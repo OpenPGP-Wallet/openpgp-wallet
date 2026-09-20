@@ -1,3 +1,28 @@
+/* Polices auto-hébergées (fichiers dans assets/fonts/) : la CSP stricte de l'app
+   (style-src/default-src 'self') empêche de charger Google Fonts par un <link>
+   externe comme sur le site vitrine — les .woff2 doivent venir du même paquet. */
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("./assets/fonts/SpaceGrotesk-Variable.woff2") format("woff2");
+  font-weight: 300 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  src: url("./assets/fonts/IBMPlexSans-Variable.woff2") format("woff2");
+  font-weight: 100 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("./assets/fonts/IBMPlexMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   color-scheme: dark;
   --bg: #0f1115;
@@ -11,7 +36,7 @@
   --danger: #ff6b6b;
   --success: #4ade80;
   --warning: #fbbf24;
-  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-family: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
 }
 
 /* Thèmes alternatifs, activés via data-theme sur <html> (choisis depuis le menu
@@ -78,6 +103,7 @@ body {
 }
 
 .brand-mark {
+  font-family: "Space Grotesk", "IBM Plex Sans", sans-serif;
   font-size: 1.3rem;
   font-weight: 700;
   color: var(--text);
@@ -116,6 +142,7 @@ body {
 }
 
 h1 {
+  font-family: "Space Grotesk", "IBM Plex Sans", sans-serif;
   margin-top: 0;
   font-size: 1.4rem;
 }
@@ -377,7 +404,7 @@ button.link:hover {
 }
 
 .backup-item .passphrase {
-  font-family: ui-monospace, monospace;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
   background: var(--bg);
   padding: 8px 10px;
   border-radius: 6px;
@@ -455,6 +482,7 @@ legend {
 }
 
 .nav-brand {
+  font-family: "Space Grotesk", "IBM Plex Sans", sans-serif;
   font-weight: 700;
   white-space: nowrap;
 }
@@ -528,7 +556,7 @@ textarea {
   border: 1px solid var(--border);
   background: var(--surface-2);
   color: var(--text);
-  font-family: ui-monospace, monospace;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
   font-size: 0.85rem;
   resize: vertical;
 }
@@ -572,7 +600,7 @@ textarea:focus {
 
 .recipient-item .recipient-fp {
   color: var(--muted);
-  font-family: ui-monospace, monospace;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
   font-size: 0.75rem;
 }
 
@@ -610,6 +638,54 @@ textarea:focus {
 .recipient-picker-item input[type="checkbox"] {
   width: auto;
   cursor: pointer;
+}
+
+.lang-switcher {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  z-index: 1000;
+  display: flex;
+  gap: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 3px;
+}
+
+/* Sur le tableau de bord, la navbar a déjà un sélecteur intégré à sa suite
+   normale (voir .lang-switcher-inline) : le sélecteur flottant ci-dessus s'y
+   superposerait au bouton "Verrouiller", donc masqué uniquement sur cet écran.
+   Nécessite que #lang-switcher soit placé APRÈS #view-dashboard dans le HTML
+   pour que ce sélecteur de sibling fonctionne (position: fixed ne dépend pas
+   de l'ordre dans le document, donc le déplacer ne change rien visuellement). */
+#view-dashboard:not(.hidden) ~ #lang-switcher {
+  display: none;
+}
+
+.lang-switcher-inline {
+  display: flex;
+  gap: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 3px;
+}
+
+.lang-btn {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  padding: 4px 10px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  border-radius: 6px;
+  width: auto;
+}
+
+.lang-btn.active {
+  background: var(--accent);
+  color: white;
 }
 
 #add-recipient-form,
@@ -700,7 +776,7 @@ textarea:focus {
 }
 
 .address {
-  font-family: ui-monospace, monospace;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
   font-size: 0.8rem;
   color: var(--muted);
   background: var(--surface-2);
@@ -892,7 +968,7 @@ textarea:focus {
 }
 
 .history-id {
-  font-family: ui-monospace, monospace;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
   font-size: 0.8rem;
   white-space: nowrap;
   overflow: hidden;

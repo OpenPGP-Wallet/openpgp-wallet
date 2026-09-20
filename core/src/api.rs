@@ -746,8 +746,9 @@ fn fee_rate_for_target(estimates: &[(u32, f64)], target: u32) -> f64 {
         .unwrap_or(1.0)
 }
 
-/// Estime les frais rapide/moyen/lent (~2/~6/~144 blocs, soit environ 20 minutes,
-/// 1 heure et 1 jour) pour un virement depuis `address`, en sats — à choisir avant
+/// Estime les frais rapide/moyen/lent (~1/~3/~6 blocs, soit environ 10 minutes,
+/// 30 minutes et 1 heure — une cible d'un jour entier n'a d'intérêt pratique pour
+/// personne) pour un virement depuis `address`, en sats — à choisir avant
 /// `send_btc`. Le nombre d'entrées dépend des UTXOs réellement disponibles sur
 /// cette adresse (tous consommés, voir `send_btc`) ; le nombre de sorties est
 /// supposé à 2 (destinataire + monnaie), le cas le plus fréquent — si la
@@ -761,9 +762,9 @@ pub fn estimate_btc_fees(address: &str, network: &wallet_flow::BtcNetwork) -> Re
 
     let sat_for_target = |target: u32| (fee_rate_for_target(&estimates, target) * vsize).ceil() as u64;
     Ok(BtcFeeEstimate {
-        fast_sat: sat_for_target(2),
-        medium_sat: sat_for_target(6),
-        slow_sat: sat_for_target(144),
+        fast_sat: sat_for_target(1),
+        medium_sat: sat_for_target(3),
+        slow_sat: sat_for_target(6),
     })
 }
 

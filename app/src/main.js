@@ -37,6 +37,466 @@ themeSelect.addEventListener("change", () => {
   }
 });
 
+// --- Langue ------------------------------------------------------------------
+// Préférence purement visuelle par appareil (comme le thème ci-dessus) : stockage
+// local suffit. Ne traduit que le frontend (HTML statique + messages générés en
+// JS) — les messages d'erreur renvoyés depuis le backend Rust (via `invoke()`)
+// restent en français quelle que soit la langue choisie ici, les traduire
+// nécessiterait de faire remonter un paramètre de langue jusqu'au backend.
+const LANG_STORAGE_KEY = "pgp-wallet-lang";
+const VALID_LANGS = ["fr", "en"];
+
+const I18N = {
+  fr: {
+    "loading.text": "Chargement…",
+    "onboarding.title": "Créer votre portefeuille",
+    "onboarding.subtitle":
+      "Choisissez un mot de passe pour cet appareil. Il vous servira à ouvrir votre portefeuille et à valider chaque virement — comme un cadenas, sans que vous ayez jamais à voir la clé qu'il y a derrière.",
+    "onboarding.passwordLabel": "Mot de passe",
+    "onboarding.confirmLabel": "Confirmation",
+    "onboarding.confirmPlaceholder": "Retapez le mot de passe",
+    "onboarding.submit": "Créer mon portefeuille",
+    "common.minChars": "Au moins 12 caractères",
+    "common.cancel": "Annuler",
+    "common.add": "Ajouter",
+    "common.copy": "Copier",
+    "common.clear": "Effacer",
+    "common.close": "Fermer",
+    "common.create": "Créer",
+    "common.busy": "Patiente…",
+    "common.passwordMinLength": "Le mot de passe doit faire au moins {min} caractères.",
+    "common.passwordHint": "Au moins {min} caractères, mélange de types recommandé.",
+    "common.strengthWeak": "Force : faible",
+    "common.strengthMedium": "Force : moyenne",
+    "common.strengthGood": "Force : bonne",
+    "common.passwordTooWeak":
+      "Ce mot de passe est trop faible ou trop prévisible — essayez un mélange de lettres, chiffres et symboles.",
+    "common.passwordsMismatch": "Les deux mots de passe ne correspondent pas.",
+    "common.passwordRequired": "Mot de passe requis.",
+    "common.saveFailed": "Échec de l'enregistrement : {err}",
+    "common.error": "Erreur : {err}",
+    "common.copyFailed": "Copie impossible : {err}",
+    "backup.title": "Sauvegardez votre kit de récupération",
+    "backup.subtitle":
+      "Ces 3 fichiers protègent votre portefeuille en cas de perte de cet appareil. <strong>2 des 3 suffisent</strong> à tout récupérer, mais aucun des 3 seul ne sert à rien — c'est voulu, personne (y compris vous) ne peut voler votre wallet avec une seule part. Téléchargez les 3 et notez les 3 mots de passe quelque part de sûr, séparément.",
+    "backup.confirmCheckbox": "J'ai téléchargé et sauvegardé mes 3 parts et leurs mots de passe",
+    "backup.continue": "Continuer vers mon portefeuille",
+    "backup.partTitle": "Part {n} — {label}",
+    "backup.partPassword": "Mot de passe de cette part :",
+    "backup.downloadShare": "Télécharger le fichier de part",
+    "backup.downloadPrivkey": "Télécharger la clé privée",
+    "unlock.title": "Portefeuille verrouillé",
+    "unlock.passwordPlaceholder": "Votre mot de passe",
+    "unlock.submit": "Déverrouiller",
+    "unlock.gotoRestore": "Restaurer depuis une sauvegarde",
+    "unlock.resetWallet": "Réinitialiser cet appareil (supprime le coffre local)",
+    "unlock.resetConfirm":
+      "Supprimer le coffre local de cet appareil ? Vous ne pourrez le récupérer qu'avec 2 de vos 3 parts de sauvegarde. Continuer ?",
+    "restore.title": "Restaurer depuis une sauvegarde",
+    "restore.subtitle":
+      "Fournissez 2 des 3 fichiers de part + leur mot de passe, et choisissez un nouveau mot de passe pour cet appareil.",
+    "restore.share1": "Part n°1",
+    "restore.share2": "Part n°2",
+    "restore.shareFile": "Fichier de part (.asc)",
+    "restore.privkeyFile": "Fichier de clé privée (.asc)",
+    "restore.sharePassword": "Mot de passe de cette part",
+    "restore.newPasswordLabel": "Nouveau mot de passe pour cet appareil",
+    "restore.submit": "Restaurer",
+    "restore.filesRequired": "Les 4 fichiers (2 parts + 2 clés privées) sont requis.",
+    "nav.wallet": "Portefeuille",
+    "nav.message": "Message",
+    "nav.certificate": "Certificat",
+    "nav.settings": "Paramètres",
+    "nav.lock": "Verrouiller",
+    "wallet.profile": "Profil",
+    "wallet.receive": "Recevoir",
+    "wallet.receiveEth": "Recevoir ETH",
+    "wallet.receiveBtc": "Recevoir BTC",
+    "wallet.receiveSol": "Recevoir SOL",
+    "wallet.newProfile": "+ Nouveau profil",
+    "wallet.archiveProfile": "Archiver ce profil",
+    "wallet.cannotArchiveLastProfile": "Impossible d'archiver le dernier profil actif restant.",
+    "wallet.archiveConfirm":
+      "Archiver le profil \"{label}\" ? Il disparaîtra du sélecteur mais restera récupérable à tout moment depuis Paramètres → Profils archivés.",
+    "wallet.mainnet": "Mainnet — Fonds réels",
+    "wallet.sepolia": "Sepolia (testnet)",
+    "wallet.testnet": "Testnet",
+    "wallet.devnet": "Devnet",
+    "wallet.refresh": "Actualiser",
+    "wallet.history": "Historique",
+    "wallet.send": "Envoyer",
+    "wallet.pendingBadge": "⏳ Transaction en attente détectée",
+    "wallet.marketsTitle": "Prix des cryptomonnaies en direct",
+    "wallet.showQr": "Afficher en QR code",
+    "wallet.marketsLoadError": "Impossible de charger les données de marché.",
+    "wallet.qrError": "Impossible de générer le QR code : {err}",
+    "wallet.linkError": "Impossible d'ouvrir le lien : {err}",
+    "wallet.noArchivedProfile": "Aucun profil archivé.",
+    "wallet.restoreProfile": "Restaurer",
+    "wallet.deleteProfileForever": "Supprimer définitivement",
+    "wallet.historyTitle": "Historique — {coin}",
+    "wallet.historyLoading": "Chargement…",
+    "wallet.historyAddressUnavailable":
+      "Adresse pas encore disponible pour ce profil — déverrouillez le portefeuille une fois pour la faire apparaître.",
+    "wallet.historyEmpty": "Aucune transaction pour cette adresse.",
+    "wallet.historyViewLink": "Voir ↗",
+    "wallet.historyConfirmed": "Confirmée",
+    "wallet.historyPending": "En attente",
+    "wallet.historyFailed": "Échouée",
+    "wallet.feeCalculating": "Calcul des frais…",
+    "wallet.feeAddressUnavailable": "Adresse indisponible.",
+    "wallet.feeUnavailable": "Frais indisponibles : {err}",
+    "wallet.feeFast": "Rapide",
+    "wallet.feeFastHint": "~10 min",
+    "wallet.feeMedium": "Moyen",
+    "wallet.feeMediumHint": "~30 min",
+    "wallet.feeSlow": "Lent",
+    "wallet.feeSlowHint": "~1 h",
+    "wallet.btcFeesNotLoaded": "Frais Bitcoin non chargés — patiente un instant ou réessaie.",
+    "wallet.allFieldsRequired": "Tous les champs sont requis.",
+    "wallet.balanceError": "erreur",
+    "message.title": "Chiffrer un message",
+    "message.subtitle":
+      "L'usage d'origine de PGP, avant qu'on le détourne ici pour protéger une seed : chiffrer un message pour que seul le destinataire puisse le lire.",
+    "message.recipientsTitle": "Destinataires",
+    "message.addRecipient": "Ajouter un destinataire",
+    "message.name": "Nom",
+    "message.namePlaceholder": "ex: Alice",
+    "message.theirPubkey": "Sa clé publique PGP (ASCII-armor)",
+    "message.messageTitle": "Message",
+    "message.recipientsPickerLabel": "Destinataires (un ou plusieurs)",
+    "message.plaintextLabel": "Message en clair",
+    "message.plaintextPlaceholder": "Votre message...",
+    "message.encrypt": "Chiffrer",
+    "message.encryptedResultLabel": "Message chiffré (à copier/envoyer)",
+    "message.decryptTitle": "Déchiffrer un message reçu",
+    "message.decryptSubtitle":
+      "Collez ici un message chiffré avec votre clé publique (celle de l'onglet Certificat) — vous seul pouvez le lire.",
+    "message.encryptedMessageLabel": "Message chiffré",
+    "message.passwordToUnlock": "Mot de passe (pour déverrouiller votre clé)",
+    "message.decrypt": "Déchiffrer",
+    "message.decryptedMessageLabel": "Message déchiffré",
+    "message.noRecipientYet": "Aucun destinataire pour l'instant.",
+    "message.addRecipientFirst": "Ajoutez d'abord un destinataire ci-dessus.",
+    "message.nameAndPubkeyRequired": "Nom et clé publique requis.",
+    "message.chooseAtLeastOneRecipient": "Choisissez au moins un destinataire (ajoutez-en un si la liste est vide).",
+    "message.cannotBeEmpty": "Le message ne peut pas être vide.",
+    "message.encryptedAndPasswordRequired": "Message chiffré et mot de passe requis.",
+    "message.removeRecipient": "Supprimer",
+    "certificate.title": "Votre certificat PGP",
+    "certificate.subtitle":
+      "C'est votre clé publique — partagez-la avec quelqu'un pour qu'il puisse vous ajouter comme destinataire et vous envoyer des messages chiffrés que vous seul pouvez lire.",
+    "certificate.identity": "Identité",
+    "certificate.fingerprint": "Empreinte (fingerprint)",
+    "certificate.keyId": "Identifiant de clé",
+    "certificate.fullKey": "Clé publique complète (ASCII-armor)",
+    "certificate.copy": "Copier ma clé publique",
+    "settings.appearance": "Apparence",
+    "settings.theme": "Thème",
+    "settings.blue": "Bleu",
+    "settings.purple": "Violet",
+    "settings.orange": "Orange",
+    "settings.dark": "Sombre",
+    "settings.archivedProfiles": "Profils archivés",
+    "settings.archivedProfilesHint":
+      "Un profil archivé disparaît du sélecteur principal mais reste entièrement récupérable — rien n'est perdu tant qu'il apparaît ici.",
+    "settings.backup": "Sauvegarde",
+    "settings.regenerateBackup": "Régénérer mon kit de sauvegarde",
+    "settings.regenerateBackupHint":
+      "Si vous avez perdu un ou plusieurs de vos 3 fichiers de sauvegarde d'origine, générez-en un nouveau jeu de 3 (mot de passe requis). Vos adresses ne changent pas.",
+    "settings.deviceSecurity": "Sécurité de l'appareil",
+    "send.title": "Envoyer",
+    "send.fromProfile": "Depuis le profil : <strong id=\"send-from-profile\"></strong>",
+    "send.mainnetWarning": "/!\\ Réseau MAINNET — ceci dépense de vrais fonds, irréversible.",
+    "send.toAddress": "Adresse destinataire",
+    "send.amount": "Montant",
+    "send.feeSpeed": "Vitesse d'envoi (frais réseau)",
+    "send.passwordToConfirm": "Mot de passe (pour valider la transaction)",
+    "send.confirm": "Confirmer l'envoi",
+    "send.txSent": "Transaction envoyée : {tx}",
+    "addProfile.title": "Nouveau profil",
+    "addProfile.subtitle":
+      "Un profil = une nouvelle adresse par réseau, dérivée de la même clé maîtresse déjà protégée par Shamir/PGP — aucune nouvelle sauvegarde à faire.",
+    "addProfile.nameLabel": "Nom du profil",
+    "addProfile.namePlaceholder": "ex : Épargne",
+    "addProfile.passwordOptional": "Mot de passe (optionnel)",
+    "addProfile.passwordPlaceholder": "Laissez vide pour voir l'adresse plus tard",
+    "addProfile.passwordHint":
+      "Avec le mot de passe : l'adresse s'affiche tout de suite. Sans lui : le profil est créé quand même, son adresse apparaîtra à votre prochain déverrouillage.",
+    "addProfile.nameRequired": "Nom du profil requis.",
+    "deleteProfile.title": "Supprimer ce profil ?",
+    "deleteProfile.subtitle":
+      "Cette application ne permet pas de recréer un profil au même index plus tard : si vous avez déjà reçu des fonds sur cette adresse, vous en perdrez l'accès depuis cette interface.",
+    "deleteProfile.passwordLabel": "Mot de passe de l'appareil",
+    "deleteProfile.confirm": "Supprimer quand même",
+    "deleteProfile.warning":
+      "Vous êtes sur le point de supprimer définitivement le profil \"{label}\". Si des fonds ont déjà été envoyés sur son adresse, ils deviendront inaccessibles depuis cette application.",
+    "regenBackup.title": "Régénérer le kit de sauvegarde",
+    "regenBackup.subtitle":
+      "Ça crée 3 nouveaux fichiers de part + 3 nouvelles passphrases, sans toucher à vos adresses ni à votre mot de passe d'appareil. Vos anciens fichiers de sauvegarde restent valables (ce n'est pas un remplacement, juste un jeu supplémentaire).",
+    "regenBackup.confirm": "Régénérer",
+    "regenBackup.resultTitle": "Nouveau kit de sauvegarde",
+    "regenBackup.resultSubtitle":
+      "<strong>2 des 3 suffisent</strong> à tout récupérer. Téléchargez les 3 et notez les 3 mots de passe quelque part de sûr, séparément.",
+    "regenBackup.resultClose": "J'ai téléchargé mes 3 nouvelles parts",
+  },
+  en: {
+    "loading.text": "Loading…",
+    "onboarding.title": "Create your wallet",
+    "onboarding.subtitle":
+      "Choose a password for this device. It will be used to open your wallet and confirm every transfer — like a lock, without you ever having to see the key behind it.",
+    "onboarding.passwordLabel": "Password",
+    "onboarding.confirmLabel": "Confirmation",
+    "onboarding.confirmPlaceholder": "Retype the password",
+    "onboarding.submit": "Create my wallet",
+    "common.minChars": "At least 12 characters",
+    "common.cancel": "Cancel",
+    "common.add": "Add",
+    "common.copy": "Copy",
+    "common.clear": "Clear",
+    "common.close": "Close",
+    "common.create": "Create",
+    "common.busy": "Please wait…",
+    "common.passwordMinLength": "The password must be at least {min} characters long.",
+    "common.passwordHint": "At least {min} characters, mixing types recommended.",
+    "common.strengthWeak": "Strength: weak",
+    "common.strengthMedium": "Strength: medium",
+    "common.strengthGood": "Strength: good",
+    "common.passwordTooWeak": "This password is too weak or too predictable — try mixing letters, digits and symbols.",
+    "common.passwordsMismatch": "The two passwords don't match.",
+    "common.passwordRequired": "Password required.",
+    "common.saveFailed": "Save failed: {err}",
+    "common.error": "Error: {err}",
+    "common.copyFailed": "Copy failed: {err}",
+    "backup.title": "Save your recovery kit",
+    "backup.subtitle":
+      "These 3 files protect your wallet if you lose this device. <strong>2 out of 3 are enough</strong> to recover everything, but none of the 3 alone is of any use — that's intentional, nobody (including you) can steal your wallet with a single share. Download all 3 and write down the 3 passwords somewhere safe, separately.",
+    "backup.confirmCheckbox": "I have downloaded and saved my 3 shares and their passwords",
+    "backup.continue": "Continue to my wallet",
+    "backup.partTitle": "Share {n} — {label}",
+    "backup.partPassword": "Password for this share:",
+    "backup.downloadShare": "Download the share file",
+    "backup.downloadPrivkey": "Download the private key",
+    "unlock.title": "Wallet locked",
+    "unlock.passwordPlaceholder": "Your password",
+    "unlock.submit": "Unlock",
+    "unlock.gotoRestore": "Restore from a backup",
+    "unlock.resetWallet": "Reset this device (deletes the local vault)",
+    "unlock.resetConfirm":
+      "Delete the local vault on this device? You will only be able to recover it with 2 of your 3 backup shares. Continue?",
+    "restore.title": "Restore from a backup",
+    "restore.subtitle":
+      "Provide 2 of the 3 share files + their password, and choose a new password for this device.",
+    "restore.share1": "Share #1",
+    "restore.share2": "Share #2",
+    "restore.shareFile": "Share file (.asc)",
+    "restore.privkeyFile": "Private key file (.asc)",
+    "restore.sharePassword": "Password for this share",
+    "restore.newPasswordLabel": "New password for this device",
+    "restore.submit": "Restore",
+    "restore.filesRequired": "All 4 files (2 shares + 2 private keys) are required.",
+    "nav.wallet": "Wallet",
+    "nav.message": "Message",
+    "nav.certificate": "Certificate",
+    "nav.settings": "Settings",
+    "nav.lock": "Lock",
+    "wallet.profile": "Profile",
+    "wallet.receive": "Receive",
+    "wallet.receiveEth": "Receive ETH",
+    "wallet.receiveBtc": "Receive BTC",
+    "wallet.receiveSol": "Receive SOL",
+    "wallet.newProfile": "+ New profile",
+    "wallet.archiveProfile": "Archive this profile",
+    "wallet.cannotArchiveLastProfile": "Cannot archive the last remaining active profile.",
+    "wallet.archiveConfirm":
+      "Archive profile \"{label}\"? It will disappear from the selector but stay recoverable at any time from Settings → Archived profiles.",
+    "wallet.mainnet": "Mainnet — Real funds",
+    "wallet.sepolia": "Sepolia (testnet)",
+    "wallet.testnet": "Testnet",
+    "wallet.devnet": "Devnet",
+    "wallet.refresh": "Refresh",
+    "wallet.history": "History",
+    "wallet.send": "Send",
+    "wallet.pendingBadge": "⏳ Pending transaction detected",
+    "wallet.marketsTitle": "Live cryptocurrency prices",
+    "wallet.showQr": "Show as QR code",
+    "wallet.marketsLoadError": "Unable to load market data.",
+    "wallet.qrError": "Unable to generate the QR code: {err}",
+    "wallet.linkError": "Unable to open the link: {err}",
+    "wallet.noArchivedProfile": "No archived profile.",
+    "wallet.restoreProfile": "Restore",
+    "wallet.deleteProfileForever": "Delete permanently",
+    "wallet.historyTitle": "History — {coin}",
+    "wallet.historyLoading": "Loading…",
+    "wallet.historyAddressUnavailable":
+      "Address not available yet for this profile — unlock the wallet once to make it appear.",
+    "wallet.historyEmpty": "No transaction for this address.",
+    "wallet.historyViewLink": "View ↗",
+    "wallet.historyConfirmed": "Confirmed",
+    "wallet.historyPending": "Pending",
+    "wallet.historyFailed": "Failed",
+    "wallet.feeCalculating": "Calculating fees…",
+    "wallet.feeAddressUnavailable": "Address unavailable.",
+    "wallet.feeUnavailable": "Fees unavailable: {err}",
+    "wallet.feeFast": "Fast",
+    "wallet.feeFastHint": "~10 min",
+    "wallet.feeMedium": "Medium",
+    "wallet.feeMediumHint": "~30 min",
+    "wallet.feeSlow": "Slow",
+    "wallet.feeSlowHint": "~1 h",
+    "wallet.btcFeesNotLoaded": "Bitcoin fees not loaded — wait a moment or try again.",
+    "wallet.allFieldsRequired": "All fields are required.",
+    "wallet.balanceError": "error",
+    "message.title": "Encrypt a message",
+    "message.subtitle":
+      "The original purpose of PGP, before it got repurposed here to protect a seed: encrypting a message so only the recipient can read it.",
+    "message.recipientsTitle": "Recipients",
+    "message.addRecipient": "Add a recipient",
+    "message.name": "Name",
+    "message.namePlaceholder": "e.g. Alice",
+    "message.theirPubkey": "Their PGP public key (ASCII-armor)",
+    "message.messageTitle": "Message",
+    "message.recipientsPickerLabel": "Recipients (one or more)",
+    "message.plaintextLabel": "Plaintext message",
+    "message.plaintextPlaceholder": "Your message...",
+    "message.encrypt": "Encrypt",
+    "message.encryptedResultLabel": "Encrypted message (copy/send it)",
+    "message.decryptTitle": "Decrypt a received message",
+    "message.decryptSubtitle":
+      "Paste here a message encrypted with your public key (the one on the Certificate tab) — only you can read it.",
+    "message.encryptedMessageLabel": "Encrypted message",
+    "message.passwordToUnlock": "Password (to unlock your key)",
+    "message.decrypt": "Decrypt",
+    "message.decryptedMessageLabel": "Decrypted message",
+    "message.noRecipientYet": "No recipient yet.",
+    "message.addRecipientFirst": "Add a recipient above first.",
+    "message.nameAndPubkeyRequired": "Name and public key are required.",
+    "message.chooseAtLeastOneRecipient": "Choose at least one recipient (add one if the list is empty).",
+    "message.cannotBeEmpty": "The message cannot be empty.",
+    "message.encryptedAndPasswordRequired": "Encrypted message and password are required.",
+    "message.removeRecipient": "Remove",
+    "certificate.title": "Your PGP certificate",
+    "certificate.subtitle":
+      "This is your public key — share it with someone so they can add you as a recipient and send you encrypted messages that only you can read.",
+    "certificate.identity": "Identity",
+    "certificate.fingerprint": "Fingerprint",
+    "certificate.keyId": "Key ID",
+    "certificate.fullKey": "Full public key (ASCII-armor)",
+    "certificate.copy": "Copy my public key",
+    "settings.appearance": "Appearance",
+    "settings.theme": "Theme",
+    "settings.blue": "Blue",
+    "settings.purple": "Purple",
+    "settings.orange": "Orange",
+    "settings.dark": "Dark",
+    "settings.archivedProfiles": "Archived profiles",
+    "settings.archivedProfilesHint":
+      "An archived profile disappears from the main selector but stays fully recoverable — nothing is lost as long as it appears here.",
+    "settings.backup": "Backup",
+    "settings.regenerateBackup": "Regenerate my backup kit",
+    "settings.regenerateBackupHint":
+      "If you lost one or more of your original 3 backup files, generate a new set of 3 (password required). Your addresses don't change.",
+    "settings.deviceSecurity": "Device security",
+    "send.title": "Send",
+    "send.fromProfile": "From profile: <strong id=\"send-from-profile\"></strong>",
+    "send.mainnetWarning": "/!\\ MAINNET network — this spends real funds, irreversible.",
+    "send.toAddress": "Recipient address",
+    "send.amount": "Amount",
+    "send.feeSpeed": "Sending speed (network fee)",
+    "send.passwordToConfirm": "Password (to confirm the transaction)",
+    "send.confirm": "Confirm send",
+    "send.txSent": "Transaction sent: {tx}",
+    "addProfile.title": "New profile",
+    "addProfile.subtitle":
+      "A profile = a new address per network, derived from the same master key already protected by Shamir/PGP — no new backup needed.",
+    "addProfile.nameLabel": "Profile name",
+    "addProfile.namePlaceholder": "e.g. Savings",
+    "addProfile.passwordOptional": "Password (optional)",
+    "addProfile.passwordPlaceholder": "Leave empty to see the address later",
+    "addProfile.passwordHint":
+      "With the password: the address shows up right away. Without it: the profile is created anyway, its address will appear on your next full unlock.",
+    "addProfile.nameRequired": "Profile name required.",
+    "deleteProfile.title": "Delete this profile?",
+    "deleteProfile.subtitle":
+      "This application does not allow recreating a profile at the same index later: if you've already received funds on this address, you will lose access to them from this interface.",
+    "deleteProfile.passwordLabel": "Device password",
+    "deleteProfile.confirm": "Delete anyway",
+    "deleteProfile.warning":
+      "You are about to permanently delete the profile \"{label}\". If funds have already been sent to its address, they will become inaccessible from this application.",
+    "regenBackup.title": "Regenerate the backup kit",
+    "regenBackup.subtitle":
+      "This creates 3 new share files + 3 new passphrases, without touching your addresses or your device password. Your old backup files remain valid (this isn't a replacement, just an extra set).",
+    "regenBackup.confirm": "Regenerate",
+    "regenBackup.resultTitle": "New backup kit",
+    "regenBackup.resultSubtitle":
+      "<strong>2 out of 3 are enough</strong> to recover everything. Download all 3 and write down the 3 passwords somewhere safe, separately.",
+    "regenBackup.resultClose": "I have downloaded my 3 new shares",
+  },
+};
+
+function t(key, vars) {
+  const dict = I18N[currentLang] || I18N.fr;
+  let text = dict[key] ?? I18N.fr[key] ?? key;
+  if (vars) {
+    for (const [name, value] of Object.entries(vars)) {
+      text = text.replaceAll(`{${name}}`, value);
+    }
+  }
+  return text;
+}
+
+function applyLanguage(lang) {
+  currentLang = VALID_LANGS.includes(lang) ? lang : "fr";
+  document.documentElement.lang = currentLang;
+  // Les messages d'erreur renvoyés par le backend Rust (core/) sont eux aussi
+  // traduits, mais côté Rust (app/src-tauri/src/lib.rs::translate_error) : core/
+  // ignore volontairement tout concept d'interface, la langue affichée n'est donc
+  // jamais transmise plus profond que cette commande dédiée. Best-effort : si
+  // l'appel échoue (ex. tout premier appel avant que le backend soit prêt), les
+  // erreurs backend restent simplement en français le temps du prochain switch.
+  invoke("set_ui_language", { lang: currentLang }).catch(() => {});
+  document.querySelectorAll("[data-i18n]").forEach((el) => {
+    el.textContent = t(el.dataset.i18n);
+  });
+  document.querySelectorAll("[data-i18n-html]").forEach((el) => {
+    el.innerHTML = t(el.dataset.i18nHtml);
+  });
+  document.querySelectorAll("[data-i18n-placeholder]").forEach((el) => {
+    el.placeholder = t(el.dataset.i18nPlaceholder);
+  });
+  document.querySelectorAll("[data-i18n-title]").forEach((el) => {
+    el.title = t(el.dataset.i18nTitle);
+  });
+  document.querySelectorAll(".lang-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.lang === currentLang);
+  });
+}
+
+let currentLang = "fr";
+try {
+  const savedLang = localStorage.getItem(LANG_STORAGE_KEY);
+  if (VALID_LANGS.includes(savedLang)) currentLang = savedLang;
+} catch (e) {
+  // localStorage indisponible : reste sur le français par défaut.
+}
+applyLanguage(currentLang);
+
+document.querySelectorAll(".lang-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    applyLanguage(btn.dataset.lang);
+    // Contenu déjà généré dynamiquement à partir de données déjà en mémoire (pas
+    // besoin de rappeler le backend) : ré-affiché tout de suite dans la nouvelle
+    // langue. Les autres listes dynamiques (historique, frais, kit de sauvegarde...)
+    // adopteront la nouvelle langue à leur prochain affichage.
+    renderRecipientList();
+    try {
+      localStorage.setItem(LANG_STORAGE_KEY, currentLang);
+    } catch (e) {
+      // Best-effort : la langue reste active pour cette session même si la sauvegarde échoue.
+    }
+  });
+});
+
 // --- Menus déroulants personnalisés -----------------------------------------
 // Un <select> natif n'expose aucun moyen fiable (CSS ou JS) de savoir si son menu
 // est réellement ouvert ou fermé — seulement s'il a le focus, qu'il garde après
@@ -171,8 +631,7 @@ function withBusyButton(button, action) {
     if (button.disabled) return; // déjà en cours : ignore un second clic
     const originalText = button.textContent;
     button.disabled = true;
-    button.dataset.busyText ??= "Patiente…";
-    button.textContent = button.dataset.busyText;
+    button.textContent = t("common.busy");
     try {
       await action(...args);
     } finally {
@@ -247,14 +706,14 @@ function updateStrengthHint(inputEl, hintEl) {
   const password = inputEl.value;
   hintEl.classList.remove("strength-faible", "strength-moyen", "strength-fort");
   if (!password) {
-    hintEl.textContent = `Au moins ${MIN_PASSWORD_LENGTH} caractères, mélange de types recommandé.`;
+    hintEl.textContent = t("common.passwordHint", { min: MIN_PASSWORD_LENGTH });
     return;
   }
   const strength = estimatePasswordStrength(password);
   const labels = {
-    faible: "Force : faible",
-    moyen: "Force : moyenne",
-    fort: "Force : bonne",
+    faible: t("common.strengthWeak"),
+    moyen: t("common.strengthMedium"),
+    fort: t("common.strengthGood"),
   };
   hintEl.textContent = labels[strength];
   hintEl.classList.add(`strength-${strength}`);
@@ -272,15 +731,15 @@ onboardingSubmitBtn.addEventListener("click", withBusyButton(onboardingSubmitBtn
   hideError(errorEl);
 
   if (password.length < MIN_PASSWORD_LENGTH) {
-    showError(errorEl, `Le mot de passe doit faire au moins ${MIN_PASSWORD_LENGTH} caractères.`);
+    showError(errorEl, t("common.passwordMinLength", { min: MIN_PASSWORD_LENGTH }));
     return;
   }
   if (estimatePasswordStrength(password) === "faible") {
-    showError(errorEl, "Ce mot de passe est trop faible ou trop prévisible — essayez un mélange de lettres, chiffres et symboles.");
+    showError(errorEl, t("common.passwordTooWeak"));
     return;
   }
   if (password !== confirm) {
-    showError(errorEl, "Les deux mots de passe ne correspondent pas.");
+    showError(errorEl, t("common.passwordsMismatch"));
     return;
   }
 
@@ -318,26 +777,26 @@ function renderBackupList(backups, containerId = "backup-list") {
     const item = document.createElement("div");
     item.className = "backup-item";
     item.innerHTML = `
-      <h3>Part ${i + 1} — ${backup.label}</h3>
-      <p class="muted">Mot de passe de cette part :</p>
+      <h3>${t("backup.partTitle", { n: i + 1, label: backup.label })}</h3>
+      <p class="muted">${t("backup.partPassword")}</p>
       <div class="passphrase">${backup.passphrase}</div>
       <div class="row-buttons">
-        <button class="secondary" data-kind="share">Télécharger le fichier de part</button>
-        <button class="secondary" data-kind="privkey">Télécharger la clé privée</button>
+        <button class="secondary" data-kind="share">${t("backup.downloadShare")}</button>
+        <button class="secondary" data-kind="privkey">${t("backup.downloadPrivkey")}</button>
       </div>
     `;
     item.querySelector('[data-kind="share"]').addEventListener("click", async (e) => {
       try {
         await saveBase64ToFile(backup.encrypted_share_b64, `${backup.label}_share.asc`);
       } catch (err) {
-        alert(`Échec de l'enregistrement : ${err}`);
+        alert(t("common.saveFailed", { err }));
       }
     });
     item.querySelector('[data-kind="privkey"]').addEventListener("click", async (e) => {
       try {
         await saveBase64ToFile(backup.privkey_armored_b64, `${backup.label}_privkey.asc`);
       } catch (err) {
-        alert(`Échec de l'enregistrement : ${err}`);
+        alert(t("common.saveFailed", { err }));
       }
     });
     container.appendChild(item);
@@ -382,9 +841,7 @@ document.getElementById("goto-restore").addEventListener("click", () => showView
 document.getElementById("goto-unlock").addEventListener("click", () => showView("unlock"));
 
 document.getElementById("reset-wallet").addEventListener("click", async () => {
-  const sure = confirm(
-    "Supprimer le coffre local de cet appareil ? Vous ne pourrez le récupérer qu'avec 2 de vos 3 parts de sauvegarde. Continuer ?"
-  );
+  const sure = confirm(t("unlock.resetConfirm"));
   if (!sure) return;
   try {
     await invoke("reset_wallet");
@@ -397,9 +854,7 @@ document.getElementById("reset-wallet").addEventListener("click", async () => {
 });
 
 document.getElementById("reset-wallet-dashboard").addEventListener("click", async () => {
-  const sure = confirm(
-    "Supprimer le coffre local de cet appareil ? Vous ne pourrez le récupérer qu'avec 2 de vos 3 parts de sauvegarde. Continuer ?"
-  );
+  const sure = confirm(t("unlock.resetConfirm"));
   if (!sure) return;
   try {
     await invoke("reset_wallet");
@@ -408,7 +863,7 @@ document.getElementById("reset-wallet-dashboard").addEventListener("click", asyn
     stopBalanceAutoRefresh();
     showView("onboarding");
   } catch (e) {
-    alert(`Erreur : ${e}`);
+    alert(t("common.error", { err: e }));
   }
 });
 
@@ -431,7 +886,7 @@ regenerateBackupConfirmBtn.addEventListener("click", withBusyButton(regenerateBa
   hideError(errorEl);
   const password = document.getElementById("regenerate-backup-password").value;
   if (!password) {
-    showError(errorEl, "Mot de passe requis.");
+    showError(errorEl, t("common.passwordRequired"));
     return;
   }
 
@@ -532,15 +987,15 @@ restoreSubmitBtn.addEventListener("click", withBusyButton(restoreSubmitBtn, asyn
   const newPassword = document.getElementById("restore-new-password").value;
 
   if (!shareFile1 || !privkeyFile1 || !shareFile2 || !privkeyFile2) {
-    showError(errorEl, "Les 4 fichiers (2 parts + 2 clés privées) sont requis.");
+    showError(errorEl, t("restore.filesRequired"));
     return;
   }
   if (newPassword.length < MIN_PASSWORD_LENGTH) {
-    showError(errorEl, `Le nouveau mot de passe doit faire au moins ${MIN_PASSWORD_LENGTH} caractères.`);
+    showError(errorEl, t("common.passwordMinLength", { min: MIN_PASSWORD_LENGTH }));
     return;
   }
   if (estimatePasswordStrength(newPassword) === "faible") {
-    showError(errorEl, "Ce mot de passe est trop faible ou trop prévisible — essayez un mélange de lettres, chiffres et symboles.");
+    showError(errorEl, t("common.passwordTooWeak"));
     return;
   }
 
@@ -701,7 +1156,7 @@ async function loadMarkets() {
       container.appendChild(row);
     });
   } catch (e) {
-    container.innerHTML = '<p class="muted">Impossible de charger les données de marché.</p>';
+    container.innerHTML = `<p class="muted">${t("wallet.marketsLoadError")}</p>`;
     console.error(e);
   }
 }
@@ -813,7 +1268,7 @@ addProfileConfirmBtn.addEventListener("click", withBusyButton(addProfileConfirmB
   const password = document.getElementById("add-profile-password").value;
 
   if (!label) {
-    showError(errorEl, "Nom du profil requis.");
+    showError(errorEl, t("addProfile.nameRequired"));
     return;
   }
 
@@ -845,16 +1300,13 @@ addProfileConfirmBtn.addEventListener("click", withBusyButton(addProfileConfirmB
 const archiveProfileBtn = document.getElementById("archive-profile-btn");
 archiveProfileBtn.addEventListener("click", withBusyButton(archiveProfileBtn, async () => {
   if (profilesCache.length <= 1) {
-    alert("Impossible d'archiver le dernier profil actif restant.");
+    alert(t("wallet.cannotArchiveLastProfile"));
     return;
   }
   const profile = currentProfile();
   if (!profile) return;
 
-  const sure = confirm(
-    `Archiver le profil "${profile.label}" ? Il disparaîtra du sélecteur mais restera récupérable ` +
-      "à tout moment depuis Paramètres → Profils archivés."
-  );
+  const sure = confirm(t("wallet.archiveConfirm", { label: profile.label }));
   if (!sure) return;
 
   try {
@@ -865,7 +1317,7 @@ archiveProfileBtn.addEventListener("click", withBusyButton(archiveProfileBtn, as
     renderCardAddresses();
     refreshAllBalances();
   } catch (e) {
-    alert(`Erreur : ${e}`);
+    alert(t("common.error", { err: e }));
   }
 }));
 
@@ -877,7 +1329,7 @@ async function loadArchivedProfiles() {
     const archived = await invoke("list_archived_profiles");
     container.innerHTML = "";
     if (archived.length === 0) {
-      container.innerHTML = '<p class="muted">Aucun profil archivé.</p>';
+      container.innerHTML = `<p class="muted">${t("wallet.noArchivedProfile")}</p>`;
       return;
     }
     archived.forEach((profile) => {
@@ -890,7 +1342,7 @@ async function loadArchivedProfiles() {
 
       const restoreBtn = document.createElement("button");
       restoreBtn.className = "secondary";
-      restoreBtn.textContent = "Restaurer";
+      restoreBtn.textContent = t("wallet.restoreProfile");
       restoreBtn.addEventListener("click", async () => {
         try {
           await invoke("unarchive_profile", { index: profile.index });
@@ -903,13 +1355,13 @@ async function loadArchivedProfiles() {
           renderCardAddresses();
           loadArchivedProfiles();
         } catch (e) {
-          alert(`Erreur : ${e}`);
+          alert(t("common.error", { err: e }));
         }
       });
 
       const deleteBtn = document.createElement("button");
       deleteBtn.className = "secondary";
-      deleteBtn.textContent = "Supprimer définitivement";
+      deleteBtn.textContent = t("wallet.deleteProfileForever");
       deleteBtn.addEventListener("click", () => openDeleteProfileModal(profile));
 
       const actions = document.createElement("div");
@@ -938,9 +1390,7 @@ let profileToDelete = null;
 
 function openDeleteProfileModal(profile) {
   profileToDelete = profile;
-  document.getElementById("delete-profile-warning").textContent =
-    `Vous êtes sur le point de supprimer définitivement le profil "${profile.label}". Si des fonds ont déjà été ` +
-    "envoyés sur son adresse, ils deviendront inaccessibles depuis cette application.";
+  document.getElementById("delete-profile-warning").textContent = t("deleteProfile.warning", { label: profile.label });
   document.getElementById("delete-profile-password").value = "";
   hideError(document.getElementById("delete-profile-error"));
   document.getElementById("delete-profile-modal").classList.remove("hidden");
@@ -960,7 +1410,7 @@ deleteProfileConfirmBtn.addEventListener("click", withBusyButton(deleteProfileCo
   const password = document.getElementById("delete-profile-password").value;
 
   if (!password) {
-    showError(errorEl, "Mot de passe requis.");
+    showError(errorEl, t("common.passwordRequired"));
     return;
   }
 
@@ -992,7 +1442,7 @@ async function refreshBalance(card) {
     const balance = await invoke("get_balance", { network, address });
     balanceEl.textContent = balance;
   } catch (e) {
-    balanceEl.textContent = "erreur";
+    balanceEl.textContent = t("wallet.balanceError");
     console.error(e);
   }
   updateFiatValue(card);
@@ -1045,7 +1495,7 @@ const qrModal = document.getElementById("qr-modal");
 async function openQrModal(card) {
   const address = addressForCoin(card.dataset.coin, networkForCard(card));
   if (!address) {
-    alert("Adresse pas encore disponible pour ce profil — déverrouillez le portefeuille une fois pour la faire apparaître.");
+    alert(t("wallet.historyAddressUnavailable"));
     return;
   }
   try {
@@ -1054,7 +1504,7 @@ async function openQrModal(card) {
     document.getElementById("qr-address-text").textContent = address;
     qrModal.classList.remove("hidden");
   } catch (e) {
-    alert(`Impossible de générer le QR code : ${e}`);
+    alert(t("wallet.qrError", { err: e }));
   }
 }
 
@@ -1072,9 +1522,9 @@ function formatTxTimestamp(unixSeconds) {
 }
 
 function historyStatusLabel(status) {
-  if (status === "confirmed") return "Confirmée";
-  if (status === "pending") return "En attente";
-  if (status === "failed") return "Échouée";
+  if (status === "confirmed") return t("wallet.historyConfirmed");
+  if (status === "pending") return t("wallet.historyPending");
+  if (status === "failed") return t("wallet.historyFailed");
   return status;
 }
 
@@ -1083,14 +1533,13 @@ async function openHistoryModal(card) {
   const network = networkForCard(card);
   const address = addressForCoin(coin, network);
   const coinLabel = card.querySelector("h2").textContent.trim();
-  document.getElementById("history-modal-title").textContent = `Historique — ${coinLabel}`;
+  document.getElementById("history-modal-title").textContent = t("wallet.historyTitle", { coin: coinLabel });
   const container = document.getElementById("history-list");
-  container.innerHTML = '<p class="muted">Chargement…</p>';
+  container.innerHTML = `<p class="muted">${t("wallet.historyLoading")}</p>`;
   historyModal.classList.remove("hidden");
 
   if (!address) {
-    container.innerHTML =
-      '<p class="muted">Adresse pas encore disponible pour ce profil — déverrouillez le portefeuille une fois pour la faire apparaître.</p>';
+    container.innerHTML = `<p class="muted">${t("wallet.historyAddressUnavailable")}</p>`;
     return;
   }
 
@@ -1098,7 +1547,7 @@ async function openHistoryModal(card) {
     const entries = await invoke("get_tx_history", { network, address });
     container.innerHTML = "";
     if (entries.length === 0) {
-      container.innerHTML = '<p class="muted">Aucune transaction pour cette adresse.</p>';
+      container.innerHTML = `<p class="muted">${t("wallet.historyEmpty")}</p>`;
       return;
     }
     entries.forEach((tx) => {
@@ -1139,9 +1588,9 @@ async function openHistoryModal(card) {
       const link = document.createElement("button");
       link.type = "button";
       link.className = "history-link";
-      link.textContent = "Voir ↗";
+      link.textContent = t("wallet.historyViewLink");
       link.addEventListener("click", () => {
-        invoke("open_external_link", { url: tx.explorer_url }).catch((e) => alert(`Impossible d'ouvrir le lien : ${e}`));
+        invoke("open_external_link", { url: tx.explorer_url }).catch((e) => alert(t("wallet.linkError", { err: e })));
       });
       right.appendChild(amountDiv);
       right.appendChild(link);
@@ -1243,20 +1692,20 @@ async function loadBtcFeeOptions(card, network) {
     return;
   }
   block.classList.remove("hidden");
-  container.innerHTML = '<p class="muted">Calcul des frais…</p>';
+  container.innerHTML = `<p class="muted">${t("wallet.feeCalculating")}</p>`;
 
   const address = addressForCoin("btc", network);
   if (!address) {
-    container.innerHTML = '<p class="muted">Adresse indisponible.</p>';
+    container.innerHTML = `<p class="muted">${t("wallet.feeAddressUnavailable")}</p>`;
     return;
   }
 
   try {
     const fees = await invoke("estimate_btc_fees", { network, address });
     const tiers = [
-      { key: "fast_sat", label: "Rapide", hint: "~20 min" },
-      { key: "medium_sat", label: "Moyen", hint: "~1 h" },
-      { key: "slow_sat", label: "Lent", hint: "~1 jour" },
+      { key: "fast_sat", label: t("wallet.feeFast"), hint: t("wallet.feeFastHint") },
+      { key: "medium_sat", label: t("wallet.feeMedium"), hint: t("wallet.feeMediumHint") },
+      { key: "slow_sat", label: t("wallet.feeSlow"), hint: t("wallet.feeSlowHint") },
     ];
     container.innerHTML = "";
     tiers.forEach((tier, index) => {
@@ -1293,7 +1742,7 @@ async function loadBtcFeeOptions(card, network) {
       container.appendChild(btn);
     });
   } catch (e) {
-    container.innerHTML = `<p class="muted">Frais indisponibles : ${e}</p>`;
+    container.innerHTML = `<p class="muted">${t("wallet.feeUnavailable", { err: e })}</p>`;
   }
 }
 
@@ -1316,11 +1765,11 @@ sendConfirmBtn.addEventListener("click", withBusyButton(sendConfirmBtn, async ()
   const password = document.getElementById("send-password").value;
 
   if (!to || !amount || !password) {
-    showError(errorEl, "Tous les champs sont requis.");
+    showError(errorEl, t("wallet.allFieldsRequired"));
     return;
   }
   if (sendContext.coin === "btc" && !sendContext.feeSat) {
-    showError(errorEl, "Frais Bitcoin non chargés — patiente un instant ou réessaie.");
+    showError(errorEl, t("wallet.btcFeesNotLoaded"));
     return;
   }
 
@@ -1333,7 +1782,7 @@ sendConfirmBtn.addEventListener("click", withBusyButton(sendConfirmBtn, async ()
       feeSat: sendContext.coin === "btc" ? sendContext.feeSat : null,
       profileIndex: sendContext.profileIndex,
     });
-    successEl.textContent = `Transaction envoyée : ${txResult}`;
+    successEl.textContent = t("send.txSent", { tx: txResult });
     successEl.classList.remove("hidden");
     refreshBalance(sendContext.card);
   } catch (e) {
@@ -1361,7 +1810,7 @@ document.getElementById("copy-cert").addEventListener("click", async () => {
   try {
     await navigator.clipboard.writeText(document.getElementById("cert-armored").value);
   } catch (e) {
-    alert(`Copie impossible : ${e}`);
+    alert(t("common.copyFailed", { err: e }));
   }
 });
 
@@ -1389,8 +1838,8 @@ function renderRecipientList() {
   picker.innerHTML = "";
 
   if (recipientsCache.length === 0) {
-    container.innerHTML = '<p class="muted">Aucun destinataire pour l\'instant.</p>';
-    picker.innerHTML = '<p class="muted">Ajoutez d\'abord un destinataire ci-dessus.</p>';
+    container.innerHTML = `<p class="muted">${t("message.noRecipientYet")}</p>`;
+    picker.innerHTML = `<p class="muted">${t("message.addRecipientFirst")}</p>`;
     return;
   }
 
@@ -1419,7 +1868,7 @@ function renderRecipientList() {
     infoDiv.appendChild(fingerprintDiv);
 
     const removeBtn = document.createElement("button");
-    removeBtn.textContent = "Supprimer";
+    removeBtn.textContent = t("message.removeRecipient");
     removeBtn.addEventListener("click", async () => {
       await invoke("remove_recipient", { label: r.label });
       loadRecipients();
@@ -1465,7 +1914,7 @@ confirmAddRecipientBtn.addEventListener("click", withBusyButton(confirmAddRecipi
   hideError(errorEl);
 
   if (!label || !pubkey) {
-    showError(errorEl, "Nom et clé publique requis.");
+    showError(errorEl, t("message.nameAndPubkeyRequired"));
     return;
   }
 
@@ -1494,11 +1943,11 @@ encryptMessageBtn.addEventListener("click", withBusyButton(encryptMessageBtn, as
     .map((r) => r.pubkey_armored);
 
   if (pubkeysArmored.length === 0) {
-    showError(errorEl, "Choisissez au moins un destinataire (ajoutez-en un si la liste est vide).");
+    showError(errorEl, t("message.chooseAtLeastOneRecipient"));
     return;
   }
   if (!message) {
-    showError(errorEl, "Le message ne peut pas être vide.");
+    showError(errorEl, t("message.cannotBeEmpty"));
     return;
   }
 
@@ -1515,7 +1964,7 @@ document.getElementById("copy-encrypted").addEventListener("click", async () => 
   try {
     await navigator.clipboard.writeText(document.getElementById("encrypt-result").value);
   } catch (e) {
-    alert(`Copie impossible : ${e}`);
+    alert(t("common.copyFailed", { err: e }));
   }
 });
 
@@ -1535,7 +1984,7 @@ decryptMessageBtn.addEventListener("click", withBusyButton(decryptMessageBtn, as
   const password = document.getElementById("decrypt-password").value;
 
   if (!ciphertext || !password) {
-    showError(errorEl, "Message chiffré et mot de passe requis.");
+    showError(errorEl, t("message.encryptedAndPasswordRequired"));
     return;
   }
 

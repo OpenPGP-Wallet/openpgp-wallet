@@ -8,17 +8,262 @@ use base64::Engine;
 use pgp_wallet_poc::{api, history, messaging, price_rpc, wallet_flow};
 use serde::Serialize;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Manager;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_opener::OpenerExt;
 use zeroize::Zeroizing;
 
+// --- Traduction des messages d'erreur ---------------------------------------
+// `core/` ignore volontairement tout concept d'interface graphique (voir sa doc :
+// pensé pour être réutilisable tel quel par une future cible CLI/mobile) — la
+// langue affichée à l'utilisateur est donc une préoccupation d'exposition, traitée
+// ici, au point unique où une erreur `anyhow::Result` produite par `core/` devient
+// la `String` envoyée au frontend. Pas de dépendance `regex` ajoutée pour ça : les
+// quelques messages avec une valeur interpolée (index, nom, montant...) sont
+// recomposés par découpage de chaîne plutôt que par expression régulière.
+static UI_LANG_IS_ENGLISH: AtomicBool = AtomicBool::new(false);
+
+/// Appelée par le frontend à chaque changement de langue (bouton FR/EN) et au
+/// démarrage. Un simple booléen process-wide suffit : ce n'est qu'une préférence
+/// d'affichage, jamais une donnée de sécurité.
+#[tauri::command]
+fn set_ui_language(lang: String) {
+    UI_LANG_IS_ENGLISH.store(lang == "en", Ordering::Relaxed);
+}
+
+/// Messages sans valeur interpolée : correspondance exacte avec le texte français
+/// tel qu'écrit dans `core/` et dans ce fichier.
+const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
+    // core/src/api.rs
+    ("sérialisation des profils", "profile serialization"),
+    ("écriture des profils", "writing profiles"),
+    ("lecture de la clé publique de l'appareil", "reading the device's public key"),
+    ("le message déchiffré n'est pas du texte UTF-8 valide", "the decrypted message is not valid UTF-8 text"),
+    ("coffre local introuvable", "local vault not found"),
+    ("gas_price * gas_limit dépasse la capacité représentable", "gas_price * gas_limit exceeds the representable range"),
+    ("montant + frais de gas dépasse la capacité représentable", "amount + gas fee exceeds the representable range"),
+    ("montant + frais dépasse la capacité représentable", "amount + fee exceeds the representable range"),
+    ("adresse Solana invalide (base58 attendu)", "invalid Solana address (base58 expected)"),
+    ("une adresse Solana fait 32 octets", "a Solana address is 32 bytes"),
+    // core/src/messaging.rs
+    ("clé publique PGP invalide", "invalid PGP public key"),
+    ("au moins un destinataire est requis", "at least one recipient is required"),
+    ("lecture du carnet de destinataires", "reading the recipient book"),
+    ("carnet de destinataires corrompu", "recipient book corrupted"),
+    ("sérialisation du carnet de destinataires", "recipient book serialization"),
+    ("écriture du carnet de destinataires", "writing the recipient book"),
+    ("initialisation de l'armure PGP", "PGP armor initialization"),
+    ("initialisation du chiffreur PGP", "PGP encryptor initialization"),
+    ("initialisation de l'écriture littérale", "literal writer initialization"),
+    ("finalisation de l'armure PGP", "PGP armor finalization"),
+    ("résultat PGP non-UTF8 (inattendu)", "non-UTF8 PGP result (unexpected)"),
+    ("certificat invalide", "invalid certificate"),
+    // core/src/pgp_engine.rs
+    ("aucune part PKESK n'a pu être déchiffrée avec cette clé", "no PKESK share could be decrypted with this key"),
+    ("passphrase incorrecte ou clé privée corrompue", "incorrect passphrase or corrupted private key"),
+    ("clé privée inutilisable pour le déchiffrement", "private key unusable for decryption"),
+    ("lecture du message PGP chiffré", "reading the encrypted PGP message"),
+    ("échec du déchiffrement (mauvaise clé ou message corrompu)", "decryption failed (wrong key or corrupted message)"),
+    ("lecture du contenu déchiffré", "reading the decrypted content"),
+    // core/src/derivation.rs
+    ("dérivation BIP32 racine impossible", "root BIP32 derivation failed"),
+    ("chemin de dérivation invalide", "invalid derivation path"),
+    ("échec de dérivation d'un segment", "failed to derive a path segment"),
+    ("encodage bech32 impossible", "bech32 encoding failed"),
+    ("adresse bech32 invalide", "invalid bech32 address"),
+    ("adresse bech32 vide", "empty bech32 address"),
+    ("conversion base32 -> octets impossible", "base32 -> bytes conversion failed"),
+    (
+        "programme témoin de taille inattendue (P2WPKH attend 20 octets)",
+        "witness program has an unexpected size (P2WPKH expects 20 bytes)",
+    ),
+    // core/src/shamir.rs
+    ("format de part invalide", "invalid share format"),
+    (
+        "échec de la reconstruction (parts insuffisantes ou corrompues)",
+        "reconstruction failed (insufficient or corrupted shares)",
+    ),
+    // core/src/wallet_flow.rs (fonctions de parsing réutilisées par la GUI)
+    ("adresse invalide (hex attendu)", "invalid address (hex expected)"),
+    ("partie entière invalide", "invalid integer part"),
+    ("partie décimale invalide", "invalid decimal part"),
+    ("montant ETH trop grand (dépassement arithmétique)", "ETH amount too large (arithmetic overflow)"),
+    ("montant BTC trop grand (dépassement arithmétique)", "BTC amount too large (arithmetic overflow)"),
+    ("montant SOL trop grand (dépassement arithmétique)", "SOL amount too large (arithmetic overflow)"),
+    ("trop de décimales (18 maximum pour l'ETH)", "too many decimals (18 maximum for ETH)"),
+    ("trop de décimales (8 maximum pour le BTC)", "too many decimals (8 maximum for BTC)"),
+    ("trop de décimales (9 maximum pour le SOL)", "too many decimals (9 maximum for SOL)"),
+    (
+        "aucun UTXO confirmé disponible (vérifie le solde d'abord)",
+        "no confirmed UTXO available (check the balance first)",
+    ),
+    ("impossible de contacter le nœud RPC", "unable to reach the RPC node"),
+    // core/src/eth_rpc.rs / sol_rpc.rs (messages sans valeur interpolée)
+    ("réponse getBalance inattendue", "unexpected getBalance response"),
+    ("réponse eth_gasPrice non textuelle", "non-textual eth_gasPrice response"),
+    ("réponse eth_getBalance non textuelle", "non-textual eth_getBalance response"),
+    ("réponse eth_sendRawTransaction non textuelle", "non-textual eth_sendRawTransaction response"),
+    ("réponse getLatestBlockhash inattendue", "unexpected getLatestBlockhash response"),
+    ("blockhash base58 invalide", "invalid base58 blockhash"),
+    ("blockhash de taille inattendue", "blockhash has an unexpected size"),
+    ("réponse requestAirdrop inattendue", "unexpected requestAirdrop response"),
+    ("réponse sendTransaction inattendue", "unexpected sendTransaction response"),
+    // core/src/btc_rpc.rs
+    ("appel esplora /utxo impossible", "esplora /utxo call failed"),
+    ("réponse esplora /utxo illisible", "unreadable esplora /utxo response"),
+    ("txid invalide", "invalid txid"),
+    ("txid de taille inattendue", "txid has an unexpected size"),
+    ("appel esplora /txs/mempool impossible", "esplora /txs/mempool call failed"),
+    ("réponse esplora /txs/mempool illisible", "unreadable esplora /txs/mempool response"),
+    ("appel esplora /txs impossible", "esplora /txs call failed"),
+    ("réponse esplora /txs illisible", "unreadable esplora /txs response"),
+    ("appel esplora /tx impossible", "esplora /tx call failed"),
+    ("réponse esplora /tx illisible", "unreadable esplora /tx response"),
+    ("appel esplora /fee-estimates impossible", "esplora /fee-estimates call failed"),
+    ("réponse esplora /fee-estimates illisible", "unreadable esplora /fee-estimates response"),
+    // core/src/blockscout.rs
+    ("appel Blockscout impossible", "Blockscout call failed"),
+    ("réponse Blockscout illisible", "unreadable Blockscout response"),
+    ("montant de transaction Blockscout invalide", "invalid Blockscout transaction amount"),
+    // core/src/price_rpc.rs
+    ("appel CoinGecko impossible", "CoinGecko call failed"),
+    ("réponse CoinGecko illisible", "unreadable CoinGecko response"),
+    ("appel CoinGecko (marchés) impossible", "CoinGecko (markets) call failed"),
+    ("réponse CoinGecko (marchés) illisible", "unreadable CoinGecko (markets) response"),
+    // app/src-tauri/src/lib.rs
+    (
+        "lien refusé : seuls les explorateurs de blocs connus de l'app sont autorisés",
+        "link refused: only the app's known block explorers are allowed",
+    ),
+    ("Régénération annulée (confirmation refusée).", "Regeneration cancelled (confirmation refused)."),
+    ("Restauration annulée (confirmation refusée).", "Restoration cancelled (confirmation refused)."),
+    ("Virement annulé (confirmation refusée).", "Transfer cancelled (confirmation refused)."),
+    ("Ajout annulé (clé différente refusée).", "Addition cancelled (different key refused)."),
+];
+
+/// Messages avec une valeur interpolée (index, méthode RPC, montant...) : la
+/// correspondance exacte ne peut pas fonctionner, donc reconstruction par
+/// découpage autour de la partie fixe du message.
+fn translate_dynamic_error(msg: &str) -> Option<String> {
+    if let Some(rest) = msg.strip_prefix("profil actif introuvable (index ") {
+        return Some(format!("active profile not found (index {rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("profil archivé introuvable (index ") {
+        return Some(format!("archived profile not found (index {rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("profil introuvable (index ") {
+        return Some(format!("profile not found (index {rest}"));
+    }
+    if msg == "une adresse EVM fait 20 octets (40 caractères hex)" {
+        return Some("an EVM address is 20 bytes (40 hex characters)".to_string());
+    }
+    if let Some(rest) = msg.strip_prefix("adresse non-testnet (préfixe 'tb' attendu, trouvé '") {
+        return Some(format!("non-testnet address (prefix 'tb' expected, found '{rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("adresse non-mainnet (préfixe 'bc' attendu, trouvé '") {
+        return Some(format!("non-mainnet address (prefix 'bc' expected, found '{rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("erreur RPC ") {
+        if let Some((method, err)) = rest.split_once(" : ") {
+            return Some(format!("RPC error {method}: {err}"));
+        }
+    }
+    if let Some(rest) = msg.strip_prefix("réponse RPC ") {
+        if let Some(method) = rest.strip_suffix(" sans champ 'result'") {
+            return Some(format!("RPC response {method} has no 'result' field"));
+        }
+    }
+    if let Some(method) = msg.strip_prefix("réponse ").and_then(|s| s.strip_suffix(" non textuelle")) {
+        return Some(format!("non-textual {method} response"));
+    }
+    if let Some(rest) = msg.strip_prefix("aucune clé de déchiffrement trouvée dans ") {
+        return Some(format!("no decryption key found in {rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("échec de diffusion de la transaction : ") {
+        return Some(format!("failed to broadcast the transaction: {rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("échec de signature ECDSA : ") {
+        return Some(format!("ECDSA signing failed: {rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("trop de tentatives incorrectes récentes ; réessayez dans ") {
+        return Some(format!("too many recent incorrect attempts; try again in {}", rest.replace("seconde(s)", "second(s)")));
+    }
+    if let Some(rest) = msg.strip_prefix("fonds insuffisants : ") {
+        let translated = rest
+            .replace("disponibles", "available")
+            .replace("de frais de gas requis", "gas fee required")
+            .replace("de frais requis", "fee required");
+        return Some(format!("insufficient funds: {translated}"));
+    }
+    if let Some(rest) =
+        msg.strip_suffix("\" n'a aucune sous-clé de chiffrement valide (expirée ou révoquée) — message non envoyé")
+    {
+        return Some(format!(
+            "{rest}\" has no valid encryption subkey (expired or revoked) — message not sent"
+        ));
+    }
+    if let Some(rest) = msg.strip_prefix("réseau EVM inconnu : ") {
+        return Some(format!("unknown EVM network: {rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("réseau Solana inconnu : ") {
+        return Some(format!("unknown Solana network: {rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("réseau Bitcoin inconnu : ") {
+        return Some(format!("unknown Bitcoin network: {rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("réseau inconnu : ") {
+        return Some(format!("unknown network: {rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("répertoire de données introuvable : ") {
+        return Some(format!("data directory not found: {rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("création du répertoire de données impossible : ") {
+        return Some(format!("could not create the data directory: {rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("contenu base64 invalide : ") {
+        return Some(format!("invalid base64 content: {rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("écriture du fichier impossible : ") {
+        return Some(format!("could not write the file: {rest}"));
+    }
+    None
+}
+
+fn translate_error(msg: &str) -> String {
+    if !UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
+        return msg.to_string();
+    }
+    if let Some((_, en)) = EXACT_ERROR_TRANSLATIONS.iter().find(|(fr, _)| *fr == msg) {
+        return en.to_string();
+    }
+    if let Some(en) = translate_dynamic_error(msg) {
+        return en;
+    }
+    // Message inconnu de la table (probablement une erreur brute d'une bibliothèque
+    // tierce, déjà en anglais/technique — reqwest, serde_json, io::Error...) :
+    // laissé tel quel plutôt que de risquer une traduction incorrecte.
+    msg.to_string()
+}
+
+/// Remplace `.t_err()` : convertit une erreur en `String`
+/// traduite selon la langue d'interface courante, au lieu d'un `.to_string()` brut.
+trait TranslatedResult<T> {
+    fn t_err(self) -> Result<T, String>;
+}
+
+impl<T, E: std::fmt::Display> TranslatedResult<T> for Result<T, E> {
+    fn t_err(self) -> Result<T, String> {
+        self.map_err(|e| translate_error(&e.to_string()))
+    }
+}
+
 fn data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let dir = app
         .path()
         .app_data_dir()
-        .map_err(|e| format!("répertoire de données introuvable : {e}"))?;
-    std::fs::create_dir_all(&dir).map_err(|e| format!("création du répertoire de données impossible : {e}"))?;
+        .map_err(|e| translate_error(&format!("répertoire de données introuvable : {e}")))?;
+    std::fs::create_dir_all(&dir).map_err(|e| translate_error(&format!("création du répertoire de données impossible : {e}")))?;
     Ok(dir)
 }
 
@@ -114,14 +359,14 @@ struct CreateWalletDto {
 fn save_bytes_with_dialog(suggested_name: String, content_b64: String, app: tauri::AppHandle) -> Result<bool, String> {
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(&content_b64)
-        .map_err(|e| format!("contenu base64 invalide : {e}"))?;
+        .map_err(|e| translate_error(&format!("contenu base64 invalide : {e}")))?;
 
     let chosen = app.dialog().file().set_file_name(&suggested_name).blocking_save_file();
 
     match chosen {
         Some(file_path) => {
-            let path = file_path.into_path().map_err(|e| e.to_string())?;
-            std::fs::write(path, bytes).map_err(|e| format!("écriture du fichier impossible : {e}"))?;
+            let path = file_path.into_path().t_err()?;
+            std::fs::write(path, bytes).map_err(|e| translate_error(&format!("écriture du fichier impossible : {e}")))?;
             Ok(true)
         }
         None => Ok(false), // l'utilisateur a annulé la boîte de dialogue
@@ -150,16 +395,18 @@ const ALLOWED_EXTERNAL_LINK_PREFIXES: [&str; 4] = [
 #[tauri::command]
 fn open_external_link(url: String, app: tauri::AppHandle) -> Result<(), String> {
     if !ALLOWED_EXTERNAL_LINK_PREFIXES.iter().any(|prefix| url.starts_with(prefix)) {
-        return Err("lien refusé : seuls les explorateurs de blocs connus de l'app sont autorisés".to_string());
+        return Err(translate_error(
+            "lien refusé : seuls les explorateurs de blocs connus de l'app sont autorisés",
+        ));
     }
-    app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
+    app.opener().open_url(url, None::<&str>).t_err()
 }
 
 /// Génère un QR code (SVG) pour une adresse publique — aucune donnée sensible,
 /// juste un confort d'affichage pour recevoir des fonds.
 #[tauri::command]
 fn generate_qr_svg(text: String) -> Result<String, String> {
-    let code = qrcode::QrCode::new(text.as_bytes()).map_err(|e| e.to_string())?;
+    let code = qrcode::QrCode::new(text.as_bytes()).t_err()?;
     Ok(code
         .render::<qrcode::render::svg::Color>()
         .min_dimensions(220, 220)
@@ -179,14 +426,14 @@ fn wallet_exists(app: tauri::AppHandle) -> Result<bool, String> {
 #[tauri::command]
 fn reset_wallet(app: tauri::AppHandle) -> Result<(), String> {
     let dir = data_dir(&app)?;
-    api::reset_wallet(&dir).map_err(|e| e.to_string())
+    api::reset_wallet(&dir).t_err()
 }
 
 #[tauri::command]
 fn create_wallet(password: String, app: tauri::AppHandle) -> Result<CreateWalletDto, String> {
     let password = Zeroizing::new(password);
     let dir = data_dir(&app)?;
-    let result = api::create_wallet(&dir, &password).map_err(|e| e.to_string())?;
+    let result = api::create_wallet(&dir, &password).t_err()?;
 
     let backups = result.backups.into_iter().map(Into::into).collect();
 
@@ -231,12 +478,12 @@ fn regenerate_backup_kit(password: String, app: tauri::AppHandle) -> Result<Vec<
     let dir = data_dir(&app)?;
 
     if !confirm_regenerate_backup_native(&app) {
-        return Err("Régénération annulée (confirmation refusée).".to_string());
+        return Err(translate_error("Régénération annulée (confirmation refusée)."));
     }
 
     api::regenerate_backup_kit(&dir, &password)
         .map(|backups| backups.into_iter().map(Into::into).collect())
-        .map_err(|e| e.to_string())
+        .t_err()
 }
 
 #[tauri::command]
@@ -245,7 +492,7 @@ fn unlock_wallet(password: String, app: tauri::AppHandle) -> Result<Vec<ProfileD
     let dir = data_dir(&app)?;
     api::unlock_wallet(&dir, &password)
         .map(|profiles| profiles.into_iter().map(Into::into).collect())
-        .map_err(|e| e.to_string())
+        .t_err()
 }
 
 /// Ajoute un profil (nouvelle adresse par réseau, dérivée de la même seed — voir
@@ -257,7 +504,7 @@ fn create_profile(password: Option<String>, label: String, app: tauri::AppHandle
     let dir = data_dir(&app)?;
     api::create_profile(&dir, password.as_ref().map(|p| p.as_str()), &label)
         .map(Into::into)
-        .map_err(|e| e.to_string())
+        .t_err()
 }
 
 /// Retire un profil de la liste (voir `api::delete_profile`) : redemande le mot de
@@ -271,7 +518,7 @@ fn create_profile(password: Option<String>, label: String, app: tauri::AppHandle
 fn delete_profile(password: String, index: u32, app: tauri::AppHandle) -> Result<(), String> {
     let password = Zeroizing::new(password);
     let dir = data_dir(&app)?;
-    api::delete_profile(&dir, &password, index).map_err(|e| e.to_string())
+    api::delete_profile(&dir, &password, index).t_err()
 }
 
 /// Suppression "légère" et réversible (voir `api::archive_profile`) : pas de mot de
@@ -280,13 +527,13 @@ fn delete_profile(password: String, index: u32, app: tauri::AppHandle) -> Result
 #[tauri::command]
 fn archive_profile(index: u32, app: tauri::AppHandle) -> Result<(), String> {
     let dir = data_dir(&app)?;
-    api::archive_profile(&dir, index).map_err(|e| e.to_string())
+    api::archive_profile(&dir, index).t_err()
 }
 
 #[tauri::command]
 fn unarchive_profile(index: u32, app: tauri::AppHandle) -> Result<(), String> {
     let dir = data_dir(&app)?;
-    api::unarchive_profile(&dir, index).map_err(|e| e.to_string())
+    api::unarchive_profile(&dir, index).t_err()
 }
 
 #[tauri::command]
@@ -336,10 +583,10 @@ fn restore_wallet(
     let dir = data_dir(&app)?;
 
     if !confirm_restore_native(&app) {
-        return Err("Restauration annulée (confirmation refusée).".to_string());
+        return Err(translate_error("Restauration annulée (confirmation refusée)."));
     }
 
-    let decode = |s: &str| base64::engine::general_purpose::STANDARD.decode(s).map_err(|e| e.to_string());
+    let decode = |s: &str| base64::engine::general_purpose::STANDARD.decode(s).t_err();
 
     let share1 = decode(&backup1_b64)?;
     let priv1 = decode(&privkey1_armored_b64)?;
@@ -356,14 +603,14 @@ fn restore_wallet(
         (&share2, &priv2, &passphrase2),
     )
     .map(Into::into)
-    .map_err(|e| e.to_string())
+    .t_err()
 }
 
 fn evm_network(network: &str) -> Result<&'static wallet_flow::EvmNetwork, String> {
     match network {
         "evm_sepolia" => Ok(&wallet_flow::SEPOLIA),
         "evm_mainnet" => Ok(&wallet_flow::ETHEREUM_MAINNET),
-        other => Err(format!("réseau EVM inconnu : {other}")),
+        other => Err(translate_error(&format!("réseau EVM inconnu : {other}"))),
     }
 }
 
@@ -371,7 +618,7 @@ fn sol_network(network: &str) -> Result<&'static wallet_flow::SolNetwork, String
     match network {
         "sol_devnet" => Ok(&wallet_flow::SOLANA_DEVNET),
         "sol_mainnet" => Ok(&wallet_flow::SOLANA_MAINNET),
-        other => Err(format!("réseau Solana inconnu : {other}")),
+        other => Err(translate_error(&format!("réseau Solana inconnu : {other}"))),
     }
 }
 
@@ -379,7 +626,7 @@ fn btc_network(network: &str) -> Result<&'static wallet_flow::BtcNetwork, String
     match network {
         "btc_testnet" => Ok(&wallet_flow::BTC_TESTNET),
         "btc_mainnet" => Ok(&wallet_flow::BTC_MAINNET),
-        other => Err(format!("réseau Bitcoin inconnu : {other}")),
+        other => Err(translate_error(&format!("réseau Bitcoin inconnu : {other}"))),
     }
 }
 
@@ -388,20 +635,20 @@ fn get_balance(network: String, address: String) -> Result<String, String> {
     match network.as_str() {
         "evm_sepolia" | "evm_mainnet" => {
             let net = evm_network(&network)?;
-            let wei = api::get_evm_balance(&address, net).map_err(|e| e.to_string())?;
+            let wei = api::get_evm_balance(&address, net).t_err()?;
             Ok(format!("{:.6}", wei as f64 / 1e18))
         }
         "btc_testnet" | "btc_mainnet" => {
             let net = btc_network(&network)?;
-            let sat = api::get_btc_balance(&address, net).map_err(|e| e.to_string())?;
+            let sat = api::get_btc_balance(&address, net).t_err()?;
             Ok(format!("{:.8}", sat as f64 / 1e8))
         }
         "sol_devnet" | "sol_mainnet" => {
             let net = sol_network(&network)?;
-            let lamports = api::get_sol_balance(&address, net).map_err(|e| e.to_string())?;
+            let lamports = api::get_sol_balance(&address, net).t_err()?;
             Ok(format!("{:.9}", lamports as f64 / 1e9))
         }
-        other => Err(format!("réseau inconnu : {other}")),
+        other => Err(translate_error(&format!("réseau inconnu : {other}"))),
     }
 }
 
@@ -418,7 +665,7 @@ struct BtcFeeEstimateDto {
 #[tauri::command]
 fn estimate_btc_fees(network: String, address: String) -> Result<BtcFeeEstimateDto, String> {
     let net = btc_network(&network)?;
-    let estimate = api::estimate_btc_fees(&address, net).map_err(|e| e.to_string())?;
+    let estimate = api::estimate_btc_fees(&address, net).t_err()?;
     Ok(BtcFeeEstimateDto {
         fast_sat: estimate.fast_sat,
         medium_sat: estimate.medium_sat,
@@ -437,13 +684,13 @@ fn has_pending_tx(network: String, address: String) -> Result<bool, String> {
         "evm_sepolia" | "evm_mainnet" => Ok(false),
         "btc_testnet" | "btc_mainnet" => {
             let net = btc_network(&network)?;
-            api::has_pending_btc(&address, net).map_err(|e| e.to_string())
+            api::has_pending_btc(&address, net).t_err()
         }
         "sol_devnet" | "sol_mainnet" => {
             let net = sol_network(&network)?;
-            api::has_pending_sol(&address, net).map_err(|e| e.to_string())
+            api::has_pending_sol(&address, net).t_err()
         }
-        other => Err(format!("réseau inconnu : {other}")),
+        other => Err(translate_error(&format!("réseau inconnu : {other}"))),
     }
 }
 
@@ -481,7 +728,7 @@ fn get_tx_history(network: String, address: String) -> Result<Vec<TxEntryDto>, S
     let entries = match network.as_str() {
         "evm_sepolia" | "evm_mainnet" => {
             let net = evm_network(&network)?;
-            let txs = history::evm_history(net.chain_id, &address, HISTORY_LIMIT as usize).map_err(|e| e.to_string())?;
+            let txs = history::evm_history(net.chain_id, &address, HISTORY_LIMIT as usize).t_err()?;
             txs.into_iter()
                 .map(|tx| TxEntryDto {
                     id: tx.id.clone(),
@@ -494,7 +741,7 @@ fn get_tx_history(network: String, address: String) -> Result<Vec<TxEntryDto>, S
         }
         "btc_testnet" | "btc_mainnet" => {
             let net = btc_network(&network)?;
-            let txs = history::btc_history(net, &address).map_err(|e| e.to_string())?;
+            let txs = history::btc_history(net, &address).t_err()?;
             txs.into_iter()
                 .map(|tx| TxEntryDto {
                     id: tx.id.clone(),
@@ -507,7 +754,7 @@ fn get_tx_history(network: String, address: String) -> Result<Vec<TxEntryDto>, S
         }
         "sol_devnet" | "sol_mainnet" => {
             let net = sol_network(&network)?;
-            let txs = history::sol_history(net.rpc, &address, HISTORY_LIMIT).map_err(|e| e.to_string())?;
+            let txs = history::sol_history(net.rpc, &address, HISTORY_LIMIT).t_err()?;
             txs.into_iter()
                 .map(|tx| TxEntryDto {
                     id: tx.id.clone(),
@@ -518,7 +765,7 @@ fn get_tx_history(network: String, address: String) -> Result<Vec<TxEntryDto>, S
                 })
                 .collect()
         }
-        other => return Err(format!("réseau inconnu : {other}")),
+        other => return Err(translate_error(&format!("réseau inconnu : {other}"))),
     };
     Ok(entries)
 }
@@ -537,7 +784,7 @@ fn get_crypto_prices() -> Result<PricesDto, String> {
     price_rpc::PriceRpc::new()
         .get_prices()
         .map(|p| PricesDto { eth_usd: p.eth_usd, btc_usd: p.btc_usd, sol_usd: p.sol_usd })
-        .map_err(|e| e.to_string())
+        .t_err()
 }
 
 #[derive(Serialize)]
@@ -570,7 +817,7 @@ fn get_market_prices() -> Result<Vec<MarketCoinDto>, String> {
                 })
                 .collect()
         })
-        .map_err(|e| e.to_string())
+        .t_err()
 }
 
 /// Libellé humain du réseau pour la boîte de dialogue de confirmation.
@@ -639,24 +886,24 @@ fn send_transaction(
     let fee_line = fee_sat.map(|f| format!("Frais : {f} sat"));
 
     if !confirm_transaction_native(&app, &network, &to, &amount, &from_label, fee_line.as_deref()) {
-        return Err("Virement annulé (confirmation refusée).".to_string());
+        return Err(translate_error("Virement annulé (confirmation refusée)."));
     }
 
     match network.as_str() {
         "evm_sepolia" | "evm_mainnet" => {
             let net = evm_network(&network)?;
-            api::send_evm(&dir, &password, net, &to, &amount, profile_index).map_err(|e| e.to_string())
+            api::send_evm(&dir, &password, net, &to, &amount, profile_index).t_err()
         }
         "btc_testnet" | "btc_mainnet" => {
             let net = btc_network(&network)?;
             let fee_sat = fee_sat.ok_or_else(|| "frais Bitcoin manquants (choisis une vitesse d'envoi)".to_string())?;
-            api::send_btc(&dir, &password, net, &to, &amount, fee_sat, profile_index).map_err(|e| e.to_string())
+            api::send_btc(&dir, &password, net, &to, &amount, fee_sat, profile_index).t_err()
         }
         "sol_devnet" | "sol_mainnet" => {
             let net = sol_network(&network)?;
-            api::send_sol(&dir, &password, net, &to, &amount, profile_index).map_err(|e| e.to_string())
+            api::send_sol(&dir, &password, net, &to, &amount, profile_index).t_err()
         }
-        other => Err(format!("réseau inconnu : {other}")),
+        other => Err(translate_error(&format!("réseau inconnu : {other}"))),
     }
 }
 
@@ -713,8 +960,8 @@ impl From<messaging::CertInfo> for CertInfoDto {
 #[tauri::command]
 fn get_own_certificate(app: tauri::AppHandle) -> Result<CertInfoDto, String> {
     let dir = data_dir(&app)?;
-    let armored = api::read_device_pubkey_armored(&dir).map_err(|e| e.to_string())?;
-    messaging::cert_info(&armored).map(Into::into).map_err(|e| e.to_string())
+    let armored = api::read_device_pubkey_armored(&dir).t_err()?;
+    messaging::cert_info(&armored).map(Into::into).t_err()
 }
 
 #[tauri::command]
@@ -722,7 +969,7 @@ fn list_recipients(app: tauri::AppHandle) -> Result<Vec<RecipientDto>, String> {
     let dir = data_dir(&app)?;
     messaging::list_recipients(&dir)
         .map(|v| v.into_iter().map(Into::into).collect())
-        .map_err(|e| e.to_string())
+        .t_err()
 }
 
 #[tauri::command]
@@ -730,7 +977,7 @@ fn add_recipient(label: String, pubkey_armored: String, app: tauri::AppHandle) -
     let dir = data_dir(&app)?;
 
     if let Some((old_fingerprint, new_fingerprint)) =
-        messaging::recipient_key_change(&dir, &label, &pubkey_armored).map_err(|e| e.to_string())?
+        messaging::recipient_key_change(&dir, &label, &pubkey_armored).t_err()?
     {
         // Boîte de dialogue native, même mécanisme que pour un envoi de fonds : un
         // remplacement de clé pour un contact déjà enregistré n'est pas anodin (voir
@@ -750,22 +997,22 @@ fn add_recipient(label: String, pubkey_armored: String, app: tauri::AppHandle) -
             .buttons(MessageDialogButtons::OkCancel)
             .blocking_show();
         if !confirmed {
-            return Err("Ajout annulé (clé différente refusée).".to_string());
+            return Err(translate_error("Ajout annulé (clé différente refusée)."));
         }
     }
 
-    messaging::add_recipient(&dir, &label, &pubkey_armored).map_err(|e| e.to_string())
+    messaging::add_recipient(&dir, &label, &pubkey_armored).t_err()
 }
 
 #[tauri::command]
 fn remove_recipient(label: String, app: tauri::AppHandle) -> Result<(), String> {
     let dir = data_dir(&app)?;
-    messaging::remove_recipient(&dir, &label).map_err(|e| e.to_string())
+    messaging::remove_recipient(&dir, &label).t_err()
 }
 
 #[tauri::command]
 fn encrypt_message(pubkeys_armored: Vec<String>, message: String) -> Result<String, String> {
-    messaging::encrypt_message(&pubkeys_armored, &message).map_err(|e| e.to_string())
+    messaging::encrypt_message(&pubkeys_armored, &message).t_err()
 }
 
 /// Déchiffre un message reçu par cet appareil (nécessite le mot de passe pour
@@ -774,7 +1021,7 @@ fn encrypt_message(pubkeys_armored: Vec<String>, message: String) -> Result<Stri
 fn decrypt_message(password: String, ciphertext: String, app: tauri::AppHandle) -> Result<String, String> {
     let password = Zeroizing::new(password);
     let dir = data_dir(&app)?;
-    api::decrypt_incoming_message(&dir, &password, &ciphertext).map_err(|e| e.to_string())
+    api::decrypt_incoming_message(&dir, &password, &ciphertext).t_err()
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -783,6 +1030,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
+            set_ui_language,
             save_bytes_with_dialog,
             open_external_link,
             generate_qr_svg,

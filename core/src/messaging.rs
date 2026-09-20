@@ -102,17 +102,32 @@ pub fn encrypt_message(pubkeys_armored: &[String], message: &str) -> Result<Stri
         .map(|k| Cert::from_bytes(k.as_bytes()).context("clé publique PGP invalide"))
         .collect::<Result<Vec<_>>>()?;
 
-    let recipients = certs
-        .iter()
-        .flat_map(|cert| {
-            cert.keys()
-                .with_policy(&policy, None)
-                .supported()
-                .alive()
-                .revoked(false)
-                .for_transport_encryption()
-        })
-        .collect::<Vec<_>>();
+    // Un `flat_map` naïf ici contribuerait silencieusement 0 destinataire pour un
+    // certificat sans sous-clé de chiffrement valide (expirée, révoquée) : le
+    // message partirait quand même, chiffré pour les autres, sans qu'aucun signe
+    // n'indique qu'un destinataire prévu a été exclu. On vérifie donc chaque
+    // certificat individuellement et on échoue pour tout le monde plutôt que
+    // d'envoyer silencieusement à moins de destinataires que demandé.
+    let mut recipients = Vec::new();
+    for (cert, pubkey_armored) in certs.iter().zip(pubkeys_armored) {
+        let cert_recipients: Vec<_> = cert
+            .keys()
+            .with_policy(&policy, None)
+            .supported()
+            .alive()
+            .revoked(false)
+            .for_transport_encryption()
+            .collect();
+        if cert_recipients.is_empty() {
+            let name = cert_info(pubkey_armored)
+                .map(|info| info.user_id)
+                .unwrap_or_else(|_| "destinataire inconnu".to_string());
+            return Err(anyhow::anyhow!(
+                "\"{name}\" n'a aucune sous-clé de chiffrement valide (expirée ou révoquée) — message non envoyé"
+            ));
+        }
+        recipients.extend(cert_recipients);
+    }
 
     let mut sink = Vec::new();
     {
@@ -226,5 +241,53 @@ mod tests {
         assert_ne!(old_fp, new_fp);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Certificat sans sous-clé de chiffrement (seulement une clé de signature) —
+    /// simule un contact dont la clé n'a jamais eu, ou n'a plus, de sous-clé
+    /// utilisable pour du chiffrement (expirée/révoquée en pratique).
+    fn test_pubkey_armored_without_encryption_subkey(userid: &str) -> String {
+        let (cert, _revocation) = CertBuilder::new()
+            .add_userid(userid)
+            .generate()
+            .expect("génération de la clé de test");
+        let mut pubkey_armored = Vec::new();
+        {
+            use openpgp::serialize::Serialize;
+            let mut writer = armor::Writer::new(&mut pubkey_armored, armor::Kind::PublicKey).unwrap();
+            cert.serialize(&mut writer).unwrap();
+            writer.finalize().unwrap();
+        }
+        String::from_utf8(pubkey_armored).unwrap()
+    }
+
+    #[test]
+    fn encrypt_message_requires_at_least_one_recipient() {
+        assert!(encrypt_message(&[], "salut").is_err());
+    }
+
+    #[test]
+    fn encrypt_message_succeeds_for_several_valid_recipients() {
+        let alice = test_pubkey_armored("Alice <alice@example.invalid>");
+        let bob = test_pubkey_armored("Bob <bob@example.invalid>");
+        let armored = encrypt_message(&[alice, bob], "salut à vous deux").expect("chiffrement multi-destinataires");
+        assert!(armored.contains("BEGIN PGP MESSAGE"));
+    }
+
+    /// Garde-fou contre une régression trouvée lors d'un audit : avant ce correctif,
+    /// un destinataire sans sous-clé de chiffrement valide était silencieusement
+    /// exclu (0 destinataire ajouté pour son certificat), le message partait quand
+    /// même pour les autres sans aucune erreur — l'utilisateur croyait avoir chiffré
+    /// pour tout le monde alors qu'un des destinataires prévus n'avait en réalité
+    /// jamais pu déchiffrer le message.
+    #[test]
+    fn encrypt_message_fails_closed_when_one_recipient_has_no_usable_encryption_subkey() {
+        let alice = test_pubkey_armored("Alice <alice@example.invalid>");
+        let bob_broken = test_pubkey_armored_without_encryption_subkey("Bob <bob@example.invalid>");
+        let result = encrypt_message(&[alice, bob_broken], "salut à vous deux");
+        assert!(
+            result.is_err(),
+            "un destinataire sans sous-clé de chiffrement valide doit faire échouer tout l'envoi, pas seulement l'exclure silencieusement"
+        );
     }
 }

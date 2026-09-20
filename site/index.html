@@ -66,7 +66,11 @@
       </svg>
     </div>
 
-    <p style="font-size: 15.5px; line-height: 1.7; color: #55575c; max-width: 540px; text-align: center; margin: 0; position: relative; z-index: 1;">La clé maîtresse qui génère toutes vos adresses est protégée par un partage de secret de Shamir, chiffré par OpenPGP — deux techniques éprouvées, assemblées pour qu'aucune part seule ne suffise jamais à vider un portefeuille.</p>
+    <div style="max-width: 540px; width: 100%; margin: 0 auto; position: relative; z-index: 1;">
+      <div id="pgp-header" class="mono" style="font-size: 11px; letter-spacing: 0.5px; color: #9a9a9a; text-align: center; height: 15px; line-height: 15px;">-----BEGIN PGP MESSAGE-----</div>
+      <p id="hero-decrypt-text" style="font-size: 15.5px; line-height: 1.7; color: #55575c; text-align: center; margin: 6px 0; min-height: 82px;">La clé maîtresse qui génère toutes vos adresses est protégée par un partage de secret de Shamir, chiffré par OpenPGP — deux techniques éprouvées, assemblées pour qu'aucune part seule ne suffise jamais à vider un portefeuille.</p>
+      <div id="pgp-footer" class="mono" style="font-size: 11px; letter-spacing: 0.5px; color: #9a9a9a; text-align: center; height: 15px; line-height: 15px;">-----END PGP MESSAGE-----</div>
+    </div>
 
     <div style="margin-top: 30px; display: flex; gap: 12px; position: relative; z-index: 1;">
       <a href="https://github.com/KHADEVS/pgp-wallet-poc/releases/download/v0.1.0/app.exe" style="display: inline-flex; align-items: center; gap: 8px; padding: 12px 22px; background: #0a0a0a; color: #ffffff; font-weight: 700; font-size: 14px; border-radius: 9px;">
@@ -340,6 +344,49 @@
 (function () {
   "use strict";
 
+  // --- Effet "message PGP qui se déchiffre" sur la phrase d'accroche ---
+  // Le texte réel est déjà dans le HTML (accessibilité / pas de JS), remplacé
+  // temporairement par du charabia façon armure PGP (alphabet base64) qui se
+  // résout caractère par caractère, de gauche à droite. Hauteur du bloc (en-tête
+  // + paragraphe + pied) réservée à l'avance dans le HTML pour que rien ne bouge
+  // en dessous (les boutons) pendant l'animation.
+  (function decryptHeroText() {
+    var textEl = document.getElementById("hero-decrypt-text");
+    if (!textEl) return;
+    var original = textEl.textContent;
+    var len = original.length;
+    var CIPHER_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
+    var duration = 1100;
+    var settleWindow = 100;
+    var startTime = null;
+    textEl.style.fontFamily = "'IBM Plex Mono', monospace";
+    textEl.style.letterSpacing = "0.2px";
+
+    function tick(now) {
+      if (startTime === null) startTime = now;
+      var elapsed = now - startTime;
+      var out = "";
+      var doneCount = 0;
+      for (var i = 0; i < len; i++) {
+        var ch = original[i];
+        var revealAt = (i / len) * duration;
+        if (ch === " " || elapsed >= revealAt + settleWindow) {
+          out += ch;
+          doneCount++;
+        } else {
+          out += CIPHER_CHARS[Math.floor(Math.random() * CIPHER_CHARS.length)];
+        }
+      }
+      textEl.textContent = out;
+      if (doneCount < len) {
+        requestAnimationFrame(tick);
+      } else {
+        textEl.textContent = original;
+      }
+    }
+    requestAnimationFrame(tick);
+  })();
+
   function reveal(p, at, span) {
     var t = Math.min(1, Math.max(0, (p - at) / span));
     return { opacity: Math.round(t * 100) / 100, y: Math.round((1 - t) * 16) };
@@ -372,9 +419,9 @@
 
   // --- Section 3 : paliers de frais ---
   var feeData = [
-    { label: "Lent · ~1 jour", sat: "310 sat", at: 0.05 },
-    { label: "Rapide · ~20 min", sat: "1 240 sat", at: 0.32 },
-    { label: "Moyen · ~1 h", sat: "840 sat", at: 0.6, chooseAt: 0.85 }
+    { label: "Rapide · ~10 min", sat: "1 240 sat", at: 0.05 },
+    { label: "Moyen · ~30 min", sat: "840 sat", at: 0.32, chooseAt: 0.6 },
+    { label: "Lent · ~1 h", sat: "310 sat", at: 0.6 }
   ];
   var feesListEl = document.getElementById("fees-list");
   feeData.forEach(function (f) {
@@ -510,7 +557,7 @@
         var r = reveal(p3, f.at, 0.28);
         f.el.style.opacity = r.opacity;
         f.el.style.transform = "translateX(" + r.y + "px)";
-        var isChosen = i === 2 && p3 > (f.chooseAt || 2);
+        var isChosen = f.chooseAt !== undefined && p3 > f.chooseAt;
         f.el.style.borderColor = isChosen ? "#f2f2f0" : "#262626";
         var c = isChosen ? "#fafafa" : "#9a9a9a";
         f.labelEl.style.color = c;
