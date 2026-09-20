@@ -449,6 +449,11 @@ legend {
    rétrécir les trois indéfiniment. */
 .wallet-card .row-buttons {
   flex-wrap: wrap;
+  /* Le `.pending-badge` juste au-dessus réserve déjà sa propre hauteur même
+     invisible (voir son commentaire), donc la marge par défaut de `.row-buttons`
+     (20px, pensée pour les modales sans badge au-dessus) s'ajoutait à cet espace
+     déjà réservé et laissait un vide trop grand sous l'adresse/QR. */
+  margin-top: 8px;
 }
 
 .wallet-card .row-buttons [data-action="refresh"],
@@ -723,16 +728,16 @@ textarea:focus {
   border-radius: 14px;
   padding: 20px;
   /* Les cartes d'une même rangée ont déjà la même hauteur (étirement par défaut
-     de la grille). En colonne flex, TOUT le bloc adresse+solde+boutons est ancré
+     de la grille). En colonne flex, TOUT le bloc solde+adresse+boutons est ancré
      en bas d'un coup (margin-top:auto sur le premier des trois, voir plus bas) :
      peu importe la hauteur exacte de l'en-tête (badge Bitcoin vs select
      Ethereum/Solana), l'écart se résorbe dans l'espace au-dessus de ce bloc,
-     jamais entre l'adresse/le solde/les boutons eux-mêmes (format inchangé). */
+     jamais entre le solde/l'adresse/les boutons eux-mêmes (format inchangé). */
   display: flex;
   flex-direction: column;
 }
 
-.wallet-card .address-row {
+.wallet-card .balance {
   margin-top: auto;
   padding-top: 12px;
 }
@@ -809,6 +814,13 @@ textarea:focus {
   padding: 0 12px;
   border-radius: 6px;
   flex-shrink: 0;
+  /* .address-row a `align-items: stretch` (pour que ce bouton suive la hauteur de
+     l'adresse quand elle passe sur 2 lignes) : sans ce centrage explicite, l'icône
+     SVG restait collée en haut du bouton une fois celui-ci étiré, au lieu de
+     rester centrée verticalement à côté de l'adresse. */
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .qr-btn:hover {

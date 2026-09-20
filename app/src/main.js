@@ -467,6 +467,12 @@ function applyLanguage(lang) {
   document.querySelectorAll("[data-i18n-title]").forEach((el) => {
     el.title = t(el.dataset.i18nTitle);
   });
+  // Les <option> viennent d'être retraduits ci-dessus, mais l'étiquette visible
+  // du menu déroulant personnalisé (.custom-select-label) et sa liste (<li>) sont
+  // de simples copies figées, synchronisées seulement à l'ouverture ou à un choix
+  // (voir syncCustomSelect) — sans ce ré-appel, elles resteraient dans l'ancienne
+  // langue jusqu'au prochain clic sur le menu.
+  document.querySelectorAll(".custom-select select").forEach(syncCustomSelect);
   document.querySelectorAll(".lang-btn").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.lang === currentLang);
   });

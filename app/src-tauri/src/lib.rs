@@ -459,7 +459,7 @@ fn confirm_regenerate_backup_native(app: &tauri::AppHandle) -> bool {
         .message(
             "Ceci va générer un nouveau kit de sauvegarde (3 fichiers + 3 mots de passe permettant \
              à quiconque les possède de reconstruire votre portefeuille, sans jamais avoir besoin de \
-             votre mot de passe d'appareil). Ne continuez que si vous avez demandé cette action vous-même.",
+             votre mot de passe d'appareil). Ne continuez que si vous avez initié cette action vous-même.",
         )
         .title("Confirmer la régénération du kit de sauvegarde")
         .kind(MessageDialogKind::Warning)
