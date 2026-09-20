@@ -217,7 +217,12 @@ fn generate_pgp_identity(label: &str, passphrase: &str) -> Result<(Vec<u8>, Vec<
 /// Passphrase générée automatiquement pour un backup (jamais tapée par l'utilisateur,
 /// juste affichée une fois pour être sauvegardée hors ligne).
 fn random_passphrase() -> String {
-    let bytes = entropy::generate_master_entropy();
+    // Le buffer d'entropie brut est effacé dès que le hex en est extrait (`Zeroizing`) —
+    // seul le cas de `generate_master_entropy` dans tout le projet qui ne le faisait pas
+    // encore. La `String` hex retournée, elle, est délibérément affichée à l'utilisateur
+    // (passphrase d'une part de sauvegarde à noter) : rien à gagner à la protéger, elle
+    // finit de toute façon rendue en clair côté interface.
+    let bytes = Zeroizing::new(entropy::generate_master_entropy());
     hex::encode(&bytes[..16])
 }
 
