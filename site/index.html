@@ -1,0 +1,554 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PGP Wallet — Aperçu interactif (privé)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  body { margin: 0; background: #050505; font-family: 'IBM Plex Sans', system-ui, sans-serif; color: #f2f2f0; }
+  h1, h2, h3 { font-family: 'Space Grotesk', 'IBM Plex Sans', sans-serif; margin: 0; }
+  a { color: #f2f2f0; text-decoration: none; }
+  .nav-link { color: #9a9a9a; }
+  .nav-link:hover { color: #fafafa; }
+  code, .mono { font-family: 'IBM Plex Mono', monospace; }
+  ::selection { background: #f2f2f0; color: #050505; }
+  @keyframes bounce { 0%, 100% { transform: translateY(0); opacity: 0.55; } 50% { transform: translateY(8px); opacity: 1; } }
+</style>
+</head>
+<body>
+
+<div id="top" style="width: 100%; background: #050505;">
+
+  <!-- ===== EN-TÊTE FIXE / NAVIGATION ===== -->
+  <div style="position: fixed; top: 0; left: 0; right: 0; z-index: 30; display: flex; align-items: center; gap: 26px; padding: 18px 40px; background: rgba(5,5,5,0.78); backdrop-filter: blur(10px); border-bottom: 1px solid #1a1a1a;">
+    <a href="#top" style="display: flex; align-items: center; gap: 9px;">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f2f2f0" stroke-width="1.8" aria-hidden="true">
+        <rect x="4" y="10" width="16" height="10" rx="2"></rect>
+        <path d="M8 10V7a4 4 0 0 1 8 0v3"></path>
+      </svg>
+      <span style="font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 15px;">PGP Wallet</span>
+    </a>
+    <nav style="display: flex; align-items: center; gap: 20px; margin-left: 10px;">
+      <a class="nav-link" href="#sec-lock" style="font-size: 13px; font-weight: 500;">Déverrouillage</a>
+      <a class="nav-link" href="#sec-networks" style="font-size: 13px; font-weight: 500;">Multi-réseau</a>
+      <a class="nav-link" href="#sec-confirm" style="font-size: 13px; font-weight: 500;">Confirmation</a>
+      <a class="nav-link" href="#sec-fees" style="font-size: 13px; font-weight: 500;">Frais</a>
+      <a class="nav-link" href="#sec-messaging" style="font-size: 13px; font-weight: 500;">Messagerie</a>
+      <a class="nav-link" href="#sec-security" style="font-size: 13px; font-weight: 500;">Sécurité</a>
+      <a class="nav-link" href="#sec-status" style="font-size: 13px; font-weight: 500;">Statut</a>
+    </nav>
+    <a href="#sec-howitworks" style="margin-left: auto; font-size: 13px; font-weight: 600; color: #cfcfcf; border: 1px solid #2a2a2a; padding: 8px 14px; border-radius: 8px; white-space: nowrap;">Comment ça marche</a>
+    <span style="font-size: 10.5px; font-weight: 700; letter-spacing: 0.8px; color: #a0a0a0; border: 1px solid #2a2a2a; padding: 6px 11px; border-radius: 999px; white-space: nowrap;">APERÇU PRIVÉ · NON PUBLIC</span>
+  </div>
+
+  <!-- ===== BARRE DE PROGRESSION (scroll global) ===== -->
+  <div style="position: fixed; right: 22px; top: 50%; transform: translateY(-50%); width: 3px; height: 220px; background: #1a1a1a; border-radius: 2px; z-index: 30; overflow: hidden;">
+    <div id="progress-fill" style="width: 100%; background: #f2f2f0; border-radius: 2px; height: 0%; transition: height 0.05s linear;"></div>
+  </div>
+
+  <!-- ===== HERO — FOND BLANC + CADENAS (normal, pas épinglé) ===== -->
+  <section style="height: 100vh; position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px 64px; box-sizing: border-box; overflow: hidden; background: #ffffff;">
+
+    <div style="font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 30px; letter-spacing: -0.3px; color: #0a0a0a; position: relative; z-index: 1;">PGP Wallet</div>
+    <span style="font-size: 12.5px; font-weight: 600; letter-spacing: 1.4px; color: #7a7a7a; text-transform: uppercase; position: relative; z-index: 1; margin-top: 8px;">Portefeuille non-custodial · Multi-réseau</span>
+    <h1 style="font-size: 38px; line-height: 1.2; font-weight: 700; color: #0a0a0a; margin-top: 14px; max-width: 620px; text-align: center; position: relative; z-index: 1;">Plus jamais 12 mots à recopier sur un bout de papier.</h1>
+
+    <!-- Cadenas, simple et statique -->
+    <div style="margin: 30px 0; position: relative; z-index: 1;">
+      <svg width="120" height="120" viewBox="0 0 24 24" fill="none" stroke="#0a0a0a" stroke-width="1" aria-hidden="true">
+        <rect x="4" y="10" width="16" height="10" rx="2"></rect>
+        <path d="M8 10V7a4 4 0 0 1 8 0v3"></path>
+        <circle cx="12" cy="14.5" r="1.15" fill="#0a0a0a" stroke="none"></circle>
+        <path d="M12 15.6v1.6" stroke-width="1.4" stroke-linecap="round"></path>
+      </svg>
+    </div>
+
+    <p style="font-size: 15.5px; line-height: 1.7; color: #55575c; max-width: 540px; text-align: center; margin: 0; position: relative; z-index: 1;">La clé maîtresse qui génère toutes vos adresses est protégée par un partage de secret de Shamir, chiffré par OpenPGP — deux techniques éprouvées, assemblées pour qu'aucune part seule ne suffise jamais à vider un portefeuille.</p>
+
+    <div style="margin-top: 30px; display: flex; gap: 12px; position: relative; z-index: 1;">
+      <a href="https://github.com/KHADEVS/pgp-wallet-poc/releases/download/v0.1.0/app.exe" style="display: inline-flex; align-items: center; gap: 8px; padding: 12px 22px; background: #0a0a0a; color: #ffffff; font-weight: 700; font-size: 14px; border-radius: 9px;">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"></path></svg>
+        Télécharger le .exe
+      </a>
+      <a href="https://github.com/KHADEVS/pgp-wallet-poc" style="display: inline-flex; align-items: center; gap: 8px; padding: 12px 22px; background: transparent; color: #0a0a0a; font-weight: 700; font-size: 14px; border-radius: 9px; border: 1px solid #d8d8d8;">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2C6.48 2 2 6.58 2 12.25c0 4.53 2.87 8.37 6.84 9.73.5.1.68-.22.68-.49 0-.24-.01-.87-.01-1.71-2.78.62-3.37-1.37-3.37-1.37-.45-1.18-1.11-1.49-1.11-1.49-.91-.64.07-.63.07-.63 1 .07 1.53 1.06 1.53 1.06.89 1.56 2.34 1.11 2.91.85.09-.66.35-1.11.63-1.37-2.22-.26-4.56-1.14-4.56-5.07 0-1.12.39-2.03 1.03-2.75-.1-.26-.45-1.31.1-2.72 0 0 .84-.28 2.75 1.05a9.32 9.32 0 0 1 5 0c1.91-1.33 2.75-1.05 2.75-1.05.55 1.41.2 2.46.1 2.72.64.72 1.03 1.63 1.03 2.75 0 3.94-2.34 4.8-4.57 5.06.36.32.68.95.68 1.92 0 1.39-.01 2.51-.01 2.85 0 .27.18.6.69.49A10.26 10.26 0 0 0 22 12.25C22 6.58 17.52 2 12 2Z"></path></svg>
+        Voir sur GitHub
+      </a>
+    </div>
+
+    <div style="margin-top: 26px; display: flex; flex-direction: column; align-items: center; gap: 10px; color: #9a9a9a; font-size: 13px; font-weight: 600; position: relative; z-index: 1;">
+      <span>Faites défiler pour commencer</span>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation: bounce 1.6s ease-in-out infinite;"><path d="M12 5v13M6 13l6 6 6-6"></path></svg>
+    </div>
+  </section>
+
+  <!-- ===== TRANSITION : blanc → noir ===== -->
+  <div aria-hidden="true" style="height: 16vh; background: linear-gradient(to bottom, #ffffff, #050505);"></div>
+
+  <!-- ---------- SECTION 0 : DÉVERROUILLAGE (épinglée, scrubbed) ---------- -->
+  <div class="pin-wrapper" id="sec-lock" style="height: 280vh; position: relative;">
+    <div style="position: sticky; top: 0; height: 100vh; display: flex; align-items: center; justify-content: center; padding: 40px 64px; box-sizing: border-box; overflow: hidden;">
+      <div style="max-width: 1080px; width: 100%; display: flex; gap: 80px; align-items: center;">
+        <div style="flex: 1 1 0; min-width: 0;">
+          <span style="font-size: 12.5px; font-weight: 600; letter-spacing: 1.4px; color: #9a9a9a; text-transform: uppercase;">01 — À l'ouverture</span>
+          <h2 style="font-size: 36px; line-height: 1.2; font-weight: 700; color: #fafafa; margin-top: 14px; max-width: 480px;">Un mot de passe. Rien à noter, rien à retenir de plus.</h2>
+          <p style="font-size: 15.5px; line-height: 1.7; color: #9a9a9a; margin-top: 16px; max-width: 460px;">Il déverrouille le coffre local de cet appareil et valide chaque transaction. La clé qu'il protège, vous ne la voyez jamais.</p>
+        </div>
+        <div style="flex: 1 1 0; min-width: 0; display: flex; justify-content: center;">
+          <div style="width: 100%; max-width: 340px; background: #101010; border: 1px solid #262626; border-radius: 18px; padding: 36px 28px; text-align: center;">
+            <div style="font-weight: 700; font-size: 16px; color: #fafafa;">Portefeuille verrouillé</div>
+            <div style="margin-top: 22px; font-size: 12px; color: #7a7a7a; text-align: left;">Mot de passe</div>
+            <div id="pw-dots" style="margin-top: 8px; display: flex; gap: 6px; justify-content: center;"></div>
+            <div style="margin-top: 20px; padding: 12px 0; background: #f2f2f0; color: #050505; font-weight: 700; font-size: 13.5px; border-radius: 9px;">Déverrouiller</div>
+            <div id="unlock-check" style="margin-top: 14px; height: 16px; font-size: 12.5px; font-weight: 600; color: #9a9a9a; opacity: 0;">✓ Coffre déverrouillé</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ---------- SECTION 1 : MULTI-RÉSEAU (épinglée, scrubbed) ---------- -->
+  <div class="pin-wrapper" id="sec-networks" style="height: 280vh; position: relative;">
+    <div style="position: sticky; top: 0; height: 100vh; display: flex; align-items: center; justify-content: center; padding: 40px 64px; box-sizing: border-box; overflow: hidden;">
+      <div style="max-width: 1080px; width: 100%; display: flex; gap: 80px; align-items: center;">
+        <div style="flex: 1 1 0; min-width: 0;">
+          <span style="font-size: 12.5px; font-weight: 600; letter-spacing: 1.4px; color: #9a9a9a; text-transform: uppercase;">02 — Multi-réseau</span>
+          <h2 style="font-size: 36px; line-height: 1.2; font-weight: 700; color: #fafafa; margin-top: 14px; max-width: 480px;">Une seule clé, toutes vos adresses.</h2>
+          <p style="font-size: 15.5px; line-height: 1.7; color: #9a9a9a; margin-top: 16px; max-width: 460px;">Bitcoin, Ethereum et Solana, dérivés de la même entropie maître. Un tableau de bord, un seul secret à protéger.</p>
+        </div>
+        <div style="flex: 1 1 0; min-width: 0; display: flex; justify-content: center;">
+          <div style="width: 100%; max-width: 360px; background: #101010; border: 1px solid #262626; border-radius: 18px; overflow: hidden;">
+            <div style="padding: 12px 16px; border-bottom: 1px solid #262626; font-size: 11.5px; color: #7a7a7a;">Portefeuille</div>
+            <div id="networks-list" style="padding: 18px; display: flex; flex-direction: column; gap: 10px;"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ---------- SECTION 2 : CONFIRMATION NATIVE ---------- -->
+  <div class="pin-wrapper" id="sec-confirm" style="height: 260vh; position: relative;">
+    <div style="position: sticky; top: 0; height: 100vh; display: flex; align-items: center; justify-content: center; padding: 40px 64px; box-sizing: border-box; overflow: hidden;">
+      <div style="max-width: 1080px; width: 100%; display: flex; gap: 80px; align-items: center;">
+        <div style="flex: 1 1 0; min-width: 0;">
+          <span style="font-size: 12.5px; font-weight: 600; letter-spacing: 1.4px; color: #9a9a9a; text-transform: uppercase;">03 — À l'envoi</span>
+          <h2 style="font-size: 36px; line-height: 1.2; font-weight: 700; color: #fafafa; margin-top: 14px; max-width: 480px;">Confirmé par le système, pas par une page web.</h2>
+          <p style="font-size: 15.5px; line-height: 1.7; color: #9a9a9a; margin-top: 16px; max-width: 460px;">Réseau, destinataire, montant et frais s'affichent dans une vraie boîte de dialogue de l'OS — infalsifiable par un frontend compromis.</p>
+        </div>
+        <div style="flex: 1 1 0; min-width: 0; display: flex; justify-content: center;">
+          <div id="confirm-dialog" style="width: 100%; max-width: 340px; background: #101010; border: 1px solid #262626; border-radius: 18px; padding: 26px; opacity: 0; transform: scale(0.9);">
+            <div style="font-weight: 700; font-size: 15px; color: #fafafa;">Confirmer l'envoi</div>
+            <div class="mono" style="margin-top: 16px; font-size: 13px; line-height: 1.9; color: #b0b0b0;">
+              Réseau : Bitcoin (mainnet)<br>
+              Destinataire : bc1q…w4x9<br>
+              Montant : 0.004 BTC<br>
+              Frais : 1 240 sat (rapide)
+            </div>
+            <div id="confirm-buttons" style="display: flex; gap: 8px; margin-top: 20px; opacity: 0;">
+              <span style="flex: 1; text-align: center; padding: 9px 0; background: #f2f2f0; color: #050505; font-weight: 700; font-size: 13px; border-radius: 8px;">OK</span>
+              <span style="flex: 1; text-align: center; padding: 9px 0; color: #b0b0b0; font-weight: 600; font-size: 13px; border-radius: 8px; border: 1px solid #2a2a2a;">Annuler</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ---------- SECTION 3 : FRAIS DYNAMIQUES ---------- -->
+  <div class="pin-wrapper" id="sec-fees" style="height: 280vh; position: relative;">
+    <div style="position: sticky; top: 0; height: 100vh; display: flex; align-items: center; justify-content: center; padding: 40px 64px; box-sizing: border-box; overflow: hidden;">
+      <div style="max-width: 1080px; width: 100%; display: flex; gap: 80px; align-items: center;">
+        <div style="flex: 1 1 0; min-width: 0;">
+          <span style="font-size: 12.5px; font-weight: 600; letter-spacing: 1.4px; color: #9a9a9a; text-transform: uppercase;">04 — Frais Bitcoin</span>
+          <h2 style="font-size: 36px; line-height: 1.2; font-weight: 700; color: #fafafa; margin-top: 14px; max-width: 480px;">Rapide, moyen ou lent — à vous de choisir.</h2>
+          <p style="font-size: 15.5px; line-height: 1.7; color: #9a9a9a; margin-top: 16px; max-width: 460px;">Les trois paliers sont calculés en direct sur le réseau au moment de l'envoi, plutôt qu'un montant fixe qui devient insuffisant.</p>
+        </div>
+        <div style="flex: 1 1 0; min-width: 0; display: flex; justify-content: center;">
+          <div style="width: 100%; max-width: 360px; background: #101010; border: 1px solid #262626; border-radius: 18px; padding: 24px;">
+            <div style="font-size: 12px; color: #7a7a7a; margin-bottom: 12px;">Vitesse d'envoi</div>
+            <div id="fees-list" style="display: flex; flex-direction: column; gap: 8px;"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ---------- SECTION 4 : MESSAGERIE ---------- -->
+  <div class="pin-wrapper" id="sec-messaging" style="height: 260vh; position: relative;">
+    <div style="position: sticky; top: 0; height: 100vh; display: flex; align-items: center; justify-content: center; padding: 40px 64px; box-sizing: border-box; overflow: hidden;">
+      <div style="max-width: 1080px; width: 100%; display: flex; gap: 80px; align-items: center;">
+        <div style="flex: 1 1 0; min-width: 0;">
+          <span style="font-size: 12.5px; font-weight: 600; letter-spacing: 1.4px; color: #9a9a9a; text-transform: uppercase;">05 — Messagerie</span>
+          <h2 style="font-size: 36px; line-height: 1.2; font-weight: 700; color: #fafafa; margin-top: 14px; max-width: 480px;">Le même protocole, pour son usage d'origine.</h2>
+          <p style="font-size: 15.5px; line-height: 1.7; color: #9a9a9a; margin-top: 16px; max-width: 460px;">PGP servait d'abord à chiffrer des messages, avant d'être détourné ici pour protéger une clé. L'app le propose aussi tel quel, pour plusieurs destinataires à la fois.</p>
+        </div>
+        <div style="flex: 1 1 0; min-width: 0; display: flex; justify-content: center;">
+          <div style="width: 100%; max-width: 340px; background: #101010; border: 1px solid #262626; border-radius: 18px; padding: 24px;">
+            <div style="font-size: 12px; color: #7a7a7a; margin-bottom: 12px;">Destinataires (un ou plusieurs)</div>
+            <div id="recipients-list" style="display: flex; flex-direction: column; gap: 8px;"></div>
+            <div id="msg-encrypted" style="margin-top: 14px; font-size: 12px; font-weight: 600; color: #9a9a9a; opacity: 0;">✓ Message chiffré pour 2 destinataires</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ---------- SECTION 5 : SÉCURITÉ ---------- -->
+  <div class="pin-wrapper" id="sec-security" style="height: 300vh; position: relative;">
+    <div style="position: sticky; top: 0; height: 100vh; display: flex; align-items: center; justify-content: center; padding: 40px 64px; box-sizing: border-box; overflow: hidden;">
+      <div style="max-width: 1080px; width: 100%; display: flex; gap: 80px; align-items: center;">
+        <div style="flex: 1 1 0; min-width: 0;">
+          <span style="font-size: 12.5px; font-weight: 600; letter-spacing: 1.4px; color: #9a9a9a; text-transform: uppercase;">06 — Sécurité</span>
+          <h2 style="font-size: 36px; line-height: 1.2; font-weight: 700; color: #fafafa; margin-top: 14px; max-width: 480px;">Ce qui protège vraiment vos fonds.</h2>
+          <p style="font-size: 15.5px; line-height: 1.7; color: #9a9a9a; margin-top: 16px; max-width: 460px;">Chacune de ces protections répond à une attaque réelle, déjà documentée sur d'autres wallets.</p>
+        </div>
+        <div style="flex: 1 1 0; min-width: 0;">
+          <div id="security-list" style="display: flex; flex-direction: column; gap: 0;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ---------- SECTION 6 : STATUT ---------- -->
+  <div class="pin-wrapper" id="sec-status" style="height: 280vh; position: relative;">
+    <div style="position: sticky; top: 0; height: 100vh; display: flex; align-items: center; justify-content: center; padding: 40px 64px; box-sizing: border-box; overflow: hidden;">
+      <div style="max-width: 720px; width: 100%; text-align: center;">
+        <span style="font-size: 12.5px; font-weight: 600; letter-spacing: 1.4px; color: #9a9a9a; text-transform: uppercase;">07 — Statut</span>
+        <h2 style="font-size: 32px; line-height: 1.25; font-weight: 700; color: #fafafa; margin-top: 14px;">Preuve de concept fonctionnelle. Pas encore prête pour de vrais fonds d'un inconnu.</h2>
+        <div id="roadmap-list" style="margin-top: 40px; display: flex; flex-direction: column; gap: 0; text-align: left;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== FOOTER (normal) ===== -->
+  <section style="min-height: 40vh; display: flex; align-items: center; justify-content: center; padding: 60px 64px; box-sizing: border-box;">
+    <div style="text-align: center; font-size: 12.5px; color: #6a6a6a;">PGP Wallet — document interne, aperçu privé. Ne pas partager publiquement.</div>
+  </section>
+
+  <!-- ---------- COMMENT ÇA MARCHE : détail complet, hors de la présentation principale ---------- -->
+  <section id="sec-howitworks" style="padding: 110px 64px; display: flex; justify-content: center; background: #050505; border-top: 1px solid #1a1a1a;">
+    <div style="max-width: 880px; width: 100%;">
+
+      <span style="font-size: 12.5px; font-weight: 600; letter-spacing: 1.4px; color: #9a9a9a; text-transform: uppercase;">Comment ça marche</span>
+      <h2 style="font-size: 34px; line-height: 1.25; font-weight: 700; color: #fafafa; margin-top: 14px; max-width: 640px;">L'architecture de sécurité, en détail — point par point.</h2>
+      <p style="font-size: 15.5px; line-height: 1.7; color: #9a9a9a; margin-top: 16px; max-width: 640px;">Les sections précédentes montrent l'effet ; celle-ci montre le mécanisme. Rien n'est passé sous silence, y compris ce qui reste hors de portée d'un logiciel seul.</p>
+
+      <!-- Groupe A -->
+      <div style="margin-top: 56px;">
+        <div style="font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 13px; letter-spacing: 0.6px; color: #f2f2f0; text-transform: uppercase; margin-bottom: 20px;">A — La clé maîtresse</div>
+
+        <div style="display: flex; flex-direction: column; gap: 22px;">
+          <div style="border-top: 1px solid #1e1e1e; padding-top: 18px;">
+            <div style="font-weight: 700; font-size: 15px; color: #fafafa;">1. Génération de l'entropie</div>
+            <p style="font-size: 14px; line-height: 1.7; color: #a8a8a8; margin: 6px 0 0;">256 bits générés une seule fois, à la création du portefeuille, par le générateur cryptographique de l'OS (<code class="mono" style="color:#d0d0d0;">BCryptGenRandom</code> sous Windows) — jamais un générateur maison. Cette entropie n'est jamais affichée, jamais notée, jamais saisie par l'utilisateur, y compris au moment de la création.</p>
+          </div>
+          <div style="border-top: 1px solid #1e1e1e; padding-top: 18px;">
+            <div style="font-weight: 700; font-size: 15px; color: #fafafa;">2. Coffre local de l'appareil</div>
+            <p style="font-size: 14px; line-height: 1.7; color: #a8a8a8; margin: 6px 0 0;">L'entropie complète est chiffrée avec une identité OpenPGP propre à cet appareil, protégée par un seul mot de passe. Le coût de dérivation de clé (S2K) est fixé au maximum du format OpenPGP — environ 350 ms par tentative sur un CPU de 2011, bien plus sur du matériel actuel — et n'est ni paramétrable ni abaissable via l'API utilisée. Le coffre est redéchiffré à la volée à chaque opération sensible et n'est jamais mis en cache entre deux actions.</p>
+          </div>
+          <div style="border-top: 1px solid #1e1e1e; padding-top: 18px;">
+            <div style="font-weight: 700; font-size: 15px; color: #fafafa;">3. Kit de sauvegarde Shamir 2-sur-3</div>
+            <p style="font-size: 14px; line-height: 1.7; color: #a8a8a8; margin: 6px 0 0;">Généré une seule fois à la création, indépendant du coffre local. L'entropie est découpée en 3 parts mathématiques (partage de secret de Shamir) : 2 suffisent à tout reconstruire, mais aucune part seule n'a de valeur. Chaque part est elle-même chiffrée avec sa propre identité PGP et sa propre passphrase générée aléatoirement, distribuable sur 3 supports séparés sans qu'aucun, pris isolément, ne représente un risque.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Groupe B -->
+      <div style="margin-top: 48px;">
+        <div style="font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 13px; letter-spacing: 0.6px; color: #f2f2f0; text-transform: uppercase; margin-bottom: 20px;">B — Dérivation et signature</div>
+
+        <div style="display: flex; flex-direction: column; gap: 22px;">
+          <div style="border-top: 1px solid #1e1e1e; padding-top: 18px;">
+            <div style="font-weight: 700; font-size: 15px; color: #fafafa;">4. Dérivation multi-réseaux (HD)</div>
+            <p style="font-size: 14px; line-height: 1.7; color: #a8a8a8; margin: 6px 0 0;">Depuis la même entropie maître : Ethereum et Bitcoin via BIP32/secp256k1 (<code class="mono" style="color:#d0d0d0;">m/44'/60'/0'/0/i</code> et <code class="mono" style="color:#d0d0d0;">m/44'/0'/0'/0/i</code>), Solana via SLIP-0010/ed25519 avec un chemin entièrement durci (<code class="mono" style="color:#d0d0d0;">m/44'/501'/i'/0'</code>). Un "profil" supplémentaire n'est qu'un index de dérivation de plus sur la même entropie — aucun changement du modèle de sécurité entre 1 profil et 50.</p>
+          </div>
+          <div style="border-top: 1px solid #1e1e1e; padding-top: 18px;">
+            <div style="font-weight: 700; font-size: 15px; color: #fafafa;">5. Construction et signature des transactions</div>
+            <p style="font-size: 14px; line-height: 1.7; color: #a8a8a8; margin: 6px 0 0;">Construites "from scratch" pour chaque réseau, sans SDK lourd type <code class="mono" style="color:#d0d0d0;">rust-bitcoin</code> ou <code class="mono" style="color:#d0d0d0;">solana-sdk</code>. Nonces déterministes (RFC 6979) pour les signatures ECDSA, empêchant l'extraction de clé privée par réutilisation de nonce — la faille qui a coûté sa clé racine à la PlayStation 3. Signatures vérifiées en interne contre une normalisation "low-S" par une suite de 2000 tests.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Groupe C -->
+      <div style="margin-top: 48px;">
+        <div style="font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 13px; letter-spacing: 0.6px; color: #f2f2f0; text-transform: uppercase; margin-bottom: 20px;">C — Protections actives</div>
+
+        <div style="display: flex; flex-direction: column; gap: 22px;">
+          <div style="border-top: 1px solid #1e1e1e; padding-top: 18px;">
+            <div style="font-weight: 700; font-size: 15px; color: #fafafa;">6. Effacement mémoire</div>
+            <p style="font-size: 14px; line-height: 1.7; color: #a8a8a8; margin: 6px 0 0;">Tout secret en clair (entropie, parts, mots de passe) est effacé de la mémoire dès qu'il n'est plus utilisé, quel que soit le chemin de sortie — retour anticipé sur erreur ou panique incluse. Un verrouillage mémoire réel (équivalent de <code class="mono" style="color:#d0d0d0;">mlock</code>/<code class="mono" style="color:#d0d0d0;">VirtualLock</code>) empêche en plus ces zones d'être écrites sur le disque via le swap.</p>
+          </div>
+          <div style="border-top: 1px solid #1e1e1e; padding-top: 18px;">
+            <div style="font-weight: 700; font-size: 15px; color: #fafafa;">7. Verrouillage anti-brute-force</div>
+            <p style="font-size: 14px; line-height: 1.7; color: #a8a8a8; margin: 6px 0 0;">Un compteur d'échecs persisté déclenche un délai croissant après 5 tentatives incorrectes, doublé à chaque nouvel échec et plafonné à 5 minutes. Un verrou interne empêche qu'un script tentant plusieurs mots de passe en parallèle ne fasse perdre ce compte.</p>
+          </div>
+          <div style="border-top: 1px solid #1e1e1e; padding-top: 18px;">
+            <div style="font-weight: 700; font-size: 15px; color: #fafafa;">8. Vérification d'adresse (EIP-55)</div>
+            <p style="font-size: 14px; line-height: 1.7; color: #a8a8a8; margin: 6px 0 0;">Une adresse Ethereum en casse mixte dont le checksum ne correspond pas est rejetée — la protection standard contre une adresse mal recopiée à la main, avec un seul caractère changé.</p>
+          </div>
+          <div style="border-top: 1px solid #1e1e1e; padding-top: 18px;">
+            <div style="font-weight: 700; font-size: 15px; color: #fafafa;">9. Liste blanche des liens externes</div>
+            <p style="font-size: 14px; line-height: 1.7; color: #a8a8a8; margin: 6px 0 0;">Seuls les explorateurs de blocs réellement utilisés par l'app peuvent être ouverts depuis l'historique de transactions — pas de contrôle de schéma seul (<code class="mono" style="color:#d0d0d0;">https://</code>), une vraie liste de domaines connus.</p>
+          </div>
+          <div style="border-top: 1px solid #1e1e1e; padding-top: 18px;">
+            <div style="font-weight: 700; font-size: 15px; color: #fafafa;">10. Verrouillage automatique</div>
+            <p style="font-size: 14px; line-height: 1.7; color: #a8a8a8; margin: 6px 0 0;">Après 10 minutes d'inactivité sur le tableau de bord, retour automatique à l'écran de mot de passe — l'hygiène standard attendue de n'importe quel wallet en cas d'accès physique à l'appareil en votre absence.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Groupe D -->
+      <div style="margin-top: 48px;">
+        <div style="font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 13px; letter-spacing: 0.6px; color: #f2f2f0; text-transform: uppercase; margin-bottom: 20px;">D — Frontière de confiance</div>
+
+        <div style="display: flex; flex-direction: column; gap: 22px;">
+          <div style="border-top: 1px solid #1e1e1e; padding-top: 18px;">
+            <div style="font-weight: 700; font-size: 15px; color: #fafafa;">11. Le frontend n'est jamais digne de confiance</div>
+            <p style="font-size: 14px; line-height: 1.7; color: #a8a8a8; margin: 6px 0 0;">Une CSP stricte (<code class="mono" style="color:#d0d0d0;">connect-src 'self'</code>) empêche le frontend de contacter un serveur directement. Il ne reçoit jamais un secret — seulement des adresses publiques, des soldes et des identifiants de transaction. Les permissions accordées au frontend sont réduites au strict minimum (<code class="mono" style="color:#d0d0d0;">core:default</code> uniquement) : aucun accès direct au système de fichiers ou au réseau.</p>
+          </div>
+          <div style="border-top: 1px solid #1e1e1e; padding-top: 18px;">
+            <div style="font-weight: 700; font-size: 15px; color: #fafafa;">12. Confirmation native avant tout envoi</div>
+            <p style="font-size: 14px; line-height: 1.7; color: #a8a8a8; margin: 6px 0 0;">Réseau, destinataire, montant, frais et profil source s'affichent dans une boîte de dialogue de l'OS, jamais une modale HTML — un frontend compromis ne peut ni la falsifier ni la faire disparaître silencieusement.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Groupe E : modèle de menace, honnêteté sur les limites -->
+      <div style="margin-top: 48px;">
+        <div style="font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 13px; letter-spacing: 0.6px; color: #ffb648; text-transform: uppercase; margin-bottom: 20px;">E — Ce que ces protections ne couvrent pas</div>
+        <div style="border-top: 1px solid #1e1e1e; padding-top: 18px;">
+          <div style="font-weight: 700; font-size: 15px; color: #fafafa;">13. Un malware actif sur l'appareil pendant l'usage</div>
+          <p style="font-size: 14px; line-height: 1.7; color: #a8a8a8; margin: 6px 0 0;">Un keylogger qui capture le mot de passe au clavier, ou une lecture directe de la mémoire du processus au moment précis du déverrouillage, contournent ces protections sans avoir besoin de casser quoi que ce soit. <strong style="color:#d0d0d0;">Ce n'est pas une faiblesse propre à ce projet</strong> — aucun wallet purement logiciel (celui-ci comme les plus connus du marché) ne peut s'en protéger totalement. C'est la raison d'être des wallets matériels, où la clé ne quitte jamais un appareil séparé doté de son propre écran de confirmation. Le dire clairement ici plutôt que de le passer sous silence, c'est aussi ça, la transparence.</p>
+        </div>
+      </div>
+
+      <!-- Groupe F -->
+      <div style="margin-top: 48px; padding: 22px 24px; background: rgba(255,182,72,0.06); border: 1px solid rgba(255,182,72,0.25); border-radius: 12px;">
+        <div style="font-weight: 700; font-size: 14.5px; color: #f0c98a;">Ce qui n'est pas encore fait</div>
+        <p style="font-size: 13.5px; line-height: 1.7; color: #d8c2a0; margin: 8px 0 0;">Signature de code du binaire, publication open-source pour revue communautaire, et surtout audit de sécurité par un prestataire professionnel indépendant — voir le statut complet ci-dessus. Aucune des protections listées ci-dessus n'a été validée par un tiers.</p>
+      </div>
+
+    </div>
+  </section>
+
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  function reveal(p, at, span) {
+    var t = Math.min(1, Math.max(0, (p - at) / span));
+    return { opacity: Math.round(t * 100) / 100, y: Math.round((1 - t) * 16) };
+  }
+
+  // --- Section 0 : points de mot de passe, générés une fois ---
+  var pwDotsEl = document.getElementById("pw-dots");
+  var pwDots = [];
+  for (var i = 0; i < 8; i++) {
+    var d = document.createElement("span");
+    d.style.cssText = "width:22px;height:26px;border-radius:5px;border:1.5px solid #3a3a3a;background:transparent;";
+    pwDotsEl.appendChild(d);
+    pwDots.push(d);
+  }
+
+  // --- Section 1 : réseaux ---
+  var netData = [
+    { name: "Ethereum", amount: "0.842 ETH", at: 0.05 },
+    { name: "Bitcoin", amount: "0.041 BTC", at: 0.35 },
+    { name: "Solana", amount: "12.4 SOL", at: 0.65 }
+  ];
+  var networksListEl = document.getElementById("networks-list");
+  netData.forEach(function (n) {
+    var row = document.createElement("div");
+    row.style.cssText = "display:flex;justify-content:space-between;align-items:center;padding:14px;border:1px solid #262626;border-radius:12px;opacity:0;";
+    row.innerHTML = '<span style="font-weight:600;font-size:14px;">' + n.name + '</span><span class="mono" style="font-size:13.5px;color:#f2f2f0;">' + n.amount + "</span>";
+    networksListEl.appendChild(row);
+    n.el = row;
+  });
+
+  // --- Section 3 : paliers de frais ---
+  var feeData = [
+    { label: "Lent · ~1 jour", sat: "310 sat", at: 0.05 },
+    { label: "Rapide · ~20 min", sat: "1 240 sat", at: 0.32 },
+    { label: "Moyen · ~1 h", sat: "840 sat", at: 0.6, chooseAt: 0.85 }
+  ];
+  var feesListEl = document.getElementById("fees-list");
+  feeData.forEach(function (f) {
+    var row = document.createElement("div");
+    row.style.cssText = "display:flex;justify-content:space-between;align-items:center;padding:12px 14px;border:1.5px solid #262626;border-radius:10px;opacity:0;";
+    var label = document.createElement("span");
+    label.style.cssText = "font-size:13px;font-weight:700;color:#9a9a9a;";
+    label.textContent = f.label;
+    var sat = document.createElement("span");
+    sat.className = "mono";
+    sat.style.cssText = "font-size:12.5px;color:#9a9a9a;";
+    sat.textContent = f.sat;
+    row.appendChild(label);
+    row.appendChild(sat);
+    feesListEl.appendChild(row);
+    f.el = row;
+    f.labelEl = label;
+    f.satEl = sat;
+  });
+
+  // --- Section 4 : destinataires ---
+  var recipientData = [
+    { name: "Alice", at: 0.15 },
+    { name: "Bob", at: 0.45 },
+    { name: "Chloé", at: 1.1 }
+  ];
+  var recipientsListEl = document.getElementById("recipients-list");
+  recipientData.forEach(function (r) {
+    var row = document.createElement("div");
+    row.style.cssText = "display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid #262626;border-radius:9px;";
+    var box = document.createElement("span");
+    box.style.cssText = "width:15px;height:15px;border-radius:4px;background:transparent;border:1px solid #3a3a3a;display:inline-block;";
+    var name = document.createElement("span");
+    name.style.cssText = "font-size:13px;color:#7a7a7a;";
+    name.textContent = r.name;
+    row.appendChild(box);
+    row.appendChild(name);
+    recipientsListEl.appendChild(row);
+    r.boxEl = box;
+    r.nameEl = name;
+  });
+
+  // --- Section 5 : liste de sécurité ---
+  var securityTexts = [
+    "Effacement mémoire et verrouillage anti-swap sur tout secret en clair",
+    "Verrouillage anti-brute-force à délai croissant sur le mot de passe",
+    "Checksum EIP-55 contre une adresse Ethereum mal recopiée",
+    "Liste blanche de domaines pour tout lien ouvert hors de l'app",
+    "Verrouillage automatique après 10 minutes d'inactivité"
+  ];
+  var securityListEl = document.getElementById("security-list");
+  var securityItems = securityTexts.map(function (text, i) {
+    var row = document.createElement("div");
+    row.style.cssText = "display:flex;gap:12px;align-items:flex-start;padding:12px 0;border-bottom:1px solid #1e1e1e;opacity:0;";
+    row.innerHTML = '<span style="color:#f2f2f0;font-size:14px;">＋</span><span style="font-size:14px;line-height:1.6;color:#c0c0c0;">' + text + "</span>";
+    securityListEl.appendChild(row);
+    return { el: row, at: i * 0.18 };
+  });
+
+  // --- Section 6 : feuille de route ---
+  var roadmapData = [
+    { label: "Phase 1 — PoC cryptographique CLI, terminée", mark: "✓", badgeBg: "#f2f2f0", badgeBorder: "#f2f2f0", badgeColor: "#050505", at: 0.02 },
+    { label: "Phase 2 — Interface graphique, en cours", mark: "●", badgeBg: "transparent", badgeBorder: "#f2f2f0", badgeColor: "#f2f2f0", at: 0.35 },
+    { label: "Signature de code, publication open-source et audit indépendant — aucun des trois n'est encore fait", mark: "○", badgeBg: "transparent", badgeBorder: "#3a3a3a", badgeColor: "#6a6a6a", at: 0.68 }
+  ];
+  var roadmapListEl = document.getElementById("roadmap-list");
+  roadmapData.forEach(function (s) {
+    var row = document.createElement("div");
+    row.style.cssText = "display:flex;gap:16px;align-items:flex-start;padding:14px 0;border-bottom:1px solid #1e1e1e;opacity:0;";
+    row.innerHTML =
+      '<span style="width:26px;height:26px;border-radius:50%;background:' + s.badgeBg + ";border:1.5px solid " + s.badgeBorder + ";color:" + s.badgeColor +
+      ';display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex-shrink:0;">' + s.mark +
+      '</span><span style="font-size:14.5px;color:#d0d0d0;padding-top:3px;">' + s.label + "</span>";
+    roadmapListEl.appendChild(row);
+    s.el = row;
+  });
+
+  // --- Boucle de scroll : calcule la progression de chaque section épinglée ---
+  var wrappers = Array.prototype.slice.call(document.querySelectorAll(".pin-wrapper"));
+  var confirmDialogEl = document.getElementById("confirm-dialog");
+  var confirmButtonsEl = document.getElementById("confirm-buttons");
+  var unlockCheckEl = document.getElementById("unlock-check");
+  var msgEncryptedEl = document.getElementById("msg-encrypted");
+  var progressFillEl = document.getElementById("progress-fill");
+
+  var raf = null;
+  function onScroll() {
+    if (raf) return;
+    raf = requestAnimationFrame(function () {
+      raf = null;
+      var vh = window.innerHeight;
+
+      var progress = wrappers.map(function (el) {
+        var r = el.getBoundingClientRect();
+        var total = r.height - vh;
+        if (total <= 0) return 1;
+        return Math.min(1, Math.max(0, -r.top / total));
+      });
+
+      var doc = document.documentElement;
+      var maxScroll = doc.scrollHeight - vh;
+      var scrollPct = maxScroll > 0 ? Math.min(100, Math.max(0, (window.scrollY / maxScroll) * 100)) : 0;
+      progressFillEl.style.height = scrollPct + "%";
+
+      // Section 0
+      var p0 = progress[0] || 0;
+      var filledCount = Math.round(p0 * 8);
+      pwDots.forEach(function (d, i) {
+        var filled = i < filledCount;
+        d.style.borderColor = filled ? "#f2f2f0" : "#3a3a3a";
+        d.style.background = filled ? "#f2f2f0" : "transparent";
+      });
+      unlockCheckEl.style.opacity = reveal(p0, 0.85, 0.15).opacity;
+
+      // Section 1
+      var p1 = progress[1] || 0;
+      netData.forEach(function (n) {
+        var r = reveal(p1, n.at, 0.28);
+        n.el.style.opacity = r.opacity;
+        n.el.style.transform = "translateY(" + r.y + "px)";
+      });
+
+      // Section 2
+      var p2 = progress[2] || 0;
+      var dialogReveal = reveal(p2, 0.05, 0.35);
+      confirmDialogEl.style.opacity = dialogReveal.opacity;
+      confirmDialogEl.style.transform = "scale(" + (0.9 + dialogReveal.opacity * 0.1).toFixed(3) + ")";
+      confirmButtonsEl.style.opacity = reveal(p2, 0.45, 0.25).opacity;
+
+      // Section 3
+      var p3 = progress[3] || 0;
+      feeData.forEach(function (f, i) {
+        var r = reveal(p3, f.at, 0.28);
+        f.el.style.opacity = r.opacity;
+        f.el.style.transform = "translateX(" + r.y + "px)";
+        var isChosen = i === 2 && p3 > (f.chooseAt || 2);
+        f.el.style.borderColor = isChosen ? "#f2f2f0" : "#262626";
+        var c = isChosen ? "#fafafa" : "#9a9a9a";
+        f.labelEl.style.color = c;
+        f.satEl.style.color = c;
+      });
+
+      // Section 4
+      var p4 = progress[4] || 0;
+      recipientData.forEach(function (r) {
+        var checked = p4 >= r.at;
+        r.boxEl.style.background = checked ? "#f2f2f0" : "transparent";
+        r.boxEl.style.borderColor = checked ? "#f2f2f0" : "#3a3a3a";
+        r.nameEl.style.color = checked ? "#fafafa" : "#7a7a7a";
+      });
+      msgEncryptedEl.style.opacity = reveal(p4, 0.8, 0.2).opacity;
+
+      // Section 5
+      var p5 = progress[5] || 0;
+      securityItems.forEach(function (s) {
+        var r = reveal(p5, s.at, 0.22);
+        s.el.style.opacity = r.opacity;
+        s.el.style.transform = "translateY(" + r.y + "px)";
+      });
+
+      // Section 6
+      var p6 = progress[6] || 0;
+      roadmapData.forEach(function (s) {
+        var r = reveal(p6, s.at, 0.25);
+        s.el.style.opacity = r.opacity;
+        s.el.style.transform = "translateY(" + r.y + "px)";
+      });
+    });
+  }
+
+  window.addEventListener("scroll", onScroll, { passive: true });
+  window.addEventListener("resize", onScroll, { passive: true });
+  onScroll();
+})();
+</script>
+</body>
+</html>
