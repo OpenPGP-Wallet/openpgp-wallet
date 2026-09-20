@@ -258,6 +258,41 @@ impl<T, E: std::fmt::Display> TranslatedResult<T> for Result<T, E> {
     }
 }
 
+// Sans ce hook, un panic imprévu (bug non détecté, dépendance tierce) ne laissait
+// absolument aucune trace : la fenêtre disparaissait instantanément et silencieusement
+// (pas de console en release, voir `windows_subsystem = "windows"` dans main.rs). On
+// journalise l'emplacement et le message du panic — jamais de secret : nos propres
+// `.expect()`/`panic!` n'embarquent que des messages statiques, jamais une valeur
+// secrète (mot de passe, clé, entropie), et un panic venant d'une dépendance tierce ne
+// peut porter que des données déjà publiques (adresse, réponse RPC), jamais un secret
+// qui ne transite jamais par un message de panic dans ce projet.
+fn install_panic_hook(log_dir: PathBuf) {
+    let log_path = log_dir.join("crash.log");
+    std::panic::set_hook(Box::new(move |info| {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let location = info
+            .location()
+            .map(|l| format!("{}:{}", l.file(), l.line()))
+            .unwrap_or_else(|| "emplacement inconnu".to_string());
+        let message = info
+            .payload()
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| info.payload().downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "message indisponible".to_string());
+        let line = format!("[{timestamp}] panic à {location} : {message}\n");
+        // Best-effort : si l'écriture du log échoue, on ne doit surtout pas déclencher
+        // un second panic depuis le hook lui-même.
+        if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&log_path) {
+            use std::io::Write;
+            let _ = file.write_all(line.as_bytes());
+        }
+    }));
+}
+
 fn data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let dir = app
         .path()
@@ -1029,6 +1064,13 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .setup(|app| {
+            if let Ok(dir) = app.path().app_data_dir() {
+                let _ = std::fs::create_dir_all(&dir);
+                install_panic_hook(dir);
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             set_ui_language,
             save_bytes_with_dialog,

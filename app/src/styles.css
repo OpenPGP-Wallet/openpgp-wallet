@@ -305,6 +305,11 @@ button:active:not(:disabled) {
   transform: scale(0.95);
 }
 
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 button.primary {
   background: var(--accent);
   color: white;

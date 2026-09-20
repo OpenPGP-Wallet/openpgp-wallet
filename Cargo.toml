@@ -3,11 +3,16 @@ resolver = "2"
 members = ["core", "app/src-tauri"]
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
+#
+# `panic = "abort"` volontairement RETIRÉ malgré la recommandation de taille : chaque
+# commande Tauri tourne sur son propre thread/tâche, donc avec le comportement par
+# défaut (unwind), un panic imprévu dans une commande fait juste échouer CETTE
+# commande (le frontend reçoit une erreur) au lieu de tuer instantanément tout le
+# processus sans message ni trace — ce qui était la cause des crashs de l'app.
 [profile.release]
 codegen-units = 1
 lto = true
 opt-level = 3
-panic = "abort"
 strip = true
 
 # La crate `region` (verrouillage mémoire réel, voir core/src/memory_guard.rs) contient

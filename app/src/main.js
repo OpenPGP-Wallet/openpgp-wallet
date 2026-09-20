@@ -932,8 +932,16 @@ document.getElementById("lock-wallet").addEventListener("click", lockWallet);
 // l'hygiène standard attendue de n'importe quel wallet.
 const AUTO_LOCK_MS = 10 * 60 * 1000; // 10 minutes d'inactivité
 let autoLockTimer = null;
+let lastActivityReset = 0;
 
 function resetAutoLockTimer() {
+  // Throttle : "mousemove"/"scroll" peuvent se déclencher des centaines de fois par
+  // seconde, et recréer un setTimeout à chaque fois est un travail inutile pour un
+  // délai de 10 minutes — une précision à la seconde près suffit largement et évite
+  // ce churn pendant tout mouvement de souris.
+  const now = Date.now();
+  if (now - lastActivityReset < 1000) return;
+  lastActivityReset = now;
   if (autoLockTimer) clearTimeout(autoLockTimer);
   autoLockTimer = setTimeout(() => {
     if (!views.dashboard.classList.contains("hidden")) lockWallet();
@@ -1068,6 +1076,7 @@ function stopBalanceAutoRefresh() {
 
 let latestPrices = null;
 let priceRefreshTimer = null;
+let pricesRefreshing = false;
 
 function priceForCoin(coin) {
   if (!latestPrices) return null;
@@ -1091,19 +1100,27 @@ function updateFiatValue(card) {
 }
 
 async function refreshPrices() {
+  // Même logique de verrou que refreshBalance : évite qu'un cycle lent (CoinGecko
+  // limite le débit gratuit) ne se fasse recouvrir par le tick suivant du minuteur.
+  if (pricesRefreshing) return;
+  pricesRefreshing = true;
   try {
-    latestPrices = await invoke("get_crypto_prices");
-  } catch (e) {
-    console.error(e);
-    latestPrices = null;
+    try {
+      latestPrices = await invoke("get_crypto_prices");
+    } catch (e) {
+      console.error(e);
+      latestPrices = null;
+    }
+    document.querySelectorAll(".wallet-card").forEach(updateFiatValue);
+    await loadMarkets();
+    // Garde les montants rapides de la modale d'envoi synchronisés avec le cours si
+    // elle reste ouverte pendant un cycle de rafraîchissement (toutes les 60s, voir
+    // startPriceAutoRefresh) — sans ça, un montant rapide cliqué plus tard dans une
+    // session longue refléterait un prix périmé.
+    if (!sendModal.classList.contains("hidden")) renderQuickAmounts();
+  } finally {
+    pricesRefreshing = false;
   }
-  document.querySelectorAll(".wallet-card").forEach(updateFiatValue);
-  loadMarkets();
-  // Garde les montants rapides de la modale d'envoi synchronisés avec le cours si
-  // elle reste ouverte pendant un cycle de rafraîchissement (toutes les 60s, voir
-  // startPriceAutoRefresh) — sans ça, un montant rapide cliqué plus tard dans une
-  // session longue refléterait un prix périmé.
-  if (!sendModal.classList.contains("hidden")) renderQuickAmounts();
 }
 
 function formatMarketCap(value) {
@@ -1439,20 +1456,31 @@ function networkForCard(card) {
 }
 
 async function refreshBalance(card) {
-  const coin = card.dataset.coin;
-  const network = networkForCard(card);
-  const address = addressForCoin(coin, network);
-  const balanceEl = card.querySelector('[data-field="balance"]');
-  balanceEl.textContent = "…";
+  // Verrou par carte, partagé entre le clic manuel (bouton "Actualiser") et le
+  // rafraîchissement automatique (setInterval, toutes les 15s) : sans lui, un appel
+  // réseau qui dépasse 15s (fréquent sur des endpoints publics gratuits) se ferait
+  // recouvrir par le tick suivant, empilant des requêtes concurrentes pour la même
+  // carte — même symptôme de lag qu'un double-clic, mais déclenché par le minuteur.
+  if (card.dataset.refreshing === "1") return;
+  card.dataset.refreshing = "1";
   try {
-    const balance = await invoke("get_balance", { network, address });
-    balanceEl.textContent = balance;
-  } catch (e) {
-    balanceEl.textContent = t("wallet.balanceError");
-    console.error(e);
+    const coin = card.dataset.coin;
+    const network = networkForCard(card);
+    const address = addressForCoin(coin, network);
+    const balanceEl = card.querySelector('[data-field="balance"]');
+    balanceEl.textContent = "…";
+    try {
+      const balance = await invoke("get_balance", { network, address });
+      balanceEl.textContent = balance;
+    } catch (e) {
+      balanceEl.textContent = t("wallet.balanceError");
+      console.error(e);
+    }
+    updateFiatValue(card);
+    await checkPendingTx(card, address, network);
+  } finally {
+    card.dataset.refreshing = "";
   }
-  updateFiatValue(card);
-  checkPendingTx(card, address, network);
 }
 
 // Signale une transaction détectée mais pas encore finalisée (mempool Bitcoin,
@@ -1477,10 +1505,12 @@ function refreshAllBalances() {
 }
 
 document.querySelectorAll(".wallet-card").forEach((card) => {
-  card.querySelector('[data-action="refresh"]').addEventListener("click", () => refreshBalance(card));
+  const refreshBtn = card.querySelector('[data-action="refresh"]');
+  refreshBtn.addEventListener("click", withBusyButton(refreshBtn, () => refreshBalance(card)));
   card.querySelector('[data-action="send"]').addEventListener("click", () => openSendModal(card));
   card.querySelector('[data-action="qr"]').addEventListener("click", () => openQrModal(card));
-  card.querySelector('[data-action="history"]').addEventListener("click", () => openHistoryModal(card));
+  const historyBtn = card.querySelector('[data-action="history"]');
+  historyBtn.addEventListener("click", withBusyButton(historyBtn, () => openHistoryModal(card)));
   const select = card.querySelector(".network-select");
   if (select) {
     // Contrairement à EVM/Solana, changer de réseau Bitcoin change aussi l'adresse
