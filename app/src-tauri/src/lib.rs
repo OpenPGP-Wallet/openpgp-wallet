@@ -764,8 +764,8 @@ fn remove_recipient(label: String, app: tauri::AppHandle) -> Result<(), String> 
 }
 
 #[tauri::command]
-fn encrypt_message(pubkey_armored: String, message: String) -> Result<String, String> {
-    messaging::encrypt_message(&pubkey_armored, &message).map_err(|e| e.to_string())
+fn encrypt_message(pubkeys_armored: Vec<String>, message: String) -> Result<String, String> {
+    messaging::encrypt_message(&pubkeys_armored, &message).map_err(|e| e.to_string())
 }
 
 /// Déchiffre un message reçu par cet appareil (nécessite le mot de passe pour

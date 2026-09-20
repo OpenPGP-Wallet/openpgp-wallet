@@ -271,6 +271,11 @@ button {
   padding: 10px 16px;
   font-size: 0.95rem;
   font-weight: 600;
+  transition: transform 0.1s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+
+button:active:not(:disabled) {
+  transform: scale(0.95);
 }
 
 button.primary {
@@ -581,6 +586,30 @@ textarea:focus {
   display: flex;
   gap: 8px;
   flex-shrink: 0;
+}
+
+.recipient-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.recipient-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.recipient-picker-item input[type="checkbox"] {
+  width: auto;
+  cursor: pointer;
 }
 
 #add-recipient-form,

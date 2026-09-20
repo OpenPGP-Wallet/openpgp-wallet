@@ -86,19 +86,33 @@ pub fn remove_recipient(data_dir: &Path, label: &str) -> Result<()> {
     save_recipients(data_dir, &recipients)
 }
 
-/// Chiffre un message texte pour une clé publique PGP arbitraire ; résultat en
-/// ASCII-armor, prêt à copier/coller ou envoyer par n'importe quel canal.
-pub fn encrypt_message(pubkey_armored: &str, message: &str) -> Result<String> {
-    let policy = StandardPolicy::new();
-    let cert = Cert::from_bytes(pubkey_armored.as_bytes()).context("clé publique PGP invalide")?;
+/// Chiffre un message texte pour une ou plusieurs clés publiques PGP ; résultat en
+/// ASCII-armor, prêt à copier/coller ou envoyer par n'importe quel canal. Chaque
+/// destinataire listé peut déchiffrer indépendamment le même message (PGP chiffre
+/// la clé de session une fois par destinataire), sans qu'aucun ne voie les autres
+/// clés privées ni ne puisse déchiffrer pour le compte d'un autre.
+pub fn encrypt_message(pubkeys_armored: &[String], message: &str) -> Result<String> {
+    if pubkeys_armored.is_empty() {
+        return Err(anyhow::anyhow!("au moins un destinataire est requis"));
+    }
 
-    let recipients = cert
-        .keys()
-        .with_policy(&policy, None)
-        .supported()
-        .alive()
-        .revoked(false)
-        .for_transport_encryption();
+    let policy = StandardPolicy::new();
+    let certs = pubkeys_armored
+        .iter()
+        .map(|k| Cert::from_bytes(k.as_bytes()).context("clé publique PGP invalide"))
+        .collect::<Result<Vec<_>>>()?;
+
+    let recipients = certs
+        .iter()
+        .flat_map(|cert| {
+            cert.keys()
+                .with_policy(&policy, None)
+                .supported()
+                .alive()
+                .revoked(false)
+                .for_transport_encryption()
+        })
+        .collect::<Vec<_>>();
 
     let mut sink = Vec::new();
     {

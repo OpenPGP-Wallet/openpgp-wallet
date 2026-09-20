@@ -1380,13 +1380,17 @@ async function loadRecipients() {
 
 function renderRecipientList() {
   const container = document.getElementById("recipient-list");
-  const select = document.getElementById("message-recipient");
+  const picker = document.getElementById("message-recipients-picker");
+  // On garde la sélection en cours (cases déjà cochées) d'un rafraîchissement à l'autre.
+  const previouslyChecked = new Set(
+    Array.from(picker.querySelectorAll("input[type=checkbox]:checked")).map((cb) => cb.value)
+  );
   container.innerHTML = "";
-  select.innerHTML = "";
+  picker.innerHTML = "";
 
   if (recipientsCache.length === 0) {
     container.innerHTML = '<p class="muted">Aucun destinataire pour l\'instant.</p>';
-    syncCustomSelect(select);
+    picker.innerHTML = '<p class="muted">Ajoutez d\'abord un destinataire ci-dessus.</p>';
     return;
   }
 
@@ -1425,12 +1429,21 @@ function renderRecipientList() {
     item.appendChild(removeBtn);
     container.appendChild(item);
 
-    const option = document.createElement("option");
-    option.value = r.label;
-    option.textContent = r.label;
-    select.appendChild(option);
+    const pickerItem = document.createElement("label");
+    pickerItem.className = "recipient-picker-item";
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.value = r.label;
+    checkbox.checked = previouslyChecked.has(r.label);
+
+    const pickerLabel = document.createElement("span");
+    pickerLabel.textContent = r.label;
+
+    pickerItem.appendChild(checkbox);
+    pickerItem.appendChild(pickerLabel);
+    picker.appendChild(pickerItem);
   });
-  syncCustomSelect(select);
 }
 
 document.getElementById("show-add-recipient").addEventListener("click", () => {
@@ -1473,12 +1486,15 @@ encryptMessageBtn.addEventListener("click", withBusyButton(encryptMessageBtn, as
   hideError(errorEl);
   document.getElementById("encrypt-result-block").classList.add("hidden");
 
-  const label = document.getElementById("message-recipient").value;
+  const picker = document.getElementById("message-recipients-picker");
+  const checkedLabels = Array.from(picker.querySelectorAll("input[type=checkbox]:checked")).map((cb) => cb.value);
   const message = document.getElementById("message-plaintext").value;
-  const recipient = recipientsCache.find((r) => r.label === label);
+  const pubkeysArmored = recipientsCache
+    .filter((r) => checkedLabels.includes(r.label))
+    .map((r) => r.pubkey_armored);
 
-  if (!recipient) {
-    showError(errorEl, "Choisissez un destinataire (ajoutez-en un si la liste est vide).");
+  if (pubkeysArmored.length === 0) {
+    showError(errorEl, "Choisissez au moins un destinataire (ajoutez-en un si la liste est vide).");
     return;
   }
   if (!message) {
@@ -1487,7 +1503,7 @@ encryptMessageBtn.addEventListener("click", withBusyButton(encryptMessageBtn, as
   }
 
   try {
-    const encrypted = await invoke("encrypt_message", { pubkeyArmored: recipient.pubkey_armored, message });
+    const encrypted = await invoke("encrypt_message", { pubkeysArmored, message });
     document.getElementById("encrypt-result").value = encrypted;
     document.getElementById("encrypt-result-block").classList.remove("hidden");
   } catch (e) {
