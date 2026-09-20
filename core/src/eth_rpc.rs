@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
+use std::sync::OnceLock;
 
 /// Client JSON-RPC minimal pour parler à un nœud Ethereum (ici : Sepolia testnet).
 pub struct EthRpc {
@@ -7,16 +8,29 @@ pub struct EthRpc {
     client: reqwest::blocking::Client,
 }
 
+// Un `reqwest::Client` maintient un pool de connexions keep-alive : le reconstruire
+// à chaque appel de commande Tauri (chaque `EthRpc::new`, donc chaque clic qui
+// touche le réseau) jetait ce pool et repayait une poignée de main TCP+TLS complète
+// à chaque fois, ajoutant une latence réseau perceptible à chaque clic. `Client` est
+// conçu pour être partagé/cloné (`Arc` en interne, clonage bon marché) : un seul
+// client construit une fois par processus, réutilisé partout.
+fn shared_client() -> &'static reqwest::blocking::Client {
+    static CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::blocking::Client::builder()
+            // Sans timeout explicite, reqwest attend indéfiniment un nœud qui ne
+            // répond jamais, bloquant l'app entière sur cet appel.
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .expect("configuration du client HTTP valide")
+    })
+}
+
 impl EthRpc {
     pub fn new(endpoint: &str) -> Self {
         Self {
             endpoint: endpoint.to_string(),
-            // Sans timeout explicite, reqwest attend indéfiniment un nœud qui ne
-            // répond jamais, bloquant l'app entière sur cet appel.
-            client: reqwest::blocking::Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
-                .build()
-                .expect("configuration du client HTTP valide"),
+            client: shared_client().clone(),
         }
     }
 

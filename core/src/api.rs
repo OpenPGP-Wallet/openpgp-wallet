@@ -696,9 +696,26 @@ pub fn send_evm(
 
     let rpc = eth_rpc::EthRpc::new(network.rpc);
     let address_str = derivation::format_address(&address);
-    let nonce = rpc.nonce(&address_str)?;
-    let gas_price = rpc.gas_price()?;
-    let chain_id = rpc.chain_id()?;
+    // Les 4 appels ci-dessous sont des lectures RPC indépendantes (aucune ne dépend
+    // du résultat d'une autre) : les lancer en parallèle plutôt que l'une après
+    // l'autre réduit la latence perçue d'un envoi ETH d'environ 4x à ~1x un
+    // aller-retour réseau.
+    let (nonce, gas_price, chain_id, balance) = std::thread::scope(|scope| {
+        let nonce_handle = scope.spawn(|| rpc.nonce(&address_str));
+        let gas_price_handle = scope.spawn(|| rpc.gas_price());
+        let chain_id_handle = scope.spawn(|| rpc.chain_id());
+        let balance_handle = scope.spawn(|| rpc.balance(&address_str));
+        (
+            nonce_handle.join().expect("le thread nonce ne doit pas paniquer"),
+            gas_price_handle.join().expect("le thread gas_price ne doit pas paniquer"),
+            chain_id_handle.join().expect("le thread chain_id ne doit pas paniquer"),
+            balance_handle.join().expect("le thread balance ne doit pas paniquer"),
+        )
+    });
+    let nonce = nonce?;
+    let gas_price = gas_price?;
+    let chain_id = chain_id?;
+    let balance = balance?;
 
     // Contrairement à Bitcoin (UTXO, vérifié dans `send_btc`), rien ne vérifiait ici
     // que le solde couvre montant + frais de gas avant de signer et diffuser : sans
@@ -712,7 +729,6 @@ pub fn send_evm(
     let total_needed = value
         .checked_add(gas_cost)
         .context("montant + frais de gas dépasse la capacité représentable")?;
-    let balance = rpc.balance(&address_str)?;
     anyhow::ensure!(
         total_needed <= balance,
         "fonds insuffisants : {balance} wei disponibles, {value} wei + {gas_cost} wei de frais de gas requis"
@@ -761,9 +777,21 @@ fn fee_rate_for_target(estimates: &[(u32, f64)], target: u32) -> f64 {
 /// légèrement supérieurs à nécessaire (quelques sats), jamais insuffisants.
 pub fn estimate_btc_fees(address: &str, network: &wallet_flow::BtcNetwork) -> Result<BtcFeeEstimate> {
     let esplora = btc_rpc::EsploraClient::new(network.esplora_base);
-    let num_inputs = esplora.utxos(address)?.len().max(1);
+    // Les UTXOs de l'adresse et les estimations de frais du réseau sont deux appels
+    // HTTP indépendants (l'un ne dépend pas du résultat de l'autre) : les lancer en
+    // parallèle plutôt que l'un après l'autre coupe environ de moitié la latence
+    // perçue à l'ouverture de la modale d'envoi Bitcoin.
+    let (utxos, estimates) = std::thread::scope(|scope| {
+        let utxos_handle = scope.spawn(|| esplora.utxos(address));
+        let estimates_handle = scope.spawn(|| esplora.fee_estimates());
+        (
+            utxos_handle.join().expect("le thread UTXOs ne doit pas paniquer"),
+            estimates_handle.join().expect("le thread frais ne doit pas paniquer"),
+        )
+    });
+    let num_inputs = utxos?.len().max(1);
     let vsize = crate::btc_tx::estimate_p2wpkh_vsize(num_inputs, 2) as f64;
-    let estimates = esplora.fee_estimates()?;
+    let estimates = estimates?;
 
     let sat_for_target = |target: u32| (fee_rate_for_target(&estimates, target) * vsize).ceil() as u64;
     Ok(BtcFeeEstimate {
@@ -849,13 +877,25 @@ pub fn send_sol(
     let lamports = wallet_flow::parse_sol_to_lamports(amount_sol)?;
 
     let rpc = sol_rpc::SolRpc::new(network.rpc);
+    let from_address = bs58::encode(from_pubkey).into_string();
+    // Le solde et le dernier blockhash sont deux lectures RPC indépendantes : les
+    // lancer en parallèle plutôt que l'une après l'autre réduit la latence perçue
+    // d'un envoi SOL d'environ moitié.
+    let (balance, recent_blockhash) = std::thread::scope(|scope| {
+        let balance_handle = scope.spawn(|| rpc.balance_lamports(&from_address));
+        let blockhash_handle = scope.spawn(|| rpc.latest_blockhash());
+        (
+            balance_handle.join().expect("le thread balance ne doit pas paniquer"),
+            blockhash_handle.join().expect("le thread blockhash ne doit pas paniquer"),
+        )
+    });
+    let balance = balance?;
+    let recent_blockhash = recent_blockhash?;
 
     // Même contrôle que côté CLI (`wallet_flow::send_sol`), absent ici jusqu'à présent :
     // sans lui, un montant + frais supérieur au solde n'était détecté qu'au rejet par
     // le nœud RPC après signature, au lieu d'un message clair "fonds insuffisants".
     const SOL_FEE_LAMPORTS: u64 = 5_000;
-    let from_address = bs58::encode(from_pubkey).into_string();
-    let balance = rpc.balance_lamports(&from_address)?;
     let total_needed = lamports
         .checked_add(SOL_FEE_LAMPORTS)
         .context("montant + frais dépasse la capacité représentable")?;
@@ -864,7 +904,6 @@ pub fn send_sol(
         "fonds insuffisants : {balance} lamports disponibles, {lamports} lamports + {SOL_FEE_LAMPORTS} lamports de frais requis"
     );
 
-    let recent_blockhash = rpc.latest_blockhash()?;
     let raw_tx = sol_tx::build_transfer_transaction(&signing_key, &from_pubkey, &to_pubkey, lamports, &recent_blockhash);
     rpc.send_transaction(&raw_tx)
 }

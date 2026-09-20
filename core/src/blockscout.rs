@@ -9,6 +9,20 @@
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
+use std::sync::OnceLock;
+
+// Voir eth_rpc::shared_client : un `reqwest::Client` reconstruit à chaque appel de
+// commande jette son pool de connexions keep-alive et repaie une poignée de main
+// TCP+TLS complète à chaque clic. Un seul client partagé, construit une fois.
+fn shared_client() -> &'static reqwest::blocking::Client {
+    static CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(20))
+            .build()
+            .expect("configuration du client HTTP valide")
+    })
+}
 
 pub struct BlockscoutClient {
     client: reqwest::blocking::Client,
@@ -50,12 +64,7 @@ impl BlockscoutClient {
     /// `https://eth-sepolia.blockscout.com` (Sepolia) — voir `history::evm_history`.
     pub fn new(base_url: &'static str) -> Self {
         Self {
-            // Sans timeout explicite, reqwest attend indéfiniment un service qui ne
-            // répond jamais, bloquant l'app entière sur cet appel.
-            client: reqwest::blocking::Client::builder()
-                .timeout(std::time::Duration::from_secs(20))
-                .build()
-                .expect("configuration du client HTTP valide"),
+            client: shared_client().clone(),
             base_url,
         }
     }

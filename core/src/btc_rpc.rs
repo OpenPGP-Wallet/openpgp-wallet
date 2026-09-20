@@ -1,6 +1,20 @@
 use crate::btc_tx::Utxo;
 use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
+use std::sync::OnceLock;
+
+// Voir eth_rpc::shared_client : un `reqwest::Client` reconstruit à chaque appel de
+// commande jette son pool de connexions keep-alive et repaie une poignée de main
+// TCP+TLS complète à chaque clic. Un seul client partagé, construit une fois.
+fn shared_client() -> &'static reqwest::blocking::Client {
+    static CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .expect("configuration du client HTTP valide")
+    })
+}
 
 /// API Esplora publique de Blockstream : pas de clé requise, suffisant pour
 /// interroger les UTXOs et diffuser une transaction dans ce PoC. Mainnet et
@@ -75,12 +89,7 @@ impl EsploraClient {
     /// réseau demandé par le frontend).
     pub fn new(base_url: &'static str) -> Self {
         Self {
-            // Sans timeout explicite, reqwest attend indéfiniment un nœud qui ne
-            // répond jamais, bloquant l'app entière sur cet appel.
-            client: reqwest::blocking::Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
-                .build()
-                .expect("configuration du client HTTP valide"),
+            client: shared_client().clone(),
             base_url,
         }
     }

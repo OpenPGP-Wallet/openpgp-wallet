@@ -7,6 +7,7 @@
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
+use std::sync::OnceLock;
 
 const COINGECKO_URL: &str =
     "https://api.coingecko.com/api/v3/simple/price?ids=ethereum,bitcoin,solana&vs_currencies=usd";
@@ -33,20 +34,30 @@ pub struct PriceRpc {
     client: reqwest::blocking::Client,
 }
 
-impl PriceRpc {
-    pub fn new() -> Self {
-        Self {
+// Voir eth_rpc::shared_client : un `reqwest::Client` reconstruit à chaque appel de
+// commande jette son pool de connexions keep-alive et repaie une poignée de main
+// TCP+TLS complète à chaque clic. Un seul client partagé, construit une fois.
+fn shared_client() -> &'static reqwest::blocking::Client {
+    static CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::blocking::Client::builder()
             // Même raison que les autres clients RPC (eth/btc/sol) : sans timeout,
             // un service muet bloquerait l'app indéfiniment sur cet appel purement
             // informatif. `user_agent` explicite : le User-Agent par défaut de
             // reqwest ("reqwest/x.y.z") s'est fait renvoyer un 403 par CoinGecko
             // (probablement filtré comme trafic de bot générique), alors qu'un
             // appel identique avec un User-Agent de navigateur/outil nommé passait.
-            client: reqwest::blocking::Client::builder()
-                .timeout(std::time::Duration::from_secs(15))
-                .user_agent("pgp-wallet-poc/0.1 (+https://github.com/)")
-                .build()
-                .expect("configuration du client HTTP valide"),
+            .timeout(std::time::Duration::from_secs(15))
+            .user_agent("pgp-wallet-poc/0.1 (+https://github.com/)")
+            .build()
+            .expect("configuration du client HTTP valide")
+    })
+}
+
+impl PriceRpc {
+    pub fn new() -> Self {
+        Self {
+            client: shared_client().clone(),
         }
     }
 

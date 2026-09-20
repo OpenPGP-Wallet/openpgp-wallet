@@ -1469,15 +1469,21 @@ async function refreshBalance(card) {
     const address = addressForCoin(coin, network);
     const balanceEl = card.querySelector('[data-field="balance"]');
     balanceEl.textContent = "…";
-    try {
-      const balance = await invoke("get_balance", { network, address });
-      balanceEl.textContent = balance;
-    } catch (e) {
-      balanceEl.textContent = t("wallet.balanceError");
-      console.error(e);
-    }
+    // Le solde et l'indicateur "transaction en attente" sont deux appels
+    // indépendants (l'un ne dépend pas du résultat de l'autre) : les lancer en
+    // parallèle plutôt que l'un après l'autre coupe la latence perçue du
+    // rafraîchissement en deux.
+    const balancePromise = invoke("get_balance", { network, address })
+      .then((balance) => {
+        balanceEl.textContent = balance;
+      })
+      .catch((e) => {
+        balanceEl.textContent = t("wallet.balanceError");
+        console.error(e);
+      });
+    const pendingPromise = checkPendingTx(card, address, network);
+    await Promise.all([balancePromise, pendingPromise]);
     updateFiatValue(card);
-    await checkPendingTx(card, address, network);
   } finally {
     card.dataset.refreshing = "";
   }
