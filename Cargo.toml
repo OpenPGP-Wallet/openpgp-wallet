@@ -1,0 +1,28 @@
+[workspace]
+resolver = "2"
+members = ["core", "app/src-tauri"]
+
+# Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true
+
+# La crate `region` (verrouillage mémoire réel, voir core/src/memory_guard.rs) contient
+# un `debug_assert!` dans le Drop de son LockGuard qui échoue par intermittence sous
+# `cargo test` : nos buffers verrouillés sont minuscules (32 octets pour l'entropie),
+# donc plusieurs buffers de tests DIFFÉRENTS tournant en parallèle peuvent partager la
+# même page mémoire (arrondi à la page, 4 Ko) — le second déverrouillage d'une page déjà
+# déverrouillée par un autre thread échoue côté OS, ce que `region` détecte via
+# `debug_assert!` seulement (pas une vraie erreur remontée). Ce n'est PAS un bug qui
+# peut se produire dans le binaire release réel : `debug-assertions` y est déjà à
+# `false` par défaut (nulle part activé explicitement ci-dessus), donc l'assertion ne
+# s'exécute jamais dans l'app livrée — uniquement un faux positif de parallélisme des
+# tests. On aligne le profil `test` sur ce même comportement plutôt que de contourner
+# artificiellement les tests (ex: --test-threads=1), et ça ne désactive AUCUNE de nos
+# propres assertions (`assert!`/`assert_eq!` dans nos tests ne sont pas concernées,
+# seules les macros `debug_assert!` le sont).
+[profile.test]
+debug-assertions = false

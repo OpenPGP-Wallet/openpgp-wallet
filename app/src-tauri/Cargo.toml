@@ -1,0 +1,43 @@
+[package]
+name = "app"
+version = "0.1.0"
+description = "A Tauri App"
+authors = ["you"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+# Boîte de dialogue native "Enregistrer sous" pour le téléchargement des parts de
+# sauvegarde : les liens <a download> classiques ne fonctionnent pas de façon fiable
+# dans la webview Tauri (navigation interceptée pour raisons de sécurité).
+tauri-plugin-dialog = "2"
+# Ouvre les liens externes (explorateurs de blocs) dans le navigateur système : un
+# <a target="_blank"> classique ne fonctionne pas de façon fiable dans la webview
+# Tauri (navigation interceptée pour raisons de sécurité), même problème déjà
+# rencontré pour les téléchargements (voir tauri-plugin-dialog ci-dessus).
+tauri-plugin-opener = "2"
+# Génération de QR code pour l'affichage des adresses (publiques, aucune donnée
+# sensible) : fait côté Rust pour ne pas ajouter de dépendance JS au frontend.
+qrcode = "0.14"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Le worker crypto (Shamir, PGP, dérivation, RPC) : toute la logique sensible reste
+# dans ce crate séparé, jamais dans le frontend web.
+pgp-wallet-poc = { path = "../../core" }
+base64 = "0.22"
+# Efface les mots de passe reçus du frontend (String) dès qu'ils ne servent plus,
+# y compris sur un retour anticipé/panic — mêmes buffers sensibles que core/, qui
+# utilise déjà zeroize pour l'entropie/seed.
+zeroize = "1.7"

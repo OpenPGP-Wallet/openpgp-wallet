@@ -1,0 +1,168 @@
+//! Prix indicatifs des 3 cryptos en monnaie fiduciaire (USD), via l'API publique
+//! CoinGecko : aucune clé requise, aucune donnée envoyée sur l'utilisateur ou ses
+//! adresses (juste "quel est le prix actuel de l'ETH/BTC/SOL ?", identique pour
+//! tout le monde) — contrairement à `eth_rpc`/`btc_rpc`/`sol_rpc`, qui interrogent
+//! une adresse précise. Purement informatif pour l'affichage ; ne joue aucun rôle
+//! dans la construction ou la signature d'une transaction.
+
+use anyhow::{Context, Result};
+use serde::Deserialize;
+
+const COINGECKO_URL: &str =
+    "https://api.coingecko.com/api/v3/simple/price?ids=ethereum,bitcoin,solana&vs_currencies=usd";
+
+pub struct Prices {
+    pub eth_usd: f64,
+    pub btc_usd: f64,
+    pub sol_usd: f64,
+}
+
+#[derive(Deserialize)]
+struct CoinPrice {
+    usd: f64,
+}
+
+#[derive(Deserialize)]
+struct CoinGeckoResponse {
+    ethereum: CoinPrice,
+    bitcoin: CoinPrice,
+    solana: CoinPrice,
+}
+
+pub struct PriceRpc {
+    client: reqwest::blocking::Client,
+}
+
+impl PriceRpc {
+    pub fn new() -> Self {
+        Self {
+            // Même raison que les autres clients RPC (eth/btc/sol) : sans timeout,
+            // un service muet bloquerait l'app indéfiniment sur cet appel purement
+            // informatif. `user_agent` explicite : le User-Agent par défaut de
+            // reqwest ("reqwest/x.y.z") s'est fait renvoyer un 403 par CoinGecko
+            // (probablement filtré comme trafic de bot générique), alors qu'un
+            // appel identique avec un User-Agent de navigateur/outil nommé passait.
+            client: reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(15))
+                .user_agent("pgp-wallet-poc/0.1 (+https://github.com/)")
+                .build()
+                .expect("configuration du client HTTP valide"),
+        }
+    }
+
+    pub fn get_prices(&self) -> Result<Prices> {
+        let response = self.client.get(COINGECKO_URL).send().context("appel CoinGecko impossible")?;
+        // Distingue explicitement un rate-limit (API publique gratuite, sans clé —
+        // attendu occasionnellement, notamment si plusieurs appareils/instances de
+        // dev tapent le même service en peu de temps) d'une vraie panne : sans ça,
+        // l'erreur générique de désérialisation ("champ manquant") ne dit pas
+        // pourquoi le JSON attendu n'est pas là.
+        anyhow::ensure!(
+            response.status().is_success(),
+            "CoinGecko a répondu {} (rate-limit probable si 429 : API gratuite, sans clé)",
+            response.status()
+        );
+        let resp: CoinGeckoResponse = response.json().context("réponse CoinGecko illisible")?;
+        Ok(Prices {
+            eth_usd: resp.ethereum.usd,
+            btc_usd: resp.bitcoin.usd,
+            sol_usd: resp.solana.usd,
+        })
+    }
+
+    /// Prix + capitalisation boursière pour la section "Marchés" du tableau de
+    /// bord. Contrairement à `get_prices` (juste le prix, pour convertir un solde
+    /// affiché), sert à afficher un mini-classement du marché — trié explicitement
+    /// par capitalisation ici, sans se fier uniquement au paramètre `order` de
+    /// l'API (verrouille la garantie plutôt que d'espérer qu'elle tienne).
+    pub fn get_market_data(&self) -> Result<Vec<MarketCoin>> {
+        let response = self
+            .client
+            .get(MARKETS_URL)
+            .send()
+            .context("appel CoinGecko (marchés) impossible")?;
+        anyhow::ensure!(
+            response.status().is_success(),
+            "CoinGecko a répondu {} pour les données de marché",
+            response.status()
+        );
+        let raw: Vec<MarketCoinRaw> = response.json().context("réponse CoinGecko (marchés) illisible")?;
+        let mut coins: Vec<MarketCoin> = raw
+            .into_iter()
+            .map(|c| MarketCoin {
+                symbol: c.symbol.to_uppercase(),
+                name: c.name,
+                price_usd: c.current_price,
+                market_cap_usd: c.market_cap,
+                // CoinGecko omet ce champ (au lieu de le mettre à 0) pour un actif
+                // trop récent/illiquide pour avoir une variation calculable sur 24h ;
+                // `Option` plutôt qu'un `0.0` par défaut qui laisserait croire à une
+                // vraie stagnation.
+                change_24h_percent: c.price_change_percentage_24h,
+            })
+            .collect();
+        coins.sort_by(|a, b| {
+            b.market_cap_usd
+                .partial_cmp(&a.market_cap_usd)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        Ok(coins)
+    }
+}
+
+const MARKETS_URL: &str = "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin,ethereum,solana,usd-coin&order=market_cap_desc&price_change_percentage=24h";
+
+pub struct MarketCoin {
+    pub symbol: String,
+    pub name: String,
+    pub price_usd: f64,
+    pub market_cap_usd: f64,
+    pub change_24h_percent: Option<f64>,
+}
+
+#[derive(Deserialize)]
+struct MarketCoinRaw {
+    symbol: String,
+    name: String,
+    current_price: f64,
+    market_cap: f64,
+    price_change_percentage_24h: Option<f64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // `#[ignore]` : test réseau réel (pas dans la suite par défaut), lancé
+    // explicitement pour diagnostiquer un souci de bout en bout.
+    #[test]
+    #[ignore]
+    fn real_coingecko_call_succeeds() {
+        let prices = PriceRpc::new().get_prices().expect("l'appel CoinGecko doit réussir");
+        println!("ETH={} BTC={} SOL={}", prices.eth_usd, prices.btc_usd, prices.sol_usd);
+        assert!(prices.eth_usd > 0.0);
+        assert!(prices.btc_usd > 0.0);
+        assert!(prices.sol_usd > 0.0);
+    }
+
+    #[test]
+    #[ignore]
+    fn real_coingecko_markets_call_is_sorted_by_market_cap_desc() {
+        let coins = PriceRpc::new().get_market_data().expect("l'appel CoinGecko (marchés) doit réussir");
+        assert_eq!(coins.len(), 4, "attendu : bitcoin, ethereum, solana, usd-coin");
+        for pair in coins.windows(2) {
+            assert!(
+                pair[0].market_cap_usd >= pair[1].market_cap_usd,
+                "{} devrait avoir une capitalisation >= {}",
+                pair[0].symbol,
+                pair[1].symbol
+            );
+        }
+        // BTC a toujours la plus grosse capitalisation du marché crypto à ce jour.
+        assert_eq!(coins[0].symbol, "BTC");
+        assert!(
+            coins[0].change_24h_percent.is_some(),
+            "BTC a toujours une variation 24h calculable (actif liquide et ancien)"
+        );
+    }
+}

@@ -1,0 +1,542 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PGP Wallet</title>
+    <script type="module" src="/main.js" defer></script>
+  </head>
+
+  <body>
+    <!-- Écran de chargement initial -->
+    <main id="view-loading" class="view">
+      <p class="muted">Chargement…</p>
+    </main>
+
+    <!-- Onboarding : pas encore de wallet sur cet appareil -->
+    <main id="view-onboarding" class="view hidden">
+      <div class="card narrow">
+        <h1>Créer votre portefeuille</h1>
+        <p class="muted">
+          Choisissez un mot de passe pour cet appareil. Il vous servira à ouvrir
+          votre portefeuille et à valider chaque virement — comme un cadenas, sans
+          que vous ayez jamais à voir la clé qu'il y a derrière.
+        </p>
+        <label>Mot de passe</label>
+        <input id="onboarding-password" type="password" placeholder="Au moins 12 caractères" />
+        <p id="onboarding-strength" class="muted strength-hint"></p>
+        <label>Confirmation</label>
+        <input id="onboarding-password-confirm" type="password" placeholder="Retapez le mot de passe" />
+        <p id="onboarding-error" class="error hidden"></p>
+        <button id="onboarding-submit" class="primary">Créer mon portefeuille</button>
+      </div>
+    </main>
+
+    <!-- Backup : affichée une seule fois juste après la création -->
+    <main id="view-backup" class="view hidden">
+      <div class="card wide">
+        <h1>Sauvegardez votre kit de récupération</h1>
+        <p class="muted">
+          Ces 3 fichiers protègent votre portefeuille en cas de perte de cet appareil.
+          <strong>2 des 3 suffisent</strong> à tout récupérer, mais aucun des 3 seul
+          ne sert à rien — c'est voulu, personne (y compris vous) ne peut voler votre
+          wallet avec une seule part. Téléchargez les 3 et notez les 3 mots de passe
+          quelque part de sûr, séparément.
+        </p>
+        <div id="backup-list" class="backup-list"></div>
+        <label class="checkbox-row">
+          <input type="checkbox" id="backup-confirm" />
+          J'ai téléchargé et sauvegardé mes 3 parts et leurs mots de passe
+        </label>
+        <button id="backup-continue" class="primary" disabled>Continuer vers mon portefeuille</button>
+      </div>
+    </main>
+
+    <!-- Déverrouillage : wallet déjà créé sur cet appareil -->
+    <main id="view-unlock" class="view hidden">
+      <div class="brand-mark">PGP Wallet</div>
+      <div class="card narrow">
+        <h1>Portefeuille verrouillé</h1>
+        <label>Mot de passe</label>
+        <input id="unlock-password" type="password" placeholder="Votre mot de passe" />
+        <p id="unlock-error" class="error hidden"></p>
+        <button id="unlock-submit" class="primary">Déverrouiller</button>
+        <button id="goto-restore" class="link">Restaurer depuis une sauvegarde</button>
+        <button id="reset-wallet" class="link">Réinitialiser cet appareil (supprime le coffre local)</button>
+      </div>
+    </main>
+
+    <!-- Restauration depuis 2 des 3 parts de sauvegarde -->
+    <main id="view-restore" class="view hidden">
+      <div class="card wide">
+        <h1>Restaurer depuis une sauvegarde</h1>
+        <p class="muted">
+          Fournissez 2 des 3 fichiers de part + leur mot de passe, et choisissez un nouveau
+          mot de passe pour cet appareil.
+        </p>
+        <div class="restore-grid">
+          <fieldset>
+            <legend>Part n°1</legend>
+            <label>Fichier de part (.asc)</label>
+            <input type="file" id="restore-share-1" accept=".asc" />
+            <label>Fichier de clé privée (.asc)</label>
+            <input type="file" id="restore-privkey-1" accept=".asc" />
+            <label>Mot de passe de cette part</label>
+            <input type="password" id="restore-passphrase-1" />
+          </fieldset>
+          <fieldset>
+            <legend>Part n°2</legend>
+            <label>Fichier de part (.asc)</label>
+            <input type="file" id="restore-share-2" accept=".asc" />
+            <label>Fichier de clé privée (.asc)</label>
+            <input type="file" id="restore-privkey-2" accept=".asc" />
+            <label>Mot de passe de cette part</label>
+            <input type="password" id="restore-passphrase-2" />
+          </fieldset>
+        </div>
+        <label>Nouveau mot de passe pour cet appareil</label>
+        <input type="password" id="restore-new-password" placeholder="Au moins 12 caractères" />
+        <p id="restore-strength" class="muted strength-hint"></p>
+        <p id="restore-error" class="error hidden"></p>
+        <div class="row-buttons">
+          <button id="restore-submit" class="primary">Restaurer</button>
+          <button id="goto-unlock" class="link">Annuler</button>
+        </div>
+      </div>
+    </main>
+
+    <!-- Tableau de bord -->
+    <main id="view-dashboard" class="view hidden view-shell">
+      <nav class="navbar">
+        <span class="nav-brand">PGP Wallet</span>
+        <div class="nav-tabs">
+          <button class="nav-tab active" data-tab="wallet">Portefeuille</button>
+          <button class="nav-tab" data-tab="message">Message</button>
+          <button class="nav-tab" data-tab="certificate">Certificat</button>
+          <button class="nav-tab" data-tab="settings">Paramètres</button>
+        </div>
+        <button id="lock-wallet" class="secondary">Verrouiller</button>
+      </nav>
+
+      <section class="tab-panel dashboard" data-panel="wallet">
+        <div class="profile-bar">
+          <label for="profile-select">Profil</label>
+          <div class="custom-select dropdown">
+            <select id="profile-select"></select>
+            <button type="button" class="custom-select-trigger">
+              <span class="custom-select-label"></span>
+              <span class="select-arrow"></span>
+            </button>
+            <ul class="custom-select-options"></ul>
+          </div>
+          <div class="action-menu dropdown">
+            <button type="button" class="custom-select-trigger">
+              <span>Recevoir</span>
+              <span class="select-arrow"></span>
+            </button>
+            <ul class="custom-select-options">
+              <li data-coin="evm">Recevoir ETH</li>
+              <li data-coin="btc">Recevoir BTC</li>
+              <li data-coin="sol">Recevoir SOL</li>
+            </ul>
+          </div>
+          <button id="add-profile-btn" class="secondary">+ Nouveau profil</button>
+          <button id="archive-profile-btn" class="secondary">Archiver ce profil</button>
+        </div>
+        <div class="wallet-grid">
+          <section class="wallet-card" data-coin="evm">
+            <header>
+              <h2><img class="coin-icon" src="/assets/eth.svg" alt="" />Ethereum</h2>
+              <div class="custom-select dropdown">
+                <select class="network-select" data-coin="evm">
+                  <option value="evm_mainnet" selected>Mainnet — Fonds réels</option>
+                  <option value="evm_sepolia">Sepolia (testnet)</option>
+                </select>
+                <button type="button" class="custom-select-trigger">
+                  <span class="custom-select-label"></span>
+                  <span class="select-arrow"></span>
+                </button>
+                <ul class="custom-select-options"></ul>
+              </div>
+            </header>
+            <div class="address-row">
+              <p class="address" data-field="address"></p>
+              <button class="qr-btn" data-action="qr" title="Afficher en QR code">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+                  <path d="M3 3h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                  <rect x="5.2" y="5.2" width="1.6" height="1.6" />
+                  <path d="M15 3h6v6h-6z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                  <rect x="17.2" y="5.2" width="1.6" height="1.6" />
+                  <path d="M3 15h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                  <rect x="5.2" y="17.2" width="1.6" height="1.6" />
+                  <rect x="15" y="15" width="2.5" height="2.5" />
+                  <rect x="18.5" y="15" width="2.5" height="2.5" />
+                  <rect x="15" y="18.5" width="2.5" height="2.5" />
+                  <rect x="18.5" y="18.5" width="2.5" height="2.5" />
+                </svg>
+              </button>
+            </div>
+            <p class="balance"><span data-field="balance">—</span> ETH</p>
+            <p class="fiat-value" data-field="fiat">—</p>
+            <p class="pending-badge" data-field="pending">⏳ Transaction en attente détectée</p>
+            <div class="row-buttons">
+              <button class="secondary" data-action="refresh">Actualiser</button>
+              <button class="secondary" data-action="history">Historique</button>
+              <button class="primary" data-action="send">Envoyer</button>
+            </div>
+          </section>
+
+          <section class="wallet-card" data-coin="btc">
+            <header>
+              <h2><img class="coin-icon" src="/assets/btc.webp" alt="" />Bitcoin</h2>
+              <div class="custom-select dropdown">
+                <select class="network-select" data-coin="btc">
+                  <option value="btc_mainnet" selected>Mainnet — Fonds réels</option>
+                  <option value="btc_testnet">Testnet</option>
+                </select>
+                <button type="button" class="custom-select-trigger">
+                  <span class="custom-select-label"></span>
+                  <span class="select-arrow"></span>
+                </button>
+                <ul class="custom-select-options"></ul>
+              </div>
+            </header>
+            <div class="address-row">
+              <p class="address" data-field="address"></p>
+              <button class="qr-btn" data-action="qr" title="Afficher en QR code">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+                  <path d="M3 3h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                  <rect x="5.2" y="5.2" width="1.6" height="1.6" />
+                  <path d="M15 3h6v6h-6z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                  <rect x="17.2" y="5.2" width="1.6" height="1.6" />
+                  <path d="M3 15h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                  <rect x="5.2" y="17.2" width="1.6" height="1.6" />
+                  <rect x="15" y="15" width="2.5" height="2.5" />
+                  <rect x="18.5" y="15" width="2.5" height="2.5" />
+                  <rect x="15" y="18.5" width="2.5" height="2.5" />
+                  <rect x="18.5" y="18.5" width="2.5" height="2.5" />
+                </svg>
+              </button>
+            </div>
+            <p class="balance"><span data-field="balance">—</span> BTC</p>
+            <p class="fiat-value" data-field="fiat">—</p>
+            <p class="pending-badge" data-field="pending"> Transaction en attente détectée</p>
+            <div class="row-buttons">
+              <button class="secondary" data-action="refresh">Actualiser</button>
+              <button class="secondary" data-action="history">Historique</button>
+              <button class="primary" data-action="send">Envoyer</button>
+            </div>
+          </section>
+
+          <section class="wallet-card" data-coin="sol">
+            <header>
+              <h2><img class="coin-icon coin-icon-sol" src="/assets/sol.png" alt="" />Solana</h2>
+              <div class="custom-select dropdown">
+                <select class="network-select" data-coin="sol">
+                  <option value="sol_mainnet" selected>Mainnet — Fonds réels</option>
+                  <option value="sol_devnet">Devnet</option>
+                </select>
+                <button type="button" class="custom-select-trigger">
+                  <span class="custom-select-label"></span>
+                  <span class="select-arrow"></span>
+                </button>
+                <ul class="custom-select-options"></ul>
+              </div>
+            </header>
+            <div class="address-row">
+              <p class="address" data-field="address"></p>
+              <button class="qr-btn" data-action="qr" title="Afficher en QR code">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+                  <path d="M3 3h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                  <rect x="5.2" y="5.2" width="1.6" height="1.6" />
+                  <path d="M15 3h6v6h-6z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                  <rect x="17.2" y="5.2" width="1.6" height="1.6" />
+                  <path d="M3 15h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                  <rect x="5.2" y="17.2" width="1.6" height="1.6" />
+                  <rect x="15" y="15" width="2.5" height="2.5" />
+                  <rect x="18.5" y="15" width="2.5" height="2.5" />
+                  <rect x="15" y="18.5" width="2.5" height="2.5" />
+                  <rect x="18.5" y="18.5" width="2.5" height="2.5" />
+                </svg>
+              </button>
+            </div>
+            <p class="balance"><span data-field="balance">—</span> SOL</p>
+            <p class="fiat-value" data-field="fiat">—</p>
+            <p class="pending-badge" data-field="pending">⏳ Transaction en attente détectée</p>
+            <div class="row-buttons">
+              <button class="secondary" data-action="refresh">Actualiser</button>
+              <button class="secondary" data-action="history">Historique</button>
+              <button class="primary" data-action="send">Envoyer</button>
+            </div>
+          </section>
+        </div>
+
+        <h2 class="section-title">Prix des cryptomonnaies en direct</h2>
+        <div id="markets-list" class="markets-list"></div>
+      </section>
+
+      <section class="tab-panel hidden" data-panel="message">
+        <div class="card wide message-panel">
+          <h1>Chiffrer un message</h1>
+          <p class="muted">
+            L'usage d'origine de PGP, avant qu'on le détourne ici pour protéger une seed :
+            chiffrer un message pour que seul le destinataire puisse le lire.
+          </p>
+
+          <h2 class="section-title">Destinataires</h2>
+          <div id="recipient-list" class="recipient-list"></div>
+          <div class="row-buttons">
+            <button id="show-add-recipient" class="secondary">Ajouter un destinataire</button>
+          </div>
+
+          <div id="add-recipient-form" class="hidden">
+            <label>Nom</label>
+            <input id="new-recipient-label" type="text" placeholder="ex: Alice" />
+            <label>Sa clé publique PGP (ASCII-armor)</label>
+            <textarea id="new-recipient-pubkey" rows="6" placeholder="-----BEGIN PGP PUBLIC KEY BLOCK-----"></textarea>
+            <p id="add-recipient-error" class="error hidden"></p>
+            <div class="row-buttons">
+              <button id="confirm-add-recipient" class="primary">Ajouter</button>
+              <button id="cancel-add-recipient" class="link">Annuler</button>
+            </div>
+          </div>
+
+          <h2 class="section-title">Message</h2>
+          <label>Destinataire</label>
+          <div class="custom-select dropdown">
+            <select id="message-recipient"></select>
+            <button type="button" class="custom-select-trigger">
+              <span class="custom-select-label"></span>
+              <span class="select-arrow"></span>
+            </button>
+            <ul class="custom-select-options"></ul>
+          </div>
+          <label>Message en clair</label>
+          <textarea id="message-plaintext" rows="4" placeholder="Votre message..."></textarea>
+          <p id="encrypt-error" class="error hidden"></p>
+          <button id="encrypt-message-btn" class="primary">Chiffrer</button>
+
+          <div id="encrypt-result-block" class="hidden">
+            <label>Message chiffré (à copier/envoyer)</label>
+            <textarea id="encrypt-result" rows="8" readonly></textarea>
+            <div class="row-buttons">
+              <button id="copy-encrypted" class="secondary">Copier</button>
+              <button id="clear-encrypted" class="link">Effacer</button>
+            </div>
+          </div>
+
+          <h2 class="section-title">Déchiffrer un message reçu</h2>
+          <p class="muted">
+            Collez ici un message chiffré avec votre clé publique (celle de l'onglet Certificat) —
+            vous seul pouvez le lire.
+          </p>
+          <label>Message chiffré</label>
+          <textarea id="decrypt-input" rows="8" placeholder="-----BEGIN PGP MESSAGE-----"></textarea>
+          <label>Mot de passe (pour déverrouiller votre clé)</label>
+          <input id="decrypt-password" type="password" />
+          <p id="decrypt-error" class="error hidden"></p>
+          <button id="decrypt-message-btn" class="primary">Déchiffrer</button>
+
+          <div id="decrypt-result-block" class="hidden">
+            <label>Message déchiffré</label>
+            <textarea id="decrypt-result" rows="4" readonly></textarea>
+            <button id="clear-decrypted" class="link">Effacer</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="tab-panel hidden" data-panel="certificate">
+        <div class="card wide">
+          <h1>Votre certificat PGP</h1>
+          <p class="muted">
+            C'est votre clé publique — partagez-la avec quelqu'un pour qu'il puisse vous ajouter
+            comme destinataire et vous envoyer des messages chiffrés que vous seul pouvez lire.
+          </p>
+          <label>Identité</label>
+          <p class="address" id="cert-userid"></p>
+          <label>Empreinte (fingerprint)</label>
+          <p class="address" id="cert-fingerprint"></p>
+          <label>Identifiant de clé</label>
+          <p class="address" id="cert-keyid"></p>
+          <label>Clé publique complète (ASCII-armor)</label>
+          <textarea id="cert-armored" rows="10" readonly></textarea>
+          <button id="copy-cert" class="secondary">Copier ma clé publique</button>
+        </div>
+      </section>
+
+      <section class="tab-panel hidden" data-panel="settings">
+        <div class="card wide">
+          <h1>Paramètres</h1>
+
+          <div class="settings-section">
+            <h2 class="section-title">Apparence</h2>
+            <label for="theme-select">Thème</label>
+            <div class="custom-select dropdown">
+              <select id="theme-select">
+                <option value="default">Bleu</option>
+                <option value="purple">Violet</option>
+                <option value="orange">Orange</option>
+                <option value="dark">Sombre</option>
+              </select>
+              <button type="button" class="custom-select-trigger">
+                <span class="custom-select-label"></span>
+                <span class="select-arrow"></span>
+              </button>
+              <ul class="custom-select-options"></ul>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <h2 class="section-title">Profils archivés</h2>
+            <p class="muted">
+              Un profil archivé disparaît du sélecteur principal mais reste entièrement
+              récupérable — rien n'est perdu tant qu'il apparaît ici.
+            </p>
+            <div id="archived-profiles-list" class="recipient-list"></div>
+          </div>
+
+          <div class="settings-section">
+            <h2 class="section-title">Sauvegarde</h2>
+            <button id="open-regenerate-backup" class="secondary">
+              Régénérer mon kit de sauvegarde
+            </button>
+            <p class="muted">
+              Si vous avez perdu un ou plusieurs de vos 3 fichiers de sauvegarde d'origine, générez-en un
+              nouveau jeu de 3 (mot de passe requis). Vos adresses ne changent pas.
+            </p>
+          </div>
+
+          <div class="settings-section">
+            <h2 class="section-title">Sécurité de l'appareil</h2>
+            <button id="reset-wallet-dashboard" class="link">
+              Réinitialiser cet appareil (supprime le coffre local)
+            </button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Modale d'envoi -->
+    <div id="send-modal" class="modal-overlay hidden">
+      <div class="modal">
+        <h2 id="send-modal-title">Envoyer</h2>
+        <p class="muted">Depuis le profil : <strong id="send-from-profile"></strong></p>
+        <p id="send-mainnet-warning" class="error hidden">
+          /!\ Réseau MAINNET — ceci dépense de vrais fonds, irréversible.
+        </p>
+        <label>Adresse destinataire</label>
+        <input id="send-to" type="text" />
+        <label>Montant</label>
+        <input id="send-amount" type="text" placeholder="0.001" />
+        <div id="send-quick-amounts" class="quick-amounts"></div>
+        <div id="send-fee-block" class="hidden">
+          <label>Vitesse d'envoi (frais réseau)</label>
+          <div id="send-fee-options" class="fee-options"></div>
+        </div>
+        <label>Mot de passe (pour valider la transaction)</label>
+        <input id="send-password" type="password" />
+        <p id="send-error" class="error hidden"></p>
+        <p id="send-success" class="success hidden"></p>
+        <div class="row-buttons">
+          <button id="send-confirm" class="primary">Confirmer l'envoi</button>
+          <button id="send-cancel" class="link">Annuler</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modale QR code -->
+    <div id="qr-modal" class="modal-overlay hidden">
+      <div class="modal narrow-modal">
+        <h2>Recevoir</h2>
+        <div id="qr-container" class="qr-container"></div>
+        <p class="address" id="qr-address-text"></p>
+        <button id="qr-close" class="link">Fermer</button>
+      </div>
+    </div>
+
+    <!-- Modale historique de transactions (séparée par crypto, voir data-coin de la carte) -->
+    <div id="history-modal" class="modal-overlay hidden">
+      <div class="modal wide-modal">
+        <h2 id="history-modal-title">Historique</h2>
+        <div id="history-list" class="history-list"></div>
+        <button id="history-close" class="link">Fermer</button>
+      </div>
+    </div>
+
+    <!-- Modale nouveau profil -->
+    <div id="add-profile-modal" class="modal-overlay hidden">
+      <div class="modal">
+        <h2>Nouveau profil</h2>
+        <p class="muted">
+          Un profil = une nouvelle adresse par réseau, dérivée de la même clé maîtresse déjà
+          protégée par Shamir/PGP — aucune nouvelle sauvegarde à faire.
+        </p>
+        <label>Nom du profil</label>
+        <input id="add-profile-label" type="text" placeholder="ex : Épargne" />
+        <label>Mot de passe (optionnel)</label>
+        <input id="add-profile-password" type="password" placeholder="Laissez vide pour voir l'adresse plus tard" />
+        <p class="muted">
+          Avec le mot de passe : l'adresse s'affiche tout de suite. Sans lui : le profil est
+          créé quand même, son adresse apparaîtra à votre prochain déverrouillage.
+        </p>
+        <p id="add-profile-error" class="error hidden"></p>
+        <div class="row-buttons">
+          <button id="add-profile-confirm" class="primary">Créer</button>
+          <button id="add-profile-cancel" class="link">Annuler</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modale de suppression d'un profil -->
+    <div id="delete-profile-modal" class="modal-overlay hidden">
+      <div class="modal">
+        <h2>Supprimer ce profil ?</h2>
+        <p id="delete-profile-warning" class="error"></p>
+        <p class="muted">
+          Cette application ne permet pas de recréer un profil au même index plus tard : si vous avez
+          déjà reçu des fonds sur cette adresse, vous en perdrez l'accès depuis cette interface.
+        </p>
+        <label>Mot de passe de l'appareil</label>
+        <input id="delete-profile-password" type="password" />
+        <p id="delete-profile-error" class="error hidden"></p>
+        <div class="row-buttons">
+          <button id="delete-profile-confirm" class="primary">Supprimer quand même</button>
+          <button id="delete-profile-cancel" class="link">Annuler</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modale mot de passe pour régénérer le kit de sauvegarde -->
+    <div id="regenerate-backup-password-modal" class="modal-overlay hidden">
+      <div class="modal">
+        <h2>Régénérer le kit de sauvegarde</h2>
+        <p class="muted">
+          Ça crée 3 nouveaux fichiers de part + 3 nouvelles passphrases, sans toucher à vos
+          adresses ni à votre mot de passe d'appareil. Vos anciens fichiers de sauvegarde restent
+          valables (ce n'est pas un remplacement, juste un jeu supplémentaire).
+        </p>
+        <label>Mot de passe de l'appareil</label>
+        <input id="regenerate-backup-password" type="password" />
+        <p id="regenerate-backup-error" class="error hidden"></p>
+        <div class="row-buttons">
+          <button id="regenerate-backup-confirm" class="primary">Régénérer</button>
+          <button id="regenerate-backup-cancel" class="link">Annuler</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modale d'affichage du kit de sauvegarde régénéré -->
+    <div id="regenerate-backup-result-modal" class="modal-overlay hidden">
+      <div class="modal wide-modal">
+        <h2>Nouveau kit de sauvegarde</h2>
+        <p class="muted">
+          <strong>2 des 3 suffisent</strong> à tout récupérer. Téléchargez les 3 et notez les 3
+          mots de passe quelque part de sûr, séparément.
+        </p>
+        <div id="regenerate-backup-list" class="backup-list"></div>
+        <button id="regenerate-backup-close" class="primary">J'ai téléchargé mes 3 nouvelles parts</button>
+      </div>
+    </div>
+  </body>
+</html>

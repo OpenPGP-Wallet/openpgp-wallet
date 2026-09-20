@@ -1,0 +1,17 @@
+/target
+# "**/" et pas d'ancrage racine : un motif contenant un "/" (ex. "keys/*.asc")
+# reste ancré au répertoire du .gitignore même sans "/" en tête, donc il raterait
+# core/keys/, core/vault/, ou une clé copiée à la main ailleurs pour un test GUI.
+# "**/" force le match à n'importe quelle profondeur. Les clés privées et parts
+# Shamir ne doivent jamais entrer dans l'historique git, quel que soit l'endroit
+# où elles finissent créées.
+**/*_privkey.asc
+**/vault/*.asc
+.env
+node_modules/
+
+# Notes internes à la racine, gardées hors du dépôt partagé — motif générique
+# (pas de nom de fichier explicite) plutôt qu'une liste, pour ne rien révéler sur
+# leur contenu ou leur origine. README.md reste le seul .md public à la racine.
+/*.md
+!/README.md

@@ -1,0 +1,89 @@
+[package]
+name = "pgp-wallet-poc"
+version = "0.1.0"
+edition = "2021"
+default-run = "pgp-wallet-poc"
+
+[dependencies]
+# blahaj (pas "sharks") : Shamir's Secret Sharing, seuil configurable. `sharks` a
+# un biais connu et non corrigé dans le tirage des coefficients polynomiaux
+# (RUSTSEC-2024-0398, trouvé via `cargo audit`) — exploitable si le même secret
+# est partagé des centaines de fois, ce qui reste peu probable ici (un split à la
+# création + régénérations protégées par mot de passe et confirmation native),
+# mais sans correctif amont disponible pour `sharks` lui-même. `blahaj` est le
+# fork officiellement recommandé par l'avis RustSec, avec la faille corrigée et
+# une API strictement identique (Sharks/Share/dealer/recover) — migration sans
+# changement de logique métier, seulement le nom du crate importé.
+blahaj = "0.6"
+getrandom = "0.2"          # source d'entropie sécurisée
+zeroize = { version = "1.7", features = ["derive"] }  # effacement mémoire garanti
+anyhow = "1.0"             # gestion d'erreurs simplifiée pour le PoC
+
+# --- Ajouts pour l'expérimentation "wallet_demo" (dérivation + virement EVM sans PGP) ---
+# bip32   : dérivation HD (BIP32) de la clé maîtresse -> clé privée par chemin de dérivation.
+#           Déjà prévu dans la roadmap du projet (src/derivation.rs).
+# k256    : implémentation secp256k1 (signature ECDSA) utilisée par `bip32` ; on en a besoin
+#           explicitement pour signer le hash de transaction Ethereum.
+# sha3    : Keccak256, requis pour calculer l'adresse EVM et le hash de transaction.
+# rlp     : encodage RLP, format binaire imposé par les transactions Ethereum legacy.
+# reqwest : client HTTP pour parler en JSON-RPC à un nœud Sepolia (interroger le solde,
+#           le nonce, et diffuser la transaction signée).
+# serde/serde_json : (dé)sérialisation des requêtes/réponses JSON-RPC.
+# hex     : conversions hexadécimales (adresses, clés, tx brutes) pour l'affichage et le RPC.
+# bip39   : génération optionnelle d'une phrase mnémonique (12 mots) dans `wallet_demo`, à but
+#           pédagogique/comparatif uniquement — le projet évite ce concept en production,
+#           l'utilisateur ne voit et ne saisit jamais de mots de récupération.
+# bech32/sha2/ripemd : nécessaires pour dériver une adresse Bitcoin testnet (P2WPKH,
+#           préfixe "tb1q...") depuis la même seed maîtresse : hash160 = RIPEMD160(SHA256(pubkey)),
+#           puis encodage bech32 (BIP173) avec le préfixe "tb" (testnet).
+bip32 = "0.5"
+bip39 = "2"
+bech32 = "0.9"
+sha2 = "0.10"
+ripemd = "0.1"
+k256 = { version = "0.13", features = ["ecdsa"] }
+sha3 = "0.10"
+rlp = "0.5"
+reqwest = { version = "0.12", features = ["blocking", "json"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+hex = "0.4"
+
+# --- Ajouts pour la démo Solana (ed25519, pas secp256k1 : dérivation et signature
+# totalement différentes de BTC/EVM) ---
+# ed25519-dalek : signature ed25519, algorithme natif de Solana.
+# hmac          : dérivation SLIP-0010 (HMAC-SHA512), seul schéma HD valable pour ed25519
+#                 (BIP32 classique ne fonctionne pas sur cette courbe : dérivation non-durcie
+#                 impossible, d'où un chemin entièrement durci m/44'/501'/0'/0').
+# bs58          : encodage des adresses et clés Solana (base58, sans checksum contrairement
+#                 à l'adresse Bitcoin legacy).
+# base64        : encodage requis par l'API JSON-RPC de Solana pour soumettre une transaction.
+ed25519-dalek = "2"
+hmac = "0.12"
+bs58 = "0.5"
+base64 = "0.22"
+
+# region : verrouillage mémoire réel (mlock Unix / VirtualLock Windows) pour les buffers
+# sensibles (entropie, seed reconstruite) — zeroize efface mais ne protège pas contre le
+# swap disque pendant la durée de vie du buffer. Complète memory_guard::wipe, ne le remplace pas.
+region = "3"
+
+# --- Backend crypto de sequoia-openpgp : un par famille d'OS, jamais "crypto-rust" ---
+# (marqué "non production ready"/"non constant-time" par sequoia lui-même). Les deux backends
+# ci-dessous sont considérés production-ready par sequoia (pas de flag
+# "allow-experimental-crypto"/"allow-variable-time-crypto" à activer).
+#
+# Windows : "crypto-cng", l'API native CNG (Cryptography API: Next Generation), déjà
+# présente sur le système, sans dépendance externe à installer.
+[target.'cfg(windows)'.dependencies]
+sequoia-openpgp = { version = "2.1", default-features = false, features = ["crypto-cng", "compression"] }
+
+# macOS/Linux/iOS/Android : "crypto-cng" n'existe pas hors Windows (API Windows
+# uniquement) ; "crypto-nettle" (utilisé par défaut sur Linux) demanderait de
+# cross-compiler libnettle+GMP en C pour la cible iOS/Android, plus pénible que
+# "crypto-openssl" ici. OpenSSL se cross-compile nativement pour iOS/Android via le
+# feature "vendored" (construit depuis les sources, pas besoin d'installation système —
+# indispensable sur iOS, qui n'a pas de gestionnaire de paquets).
+[target.'cfg(not(windows))'.dependencies]
+sequoia-openpgp = { version = "2.1", default-features = false, features = ["crypto-openssl", "compression"] }
+openssl = { version = "0.10", features = ["vendored"] }
