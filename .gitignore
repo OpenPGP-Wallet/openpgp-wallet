@@ -7,6 +7,8 @@
 # où elles finissent créées.
 **/*_privkey.asc
 **/vault/*.asc
+**/*_sealed_secret.bin
+**/*_key_meta.json
 .env
 node_modules/
 

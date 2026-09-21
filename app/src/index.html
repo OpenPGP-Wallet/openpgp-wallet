@@ -59,6 +59,11 @@
       <div class="brand-mark">PGP Wallet</div>
       <div class="card narrow">
         <h1 data-i18n="unlock.title">Portefeuille verrouillé</h1>
+        <button id="unlock-biometric-btn" class="primary hidden" data-i18n="unlock.biometricButton">
+          Déverrouiller avec Windows Hello
+        </button>
+        <p id="unlock-biometric-error" class="error hidden"></p>
+        <p id="unlock-biometric-divider" class="divider-text hidden" data-i18n="unlock.orPassword">ou</p>
         <label data-i18n="onboarding.passwordLabel">Mot de passe</label>
         <input id="unlock-password" type="password" data-i18n-placeholder="unlock.passwordPlaceholder" placeholder="Votre mot de passe" />
         <p id="unlock-error" class="error hidden"></p>
@@ -406,6 +411,25 @@
           </div>
 
           <div class="settings-section">
+            <h2 class="section-title" data-i18n="settings.biometricTitle">Déverrouillage biométrique</h2>
+            <p class="muted" data-i18n="settings.biometricHint">
+              Active Windows Hello (empreinte, visage ou code confidentiel) comme moyen rapide de
+              déverrouiller ce portefeuille, en plus du mot de passe qui reste toujours disponible en
+              secours pour les actions sensibles.
+            </p>
+            <p id="biometric-unavailable-hint" class="muted hidden" data-i18n="settings.biometricUnavailable">
+              Windows Hello n'est pas configuré sur cet appareil — configurez-le dans les paramètres
+              Windows pour activer cette option.
+            </p>
+            <button id="enable-biometric-btn" class="secondary hidden" data-i18n="settings.biometricEnable">
+              Activer Windows Hello
+            </button>
+            <button id="disable-biometric-btn" class="link hidden" data-i18n="settings.biometricDisable">
+              Désactiver Windows Hello
+            </button>
+          </div>
+
+          <div class="settings-section">
             <h2 class="section-title" data-i18n="settings.deviceSecurity">Sécurité de l'appareil</h2>
             <button id="reset-wallet-dashboard" class="link" data-i18n="unlock.resetWallet">
               Réinitialiser cet appareil (supprime le coffre local)
@@ -520,6 +544,39 @@
         <div class="row-buttons">
           <button id="regenerate-backup-confirm" class="primary" data-i18n="regenBackup.confirm">Régénérer</button>
           <button id="regenerate-backup-cancel" class="link" data-i18n="common.cancel">Annuler</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modale mot de passe pour activer Windows Hello -->
+    <div id="enable-biometric-password-modal" class="modal-overlay hidden">
+      <div class="modal">
+        <h2 data-i18n="settings.biometricEnableModalTitle">Activer Windows Hello</h2>
+        <p class="muted" data-i18n="settings.biometricEnableModalSubtitle">
+          Votre mot de passe reste nécessaire pour les actions sensibles (sauvegarde, suppression de
+          profil, désactivation de cette option). Une confirmation Windows Hello vous sera aussi
+          demandée juste après.
+        </p>
+        <label data-i18n="deleteProfile.passwordLabel">Mot de passe de l'appareil</label>
+        <input id="enable-biometric-password" type="password" />
+        <p id="enable-biometric-error" class="error hidden"></p>
+        <div class="row-buttons">
+          <button id="enable-biometric-confirm" class="primary" data-i18n="settings.biometricEnableConfirm">Activer</button>
+          <button id="enable-biometric-cancel" class="link" data-i18n="common.cancel">Annuler</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modale mot de passe pour désactiver Windows Hello -->
+    <div id="disable-biometric-password-modal" class="modal-overlay hidden">
+      <div class="modal">
+        <h2 data-i18n="settings.biometricDisableModalTitle">Désactiver Windows Hello</h2>
+        <label data-i18n="deleteProfile.passwordLabel">Mot de passe de l'appareil</label>
+        <input id="disable-biometric-password" type="password" />
+        <p id="disable-biometric-error" class="error hidden"></p>
+        <div class="row-buttons">
+          <button id="disable-biometric-confirm" class="primary" data-i18n="settings.biometricDisableConfirm">Désactiver</button>
+          <button id="disable-biometric-cancel" class="link" data-i18n="common.cancel">Annuler</button>
         </div>
       </div>
     </div>

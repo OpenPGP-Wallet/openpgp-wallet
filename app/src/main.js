@@ -8,12 +8,25 @@ const { invoke } = window.__TAURI__.core;
 const THEME_STORAGE_KEY = "pgp-wallet-theme";
 const VALID_THEMES = ["default", "purple", "orange", "dark"];
 
+// Changer `data-theme` sur <html> invalide le style de TOUTE la page (les
+// variables CSS sont héritées partout) et force un recalcul complet. Choisir
+// plusieurs thèmes coup sur coup dans le menu déroulant déclenchait donc une
+// rafale de recalculs de page consécutifs, plus vite que le moteur de rendu ne
+// pouvait les absorber — regroupés ici via `requestAnimationFrame` : si
+// plusieurs appels arrivent avant la prochaine image, seul le dernier choisi
+// est réellement appliqué, une seule fois.
+let pendingThemeFrame = null;
+
 function applyTheme(theme) {
-  if (VALID_THEMES.includes(theme) && theme !== "default") {
-    document.documentElement.dataset.theme = theme;
-  } else {
-    delete document.documentElement.dataset.theme;
-  }
+  if (pendingThemeFrame !== null) cancelAnimationFrame(pendingThemeFrame);
+  pendingThemeFrame = requestAnimationFrame(() => {
+    pendingThemeFrame = null;
+    if (VALID_THEMES.includes(theme) && theme !== "default") {
+      document.documentElement.dataset.theme = theme;
+    } else {
+      delete document.documentElement.dataset.theme;
+    }
+  });
 }
 
 let currentTheme = "default";
@@ -86,6 +99,8 @@ const I18N = {
     "backup.downloadShare": "Télécharger le fichier de part",
     "backup.downloadPrivkey": "Télécharger la clé privée",
     "unlock.title": "Portefeuille verrouillé",
+    "unlock.biometricButton": "Déverrouiller avec Windows Hello",
+    "unlock.orPassword": "ou",
     "unlock.passwordPlaceholder": "Votre mot de passe",
     "unlock.submit": "Déverrouiller",
     "unlock.gotoRestore": "Restaurer depuis une sauvegarde",
@@ -205,6 +220,20 @@ const I18N = {
     "settings.regenerateBackupHint":
       "Si vous avez perdu un ou plusieurs de vos 3 fichiers de sauvegarde d'origine, générez-en un nouveau jeu de 3 (mot de passe requis). Vos adresses ne changent pas.",
     "settings.deviceSecurity": "Sécurité de l'appareil",
+    "settings.biometricTitle": "Déverrouillage biométrique",
+    "settings.biometricHint":
+      "Active Windows Hello (empreinte, visage ou code confidentiel) comme moyen rapide de déverrouiller ce portefeuille, en plus du mot de passe qui reste toujours disponible en secours pour les actions sensibles.",
+    "settings.biometricUnavailable":
+      "Windows Hello n'est pas configuré sur cet appareil — configurez-le dans les paramètres Windows pour activer cette option.",
+    "settings.biometricEnable": "Activer Windows Hello",
+    "settings.biometricDisable": "Désactiver Windows Hello",
+    "settings.biometricEnableModalTitle": "Activer Windows Hello",
+    "settings.biometricEnableModalSubtitle":
+      "Votre mot de passe reste nécessaire pour les actions sensibles (sauvegarde, suppression de profil, désactivation de cette option). Une confirmation Windows Hello vous sera aussi demandée juste après.",
+    "settings.biometricEnableConfirm": "Activer",
+    "settings.biometricDisableModalTitle": "Désactiver Windows Hello",
+    "settings.biometricDisableConfirm": "Désactiver",
+    "settings.biometricEnabledStatus": "Windows Hello est activé sur cet appareil.",
     "send.title": "Envoyer",
     "send.fromProfile": "Depuis le profil : <strong id=\"send-from-profile\"></strong>",
     "send.mainnetWarning": "/!\\ Réseau MAINNET — ceci dépense de vrais fonds, irréversible.",
@@ -278,6 +307,8 @@ const I18N = {
     "backup.downloadShare": "Download the share file",
     "backup.downloadPrivkey": "Download the private key",
     "unlock.title": "Wallet locked",
+    "unlock.biometricButton": "Unlock with Windows Hello",
+    "unlock.orPassword": "or",
     "unlock.passwordPlaceholder": "Your password",
     "unlock.submit": "Unlock",
     "unlock.gotoRestore": "Restore from a backup",
@@ -397,6 +428,20 @@ const I18N = {
     "settings.regenerateBackupHint":
       "If you lost one or more of your original 3 backup files, generate a new set of 3 (password required). Your addresses don't change.",
     "settings.deviceSecurity": "Device security",
+    "settings.biometricTitle": "Biometric unlock",
+    "settings.biometricHint":
+      "Enables Windows Hello (fingerprint, face, or PIN) as a quick way to unlock this wallet, in addition to your password, which remains available as a fallback for sensitive actions.",
+    "settings.biometricUnavailable":
+      "Windows Hello isn't set up on this device — configure it in Windows Settings to enable this option.",
+    "settings.biometricEnable": "Enable Windows Hello",
+    "settings.biometricDisable": "Disable Windows Hello",
+    "settings.biometricEnableModalTitle": "Enable Windows Hello",
+    "settings.biometricEnableModalSubtitle":
+      "Your password remains required for sensitive actions (backup, profile deletion, disabling this option). A Windows Hello confirmation will also be requested right after.",
+    "settings.biometricEnableConfirm": "Enable",
+    "settings.biometricDisableModalTitle": "Disable Windows Hello",
+    "settings.biometricDisableConfirm": "Disable",
+    "settings.biometricEnabledStatus": "Windows Hello is enabled on this device.",
     "send.title": "Send",
     "send.fromProfile": "From profile: <strong id=\"send-from-profile\"></strong>",
     "send.mainnetWarning": "/!\\ MAINNET network — this spends real funds, irreversible.",
@@ -843,8 +888,49 @@ unlockSubmitBtn.addEventListener("click", withBusyButton(unlockSubmitBtn, async 
   }
 }));
 
+// Le mot de passe reste TOUJOURS visible et fonctionnel juste en dessous
+// (jamais remplacé par la biométrie, seulement complété par elle) : un capteur
+// défaillant ou Windows Hello mal configuré ne doit jamais bloquer l'accès au
+// portefeuille. Le bouton biométrique ne se déclenche que sur un clic explicite
+// (voir `showUnlockView`) — jamais automatiquement à l'arrivée sur cet écran,
+// pour ne jamais faire apparaître un prompt OS sans action volontaire.
+const unlockBiometricBtn = document.getElementById("unlock-biometric-btn");
+const attemptBiometricUnlock = withBusyButton(unlockBiometricBtn, async () => {
+  const errorEl = document.getElementById("unlock-biometric-error");
+  hideError(errorEl);
+  try {
+    const profiles = await invoke("unlock_wallet_biometric");
+    renderDashboardAddresses(profiles);
+    showView("dashboard");
+    refreshAllBalances();
+    startBalanceAutoRefresh();
+  } catch (e) {
+    showError(errorEl, String(e));
+  }
+});
+unlockBiometricBtn.addEventListener("click", attemptBiometricUnlock);
+
+/// Affiche l'écran de déverrouillage et, si la biométrie est activée sur cet
+/// appareil, révèle le bouton dédié — l'utilisateur déclenche lui-même le
+/// prompt Windows Hello en cliquant dessus, jamais automatiquement à l'arrivée
+/// sur cet écran.
+async function showUnlockView() {
+  showView("unlock");
+  const biometricBtn = document.getElementById("unlock-biometric-btn");
+  const divider = document.getElementById("unlock-biometric-divider");
+  hideError(document.getElementById("unlock-biometric-error"));
+  let enrolled = false;
+  try {
+    enrolled = await invoke("biometric_unlock_enrolled");
+  } catch (e) {
+    enrolled = false;
+  }
+  biometricBtn.classList.toggle("hidden", !enrolled);
+  divider.classList.toggle("hidden", !enrolled);
+}
+
 document.getElementById("goto-restore").addEventListener("click", () => showView("restore"));
-document.getElementById("goto-unlock").addEventListener("click", () => showView("unlock"));
+document.getElementById("goto-unlock").addEventListener("click", () => showUnlockView());
 
 document.getElementById("reset-wallet").addEventListener("click", async () => {
   const sure = confirm(t("unlock.resetConfirm"));
@@ -872,6 +958,98 @@ document.getElementById("reset-wallet-dashboard").addEventListener("click", asyn
     alert(t("common.error", { err: e }));
   }
 });
+
+// --- Déverrouillage biométrique (Windows Hello), onglet Paramètres ---------
+
+async function loadBiometricSettings() {
+  const enableBtn = document.getElementById("enable-biometric-btn");
+  const disableBtn = document.getElementById("disable-biometric-btn");
+  const unavailableHint = document.getElementById("biometric-unavailable-hint");
+
+  // Les deux appels sont indépendants (disponibilité Windows Hello côté OS vs.
+  // statut d'activation côté fichiers) : lancés en parallèle plutôt que l'un
+  // après l'autre, même principe que le reste de l'app (voir refreshBalance).
+  let available = false;
+  let enrolled = false;
+  try {
+    [available, enrolled] = await Promise.all([
+      invoke("biometric_unlock_available"),
+      invoke("biometric_unlock_enrolled"),
+    ]);
+  } catch (e) {
+    console.error(e);
+  }
+
+  // `available` est une heuristique d'affichage côté OS (voir
+  // `windows_hello::is_available`), jamais la barrière de sécurité elle-même :
+  // se tromper ici ne peut que proposer un bouton qui échouera ensuite, jamais
+  // affaiblir quoi que ce soit.
+  unavailableHint.classList.toggle("hidden", available || enrolled);
+  enableBtn.classList.toggle("hidden", enrolled || !available);
+  disableBtn.classList.toggle("hidden", !enrolled);
+}
+
+document.getElementById("enable-biometric-btn").addEventListener("click", () => {
+  document.getElementById("enable-biometric-password").value = "";
+  hideError(document.getElementById("enable-biometric-error"));
+  document.getElementById("enable-biometric-password-modal").classList.remove("hidden");
+});
+
+document.getElementById("enable-biometric-cancel").addEventListener("click", () => {
+  document.getElementById("enable-biometric-password-modal").classList.add("hidden");
+  document.getElementById("enable-biometric-password").value = "";
+});
+
+const enableBiometricConfirmBtn = document.getElementById("enable-biometric-confirm");
+enableBiometricConfirmBtn.addEventListener("click", withBusyButton(enableBiometricConfirmBtn, async () => {
+  const errorEl = document.getElementById("enable-biometric-error");
+  hideError(errorEl);
+  const password = document.getElementById("enable-biometric-password").value;
+  if (!password) {
+    showError(errorEl, t("common.passwordRequired"));
+    return;
+  }
+  try {
+    await invoke("enroll_biometric_unlock", { password });
+    document.getElementById("enable-biometric-password-modal").classList.add("hidden");
+    loadBiometricSettings();
+  } catch (e) {
+    showError(errorEl, String(e));
+  } finally {
+    document.getElementById("enable-biometric-password").value = "";
+  }
+}));
+
+document.getElementById("disable-biometric-btn").addEventListener("click", () => {
+  document.getElementById("disable-biometric-password").value = "";
+  hideError(document.getElementById("disable-biometric-error"));
+  document.getElementById("disable-biometric-password-modal").classList.remove("hidden");
+});
+
+document.getElementById("disable-biometric-cancel").addEventListener("click", () => {
+  document.getElementById("disable-biometric-password-modal").classList.add("hidden");
+  document.getElementById("disable-biometric-password").value = "";
+});
+
+const disableBiometricConfirmBtn = document.getElementById("disable-biometric-confirm");
+disableBiometricConfirmBtn.addEventListener("click", withBusyButton(disableBiometricConfirmBtn, async () => {
+  const errorEl = document.getElementById("disable-biometric-error");
+  hideError(errorEl);
+  const password = document.getElementById("disable-biometric-password").value;
+  if (!password) {
+    showError(errorEl, t("common.passwordRequired"));
+    return;
+  }
+  try {
+    await invoke("disable_biometric_unlock", { password });
+    document.getElementById("disable-biometric-password-modal").classList.add("hidden");
+    loadBiometricSettings();
+  } catch (e) {
+    showError(errorEl, String(e));
+  } finally {
+    document.getElementById("disable-biometric-password").value = "";
+  }
+}));
 
 // --- Régénération du kit de sauvegarde ------------------------------------
 
@@ -918,7 +1096,7 @@ function lockWallet() {
   currentProfileIndex = 0;
   stopBalanceAutoRefresh();
   document.getElementById("unlock-password").value = "";
-  showView("unlock");
+  showUnlockView();
 }
 
 document.getElementById("lock-wallet").addEventListener("click", lockWallet);
@@ -965,7 +1143,10 @@ document.querySelectorAll(".nav-tab").forEach((tab) => {
     });
     if (target === "certificate") loadCertificate();
     if (target === "message") loadRecipients();
-    if (target === "settings") loadArchivedProfiles();
+    if (target === "settings") {
+      loadArchivedProfiles();
+      loadBiometricSettings();
+    }
   });
 });
 
@@ -2052,7 +2233,11 @@ document.getElementById("clear-decrypted").addEventListener("click", () => {
 window.addEventListener("DOMContentLoaded", async () => {
   try {
     const exists = await invoke("wallet_exists");
-    showView(exists ? "unlock" : "onboarding");
+    if (exists) {
+      showUnlockView();
+    } else {
+      showView("onboarding");
+    }
   } catch (e) {
     console.error(e);
     showView("onboarding");

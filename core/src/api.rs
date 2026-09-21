@@ -30,6 +30,18 @@ const DEVICE_PRIVKEY_FILE: &str = "device_privkey.asc";
 const DEVICE_VAULT_FILE: &str = "device_vault.asc";
 const BACKUP_IDENTITIES: [&str; 3] = ["backup_a", "backup_b", "backup_c"];
 
+// Déverrouillage biométrique (Windows Hello/TPM, voir windows_hello.rs et
+// enroll_biometric_unlock ci-dessous) : une SECONDE identité PGP, en plus de
+// "device" (mot de passe, inchangée), dont la clé privée est protégée par un
+// secret aléatoire scellé matériellement plutôt qu'un mot de passe humain. Le
+// coffre (`DEVICE_VAULT_FILE`) est alors chiffré pour les deux identités à la
+// fois (voir `pgp_engine::encrypt_share_multi`) — n'importe laquelle des deux
+// clés privées le déchiffre indépendamment.
+const DEVICE_BIOMETRIC_PUBKEY_FILE: &str = "device_biometric_pubkey.asc";
+const DEVICE_BIOMETRIC_PRIVKEY_FILE: &str = "device_biometric_privkey.asc";
+const DEVICE_BIOMETRIC_SEALED_SECRET_FILE: &str = "device_biometric_sealed_secret.bin";
+const DEVICE_BIOMETRIC_KEY_META_FILE: &str = "device_biometric_key_meta.json";
+
 const UNLOCK_ATTEMPTS_FILE: &str = "unlock_attempts.json";
 /// Nombre d'échecs consécutifs tolérés avant qu'un délai commence à s'appliquer.
 const MAX_FREE_ATTEMPTS: u32 = 5;
@@ -102,6 +114,59 @@ fn record_unlock_failure(data_dir: &Path) {
 
 fn reset_unlock_attempts(data_dir: &Path) {
     let _ = std::fs::remove_file(unlock_attempts_path(data_dir));
+}
+
+// Compteur d'échecs SÉPARÉ pour le chemin biométrique (jamais partagé avec
+// `UNLOCK_ATTEMPTS_FILE`/le mot de passe) : un prompt Windows Hello qui traîne,
+// échoue ou est spammé ne doit jamais mettre en attente le déverrouillage par
+// mot de passe, et inversement. Copie quasi verbatim de la logique ci-dessus
+// (`required_lockout_secs` est une fonction pure sur un compteur, réutilisée
+// telle quelle) — dupliquée plutôt que paramétrée pour ne surtout pas risquer de
+// modifier, même indirectement, le chemin mot de passe déjà audité.
+const BIOMETRIC_UNLOCK_ATTEMPTS_FILE: &str = "unlock_attempts_biometric.json";
+
+fn biometric_unlock_attempts_path(data_dir: &Path) -> std::path::PathBuf {
+    data_dir.join(BIOMETRIC_UNLOCK_ATTEMPTS_FILE)
+}
+
+fn read_biometric_unlock_attempts(data_dir: &Path) -> UnlockAttempts {
+    std::fs::read_to_string(biometric_unlock_attempts_path(data_dir))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+fn write_biometric_unlock_attempts(data_dir: &Path, attempts: &UnlockAttempts) {
+    if let Ok(s) = serde_json::to_string(attempts) {
+        let _ = std::fs::write(biometric_unlock_attempts_path(data_dir), s);
+    }
+}
+
+fn enforce_biometric_unlock_lockout(data_dir: &Path) -> Result<()> {
+    let attempts = read_biometric_unlock_attempts(data_dir);
+    let delay = required_lockout_secs(attempts.consecutive_failures);
+    if delay == 0 {
+        return Ok(());
+    }
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+    let elapsed = now.saturating_sub(attempts.last_failure_unix);
+    anyhow::ensure!(
+        elapsed >= delay,
+        "trop de tentatives biométriques incorrectes récentes ; réessayez dans {} seconde(s)",
+        delay - elapsed
+    );
+    Ok(())
+}
+
+fn record_biometric_unlock_failure(data_dir: &Path) {
+    let mut attempts = read_biometric_unlock_attempts(data_dir);
+    attempts.consecutive_failures = attempts.consecutive_failures.saturating_add(1);
+    attempts.last_failure_unix = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+    write_biometric_unlock_attempts(data_dir, &attempts);
+}
+
+fn reset_biometric_unlock_attempts(data_dir: &Path) {
+    let _ = std::fs::remove_file(biometric_unlock_attempts_path(data_dir));
 }
 
 pub struct Addresses {
@@ -647,6 +712,225 @@ fn unlock_seed(data_dir: &Path, device_password: &str) -> Result<Zeroizing<Vec<u
             Err(e)
         }
     }
+}
+
+// --- Déverrouillage biométrique (Windows Hello/TPM) ------------------------
+// Chemin ADDITIONNEL au mot de passe, jamais un remplacement : voir le
+// commentaire sur les constantes `DEVICE_BIOMETRIC_*` plus haut, et
+// `windows_hello.rs` pour le "pourquoi" du choix TPM plutôt que DPAPI.
+
+/// Abstraction sur "sceller/récupérer un secret via une vérification
+/// biométrique locale" — permet de tester toute l'orchestration
+/// (activation/désactivation/déverrouillage, fichiers, verrou anti-brute-force)
+/// avec un faux scelleur en mémoire, sans matériel Windows Hello réel. En
+/// production, toujours `WindowsHelloSealer`.
+pub(crate) trait SecretSealer {
+    fn enroll(&self, secret: &[u8]) -> Result<(String, Vec<u8>)>;
+    fn unlock(&self, key_name: &str, sealed_blob: &[u8]) -> Result<Zeroizing<Vec<u8>>>;
+    fn remove(&self, key_name: &str) -> Result<()>;
+}
+
+#[cfg(windows)]
+struct WindowsHelloSealer;
+
+#[cfg(windows)]
+impl SecretSealer for WindowsHelloSealer {
+    fn enroll(&self, secret: &[u8]) -> Result<(String, Vec<u8>)> {
+        crate::windows_hello::enroll(secret)
+    }
+    fn unlock(&self, key_name: &str, sealed_blob: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
+        crate::windows_hello::unlock(key_name, sealed_blob)
+    }
+    fn remove(&self, key_name: &str) -> Result<()> {
+        crate::windows_hello::remove(key_name)
+    }
+}
+
+#[cfg(not(windows))]
+struct WindowsHelloSealer;
+
+#[cfg(not(windows))]
+impl SecretSealer for WindowsHelloSealer {
+    fn enroll(&self, _secret: &[u8]) -> Result<(String, Vec<u8>)> {
+        Err(anyhow::anyhow!("le déverrouillage biométrique n'est disponible que sous Windows"))
+    }
+    fn unlock(&self, _key_name: &str, _sealed_blob: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
+        Err(anyhow::anyhow!("le déverrouillage biométrique n'est disponible que sous Windows"))
+    }
+    fn remove(&self, _key_name: &str) -> Result<()> {
+        Err(anyhow::anyhow!("le déverrouillage biométrique n'est disponible que sous Windows"))
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct BiometricKeyMeta {
+    key_name: String,
+    created_unix: u64,
+}
+
+fn read_biometric_meta(data_dir: &Path) -> Result<BiometricKeyMeta> {
+    let content = std::fs::read_to_string(data_dir.join(DEVICE_BIOMETRIC_KEY_META_FILE))
+        .context("déverrouillage biométrique non activé sur cet appareil")?;
+    serde_json::from_str(&content).context("métadonnées de la clé biométrique corrompues")
+}
+
+/// `true` si le déverrouillage biométrique est activé sur cet appareil.
+pub fn biometric_unlock_enrolled(data_dir: &Path) -> bool {
+    data_dir.join(DEVICE_BIOMETRIC_SEALED_SECRET_FILE).exists()
+}
+
+fn try_remove_existing_biometric_enrollment(data_dir: &Path, sealer: &dyn SecretSealer) {
+    if let Ok(meta) = read_biometric_meta(data_dir) {
+        let _ = sealer.remove(&meta.key_name);
+    }
+}
+
+/// Active le déverrouillage biométrique EN PLUS du mot de passe existant,
+/// jamais à sa place : ré-chiffre `device_vault.asc` pour DEUX destinataires
+/// (l'identité "device" existante, inchangée, + une nouvelle identité
+/// "device_biometric" dont la passphrase est un secret aléatoire de 256 bits
+/// scellé par le TPM, voir `windows_hello::enroll`). Exige le mot de passe
+/// actuel de l'appareil (même verrou anti-brute-force que les autres actions
+/// sensibles, via `unlock_seed`) : activer ce second chemin est une action de
+/// sécurité, pas un simple confort.
+///
+/// Ré-enrôler alors qu'un enrôlement existe déjà le remplace proprement
+/// (l'ancienne clé TPM est supprimée en best-effort) plutôt que d'exiger un
+/// `disable_biometric_unlock` préalable — utile si l'utilisateur reconfigure
+/// son empreinte/visage Windows Hello.
+pub fn enroll_biometric_unlock(data_dir: &Path, device_password: &str) -> Result<()> {
+    enroll_biometric_unlock_with(data_dir, device_password, &WindowsHelloSealer)
+}
+
+fn enroll_biometric_unlock_with(data_dir: &Path, device_password: &str, sealer: &dyn SecretSealer) -> Result<()> {
+    let master_entropy = unlock_seed(data_dir, device_password)?;
+    let _entropy_lock = memory_guard::lock(&master_entropy);
+
+    try_remove_existing_biometric_enrollment(data_dir, sealer);
+
+    let secret = Zeroizing::new(entropy::generate_master_entropy());
+    let biometric_passphrase = Zeroizing::new(hex::encode(&secret[..]));
+    let (bio_pub, bio_priv) = generate_pgp_identity("device_biometric", &biometric_passphrase)?;
+
+    let (key_name, sealed_blob) = sealer.enroll(&secret)?;
+
+    let device_pub = std::fs::read(data_dir.join(DEVICE_PUBKEY_FILE)).context("lecture de la clé publique de l'appareil")?;
+    let new_vault = pgp_engine::encrypt_share_multi(&master_entropy, &[&device_pub, &bio_pub])?;
+
+    // Écrit-vérifie-renomme : le mot de passe existant doit pouvoir déchiffrer
+    // le NOUVEAU coffre avant que l'ancien ne soit jamais écrasé — sans ça, un
+    // nouveau coffre mal formé casserait le seul chemin de déverrouillage qui
+    // existait avant cet appel.
+    let tmp_vault_path = data_dir.join("tmp_device_vault_new.asc");
+    std::fs::write(&tmp_vault_path, &new_vault)?;
+    let _guard = TempFileGuard(&tmp_vault_path);
+    let privkey_path = data_dir.join(DEVICE_PRIVKEY_FILE);
+    pgp_engine::decrypt_share(&new_vault, &privkey_path.to_string_lossy(), device_password)
+        .context("vérification post-ré-chiffrement du coffre : le mot de passe existant ne fonctionne plus, activation annulée")?;
+
+    std::fs::write(data_dir.join(DEVICE_BIOMETRIC_PUBKEY_FILE), &bio_pub)?;
+    std::fs::write(data_dir.join(DEVICE_BIOMETRIC_PRIVKEY_FILE), &bio_priv)?;
+    std::fs::write(data_dir.join(DEVICE_BIOMETRIC_SEALED_SECRET_FILE), &sealed_blob)?;
+    let created_unix = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+    let meta = BiometricKeyMeta { key_name, created_unix };
+    std::fs::write(data_dir.join(DEVICE_BIOMETRIC_KEY_META_FILE), serde_json::to_string(&meta)?)?;
+    std::fs::rename(&tmp_vault_path, data_dir.join(DEVICE_VAULT_FILE))?; // dernière étape, atomique
+    reset_biometric_unlock_attempts(data_dir);
+    Ok(())
+}
+
+/// Désactive le déverrouillage biométrique : revient à un coffre protégé par le
+/// seul mot de passe (comme avant toute activation), supprime la clé TPM
+/// (best-effort) et les fichiers biométriques. Exige le mot de passe de
+/// l'appareil — jamais la biométrie elle-même pour se désactiver.
+pub fn disable_biometric_unlock(data_dir: &Path, device_password: &str) -> Result<()> {
+    disable_biometric_unlock_with(data_dir, device_password, &WindowsHelloSealer)
+}
+
+fn disable_biometric_unlock_with(data_dir: &Path, device_password: &str, sealer: &dyn SecretSealer) -> Result<()> {
+    let master_entropy = unlock_seed(data_dir, device_password)?;
+    let _entropy_lock = memory_guard::lock(&master_entropy);
+
+    let device_pub = std::fs::read(data_dir.join(DEVICE_PUBKEY_FILE)).context("lecture de la clé publique de l'appareil")?;
+    let tmp_pub_path = data_dir.join("tmp_device_pub_disable.asc");
+    let new_vault = encrypt_with_armored_pubkey(&master_entropy, &tmp_pub_path, &device_pub)?;
+
+    let tmp_vault_path = data_dir.join("tmp_device_vault_disable.asc");
+    std::fs::write(&tmp_vault_path, &new_vault)?;
+    let _guard = TempFileGuard(&tmp_vault_path);
+    let privkey_path = data_dir.join(DEVICE_PRIVKEY_FILE);
+    pgp_engine::decrypt_share(&new_vault, &privkey_path.to_string_lossy(), device_password)
+        .context("vérification post-ré-chiffrement du coffre : le mot de passe existant ne fonctionne plus, désactivation annulée")?;
+    std::fs::rename(&tmp_vault_path, data_dir.join(DEVICE_VAULT_FILE))?;
+
+    if let Ok(meta) = read_biometric_meta(data_dir) {
+        let _ = sealer.remove(&meta.key_name);
+    }
+    for file in [
+        DEVICE_BIOMETRIC_PUBKEY_FILE,
+        DEVICE_BIOMETRIC_PRIVKEY_FILE,
+        DEVICE_BIOMETRIC_SEALED_SECRET_FILE,
+        DEVICE_BIOMETRIC_KEY_META_FILE,
+    ] {
+        let _ = std::fs::remove_file(data_dir.join(file));
+    }
+    reset_biometric_unlock_attempts(data_dir);
+    Ok(())
+}
+
+/// Sérialise le cycle lecture-tentative-écriture du compteur d'échecs
+/// biométrique — même raison que `UNLOCK_MUTEX` pour le mot de passe, mutex
+/// entièrement séparé pour ne jamais faire attendre l'un sur l'autre.
+static BIOMETRIC_UNLOCK_MUTEX: Mutex<()> = Mutex::new(());
+
+fn unlock_seed_biometric(data_dir: &Path, sealer: &dyn SecretSealer) -> Result<Zeroizing<Vec<u8>>> {
+    let _serialize = BIOMETRIC_UNLOCK_MUTEX.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    let vault = std::fs::read(data_dir.join(DEVICE_VAULT_FILE)).context("coffre local introuvable")?;
+    enforce_biometric_unlock_lockout(data_dir)?;
+    let meta = read_biometric_meta(data_dir)?;
+    let sealed_blob = std::fs::read(data_dir.join(DEVICE_BIOMETRIC_SEALED_SECRET_FILE))
+        .context("secret biométrique scellé introuvable")?;
+
+    let secret = match sealer.unlock(&meta.key_name, &sealed_blob) {
+        Ok(s) => s,
+        Err(e) => {
+            record_biometric_unlock_failure(data_dir);
+            return Err(e);
+        }
+    };
+    let passphrase = Zeroizing::new(hex::encode(&secret[..]));
+    let privkey_path = data_dir.join(DEVICE_BIOMETRIC_PRIVKEY_FILE);
+    match pgp_engine::decrypt_share(&vault, &privkey_path.to_string_lossy(), &passphrase) {
+        Ok(seed) => {
+            reset_biometric_unlock_attempts(data_dir);
+            Ok(Zeroizing::new(seed))
+        }
+        Err(e) => {
+            record_biometric_unlock_failure(data_dir);
+            Err(e)
+        }
+    }
+}
+
+/// Déverrouille le coffre via la biométrie (Windows Hello/TPM) plutôt que le mot
+/// de passe — chemin parallèle à `unlock_wallet`, jamais mêlé à son verrou
+/// anti-brute-force ni à son mutex. Renvoie les mêmes adresses, pour tous les
+/// profils actifs.
+pub fn unlock_wallet_biometric(data_dir: &Path) -> Result<Vec<ProfileAddresses>> {
+    unlock_wallet_biometric_with(data_dir, &WindowsHelloSealer)
+}
+
+fn unlock_wallet_biometric_with(data_dir: &Path, sealer: &dyn SecretSealer) -> Result<Vec<ProfileAddresses>> {
+    let seed = unlock_seed_biometric(data_dir, sealer)?;
+    let _seed_lock = memory_guard::lock(&seed);
+    list_profiles(data_dir)
+        .into_iter()
+        .map(|profile| {
+            let addresses = derive_addresses(&seed, profile.index)?;
+            Ok(ProfileAddresses { profile, addresses: Some(addresses) })
+        })
+        .collect()
 }
 
 pub fn get_evm_balance(address: &str, network: &wallet_flow::EvmNetwork) -> Result<u128> {
@@ -1305,6 +1589,192 @@ mod tests {
             enforce_unlock_lockout(&dir).is_ok(),
             "un coffre tout juste créé ne doit jamais hériter d'un verrou résiduel"
         );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // --- Déverrouillage biométrique ----------------------------------------
+    // `FakeSealer` ne fait AUCUN vrai scellement (le blob "scellé" est le secret
+    // en clair) : la propriété testée ici est l'orchestration côté api.rs
+    // (fichiers, ré-chiffrement du coffre, verrou anti-brute-force), pas la
+    // cryptographie NCrypt/TPM elle-même — voir `windows_hello.rs` et le spike
+    // manuel pour cette partie-là, non automatisable.
+    struct FakeSealer {
+        fail_enroll: bool,
+    }
+
+    impl SecretSealer for FakeSealer {
+        fn enroll(&self, secret: &[u8]) -> Result<(String, Vec<u8>)> {
+            if self.fail_enroll {
+                return Err(anyhow::anyhow!("échec simulé du scelleur (TPM indisponible)"));
+            }
+            Ok(("fake-tpm-key".to_string(), secret.to_vec()))
+        }
+        fn unlock(&self, _key_name: &str, sealed_blob: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
+            Ok(Zeroizing::new(sealed_blob.to_vec()))
+        }
+        fn remove(&self, _key_name: &str) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn enroll_biometric_unlock_adds_a_second_recipient_without_breaking_the_existing_password() {
+        let dir = std::env::temp_dir().join(format!("pgp_wallet_enroll_bio_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let password = "un mot de passe de test bien assez long";
+        create_wallet(&dir, password).expect("création du wallet");
+        let before = initial_addresses_for(&dir, password);
+
+        enroll_biometric_unlock_with(&dir, password, &FakeSealer { fail_enroll: false })
+            .expect("activation de la biométrie");
+
+        let after = unlock_wallet(&dir, password).expect("le mot de passe doit toujours déverrouiller le coffre");
+        let after_addresses = after.into_iter().find(|p| p.profile.index == 0).unwrap().addresses.unwrap();
+        assert_eq!(before.evm, after_addresses.evm, "les adresses ne doivent pas changer après activation");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn enroll_biometric_unlock_then_unlock_wallet_biometric_returns_the_same_addresses_as_password_unlock() {
+        let dir = std::env::temp_dir().join(format!("pgp_wallet_bio_unlock_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let password = "un mot de passe de test bien assez long";
+        create_wallet(&dir, password).expect("création du wallet");
+        enroll_biometric_unlock_with(&dir, password, &FakeSealer { fail_enroll: false })
+            .expect("activation de la biométrie");
+
+        assert!(biometric_unlock_enrolled(&dir));
+
+        let via_password = initial_addresses_for(&dir, password);
+        let via_biometric = unlock_wallet_biometric_with(&dir, &FakeSealer { fail_enroll: false })
+            .expect("déverrouillage biométrique")
+            .into_iter()
+            .find(|p| p.profile.index == 0)
+            .unwrap()
+            .addresses
+            .unwrap();
+        assert_eq!(via_password.evm, via_biometric.evm);
+        assert_eq!(via_password.solana, via_biometric.solana);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Garde-fou central de toute cette fonctionnalité : le verrou anti-brute-force
+    /// du mot de passe (compteur, délai) doit se comporter EXACTEMENT comme avant
+    /// l'existence de la biométrie, avec ou sans elle activée.
+    #[test]
+    fn wrong_device_password_lockout_is_unaffected_by_biometric_enrollment() {
+        let dir = std::env::temp_dir().join(format!("pgp_wallet_bio_lockout_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let password = "un mot de passe de test bien assez long";
+        create_wallet(&dir, password).expect("création du wallet");
+        enroll_biometric_unlock_with(&dir, password, &FakeSealer { fail_enroll: false })
+            .expect("activation de la biométrie");
+
+        for _ in 0..MAX_FREE_ATTEMPTS {
+            assert!(unlock_wallet(&dir, "mauvais mot de passe").is_err());
+        }
+        assert!(
+            enforce_unlock_lockout(&dir).is_err(),
+            "le verrou mot de passe doit se déclencher normalement, biométrie activée ou non"
+        );
+        // Le compteur biométrique, lui, ne doit pas avoir bougé : ce sont des
+        // tentatives par mot de passe, jamais comptées sur l'autre chemin.
+        assert!(enforce_biometric_unlock_lockout(&dir).is_ok());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn disable_biometric_unlock_returns_the_vault_to_single_recipient_and_removes_the_four_files() {
+        let dir = std::env::temp_dir().join(format!("pgp_wallet_bio_disable_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let password = "un mot de passe de test bien assez long";
+        create_wallet(&dir, password).expect("création du wallet");
+        enroll_biometric_unlock_with(&dir, password, &FakeSealer { fail_enroll: false })
+            .expect("activation de la biométrie");
+        assert!(biometric_unlock_enrolled(&dir));
+
+        disable_biometric_unlock_with(&dir, password, &FakeSealer { fail_enroll: false })
+            .expect("désactivation de la biométrie");
+
+        assert!(!biometric_unlock_enrolled(&dir));
+        for file in [
+            DEVICE_BIOMETRIC_PUBKEY_FILE,
+            DEVICE_BIOMETRIC_PRIVKEY_FILE,
+            DEVICE_BIOMETRIC_SEALED_SECRET_FILE,
+            DEVICE_BIOMETRIC_KEY_META_FILE,
+        ] {
+            assert!(!dir.join(file).exists(), "{file} devrait avoir été supprimé");
+        }
+        assert!(unlock_wallet(&dir, password).is_ok(), "le mot de passe doit toujours fonctionner après désactivation");
+        assert!(
+            unlock_wallet_biometric_with(&dir, &FakeSealer { fail_enroll: false }).is_err(),
+            "la biométrie ne doit plus fonctionner après désactivation"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn enroll_biometric_unlock_twice_replaces_the_previous_enrollment_cleanly() {
+        let dir = std::env::temp_dir().join(format!("pgp_wallet_bio_reenroll_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let password = "un mot de passe de test bien assez long";
+        create_wallet(&dir, password).expect("création du wallet");
+
+        enroll_biometric_unlock_with(&dir, password, &FakeSealer { fail_enroll: false }).expect("premier enrôlement");
+        enroll_biometric_unlock_with(&dir, password, &FakeSealer { fail_enroll: false })
+            .expect("second enrôlement (ré-enrôlement) doit réussir sans exiger de désactivation préalable");
+
+        assert!(unlock_wallet(&dir, password).is_ok());
+        assert!(unlock_wallet_biometric_with(&dir, &FakeSealer { fail_enroll: false }).is_ok());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn enroll_biometric_unlock_rejects_a_wrong_device_password_and_leaves_the_vault_untouched() {
+        let dir = std::env::temp_dir().join(format!("pgp_wallet_bio_wrongpass_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let password = "un mot de passe de test bien assez long";
+        create_wallet(&dir, password).expect("création du wallet");
+        let vault_before = std::fs::read(dir.join(DEVICE_VAULT_FILE)).unwrap();
+
+        assert!(enroll_biometric_unlock_with(&dir, "mauvais mot de passe", &FakeSealer { fail_enroll: false }).is_err());
+
+        let vault_after = std::fs::read(dir.join(DEVICE_VAULT_FILE)).unwrap();
+        assert_eq!(vault_before, vault_after, "un mauvais mot de passe ne doit jamais toucher au coffre");
+        assert!(!biometric_unlock_enrolled(&dir));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Si le scelleur (TPM réel) échoue au moment de l'enrôlement, le coffre doit
+    /// rester strictement identique à avant — motif écrire-vérifier-renommer
+    /// (voir `enroll_biometric_unlock_with`).
+    #[test]
+    fn enroll_biometric_unlock_leaves_the_vault_untouched_when_the_sealer_fails() {
+        let dir = std::env::temp_dir().join(format!("pgp_wallet_bio_sealer_fail_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let password = "un mot de passe de test bien assez long";
+        create_wallet(&dir, password).expect("création du wallet");
+        let vault_before = std::fs::read(dir.join(DEVICE_VAULT_FILE)).unwrap();
+
+        assert!(enroll_biometric_unlock_with(&dir, password, &FakeSealer { fail_enroll: true }).is_err());
+
+        let vault_after = std::fs::read(dir.join(DEVICE_VAULT_FILE)).unwrap();
+        assert_eq!(vault_before, vault_after, "un échec du scelleur ne doit jamais toucher au coffre");
+        assert!(!biometric_unlock_enrolled(&dir));
 
         let _ = std::fs::remove_dir_all(&dir);
     }

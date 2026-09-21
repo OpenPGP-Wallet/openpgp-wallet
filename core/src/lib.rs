@@ -15,3 +15,5 @@ pub mod history;
 pub mod wallet_flow;
 pub mod api;
 pub mod messaging;
+#[cfg(windows)]
+pub mod windows_hello;

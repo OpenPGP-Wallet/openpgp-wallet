@@ -530,6 +530,90 @@ fn unlock_wallet(password: String, app: tauri::AppHandle) -> Result<Vec<ProfileD
         .t_err()
 }
 
+/// Heuristique d'affichage uniquement (ne fait pas partie de la barrière de
+/// sécurité) : indique si Windows Hello semble configuré sur cette machine,
+/// pour ne proposer le bouton d'activation que quand ça a une chance de
+/// fonctionner. `false` sur toute plateforme autre que Windows.
+#[tauri::command]
+fn biometric_unlock_available() -> bool {
+    #[cfg(windows)]
+    {
+        pgp_wallet_poc::windows_hello::is_available()
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+#[tauri::command]
+fn biometric_unlock_enrolled(app: tauri::AppHandle) -> Result<bool, String> {
+    let dir = data_dir(&app)?;
+    Ok(api::biometric_unlock_enrolled(&dir))
+}
+
+/// Même raison que `confirm_regenerate_backup_native` : activer un second moyen
+/// de déverrouiller le coffre est une action de sécurité, rendue visible et
+/// impossible à déclencher silencieusement par un frontend compromis grâce au
+/// dialogue natif de l'OS.
+fn confirm_enroll_biometric_native(app: &tauri::AppHandle) -> bool {
+    app.dialog()
+        .message(
+            "Ceci va activer un second moyen de déverrouiller ce portefeuille sur CET appareil, via \
+             Windows Hello (empreinte, visage ou code confidentiel), en plus du mot de passe actuel — \
+             celui-ci reste nécessaire pour les actions sensibles (sauvegarde, suppression de profil, \
+             désactivation de cette option). Ne continuez que si vous avez initié cette action vous-même.",
+        )
+        .title("Confirmer l'activation de Windows Hello")
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancel)
+        .blocking_show()
+}
+
+#[tauri::command]
+fn enroll_biometric_unlock(password: String, app: tauri::AppHandle) -> Result<(), String> {
+    let password = Zeroizing::new(password);
+    let dir = data_dir(&app)?;
+    if !confirm_enroll_biometric_native(&app) {
+        return Err(translate_error("Activation annulée (confirmation refusée)."));
+    }
+    api::enroll_biometric_unlock(&dir, &password).t_err()
+}
+
+/// Déverrouille le coffre via Windows Hello plutôt que le mot de passe — voir
+/// `api::unlock_wallet_biometric`. Renvoie les mêmes `ProfileDto` que
+/// `unlock_wallet`.
+#[tauri::command]
+fn unlock_wallet_biometric(app: tauri::AppHandle) -> Result<Vec<ProfileDto>, String> {
+    let dir = data_dir(&app)?;
+    api::unlock_wallet_biometric(&dir)
+        .map(|profiles| profiles.into_iter().map(Into::into).collect())
+        .t_err()
+}
+
+fn confirm_disable_biometric_native(app: &tauri::AppHandle) -> bool {
+    app.dialog()
+        .message(
+            "Ceci va désactiver le déverrouillage par Windows Hello sur cet appareil — seul le mot de \
+             passe permettra ensuite de déverrouiller ce portefeuille. Ne continuez que si vous avez \
+             initié cette action vous-même.",
+        )
+        .title("Confirmer la désactivation de Windows Hello")
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancel)
+        .blocking_show()
+}
+
+#[tauri::command]
+fn disable_biometric_unlock(password: String, app: tauri::AppHandle) -> Result<(), String> {
+    let password = Zeroizing::new(password);
+    let dir = data_dir(&app)?;
+    if !confirm_disable_biometric_native(&app) {
+        return Err(translate_error("Désactivation annulée (confirmation refusée)."));
+    }
+    api::disable_biometric_unlock(&dir, &password).t_err()
+}
+
 /// Ajoute un profil (nouvelle adresse par réseau, dérivée de la même seed — voir
 /// `api::create_profile`) : redemande le mot de passe puisque dériver une adresse
 /// suppose de redéchiffrer la seed, jamais mise en cache entre deux appels.
@@ -1081,6 +1165,11 @@ pub fn run() {
             create_wallet,
             regenerate_backup_kit,
             unlock_wallet,
+            biometric_unlock_available,
+            biometric_unlock_enrolled,
+            enroll_biometric_unlock,
+            unlock_wallet_biometric,
+            disable_biometric_unlock,
             create_profile,
             delete_profile,
             archive_profile,

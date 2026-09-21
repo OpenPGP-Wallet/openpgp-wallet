@@ -119,6 +119,14 @@ body {
   line-height: 1.5;
 }
 
+/* Séparateur textuel entre le bouton biométrique et le champ mot de passe sur
+   l'écran de déverrouillage (visible seulement quand la biométrie est activée). */
+.divider-text {
+  color: var(--muted);
+  text-align: center;
+  margin: 4px 0;
+}
+
 .card {
   background: var(--surface);
   border: 1px solid var(--border);

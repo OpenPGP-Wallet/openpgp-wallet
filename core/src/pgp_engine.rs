@@ -39,6 +39,61 @@ pub fn encrypt_share(share: &[u8], pubkey_path: &str) -> Result<Vec<u8>> {
     Ok(sink)
 }
 
+/// Chiffre une part (bytes) pour PLUSIEURS destinataires PGP à la fois (une seule
+/// clé de session, un PKESK indépendant par certificat) — même principe que
+/// `messaging::encrypt_message`, mais sur des octets bruts non armurés (le coffre
+/// de l'appareil reste binaire) et à partir de certificats déjà en mémoire plutôt
+/// que d'un chemin de fichier. N'importe lequel des destinataires peut déchiffrer
+/// indépendamment le résultat avec sa propre clé privée, sans connaître les
+/// autres. Échoue (fail-closed) si UN SEUL des certificats fournis n'a aucune
+/// sous-clé de chiffrement valide, plutôt que de chiffrer silencieusement pour
+/// moins de destinataires que demandé — même garde-fou, pour la même raison, que
+/// `messaging::encrypt_message` (voir son test de régression
+/// `encrypt_message_fails_closed_when_one_recipient_has_no_usable_encryption_subkey`).
+pub fn encrypt_share_multi(share: &[u8], pubkeys_armored: &[&[u8]]) -> Result<Vec<u8>> {
+    if pubkeys_armored.is_empty() {
+        return Err(anyhow!("au moins un destinataire est requis"));
+    }
+
+    let policy = StandardPolicy::new();
+    let certs = pubkeys_armored
+        .iter()
+        .map(|k| Cert::from_bytes(k).context("clé publique PGP invalide"))
+        .collect::<Result<Vec<_>>>()?;
+
+    let mut recipients = Vec::new();
+    for cert in &certs {
+        let cert_recipients: Vec<_> = cert
+            .keys()
+            .with_policy(&policy, None)
+            .supported()
+            .alive()
+            .revoked(false)
+            .for_transport_encryption()
+            .collect();
+        if cert_recipients.is_empty() {
+            return Err(anyhow!(
+                "un des certificats fournis n'a aucune sous-clé de chiffrement valide (expirée ou révoquée)"
+            ));
+        }
+        recipients.extend(cert_recipients);
+    }
+
+    let mut sink = Vec::new();
+    {
+        let message = Message::new(&mut sink);
+        let message = Encryptor::for_recipients(message, recipients)
+            .build()
+            .context("initialisation du chiffreur PGP")?;
+        let mut writer = LiteralWriter::new(message)
+            .build()
+            .context("initialisation de l'écriture littérale")?;
+        writer.write_all(share)?;
+        writer.finalize()?;
+    }
+    Ok(sink)
+}
+
 /// Aide de déchiffrement pour l'API stream de sequoia : fournit la clé privée
 /// déjà déverrouillée (par passphrase) pour ouvrir le paquet de session PGP.
 struct DecryptionKeyHelper {
@@ -174,5 +229,92 @@ mod tests {
         assert!(decrypt_share(&encrypted, &privkey_path.to_string_lossy(), "mauvais mot de passe").is_err());
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn generate_test_identity(passphrase: &str) -> (Vec<u8>, Vec<u8>) {
+        let (cert, _revocation) = CertBuilder::new()
+            .add_userid("Test <test@example.invalid>")
+            .add_transport_encryption_subkey()
+            .set_password(Some(Password::from(passphrase)))
+            .generate()
+            .expect("génération de la clé de test");
+
+        let mut pubkey_armored = Vec::new();
+        {
+            let mut writer = armor::Writer::new(&mut pubkey_armored, armor::Kind::PublicKey).unwrap();
+            cert.serialize(&mut writer).unwrap();
+            writer.finalize().unwrap();
+        }
+        let mut privkey_armored = Vec::new();
+        {
+            let mut writer = armor::Writer::new(&mut privkey_armored, armor::Kind::SecretKey).unwrap();
+            cert.as_tsk().serialize(&mut writer).unwrap();
+            writer.finalize().unwrap();
+        }
+        (pubkey_armored, privkey_armored)
+    }
+
+    /// Garantie centrale du déverrouillage biométrique : un coffre chiffré pour
+    /// deux destinataires doit être déchiffrable indépendamment par l'un OU
+    /// l'autre, chacun avec sa propre passphrase, sans que l'un ait besoin de
+    /// connaître ou d'utiliser la clé de l'autre.
+    #[test]
+    fn encrypt_share_multi_lets_either_recipient_decrypt_independently() {
+        let dir = std::env::temp_dir().join(format!("pgp_engine_multi_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let (pub_a, priv_a) = generate_test_identity("passphrase du destinataire A");
+        let (pub_b, priv_b) = generate_test_identity("passphrase du destinataire B, bien différente");
+
+        let priv_a_path = dir.join("a_privkey.asc");
+        let priv_b_path = dir.join("b_privkey.asc");
+        std::fs::write(&priv_a_path, &priv_a).unwrap();
+        std::fs::write(&priv_b_path, &priv_b).unwrap();
+
+        let plaintext = b"secret partage entre deux identites independantes";
+        let encrypted = encrypt_share_multi(plaintext, &[&pub_a, &pub_b]).expect("chiffrement multi-destinataires");
+
+        let decrypted_by_a = decrypt_share(&encrypted, &priv_a_path.to_string_lossy(), "passphrase du destinataire A")
+            .expect("déchiffrement par A");
+        assert_eq!(decrypted_by_a, plaintext);
+
+        let decrypted_by_b = decrypt_share(
+            &encrypted,
+            &priv_b_path.to_string_lossy(),
+            "passphrase du destinataire B, bien différente",
+        )
+        .expect("déchiffrement par B");
+        assert_eq!(decrypted_by_b, plaintext);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Régression : sans cette vérification, un certificat sans sous-clé de
+    /// chiffrement utilisable contribuerait silencieusement 0 destinataire au
+    /// lieu de faire échouer l'opération entière (voir la même faille corrigée
+    /// dans `messaging::encrypt_message`).
+    #[test]
+    fn encrypt_share_multi_fails_closed_when_one_recipient_has_no_usable_encryption_subkey() {
+        let (pub_a, _priv_a) = generate_test_identity("passphrase du destinataire A");
+        // Un certificat sans sous-clé de chiffrement du tout (seulement une clé de
+        // signature) : aucun `for_transport_encryption()` disponible.
+        let (cert_no_enc, _) = CertBuilder::new()
+            .add_userid("Sans chiffrement <no-enc@example.invalid>")
+            .generate()
+            .expect("génération de la clé sans sous-clé de chiffrement");
+        let mut pub_no_enc = Vec::new();
+        {
+            let mut writer = armor::Writer::new(&mut pub_no_enc, armor::Kind::PublicKey).unwrap();
+            cert_no_enc.serialize(&mut writer).unwrap();
+            writer.finalize().unwrap();
+        }
+
+        let result = encrypt_share_multi(b"peu importe", &[&pub_a, &pub_no_enc]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn encrypt_share_multi_requires_at_least_one_recipient() {
+        assert!(encrypt_share_multi(b"peu importe", &[]).is_err());
     }
 }

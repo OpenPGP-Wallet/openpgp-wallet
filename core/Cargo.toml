@@ -77,6 +77,17 @@ region = "3"
 # présente sur le système, sans dépendance externe à installer.
 [target.'cfg(windows)'.dependencies]
 sequoia-openpgp = { version = "2.1", default-features = false, features = ["crypto-cng", "compression"] }
+# Déverrouillage biométrique (Windows Hello/TPM, voir windows_hello.rs) : liaisons
+# officielles Microsoft pour NCrypt/BCrypt (clé persistée dans le TPM via le
+# fournisseur "Microsoft Platform Crypto Provider") et UserConsentVerifier (simple
+# heuristique d'affichage, pas la barrière de sécurité elle-même). Déjà présent
+# *transitivement* (v0.61.3, via Tauri/WebView2/tao pour le fenêtrage) mais sans ces
+# feature flags : ceci en fait une dépendance directe.
+windows = { version = "0.61", features = [
+    "Win32_Security_Cryptography",
+    "Win32_Foundation",
+    "Security_Credentials_UI",
+] }
 
 # macOS/Linux/iOS/Android : "crypto-cng" n'existe pas hors Windows (API Windows
 # uniquement) ; "crypto-nettle" (utilisé par défaut sur Linux) demanderait de
