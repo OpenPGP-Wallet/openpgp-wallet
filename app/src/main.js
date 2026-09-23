@@ -145,7 +145,7 @@ const I18N = {
     "common.clear": "Effacer",
     "common.close": "Fermer",
     "common.create": "Créer",
-    "common.busy": "Patiente…",
+    "common.busy": "Patientez…",
     "common.passwordMinLength": "Le mot de passe doit faire au moins {min} caractères.",
     "common.passwordHint": "Au moins {min} caractères, mélange de types recommandé.",
     "common.strengthWeak": "Force : faible",
@@ -158,6 +158,7 @@ const I18N = {
     "common.saveFailed": "Échec de l'enregistrement : {err}",
     "common.error": "Erreur : {err}",
     "common.copyFailed": "Copie impossible : {err}",
+    "common.copied": "Copié !",
     "backup.title": "Sauvegardez votre kit de récupération",
     "backup.subtitle":
       "Ces 3 fichiers protègent votre portefeuille en cas de perte de cet appareil. <strong>2 des 3 suffisent</strong> à tout récupérer, mais aucun des 3 seul ne sert à rien — c'est voulu, personne (y compris vous) ne peut voler votre wallet avec une seule part. Téléchargez les 3 et notez les 3 mots de passe quelque part de sûr, séparément.",
@@ -256,6 +257,7 @@ const I18N = {
     "wallet.marketsTitle": "Prix des cryptomonnaies en direct",
     "wallet.showQr": "Afficher en QR code",
     "wallet.copyAddress": "Copier l'adresse",
+    "wallet.addressCopied": "Adresse copiée !",
     "wallet.marketsLoadError": "Impossible de charger les données de marché.",
     "wallet.qrError": "Impossible de générer le QR code : {err}",
     "wallet.linkError": "Impossible d'ouvrir le lien : {err}",
@@ -414,6 +416,7 @@ const I18N = {
     "common.saveFailed": "Save failed: {err}",
     "common.error": "Error: {err}",
     "common.copyFailed": "Copy failed: {err}",
+    "common.copied": "Copied!",
     "backup.title": "Save your recovery kit",
     "backup.subtitle":
       "These 3 files protect your wallet if you lose this device. <strong>2 out of 3 are enough</strong> to recover everything, but none of the 3 alone is of any use — that's intentional, nobody (including you) can steal your wallet with a single share. Download all 3 and write down the 3 passwords somewhere safe, separately.",
@@ -512,6 +515,7 @@ const I18N = {
     "wallet.marketsTitle": "Live cryptocurrency prices",
     "wallet.showQr": "Show as QR code",
     "wallet.copyAddress": "Copy address",
+    "wallet.addressCopied": "Address copied!",
     "wallet.marketsLoadError": "Unable to load market data.",
     "wallet.qrError": "Unable to generate the QR code: {err}",
     "wallet.linkError": "Unable to open the link: {err}",
@@ -857,6 +861,35 @@ function withBusyButton(button, action) {
   };
 }
 
+// Comme `withBusyButton`, mais le bouton reste désactivé au moins `cooldownMs`
+// après le clic, même si la requête elle-même a fini plus vite — sans ça, un
+// clic répété dès que le bouton redevient actif suffit à spammer l'API
+// (solde/historique) à peu près à la fréquence du réseau. Réservé aux boutons
+// "Actualiser", qui sont justement ceux qu'on peut spammer sans rien taper
+// entre deux clics (contrairement à "Envoyer"/"Ajouter", qui demandent de
+// remplir un formulaire à chaque fois).
+function withThrottledButton(button, cooldownMs, action) {
+  return async (...args) => {
+    if (button.disabled) return;
+    const originalText = button.textContent;
+    button.disabled = true;
+    button.textContent = t("common.busy");
+    const start = Date.now();
+    try {
+      await action(...args);
+    } finally {
+      const remaining = cooldownMs - (Date.now() - start);
+      if (remaining > 0) {
+        await new Promise((resolve) => setTimeout(resolve, remaining));
+      }
+      button.disabled = false;
+      button.textContent = originalText;
+    }
+  };
+}
+
+const REFRESH_COOLDOWN_MS = 1500;
+
 const views = {
   loading: document.getElementById("view-loading"),
   onboarding: document.getElementById("view-onboarding"),
@@ -881,9 +914,30 @@ function hideError(el) {
   el.classList.add("hidden");
 }
 
-async function copyText(text) {
+let copyToastHideTimeout = null;
+let copyToastCleanupTimeout = null;
+
+function showCopyToast(message) {
+  const toast = document.getElementById("copy-toast");
+  document.getElementById("copy-toast-text").textContent = message;
+  clearTimeout(copyToastHideTimeout);
+  clearTimeout(copyToastCleanupTimeout);
+  toast.classList.remove("hidden");
+  // Force le recalcul de style avant d'ajouter `.visible` : sans ça, un clic
+  // pendant que le toast précédent est encore affiché ne redéclencherait pas
+  // la transition (déjà à son état final), donc pas d'animation visible.
+  void toast.offsetWidth;
+  toast.classList.add("visible");
+  copyToastHideTimeout = setTimeout(() => {
+    toast.classList.remove("visible");
+    copyToastCleanupTimeout = setTimeout(() => toast.classList.add("hidden"), 200);
+  }, 1800);
+}
+
+async function copyText(text, successMessage) {
   try {
     await navigator.clipboard.writeText(text);
+    showCopyToast(successMessage || t("common.copied"));
   } catch (e) {
     alert(t("common.copyFailed", { err: e }));
   }
@@ -1882,7 +1936,7 @@ function refreshAllBalances() {
 
 document.querySelectorAll(".wallet-card").forEach((card) => {
   const refreshBtn = card.querySelector('[data-action="refresh"]');
-  refreshBtn.addEventListener("click", withBusyButton(refreshBtn, () => refreshBalance(card)));
+  refreshBtn.addEventListener("click", withThrottledButton(refreshBtn, REFRESH_COOLDOWN_MS, () => refreshBalance(card)));
   card.querySelector('[data-action="send"]').addEventListener("click", () => openSendModal(card));
   card.querySelector('[data-action="qr"]').addEventListener("click", () => openQrModal(card));
   // Cliquer l'adresse elle-même l'affiche en entier (même modale que le bouton QR,
@@ -1896,7 +1950,7 @@ document.querySelectorAll(".wallet-card").forEach((card) => {
       alert(t("wallet.historyAddressUnavailable"));
       return;
     }
-    copyText(address);
+    copyText(address, t("wallet.addressCopied"));
   });
   const historyBtn = card.querySelector('[data-action="history"]');
   historyBtn.addEventListener("click", withBusyButton(historyBtn, () => openHistoryModal(card)));
@@ -2044,6 +2098,23 @@ document.getElementById("history-close").addEventListener("click", () => {
 
 const sendModal = document.getElementById("send-modal");
 let sendContext = null;
+
+// N'accepte que des chiffres et un séparateur décimal (point ou virgule) : un
+// montant à envoyer ne peut structurellement rien contenir d'autre, autant
+// l'empêcher à la frappe plutôt que de laisser taper "dqdz" et le rejeter
+// après coup. Un seul séparateur gardé (le premier), les suivants supprimés,
+// pour empêcher "1.2.3" ou "1,2,3".
+const sendAmountInput = document.getElementById("send-amount");
+sendAmountInput.addEventListener("input", () => {
+  let value = sendAmountInput.value.replace(/[^0-9.,]/g, "");
+  const separatorIndex = value.search(/[.,]/);
+  if (separatorIndex !== -1) {
+    value = value.slice(0, separatorIndex + 1) + value.slice(separatorIndex + 1).replace(/[.,]/g, "");
+  }
+  if (value !== sendAmountInput.value) {
+    sendAmountInput.value = value;
+  }
+});
 
 // Montants rapides en dollars : convertis en crypto au prix en direct (voir
 // `latestPrices`/`refreshPrices`), pas des montants fixes en ETH/BTC/SOL — ça n'a
@@ -2238,7 +2309,10 @@ sendConfirmBtn.addEventListener("click", withBusyButton(sendConfirmBtn, async ()
 
   const network = networkForCard(sendContext.card);
   const to = document.getElementById("send-to").value.trim();
-  const amount = document.getElementById("send-amount").value.trim();
+  // La virgule est acceptée à la saisie (voir le filtre sur #send-amount plus
+  // bas) mais les parseurs Rust (parse_btc_to_sat/parse_eth_to_wei/
+  // parse_sol_to_lamports/parse_usdc_to_micros) n'acceptent qu'un point.
+  const amount = document.getElementById("send-amount").value.trim().replace(",", ".");
   const password = document.getElementById("send-password").value;
 
   if (!to || !amount || !password) {
@@ -2577,7 +2651,7 @@ function renderExternalWalletRow(wallet) {
   copyBtn.type = "button";
   copyBtn.className = "link";
   copyBtn.textContent = t("common.copy");
-  copyBtn.addEventListener("click", () => copyText(wallet.address));
+  copyBtn.addEventListener("click", () => copyText(wallet.address, t("wallet.addressCopied")));
 
   const removeBtn = document.createElement("button");
   removeBtn.type = "button";
@@ -2717,10 +2791,14 @@ async function refreshExternalWalletBalances() {
   updateAllExternalGroupTotals();
 }
 
-document.getElementById("refresh-external-wallets-btn").addEventListener("click", () => {
-  renderExternalWallets();
-  refreshExternalWalletBalances();
-});
+const refreshExternalWalletsBtn = document.getElementById("refresh-external-wallets-btn");
+refreshExternalWalletsBtn.addEventListener(
+  "click",
+  withThrottledButton(refreshExternalWalletsBtn, REFRESH_COOLDOWN_MS, async () => {
+    renderExternalWallets();
+    await refreshExternalWalletBalances();
+  })
+);
 
 // --- Modale ajout d'un wallet externe ---------------------------------------
 
@@ -2843,7 +2921,7 @@ function renderAddressBookRow(entry) {
   copyBtn.type = "button";
   copyBtn.className = "link";
   copyBtn.textContent = t("common.copy");
-  copyBtn.addEventListener("click", () => copyText(entry.address));
+  copyBtn.addEventListener("click", () => copyText(entry.address, t("wallet.addressCopied")));
 
   const removeBtn = document.createElement("button");
   removeBtn.type = "button";
@@ -2939,6 +3017,38 @@ document.getElementById("send-address-book-select").addEventListener("change", (
   }
   e.target.value = "";
   syncCustomSelect(e.target);
+});
+
+// --- Valider avec Entrée -----------------------------------------------------
+// Aucun de ces champs n'est dans un vrai <form> (tout est soumis via un clic
+// de bouton géré en JS) : Entrée ne fait donc rien par défaut, contrairement à
+// un formulaire HTML classique. Ce mapping recrée ce comportement pour chaque
+// champ de mot de passe de l'app, sans dupliquer un `keydown` par écran.
+const ENTER_SUBMIT_MAP = {
+  "onboarding-password": "onboarding-submit",
+  "onboarding-password-confirm": "onboarding-submit",
+  "unlock-password": "unlock-submit",
+  "restore-passphrase-1": "restore-submit",
+  "restore-passphrase-2": "restore-submit",
+  "restore-new-password": "restore-submit",
+  "decrypt-password": "decrypt-message-btn",
+  "send-password": "send-confirm",
+  "add-profile-password": "add-profile-confirm",
+  "delete-profile-password": "delete-profile-confirm",
+  "regenerate-backup-password": "regenerate-backup-confirm",
+  "enable-biometric-password": "enable-biometric-confirm",
+  "disable-biometric-password": "disable-biometric-confirm",
+};
+
+Object.entries(ENTER_SUBMIT_MAP).forEach(([inputId, buttonId]) => {
+  const input = document.getElementById(inputId);
+  const button = document.getElementById(buttonId);
+  if (!input || !button) return;
+  input.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    button.click();
+  });
 });
 
 // --- Démarrage -------------------------------------------------------------

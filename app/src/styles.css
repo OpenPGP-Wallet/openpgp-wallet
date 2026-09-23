@@ -87,6 +87,36 @@
   border-radius: 999px;
 }
 
+/* Même bascule, mais pour les petites puces/lignes qui ne sont PAS des
+   <button> (donc pas couvertes par la règle ci-dessus) : lignes de liste
+   (profils archivés, wallets externes, carnet d'adresses, destinataires de
+   message...), boîte d'adresse, menus déroulants, etc. Sans ça, "boutons
+   ronds" ne rendait rond QUE les boutons, en laissant tout le reste anguleux
+   autour d'eux.
+
+   Volontairement exclus : les GRANDS conteneurs (`.card`, `.modal`,
+   `.wallet-card`, `.qr-container`, `.backup-item`) — un rayon de 999px sur une
+   grande boîte se rabat certes sur la moitié de son plus petit côté plutôt que
+   de casser, mais ça donnait des coins bien plus arrondis que la boîte n'a de
+   marge intérieure pour ça, et le contenu (texte, boutons) dépassait
+   visuellement du cadre arrondi près des coins. Ce problème ne se pose pas sur
+   les petites puces ci-dessous, assez basses pour qu'un rayon large reste
+   dans leur marge intérieure. Formulaires (input/textarea/select/fieldset)
+   également exclus : une pilule n'est pas un motif courant pour une zone de
+   saisie. */
+:root[data-rounded-buttons="true"] .recipient-item,
+:root[data-rounded-buttons="true"] .recipient-picker-item,
+:root[data-rounded-buttons="true"] .backup-item .passphrase,
+:root[data-rounded-buttons="true"] .address,
+:root[data-rounded-buttons="true"] .market-row,
+:root[data-rounded-buttons="true"] .history-row,
+:root[data-rounded-buttons="true"] .custom-select-options,
+:root[data-rounded-buttons="true"] .custom-select-options li,
+:root[data-rounded-buttons="true"] .lang-switcher,
+:root[data-rounded-buttons="true"] .lang-switcher-inline {
+  border-radius: 999px;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -821,6 +851,57 @@ textarea:focus {
 .lang-btn.active {
   background: var(--accent);
   color: white;
+}
+
+/* Confirmation glissante après un clic sur un bouton "copier" (voir copyText()
+   dans main.js) : `.hidden` retire l'élément du flux tant qu'il n'a jamais
+   servi, `.visible` pilote ensuite l'animation par transition CSS plutôt que
+   `display` (qui ne peut pas être transitionné) — glisse depuis le bas et
+   s'efface en même temps, dans les deux sens (apparition/disparition). */
+.copy-toast {
+  position: fixed;
+  /* Sous la navbar (sticky, ~68px de haut) plutôt que par-dessus — tous les
+     boutons "copier" de l'app sont sur des écrans où elle est visible. */
+  top: 76px;
+  left: 50%;
+  z-index: 999;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 10px 16px;
+  /* Même logique que les boutons (voir la règle `:root[data-rounded-buttons]`
+     tout en haut de ce fichier) : carré par défaut, pilule en mode "boutons
+     ronds" — ce n'est pas un <button> donc pas couvert automatiquement par
+     cette règle-là, dupliquée ici volontairement pour ce seul élément. */
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  font-size: 0.85rem;
+  font-weight: 600;
+  pointer-events: none;
+  transform: translate(-50%, -12px);
+  opacity: 0;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+:root[data-rounded-buttons="true"] .copy-toast {
+  border-radius: 999px;
+}
+
+.copy-toast.hidden {
+  display: none;
+}
+
+.copy-toast.visible {
+  transform: translate(-50%, 0);
+  opacity: 1;
+}
+
+.copy-toast svg {
+  color: var(--success);
+  flex-shrink: 0;
 }
 
 #add-recipient-form,
