@@ -9,11 +9,14 @@ pub mod btc_tx;
 pub mod btc_rpc;
 pub mod sol_tx;
 pub mod sol_rpc;
+pub mod sol_spl;
 pub mod price_rpc;
 pub mod blockscout;
 pub mod history;
 pub mod wallet_flow;
 pub mod api;
 pub mod messaging;
+pub mod external_wallets;
+pub mod address_book;
 #[cfg(windows)]
 pub mod windows_hello;

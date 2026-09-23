@@ -98,13 +98,40 @@ pub fn enroll(secret: &[u8]) -> Result<(String, Vec<u8>)> {
     let key_name = format!("{KEY_NAME_PREFIX}{}", hex::encode(crate::entropy::generate_master_entropy()));
     let key_name_wide = HSTRING::from(&key_name);
 
+    // `NCryptCreatePersistedKey` ne persiste réellement la clé qu'au moment de
+    // `NCryptFinalizeKey` (avant ça, un échec ici ne laisse rien dans le TPM,
+    // pas besoin de nettoyage). En revanche, une fois `NCryptFinalizeKey`
+    // réussi, la clé existe vraiment dans le magasin du TPM — si une étape
+    // suivante (scellement du secret) échoue ensuite, cette fonction retourne
+    // une erreur SANS jamais renvoyer `key_name` à l'appelant, qui ne peut donc
+    // jamais la nettoyer plus tard (aucun fichier de métadonnées n'est écrit
+    // pour une clé dont l'enrôlement a échoué) : elle resterait orpheline dans
+    // le TPM indéfiniment. `finalized` distingue les deux cas pour ne
+    // déclencher la suppression best-effort que si la clé a vraiment été créée.
+    let mut finalized = false;
+    let result = enroll_inner(&provider, &key_name_wide, secret, &mut finalized);
+    if result.is_err() && finalized {
+        // Best-effort : si ce nettoyage échoue aussi, l'erreur d'origine (déjà
+        // dans `result`) reste ce qui est remonté à l'appelant — pas question
+        // de masquer l'échec réel de l'enrôlement par un échec de nettoyage.
+        let _: Result<()> = (|| {
+            let mut handle = NCRYPT_KEY_HANDLE::default();
+            unsafe { NCryptOpenKey(provider.0, &mut handle, &key_name_wide, CERT_KEY_SPEC(0), NCRYPT_FLAGS(0)) }
+                .map_err(|e| to_anyhow("ré-ouverture de la clé TPM à nettoyer après échec d'enrôlement", e))?;
+            unsafe { NCryptDeleteKey(handle, 0) }.map_err(|e| to_anyhow("nettoyage de la clé TPM après échec d'enrôlement", e))
+        })();
+    }
+    result.map(|sealed| (key_name, sealed))
+}
+
+fn enroll_inner(provider: &Provider, key_name_wide: &HSTRING, secret: &[u8], finalized: &mut bool) -> Result<Vec<u8>> {
     let mut key_handle = NCRYPT_KEY_HANDLE::default();
     unsafe {
         NCryptCreatePersistedKey(
             provider.0,
             &mut key_handle,
             BCRYPT_RSA_ALGORITHM,
-            &key_name_wide,
+            key_name_wide,
             CERT_KEY_SPEC(0),
             NCRYPT_FLAGS(0),
         )
@@ -140,6 +167,7 @@ pub fn enroll(secret: &[u8]) -> Result<(String, Vec<u8>)> {
         .map_err(|e| to_anyhow("réglage de la politique Windows Hello sur la clé TPM", e))?;
 
     unsafe { NCryptFinalizeKey(key.0, NCRYPT_FLAGS(0)) }.map_err(|e| to_anyhow("finalisation de la clé TPM", e))?;
+    *finalized = true; // la clé existe désormais vraiment dans le TPM
 
     let padding_algo = oaep_hash_algorithm();
     let padding_info = BCRYPT_OAEP_PADDING_INFO {
@@ -177,7 +205,7 @@ pub fn enroll(secret: &[u8]) -> Result<(String, Vec<u8>)> {
     .map_err(|e| to_anyhow("scellement du secret dans le TPM", e))?;
     sealed.truncate(written as usize);
 
-    Ok((key_name, sealed))
+    Ok(sealed)
 }
 
 /// Rouvre la clé TPM persistée `key_name` et déchiffre `sealed_blob` — c'est CET

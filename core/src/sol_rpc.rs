@@ -150,6 +150,44 @@ impl SolRpc {
             .collect())
     }
 
+    /// Solde d'un compte de jeton SPL (Associated Token Account), en plus
+    /// petite unité (ex: micro-USDC, 6 décimales). `None` si le compte
+    /// n'existe pas encore (jamais reçu ce jeton) — `getTokenAccountBalance`
+    /// renvoie une erreur JSON-RPC dans ce cas (pas un `value: null` comme
+    /// `getAccountInfo`), détectée ici par le message plutôt qu'un code
+    /// structuré, faute de mieux exposé par ce endpoint.
+    pub fn token_account_balance(&self, ata_b58: &str) -> Result<Option<u64>> {
+        match self.call("getTokenAccountBalance", json!([ata_b58])) {
+            Ok(result) => {
+                let amount_str = result
+                    .pointer("/value/amount")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| anyhow!("réponse getTokenAccountBalance inattendue"))?;
+                Ok(Some(amount_str.parse::<u64>().context("montant getTokenAccountBalance illisible")?))
+            }
+            Err(e) if e.to_string().to_lowercase().contains("could not find account") => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// `true` si un compte (ATA ou autre) existe déjà on-chain — sert à
+    /// savoir si l'instruction CreateIdempotent va réellement créer un
+    /// compte (et donc facturer le rent) avant d'afficher ce coût dans la
+    /// boîte de dialogue de confirmation.
+    pub fn account_exists(&self, pubkey_b58: &str) -> Result<bool> {
+        let result = self.call("getAccountInfo", json!([pubkey_b58, {"encoding": "base64"}]))?;
+        Ok(!result.get("value").map(Value::is_null).unwrap_or(true))
+    }
+
+    /// Minimum de lamports pour qu'un compte de `data_len` octets soit
+    /// exempté de rent — interrogé en direct plutôt que codé en dur : ce
+    /// paramètre réseau évolue avec le temps, un chiffre figé deviendrait
+    /// silencieusement trop bas ou trop haut.
+    pub fn minimum_rent_exempt_balance(&self, data_len: u64) -> Result<u64> {
+        let result = self.call("getMinimumBalanceForRentExemption", json!([data_len]))?;
+        result.as_u64().ok_or_else(|| anyhow!("réponse getMinimumBalanceForRentExemption inattendue"))
+    }
+
     fn net_lamports_for(&self, signature: &str, pubkey_b58: &str) -> Result<Option<i128>> {
         let result = self.call(
             "getTransaction",
@@ -171,6 +209,73 @@ impl SolRpc {
             let post = post_balances.get(i).and_then(Value::as_i64)?;
             Some((post - pre) as i128)
         }))
+    }
+
+    /// Même principe que `signature_history`, mais pour l'historique d'un jeton SPL
+    /// (ex: USDC) : interroge les signatures touchant directement le compte de
+    /// jetons associé (ATA), pas l'adresse "propriétaire" du wallet — c'est l'ATA,
+    /// pas le compte système du propriétaire, qui reçoit/envoie effectivement le
+    /// jeton. Le champ `net_lamports` du `SolTx` retourné contient en réalité un
+    /// montant en plus petite unité du jeton (ex: micro-USDC), pas des lamports —
+    /// réutilise la même structure plutôt que d'en dupliquer une identique.
+    pub fn token_signature_history(&self, ata_b58: &str, limit: u32) -> Result<Vec<SolTx>> {
+        let result = self.call("getSignaturesForAddress", json!([ata_b58, {"limit": limit}]))?;
+        let entries = result.as_array().cloned().unwrap_or_default();
+
+        Ok(entries
+            .into_iter()
+            .map(|entry| {
+                let signature = entry.get("signature").and_then(Value::as_str).unwrap_or_default().to_string();
+                let block_time = entry.get("blockTime").and_then(Value::as_i64);
+                let confirmation_status = entry.get("confirmationStatus").and_then(Value::as_str).unwrap_or("");
+                let failed = entry.get("err").map(|e| !e.is_null()).unwrap_or(false);
+                let net_lamports = self.net_token_amount_for(&signature, ata_b58).ok().flatten();
+                SolTx {
+                    signature,
+                    block_time,
+                    confirmed: matches!(confirmation_status, "confirmed" | "finalized"),
+                    failed,
+                    net_lamports,
+                }
+            })
+            .collect())
+    }
+
+    /// Équivalent de `net_lamports_for` pour un compte de jetons SPL : Solana ne
+    /// donne pas l'historique des soldes de jetons dans `preBalances`/`postBalances`
+    /// (réservés au solde natif SOL), mais dans `preTokenBalances`/`postTokenBalances`,
+    /// indexés par la position du compte dans `accountKeys` (même mécanisme
+    /// d'indexation). Absence dans `preTokenBalances` traitée comme un solde de 0
+    /// avant la transaction (cas d'un ATA tout juste créé par cette même
+    /// transaction, via CreateIdempotent).
+    fn net_token_amount_for(&self, signature: &str, ata_b58: &str) -> Result<Option<i128>> {
+        let result = self.call(
+            "getTransaction",
+            json!([signature, {"encoding": "json", "maxSupportedTransactionVersion": 0}]),
+        )?;
+        if result.is_null() {
+            return Ok(None);
+        }
+        let account_keys = result.pointer("/transaction/message/accountKeys").and_then(Value::as_array);
+        let pre_token_balances = result.pointer("/meta/preTokenBalances").and_then(Value::as_array);
+        let post_token_balances = result.pointer("/meta/postTokenBalances").and_then(Value::as_array);
+        let (Some(account_keys), Some(post_token_balances)) = (account_keys, post_token_balances) else {
+            return Ok(None);
+        };
+        let index = account_keys.iter().position(|k| k.as_str() == Some(ata_b58));
+        let Some(index) = index else { return Ok(None) };
+
+        let amount_at_index = |balances: &[Value]| -> Option<i128> {
+            balances
+                .iter()
+                .find(|entry| entry.get("accountIndex").and_then(Value::as_u64) == Some(index as u64))
+                .and_then(|entry| entry.pointer("/uiTokenAmount/amount"))
+                .and_then(Value::as_str)
+                .and_then(|s| s.parse::<i128>().ok())
+        };
+
+        let pre_amount = pre_token_balances.and_then(|b| amount_at_index(b)).unwrap_or(0);
+        Ok(amount_at_index(post_token_balances).map(|post| post - pre_amount))
     }
 }
 

@@ -351,6 +351,27 @@ pub(crate) fn parse_sol_to_lamports(input: &str) -> Result<u64> {
         .context("montant SOL trop grand (dépassement arithmétique)")
 }
 
+/// Convertit un montant décimal en USDC (ex: "12.50") en plus petite unité
+/// (6 décimales, comme l'ETH en a 18 et le SOL en a 9) — même structure que
+/// `parse_sol_to_lamports`/`parse_eth_to_wei`.
+pub(crate) fn parse_usdc_to_micros(input: &str) -> Result<u64> {
+    let input = input.trim();
+    let (whole, frac) = input.split_once('.').unwrap_or((input, ""));
+    if frac.len() > 6 {
+        return Err(anyhow!("trop de décimales (6 maximum pour l'USDC)"));
+    }
+    let whole: u64 = if whole.is_empty() { 0 } else { whole.parse().context("partie entière invalide")? };
+    let mut frac_padded = frac.to_string();
+    while frac_padded.len() < 6 {
+        frac_padded.push('0');
+    }
+    let frac_val: u64 = if frac_padded.is_empty() { 0 } else { frac_padded.parse().context("partie décimale invalide")? };
+    whole
+        .checked_mul(1_000_000)
+        .and_then(|w| w.checked_add(frac_val))
+        .context("montant USDC trop grand (dépassement arithmétique)")
+}
+
 /// Dérive une clé Solana depuis `seed` et ouvre un menu recevoir/envoyer sur `network`
 /// (voir SOLANA_DEVNET / SOLANA_MAINNET).
 pub fn run_sol_wallet(seed: &[u8], network: &SolNetwork) -> Result<()> {
@@ -465,5 +486,22 @@ mod tests {
     fn parse_evm_address_accepts_all_uppercase_without_checksum() {
         let all_upper = format!("0x{}", VALID_CHECKSUM.trim_start_matches("0x").to_uppercase());
         assert!(parse_evm_address(&all_upper).is_ok());
+    }
+
+    #[test]
+    fn parse_usdc_to_micros_handles_exact_six_decimals() {
+        assert_eq!(parse_usdc_to_micros("12.500000").unwrap(), 12_500_000);
+        assert_eq!(parse_usdc_to_micros("0.000001").unwrap(), 1);
+        assert_eq!(parse_usdc_to_micros("100").unwrap(), 100_000_000);
+    }
+
+    #[test]
+    fn parse_usdc_to_micros_rejects_more_than_six_decimals() {
+        assert!(parse_usdc_to_micros("1.1234567").is_err());
+    }
+
+    #[test]
+    fn parse_usdc_to_micros_rejects_overflow_instead_of_wrapping() {
+        assert!(parse_usdc_to_micros(&u64::MAX.to_string()).is_err());
     }
 }

@@ -60,6 +60,30 @@ pub fn sol_history(rpc_url: &str, pubkey_b58: &str, limit: u32) -> Result<Vec<Tx
         .collect())
 }
 
+/// Historique d'un jeton SPL (USDC) : `ata_b58` est le compte de jetons associé
+/// (ATA) du propriétaire, pas son adresse Solana "propriétaire" — voir
+/// `sol_spl::find_associated_token_address` côté appelant (api.rs) pour le
+/// dériver. `net_amount_minor` est alors en plus petite unité du jeton
+/// (micro-USDC), pas en lamports.
+pub fn usdc_history(rpc_url: &str, ata_b58: &str, limit: u32) -> Result<Vec<TxEntry>> {
+    let txs = SolRpc::new(rpc_url).token_signature_history(ata_b58, limit)?;
+    Ok(txs
+        .into_iter()
+        .map(|tx| TxEntry {
+            id: tx.signature,
+            timestamp_unix: tx.block_time,
+            status: if tx.failed {
+                TxStatus::Failed
+            } else if tx.confirmed {
+                TxStatus::Confirmed
+            } else {
+                TxStatus::Pending
+            },
+            net_amount_minor: tx.net_lamports,
+        })
+        .collect())
+}
+
 /// `chain_id` : 1 pour Ethereum mainnet, 11155111 pour Sepolia (voir
 /// wallet_flow::ETHEREUM_MAINNET / SEPOLIA) — détermine quelle instance publique
 /// Blockscout interroger.

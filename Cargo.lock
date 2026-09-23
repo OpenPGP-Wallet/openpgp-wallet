@@ -3564,6 +3564,7 @@ dependencies = [
  "bip39",
  "blahaj",
  "bs58",
+ "curve25519-dalek",
  "ed25519-dalek",
  "getrandom 0.2.17",
  "hex",

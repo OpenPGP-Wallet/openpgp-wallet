@@ -5,7 +5,7 @@
 //! confirmations/erreurs le sont.
 
 use base64::Engine;
-use pgp_wallet_poc::{api, history, messaging, price_rpc, wallet_flow};
+use pgp_wallet_poc::{address_book, api, external_wallets, history, messaging, price_rpc, wallet_flow};
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -140,6 +140,43 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("Restauration annulée (confirmation refusée).", "Restoration cancelled (confirmation refused)."),
     ("Virement annulé (confirmation refusée).", "Transfer cancelled (confirmation refused)."),
     ("Ajout annulé (clé différente refusée).", "Addition cancelled (different key refused)."),
+    ("Activation annulée (confirmation refusée).", "Activation cancelled (confirmation refused)."),
+    ("Désactivation annulée (confirmation refusée).", "Deactivation cancelled (confirmation refused)."),
+    ("USDC n'est disponible que sur Solana mainnet.", "USDC is only available on Solana mainnet."),
+    // core/src/windows_hello.rs (contexte fixe de `to_anyhow`, sans le suffixe
+    // dynamique ": {err} (code ...)", géré par translate_dynamic_error)
+    ("clé TPM déjà absente, rien à supprimer", "TPM key already absent, nothing to remove"),
+    // core/src/sol_rpc.rs (nouvelles méthodes SPL)
+    ("réponse getTokenAccountBalance inattendue", "unexpected getTokenAccountBalance response"),
+    ("montant getTokenAccountBalance illisible", "unreadable getTokenAccountBalance amount"),
+    ("réponse getMinimumBalanceForRentExemption inattendue", "unexpected getMinimumBalanceForRentExemption response"),
+    // core/src/api.rs (biométrie + USDC)
+    (
+        "le déverrouillage biométrique n'est disponible que sous Windows",
+        "biometric unlock is only available on Windows",
+    ),
+    ("déverrouillage biométrique non activé sur cet appareil", "biometric unlock is not enabled on this device"),
+    ("métadonnées de la clé biométrique corrompues", "biometric key metadata corrupted"),
+    (
+        "vérification post-ré-chiffrement du coffre : le mot de passe existant ne fonctionne plus, activation annulée",
+        "post-re-encryption vault check: the existing password no longer works, activation cancelled",
+    ),
+    (
+        "vérification post-ré-chiffrement du coffre : le mot de passe existant ne fonctionne plus, désactivation annulée",
+        "post-re-encryption vault check: the existing password no longer works, deactivation cancelled",
+    ),
+    ("secret biométrique scellé introuvable", "sealed biometric secret not found"),
+    ("aucun compte USDC trouvé pour cette adresse (solde 0)", "no USDC account found for this address (balance 0)"),
+    ("frais + rent dépasse la capacité représentable", "fee + rent exceeds the representable range"),
+    // core/src/wallet_flow.rs (parse_usdc_to_micros)
+    ("trop de décimales (6 maximum pour l'USDC)", "too many decimals (6 maximum for USDC)"),
+    ("montant USDC trop grand (dépassement arithmétique)", "USDC amount too large (arithmetic overflow)"),
+    // core/src/external_wallets.rs
+    ("sérialisation des wallets externes", "external wallet serialization"),
+    ("écriture des wallets externes", "writing external wallets"),
+    // core/src/address_book.rs
+    ("sérialisation du carnet d'adresses", "address book serialization"),
+    ("écriture du carnet d'adresses", "writing the address book"),
 ];
 
 /// Messages avec une valeur interpolée (index, méthode RPC, montant...) : la
@@ -227,6 +264,50 @@ fn translate_dynamic_error(msg: &str) -> Option<String> {
     if let Some(rest) = msg.strip_prefix("écriture du fichier impossible : ") {
         return Some(format!("could not write the file: {rest}"));
     }
+    if let Some(rest) = msg.strip_prefix("fonds USDC insuffisants : ") {
+        let translated = rest.replace("disponibles (unité 10^-6 USDC)", "available (10^-6 USDC unit)").replace("requis", "required");
+        return Some(format!("insufficient USDC funds: {translated}"));
+    }
+    if let Some(rest) = msg.strip_prefix("SOL insuffisant pour les frais") {
+        if let Some((extra, numbers)) = rest.split_once(" : ") {
+            let extra_en = extra.replace(" + création du compte de jetons du destinataire", " + creating the recipient's token account");
+            let numbers_en = numbers.replace("disponibles", "available").replace("requis", "required");
+            return Some(format!("insufficient SOL for fees{extra_en}: {numbers_en}"));
+        }
+    }
+    if let Some(rest) = msg.strip_prefix("groupe introuvable (id ") {
+        return Some(format!("group not found (id {rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("wallet externe introuvable (id ") {
+        return Some(format!("external wallet not found (id {rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("entrée du carnet d'adresses introuvable (id ") {
+        return Some(format!("address book entry not found (id {rest}"));
+    }
+    // core/src/windows_hello.rs : `to_anyhow` construit "{contexte} : {err} (code
+    // ...)" — seul le contexte fixe (en français) est traduisible, le message
+    // d'erreur Windows lui-même (`{err}`) est déjà dans la langue du système
+    // d'exploitation, hors de notre contrôle.
+    const WINDOWS_HELLO_CONTEXTS: &[(&str, &str)] = &[
+        ("ouverture du fournisseur TPM (Microsoft Platform Crypto Provider)", "opening the TPM provider (Microsoft Platform Crypto Provider)"),
+        ("création de la clé TPM persistée", "creating the persisted TPM key"),
+        ("réglage de la taille de clé TPM", "setting the TPM key size"),
+        ("réglage de la politique Windows Hello sur la clé TPM", "setting the Windows Hello policy on the TPM key"),
+        ("finalisation de la clé TPM", "finalizing the TPM key"),
+        ("calcul de la taille du blob scellé", "computing the sealed blob size"),
+        ("scellement du secret dans le TPM", "sealing the secret in the TPM"),
+        ("ouverture de la clé TPM (déverrouillage biométrique désactivé ou clé absente ?)", "opening the TPM key (biometric unlock disabled or key missing?)"),
+        ("calcul de la taille du secret déchiffré", "computing the decrypted secret size"),
+        ("vérification Windows Hello refusée, annulée ou échouée", "Windows Hello verification refused, cancelled, or failed"),
+        ("suppression de la clé TPM", "removing the TPM key"),
+    ];
+    for (fr, en) in WINDOWS_HELLO_CONTEXTS {
+        if let Some(rest) = msg.strip_prefix(fr) {
+            if let Some(rest) = rest.strip_prefix(" : ") {
+                return Some(format!("{en}: {rest}"));
+            }
+        }
+    }
     None
 }
 
@@ -244,6 +325,19 @@ fn translate_error(msg: &str) -> String {
     // tierce, déjà en anglais/technique — reqwest, serde_json, io::Error...) :
     // laissé tel quel plutôt que de risquer une traduction incorrecte.
     msg.to_string()
+}
+
+/// Choisit le texte français ou anglais selon la langue d'interface courante —
+/// utilisé pour le texte des boîtes de dialogue natives (`app.dialog()...`),
+/// qui ne passent jamais par `translate_error`/`.t_err()` puisqu'elles ne sont
+/// pas des erreurs mais des messages de confirmation construits directement
+/// ici, jamais renvoyés par `core/`.
+fn lang<'a>(fr: &'a str, en: &'a str) -> &'a str {
+    if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
+        en
+    } else {
+        fr
+    }
 }
 
 /// Remplace `.t_err()` : convertit une erreur en `String`
@@ -491,12 +585,15 @@ fn create_wallet(password: String, app: tauri::AppHandle) -> Result<CreateWallet
 /// tentative visible et impossible à supprimer silencieusement.
 fn confirm_regenerate_backup_native(app: &tauri::AppHandle) -> bool {
     app.dialog()
-        .message(
+        .message(lang(
             "Ceci va générer un nouveau kit de sauvegarde (3 fichiers + 3 mots de passe permettant \
              à quiconque les possède de reconstruire votre portefeuille, sans jamais avoir besoin de \
              votre mot de passe d'appareil). Ne continuez que si vous avez initié cette action vous-même.",
-        )
-        .title("Confirmer la régénération du kit de sauvegarde")
+            "This will generate a new backup kit (3 files + 3 passwords letting anyone who has them \
+             rebuild your wallet, without ever needing your device password). Only continue if you \
+             initiated this action yourself.",
+        ))
+        .title(lang("Confirmer la régénération du kit de sauvegarde", "Confirm backup kit regeneration"))
         .kind(MessageDialogKind::Warning)
         .buttons(MessageDialogButtons::OkCancel)
         .blocking_show()
@@ -558,13 +655,17 @@ fn biometric_unlock_enrolled(app: tauri::AppHandle) -> Result<bool, String> {
 /// dialogue natif de l'OS.
 fn confirm_enroll_biometric_native(app: &tauri::AppHandle) -> bool {
     app.dialog()
-        .message(
+        .message(lang(
             "Ceci va activer un second moyen de déverrouiller ce portefeuille sur CET appareil, via \
              Windows Hello (empreinte, visage ou code confidentiel), en plus du mot de passe actuel — \
              celui-ci reste nécessaire pour les actions sensibles (sauvegarde, suppression de profil, \
              désactivation de cette option). Ne continuez que si vous avez initié cette action vous-même.",
-        )
-        .title("Confirmer l'activation de Windows Hello")
+            "This will enable a second way to unlock this wallet on THIS device, via Windows Hello \
+             (fingerprint, face, or PIN), in addition to your current password — which remains required \
+             for sensitive actions (backup, profile deletion, disabling this option). Only continue if \
+             you initiated this action yourself.",
+        ))
+        .title(lang("Confirmer l'activation de Windows Hello", "Confirm enabling Windows Hello"))
         .kind(MessageDialogKind::Warning)
         .buttons(MessageDialogButtons::OkCancel)
         .blocking_show()
@@ -593,12 +694,14 @@ fn unlock_wallet_biometric(app: tauri::AppHandle) -> Result<Vec<ProfileDto>, Str
 
 fn confirm_disable_biometric_native(app: &tauri::AppHandle) -> bool {
     app.dialog()
-        .message(
+        .message(lang(
             "Ceci va désactiver le déverrouillage par Windows Hello sur cet appareil — seul le mot de \
              passe permettra ensuite de déverrouiller ce portefeuille. Ne continuez que si vous avez \
              initié cette action vous-même.",
-        )
-        .title("Confirmer la désactivation de Windows Hello")
+            "This will disable Windows Hello unlock on this device — only the password will then unlock \
+             this wallet. Only continue if you initiated this action yourself.",
+        ))
+        .title(lang("Confirmer la désactivation de Windows Hello", "Confirm disabling Windows Hello"))
         .kind(MessageDialogKind::Warning)
         .buttons(MessageDialogButtons::OkCancel)
         .blocking_show()
@@ -673,13 +776,16 @@ fn list_archived_profiles(app: tauri::AppHandle) -> Result<Vec<ProfileLabelDto>,
 /// donc impossible à falsifier ou à contourner depuis un frontend compromis.
 fn confirm_restore_native(app: &tauri::AppHandle) -> bool {
     app.dialog()
-        .message(
+        .message(lang(
             "Ceci va remplacer le portefeuille actuel de cet appareil par celui reconstruit \
              à partir des 2 fichiers de sauvegarde fournis. Ne continuez que si vous êtes sûr(e) de \
              leur provenance — quelqu'un d'autre en possession de 2 de vos parts pourrait sinon \
              substituer son propre wallet au vôtre.",
-        )
-        .title("Confirmer la restauration")
+            "This will replace the current wallet on this device with the one rebuilt from the 2 backup \
+             files provided. Only continue if you are sure of their origin — someone else in possession \
+             of 2 of your shares could otherwise substitute their own wallet for yours.",
+        ))
+        .title(lang("Confirmer la restauration", "Confirm restoration"))
         .kind(MessageDialogKind::Warning)
         .buttons(MessageDialogButtons::OkCancel)
         .blocking_show()
@@ -769,6 +875,18 @@ fn get_balance(network: String, address: String) -> Result<String, String> {
         }
         other => Err(translate_error(&format!("réseau inconnu : {other}"))),
     }
+}
+
+/// Solde USDC — mainnet uniquement (voir sol_spl.rs : pas de mint devnet
+/// vérifié avec confiance, et aucun intérêt pratique à en tester un).
+#[tauri::command]
+fn get_usdc_balance(network: String, address: String) -> Result<String, String> {
+    if network != "sol_mainnet" {
+        return Err(translate_error("USDC n'est disponible que sur Solana mainnet."));
+    }
+    let net = sol_network(&network)?;
+    let micros = api::get_usdc_balance(&address, net).t_err()?;
+    Ok(format!("{:.6}", micros as f64 / 1e6))
 }
 
 #[derive(Serialize)]
@@ -889,6 +1007,29 @@ fn get_tx_history(network: String, address: String) -> Result<Vec<TxEntryDto>, S
     Ok(entries)
 }
 
+/// Mainnet uniquement (v1, voir core/src/sol_spl.rs — même contrainte que
+/// `get_usdc_balance`/`send_usdc_transaction`) : `network` n'est là que pour
+/// rester cohérent avec `get_tx_history` côté frontend, une seule valeur est
+/// acceptée.
+#[tauri::command]
+fn get_usdc_tx_history(network: String, address: String) -> Result<Vec<TxEntryDto>, String> {
+    if network != "sol_mainnet" {
+        return Err(translate_error(&format!("réseau inconnu : {network}")));
+    }
+    let net = sol_network(&network)?;
+    let txs = api::get_usdc_tx_history(&address, net, HISTORY_LIMIT).t_err()?;
+    Ok(txs
+        .into_iter()
+        .map(|tx| TxEntryDto {
+            id: tx.id.clone(),
+            timestamp_unix: tx.timestamp_unix,
+            status: status_str(&tx.status).to_string(),
+            amount: format_signed_amount(tx.net_amount_minor, 6),
+            explorer_url: format!("{}{}{}", net.explorer_tx_prefix, tx.id, net.explorer_tx_suffix),
+        })
+        .collect())
+}
+
 #[derive(Serialize)]
 struct PricesDto {
     eth_usd: f64,
@@ -943,11 +1084,11 @@ fn get_market_prices() -> Result<Vec<MarketCoinDto>, String> {
 fn network_label(network: &str) -> &str {
     match network {
         "evm_sepolia" => "Ethereum Sepolia (testnet)",
-        "evm_mainnet" => "Ethereum MAINNET — fonds réels",
-        "btc_testnet" => "Bitcoin testnet",
-        "btc_mainnet" => "Bitcoin MAINNET — fonds réels",
-        "sol_devnet" => "Solana devnet",
-        "sol_mainnet" => "Solana MAINNET — fonds réels",
+        "evm_mainnet" => lang("Ethereum MAINNET — fonds réels", "Ethereum MAINNET — real funds"),
+        "btc_testnet" => lang("Bitcoin testnet", "Bitcoin testnet"),
+        "btc_mainnet" => lang("Bitcoin MAINNET — fonds réels", "Bitcoin MAINNET — real funds"),
+        "sol_devnet" => lang("Solana devnet", "Solana devnet"),
+        "sol_mainnet" => lang("Solana MAINNET — fonds réels", "Solana MAINNET — real funds"),
         other => other,
     }
 }
@@ -969,12 +1110,20 @@ fn confirm_transaction_native(
     fee_line: Option<&str>,
 ) -> bool {
     let fee_line = fee_line.map(|f| format!("\n{f}")).unwrap_or_default();
-    app.dialog()
-        .message(format!(
+    let message = if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
+        format!(
+            "Network: {}\nFrom profile: {from_label}\nRecipient: {to}\nAmount: {amount}{fee_line}\n\nConfirm this transfer? It is irreversible.",
+            network_label(network)
+        )
+    } else {
+        format!(
             "Réseau : {}\nDepuis le profil : {from_label}\nDestinataire : {to}\nMontant : {amount}{fee_line}\n\nConfirmer cet envoi ? C'est irréversible.",
             network_label(network)
-        ))
-        .title("Confirmer le virement")
+        )
+    };
+    app.dialog()
+        .message(message)
+        .title(lang("Confirmer le virement", "Confirm the transfer"))
         .kind(MessageDialogKind::Warning)
         .buttons(MessageDialogButtons::OkCancel)
         .blocking_show()
@@ -1024,6 +1173,50 @@ fn send_transaction(
         }
         other => Err(translate_error(&format!("réseau inconnu : {other}"))),
     }
+}
+
+/// Indique si l'envoi USDC vers `to` va facturer un rent supplémentaire (le
+/// destinataire n'a pas encore de compte USDC) — lecture seule, appelée AVANT
+/// la confirmation pour ne jamais présenter un coût caché après coup. `None`
+/// si l'ATA du destinataire existe déjà (aucun coût supplémentaire), ou si
+/// `to` n'est pas une adresse Solana valide ou que la lecture réseau échoue
+/// (l'erreur sera de toute façon remontée normalement par `send_usdc` juste
+/// après ; ici on préfère ne rien afficher plutôt que de bloquer sur un
+/// problème réseau avant même la confirmation).
+fn describe_possible_ata_rent(net: &wallet_flow::SolNetwork, to: &str) -> Option<String> {
+    let rent_lamports = api::usdc_ata_rent_lamports_if_missing(to, net).ok()??;
+    let sol = rent_lamports as f64 / 1e9;
+    Some(if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
+        format!(
+            "The recipient doesn't have a USDC account yet: creating it will cost about {sol:.6} extra SOL in rent (paid by you, once), on top of the usual network fee."
+        )
+    } else {
+        format!(
+            "Le destinataire n'a pas encore de compte USDC : sa création coûtera environ {sol:.6} SOL de rent supplémentaire (payé par vous, une seule fois), en plus des frais réseau habituels."
+        )
+    })
+}
+
+#[tauri::command]
+fn send_usdc_transaction(password: String, to: String, amount: String, profile_index: u32, app: tauri::AppHandle) -> Result<String, String> {
+    let password = Zeroizing::new(password);
+    let dir = data_dir(&app)?;
+    let network = "sol_mainnet"; // USDC v1 : mainnet uniquement (voir sol_spl.rs)
+    let net = sol_network(network)?;
+
+    let from_label = api::list_profiles(&dir)
+        .into_iter()
+        .find(|p| p.index == profile_index)
+        .map(|p| p.label)
+        .unwrap_or_else(|| format!("profil #{profile_index}"));
+
+    let rent_line = describe_possible_ata_rent(net, &to);
+    let amount_line = format!("{amount} USDC");
+    if !confirm_transaction_native(&app, network, &to, &amount_line, &from_label, rent_line.as_deref()) {
+        return Err(translate_error("Virement annulé (confirmation refusée)."));
+    }
+
+    api::send_usdc(&dir, &password, net, &to, &amount, profile_index).t_err()
 }
 
 #[derive(Serialize)]
@@ -1102,16 +1295,27 @@ fn add_recipient(label: String, pubkey_armored: String, app: tauri::AppHandle) -
         // remplacement de clé pour un contact déjà enregistré n'est pas anodin (voir
         // la doc de `recipient_key_change`), donc pas question de le laisser passer
         // silencieusement comme le ferait `messaging::add_recipient` seule.
-        let confirmed = app
-            .dialog()
-            .message(format!(
+        let message = if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
+            format!(
+                "\"{label}\" already has a registered key, different from this one.\n\n\
+                 Old fingerprint: {old_fingerprint}\n\
+                 New fingerprint: {new_fingerprint}\n\n\
+                 If you haven't verified this change with {label} through a channel other than the app, \
+                 this could be a substitution attempt. Replace anyway?"
+            )
+        } else {
+            format!(
                 "\"{label}\" a déjà une clé enregistrée, différente de celle-ci.\n\n\
                  Ancienne empreinte : {old_fingerprint}\n\
                  Nouvelle empreinte : {new_fingerprint}\n\n\
                  Si vous n'avez pas vérifié ce changement avec {label} par un autre moyen que l'app, \
                  ceci pourrait être une tentative de substitution. Remplacer quand même ?"
-            ))
-            .title("Clé du destinataire modifiée")
+            )
+        };
+        let confirmed = app
+            .dialog()
+            .message(message)
+            .title(lang("Clé du destinataire modifiée", "Recipient key changed"))
             .kind(MessageDialogKind::Warning)
             .buttons(MessageDialogButtons::OkCancel)
             .blocking_show();
@@ -1141,6 +1345,94 @@ fn decrypt_message(password: String, ciphertext: String, app: tauri::AppHandle) 
     let password = Zeroizing::new(password);
     let dir = data_dir(&app)?;
     api::decrypt_incoming_message(&dir, &password, &ciphertext).t_err()
+}
+
+// --- Wallets externes --------------------------------------------------------
+// Suivi en lecture seule d'adresses qui n'appartiennent pas à ce portefeuille
+// (voir core/src/external_wallets.rs) : aucun secret impliqué, le solde de
+// chacune passe par la commande `get_balance` déjà existante, exactement comme
+// pour les propres profils du wallet.
+
+#[tauri::command]
+fn list_external_wallets(app: tauri::AppHandle) -> Result<Vec<external_wallets::ExternalWallet>, String> {
+    let dir = data_dir(&app)?;
+    Ok(external_wallets::list_wallets(&dir))
+}
+
+#[tauri::command]
+fn list_external_wallet_groups(app: tauri::AppHandle) -> Result<Vec<external_wallets::ExternalWalletGroup>, String> {
+    let dir = data_dir(&app)?;
+    Ok(external_wallets::list_groups(&dir))
+}
+
+#[tauri::command]
+fn add_external_wallet(
+    label: String,
+    network: String,
+    address: String,
+    group_id: Option<u32>,
+    app: tauri::AppHandle,
+) -> Result<external_wallets::ExternalWallet, String> {
+    let dir = data_dir(&app)?;
+    external_wallets::add_wallet(&dir, &label, &network, &address, group_id).t_err()
+}
+
+#[tauri::command]
+fn remove_external_wallet(id: u32, app: tauri::AppHandle) -> Result<(), String> {
+    let dir = data_dir(&app)?;
+    external_wallets::remove_wallet(&dir, id).t_err()
+}
+
+#[tauri::command]
+fn set_external_wallet_group(id: u32, group_id: Option<u32>, app: tauri::AppHandle) -> Result<(), String> {
+    let dir = data_dir(&app)?;
+    external_wallets::set_wallet_group(&dir, id, group_id).t_err()
+}
+
+#[tauri::command]
+fn create_external_wallet_group(name: String, app: tauri::AppHandle) -> Result<external_wallets::ExternalWalletGroup, String> {
+    let dir = data_dir(&app)?;
+    external_wallets::create_group(&dir, &name).t_err()
+}
+
+#[tauri::command]
+fn rename_external_wallet_group(id: u32, name: String, app: tauri::AppHandle) -> Result<(), String> {
+    let dir = data_dir(&app)?;
+    external_wallets::rename_group(&dir, id, &name).t_err()
+}
+
+#[tauri::command]
+fn delete_external_wallet_group(id: u32, app: tauri::AppHandle) -> Result<(), String> {
+    let dir = data_dir(&app)?;
+    external_wallets::delete_group(&dir, id).t_err()
+}
+
+// --- Carnet d'adresses -------------------------------------------------------
+// Associer un label à une adresse pour la retrouver au moment d'envoyer des
+// fonds (voir core/src/address_book.rs) — distinct des wallets externes
+// (aucun solde interrogé ici, jamais).
+
+#[tauri::command]
+fn list_address_book(app: tauri::AppHandle) -> Result<Vec<address_book::AddressBookEntry>, String> {
+    let dir = data_dir(&app)?;
+    Ok(address_book::list_entries(&dir))
+}
+
+#[tauri::command]
+fn add_address_book_entry(
+    label: String,
+    network: String,
+    address: String,
+    app: tauri::AppHandle,
+) -> Result<address_book::AddressBookEntry, String> {
+    let dir = data_dir(&app)?;
+    address_book::add_entry(&dir, &label, &network, &address).t_err()
+}
+
+#[tauri::command]
+fn remove_address_book_entry(id: u32, app: tauri::AppHandle) -> Result<(), String> {
+    let dir = data_dir(&app)?;
+    address_book::remove_entry(&dir, id).t_err()
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1177,18 +1469,32 @@ pub fn run() {
             list_archived_profiles,
             restore_wallet,
             get_balance,
+            get_usdc_balance,
             has_pending_tx,
             get_tx_history,
+            get_usdc_tx_history,
             estimate_btc_fees,
             get_crypto_prices,
             get_market_prices,
             send_transaction,
+            send_usdc_transaction,
             get_own_certificate,
             list_recipients,
             add_recipient,
             remove_recipient,
             encrypt_message,
             decrypt_message,
+            list_external_wallets,
+            list_external_wallet_groups,
+            add_external_wallet,
+            remove_external_wallet,
+            set_external_wallet_group,
+            create_external_wallet_group,
+            rename_external_wallet_group,
+            delete_external_wallet_group,
+            list_address_book,
+            add_address_book_entry,
+            remove_address_book_entry,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

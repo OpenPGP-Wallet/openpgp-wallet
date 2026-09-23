@@ -50,6 +50,75 @@ themeSelect.addEventListener("change", () => {
   }
 });
 
+// Même préférence purement visuelle que le thème ci-dessus (stockage local
+// suffit). `applyRoundedButtons` cible directement `<html>` (voir styles.css :
+// `:root[data-rounded-buttons="true"] button`), une seule règle CSS qui couvre
+// tous les boutons de l'app puisqu'ils sont tous de vrais éléments `<button>`.
+const ROUNDED_BUTTONS_STORAGE_KEY = "pgp-wallet-rounded-buttons";
+
+function applyRoundedButtons(enabled) {
+  if (enabled) {
+    document.documentElement.dataset.roundedButtons = "true";
+  } else {
+    delete document.documentElement.dataset.roundedButtons;
+  }
+}
+
+let roundedButtonsEnabled = false;
+try {
+  roundedButtonsEnabled = localStorage.getItem(ROUNDED_BUTTONS_STORAGE_KEY) === "true";
+} catch (e) {
+  // localStorage indisponible : reste sur des boutons non arrondis par défaut.
+}
+applyRoundedButtons(roundedButtonsEnabled);
+
+const roundedButtonsToggle = document.getElementById("rounded-buttons-toggle");
+roundedButtonsToggle.checked = roundedButtonsEnabled;
+roundedButtonsToggle.addEventListener("change", () => {
+  const enabled = roundedButtonsToggle.checked;
+  applyRoundedButtons(enabled);
+  try {
+    localStorage.setItem(ROUNDED_BUTTONS_STORAGE_KEY, String(enabled));
+  } catch (e) {
+    // Best-effort : le réglage reste actif pour cette session même si la sauvegarde échoue.
+  }
+});
+
+// Vue liste du portefeuille : même préférence purement visuelle/locale que les
+// deux précédentes. `applyWalletListView` cible `<html>` (voir styles.css :
+// `:root[data-wallet-list-view="true"] .wallet-card`) — du CSS pur, aucun
+// changement de structure DOM, donc aucun autre code (refresh/historique/envoi)
+// n'a besoin de savoir dans quel mode d'affichage il tourne.
+const WALLET_LIST_VIEW_STORAGE_KEY = "pgp-wallet-list-view";
+
+function applyWalletListView(enabled) {
+  if (enabled) {
+    document.documentElement.dataset.walletListView = "true";
+  } else {
+    delete document.documentElement.dataset.walletListView;
+  }
+}
+
+let walletListViewEnabled = false;
+try {
+  walletListViewEnabled = localStorage.getItem(WALLET_LIST_VIEW_STORAGE_KEY) === "true";
+} catch (e) {
+  // localStorage indisponible : reste en vue cartes par défaut.
+}
+applyWalletListView(walletListViewEnabled);
+
+const walletListViewToggle = document.getElementById("wallet-list-view-toggle");
+walletListViewToggle.checked = walletListViewEnabled;
+walletListViewToggle.addEventListener("change", () => {
+  const enabled = walletListViewToggle.checked;
+  applyWalletListView(enabled);
+  try {
+    localStorage.setItem(WALLET_LIST_VIEW_STORAGE_KEY, String(enabled));
+  } catch (e) {
+    // Best-effort : le réglage reste actif pour cette session même si la sauvegarde échoue.
+  }
+});
+
 // --- Langue ------------------------------------------------------------------
 // Préférence purement visuelle par appareil (comme le thème ci-dessus) : stockage
 // local suffit. Ne traduit que le frontend (HTML statique + messages générés en
@@ -121,8 +190,51 @@ const I18N = {
     "nav.wallet": "Portefeuille",
     "nav.message": "Message",
     "nav.certificate": "Certificat",
+    "nav.external": "Wallets externes",
+    "nav.addressBook": "Carnet d'adresses",
     "nav.settings": "Paramètres",
     "nav.lock": "Verrouiller",
+    "external.title": "Wallets externes",
+    "external.subtitle":
+      "Suivez le solde d'adresses qui ne vous appartiennent pas — collez juste une adresse publique. Lecture seule : aucune clé privée n'est jamais impliquée. Regroupez plusieurs wallets pour additionner leur valeur.",
+    "external.addWallet": "+ Ajouter un wallet externe",
+    "external.addGroup": "+ Nouveau groupe",
+    "external.refresh": "Actualiser",
+    "external.addWalletTitle": "Ajouter un wallet externe",
+    "external.label": "Nom (pour vous y retrouver)",
+    "external.network": "Réseau",
+    "external.netEvmMainnet": "Ethereum — Mainnet",
+    "external.netEvmSepolia": "Ethereum — Sepolia (testnet)",
+    "external.netBtcMainnet": "Bitcoin — Mainnet",
+    "external.netBtcTestnet": "Bitcoin — Testnet",
+    "external.netSolMainnet": "Solana — Mainnet",
+    "external.netSolDevnet": "Solana — Devnet",
+    "external.netUsdcSolana": "USDC — Solana (Mainnet)",
+    "external.address": "Adresse",
+    "external.group": "Groupe (optionnel)",
+    "external.noGroup": "Aucun groupe",
+    "external.add": "Ajouter",
+    "external.addGroupTitle": "Nouveau groupe",
+    "external.groupName": "Nom du groupe",
+    "external.empty": "Aucun wallet externe pour l'instant — ajoutez-en un avec le bouton ci-dessus.",
+    "external.groupEmpty": "Aucun wallet dans ce groupe.",
+    "external.ungrouped": "Non groupés",
+    "external.deleteGroup": "Supprimer le groupe",
+    "external.remove": "Retirer",
+    "external.labelAndAddressRequired": "Le nom et l'adresse sont requis.",
+    "external.groupNameRequired": "Le nom du groupe est requis.",
+    "addressBook.title": "Carnet d'adresses",
+    "addressBook.subtitle":
+      "Enregistrez une adresse sous un nom pour la retrouver rapidement au moment d'envoyer des fonds, sans avoir à la recopier à chaque fois.",
+    "addressBook.addEntry": "+ Ajouter une adresse",
+    "addressBook.addTitle": "Ajouter une adresse",
+    "addressBook.label": "Nom (pour vous y retrouver)",
+    "addressBook.network": "Réseau",
+    "addressBook.address": "Adresse",
+    "addressBook.add": "Ajouter",
+    "addressBook.remove": "Supprimer",
+    "addressBook.empty": "Aucune adresse enregistrée pour l'instant — ajoutez-en une avec le bouton ci-dessus.",
+    "addressBook.pickPlaceholder": "— Choisir depuis le carnet d'adresses —",
     "wallet.profile": "Profil",
     "wallet.receive": "Recevoir",
     "wallet.receiveEth": "Recevoir ETH",
@@ -143,6 +255,7 @@ const I18N = {
     "wallet.pendingBadge": "⏳ Transaction en attente détectée",
     "wallet.marketsTitle": "Prix des cryptomonnaies en direct",
     "wallet.showQr": "Afficher en QR code",
+    "wallet.copyAddress": "Copier l'adresse",
     "wallet.marketsLoadError": "Impossible de charger les données de marché.",
     "wallet.qrError": "Impossible de générer le QR code : {err}",
     "wallet.linkError": "Impossible d'ouvrir le lien : {err}",
@@ -212,6 +325,8 @@ const I18N = {
     "settings.purple": "Violet",
     "settings.orange": "Orange",
     "settings.dark": "Sombre",
+    "settings.roundedButtons": "Boutons arrondis",
+    "settings.walletListView": "Affichage compact (liste) du portefeuille",
     "settings.archivedProfiles": "Profils archivés",
     "settings.archivedProfilesHint":
       "Un profil archivé disparaît du sélecteur principal mais reste entièrement récupérable — rien n'est perdu tant qu'il apparaît ici.",
@@ -239,6 +354,8 @@ const I18N = {
     "send.mainnetWarning": "/!\\ Réseau MAINNET — ceci dépense de vrais fonds, irréversible.",
     "send.toAddress": "Adresse destinataire",
     "send.amount": "Montant",
+    "send.percentMax": "Max",
+    "send.percentUnavailable": "Pourcentages indisponibles (solde non chargé).",
     "send.feeSpeed": "Vitesse d'envoi (frais réseau)",
     "send.passwordToConfirm": "Mot de passe (pour valider la transaction)",
     "send.confirm": "Confirmer l'envoi",
@@ -329,8 +446,51 @@ const I18N = {
     "nav.wallet": "Wallet",
     "nav.message": "Message",
     "nav.certificate": "Certificate",
+    "nav.external": "External wallets",
+    "nav.addressBook": "Address book",
     "nav.settings": "Settings",
     "nav.lock": "Lock",
+    "external.title": "External wallets",
+    "external.subtitle":
+      "Track the balance of addresses you don't own — just paste a public address. Read-only: no private key is ever involved. Group several wallets together to add up their value.",
+    "external.addWallet": "+ Add an external wallet",
+    "external.addGroup": "+ New group",
+    "external.refresh": "Refresh",
+    "external.addWalletTitle": "Add an external wallet",
+    "external.label": "Name (for your own reference)",
+    "external.network": "Network",
+    "external.netEvmMainnet": "Ethereum — Mainnet",
+    "external.netEvmSepolia": "Ethereum — Sepolia (testnet)",
+    "external.netBtcMainnet": "Bitcoin — Mainnet",
+    "external.netBtcTestnet": "Bitcoin — Testnet",
+    "external.netSolMainnet": "Solana — Mainnet",
+    "external.netSolDevnet": "Solana — Devnet",
+    "external.netUsdcSolana": "USDC — Solana (Mainnet)",
+    "external.address": "Address",
+    "external.group": "Group (optional)",
+    "external.noGroup": "No group",
+    "external.add": "Add",
+    "external.addGroupTitle": "New group",
+    "external.groupName": "Group name",
+    "external.empty": "No external wallet yet — add one with the button above.",
+    "external.groupEmpty": "No wallet in this group.",
+    "external.ungrouped": "Ungrouped",
+    "external.deleteGroup": "Delete group",
+    "external.remove": "Remove",
+    "external.labelAndAddressRequired": "Name and address are required.",
+    "external.groupNameRequired": "Group name is required.",
+    "addressBook.title": "Address book",
+    "addressBook.subtitle":
+      "Save an address under a name so you can find it quickly when sending funds, without retyping it every time.",
+    "addressBook.addEntry": "+ Add an address",
+    "addressBook.addTitle": "Add an address",
+    "addressBook.label": "Name (for your own reference)",
+    "addressBook.network": "Network",
+    "addressBook.address": "Address",
+    "addressBook.add": "Add",
+    "addressBook.remove": "Remove",
+    "addressBook.empty": "No saved address yet — add one with the button above.",
+    "addressBook.pickPlaceholder": "— Choose from the address book —",
     "wallet.profile": "Profile",
     "wallet.receive": "Receive",
     "wallet.receiveEth": "Receive ETH",
@@ -351,6 +511,7 @@ const I18N = {
     "wallet.pendingBadge": "⏳ Pending transaction detected",
     "wallet.marketsTitle": "Live cryptocurrency prices",
     "wallet.showQr": "Show as QR code",
+    "wallet.copyAddress": "Copy address",
     "wallet.marketsLoadError": "Unable to load market data.",
     "wallet.qrError": "Unable to generate the QR code: {err}",
     "wallet.linkError": "Unable to open the link: {err}",
@@ -420,6 +581,8 @@ const I18N = {
     "settings.purple": "Purple",
     "settings.orange": "Orange",
     "settings.dark": "Dark",
+    "settings.roundedButtons": "Rounded buttons",
+    "settings.walletListView": "Compact (list) wallet display",
     "settings.archivedProfiles": "Archived profiles",
     "settings.archivedProfilesHint":
       "An archived profile disappears from the main selector but stays fully recoverable — nothing is lost as long as it appears here.",
@@ -447,6 +610,8 @@ const I18N = {
     "send.mainnetWarning": "/!\\ MAINNET network — this spends real funds, irreversible.",
     "send.toAddress": "Recipient address",
     "send.amount": "Amount",
+    "send.percentMax": "Max",
+    "send.percentUnavailable": "Percentages unavailable (balance not loaded).",
     "send.feeSpeed": "Sending speed (network fee)",
     "send.passwordToConfirm": "Password (to confirm the transaction)",
     "send.confirm": "Confirm send",
@@ -714,6 +879,14 @@ function showError(el, message) {
 
 function hideError(el) {
   el.classList.add("hidden");
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (e) {
+    alert(t("common.copyFailed", { err: e }));
+  }
 }
 
 // --- Onboarding ---------------------------------------------------------
@@ -1143,6 +1316,8 @@ document.querySelectorAll(".nav-tab").forEach((tab) => {
     });
     if (target === "certificate") loadCertificate();
     if (target === "message") loadRecipients();
+    if (target === "external") loadExternalWallets();
+    if (target === "addressbook") loadAddressBook();
     if (target === "settings") {
       loadArchivedProfiles();
       loadBiometricSettings();
@@ -1260,6 +1435,10 @@ let priceRefreshTimer = null;
 let pricesRefreshing = false;
 
 function priceForCoin(coin) {
+  // USDC est un stablecoin indexé sur le dollar : pas d'appel de prix
+  // nécessaire, toujours ~1 $ — évite un cas particulier dans
+  // updateFiatValue/renderQuickAmounts pour ce seul actif.
+  if (coin === "usdc") return 1;
   if (!latestPrices) return null;
   if (coin === "evm") return latestPrices.eth_usd;
   if (coin === "btc") return latestPrices.btc_usd;
@@ -1382,6 +1561,9 @@ const coinConfig = {
   evm: { defaultNetwork: "evm_mainnet" },
   btc: { defaultNetwork: "btc_mainnet" },
   sol: { defaultNetwork: "sol_mainnet" },
+  // USDC (jeton SPL sur Solana, pas un réseau à part) : mainnet uniquement en
+  // v1 (voir core/src/sol_spl.rs), jamais devnet.
+  usdc: { defaultNetwork: "sol_mainnet" },
 };
 
 // Un "profil" = un index de dérivation supplémentaire sur la même clé maîtresse
@@ -1413,7 +1595,10 @@ function addressForCoin(coin, network) {
   if (!profile || !profile.addresses) return "";
   if (coin === "evm") return profile.addresses.evm;
   if (coin === "btc") return network === "btc_mainnet" ? profile.addresses.btc_mainnet : profile.addresses.btc_testnet;
-  if (coin === "sol") return profile.addresses.solana;
+  // USDC utilise la même adresse propriétaire que Solana (le compte de jetons
+  // associé qui détient réellement l'USDC est un détail invisible pour
+  // l'utilisateur, dérivé côté Rust — voir core/src/sol_spl.rs).
+  if (coin === "sol" || coin === "usdc") return profile.addresses.solana;
   return "";
 }
 
@@ -1654,7 +1839,11 @@ async function refreshBalance(card) {
     // indépendants (l'un ne dépend pas du résultat de l'autre) : les lancer en
     // parallèle plutôt que l'un après l'autre coupe la latence perçue du
     // rafraîchissement en deux.
-    const balancePromise = invoke("get_balance", { network, address })
+    // USDC est un jeton SPL, pas un "réseau" au sens où get_balance l'entend
+    // (pas de notion de décimales/mint par actif dans cette commande) : une
+    // commande dédiée, voir core/src/api.rs::get_usdc_balance.
+    const balanceCommand = coin === "usdc" ? "get_usdc_balance" : "get_balance";
+    const balancePromise = invoke(balanceCommand, { network, address })
       .then((balance) => {
         balanceEl.textContent = balance;
       })
@@ -1696,6 +1885,19 @@ document.querySelectorAll(".wallet-card").forEach((card) => {
   refreshBtn.addEventListener("click", withBusyButton(refreshBtn, () => refreshBalance(card)));
   card.querySelector('[data-action="send"]').addEventListener("click", () => openSendModal(card));
   card.querySelector('[data-action="qr"]').addEventListener("click", () => openQrModal(card));
+  // Cliquer l'adresse elle-même l'affiche en entier (même modale que le bouton QR,
+  // qui montre déjà le texte complet à côté du code QR) — utile surtout en vue
+  // liste (voir styles.css : `.address` y est tronquée avec "…" pour la
+  // compacité), mais garde le même geste en vue cartes aussi, par cohérence.
+  card.querySelector('[data-field="address"]').addEventListener("click", () => openQrModal(card));
+  card.querySelector('[data-action="copy-address"]').addEventListener("click", () => {
+    const address = card.querySelector('[data-field="address"]').textContent;
+    if (!address) {
+      alert(t("wallet.historyAddressUnavailable"));
+      return;
+    }
+    copyText(address);
+  });
   const historyBtn = card.querySelector('[data-action="history"]');
   historyBtn.addEventListener("click", withBusyButton(historyBtn, () => openHistoryModal(card)));
   const select = card.querySelector(".network-select");
@@ -1767,7 +1969,14 @@ async function openHistoryModal(card) {
   }
 
   try {
-    const entries = await invoke("get_tx_history", { network, address });
+    // USDC (jeton SPL) lit preTokenBalances/postTokenBalances via l'ATA du
+    // propriétaire plutôt que preBalances/postBalances de l'adresse elle-même
+    // (voir core/src/sol_rpc.rs::token_signature_history) : commande dédiée,
+    // comme pour le solde et l'envoi. Mainnet uniquement (sol_spl.rs).
+    const entries =
+      coin === "usdc"
+        ? await invoke("get_usdc_tx_history", { network: "sol_mainnet", address })
+        : await invoke("get_tx_history", { network, address });
     container.innerHTML = "";
     if (entries.length === 0) {
       container.innerHTML = `<p class="muted">${t("wallet.historyEmpty")}</p>`;
@@ -1843,8 +2052,8 @@ let sendContext = null;
 // (app/src-tauri/src/lib.rs::get_balance), pour que le montant rempli soit celui
 // réellement envoyé, pas une valeur arrondie différente.
 const QUICK_AMOUNTS_USD = [5, 10, 50];
-const COIN_DECIMALS = { evm: 6, btc: 8, sol: 9 };
-const COIN_SYMBOL = { evm: "ETH", btc: "BTC", sol: "SOL" };
+const COIN_DECIMALS = { evm: 6, btc: 8, sol: 9, usdc: 6 };
+const COIN_SYMBOL = { evm: "ETH", btc: "BTC", sol: "SOL", usdc: "USDC" };
 
 function renderQuickAmounts() {
   const container = document.getElementById("send-quick-amounts");
@@ -1880,6 +2089,49 @@ function renderQuickAmounts() {
   });
 }
 
+// Pourcentages du solde actuellement affiché sur la carte (pas un nouvel appel
+// réseau : réutilise `[data-field="balance"]`, déjà tenu à jour par
+// refreshBalance). Pas de déduction de frais réseau pour "Max" (100 %) : les
+// frais sont estimés différemment par réseau (sat/vB pour Bitcoin, gas pour
+// EVM, frais fixe pour Solana) et le backend refuse déjà clairement l'envoi
+// AVANT toute diffusion si le solde restant ne couvre pas les frais (voir
+// api.rs::send_sol/send_btc/send_evm/send_usdc) — pas la peine de deviner ici
+// un montant de frais qu'on ne peut pas garantir exact.
+const QUICK_PERCENTAGES = [25, 50, 100];
+
+function renderQuickPercentages() {
+  const container = document.getElementById("send-quick-percentages");
+  container.innerHTML = "";
+  if (!sendContext) return;
+  const balance = Number.parseFloat(sendContext.card.querySelector('[data-field="balance"]').textContent);
+  const decimals = COIN_DECIMALS[sendContext.coin];
+  const symbol = COIN_SYMBOL[sendContext.coin];
+
+  if (!Number.isFinite(balance) || balance <= 0) {
+    container.innerHTML = `<p class="muted quick-amounts-hint">${t("send.percentUnavailable")}</p>`;
+    return;
+  }
+
+  QUICK_PERCENTAGES.forEach((percent) => {
+    const cryptoAmount = ((balance * percent) / 100).toFixed(decimals);
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "quick-amount-btn";
+    const percentSpan = document.createElement("span");
+    percentSpan.className = "quick-amount-usd";
+    percentSpan.textContent = percent === 100 ? t("send.percentMax") : `${percent}%`;
+    const cryptoSpan = document.createElement("span");
+    cryptoSpan.className = "quick-amount-crypto";
+    cryptoSpan.textContent = `≈ ${cryptoAmount} ${symbol}`;
+    btn.appendChild(percentSpan);
+    btn.appendChild(cryptoSpan);
+    btn.addEventListener("click", () => {
+      document.getElementById("send-amount").value = cryptoAmount;
+    });
+    container.appendChild(btn);
+  });
+}
+
 function openSendModal(card) {
   // Le profil source est figé à l'ouverture (`sendContext.profileIndex`) plutôt que
   // relu depuis `currentProfileIndex` au moment de confirmer : la modale plein écran
@@ -1898,8 +2150,10 @@ function openSendModal(card) {
   hideError(document.getElementById("send-error"));
   document.getElementById("send-success").classList.add("hidden");
   renderQuickAmounts();
+  renderQuickPercentages();
   loadBtcFeeOptions(card, network);
   sendModal.classList.remove("hidden");
+  loadAddressBook().then(() => refreshSendAddressBookPicker(card.dataset.coin));
 }
 
 // Bitcoin est le seul réseau où les frais sont un choix explicite de l'utilisateur
@@ -1997,14 +2251,20 @@ sendConfirmBtn.addEventListener("click", withBusyButton(sendConfirmBtn, async ()
   }
 
   try {
-    const txResult = await invoke("send_transaction", {
-      network,
-      password,
-      to,
-      amount,
-      feeSat: sendContext.coin === "btc" ? sendContext.feeSat : null,
-      profileIndex: sendContext.profileIndex,
-    });
+    // USDC (jeton SPL) suit un chemin dédié, distinct de send_transaction :
+    // pas de "network" à transmettre (mainnet uniquement, voir sol_spl.rs) ni
+    // de frais Bitcoin-style, et la construction de la transaction elle-même
+    // est entièrement différente côté Rust (deux instructions au lieu d'une).
+    const txResult = sendContext.coin === "usdc"
+      ? await invoke("send_usdc_transaction", { password, to, amount, profileIndex: sendContext.profileIndex })
+      : await invoke("send_transaction", {
+          network,
+          password,
+          to,
+          amount,
+          feeSat: sendContext.coin === "btc" ? sendContext.feeSat : null,
+          profileIndex: sendContext.profileIndex,
+        });
     successEl.textContent = t("send.txSent", { tx: txResult });
     successEl.classList.remove("hidden");
     refreshBalance(sendContext.card);
@@ -2029,12 +2289,8 @@ async function loadCertificate() {
   }
 }
 
-document.getElementById("copy-cert").addEventListener("click", async () => {
-  try {
-    await navigator.clipboard.writeText(document.getElementById("cert-armored").value);
-  } catch (e) {
-    alert(t("common.copyFailed", { err: e }));
-  }
+document.getElementById("copy-cert").addEventListener("click", () => {
+  copyText(document.getElementById("cert-armored").value);
 });
 
 // --- Message (destinataires + chiffrement) ---------------------------------
@@ -2183,12 +2439,8 @@ encryptMessageBtn.addEventListener("click", withBusyButton(encryptMessageBtn, as
   }
 }));
 
-document.getElementById("copy-encrypted").addEventListener("click", async () => {
-  try {
-    await navigator.clipboard.writeText(document.getElementById("encrypt-result").value);
-  } catch (e) {
-    alert(t("common.copyFailed", { err: e }));
-  }
+document.getElementById("copy-encrypted").addEventListener("click", () => {
+  copyText(document.getElementById("encrypt-result").value);
 });
 
 document.getElementById("clear-encrypted").addEventListener("click", () => {
@@ -2226,6 +2478,467 @@ document.getElementById("clear-decrypted").addEventListener("click", () => {
   document.getElementById("decrypt-result-block").classList.add("hidden");
   document.getElementById("decrypt-result").value = "";
   document.getElementById("decrypt-input").value = "";
+});
+
+// --- Wallets externes --------------------------------------------------------
+// Suivi en lecture seule d'adresses qui n'appartiennent pas à ce portefeuille :
+// on réutilise directement la commande `get_balance` déjà utilisée pour les
+// propres cartes du wallet (aucun secret impliqué, juste une adresse publique).
+
+let externalWalletsCache = [];
+let externalGroupsCache = [];
+
+function externalWalletCoin(network) {
+  // "usdc_solana" avant "sol" : sinon startsWith("sol") ne matcherait de
+  // toute façon pas ("usdc_solana" ne commence pas par "sol"), mais autant
+  // rester explicite plutôt que de dépendre de cet ordre par accident.
+  if (network === "usdc_solana") return "usdc";
+  if (network.startsWith("evm")) return "evm";
+  if (network.startsWith("btc")) return "btc";
+  if (network.startsWith("sol")) return "sol";
+  return null;
+}
+
+function externalNetworkLabel(network) {
+  const key = {
+    evm_mainnet: "external.netEvmMainnet",
+    evm_sepolia: "external.netEvmSepolia",
+    btc_mainnet: "external.netBtcMainnet",
+    btc_testnet: "external.netBtcTestnet",
+    sol_mainnet: "external.netSolMainnet",
+    sol_devnet: "external.netSolDevnet",
+    usdc_solana: "external.netUsdcSolana",
+  }[network];
+  return key ? t(key) : network;
+}
+
+async function loadExternalWallets() {
+  try {
+    [externalWalletsCache, externalGroupsCache] = await Promise.all([
+      invoke("list_external_wallets"),
+      invoke("list_external_wallet_groups"),
+    ]);
+  } catch (e) {
+    console.error(e);
+    return;
+  }
+  renderExternalWallets();
+  refreshExternalWalletBalances();
+}
+
+function renderExternalWalletRow(wallet) {
+  const row = document.createElement("div");
+  row.className = "recipient-item";
+  row.dataset.externalWalletRow = String(wallet.id);
+  row.dataset.externalGroup = wallet.group_id != null ? String(wallet.group_id) : "none";
+
+  const info = document.createElement("div");
+  info.className = "recipient-info";
+  const labelEl = document.createElement("span");
+  labelEl.className = "recipient-label";
+  labelEl.textContent = wallet.label;
+  const meta = document.createElement("span");
+  meta.className = "recipient-fp";
+  meta.textContent = `${externalNetworkLabel(wallet.network)} · ${wallet.address}`;
+  info.appendChild(labelEl);
+  info.appendChild(meta);
+
+  const actions = document.createElement("div");
+  actions.className = "item-actions";
+
+  const balanceEl = document.createElement("span");
+  balanceEl.dataset.field = "external-balance";
+  balanceEl.textContent = "…";
+
+  const groupSelect = document.createElement("select");
+  groupSelect.className = "external-wallet-group-select";
+  const noneOption = document.createElement("option");
+  noneOption.value = "";
+  noneOption.textContent = t("external.noGroup");
+  groupSelect.appendChild(noneOption);
+  externalGroupsCache.forEach((g) => {
+    const opt = document.createElement("option");
+    opt.value = String(g.id);
+    opt.textContent = g.name;
+    groupSelect.appendChild(opt);
+  });
+  groupSelect.value = wallet.group_id != null ? String(wallet.group_id) : "";
+  groupSelect.addEventListener("change", async () => {
+    const groupId = groupSelect.value === "" ? null : Number.parseInt(groupSelect.value, 10);
+    try {
+      await invoke("set_external_wallet_group", { id: wallet.id, groupId });
+      loadExternalWallets();
+    } catch (e) {
+      alert(t("common.error", { err: e }));
+    }
+  });
+
+  const copyBtn = document.createElement("button");
+  copyBtn.type = "button";
+  copyBtn.className = "link";
+  copyBtn.textContent = t("common.copy");
+  copyBtn.addEventListener("click", () => copyText(wallet.address));
+
+  const removeBtn = document.createElement("button");
+  removeBtn.type = "button";
+  removeBtn.className = "link";
+  removeBtn.textContent = t("external.remove");
+  removeBtn.addEventListener("click", async () => {
+    try {
+      await invoke("remove_external_wallet", { id: wallet.id });
+      loadExternalWallets();
+    } catch (e) {
+      alert(t("common.error", { err: e }));
+    }
+  });
+
+  actions.appendChild(balanceEl);
+  actions.appendChild(groupSelect);
+  actions.appendChild(copyBtn);
+  actions.appendChild(removeBtn);
+  row.appendChild(info);
+  row.appendChild(actions);
+  return row;
+}
+
+function renderExternalGroupBlock(group, wallets) {
+  const groupKey = group ? String(group.id) : "none";
+  const block = document.createElement("div");
+  block.className = "external-group";
+
+  const header = document.createElement("div");
+  header.className = "external-group-header";
+
+  const nameEl = document.createElement("h3");
+  nameEl.textContent = group ? group.name : t("external.ungrouped");
+
+  const totalEl = document.createElement("span");
+  totalEl.className = "external-group-total";
+  totalEl.dataset.externalGroupTotal = groupKey;
+  totalEl.textContent = "…";
+
+  header.appendChild(nameEl);
+  header.appendChild(totalEl);
+
+  if (group) {
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.className = "link";
+    deleteBtn.textContent = t("external.deleteGroup");
+    deleteBtn.addEventListener("click", async () => {
+      try {
+        await invoke("delete_external_wallet_group", { id: group.id });
+        loadExternalWallets();
+      } catch (e) {
+        alert(t("common.error", { err: e }));
+      }
+    });
+    header.appendChild(deleteBtn);
+  }
+
+  block.appendChild(header);
+
+  const list = document.createElement("div");
+  list.className = "recipient-list";
+  if (wallets.length === 0) {
+    list.innerHTML = `<p class="muted">${t("external.groupEmpty")}</p>`;
+  } else {
+    wallets.forEach((wallet) => list.appendChild(renderExternalWalletRow(wallet)));
+  }
+  block.appendChild(list);
+
+  return block;
+}
+
+function renderExternalWallets() {
+  const container = document.getElementById("external-wallets-container");
+  container.innerHTML = "";
+
+  if (externalWalletsCache.length === 0) {
+    container.innerHTML = `<p class="muted">${t("external.empty")}</p>`;
+    return;
+  }
+
+  externalGroupsCache.forEach((group) => {
+    const wallets = externalWalletsCache.filter((w) => w.group_id === group.id);
+    container.appendChild(renderExternalGroupBlock(group, wallets));
+  });
+
+  const ungrouped = externalWalletsCache.filter((w) => w.group_id == null);
+  if (ungrouped.length > 0 || externalGroupsCache.length === 0) {
+    container.appendChild(renderExternalGroupBlock(null, ungrouped));
+  }
+}
+
+function updateAllExternalGroupTotals() {
+  document.querySelectorAll("[data-external-group-total]").forEach((totalEl) => {
+    const groupKey = totalEl.dataset.externalGroupTotal;
+    const rows = document.querySelectorAll(`[data-external-wallet-row][data-external-group="${groupKey}"]`);
+    let sum = 0;
+    let any = false;
+    rows.forEach((row) => {
+      if (row.dataset.usd) {
+        sum += Number.parseFloat(row.dataset.usd);
+        any = true;
+      }
+    });
+    totalEl.textContent = any
+      ? `${sum.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} $`
+      : "—";
+  });
+}
+
+async function refreshExternalWalletBalances() {
+  await Promise.all(
+    externalWalletsCache.map(async (wallet) => {
+      const row = document.querySelector(`[data-external-wallet-row="${wallet.id}"]`);
+      if (!row) return;
+      const balanceEl = row.querySelector('[data-field="external-balance"]');
+      try {
+        // USDC n'est pas un "network" au sens où get_balance l'entend (pas de
+        // notion de décimales/mint par actif) : commande dédiée, comme pour la
+        // carte USDC du propre wallet. Mainnet uniquement (voir sol_spl.rs) —
+        // "usdc_solana" est stocké tel quel dans external_wallets.json, mais
+        // get_usdc_balance attend le vrai identifiant de cluster ("sol_mainnet").
+        const balance =
+          wallet.network === "usdc_solana"
+            ? await invoke("get_usdc_balance", { network: "sol_mainnet", address: wallet.address })
+            : await invoke("get_balance", { network: wallet.network, address: wallet.address });
+        const price = priceForCoin(externalWalletCoin(wallet.network));
+        const usd = price != null ? Number.parseFloat(balance) * price : null;
+        balanceEl.textContent = balance;
+        row.dataset.usd = usd != null && Number.isFinite(usd) ? String(usd) : "";
+      } catch (e) {
+        balanceEl.textContent = t("wallet.balanceError");
+        row.dataset.usd = "";
+      }
+    })
+  );
+  updateAllExternalGroupTotals();
+}
+
+document.getElementById("refresh-external-wallets-btn").addEventListener("click", () => {
+  renderExternalWallets();
+  refreshExternalWalletBalances();
+});
+
+// --- Modale ajout d'un wallet externe ---------------------------------------
+
+document.getElementById("add-external-wallet-btn").addEventListener("click", () => {
+  document.getElementById("external-wallet-label").value = "";
+  document.getElementById("external-wallet-address").value = "";
+  hideError(document.getElementById("add-external-wallet-error"));
+
+  const groupSelect = document.getElementById("external-wallet-group");
+  groupSelect.innerHTML = "";
+  const noneOption = document.createElement("option");
+  noneOption.value = "";
+  noneOption.textContent = t("external.noGroup");
+  groupSelect.appendChild(noneOption);
+  externalGroupsCache.forEach((g) => {
+    const opt = document.createElement("option");
+    opt.value = String(g.id);
+    opt.textContent = g.name;
+    groupSelect.appendChild(opt);
+  });
+  groupSelect.value = "";
+  syncCustomSelect(groupSelect);
+
+  document.getElementById("add-external-wallet-modal").classList.remove("hidden");
+});
+
+document.getElementById("add-external-wallet-cancel").addEventListener("click", () => {
+  document.getElementById("add-external-wallet-modal").classList.add("hidden");
+});
+
+const addExternalWalletConfirmBtn = document.getElementById("add-external-wallet-confirm");
+addExternalWalletConfirmBtn.addEventListener("click", withBusyButton(addExternalWalletConfirmBtn, async () => {
+  const errorEl = document.getElementById("add-external-wallet-error");
+  hideError(errorEl);
+  const label = document.getElementById("external-wallet-label").value.trim();
+  const network = document.getElementById("external-wallet-network").value;
+  const address = document.getElementById("external-wallet-address").value.trim();
+  const groupValue = document.getElementById("external-wallet-group").value;
+  const groupId = groupValue === "" ? null : Number.parseInt(groupValue, 10);
+
+  if (!label || !address) {
+    showError(errorEl, t("external.labelAndAddressRequired"));
+    return;
+  }
+
+  try {
+    await invoke("add_external_wallet", { label, network, address, groupId });
+    document.getElementById("add-external-wallet-modal").classList.add("hidden");
+    loadExternalWallets();
+  } catch (e) {
+    showError(errorEl, String(e));
+  }
+}));
+
+// --- Modale nouveau groupe ---------------------------------------------------
+
+document.getElementById("add-external-group-btn").addEventListener("click", () => {
+  document.getElementById("external-group-name").value = "";
+  hideError(document.getElementById("add-external-group-error"));
+  document.getElementById("add-external-group-modal").classList.remove("hidden");
+});
+
+document.getElementById("add-external-group-cancel").addEventListener("click", () => {
+  document.getElementById("add-external-group-modal").classList.add("hidden");
+});
+
+const addExternalGroupConfirmBtn = document.getElementById("add-external-group-confirm");
+addExternalGroupConfirmBtn.addEventListener("click", withBusyButton(addExternalGroupConfirmBtn, async () => {
+  const errorEl = document.getElementById("add-external-group-error");
+  hideError(errorEl);
+  const name = document.getElementById("external-group-name").value.trim();
+  if (!name) {
+    showError(errorEl, t("external.groupNameRequired"));
+    return;
+  }
+  try {
+    await invoke("create_external_wallet_group", { name });
+    document.getElementById("add-external-group-modal").classList.add("hidden");
+    loadExternalWallets();
+  } catch (e) {
+    showError(errorEl, String(e));
+  }
+}));
+
+// --- Carnet d'adresses -------------------------------------------------------
+// Associer un label à une adresse pour la retrouver au moment d'envoyer des
+// fonds (voir core/src/address_book.rs) — distinct des wallets externes :
+// aucun solde n'est jamais interrogé ici.
+
+let addressBookCache = [];
+
+async function loadAddressBook() {
+  try {
+    addressBookCache = await invoke("list_address_book");
+  } catch (e) {
+    console.error(e);
+    return;
+  }
+  renderAddressBook();
+}
+
+function renderAddressBookRow(entry) {
+  const row = document.createElement("div");
+  row.className = "recipient-item";
+
+  const info = document.createElement("div");
+  info.className = "recipient-info";
+  const labelEl = document.createElement("span");
+  labelEl.className = "recipient-label";
+  labelEl.textContent = entry.label;
+  const meta = document.createElement("span");
+  meta.className = "recipient-fp";
+  meta.textContent = `${externalNetworkLabel(entry.network)} · ${entry.address}`;
+  info.appendChild(labelEl);
+  info.appendChild(meta);
+
+  const actions = document.createElement("div");
+  actions.className = "item-actions";
+  const copyBtn = document.createElement("button");
+  copyBtn.type = "button";
+  copyBtn.className = "link";
+  copyBtn.textContent = t("common.copy");
+  copyBtn.addEventListener("click", () => copyText(entry.address));
+
+  const removeBtn = document.createElement("button");
+  removeBtn.type = "button";
+  removeBtn.className = "link";
+  removeBtn.textContent = t("addressBook.remove");
+  removeBtn.addEventListener("click", async () => {
+    try {
+      await invoke("remove_address_book_entry", { id: entry.id });
+      loadAddressBook();
+    } catch (e) {
+      alert(t("common.error", { err: e }));
+    }
+  });
+  actions.appendChild(copyBtn);
+  actions.appendChild(removeBtn);
+
+  row.appendChild(info);
+  row.appendChild(actions);
+  return row;
+}
+
+function renderAddressBook() {
+  const container = document.getElementById("address-book-container");
+  container.innerHTML = "";
+  if (addressBookCache.length === 0) {
+    container.innerHTML = `<p class="muted">${t("addressBook.empty")}</p>`;
+    return;
+  }
+  const list = document.createElement("div");
+  list.className = "recipient-list";
+  addressBookCache.forEach((entry) => list.appendChild(renderAddressBookRow(entry)));
+  container.appendChild(list);
+}
+
+document.getElementById("add-address-book-btn").addEventListener("click", () => {
+  document.getElementById("address-book-label").value = "";
+  document.getElementById("address-book-address").value = "";
+  hideError(document.getElementById("add-address-book-error"));
+  document.getElementById("add-address-book-modal").classList.remove("hidden");
+});
+
+document.getElementById("add-address-book-cancel").addEventListener("click", () => {
+  document.getElementById("add-address-book-modal").classList.add("hidden");
+});
+
+const addAddressBookConfirmBtn = document.getElementById("add-address-book-confirm");
+addAddressBookConfirmBtn.addEventListener("click", withBusyButton(addAddressBookConfirmBtn, async () => {
+  const errorEl = document.getElementById("add-address-book-error");
+  hideError(errorEl);
+  const label = document.getElementById("address-book-label").value.trim();
+  const network = document.getElementById("address-book-network").value;
+  const address = document.getElementById("address-book-address").value.trim();
+
+  if (!label || !address) {
+    showError(errorEl, t("external.labelAndAddressRequired"));
+    return;
+  }
+
+  try {
+    await invoke("add_address_book_entry", { label, network, address });
+    document.getElementById("add-address-book-modal").classList.add("hidden");
+    loadAddressBook();
+  } catch (e) {
+    showError(errorEl, String(e));
+  }
+}));
+
+// Sélecteur "choisir depuis le carnet d'adresses" dans la modale d'envoi :
+// filtré par coin (même correspondance réseau->coin que pour les wallets
+// externes, voir externalWalletCoin), masqué s'il n'y a aucune entrée
+// compatible pour ce coin. Choisir une entrée remplit juste le champ adresse,
+// le sélecteur repart ensuite sur son placeholder (action, pas un état persistant).
+function refreshSendAddressBookPicker(coin) {
+  const wrapper = document.getElementById("send-address-book-picker");
+  const select = document.getElementById("send-address-book-select");
+  const matches = addressBookCache.filter((entry) => externalWalletCoin(entry.network) === coin);
+
+  select.innerHTML = `<option value="" data-i18n="addressBook.pickPlaceholder">${t("addressBook.pickPlaceholder")}</option>`;
+  matches.forEach((entry) => {
+    const opt = document.createElement("option");
+    opt.value = String(entry.id);
+    opt.textContent = `${entry.label} — ${entry.address}`;
+    select.appendChild(opt);
+  });
+  syncCustomSelect(select);
+  wrapper.classList.toggle("hidden", matches.length === 0);
+}
+
+document.getElementById("send-address-book-select").addEventListener("change", (e) => {
+  const entry = addressBookCache.find((entry) => String(entry.id) === e.target.value);
+  if (entry) {
+    document.getElementById("send-to").value = entry.address;
+  }
+  e.target.value = "";
+  syncCustomSelect(e.target);
 });
 
 // --- Démarrage -------------------------------------------------------------

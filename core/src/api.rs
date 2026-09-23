@@ -13,7 +13,7 @@
 //!   qui ne sert qu'à restaurer le wallet sur un NOUVEL appareil si celui-ci est
 //!   perdu — jamais utilisé pour le déverrouillage quotidien.
 
-use crate::{btc_rpc, derivation, entropy, eth_rpc, eth_tx, memory_guard, pgp_engine, shamir, sol_rpc, sol_tx, wallet_flow};
+use crate::{btc_rpc, derivation, entropy, eth_rpc, eth_tx, history, memory_guard, pgp_engine, shamir, sol_rpc, sol_spl, sol_tx, wallet_flow};
 use anyhow::{Context, Result};
 use openpgp::armor;
 use openpgp::cert::prelude::*;
@@ -730,6 +730,22 @@ pub(crate) trait SecretSealer {
     fn remove(&self, key_name: &str) -> Result<()>;
 }
 
+/// `true` si `err` correspond à une annulation volontaire du prompt Windows
+/// Hello par l'utilisateur (NTE_USER_CANCELLED, code Windows `0x800704c7`) —
+/// un choix délibéré ("je préfère taper mon mot de passe"), jamais une
+/// tentative de deviner le secret : la biométrie n'est structurellement pas
+/// "devinable" par cette fonction, elle est intégralement gated par le
+/// TPM/l'OS. Sans cette distinction, un utilisateur qui clique "Annuler"
+/// plusieurs fois (changement d'avis, capteur capricieux) déclencherait le
+/// même verrou anti-brute-force que prévu pour une vraie attaque, punissant
+/// un usage légitime. Le code numérique (contrairement au texte du message,
+/// dépendant de la langue de Windows) est stable, indépendant de la langue du
+/// système — vérifié empiriquement lors du spike (`tpm_hello_spike.rs`,
+/// commande `cancel`).
+fn is_user_cancellation(err: &anyhow::Error) -> bool {
+    err.to_string().to_lowercase().contains("0x800704c7")
+}
+
 #[cfg(windows)]
 struct WindowsHelloSealer;
 
@@ -814,8 +830,30 @@ fn enroll_biometric_unlock_with(data_dir: &Path, device_password: &str, sealer: 
 
     let (key_name, sealed_blob) = sealer.enroll(&secret)?;
 
+    // À partir d'ici, la clé TPM existe réellement (voir `windows_hello::enroll`).
+    // Si une étape suivante échoue, cette fonction n'écrit jamais le fichier de
+    // métadonnées (`DEVICE_BIOMETRIC_KEY_META_FILE`) qui permettrait de la
+    // retrouver plus tard : sans ce nettoyage explicite, elle resterait
+    // orpheline dans le TPM indéfiniment, invisible pour
+    // `try_remove_existing_biometric_enrollment` lors d'un futur essai.
+    let result = finish_enroll(data_dir, device_password, &master_entropy, &bio_pub, &bio_priv, &key_name, &sealed_blob);
+    if result.is_err() {
+        let _ = sealer.remove(&key_name);
+    }
+    result
+}
+
+fn finish_enroll(
+    data_dir: &Path,
+    device_password: &str,
+    master_entropy: &[u8],
+    bio_pub: &[u8],
+    bio_priv: &[u8],
+    key_name: &str,
+    sealed_blob: &[u8],
+) -> Result<()> {
     let device_pub = std::fs::read(data_dir.join(DEVICE_PUBKEY_FILE)).context("lecture de la clé publique de l'appareil")?;
-    let new_vault = pgp_engine::encrypt_share_multi(&master_entropy, &[&device_pub, &bio_pub])?;
+    let new_vault = pgp_engine::encrypt_share_multi(master_entropy, &[&device_pub, bio_pub])?;
 
     // Écrit-vérifie-renomme : le mot de passe existant doit pouvoir déchiffrer
     // le NOUVEAU coffre avant que l'ancien ne soit jamais écrasé — sans ça, un
@@ -828,11 +866,11 @@ fn enroll_biometric_unlock_with(data_dir: &Path, device_password: &str, sealer: 
     pgp_engine::decrypt_share(&new_vault, &privkey_path.to_string_lossy(), device_password)
         .context("vérification post-ré-chiffrement du coffre : le mot de passe existant ne fonctionne plus, activation annulée")?;
 
-    std::fs::write(data_dir.join(DEVICE_BIOMETRIC_PUBKEY_FILE), &bio_pub)?;
-    std::fs::write(data_dir.join(DEVICE_BIOMETRIC_PRIVKEY_FILE), &bio_priv)?;
-    std::fs::write(data_dir.join(DEVICE_BIOMETRIC_SEALED_SECRET_FILE), &sealed_blob)?;
+    std::fs::write(data_dir.join(DEVICE_BIOMETRIC_PUBKEY_FILE), bio_pub)?;
+    std::fs::write(data_dir.join(DEVICE_BIOMETRIC_PRIVKEY_FILE), bio_priv)?;
+    std::fs::write(data_dir.join(DEVICE_BIOMETRIC_SEALED_SECRET_FILE), sealed_blob)?;
     let created_unix = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-    let meta = BiometricKeyMeta { key_name, created_unix };
+    let meta = BiometricKeyMeta { key_name: key_name.to_string(), created_unix };
     std::fs::write(data_dir.join(DEVICE_BIOMETRIC_KEY_META_FILE), serde_json::to_string(&meta)?)?;
     std::fs::rename(&tmp_vault_path, data_dir.join(DEVICE_VAULT_FILE))?; // dernière étape, atomique
     reset_biometric_unlock_attempts(data_dir);
@@ -895,7 +933,13 @@ fn unlock_seed_biometric(data_dir: &Path, sealer: &dyn SecretSealer) -> Result<Z
     let secret = match sealer.unlock(&meta.key_name, &sealed_blob) {
         Ok(s) => s,
         Err(e) => {
-            record_biometric_unlock_failure(data_dir);
+            // Une annulation volontaire du prompt (voir `is_user_cancellation`)
+            // ne compte jamais dans le verrou anti-brute-force — seul un
+            // véritable échec de vérification (blob corrompu, clé TPM absente,
+            // etc.) y contribue.
+            if !is_user_cancellation(&e) {
+                record_biometric_unlock_failure(data_dir);
+            }
             return Err(e);
         }
     };
@@ -944,6 +988,48 @@ pub fn get_btc_balance(address: &str, network: &wallet_flow::BtcNetwork) -> Resu
 
 pub fn get_sol_balance(address: &str, network: &wallet_flow::SolNetwork) -> Result<u64> {
     sol_rpc::SolRpc::new(network.rpc).balance_lamports(address)
+}
+
+/// Solde USDC de `owner_address` (mainnet uniquement, voir sol_spl.rs), en
+/// plus petite unité (6 décimales) — 0 si l'Associated Token Account n'existe
+/// pas encore (jamais reçu d'USDC), pas une erreur.
+pub fn get_usdc_balance(owner_address: &str, network: &wallet_flow::SolNetwork) -> Result<u64> {
+    let owner_bytes = bs58::decode(owner_address.trim()).into_vec().context("adresse Solana invalide (base58 attendu)")?;
+    let owner: [u8; 32] = owner_bytes.try_into().map_err(|_| anyhow::anyhow!("une adresse Solana fait 32 octets"))?;
+    let ata = sol_spl::find_associated_token_address(&owner, &sol_spl::usdc_mint_mainnet());
+    let ata_b58 = bs58::encode(ata).into_string();
+    Ok(sol_rpc::SolRpc::new(network.rpc).token_account_balance(&ata_b58)?.unwrap_or(0))
+}
+
+/// Historique des transactions USDC de `owner_address` : dérive son ATA puis
+/// délègue à `history::usdc_history` (voir sa doc — l'ATA, pas l'adresse
+/// "propriétaire", est ce qui reçoit/envoie effectivement le jeton). Si l'ATA
+/// n'existe pas encore (jamais reçu d'USDC), `getSignaturesForAddress` renvoie
+/// simplement une liste vide, sans erreur.
+pub fn get_usdc_tx_history(owner_address: &str, network: &wallet_flow::SolNetwork, limit: u32) -> Result<Vec<history::TxEntry>> {
+    let owner_bytes = bs58::decode(owner_address.trim()).into_vec().context("adresse Solana invalide (base58 attendu)")?;
+    let owner: [u8; 32] = owner_bytes.try_into().map_err(|_| anyhow::anyhow!("une adresse Solana fait 32 octets"))?;
+    let ata = sol_spl::find_associated_token_address(&owner, &sol_spl::usdc_mint_mainnet());
+    let ata_b58 = bs58::encode(ata).into_string();
+    history::usdc_history(network.rpc, &ata_b58, limit)
+}
+
+/// `Some(lamports de rent)` si l'Associated Token Account USDC de `to_address`
+/// n'existe pas encore (sa création par `send_usdc` facturera ce montant en
+/// plus des frais réseau habituels), `None` si elle existe déjà — lecture
+/// seule, pensée pour être appelée AVANT confirmation afin de ne jamais
+/// présenter un coût caché après coup (voir `describe_possible_ata_rent` côté
+/// app-tauri, qui met ce chiffre en forme pour la boîte de dialogue).
+pub fn usdc_ata_rent_lamports_if_missing(to_address: &str, network: &wallet_flow::SolNetwork) -> Result<Option<u64>> {
+    let to_bytes = bs58::decode(to_address.trim()).into_vec().context("adresse Solana invalide (base58 attendu)")?;
+    let to_owner: [u8; 32] = to_bytes.try_into().map_err(|_| anyhow::anyhow!("une adresse Solana fait 32 octets"))?;
+    let dest_ata = sol_spl::find_associated_token_address(&to_owner, &sol_spl::usdc_mint_mainnet());
+    let dest_ata_b58 = bs58::encode(dest_ata).into_string();
+    let rpc = sol_rpc::SolRpc::new(network.rpc);
+    if rpc.account_exists(&dest_ata_b58)? {
+        return Ok(None);
+    }
+    Ok(Some(rpc.minimum_rent_exempt_balance(165)?))
 }
 
 /// `true` si une transaction touchant `address` n'a pas encore atteint sa finalité
@@ -1192,9 +1278,108 @@ pub fn send_sol(
     rpc.send_transaction(&raw_tx)
 }
 
+/// Déverrouille le coffre, signe et diffuse un virement USDC (mainnet
+/// uniquement, voir sol_spl.rs) — un jeton SPL, pas du SOL natif : deux
+/// instructions dans une seule transaction (créer l'Associated Token Account
+/// du destinataire si besoin, puis transférer), voir sol_spl.rs. Vérifie le
+/// solde USDC ET le solde SOL (frais + rent éventuel) AVANT de signer ou
+/// diffuser quoi que ce soit — même principe "échec précoce et clair" que
+/// send_sol/send_btc/send_evm.
+pub fn send_usdc(
+    data_dir: &Path,
+    device_password: &str,
+    network: &wallet_flow::SolNetwork,
+    to: &str,
+    amount_usdc: &str,
+    profile_index: u32,
+) -> Result<String> {
+    let seed = unlock_seed(data_dir, device_password)?;
+    let _seed_lock = memory_guard::lock(&seed);
+    let signing_key = derivation::derive_solana_key(&seed, profile_index);
+    let owner = signing_key.verifying_key().to_bytes();
+
+    let to_bytes = bs58::decode(to.trim()).into_vec().context("adresse Solana invalide (base58 attendu)")?;
+    let to_owner: [u8; 32] = to_bytes.try_into().map_err(|_| anyhow::anyhow!("une adresse Solana fait 32 octets"))?;
+    let amount = wallet_flow::parse_usdc_to_micros(amount_usdc)?;
+
+    let mint = sol_spl::usdc_mint_mainnet();
+    let source_ata = sol_spl::find_associated_token_address(&owner, &mint);
+    let dest_ata = sol_spl::find_associated_token_address(&to_owner, &mint);
+    let source_ata_b58 = bs58::encode(source_ata).into_string();
+    let dest_ata_b58 = bs58::encode(dest_ata).into_string();
+    let owner_b58 = bs58::encode(owner).into_string();
+
+    let rpc = sol_rpc::SolRpc::new(network.rpc);
+    // 4 lectures RPC indépendantes en parallèle (même motif que send_sol/send_evm) :
+    // solde SOL (frais), solde USDC (ATA source), blockhash récent, et existence de
+    // l'ATA destinataire (pour savoir si sa création va facturer du rent).
+    let (sol_balance, usdc_balance, recent_blockhash, dest_ata_exists) = std::thread::scope(|scope| {
+        let sol_handle = scope.spawn(|| rpc.balance_lamports(&owner_b58));
+        let usdc_handle = scope.spawn(|| rpc.token_account_balance(&source_ata_b58));
+        let blockhash_handle = scope.spawn(|| rpc.latest_blockhash());
+        let dest_handle = scope.spawn(|| rpc.account_exists(&dest_ata_b58));
+        (
+            sol_handle.join().expect("le thread solde SOL ne doit pas paniquer"),
+            usdc_handle.join().expect("le thread solde USDC ne doit pas paniquer"),
+            blockhash_handle.join().expect("le thread blockhash ne doit pas paniquer"),
+            dest_handle.join().expect("le thread existence ATA ne doit pas paniquer"),
+        )
+    });
+    let sol_balance = sol_balance?;
+    let recent_blockhash = recent_blockhash?;
+    let dest_ata_exists = dest_ata_exists?;
+
+    // ATA source absente == solde USDC forcément nul (jamais reçu d'USDC) :
+    // échouer clairement plutôt que de construire une transaction qui
+    // échouerait de toute façon on-chain.
+    let usdc_balance = usdc_balance?.ok_or_else(|| anyhow::anyhow!("aucun compte USDC trouvé pour cette adresse (solde 0)"))?;
+    anyhow::ensure!(
+        amount <= usdc_balance,
+        "fonds USDC insuffisants : {usdc_balance} disponibles (unité 10^-6 USDC), {amount} requis"
+    );
+
+    const SOL_FEE_LAMPORTS: u64 = 5_000;
+    let rent_lamports = if dest_ata_exists {
+        0
+    } else {
+        // Taille standard d'un compte SPL Token (165 octets), vérifiée contre
+        // le réseau réel — voir sol_spl.rs. Interrogé en direct plutôt que
+        // codé en dur : le montant de rent est un paramètre réseau qui évolue.
+        rpc.minimum_rent_exempt_balance(165)?
+    };
+    let total_sol_needed = SOL_FEE_LAMPORTS
+        .checked_add(rent_lamports)
+        .context("frais + rent dépasse la capacité représentable")?;
+    anyhow::ensure!(
+        total_sol_needed <= sol_balance,
+        "SOL insuffisant pour les frais{} : {sol_balance} lamports disponibles, {total_sol_needed} lamports requis",
+        if dest_ata_exists { String::new() } else { " + création du compte de jetons du destinataire".to_string() }
+    );
+
+    let create_ata_ix = sol_spl::create_ata_idempotent_instruction(&owner, &to_owner, &mint, &dest_ata);
+    let transfer_ix = sol_spl::transfer_checked_instruction(&source_ata, &mint, &dest_ata, &owner, amount, sol_spl::USDC_DECIMALS);
+    let raw_tx = sol_tx::build_and_sign_transaction(&signing_key, &owner, &[create_ata_ix, transfer_ix], &recent_blockhash);
+    rpc.send_transaction(&raw_tx)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Vérification de bout en bout contre le RPC mainnet réel (lecture seule,
+    /// aucun risque) : même portefeuille public utilisé pour valider
+    /// `find_associated_token_address` (voir sol_spl.rs) — solde connu non
+    /// nul au moment de l'écriture de ce test. Ignoré par défaut (dépend du
+    /// réseau, pas exécuté par la suite normale) : lancer explicitement avec
+    /// `cargo test -- --ignored get_usdc_balance_matches_the_real_network`.
+    #[test]
+    #[ignore]
+    fn get_usdc_balance_matches_the_real_network() {
+        let network = wallet_flow::SOLANA_MAINNET;
+        let balance = get_usdc_balance("E645TckHQnDcavVv92Etc6xSWQaq8zzPtPRGBheviRAk", &network)
+            .expect("appel réseau réel");
+        assert!(balance > 0, "ce portefeuille public détient de l'USDC au moment de l'écriture du test");
+    }
 
     #[test]
     fn fee_rate_for_target_prefers_the_closest_target_at_or_below_the_requested_one() {
@@ -1616,6 +1801,82 @@ mod tests {
         fn remove(&self, _key_name: &str) -> Result<()> {
             Ok(())
         }
+    }
+
+    /// Scelleur dont l'enrôlement réussit mais dont `remove` enregistre chaque
+    /// appel (via `Cell`, `&self` suffit) — sert à vérifier qu'une clé
+    /// "TPM" est bien nettoyée si une étape APRÈS l'enrôlement échoue.
+    struct TrackingSealer {
+        removed: std::cell::Cell<bool>,
+    }
+
+    impl SecretSealer for TrackingSealer {
+        fn enroll(&self, secret: &[u8]) -> Result<(String, Vec<u8>)> {
+            Ok(("fake-tpm-key".to_string(), secret.to_vec()))
+        }
+        fn unlock(&self, _key_name: &str, sealed_blob: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
+            Ok(Zeroizing::new(sealed_blob.to_vec()))
+        }
+        fn remove(&self, _key_name: &str) -> Result<()> {
+            self.removed.set(true);
+            Ok(())
+        }
+    }
+
+    /// Simule une annulation du prompt Windows Hello par l'utilisateur (code
+    /// NTE_USER_CANCELLED, voir `is_user_cancellation`).
+    struct CancellingSealer;
+
+    impl SecretSealer for CancellingSealer {
+        fn enroll(&self, secret: &[u8]) -> Result<(String, Vec<u8>)> {
+            Ok(("fake-tpm-key".to_string(), secret.to_vec()))
+        }
+        fn unlock(&self, _key_name: &str, _sealed_blob: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
+            Err(anyhow::anyhow!("vérification Windows Hello refusée, annulée ou échouée : L'opération a été annulée par l'utilisateur. (code 0x800704c7)"))
+        }
+        fn remove(&self, _key_name: &str) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn enroll_biometric_unlock_cleans_up_the_sealer_key_if_a_later_step_fails() {
+        let dir = std::env::temp_dir().join(format!("pgp_wallet_bio_cleanup_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let password = "un mot de passe de test bien assez long";
+        create_wallet(&dir, password).expect("création du wallet");
+
+        // Corrompt la lecture de la clé publique de l'appareil (supprimée) pour
+        // forcer un échec APRÈS que le scelleur ait déjà "créé" sa clé — le seul
+        // moment où un nettoyage est nécessaire (voir enroll_biometric_unlock_with).
+        std::fs::remove_file(dir.join(DEVICE_PUBKEY_FILE)).unwrap();
+
+        let sealer = TrackingSealer { removed: std::cell::Cell::new(false) };
+        assert!(enroll_biometric_unlock_with(&dir, password, &sealer).is_err());
+        assert!(sealer.removed.get(), "la clé du scelleur doit être nettoyée après un échec post-enrôlement");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn biometric_unlock_cancellation_does_not_count_toward_the_lockout() {
+        let dir = std::env::temp_dir().join(format!("pgp_wallet_bio_cancel_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let password = "un mot de passe de test bien assez long";
+        create_wallet(&dir, password).expect("création du wallet");
+        enroll_biometric_unlock_with(&dir, password, &FakeSealer { fail_enroll: false }).expect("activation de la biométrie");
+
+        for _ in 0..(MAX_FREE_ATTEMPTS + 3) {
+            assert!(unlock_wallet_biometric_with(&dir, &CancellingSealer).is_err());
+        }
+        assert!(
+            enforce_biometric_unlock_lockout(&dir).is_ok(),
+            "annuler le prompt plusieurs fois ne doit jamais déclencher le verrou anti-brute-force"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
