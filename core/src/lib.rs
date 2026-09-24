@@ -22,3 +22,4 @@ pub mod thorchain_rpc;
 pub mod jupiter_rpc;
 #[cfg(windows)]
 pub mod windows_hello;
+pub mod secure_storage;

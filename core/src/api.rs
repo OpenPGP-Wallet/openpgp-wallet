@@ -14,8 +14,8 @@
 //!   perdu — jamais utilisé pour le déverrouillage quotidien.
 
 use crate::{
-    btc_rpc, derivation, entropy, eth_rpc, eth_tx, history, jupiter_rpc, memory_guard, pgp_engine, shamir, sol_rpc, sol_spl,
-    sol_tx, thorchain_rpc, wallet_flow,
+    btc_rpc, derivation, entropy, eth_rpc, eth_tx, history, jupiter_rpc, memory_guard, pgp_engine, secure_storage, shamir,
+    sol_rpc, sol_spl, sol_tx, thorchain_rpc, wallet_flow,
 };
 use anyhow::{Context, Result};
 use openpgp::armor;
@@ -522,6 +522,93 @@ fn decrypt_with_armored_privkey(data: &[u8], tmp_path: &Path, privkey_armored: &
     pgp_engine::decrypt_share(data, &tmp_path.to_string_lossy(), passphrase)
 }
 
+// --- Stockage de la clé privée "device" (coffre OS plutôt qu'un simple fichier) --
+// Voir `secure_storage.rs` pour le "pourquoi" (contrôle d'accès OS réel, pas
+// seulement un chemin de fichier à deviner) et l'isolation par `data_dir`.
+// Ne concerne QUE `device_privkey.asc` (déverrouillage par mot de passe) : la
+// clé privée "device_biometric" reste en fichier, son secret est déjà scellé
+// matériellement par le TPM (voir windows_hello.rs), le gain marginal d'un
+// second mécanisme de protection serait minime.
+
+/// Sélectionne le coffre actif : le vrai coffre OS en production, un faux
+/// coffre en mémoire partagé entre tests en `#[cfg(test)]` — même motif que
+/// `SecretSealer`/`WindowsHelloSealer` pour le déverrouillage biométrique,
+/// justifié ici pour la même raison : `cargo test` ne doit jamais toucher le
+/// vrai Gestionnaire d'identification/Trousseau de la machine qui l'exécute,
+/// ni dépendre d'un coffre OS réellement configuré sur une machine de CI.
+#[cfg(not(test))]
+fn active_key_store() -> &'static dyn secure_storage::KeyStore {
+    static STORE: secure_storage::OsKeyStore = secure_storage::OsKeyStore;
+    &STORE
+}
+
+#[cfg(test)]
+fn active_key_store() -> &'static dyn secure_storage::KeyStore {
+    static STORE: std::sync::OnceLock<secure_storage::InMemoryKeyStore> = std::sync::OnceLock::new();
+    STORE.get_or_init(secure_storage::InMemoryKeyStore::default)
+}
+
+/// Écrit une nouvelle clé privée "device" : essaie le coffre OS en premier,
+/// ne retombe sur un fichier classique QUE s'il est indisponible (jamais de
+/// blocage de la création/restauration du wallet à cause de ça). Supprime un
+/// éventuel fichier existant en cas de succès du coffre OS : une seule copie
+/// du secret doit exister à la fois, jamais les deux en parallèle.
+fn write_device_privkey(data_dir: &Path, armored: &[u8]) -> Result<()> {
+    let text = std::str::from_utf8(armored).context("clé privée générée non-UTF8 (bug de génération PGP)")?;
+    let username = secure_storage::entry_username(data_dir);
+    match active_key_store().write(&username, text) {
+        Ok(()) => {
+            let _ = std::fs::remove_file(data_dir.join(DEVICE_PRIVKEY_FILE));
+            Ok(())
+        }
+        Err(_) => std::fs::write(data_dir.join(DEVICE_PRIVKEY_FILE), armored)
+            .context("écriture de la clé privée de l'appareil (coffre OS indisponible)"),
+    }
+}
+
+/// Donne un accès temporaire, sous forme de CHEMIN DE FICHIER, à la clé
+/// privée "device" — `pgp_engine::decrypt_share` (biais hérité de
+/// `sequoia-openpgp::Cert::from_file`) n'accepte qu'un chemin, jamais des
+/// octets en mémoire directement. Lit D'ABORD le coffre OS puis, seulement à
+/// défaut, l'ancien fichier (compatibilité avec les wallets créés avant ce
+/// changement, ou coffre OS momentanément indisponible). Quand la source est
+/// le coffre OS, le secret est brièvement matérialisé dans un fichier
+/// temporaire à usage unique, supprimé même en cas de panique/erreur
+/// (`TempFileGuard`, même mécanisme déjà utilisé pour les clés de sauvegarde
+/// Shamir) : une fenêtre d'exposition sur disque de la durée d'un seul appel,
+/// contre une exposition permanente à un chemin fixe et prévisible avant ce
+/// changement.
+fn with_device_privkey_path<T>(data_dir: &Path, f: impl FnOnce(&str) -> Result<T>) -> Result<T> {
+    let username = secure_storage::entry_username(data_dir);
+    if let Ok(secret) = active_key_store().read(&username) {
+        let unique = format!("{:?}-{}", std::thread::current().id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos());
+        let tmp_path = data_dir.join(format!("tmp_device_privkey_{unique}.asc"));
+        std::fs::write(&tmp_path, secret.as_bytes()).context("matérialisation temporaire de la clé privée de l'appareil")?;
+        let _guard = TempFileGuard(&tmp_path);
+        return f(&tmp_path.to_string_lossy());
+    }
+    let path = data_dir.join(DEVICE_PRIVKEY_FILE);
+    anyhow::ensure!(path.exists(), "clé privée de l'appareil introuvable (ni coffre OS, ni fichier)");
+    f(&path.to_string_lossy())
+}
+
+/// Supprime la clé privée "device", où qu'elle vive (coffre OS et/ou fichier
+/// — au plus l'un des deux en pratique, voir `write_device_privkey`, mais
+/// vérifie les deux pour ne jamais laisser une copie orpheline). Best-effort
+/// sur le coffre OS (absence normale si le wallet a toujours vécu en
+/// fichier) ; erreur si le fichier existe mais ne peut pas être supprimé
+/// (permissions, verrouillage) — comportement identique à `reset_wallet`
+/// pour les autres fichiers du coffre.
+fn remove_device_privkey(data_dir: &Path) -> Result<()> {
+    let username = secure_storage::entry_username(data_dir);
+    let _ = active_key_store().remove(&username);
+    let path = data_dir.join(DEVICE_PRIVKEY_FILE);
+    if path.exists() {
+        std::fs::remove_file(&path).context("suppression du fichier de clé privée de l'appareil impossible")?;
+    }
+    Ok(())
+}
+
 /// Crée un nouveau wallet dans `data_dir` : coffre local (mot de passe de l'appareil)
 /// + kit de sauvegarde Shamir 2-sur-3 (3 parts, chacune avec sa propre passphrase
 /// générée automatiquement). Ne journalise et ne retourne jamais l'entropie elle-même.
@@ -553,7 +640,7 @@ pub fn create_wallet(data_dir: &Path, device_password: &str) -> Result<CreateWal
     // 1. Coffre local de l'appareil.
     let (device_pub, device_priv) = generate_pgp_identity("device", device_password)?;
     std::fs::write(data_dir.join(DEVICE_PUBKEY_FILE), &device_pub)?;
-    std::fs::write(data_dir.join(DEVICE_PRIVKEY_FILE), &device_priv)?;
+    write_device_privkey(data_dir, &device_priv)?;
     let vault = encrypt_with_armored_pubkey(&master_entropy, &data_dir.join("tmp_device_pub.asc"), &device_pub)?;
     std::fs::write(data_dir.join(DEVICE_VAULT_FILE), &vault)?;
     // Un compteur d'échecs résiduel (ex: fichier laissé par un `reset_wallet` qui
@@ -633,7 +720,7 @@ pub fn restore_wallet(
 
     let (device_pub, device_priv) = generate_pgp_identity("device", new_device_password)?;
     std::fs::write(data_dir.join(DEVICE_PUBKEY_FILE), &device_pub)?;
-    std::fs::write(data_dir.join(DEVICE_PRIVKEY_FILE), &device_priv)?;
+    write_device_privkey(data_dir, &device_priv)?;
     let vault = encrypt_with_armored_pubkey(&recovered, &data_dir.join("tmp_device_pub.asc"), &device_pub)?;
     std::fs::write(data_dir.join(DEVICE_VAULT_FILE), &vault)?;
     // Prouver la possession de 2 parts de sauvegarde est une preuve d'identité bien
@@ -671,8 +758,9 @@ pub fn read_device_pubkey_armored(data_dir: &Path) -> Result<String> {
 /// passe — rendant inutile le verrou déjà en place sur `unlock_wallet`/`send_*`.
 pub fn decrypt_incoming_message(data_dir: &Path, device_password: &str, ciphertext: &str) -> Result<String> {
     let _ = unlock_seed(data_dir, device_password)?;
-    let privkey_path = data_dir.join(DEVICE_PRIVKEY_FILE);
-    let plaintext = pgp_engine::decrypt_share(ciphertext.as_bytes(), &privkey_path.to_string_lossy(), device_password)?;
+    let plaintext = with_device_privkey_path(data_dir, |privkey_path| {
+        pgp_engine::decrypt_share(ciphertext.as_bytes(), privkey_path, device_password)
+    })?;
     String::from_utf8(plaintext).context("le message déchiffré n'est pas du texte UTF-8 valide")
 }
 
@@ -681,12 +769,13 @@ pub fn decrypt_incoming_message(data_dir: &Path, device_password: &str, cipherte
 /// l'utilisateur a bien exporté ses 3 parts de sauvegarde à la création, le wallet
 /// reste récupérable via `restore_wallet`. Aucune erreur si le coffre n'existait déjà pas.
 pub fn reset_wallet(data_dir: &Path) -> Result<()> {
-    for file in [DEVICE_PUBKEY_FILE, DEVICE_PRIVKEY_FILE, DEVICE_VAULT_FILE] {
+    for file in [DEVICE_PUBKEY_FILE, DEVICE_VAULT_FILE] {
         let path = data_dir.join(file);
         if path.exists() {
             std::fs::remove_file(&path).with_context(|| format!("suppression de {file} impossible"))?;
         }
     }
+    remove_device_privkey(data_dir)?;
     // Best-effort : un nouveau coffre doit repartir avec un compteur d'échecs vierge.
     reset_unlock_attempts(data_dir);
     Ok(())
@@ -716,8 +805,8 @@ fn unlock_seed(data_dir: &Path, device_password: &str) -> Result<Zeroizing<Vec<u
     // (sinon interroger un appareil sans wallet créerait un compteur artificiel).
     let vault = std::fs::read(data_dir.join(DEVICE_VAULT_FILE)).context("coffre local introuvable")?;
     enforce_unlock_lockout(data_dir)?;
-    let privkey_path = data_dir.join(DEVICE_PRIVKEY_FILE);
-    match pgp_engine::decrypt_share(&vault, &privkey_path.to_string_lossy(), device_password) {
+    let result = with_device_privkey_path(data_dir, |privkey_path| pgp_engine::decrypt_share(&vault, privkey_path, device_password));
+    match result {
         Ok(seed) => {
             reset_unlock_attempts(data_dir);
             Ok(Zeroizing::new(seed))
@@ -877,8 +966,7 @@ fn finish_enroll(
     let tmp_vault_path = data_dir.join("tmp_device_vault_new.asc");
     std::fs::write(&tmp_vault_path, &new_vault)?;
     let _guard = TempFileGuard(&tmp_vault_path);
-    let privkey_path = data_dir.join(DEVICE_PRIVKEY_FILE);
-    pgp_engine::decrypt_share(&new_vault, &privkey_path.to_string_lossy(), device_password)
+    with_device_privkey_path(data_dir, |privkey_path| pgp_engine::decrypt_share(&new_vault, privkey_path, device_password))
         .context("vérification post-ré-chiffrement du coffre : le mot de passe existant ne fonctionne plus, activation annulée")?;
 
     std::fs::write(data_dir.join(DEVICE_BIOMETRIC_PUBKEY_FILE), bio_pub)?;
@@ -911,8 +999,7 @@ fn disable_biometric_unlock_with(data_dir: &Path, device_password: &str, sealer:
     let tmp_vault_path = data_dir.join("tmp_device_vault_disable.asc");
     std::fs::write(&tmp_vault_path, &new_vault)?;
     let _guard = TempFileGuard(&tmp_vault_path);
-    let privkey_path = data_dir.join(DEVICE_PRIVKEY_FILE);
-    pgp_engine::decrypt_share(&new_vault, &privkey_path.to_string_lossy(), device_password)
+    with_device_privkey_path(data_dir, |privkey_path| pgp_engine::decrypt_share(&new_vault, privkey_path, device_password))
         .context("vérification post-ré-chiffrement du coffre : le mot de passe existant ne fonctionne plus, désactivation annulée")?;
     std::fs::rename(&tmp_vault_path, data_dir.join(DEVICE_VAULT_FILE))?;
 

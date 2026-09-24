@@ -79,6 +79,24 @@ curve25519-dalek = "4.1.3"
 # swap disque pendant la durée de vie du buffer. Complète memory_guard::wipe, ne le remplace pas.
 region = "3"
 
+# keyring : stocke la clé privée PGP de l'appareil dans le coffre natif de l'OS
+# (Windows Credential Manager / macOS Keychain / Linux Secret Service) plutôt
+# qu'un simple fichier .asc — un vrai contrôle d'accès du système d'exploitation
+# (lié à la session utilisateur), pas seulement un chemin de fichier à deviner.
+# Voir core/src/secure_storage.rs : repli automatique sur un fichier si le
+# coffre OS est indisponible, jamais de blocage de la création/du
+# déverrouillage du wallet à cause de ça.
+#
+# Sans feature explicite, `keyring` retombe sur un backend qui n'écrit nulle
+# part de réel — vérifié empiriquement (`cargo run --bin keyring_spike --
+# write` puis `read` échouait avec "No matching entry found" avant cet ajout,
+# malgré une écriture "réussie"). Les 3 features ci-dessous correspondent
+# chacune à un backend spécifique à un OS (`dep:` cible elle-même restreinte à
+# cet OS dans le Cargo.toml de `keyring`) : les activer toutes les 3 sans
+# condition est sans risque, Cargo n'inclut de toute façon que celle(s)
+# pertinente(s) pour la cible réellement compilée.
+keyring = { version = "3", features = ["windows-native", "apple-native", "linux-native-sync-persistent"] }
+
 # --- Backend crypto de sequoia-openpgp : un par famille d'OS, jamais "crypto-rust" ---
 # (marqué "non production ready"/"non constant-time" par sequoia lui-même). Les deux backends
 # ci-dessous sont considérés production-ready par sequoia (pas de flag
