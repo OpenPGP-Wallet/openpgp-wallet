@@ -1260,6 +1260,15 @@ fn get_swap_quote(from_coin: String, to_coin: String, amount: String, destinatio
 /// ne le rend pas plus fiable en soi, mais restaure le même principe "on
 /// signe ce qu'on voit" que le reste de l'app, et donne à un utilisateur
 /// attentif une chance de repérer une adresse manifestement incohérente.
+///
+/// Montre aussi `final_destination` (l'adresse sur la chaîne d'ARRIVÉE, celle
+/// que THORChain paiera une fois le swap exécuté) — trouvé dans le même audit :
+/// contrairement au vault (opaque, l'utilisateur ne peut pas juger s'il est
+/// légitime), cette adresse est normalement LA SIENNE (pré-remplie par le
+/// frontend, mais reste modifiable) — exactement le genre de valeur qu'un
+/// détournement d'adresse (presse-papier, frontend compromis) chercherait à
+/// altérer, et que l'utilisateur PEUT vérifier lui-même contre l'adresse déjà
+/// affichée ailleurs dans l'app pour ce réseau.
 fn confirm_swap_native(
     app: &tauri::AppHandle,
     from_label: &str,
@@ -1268,22 +1277,30 @@ fn confirm_swap_native(
     to_coin: &str,
     pay_to: &str,
     router: Option<&str>,
+    final_destination: &str,
 ) -> bool {
     let english = UI_LANG_IS_ENGLISH.load(Ordering::Relaxed);
-    let destination_line = match (router, english) {
+    let vault_line = match (router, english) {
         (Some(router), true) => format!("Actual destination: router contract {router}\n(THORChain vault targeted: {pay_to})\n"),
         (Some(router), false) => format!("Destination réelle : contrat routeur {router}\n(coffre THORChain visé : {pay_to})\n"),
         (None, true) => format!("Actual destination: {pay_to}\n"),
         (None, false) => format!("Destination réelle : {pay_to}\n"),
     };
+    let arrival_line = if final_destination.is_empty() {
+        String::new()
+    } else if english {
+        format!("Funds will arrive at: {final_destination}\n(verify this is really your own address)\n")
+    } else {
+        format!("Les fonds arriveront sur : {final_destination}\n(vérifiez qu'il s'agit bien de votre propre adresse)\n")
+    };
     let message = if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
         format!(
-            "Swap via THORChain (external protocol, not audited by this app)\n\nFrom profile: {from_label}\nSending: {amount}\nExpected to receive: ~{expected_out} {}\n{destination_line}\nIncludes THORChain's own network/liquidity fees, plus a 0.80% affiliate fee.\nThis is irreversible, and once sent this app can no longer track or reverse it.\n\nConfirm this swap?",
+            "Swap via THORChain (external protocol, not audited by this app)\n\nFrom profile: {from_label}\nSending: {amount}\nExpected to receive: ~{expected_out} {}\n{vault_line}{arrival_line}\nIncludes THORChain's own network/liquidity fees, plus a 0.80% affiliate fee.\nThis is irreversible, and once sent this app can no longer track or reverse it.\n\nConfirm this swap?",
             to_coin.to_uppercase()
         )
     } else {
         format!(
-            "Échange via THORChain (protocole externe, non audité par cette app)\n\nDepuis le profil : {from_label}\nEnvoi : {amount}\nRéception attendue : ~{expected_out} {}\n{destination_line}\nInclut les frais propres à THORChain (réseau/liquidité), plus 0,80% de frais d'affiliation.\nC'est irréversible, et une fois envoyé cette app ne peut plus ni suivre ni annuler l'opération.\n\nConfirmer cet échange ?",
+            "Échange via THORChain (protocole externe, non audité par cette app)\n\nDepuis le profil : {from_label}\nEnvoi : {amount}\nRéception attendue : ~{expected_out} {}\n{vault_line}{arrival_line}\nInclut les frais propres à THORChain (réseau/liquidité), plus 0,80% de frais d'affiliation.\nC'est irréversible, et une fois envoyé cette app ne peut plus ni suivre ni annuler l'opération.\n\nConfirmer cet échange ?",
             to_coin.to_uppercase()
         )
     };
@@ -1334,9 +1351,21 @@ fn swap_transaction(
         &to_coin,
         &quote.inbound_address,
         router_for_from_coin,
+        &destination,
     ) {
         return Err(translate_error("Échange annulé (confirmation refusée)."));
     }
+
+    // Devis RE-lu ICI, après la confirmation (pas celui qui a servi à
+    // l'afficher) : trouvé lors d'un audit de cette fonctionnalité — la boîte
+    // de dialogue native bloque tant que l'utilisateur n'a pas cliqué, un
+    // délai arbitraire pendant lequel l'adresse de vault/le routeur peuvent
+    // avoir tourné (voir la doc de `thorchain_rpc::SwapQuote` : "toujours
+    // relue en direct, jamais mise en cache"). Réutiliser le devis d'avant la
+    // confirmation aurait justement enfreint cette règle. Même principe que
+    // `send_jupiter_swap`, qui re-demande lui aussi un devis tout frais juste
+    // avant de construire sa transaction, jamais celui affiché dans l'aperçu.
+    let quote = api::get_swap_quote(&from_coin, &to_coin, &amount, &destination).t_err()?;
 
     // Swap mainnet uniquement dans tous les cas : les pools THORChain n'ont
     // aucune existence sur les réseaux de test.
