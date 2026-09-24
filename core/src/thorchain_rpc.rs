@@ -45,6 +45,14 @@ pub struct SwapQuote {
     /// Adresse de vault à laquelle envoyer l'actif source — TOUJOURS relue en
     /// direct, jamais mise en cache : ces adresses tournent régulièrement.
     pub inbound_address: String,
+    /// Adresse du contrat "THORChain Router" à appeler pour un swap EVM
+    /// (JAMAIS envoyer directement à `inbound_address` sur une chaîne EVM :
+    /// il faut appeler `depositWithExpiry` sur ce contrat, voir
+    /// `eth_tx::thorchain_deposit_calldata`). Absente pour les chaînes non-EVM
+    /// (BTC, SOL...), toujours relue en direct comme `inbound_address` — ces
+    /// contrats sont versionnés et peuvent changer. Vérifié en direct : la
+    /// même valeur est aussi exposée par `/thorchain/inbound_addresses`.
+    pub router: Option<String>,
     /// Memo prêt à l'emploi, construit par THORChain : jamais reconstruit à la
     /// main côté client (voir la doc du module).
     pub memo: String,
@@ -60,6 +68,7 @@ pub struct SwapQuote {
 #[derive(Deserialize)]
 struct QuoteResponseJson {
     inbound_address: Option<String>,
+    router: Option<String>,
     memo: Option<String>,
     expected_amount_out: Option<String>,
     fees: Option<FeesJson>,
@@ -131,6 +140,7 @@ pub fn quote_swap(from_asset: &str, to_asset: &str, amount: u64, destination: &s
 
     Ok(SwapQuote {
         inbound_address,
+        router: response.router,
         memo,
         expected_amount_out,
         total_fees,
@@ -179,6 +189,8 @@ mod tests {
         assert!(quote.inbound_address.starts_with("0x"), "vault ETH attendue : {}", quote.inbound_address);
         assert!(quote.memo.contains(AFFILIATE_ADDRESS), "le memo doit inclure notre adresse d'affiliation");
         assert!(quote.expected_amount_out > 0);
+        let router = quote.router.expect("un devis source ETH doit renvoyer un routeur");
+        assert!(router.starts_with("0x") && router.len() == 42, "adresse de routeur EVM attendue : {router}");
     }
 
     #[test]

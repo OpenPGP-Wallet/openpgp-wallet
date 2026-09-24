@@ -1281,12 +1281,11 @@ fn swap_transaction(
     let password = Zeroizing::new(password);
     let dir = data_dir(&app)?;
 
-    if from_coin != "sol" {
+    if !matches!(from_coin.as_str(), "sol" | "btc" | "evm") {
         return Err(translate_error(&format!(
-            "envoi de swap non pris en charge pour l'instant : {from_coin} (seul \"sol\" est disponible)"
+            "envoi de swap non pris en charge pour cet actif : {from_coin}"
         )));
     }
-    let network = sol_network("sol_mainnet")?; // swap mainnet uniquement, pools THORChain absents ailleurs
 
     let from_label = api::list_profiles(&dir)
         .into_iter()
@@ -1303,7 +1302,23 @@ fn swap_transaction(
         return Err(translate_error("Échange annulé (confirmation refusée)."));
     }
 
-    api::send_swap_sol(&dir, &password, network, &quote, &amount, profile_index).t_err()
+    // Swap mainnet uniquement dans tous les cas : les pools THORChain n'ont
+    // aucune existence sur les réseaux de test.
+    match from_coin.as_str() {
+        "sol" => {
+            let network = sol_network("sol_mainnet")?;
+            api::send_swap_sol(&dir, &password, network, &quote, &amount, profile_index).t_err()
+        }
+        "btc" => {
+            let network = btc_network("btc_mainnet")?;
+            api::send_swap_btc(&dir, &password, network, &quote, &amount, profile_index).t_err()
+        }
+        "evm" => {
+            let network = evm_network("evm_mainnet")?;
+            api::send_swap_evm(&dir, &password, network, &quote, &amount, profile_index).t_err()
+        }
+        other => Err(translate_error(&format!("envoi de swap non pris en charge pour cet actif : {other}"))),
+    }
 }
 
 // --- Swap (Jupiter) ----------------------------------------------------------

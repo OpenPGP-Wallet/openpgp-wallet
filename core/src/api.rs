@@ -1126,6 +1126,96 @@ pub fn send_evm(
         to: to_bytes,
         value,
         chain_id,
+        data: Vec::new(),
+    };
+    let raw_tx = tx.sign(&signing_key)?;
+    rpc.send_raw_transaction(&raw_tx)
+}
+
+/// Déverrouille le coffre, signe et diffuse un swap Ethereum -> THORChain :
+/// contrairement à un envoi normal, la transaction n'est PAS un simple
+/// transfert vers `quote.inbound_address`, mais un appel au contrat
+/// "THORChain Router" (`quote.router` — jamais `inbound_address` directement
+/// sur une chaîne EVM, voir `thorchain_rpc::SwapQuote`) : `depositWithExpiry`
+/// avec `asset` = adresse nulle (ETH natif) et `amount` ignoré côté contrat
+/// (c'est `msg.value`, donc `value`, qui compte réellement). `expiration` :
+/// horodatage Unix + marge large (1h), comme documenté par THORChain pour
+/// éviter qu'un appel resté longtemps en attente ne s'exécute à un cours
+/// périmé.
+pub fn send_swap_evm(
+    data_dir: &Path,
+    device_password: &str,
+    network: &wallet_flow::EvmNetwork,
+    quote: &thorchain_rpc::SwapQuote,
+    amount_eth: &str,
+    profile_index: u32,
+) -> Result<String> {
+    let router = quote
+        .router
+        .as_deref()
+        .context("devis THORChain sans adresse de routeur (attendu pour un swap EVM)")?;
+    let router_bytes = wallet_flow::parse_evm_address(router)?;
+    let vault_bytes = wallet_flow::parse_evm_address(&quote.inbound_address)?;
+    // ETH natif = adresse nulle côté contrat (PAS la convention "0xEeee...Eeee"
+    // utilisée par d'autres protocoles — vérifié en lisant le vrai code source
+    // vérifié du routeur déployé, via Sourcify : `if(asset == address(0))`,
+    // voir `deposit()` dans le contrat THORChain_Router). `amount` est alors
+    // ignoré par le contrat (c'est `msg.value`, donc `value` plus bas, qui
+    // compte réellement).
+    let native_asset_bytes = [0u8; 20];
+
+    let seed = unlock_seed(data_dir, device_password)?;
+    let _seed_lock = memory_guard::lock(&seed);
+    let (signing_key, address) = derivation::derive_evm_key(&seed, profile_index)?;
+    let value = wallet_flow::parse_eth_to_wei(amount_eth)?;
+
+    let rpc = eth_rpc::EthRpc::new(network.rpc);
+    let address_str = derivation::format_address(&address);
+    let (nonce, gas_price, chain_id, balance) = std::thread::scope(|scope| {
+        let nonce_handle = scope.spawn(|| rpc.nonce(&address_str));
+        let gas_price_handle = scope.spawn(|| rpc.gas_price());
+        let chain_id_handle = scope.spawn(|| rpc.chain_id());
+        let balance_handle = scope.spawn(|| rpc.balance(&address_str));
+        (
+            nonce_handle.join().expect("le thread nonce ne doit pas paniquer"),
+            gas_price_handle.join().expect("le thread gas_price ne doit pas paniquer"),
+            chain_id_handle.join().expect("le thread chain_id ne doit pas paniquer"),
+            balance_handle.join().expect("le thread balance ne doit pas paniquer"),
+        )
+    });
+    let nonce = nonce?;
+    let gas_price = gas_price?;
+    let chain_id = chain_id?;
+    let balance = balance?;
+
+    let expiration = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .context("horloge système invalide")?
+        .as_secs()
+        + 3600;
+
+    let calldata = eth_tx::thorchain_deposit_calldata(&vault_bytes, &native_asset_bytes, 0, &quote.memo, expiration);
+    let gas_limit = eth_tx::intrinsic_gas(&calldata);
+
+    let gas_cost = gas_price
+        .checked_mul(u128::from(gas_limit))
+        .context("gas_price * gas_limit dépasse la capacité représentable")?;
+    let total_needed = value
+        .checked_add(gas_cost)
+        .context("montant + frais de gas dépasse la capacité représentable")?;
+    anyhow::ensure!(
+        total_needed <= balance,
+        "fonds insuffisants : {balance} wei disponibles, {value} wei + {gas_cost} wei de frais de gas requis"
+    );
+
+    let tx = eth_tx::EthTx {
+        nonce,
+        gas_price,
+        gas_limit,
+        to: router_bytes,
+        value,
+        chain_id,
+        data: calldata,
     };
     let raw_tx = tx.sign(&signing_key)?;
     rpc.send_raw_transaction(&raw_tx)
@@ -1234,6 +1324,82 @@ pub fn send_btc(
         value_sat: amount_sat,
         change_hash160: hash160,
         change_sat,
+        op_return_data: None,
+    };
+    let raw_tx = tx.sign(&signing_key, &hash160)?;
+    esplora.broadcast(&raw_tx)
+}
+
+/// Déverrouille le coffre, signe et diffuse un swap Bitcoin -> THORChain :
+/// même mécanique que `send_btc`, mais l'envoi part vers l'`inbound_address`
+/// du devis (pas l'adresse tapée par l'utilisateur) et porte le memo du swap
+/// dans une sortie OP_RETURN. Contrairement à `send_btc`, les frais ne sont
+/// pas choisis par l'appelant (pas de sélecteur rapide/moyen/lent dans la
+/// modale de swap, déjà chargée d'étapes) : la cible "moyenne" est utilisée
+/// automatiquement, cohérente avec le reste du flux de swap (Jupiter/THORChain
+/// choisissent aussi leurs propres frais réseau sans intervention).
+pub fn send_swap_btc(
+    data_dir: &Path,
+    device_password: &str,
+    network: &wallet_flow::BtcNetwork,
+    quote: &thorchain_rpc::SwapQuote,
+    amount_btc: &str,
+    profile_index: u32,
+) -> Result<String> {
+    anyhow::ensure!(
+        quote.memo.as_bytes().len() <= 80,
+        "memo THORChain trop long pour une sortie OP_RETURN standard ({} octets)",
+        quote.memo.as_bytes().len()
+    );
+
+    let seed = unlock_seed(data_dir, device_password)?;
+    let _seed_lock = memory_guard::lock(&seed);
+    let (signing_key, hash160) = (network.derive_key)(&seed, profile_index)?;
+
+    let address = (network.format_address)(&hash160)?;
+    let to_hash160 = (network.parse_address)(&quote.inbound_address)?;
+    let amount_sat = wallet_flow::parse_btc_to_sat(amount_btc)?;
+
+    let esplora = btc_rpc::EsploraClient::new(network.esplora_base);
+    let (utxos, estimates) = std::thread::scope(|scope| {
+        let utxos_handle = scope.spawn(|| esplora.utxos(&address));
+        let estimates_handle = scope.spawn(|| esplora.fee_estimates());
+        (
+            utxos_handle.join().expect("le thread UTXOs ne doit pas paniquer"),
+            estimates_handle.join().expect("le thread d'estimation de frais ne doit pas paniquer"),
+        )
+    });
+    let utxos = utxos?;
+    let estimates = estimates?;
+    let total_sat: u64 = utxos.iter().map(|u| u.value_sat).sum();
+
+    // Poids approximatif d'une sortie OP_RETURN (script <= 80 octets) : 8
+    // (valeur) + 1 (longueur script) + jusqu'à 82 (OP_RETURN + pushdata +
+    // données) => ~91 octets, contre ~31 pour une sortie P2WPKH classique.
+    // `estimate_p2wpkh_vsize` sous-estimerait donc légèrement les frais réels
+    // ici ; la marge (~60 vbytes) reste négligeable face à la volatilité des
+    // frais réseau eux-mêmes.
+    let vsize = crate::btc_tx::estimate_p2wpkh_vsize(utxos.len(), 2) as f64;
+    let fee_sat = (fee_rate_for_target(&estimates, 3) * vsize).ceil() as u64;
+
+    const DUST_THRESHOLD_SAT: u64 = 1_000;
+    let total_needed = amount_sat
+        .checked_add(fee_sat)
+        .context("montant + frais dépasse la capacité représentable")?;
+    anyhow::ensure!(
+        total_needed <= total_sat,
+        "fonds insuffisants : {total_sat} sat disponibles, {amount_sat} sat + {fee_sat} sat de frais requis"
+    );
+    let remaining = total_sat - total_needed;
+    let change_sat = if remaining > DUST_THRESHOLD_SAT { remaining } else { 0 };
+
+    let tx = crate::btc_tx::BtcTx {
+        inputs: utxos,
+        to_hash160,
+        value_sat: amount_sat,
+        change_hash160: hash160,
+        change_sat,
+        op_return_data: Some(quote.memo.as_bytes().to_vec()),
     };
     let raw_tx = tx.sign(&signing_key, &hash160)?;
     esplora.broadcast(&raw_tx)

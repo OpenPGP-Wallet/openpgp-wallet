@@ -383,11 +383,14 @@ const I18N = {
     "swap.fromAsset": "Depuis",
     "swap.fromSol": "Solana (SOL)",
     "swap.fromUsdc": "USDC",
+    "swap.fromBtc": "Bitcoin (BTC)",
+    "swap.fromEth": "Ethereum (ETH)",
     "swap.toAsset": "Vers",
     "swap.toBtc": "Bitcoin (BTC)",
     "swap.toEth": "Ethereum (ETH)",
     "swap.toUsdc": "USDC (via Jupiter, même portefeuille)",
     "swap.toSol": "Solana (SOL, via Jupiter, même portefeuille)",
+    "swap.toSolCrossChain": "Solana (SOL)",
     "swap.amount": "Montant",
     "swap.destination": "Adresse de destination",
     "swap.destinationHint":
@@ -678,11 +681,14 @@ const I18N = {
     "swap.fromAsset": "From",
     "swap.fromSol": "Solana (SOL)",
     "swap.fromUsdc": "USDC",
+    "swap.fromBtc": "Bitcoin (BTC)",
+    "swap.fromEth": "Ethereum (ETH)",
     "swap.toAsset": "To",
     "swap.toBtc": "Bitcoin (BTC)",
     "swap.toEth": "Ethereum (ETH)",
     "swap.toUsdc": "USDC (via Jupiter, same wallet)",
     "swap.toSol": "Solana (SOL, via Jupiter, same wallet)",
+    "swap.toSolCrossChain": "Solana (SOL)",
     "swap.amount": "Amount",
     "swap.destination": "Destination address",
     "swap.destinationHint": "Pre-filled with your own address on the chosen network — editable if you want to swap to a different address.",
@@ -2062,8 +2068,6 @@ document.querySelectorAll(".wallet-card").forEach((card) => {
     }
     copyText(address, t("wallet.addressCopied"));
   });
-  // Uniquement présent sur la carte Solana pour l'instant (voir index.html) :
-  // seul actif source pris en charge par le swap en v1 (voir le plan swap).
   const swapBtn = card.querySelector('[data-action="swap"]');
   if (swapBtn) swapBtn.addEventListener("click", () => openSwapModal(card));
   const select = card.querySelector(".network-select");
@@ -2542,7 +2546,10 @@ let swapContext = null;
 // Options "Vers" possibles selon l'actif "Depuis" : depuis SOL, on peut viser
 // BTC/ETH (cross-chain, via THORChain) ou USDC (même portefeuille, via
 // Jupiter) ; depuis USDC, seul SOL a du sens (Jupiter uniquement — THORChain
-// ne prend pas en charge un jeton SPL comme actif source dans cette v1).
+// ne prend pas en charge un jeton SPL comme actif source dans cette v1) ;
+// depuis BTC/ETH, uniquement cross-chain via THORChain vers les deux autres
+// actifs natifs (pas de jeton SPL comme destination directe depuis une
+// chaîne non-Solana).
 const SWAP_TO_OPTIONS = {
   sol: [
     { value: "btc", key: "swap.toBtc", fallback: "Bitcoin (BTC)" },
@@ -2550,6 +2557,14 @@ const SWAP_TO_OPTIONS = {
     { value: "usdc", key: "swap.toUsdc", fallback: "USDC (via Jupiter, même portefeuille)" },
   ],
   usdc: [{ value: "sol", key: "swap.toSol", fallback: "Solana (SOL, via Jupiter, même portefeuille)" }],
+  btc: [
+    { value: "evm", key: "swap.toEth", fallback: "Ethereum (ETH)" },
+    { value: "sol", key: "swap.toSolCrossChain", fallback: "Solana (SOL)" },
+  ],
+  evm: [
+    { value: "btc", key: "swap.toBtc", fallback: "Bitcoin (BTC)" },
+    { value: "sol", key: "swap.toSolCrossChain", fallback: "Solana (SOL)" },
+  ],
 };
 
 function updateSwapToOptions() {
@@ -2577,25 +2592,30 @@ function openSwapModal(card) {
   document.getElementById("swap-amount").value = "";
   hideError(document.getElementById("swap-error"));
   const fromSelect = document.getElementById("swap-from-coin");
-  fromSelect.value = card.dataset.coin === "usdc" ? "usdc" : "sol";
+  fromSelect.value = SWAP_TO_OPTIONS[card.dataset.coin] ? card.dataset.coin : "sol";
   syncCustomSelect(fromSelect);
   updateSwapToOptions();
   swapModal.classList.remove("hidden");
 }
 
 // USDC<->SOL (via Jupiter) reste dans le même portefeuille Solana : pas
-// d'adresse de destination séparée à saisir, contrairement à BTC/ETH (via
-// THORChain, cross-chain) qui en ont réellement besoin.
-function isJupiterSwap(toCoin) {
-  return toCoin === "usdc" || toCoin === "sol";
+// d'adresse de destination séparée à saisir, contrairement à un swap
+// cross-chain (via THORChain, quels que soient les deux actifs impliqués)
+// qui en a réellement besoin. Seule la paire {sol, usdc} passe par Jupiter —
+// btc/evm impliqués d'un côté ou de l'autre sont TOUJOURS cross-chain.
+function isJupiterSwap(fromCoin, toCoin) {
+  const jupiterCoins = new Set(["sol", "usdc"]);
+  return jupiterCoins.has(fromCoin) && jupiterCoins.has(toCoin);
 }
 
 function updateSwapDestination() {
+  const fromCoin = document.getElementById("swap-from-coin").value;
   const toCoin = document.getElementById("swap-to-coin").value;
-  document.getElementById("swap-destination-block").classList.toggle("hidden", isJupiterSwap(toCoin));
-  document.getElementById("swap-jupiter-hint").classList.toggle("hidden", !isJupiterSwap(toCoin));
-  if (!isJupiterSwap(toCoin)) {
-    const network = toCoin === "btc" ? "btc_mainnet" : "evm_mainnet";
+  const jupiter = isJupiterSwap(fromCoin, toCoin);
+  document.getElementById("swap-destination-block").classList.toggle("hidden", jupiter);
+  document.getElementById("swap-jupiter-hint").classList.toggle("hidden", !jupiter);
+  if (!jupiter) {
+    const network = toCoin === "btc" ? "btc_mainnet" : toCoin === "evm" ? "evm_mainnet" : "sol_mainnet";
     document.getElementById("swap-destination").value = addressForCoin(toCoin, network);
   }
 }
@@ -2623,7 +2643,7 @@ swapQuoteBtn.addEventListener("click", withBusyButton(swapQuoteBtn, async () => 
   const fromCoin = document.getElementById("swap-from-coin").value;
   const toCoin = document.getElementById("swap-to-coin").value;
   const amount = document.getElementById("swap-amount").value.trim().replace(",", ".");
-  const jupiter = isJupiterSwap(toCoin);
+  const jupiter = isJupiterSwap(fromCoin, toCoin);
   const destination = jupiter ? "" : document.getElementById("swap-destination").value.trim();
 
   if (!amount || (!jupiter && !destination)) {
@@ -2683,7 +2703,7 @@ swapPreviewConfirmBtn.addEventListener("click", withBusyButton(swapPreviewConfir
   const fromCoin = document.getElementById("swap-from-coin").value;
   const toCoin = document.getElementById("swap-to-coin").value;
   const amount = document.getElementById("swap-amount").value.trim().replace(",", ".");
-  const jupiter = isJupiterSwap(toCoin);
+  const jupiter = isJupiterSwap(fromCoin, toCoin);
   const destination = jupiter ? "" : document.getElementById("swap-destination").value.trim();
   const password = document.getElementById("swap-preview-password").value;
 

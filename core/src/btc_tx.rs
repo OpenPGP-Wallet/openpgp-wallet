@@ -22,6 +22,10 @@ pub struct BtcTx {
     pub change_hash160: [u8; 20],
     /// 0 si la monnaie est sous le seuil de poussière (part alors dans les frais).
     pub change_sat: u64,
+    /// Sortie OP_RETURN optionnelle (valeur 0, non dépensable), utilisée pour
+    /// transmettre un memo (ex : memo de swap THORChain). `None` = comportement
+    /// strictement identique à avant cet ajout (aucune régression sur l'envoi normal).
+    pub op_return_data: Option<Vec<u8>>,
 }
 
 fn dsha256(data: &[u8]) -> [u8; 32] {
@@ -66,6 +70,21 @@ fn p2wpkh_script_pubkey(hash160: &[u8; 20]) -> Vec<u8> {
     s
 }
 
+/// scriptPubKey OP_RETURN portant `data` en clair (non dépensable, sert
+/// uniquement à ancrer des métadonnées, ex : memo de swap). Limité en pratique
+/// à ~80 octets par la politique de relais standard du réseau Bitcoin.
+fn op_return_script(data: &[u8]) -> Vec<u8> {
+    let mut s = vec![0x6a]; // OP_RETURN
+    if data.len() <= 75 {
+        s.push(data.len() as u8); // push direct
+    } else {
+        s.push(0x4c); // OP_PUSHDATA1
+        s.push(data.len() as u8);
+    }
+    s.extend_from_slice(data);
+    s
+}
+
 /// scriptCode utilisé dans le sighash BIP143 pour un input P2WPKH : équivalent
 /// au script P2PKH classique (imposé par la spec, même si l'input n'est pas P2PKH).
 fn p2wpkh_script_code(hash160: &[u8; 20]) -> Vec<u8> {
@@ -93,7 +112,18 @@ impl BtcTx {
             push_varint(&mut buf, change_script.len() as u64);
             buf.extend_from_slice(&change_script);
         }
+
+        if let Some(data) = &self.op_return_data {
+            buf.extend_from_slice(&0u64.to_le_bytes()); // valeur 0 : non dépensable
+            let script = op_return_script(data);
+            push_varint(&mut buf, script.len() as u64);
+            buf.extend_from_slice(&script);
+        }
         buf
+    }
+
+    fn num_outputs(&self) -> u64 {
+        1 + (self.change_sat > 0) as u64 + self.op_return_data.is_some() as u64
     }
 
     fn hash_prevouts(&self) -> [u8; 32] {
@@ -176,8 +206,7 @@ impl BtcTx {
             tx.extend_from_slice(&0xffff_ffffu32.to_le_bytes()); // sequence
         }
 
-        let n_outputs = if self.change_sat > 0 { 2 } else { 1 };
-        push_varint(&mut tx, n_outputs);
+        push_varint(&mut tx, self.num_outputs());
         tx.extend_from_slice(&self.outputs_body());
 
         for (sig, pubkey) in &witnesses {
@@ -246,6 +275,7 @@ mod tests {
             value_sat: 9_000,
             change_hash160: hash160,
             change_sat: 0,
+            op_return_data: None,
         };
         let body = tx.outputs_body();
         assert_eq!(&body[0..8], &tx.value_sat.to_le_bytes());
@@ -262,10 +292,46 @@ mod tests {
             value_sat: 50_000,
             change_hash160: hash160,
             change_sat: 49_000,
+            op_return_data: None,
         };
         let body = tx.outputs_body();
         // Deux sorties : 2 * (8 + 1 + 22) = 62 octets.
         assert_eq!(body.len(), 2 * (8 + 1 + 22));
+    }
+
+    /// La sortie OP_RETURN doit être présente, non dépensable (valeur 0) et
+    /// porter le memo en clair, sans casser le reste (garde-fou contre une
+    /// régression sur `num_outputs`/`sign` introduite par cet ajout).
+    #[test]
+    fn outputs_body_includes_op_return_when_present() {
+        let hash160 = [0x11u8; 20];
+        let memo = b"SWAP:BTC.BTC:bc1qxyz:0/1/0:thor1abc:80".to_vec();
+        let tx = BtcTx {
+            inputs: vec![Utxo { txid: [0xAAu8; 32], vout: 0, value_sat: 100_000 }],
+            to_hash160: [0x22u8; 20],
+            value_sat: 50_000,
+            change_hash160: hash160,
+            change_sat: 49_000,
+            op_return_data: Some(memo.clone()),
+        };
+        let body = tx.outputs_body();
+        // Sortie principale + monnaie (2 * 31 octets) puis OP_RETURN : valeur (8,
+        // nulle) + longueur script (1) + OP_RETURN (1) + push direct (1) + memo.
+        let expected_len = 2 * (8 + 1 + 22) + 8 + 1 + 1 + 1 + memo.len();
+        assert_eq!(body.len(), expected_len);
+        let op_return_offset = 2 * (8 + 1 + 22);
+        assert_eq!(&body[op_return_offset..op_return_offset + 8], &0u64.to_le_bytes());
+        assert_eq!(body[op_return_offset + 9], 0x6a, "OP_RETURN attendu");
+        assert_eq!(body[op_return_offset + 10], memo.len() as u8, "push direct de la longueur");
+        assert_eq!(&body[op_return_offset + 11..], &memo[..]);
+
+        let key = SigningKey::from_slice(&[9u8; 32]).expect("clé de test valide");
+        let raw = tx.sign(&key, &hash160).expect("signature réussie avec OP_RETURN");
+        // 3 sorties désormais : le varint de compte doit valoir 3.
+        // (marker+flag = 2 octets après les 4 de version, puis varint d'entrées =
+        // 1 octet ici, 41 octets d'entrée, puis le varint de sorties)
+        let outputs_count_offset = 4 + 2 + 1 + 41;
+        assert_eq!(raw[outputs_count_offset], 3, "3 sorties attendues (dest + monnaie + OP_RETURN)");
     }
 
     /// Test de non-régression : le sighash BIP143 recalculé de façon indépendante
@@ -282,6 +348,7 @@ mod tests {
             value_sat: 50_000,
             change_hash160: hash160,
             change_sat: 49_000,
+            op_return_data: None,
         };
 
         // sign() doit réussir (valide la mécanique complète : construction, signature, sérialisation).

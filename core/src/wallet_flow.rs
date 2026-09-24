@@ -229,6 +229,7 @@ fn send_evm(
         to,
         value,
         chain_id,
+        data: Vec::new(),
     };
 
     let raw_tx = tx.sign(signing_key)?;
@@ -322,6 +323,7 @@ fn send_btc(
         value_sat: amount_sat,
         change_hash160: *hash160,
         change_sat,
+        op_return_data: None,
     };
 
     let raw_tx = tx.sign(signing_key, hash160)?;

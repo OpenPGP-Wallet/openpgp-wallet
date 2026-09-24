@@ -13,6 +13,12 @@ pub struct EthTx {
     pub to: [u8; 20],
     pub value: u128,
     pub chain_id: u64,
+    /// Calldata d'appel de contrat. Vide pour un simple transfert (comportement
+    /// strictement identique à avant cet ajout). Non-vide pour un swap
+    /// THORChain (`thorchain_deposit_calldata`) — voir `intrinsic_gas`, dont le
+    /// résultat DOIT être utilisé comme `gas_limit` dès que `data` n'est pas vide
+    /// (21 000 fixe sous-estime le coût réel et ferait rejeter la transaction).
+    pub data: Vec<u8>,
 }
 
 /// Encode un entier en RLP "big-endian minimal" (zéros de tête retirés, 0 -> chaîne vide),
@@ -34,7 +40,7 @@ impl EthTx {
         s.append(&trim_be(&self.gas_limit.to_be_bytes()));
         s.append(&self.to.as_slice());
         s.append(&trim_be(&self.value.to_be_bytes()));
-        s.append(&Vec::<u8>::new()); // champ "data", vide pour un simple transfert
+        s.append(&self.data);
 
         match v {
             None => {
@@ -75,6 +81,61 @@ impl EthTx {
 
         Ok(self.encode(Some((v, trim_be(&r).as_slice(), trim_be(&s_val).as_slice()))))
     }
+}
+
+/// Gas intrinsèque réel d'une transaction (règle post-EIP-2028, en vigueur
+/// depuis Istanbul) : 21 000 de base + 16 par octet non-nul de calldata + 4 par
+/// octet nul. Un simple transfert (`data` vide) redonne exactement 21 000,
+/// donc aucune régression sur le chemin d'envoi existant. Indispensable pour
+/// tout appel de contrat (ex : swap THORChain) : la constante fixe 21 000
+/// précédemment codée en dur ferait rejeter la transaction par le nœud
+/// ("intrinsic gas too low") dès que `data` n'est pas vide.
+pub fn intrinsic_gas(data: &[u8]) -> u64 {
+    const BASE: u64 = 21_000;
+    let (zero, nonzero) = data.iter().fold((0u64, 0u64), |(zero, nonzero), &b| {
+        if b == 0 { (zero + 1, nonzero) } else { (zero, nonzero + 1) }
+    });
+    BASE + zero * 4 + nonzero * 16
+}
+
+fn pad_left_32(bytes: &[u8]) -> [u8; 32] {
+    let mut buf = [0u8; 32];
+    buf[32 - bytes.len()..].copy_from_slice(bytes);
+    buf
+}
+
+/// Encode l'appel `depositWithExpiry(address vault, address asset, uint256
+/// amount, string memo, uint256 expiration)` du contrat "THORChain Router",
+/// tel qu'exigé pour un swap THORChain depuis une chaîne EVM (voir
+/// `thorchain_rpc` pour le contexte : `vault` = `SwapQuote::inbound_address`,
+/// et l'appel doit cibler `SwapQuote::router`, jamais `inbound_address`
+/// directement). Sélecteur (`0x44bc937b`) vérifié en direct contre la base
+/// publique 4byte.directory, jamais recalculé "à l'oeil". Suit l'encodage ABI
+/// Solidity standard : les 3 premiers paramètres statiques sont encodés en
+/// place, `memo` (seul type dynamique) est remplacé dans la tête par un
+/// décalage vers la queue, `expiration` reste statique après ce décalage —
+/// voir le test `thorchain_deposit_calldata_matches_a_hand_computed_reference`
+/// pour une vérification octet par octet contre la spec.
+pub fn thorchain_deposit_calldata(vault: &[u8; 20], asset: &[u8; 20], amount: u128, memo: &str, expiration: u64) -> Vec<u8> {
+    const SELECTOR: [u8; 4] = [0x44, 0xbc, 0x93, 0x7b];
+    const HEAD_SLOTS: u128 = 5; // vault, asset, amount, offset(memo), expiration
+
+    let memo_bytes = memo.as_bytes();
+    let mut data = Vec::with_capacity(4 + 32 * 5 + 32 + memo_bytes.len().div_ceil(32) * 32);
+    data.extend_from_slice(&SELECTOR);
+
+    data.extend_from_slice(&pad_left_32(vault));
+    data.extend_from_slice(&pad_left_32(asset));
+    data.extend_from_slice(&pad_left_32(&amount.to_be_bytes()));
+    data.extend_from_slice(&pad_left_32(&(HEAD_SLOTS * 32).to_be_bytes())); // offset du memo
+    data.extend_from_slice(&pad_left_32(&(expiration as u128).to_be_bytes()));
+
+    data.extend_from_slice(&pad_left_32(&(memo_bytes.len() as u128).to_be_bytes()));
+    data.extend_from_slice(memo_bytes);
+    let padding = (32 - memo_bytes.len() % 32) % 32;
+    data.extend(std::iter::repeat(0u8).take(padding));
+
+    data
 }
 
 #[cfg(test)]
@@ -127,6 +188,7 @@ mod tests {
             to: [0xABu8; 20],
             value: 1_000_000_000_000_000_000, // 1 ETH
             chain_id: 11155111,                // Sepolia
+            data: Vec::new(),
         };
 
         let raw = tx.sign(&key).expect("signature réussie");
@@ -159,5 +221,68 @@ mod tests {
         verifying_key
             .verify_prehash(&hash, &signature)
             .expect("la signature doit vérifier contre la clé publique et le hash non-signé");
+    }
+
+    #[test]
+    fn intrinsic_gas_matches_the_base_cost_for_an_empty_payload() {
+        // Un simple transfert (data vide) doit redonner exactement 21 000 :
+        // aucune régression sur le chemin d'envoi existant, qui codait cette
+        // valeur en dur avant cet ajout.
+        assert_eq!(intrinsic_gas(&[]), 21_000);
+    }
+
+    #[test]
+    fn intrinsic_gas_counts_zero_and_nonzero_bytes_at_their_real_eip2028_cost() {
+        let data = [0x00, 0x00, 0xFF, 0x01]; // 2 octets nuls, 2 non-nuls
+        assert_eq!(intrinsic_gas(&data), 21_000 + 2 * 4 + 2 * 16);
+    }
+
+    /// Vérifie l'encodage `thorchain_deposit_calldata` octet par octet contre
+    /// la spec ABI Solidity, recalculée à la main ici (pas seulement "ça
+    /// compile") : sélecteur, 3 champs statiques en place, décalage vers le
+    /// memo (seul type dynamique), puis longueur + contenu + padding du memo
+    /// dans la queue. Le sélecteur `0x44bc937b` a été vérifié en direct contre
+    /// 4byte.directory avant d'être inscrit dans le code (jamais recalculé
+    /// "à l'oeil").
+    #[test]
+    fn thorchain_deposit_calldata_matches_a_hand_computed_reference() {
+        let vault = [0x11u8; 20];
+        let asset = [0x22u8; 20];
+        let amount: u128 = 1000;
+        let memo = "AB";
+        let expiration: u64 = 5;
+
+        let calldata = thorchain_deposit_calldata(&vault, &asset, amount, memo, expiration);
+
+        // 4 (sélecteur) + 5*32 (tête) + 32 (longueur memo) + 32 (memo paddé à 32) = 228.
+        assert_eq!(calldata.len(), 228);
+
+        assert_eq!(&calldata[0..4], &[0x44, 0xbc, 0x93, 0x7b]);
+
+        // vault : 12 octets nuls puis l'adresse (20 octets), alignée à droite.
+        assert_eq!(&calldata[4..16], &[0u8; 12]);
+        assert_eq!(&calldata[16..36], &vault);
+
+        // asset : même schéma.
+        assert_eq!(&calldata[36..48], &[0u8; 12]);
+        assert_eq!(&calldata[48..68], &asset);
+
+        // amount : uint256 big-endian, valeur 1000 dans les derniers octets.
+        assert_eq!(&calldata[68..98], &[0u8; 30]);
+        assert_eq!(&calldata[98..100], &[0x03, 0xe8]); // 1000
+
+        // offset du memo : 5 slots de tête * 32 = 160 = 0xa0.
+        assert_eq!(&calldata[100..131], &[0u8; 31]);
+        assert_eq!(calldata[131], 0xa0);
+
+        // expiration : uint256 big-endian, valeur 5.
+        assert_eq!(&calldata[132..163], &[0u8; 31]);
+        assert_eq!(calldata[163], 5);
+
+        // longueur du memo ("AB" = 2 octets) puis contenu et padding.
+        assert_eq!(&calldata[164..195], &[0u8; 31]);
+        assert_eq!(calldata[195], 2);
+        assert_eq!(&calldata[196..198], b"AB");
+        assert_eq!(&calldata[198..228], &[0u8; 30], "padding du memo jusqu'à 32 octets");
     }
 }
