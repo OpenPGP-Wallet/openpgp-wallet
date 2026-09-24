@@ -24,6 +24,10 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "Khadim",
+    "copyright": "© 2026 Khadim",
+    "shortDescription": "Portefeuille crypto non-custodial protégé par PGP",
+    "longDescription": "Portefeuille crypto multi-réseaux (Bitcoin, EVM, Solana) non-custodial et décentralisé. La clé maîtresse est chiffrée avec OpenPGP au lieu d'une seed phrase en clair.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

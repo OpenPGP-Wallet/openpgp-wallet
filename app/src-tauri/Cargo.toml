@@ -1,8 +1,8 @@
 [package]
 name = "wallet"
 version = "2.2.0"
-description = "A Tauri App"
-authors = ["you"]
+description = "Portefeuille crypto non-custodial (Bitcoin, EVM, Solana) protégé par PGP au lieu d'une seed phrase en clair"
+authors = ["Khadim"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
