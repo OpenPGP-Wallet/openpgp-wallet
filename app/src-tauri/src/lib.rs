@@ -1248,15 +1248,42 @@ fn get_swap_quote(from_coin: String, to_coin: String, amount: String, destinatio
 /// avec ses propres frais + les 0,80% d'affiliation, et que l'app elle-même
 /// ne peut garantir le bon déroulement au-delà de l'envoi de cette
 /// transaction (voir core/src/thorchain_rpc.rs pour le contexte complet).
-fn confirm_swap_native(app: &tauri::AppHandle, from_label: &str, amount: &str, expected_out: &str, to_coin: &str) -> bool {
+///
+/// Montre aussi l'adresse de vault réelle (`inbound_address`, et le contrat
+/// routeur pour un swap EVM) — trouvé lors de l'audit de cette
+/// fonctionnalité : contrairement à `confirm_transaction_native` (envoi
+/// normal), qui montre TOUJOURS le destinataire réel pour se protéger
+/// justement de la "signature aveugle" (voir ETAPES.md, 15ᵉ passage), cette
+/// boîte ne montrait jusqu'ici que le montant/l'actif, jamais l'adresse
+/// réellement payée. Cette adresse vient d'un tiers (la passerelle THORChain
+/// interrogée pour le devis, jamais un nœud opéré par ce projet) : l'afficher
+/// ne le rend pas plus fiable en soi, mais restaure le même principe "on
+/// signe ce qu'on voit" que le reste de l'app, et donne à un utilisateur
+/// attentif une chance de repérer une adresse manifestement incohérente.
+fn confirm_swap_native(
+    app: &tauri::AppHandle,
+    from_label: &str,
+    amount: &str,
+    expected_out: &str,
+    to_coin: &str,
+    pay_to: &str,
+    router: Option<&str>,
+) -> bool {
+    let english = UI_LANG_IS_ENGLISH.load(Ordering::Relaxed);
+    let destination_line = match (router, english) {
+        (Some(router), true) => format!("Actual destination: router contract {router}\n(THORChain vault targeted: {pay_to})\n"),
+        (Some(router), false) => format!("Destination réelle : contrat routeur {router}\n(coffre THORChain visé : {pay_to})\n"),
+        (None, true) => format!("Actual destination: {pay_to}\n"),
+        (None, false) => format!("Destination réelle : {pay_to}\n"),
+    };
     let message = if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
         format!(
-            "Swap via THORChain (external protocol, not audited by this app)\n\nFrom profile: {from_label}\nSending: {amount}\nExpected to receive: ~{expected_out} {}\n\nIncludes THORChain's own network/liquidity fees, plus a 0.80% affiliate fee.\nThis is irreversible, and once sent this app can no longer track or reverse it.\n\nConfirm this swap?",
+            "Swap via THORChain (external protocol, not audited by this app)\n\nFrom profile: {from_label}\nSending: {amount}\nExpected to receive: ~{expected_out} {}\n{destination_line}\nIncludes THORChain's own network/liquidity fees, plus a 0.80% affiliate fee.\nThis is irreversible, and once sent this app can no longer track or reverse it.\n\nConfirm this swap?",
             to_coin.to_uppercase()
         )
     } else {
         format!(
-            "Échange via THORChain (protocole externe, non audité par cette app)\n\nDepuis le profil : {from_label}\nEnvoi : {amount}\nRéception attendue : ~{expected_out} {}\n\nInclut les frais propres à THORChain (réseau/liquidité), plus 0,80% de frais d'affiliation.\nC'est irréversible, et une fois envoyé cette app ne peut plus ni suivre ni annuler l'opération.\n\nConfirmer cet échange ?",
+            "Échange via THORChain (protocole externe, non audité par cette app)\n\nDepuis le profil : {from_label}\nEnvoi : {amount}\nRéception attendue : ~{expected_out} {}\n{destination_line}\nInclut les frais propres à THORChain (réseau/liquidité), plus 0,80% de frais d'affiliation.\nC'est irréversible, et une fois envoyé cette app ne peut plus ni suivre ni annuler l'opération.\n\nConfirmer cet échange ?",
             to_coin.to_uppercase()
         )
     };
@@ -1298,7 +1325,16 @@ fn swap_transaction(
     let quote = api::get_swap_quote(&from_coin, &to_coin, &amount, &destination).t_err()?;
     let amount_line = format!("{amount} {}", from_coin.to_uppercase());
 
-    if !confirm_swap_native(&app, &from_label, &amount_line, &format_1e8(quote.expected_amount_out), &to_coin) {
+    let router_for_from_coin = if from_coin == "evm" { quote.router.as_deref() } else { None };
+    if !confirm_swap_native(
+        &app,
+        &from_label,
+        &amount_line,
+        &format_1e8(quote.expected_amount_out),
+        &to_coin,
+        &quote.inbound_address,
+        router_for_from_coin,
+    ) {
         return Err(translate_error("Échange annulé (confirmation refusée)."));
     }
 
