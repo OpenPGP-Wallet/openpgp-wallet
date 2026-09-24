@@ -840,6 +840,27 @@
       </div>
     </div>
 
+    <!-- Modale de consultation de la clé publique d'un destinataire -->
+    <div id="recipient-key-modal" class="modal-overlay hidden">
+      <div class="modal">
+        <h2 data-i18n="recipientKey.title">Clé publique du destinataire</h2>
+        <label data-i18n="message.name">Nom</label>
+        <p class="address" id="recipient-key-label"></p>
+        <label data-i18n="certificate.identity">Identité</label>
+        <p class="address" id="recipient-key-userid"></p>
+        <label data-i18n="certificate.fingerprint">Empreinte (fingerprint)</label>
+        <p class="address" id="recipient-key-fingerprint"></p>
+        <label data-i18n="certificate.keyId">Identifiant de clé</label>
+        <p class="address" id="recipient-key-keyid"></p>
+        <label data-i18n="certificate.fullKey">Clé publique complète (ASCII-armor)</label>
+        <textarea id="recipient-key-armored" rows="10" readonly></textarea>
+        <div class="row-buttons">
+          <button id="recipient-key-copy" class="secondary" data-i18n="recipientKey.copy">Copier cette clé publique</button>
+          <button id="recipient-key-close" class="link" data-i18n="common.close">Fermer</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Modale nouveau profil -->
     <div id="add-profile-modal" class="modal-overlay hidden">
       <div class="modal">

@@ -1505,17 +1505,23 @@ struct RecipientDto {
     /// jamais lue depuis le fichier : une empreinte falsifiée ne correspondrait
     /// plus à la clé réellement utilisée pour chiffrer.
     fingerprint: String,
+    /// Identifiant de clé et identité PGP (nom/e-mail embarqués dans le
+    /// certificat) — ajoutés pour la consultation détaillée d'un destinataire
+    /// (modale "Consulter la clé"), même trio d'informations que l'onglet
+    /// Certificat pour la propre identité de l'appareil.
+    key_id: String,
+    user_id: String,
 }
 
 impl From<messaging::Recipient> for RecipientDto {
     fn from(r: messaging::Recipient) -> Self {
-        let fingerprint = messaging::cert_info(&r.pubkey_armored)
-            .map(|info| info.fingerprint)
-            .unwrap_or_else(|_| "invalide".to_string());
+        let info = messaging::cert_info(&r.pubkey_armored).ok();
         Self {
             label: r.label,
             pubkey_armored: r.pubkey_armored,
-            fingerprint,
+            fingerprint: info.as_ref().map(|i| i.fingerprint.clone()).unwrap_or_else(|| "invalide".to_string()),
+            key_id: info.as_ref().map(|i| i.key_id.clone()).unwrap_or_default(),
+            user_id: info.map(|i| i.user_id).unwrap_or_default(),
         }
     }
 }

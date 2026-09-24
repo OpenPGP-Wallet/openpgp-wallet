@@ -318,6 +318,9 @@ const I18N = {
     "message.cannotBeEmpty": "Le message ne peut pas être vide.",
     "message.encryptedAndPasswordRequired": "Message chiffré et mot de passe requis.",
     "message.removeRecipient": "Supprimer",
+    "recipientKey.view": "Consulter la clé",
+    "recipientKey.title": "Clé publique du destinataire",
+    "recipientKey.copy": "Copier cette clé publique",
     "certificate.title": "Votre certificat PGP",
     "certificate.subtitle":
       "C'est votre clé publique — partagez-la avec quelqu'un pour qu'il puisse vous ajouter comme destinataire et vous envoyer des messages chiffrés que vous seul pouvez lire.",
@@ -616,6 +619,9 @@ const I18N = {
     "message.cannotBeEmpty": "The message cannot be empty.",
     "message.encryptedAndPasswordRequired": "Encrypted message and password are required.",
     "message.removeRecipient": "Remove",
+    "recipientKey.view": "View key",
+    "recipientKey.title": "Recipient's public key",
+    "recipientKey.copy": "Copy this public key",
     "certificate.title": "Your PGP certificate",
     "certificate.subtitle":
       "This is your public key — share it with someone so they can add you as a recipient and send you encrypted messages that only you can read.",
@@ -2807,6 +2813,14 @@ function renderRecipientList() {
     infoDiv.appendChild(labelDiv);
     infoDiv.appendChild(fingerprintDiv);
 
+    const actionsDiv = document.createElement("div");
+    actionsDiv.className = "item-actions";
+
+    const viewKeyBtn = document.createElement("button");
+    viewKeyBtn.className = "secondary";
+    viewKeyBtn.textContent = t("recipientKey.view");
+    viewKeyBtn.addEventListener("click", () => openRecipientKeyModal(r));
+
     const removeBtn = document.createElement("button");
     removeBtn.textContent = t("message.removeRecipient");
     removeBtn.addEventListener("click", async () => {
@@ -2814,8 +2828,10 @@ function renderRecipientList() {
       loadRecipients();
     });
 
+    actionsDiv.appendChild(viewKeyBtn);
+    actionsDiv.appendChild(removeBtn);
     item.appendChild(infoDiv);
-    item.appendChild(removeBtn);
+    item.appendChild(actionsDiv);
     container.appendChild(item);
 
     const pickerItem = document.createElement("label");
@@ -2834,6 +2850,29 @@ function renderRecipientList() {
     picker.appendChild(pickerItem);
   });
 }
+
+// Consultation de la clé publique complète d'un destinataire déjà enregistré
+// (identité/empreinte/identifiant de clé/texte ASCII-armor complet) — même
+// gabarit que l'onglet Certificat pour la propre identité de l'appareil.
+// Toutes les données viennent déjà de `recipientsCache` (voir RecipientDto
+// côté Rust) : aucun nouvel appel Tauri nécessaire pour ouvrir cette modale.
+function openRecipientKeyModal(recipient) {
+  document.getElementById("recipient-key-label").textContent = recipient.label;
+  document.getElementById("recipient-key-userid").textContent = recipient.user_id;
+  document.getElementById("recipient-key-fingerprint").textContent = recipient.fingerprint;
+  document.getElementById("recipient-key-keyid").textContent = recipient.key_id;
+  document.getElementById("recipient-key-armored").value = recipient.pubkey_armored;
+  document.getElementById("recipient-key-modal").classList.remove("hidden");
+}
+
+function closeRecipientKeyModal() {
+  document.getElementById("recipient-key-modal").classList.add("hidden");
+}
+
+document.getElementById("recipient-key-close").addEventListener("click", closeRecipientKeyModal);
+document.getElementById("recipient-key-copy").addEventListener("click", () => {
+  copyText(document.getElementById("recipient-key-armored").value);
+});
 
 document.getElementById("show-add-recipient").addEventListener("click", () => {
   document.getElementById("add-recipient-form").classList.remove("hidden");
