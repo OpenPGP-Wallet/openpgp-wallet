@@ -189,6 +189,7 @@ const I18N = {
     "restore.submit": "Restaurer",
     "restore.filesRequired": "Les 4 fichiers (2 parts + 2 clés privées) sont requis.",
     "nav.wallet": "Portefeuille",
+    "nav.history": "Historique",
     "nav.message": "Message",
     "nav.certificate": "Certificat",
     "nav.external": "Wallets externes",
@@ -251,8 +252,8 @@ const I18N = {
     "wallet.testnet": "Testnet",
     "wallet.devnet": "Devnet",
     "wallet.refresh": "Actualiser",
-    "wallet.history": "Historique",
     "wallet.send": "Envoyer",
+    "wallet.swap": "Échanger",
     "wallet.pendingBadge": "⏳ Transaction en attente détectée",
     "wallet.marketsTitle": "Prix des cryptomonnaies en direct",
     "wallet.showQr": "Afficher en QR code",
@@ -264,7 +265,11 @@ const I18N = {
     "wallet.noArchivedProfile": "Aucun profil archivé.",
     "wallet.restoreProfile": "Restaurer",
     "wallet.deleteProfileForever": "Supprimer définitivement",
-    "wallet.historyTitle": "Historique — {coin}",
+    "history.subtitle":
+      "Triées par réseau, dans le réseau actuellement sélectionné pour chaque carte du portefeuille (mainnet ou testnet).",
+    "history.ethereum": "Ethereum",
+    "history.bitcoin": "Bitcoin",
+    "history.solana": "Solana",
     "wallet.historyLoading": "Chargement…",
     "wallet.historyAddressUnavailable":
       "Adresse pas encore disponible pour ce profil — déverrouillez le portefeuille une fois pour la faire apparaître.",
@@ -336,6 +341,10 @@ const I18N = {
     "settings.regenerateBackup": "Régénérer mon kit de sauvegarde",
     "settings.regenerateBackupHint":
       "Si vous avez perdu un ou plusieurs de vos 3 fichiers de sauvegarde d'origine, générez-en un nouveau jeu de 3 (mot de passe requis). Vos adresses ne changent pas.",
+    "settings.thorTitle": "Adresse THOR (frais de swap)",
+    "settings.thorHint":
+      "Adresse THORChain dérivée de votre clé maîtresse — lecture seule, aucune fonction d'envoi ni de solde RUNE dans cette version. Sert uniquement de référence pour la fonctionnalité d'échange (swap).",
+    "settings.thorShow": "Afficher l'adresse",
     "settings.deviceSecurity": "Sécurité de l'appareil",
     "settings.biometricTitle": "Déverrouillage biométrique",
     "settings.biometricHint":
@@ -361,7 +370,35 @@ const I18N = {
     "send.feeSpeed": "Vitesse d'envoi (frais réseau)",
     "send.passwordToConfirm": "Mot de passe (pour valider la transaction)",
     "send.confirm": "Confirmer l'envoi",
+    "send.previewTitle": "Vérifiez avant d'envoyer",
+    "send.previewSubtitle": "Une confirmation de Windows s'ouvrira juste après — c'est elle qui valide réellement l'envoi.",
+    "send.previewNetwork": "Réseau",
+    "send.previewFrom": "Depuis",
+    "send.previewConfirm": "Continuer",
+    "send.previewBack": "Modifier",
     "send.txSent": "Transaction envoyée : {tx}",
+    "swap.title": "Échanger",
+    "swap.subtitle":
+      "Passe par un protocole externe non audité par cette app — voir \"Comment ça marche\" pour le détail. Chaque échange (cross-chain via THORChain ou SOL/USDC via Jupiter) inclut 0,80% de frais d'affiliation.",
+    "swap.fromAsset": "Depuis",
+    "swap.fromSol": "Solana (SOL)",
+    "swap.fromUsdc": "USDC",
+    "swap.toAsset": "Vers",
+    "swap.toBtc": "Bitcoin (BTC)",
+    "swap.toEth": "Ethereum (ETH)",
+    "swap.toUsdc": "USDC (via Jupiter, même portefeuille)",
+    "swap.toSol": "Solana (SOL, via Jupiter, même portefeuille)",
+    "swap.amount": "Montant",
+    "swap.destination": "Adresse de destination",
+    "swap.destinationHint":
+      "Pré-remplie avec votre propre adresse sur le réseau choisi — modifiable si vous voulez échanger vers une autre adresse.",
+    "swap.jupiterHint":
+      "Même portefeuille : les USDC arrivent directement sur votre adresse Solana, pas besoin d'adresse de destination séparée.",
+    "swap.getQuote": "Obtenir un devis",
+    "swap.previewTitle": "Vérifiez avant d'échanger",
+    "swap.previewSending": "Envoi",
+    "swap.previewReceiving": "Réception estimée",
+    "swap.previewFees": "Frais THORChain (inclus)",
     "addProfile.title": "Nouveau profil",
     "addProfile.subtitle":
       "Un profil = une nouvelle adresse par réseau, dérivée de la même clé maîtresse déjà protégée par Shamir/PGP — aucune nouvelle sauvegarde à faire.",
@@ -447,6 +484,7 @@ const I18N = {
     "restore.submit": "Restore",
     "restore.filesRequired": "All 4 files (2 shares + 2 private keys) are required.",
     "nav.wallet": "Wallet",
+    "nav.history": "History",
     "nav.message": "Message",
     "nav.certificate": "Certificate",
     "nav.external": "External wallets",
@@ -509,8 +547,8 @@ const I18N = {
     "wallet.testnet": "Testnet",
     "wallet.devnet": "Devnet",
     "wallet.refresh": "Refresh",
-    "wallet.history": "History",
     "wallet.send": "Send",
+    "wallet.swap": "Swap",
     "wallet.pendingBadge": "⏳ Pending transaction detected",
     "wallet.marketsTitle": "Live cryptocurrency prices",
     "wallet.showQr": "Show as QR code",
@@ -522,7 +560,11 @@ const I18N = {
     "wallet.noArchivedProfile": "No archived profile.",
     "wallet.restoreProfile": "Restore",
     "wallet.deleteProfileForever": "Delete permanently",
-    "wallet.historyTitle": "History — {coin}",
+    "history.subtitle":
+      "Sorted by network, using whichever network is currently selected for each wallet card (mainnet or testnet).",
+    "history.ethereum": "Ethereum",
+    "history.bitcoin": "Bitcoin",
+    "history.solana": "Solana",
     "wallet.historyLoading": "Loading…",
     "wallet.historyAddressUnavailable":
       "Address not available yet for this profile — unlock the wallet once to make it appear.",
@@ -594,6 +636,10 @@ const I18N = {
     "settings.regenerateBackup": "Regenerate my backup kit",
     "settings.regenerateBackupHint":
       "If you lost one or more of your original 3 backup files, generate a new set of 3 (password required). Your addresses don't change.",
+    "settings.thorTitle": "THOR address (swap fee)",
+    "settings.thorHint":
+      "THORChain address derived from your master key — read-only, no send function or RUNE balance in this version. Used only as a reference for the swap feature.",
+    "settings.thorShow": "Show address",
     "settings.deviceSecurity": "Device security",
     "settings.biometricTitle": "Biometric unlock",
     "settings.biometricHint":
@@ -619,7 +665,33 @@ const I18N = {
     "send.feeSpeed": "Sending speed (network fee)",
     "send.passwordToConfirm": "Password (to confirm the transaction)",
     "send.confirm": "Confirm send",
+    "send.previewTitle": "Review before sending",
+    "send.previewSubtitle": "A Windows confirmation will open right after — that's what actually validates the send.",
+    "send.previewNetwork": "Network",
+    "send.previewFrom": "From",
+    "send.previewConfirm": "Continue",
+    "send.previewBack": "Edit",
     "send.txSent": "Transaction sent: {tx}",
+    "swap.title": "Swap",
+    "swap.subtitle":
+      "Goes through an external protocol not audited by this app — see \"How it works\" for details. Every swap (cross-chain via THORChain or SOL/USDC via Jupiter) includes a 0.80% affiliate fee.",
+    "swap.fromAsset": "From",
+    "swap.fromSol": "Solana (SOL)",
+    "swap.fromUsdc": "USDC",
+    "swap.toAsset": "To",
+    "swap.toBtc": "Bitcoin (BTC)",
+    "swap.toEth": "Ethereum (ETH)",
+    "swap.toUsdc": "USDC (via Jupiter, same wallet)",
+    "swap.toSol": "Solana (SOL, via Jupiter, same wallet)",
+    "swap.amount": "Amount",
+    "swap.destination": "Destination address",
+    "swap.destinationHint": "Pre-filled with your own address on the chosen network — editable if you want to swap to a different address.",
+    "swap.jupiterHint": "Same wallet: the USDC lands directly on your Solana address, no separate destination address needed.",
+    "swap.getQuote": "Get a quote",
+    "swap.previewTitle": "Review before swapping",
+    "swap.previewSending": "Sending",
+    "swap.previewReceiving": "Estimated receive",
+    "swap.previewFees": "THORChain fees (included)",
     "addProfile.title": "New profile",
     "addProfile.subtitle":
       "A profile = a new address per network, derived from the same master key already protected by Shamir/PGP — no new backup needed.",
@@ -1318,6 +1390,43 @@ document.getElementById("regenerate-backup-close").addEventListener("click", () 
   document.getElementById("regenerate-backup-list").innerHTML = "";
 });
 
+// --- Adresse THOR (frais de swap) -------------------------------------------
+// Purement informatif (voir api::get_thor_fee_address) : aucune fonction
+// d'envoi/solde RUNE, juste la dérivation + l'affichage de l'adresse.
+
+document.getElementById("show-thor-address-btn").addEventListener("click", () => {
+  document.getElementById("thor-address-password").value = "";
+  hideError(document.getElementById("thor-address-error"));
+  document.getElementById("thor-address-password-modal").classList.remove("hidden");
+});
+
+document.getElementById("thor-address-cancel").addEventListener("click", () => {
+  document.getElementById("thor-address-password-modal").classList.add("hidden");
+});
+
+const thorAddressConfirmBtn = document.getElementById("thor-address-confirm");
+thorAddressConfirmBtn.addEventListener("click", withBusyButton(thorAddressConfirmBtn, async () => {
+  const errorEl = document.getElementById("thor-address-error");
+  hideError(errorEl);
+  const password = document.getElementById("thor-address-password").value;
+  if (!password) {
+    showError(errorEl, t("common.passwordRequired"));
+    return;
+  }
+
+  try {
+    const address = await invoke("get_thor_fee_address", { password });
+    document.getElementById("thor-address-password-modal").classList.add("hidden");
+    const display = document.getElementById("thor-address-display");
+    display.textContent = address;
+    display.classList.remove("hidden");
+  } catch (e) {
+    showError(errorEl, String(e));
+  } finally {
+    document.getElementById("thor-address-password").value = "";
+  }
+}));
+
 function lockWallet() {
   profilesCache = [];
   currentProfileIndex = 0;
@@ -1368,6 +1477,7 @@ document.querySelectorAll(".nav-tab").forEach((tab) => {
     document.querySelectorAll(".tab-panel").forEach((panel) => {
       panel.classList.toggle("hidden", panel.dataset.panel !== target);
     });
+    if (target === "history") loadAllHistory();
     if (target === "certificate") loadCertificate();
     if (target === "message") loadRecipients();
     if (target === "external") loadExternalWallets();
@@ -1952,8 +2062,10 @@ document.querySelectorAll(".wallet-card").forEach((card) => {
     }
     copyText(address, t("wallet.addressCopied"));
   });
-  const historyBtn = card.querySelector('[data-action="history"]');
-  historyBtn.addEventListener("click", withBusyButton(historyBtn, () => openHistoryModal(card)));
+  // Uniquement présent sur la carte Solana pour l'instant (voir index.html) :
+  // seul actif source pris en charge par le swap en v1 (voir le plan swap).
+  const swapBtn = card.querySelector('[data-action="swap"]');
+  if (swapBtn) swapBtn.addEventListener("click", () => openSwapModal(card));
   const select = card.querySelector(".network-select");
   if (select) {
     // Contrairement à EVM/Solana, changer de réseau Bitcoin change aussi l'adresse
@@ -1991,9 +2103,13 @@ document.getElementById("qr-close").addEventListener("click", () => {
   qrModal.classList.add("hidden");
 });
 
-// --- Historique de transactions (séparé par crypto) -------------------------
+// --- Historique de transactions (onglet dédié, trié par réseau) -------------
+// Un réseau = une carte du tableau de bord (voir data-coin) : la carte reste
+// la seule source de vérité pour "quel réseau/quelle adresse" (mainnet ou
+// testnet, choisi via son sélecteur), l'onglet ne fait que relire cet état,
+// jamais son propre choix de réseau séparé.
 
-const historyModal = document.getElementById("history-modal");
+const HISTORY_COINS = ["evm", "btc", "sol", "usdc"];
 
 function formatTxTimestamp(unixSeconds) {
   if (unixSeconds == null) return "en attente";
@@ -2007,15 +2123,66 @@ function historyStatusLabel(status) {
   return status;
 }
 
-async function openHistoryModal(card) {
-  const coin = card.dataset.coin;
+function buildHistoryRow(tx) {
+  const row = document.createElement("div");
+  row.className = "history-row";
+
+  const left = document.createElement("div");
+  left.className = "history-left";
+  const idDiv = document.createElement("div");
+  idDiv.className = "history-id";
+  idDiv.textContent = tx.id;
+  const meta = document.createElement("div");
+  meta.className = "history-meta";
+  const dateSpan = document.createElement("span");
+  dateSpan.textContent = formatTxTimestamp(tx.timestamp_unix);
+  const statusSpan = document.createElement("span");
+  statusSpan.className = `history-status history-status-${tx.status}`;
+  statusSpan.textContent = historyStatusLabel(tx.status);
+  meta.appendChild(dateSpan);
+  meta.appendChild(statusSpan);
+  left.appendChild(idDiv);
+  left.appendChild(meta);
+
+  const right = document.createElement("div");
+  right.className = "history-right";
+  const amountDiv = document.createElement("div");
+  amountDiv.className = "history-amount";
+  if (tx.amount != null) {
+    amountDiv.classList.add(tx.amount.startsWith("-") ? "negative" : "positive");
+    amountDiv.textContent = tx.amount;
+  } else {
+    amountDiv.textContent = "—";
+  }
+  // Un <a target="_blank"> classique ne s'ouvre pas de façon fiable dans la
+  // webview Tauri (navigation interceptée pour raisons de sécurité) : on passe
+  // par la commande dédiée qui ouvre le navigateur système (voir
+  // app/src-tauri/src/lib.rs::open_external_link).
+  const link = document.createElement("button");
+  link.type = "button";
+  link.className = "history-link";
+  link.textContent = t("wallet.historyViewLink");
+  link.addEventListener("click", () => {
+    invoke("open_external_link", { url: tx.explorer_url }).catch((e) => alert(t("wallet.linkError", { err: e })));
+  });
+  right.appendChild(amountDiv);
+  right.appendChild(link);
+
+  row.appendChild(left);
+  row.appendChild(right);
+  return row;
+}
+
+async function loadHistorySection(coin) {
+  const card = document.querySelector(`.wallet-card[data-coin="${coin}"]`);
+  const container = document.getElementById(`history-list-${coin}`);
+  const networkEl = document.getElementById(`history-network-${coin}`);
+  if (!card || !container || !networkEl) return;
+
   const network = networkForCard(card);
   const address = addressForCoin(coin, network);
-  const coinLabel = card.querySelector("h2").textContent.trim();
-  document.getElementById("history-modal-title").textContent = t("wallet.historyTitle", { coin: coinLabel });
-  const container = document.getElementById("history-list");
+  networkEl.textContent = networkLabelForCard(card);
   container.innerHTML = `<p class="muted">${t("wallet.historyLoading")}</p>`;
-  historyModal.classList.remove("hidden");
 
   if (!address) {
     container.innerHTML = `<p class="muted">${t("wallet.historyAddressUnavailable")}</p>`;
@@ -2036,63 +2203,17 @@ async function openHistoryModal(card) {
       container.innerHTML = `<p class="muted">${t("wallet.historyEmpty")}</p>`;
       return;
     }
-    entries.forEach((tx) => {
-      const row = document.createElement("div");
-      row.className = "history-row";
-
-      const left = document.createElement("div");
-      left.className = "history-left";
-      const idDiv = document.createElement("div");
-      idDiv.className = "history-id";
-      idDiv.textContent = tx.id;
-      const meta = document.createElement("div");
-      meta.className = "history-meta";
-      const dateSpan = document.createElement("span");
-      dateSpan.textContent = formatTxTimestamp(tx.timestamp_unix);
-      const statusSpan = document.createElement("span");
-      statusSpan.className = `history-status history-status-${tx.status}`;
-      statusSpan.textContent = historyStatusLabel(tx.status);
-      meta.appendChild(dateSpan);
-      meta.appendChild(statusSpan);
-      left.appendChild(idDiv);
-      left.appendChild(meta);
-
-      const right = document.createElement("div");
-      right.className = "history-right";
-      const amountDiv = document.createElement("div");
-      amountDiv.className = "history-amount";
-      if (tx.amount != null) {
-        amountDiv.classList.add(tx.amount.startsWith("-") ? "negative" : "positive");
-        amountDiv.textContent = tx.amount;
-      } else {
-        amountDiv.textContent = "—";
-      }
-      // Un <a target="_blank"> classique ne s'ouvre pas de façon fiable dans la
-      // webview Tauri (navigation interceptée pour raisons de sécurité) : on passe
-      // par la commande dédiée qui ouvre le navigateur système (voir
-      // app/src-tauri/src/lib.rs::open_external_link).
-      const link = document.createElement("button");
-      link.type = "button";
-      link.className = "history-link";
-      link.textContent = t("wallet.historyViewLink");
-      link.addEventListener("click", () => {
-        invoke("open_external_link", { url: tx.explorer_url }).catch((e) => alert(t("wallet.linkError", { err: e })));
-      });
-      right.appendChild(amountDiv);
-      right.appendChild(link);
-
-      row.appendChild(left);
-      row.appendChild(right);
-      container.appendChild(row);
-    });
+    entries.forEach((tx) => container.appendChild(buildHistoryRow(tx)));
   } catch (e) {
     container.innerHTML = `<p class="muted">${e}</p>`;
   }
 }
 
-document.getElementById("history-close").addEventListener("click", () => {
-  historyModal.classList.add("hidden");
-});
+function loadAllHistory() {
+  HISTORY_COINS.forEach(loadHistorySection);
+}
+
+document.getElementById("refresh-history-btn").addEventListener("click", loadAllHistory);
 
 // --- Send modal ----------------------------------------------------------
 
@@ -2299,19 +2420,25 @@ document.getElementById("send-cancel").addEventListener("click", () => {
   sendContext = null;
 });
 
+function networkLabelForCard(card) {
+  var label = card.querySelector(".custom-select-label") || card.querySelector(".network-fixed-label");
+  return label ? label.textContent.trim() : networkForCard(card);
+}
+
+const sendPreviewModal = document.getElementById("send-preview-modal");
+
+// Étape 1 : valide les champs puis affiche un aperçu stylé (réseau,
+// destinataire, montant, frais) — pas encore d'appel réseau ni de secret
+// impliqué ici, juste relire ce qui est déjà dans le formulaire.
 const sendConfirmBtn = document.getElementById("send-confirm");
-sendConfirmBtn.addEventListener("click", withBusyButton(sendConfirmBtn, async () => {
+sendConfirmBtn.addEventListener("click", () => {
   if (!sendContext) return;
   const errorEl = document.getElementById("send-error");
   const successEl = document.getElementById("send-success");
   hideError(errorEl);
   successEl.classList.add("hidden");
 
-  const network = networkForCard(sendContext.card);
   const to = document.getElementById("send-to").value.trim();
-  // La virgule est acceptée à la saisie (voir le filtre sur #send-amount plus
-  // bas) mais les parseurs Rust (parse_btc_to_sat/parse_eth_to_wei/
-  // parse_sol_to_lamports/parse_usdc_to_micros) n'acceptent qu'un point.
   const amount = document.getElementById("send-amount").value.trim().replace(",", ".");
   const password = document.getElementById("send-password").value;
 
@@ -2323,6 +2450,55 @@ sendConfirmBtn.addEventListener("click", withBusyButton(sendConfirmBtn, async ()
     showError(errorEl, t("wallet.btcFeesNotLoaded"));
     return;
   }
+
+  document.getElementById("send-preview-network").textContent = networkLabelForCard(sendContext.card);
+  document.getElementById("send-preview-from").textContent = document.getElementById("send-from-profile").textContent;
+  document.getElementById("send-preview-to").textContent = to;
+  document.getElementById("send-preview-amount").textContent = `${amount} ${COIN_SYMBOL[sendContext.coin]}`;
+
+  const feeRow = document.getElementById("send-preview-fee-row");
+  const selectedFeeBtn = document.querySelector("#send-fee-options .fee-option-btn.selected");
+  if (sendContext.coin === "btc" && selectedFeeBtn) {
+    // Les 3 <span> du bouton (label/indication/sat) n'ont pas d'espace entre
+    // eux dans le DOM (juste juxtaposés visuellement en flex) : lus un par un
+    // et rejoints ici plutôt que via `.textContent` global, qui les collerait
+    // ("Rapide~10 min1240 sat" au lieu de "Rapide · ~10 min · 1240 sat").
+    const parts = [".fee-option-label", ".fee-option-hint", ".fee-option-sat"]
+      .map((sel) => selectedFeeBtn.querySelector(sel)?.textContent)
+      .filter(Boolean);
+    document.getElementById("send-preview-fee").textContent = parts.join(" · ");
+    feeRow.classList.remove("hidden");
+  } else {
+    feeRow.classList.add("hidden");
+  }
+
+  sendPreviewModal.classList.remove("hidden");
+});
+
+document.getElementById("send-preview-back").addEventListener("click", () => {
+  sendPreviewModal.classList.add("hidden");
+});
+
+// Étape 2 : c'est ICI, et seulement ici, que la vraie transaction part — la
+// boîte de dialogue native de l'OS (confirm_transaction_native côté Rust,
+// voir son commentaire) s'ouvre pendant cet appel et reste la seule
+// protection réelle contre un frontend compromis. L'aperçu ci-dessus n'est
+// qu'un résumé agréable à lire avant d'y arriver, jamais un remplacement.
+const sendPreviewConfirmBtn = document.getElementById("send-preview-confirm");
+sendPreviewConfirmBtn.addEventListener("click", withBusyButton(sendPreviewConfirmBtn, async () => {
+  if (!sendContext) return;
+  const errorEl = document.getElementById("send-error");
+  const successEl = document.getElementById("send-success");
+
+  const network = networkForCard(sendContext.card);
+  const to = document.getElementById("send-to").value.trim();
+  // La virgule est acceptée à la saisie (voir le filtre sur #send-amount plus
+  // bas) mais les parseurs Rust (parse_btc_to_sat/parse_eth_to_wei/
+  // parse_sol_to_lamports/parse_usdc_to_micros) n'acceptent qu'un point.
+  const amount = document.getElementById("send-amount").value.trim().replace(",", ".");
+  const password = document.getElementById("send-password").value;
+
+  sendPreviewModal.classList.add("hidden");
 
   try {
     // USDC (jeton SPL) suit un chemin dédié, distinct de send_transaction :
@@ -2346,6 +2522,197 @@ sendConfirmBtn.addEventListener("click", withBusyButton(sendConfirmBtn, async ()
     showError(errorEl, String(e));
   } finally {
     document.getElementById("send-password").value = "";
+  }
+}));
+
+// --- Swap (THORChain cross-chain + Jupiter même-chaîne) ---------------------
+// Passe par un protocole externe non audité par cette app — THORChain pour
+// un swap cross-chain (vers BTC/ETH, voir core/src/thorchain_rpc.rs), Jupiter
+// pour SOL<->USDC dans le même portefeuille (voir core/src/jupiter_rpc.rs).
+// Actifs source limités à SOL/USDC (le moins de nouveau code, voir le plan
+// swap). Même principe en deux étapes que l'envoi normal (devis -> aperçu
+// stylé -> confirmation native), sauf que le devis lui-même est déjà une
+// étape réseau (donc pas juste une relecture du formulaire comme pour
+// l'envoi).
+
+const swapModal = document.getElementById("swap-modal");
+const swapPreviewModal = document.getElementById("swap-preview-modal");
+let swapContext = null;
+
+// Options "Vers" possibles selon l'actif "Depuis" : depuis SOL, on peut viser
+// BTC/ETH (cross-chain, via THORChain) ou USDC (même portefeuille, via
+// Jupiter) ; depuis USDC, seul SOL a du sens (Jupiter uniquement — THORChain
+// ne prend pas en charge un jeton SPL comme actif source dans cette v1).
+const SWAP_TO_OPTIONS = {
+  sol: [
+    { value: "btc", key: "swap.toBtc", fallback: "Bitcoin (BTC)" },
+    { value: "evm", key: "swap.toEth", fallback: "Ethereum (ETH)" },
+    { value: "usdc", key: "swap.toUsdc", fallback: "USDC (via Jupiter, même portefeuille)" },
+  ],
+  usdc: [{ value: "sol", key: "swap.toSol", fallback: "Solana (SOL, via Jupiter, même portefeuille)" }],
+};
+
+function updateSwapToOptions() {
+  const fromCoin = document.getElementById("swap-from-coin").value;
+  const toSelect = document.getElementById("swap-to-coin");
+  toSelect.innerHTML = "";
+  SWAP_TO_OPTIONS[fromCoin].forEach((opt) => {
+    const optionEl = document.createElement("option");
+    optionEl.value = opt.value;
+    optionEl.dataset.i18n = opt.key;
+    optionEl.textContent = t(opt.key) || opt.fallback;
+    toSelect.appendChild(optionEl);
+  });
+  syncCustomSelect(toSelect);
+
+  document.getElementById("swap-amount-label").textContent = `${t("swap.amount")} (${COIN_SYMBOL[fromCoin]})`;
+  updateSwapDestination();
+}
+
+document.getElementById("swap-from-coin").addEventListener("change", updateSwapToOptions);
+
+function openSwapModal(card) {
+  const profile = currentProfile();
+  swapContext = { card, profileIndex: profile ? profile.index : currentProfileIndex };
+  document.getElementById("swap-amount").value = "";
+  hideError(document.getElementById("swap-error"));
+  const fromSelect = document.getElementById("swap-from-coin");
+  fromSelect.value = card.dataset.coin === "usdc" ? "usdc" : "sol";
+  syncCustomSelect(fromSelect);
+  updateSwapToOptions();
+  swapModal.classList.remove("hidden");
+}
+
+// USDC<->SOL (via Jupiter) reste dans le même portefeuille Solana : pas
+// d'adresse de destination séparée à saisir, contrairement à BTC/ETH (via
+// THORChain, cross-chain) qui en ont réellement besoin.
+function isJupiterSwap(toCoin) {
+  return toCoin === "usdc" || toCoin === "sol";
+}
+
+function updateSwapDestination() {
+  const toCoin = document.getElementById("swap-to-coin").value;
+  document.getElementById("swap-destination-block").classList.toggle("hidden", isJupiterSwap(toCoin));
+  document.getElementById("swap-jupiter-hint").classList.toggle("hidden", !isJupiterSwap(toCoin));
+  if (!isJupiterSwap(toCoin)) {
+    const network = toCoin === "btc" ? "btc_mainnet" : "evm_mainnet";
+    document.getElementById("swap-destination").value = addressForCoin(toCoin, network);
+  }
+}
+
+document.getElementById("swap-to-coin").addEventListener("change", updateSwapDestination);
+
+function closeSwapModal() {
+  swapModal.classList.add("hidden");
+  swapContext = null;
+}
+
+document.getElementById("swap-cancel").addEventListener("click", closeSwapModal);
+document.getElementById("swap-close-x").addEventListener("click", closeSwapModal);
+document.getElementById("swap-preview-close-x").addEventListener("click", () => {
+  swapPreviewModal.classList.add("hidden");
+  swapContext = null;
+});
+
+const swapQuoteBtn = document.getElementById("swap-quote-btn");
+swapQuoteBtn.addEventListener("click", withBusyButton(swapQuoteBtn, async () => {
+  if (!swapContext) return;
+  const errorEl = document.getElementById("swap-error");
+  hideError(errorEl);
+
+  const fromCoin = document.getElementById("swap-from-coin").value;
+  const toCoin = document.getElementById("swap-to-coin").value;
+  const amount = document.getElementById("swap-amount").value.trim().replace(",", ".");
+  const jupiter = isJupiterSwap(toCoin);
+  const destination = jupiter ? "" : document.getElementById("swap-destination").value.trim();
+
+  if (!amount || (!jupiter && !destination)) {
+    showError(errorEl, t("wallet.allFieldsRequired"));
+    return;
+  }
+
+  try {
+    const destRow = document.getElementById("swap-preview-destination").closest(".send-preview-row");
+    const feeRow = document.getElementById("swap-preview-fees").closest(".send-preview-row");
+    let receivingText;
+    if (jupiter) {
+      const outAmount = await invoke("get_jupiter_quote", { fromCoin, toCoin, amount });
+      receivingText = `≈ ${outAmount} ${COIN_SYMBOL[toCoin] || toCoin.toUpperCase()}`;
+      destRow.classList.add("hidden");
+      feeRow.classList.add("hidden");
+    } else {
+      const quote = await invoke("get_swap_quote", { fromCoin, toCoin, amount, destination });
+      receivingText = `≈ ${quote.expected_amount_out} ${COIN_SYMBOL[toCoin] || toCoin.toUpperCase()}`;
+      document.getElementById("swap-preview-fees").textContent = quote.total_fees != null ? quote.total_fees : "—";
+      document.getElementById("swap-preview-destination").textContent = destination;
+      destRow.classList.remove("hidden");
+      feeRow.classList.remove("hidden");
+    }
+
+    document.getElementById("swap-preview-sending").textContent = `${amount} ${COIN_SYMBOL[fromCoin] || fromCoin.toUpperCase()}`;
+    document.getElementById("swap-preview-receiving").textContent = receivingText;
+    document.getElementById("swap-preview-password").value = "";
+    hideError(document.getElementById("swap-preview-error"));
+    document.getElementById("swap-success").classList.add("hidden");
+
+    swapModal.classList.add("hidden");
+    swapPreviewModal.classList.remove("hidden");
+  } catch (e) {
+    showError(errorEl, String(e));
+  }
+}));
+
+document.getElementById("swap-preview-back").addEventListener("click", () => {
+  swapPreviewModal.classList.add("hidden");
+  swapModal.classList.remove("hidden");
+});
+
+// Le devis affiché ici (aperçu) n'est qu'une estimation pour décider de
+// continuer : `swap_transaction` en relit un tout nouveau côté Rust juste
+// avant la confirmation native, jamais celui-ci (voir sa doc) — l'adresse de
+// vault THORChain change régulièrement, un devis de quelques secondes peut
+// déjà être périmé.
+const swapPreviewConfirmBtn = document.getElementById("swap-preview-confirm");
+swapPreviewConfirmBtn.addEventListener("click", withBusyButton(swapPreviewConfirmBtn, async () => {
+  if (!swapContext) return;
+  const errorEl = document.getElementById("swap-preview-error");
+  const successEl = document.getElementById("swap-success");
+  hideError(errorEl);
+  successEl.classList.add("hidden");
+
+  const fromCoin = document.getElementById("swap-from-coin").value;
+  const toCoin = document.getElementById("swap-to-coin").value;
+  const amount = document.getElementById("swap-amount").value.trim().replace(",", ".");
+  const jupiter = isJupiterSwap(toCoin);
+  const destination = jupiter ? "" : document.getElementById("swap-destination").value.trim();
+  const password = document.getElementById("swap-preview-password").value;
+
+  if (!password) {
+    showError(errorEl, t("common.passwordRequired"));
+    return;
+  }
+
+  try {
+    const txResult = jupiter
+      ? await invoke("jupiter_swap_transaction", { password, fromCoin, toCoin, amount, profileIndex: swapContext.profileIndex })
+      : await invoke("swap_transaction", {
+          password,
+          fromCoin,
+          toCoin,
+          amount,
+          destination,
+          profileIndex: swapContext.profileIndex,
+        });
+    successEl.textContent = t("send.txSent", { tx: txResult });
+    successEl.classList.remove("hidden");
+    // Un swap peut affecter le solde de PLUSIEURS cartes (source ET
+    // destination si elle est aussi gérée par ce wallet, ex: SOL<->USDC) —
+    // toutes rafraîchies plutôt que juste celle d'où le swap a été ouvert.
+    refreshAllBalances();
+  } catch (e) {
+    showError(errorEl, String(e));
+  } finally {
+    document.getElementById("swap-preview-password").value = "";
   }
 }));
 
@@ -3036,6 +3403,8 @@ const ENTER_SUBMIT_MAP = {
   "add-profile-password": "add-profile-confirm",
   "delete-profile-password": "delete-profile-confirm",
   "regenerate-backup-password": "regenerate-backup-confirm",
+  "thor-address-password": "thor-address-confirm",
+  "swap-preview-password": "swap-preview-confirm",
   "enable-biometric-password": "enable-biometric-confirm",
   "disable-biometric-password": "disable-biometric-confirm",
 };

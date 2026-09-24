@@ -618,6 +618,18 @@ fn regenerate_backup_kit(password: String, app: tauri::AppHandle) -> Result<Vec<
         .t_err()
 }
 
+/// Adresse THORChain (RUNE) dérivée de la même entropie maître (voir
+/// `api::get_thor_fee_address`) : purement informatif, sert uniquement à
+/// recevoir les frais d'affiliation des swaps. Pas de confirmation native
+/// ici (lecture seule, aucun fonds ne bouge) — le mot de passe suffit,
+/// exactement comme pour afficher les autres adresses du portefeuille.
+#[tauri::command]
+fn get_thor_fee_address(password: String, app: tauri::AppHandle) -> Result<String, String> {
+    let password = Zeroizing::new(password);
+    let dir = data_dir(&app)?;
+    api::get_thor_fee_address(&dir, &password).t_err()
+}
+
 #[tauri::command]
 fn unlock_wallet(password: String, app: tauri::AppHandle) -> Result<Vec<ProfileDto>, String> {
     let password = Zeroizing::new(password);
@@ -1197,6 +1209,186 @@ fn describe_possible_ata_rent(net: &wallet_flow::SolNetwork, to: &str) -> Option
     })
 }
 
+// --- Swap (THORChain) --------------------------------------------------------
+// Un swap réel entre BTC/ETH/SOL n'a aucun mécanisme on-chain natif : passe
+// nécessairement par un protocole externe (voir core/src/thorchain_rpc.rs).
+// v1 : source Solana uniquement (le moins de nouveau code, voir le plan) ;
+// obtenir un devis reste possible pour n'importe quelle paire connue
+// (lecture seule, aucun risque), seul l'ENVOI est restreint à "sol" pour
+// l'instant.
+
+#[derive(Serialize)]
+struct SwapQuoteDto {
+    inbound_address: String,
+    memo: String,
+    /// Déjà à l'échelle 1e8 utilisée par THORChain pour TOUS les actifs —
+    /// donc affichable tel quel (divisé par 1e8), sans jamais repasser par les
+    /// décimales natives de l'actif de destination.
+    expected_amount_out: String,
+    total_fees: Option<String>,
+}
+
+fn format_1e8(amount: u64) -> String {
+    format!("{:.8}", amount as f64 / 1e8)
+}
+
+#[tauri::command]
+fn get_swap_quote(from_coin: String, to_coin: String, amount: String, destination: String) -> Result<SwapQuoteDto, String> {
+    let quote = api::get_swap_quote(&from_coin, &to_coin, &amount, &destination).t_err()?;
+    Ok(SwapQuoteDto {
+        inbound_address: quote.inbound_address,
+        memo: quote.memo,
+        expected_amount_out: format_1e8(quote.expected_amount_out),
+        total_fees: quote.total_fees.map(format_1e8),
+    })
+}
+
+/// Confirmation native spécifique au swap : contrairement à un envoi normal,
+/// mentionne explicitement qu'il s'agit d'un protocole EXTERNE (THORChain),
+/// avec ses propres frais + les 0,80% d'affiliation, et que l'app elle-même
+/// ne peut garantir le bon déroulement au-delà de l'envoi de cette
+/// transaction (voir core/src/thorchain_rpc.rs pour le contexte complet).
+fn confirm_swap_native(app: &tauri::AppHandle, from_label: &str, amount: &str, expected_out: &str, to_coin: &str) -> bool {
+    let message = if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
+        format!(
+            "Swap via THORChain (external protocol, not audited by this app)\n\nFrom profile: {from_label}\nSending: {amount}\nExpected to receive: ~{expected_out} {}\n\nIncludes THORChain's own network/liquidity fees, plus a 0.80% affiliate fee.\nThis is irreversible, and once sent this app can no longer track or reverse it.\n\nConfirm this swap?",
+            to_coin.to_uppercase()
+        )
+    } else {
+        format!(
+            "Échange via THORChain (protocole externe, non audité par cette app)\n\nDepuis le profil : {from_label}\nEnvoi : {amount}\nRéception attendue : ~{expected_out} {}\n\nInclut les frais propres à THORChain (réseau/liquidité), plus 0,80% de frais d'affiliation.\nC'est irréversible, et une fois envoyé cette app ne peut plus ni suivre ni annuler l'opération.\n\nConfirmer cet échange ?",
+            to_coin.to_uppercase()
+        )
+    };
+    app.dialog()
+        .message(message)
+        .title(lang("Confirmer l'échange", "Confirm the swap"))
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancel)
+        .blocking_show()
+}
+
+#[tauri::command]
+fn swap_transaction(
+    password: String,
+    from_coin: String,
+    to_coin: String,
+    amount: String,
+    destination: String,
+    profile_index: u32,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let password = Zeroizing::new(password);
+    let dir = data_dir(&app)?;
+
+    if from_coin != "sol" {
+        return Err(translate_error(&format!(
+            "envoi de swap non pris en charge pour l'instant : {from_coin} (seul \"sol\" est disponible)"
+        )));
+    }
+    let network = sol_network("sol_mainnet")?; // swap mainnet uniquement, pools THORChain absents ailleurs
+
+    let from_label = api::list_profiles(&dir)
+        .into_iter()
+        .find(|p| p.index == profile_index)
+        .map(|p| p.label)
+        .unwrap_or_else(|| format!("profil #{profile_index}"));
+
+    // Devis obtenu ICI, juste avant la confirmation, jamais mis en cache
+    // (adresse de vault THORChain vivante, voir thorchain_rpc::SwapQuote).
+    let quote = api::get_swap_quote(&from_coin, &to_coin, &amount, &destination).t_err()?;
+    let amount_line = format!("{amount} {}", from_coin.to_uppercase());
+
+    if !confirm_swap_native(&app, &from_label, &amount_line, &format_1e8(quote.expected_amount_out), &to_coin) {
+        return Err(translate_error("Échange annulé (confirmation refusée)."));
+    }
+
+    api::send_swap_sol(&dir, &password, network, &quote, &amount, profile_index).t_err()
+}
+
+// --- Swap (Jupiter) ----------------------------------------------------------
+// Même chaîne uniquement (SOL <-> USDC), contrairement au swap cross-chain
+// THORChain ci-dessus — voir core/src/jupiter_rpc.rs pour le contexte
+// complet, notamment pourquoi la transaction elle-même n'est pas
+// reconstruite à la main ici (seulement vérifiée puis signée).
+
+const JUPITER_DEFAULT_SLIPPAGE_BPS: u32 = 50; // 0,50 %
+
+fn decimals_for_swap_coin(coin: &str) -> u32 {
+    if coin == "usdc" {
+        6
+    } else {
+        9 // "sol"
+    }
+}
+
+fn format_native_amount(amount: u64, decimals: u32) -> String {
+    format!("{:.*}", decimals as usize, amount as f64 / 10f64.powi(decimals as i32))
+}
+
+#[tauri::command]
+fn get_jupiter_quote(from_coin: String, to_coin: String, amount: String) -> Result<String, String> {
+    let out_amount = api::get_jupiter_quote(&from_coin, &to_coin, &amount, JUPITER_DEFAULT_SLIPPAGE_BPS).t_err()?;
+    Ok(format_native_amount(out_amount, decimals_for_swap_coin(&to_coin)))
+}
+
+/// Confirmation native spécifique à Jupiter : contrairement à THORChain, ce
+/// n'est pas un protocole cross-chain, mais reste un protocole EXTERNE non
+/// audité par cette app, et la transaction elle-même est construite par
+/// Jupiter (voir core/src/jupiter_rpc.rs), pas par cette app — vérifiée
+/// (payeur de frais) puis signée, jamais reconstruite.
+fn confirm_jupiter_swap_native(app: &tauri::AppHandle, from_label: &str, amount: &str, expected_out: &str, to_coin: &str) -> bool {
+    let message = if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
+        format!(
+            "Swap via Jupiter (external protocol, not audited by this app)\n\nFrom profile: {from_label}\nSending: {amount}\nExpected to receive: ~{expected_out} {}\nIncludes a 0.80% affiliate fee\n\nThe swap transaction itself is built by Jupiter, not by this app — checked (fee payer) then signed, never reconstructed.\nThis is irreversible.\n\nConfirm this swap?",
+            to_coin.to_uppercase()
+        )
+    } else {
+        format!(
+            "Échange via Jupiter (protocole externe, non audité par cette app)\n\nDepuis le profil : {from_label}\nEnvoi : {amount}\nRéception attendue : ~{expected_out} {}\nInclut 0,80% de frais d'affiliation\n\nLa transaction de swap elle-même est construite par Jupiter, pas par cette app — vérifiée (payeur de frais) puis signée, jamais reconstruite.\nC'est irréversible.\n\nConfirmer cet échange ?",
+            to_coin.to_uppercase()
+        )
+    };
+    app.dialog()
+        .message(message)
+        .title(lang("Confirmer l'échange", "Confirm the swap"))
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancel)
+        .blocking_show()
+}
+
+#[tauri::command]
+fn jupiter_swap_transaction(
+    password: String,
+    from_coin: String,
+    to_coin: String,
+    amount: String,
+    profile_index: u32,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let password = Zeroizing::new(password);
+    let dir = data_dir(&app)?;
+    let network = sol_network("sol_mainnet")?; // Jupiter mainnet uniquement (pas de liquidité fiable en devnet)
+
+    let from_label = api::list_profiles(&dir)
+        .into_iter()
+        .find(|p| p.index == profile_index)
+        .map(|p| p.label)
+        .unwrap_or_else(|| format!("profil #{profile_index}"));
+
+    // Devis relu ICI, juste avant la confirmation — jamais celui affiché dans
+    // l'aperçu du frontend, potentiellement déjà légèrement périmé.
+    let out_amount = api::get_jupiter_quote(&from_coin, &to_coin, &amount, JUPITER_DEFAULT_SLIPPAGE_BPS).t_err()?;
+    let expected_out = format_native_amount(out_amount, decimals_for_swap_coin(&to_coin));
+    let amount_line = format!("{amount} {}", from_coin.to_uppercase());
+
+    if !confirm_jupiter_swap_native(&app, &from_label, &amount_line, &expected_out, &to_coin) {
+        return Err(translate_error("Échange annulé (confirmation refusée)."));
+    }
+
+    api::send_jupiter_swap(&dir, &password, network, &from_coin, &to_coin, &amount, JUPITER_DEFAULT_SLIPPAGE_BPS, profile_index).t_err()
+}
+
 #[tauri::command]
 fn send_usdc_transaction(password: String, to: String, amount: String, profile_index: u32, app: tauri::AppHandle) -> Result<String, String> {
     let password = Zeroizing::new(password);
@@ -1456,6 +1648,7 @@ pub fn run() {
             reset_wallet,
             create_wallet,
             regenerate_backup_kit,
+            get_thor_fee_address,
             unlock_wallet,
             biometric_unlock_available,
             biometric_unlock_enrolled,
@@ -1478,6 +1671,10 @@ pub fn run() {
             get_market_prices,
             send_transaction,
             send_usdc_transaction,
+            get_swap_quote,
+            swap_transaction,
+            get_jupiter_quote,
+            jupiter_swap_transaction,
             get_own_certificate,
             list_recipients,
             add_recipient,

@@ -5,9 +5,17 @@ use std::collections::HashMap;
 /// (base58 : "11111111111111111111111111111111").
 pub const SYSTEM_PROGRAM_ID: [u8; 32] = [0u8; 32];
 
+/// SPL Memo Program (v2) — vérifié contre le dépôt officiel
+/// `solana-program`/`spl-memo`. Aucun compte requis pour une instruction memo,
+/// juste des octets UTF-8 arbitraires en données (voir `swap` dans api.rs,
+/// qui l'utilise pour transmettre le memo THORChain).
+pub fn memo_program_id() -> [u8; 32] {
+    crate::sol_spl::decode_pubkey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr")
+}
+
 /// Encodage "compact-u16" (shortvec) utilisé par Solana pour les longueurs de tableaux
 /// dans le message d'une transaction (comparable à un varint LEB128 non signé).
-fn write_shortvec_len(buf: &mut Vec<u8>, mut len: usize) {
+pub(crate) fn write_shortvec_len(buf: &mut Vec<u8>, mut len: usize) {
     loop {
         let mut byte = (len & 0x7f) as u8;
         len >>= 7;
@@ -151,13 +159,11 @@ pub fn build_and_sign_transaction(signing_key: &SigningKey, payer: &[u8; 32], in
 /// signataire (l'expéditeur, qui paie aussi les frais), un destinataire, une
 /// instruction "Transfer" du System Program. Cas particulier (une seule
 /// instruction) de `build_and_sign_transaction`.
-pub fn build_transfer_transaction(
-    signing_key: &SigningKey,
-    from_pubkey: &[u8; 32],
-    to_pubkey: &[u8; 32],
-    lamports: u64,
-    recent_blockhash: &[u8; 32],
-) -> Vec<u8> {
+/// Instruction "Transfer" du System Program — extraite de
+/// `build_transfer_transaction` pour être combinable avec d'autres
+/// instructions dans la même transaction (voir `api::send_swap_sol`, qui
+/// l'associe à une instruction Memo pour un swap THORChain).
+pub fn transfer_instruction(from_pubkey: &[u8; 32], to_pubkey: &[u8; 32], lamports: u64) -> Instruction {
     let mut ix_data = Vec::new();
     ix_data.extend_from_slice(&2u32.to_le_bytes()); // variante "Transfer" du System Program
     ix_data.extend_from_slice(&lamports.to_le_bytes());
@@ -167,11 +173,21 @@ pub fn build_transfer_transaction(
     // besoin de le détecter à la main comme avant ce refactor : les deux
     // rôles "source" et "destination" pointant vers la même clé fusionnent
     // en une seule entrée de compte, avec les droits combinés (writable).
-    let instruction = Instruction {
+    Instruction {
         program_id: SYSTEM_PROGRAM_ID,
         accounts: vec![(*from_pubkey, true, true), (*to_pubkey, false, true)],
         data: ix_data,
-    };
+    }
+}
+
+pub fn build_transfer_transaction(
+    signing_key: &SigningKey,
+    from_pubkey: &[u8; 32],
+    to_pubkey: &[u8; 32],
+    lamports: u64,
+    recent_blockhash: &[u8; 32],
+) -> Vec<u8> {
+    let instruction = transfer_instruction(from_pubkey, to_pubkey, lamports);
     build_and_sign_transaction(signing_key, from_pubkey, &[instruction], recent_blockhash)
 }
 

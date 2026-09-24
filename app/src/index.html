@@ -118,6 +118,7 @@
         <span class="nav-brand">PGP Wallet</span>
         <div class="nav-tabs">
           <button class="nav-tab active" data-tab="wallet" data-i18n="nav.wallet">Portefeuille</button>
+          <button class="nav-tab" data-tab="history" data-i18n="nav.history">Historique</button>
           <button class="nav-tab" data-tab="message" data-i18n="nav.message">Message</button>
           <button class="nav-tab" data-tab="certificate" data-i18n="nav.certificate">Certificat</button>
           <button class="nav-tab" data-tab="external" data-i18n="nav.external">Wallets externes</button>
@@ -208,7 +209,6 @@
                  besoin. -->
             <div class="row-buttons">
               <button class="secondary" data-action="refresh" data-i18n="wallet.refresh">Actualiser</button>
-              <button class="secondary" data-action="history" data-i18n="wallet.history">Historique</button>
               <button class="primary" data-action="send" data-i18n="wallet.send">Envoyer</button>
             </div>
           </section>
@@ -258,7 +258,6 @@
             </div>
             <div class="row-buttons">
               <button class="secondary" data-action="refresh" data-i18n="wallet.refresh">Actualiser</button>
-              <button class="secondary" data-action="history" data-i18n="wallet.history">Historique</button>
               <button class="primary" data-action="send" data-i18n="wallet.send">Envoyer</button>
             </div>
           </section>
@@ -308,7 +307,7 @@
             </div>
             <div class="row-buttons">
               <button class="secondary" data-action="refresh" data-i18n="wallet.refresh">Actualiser</button>
-              <button class="secondary" data-action="history" data-i18n="wallet.history">Historique</button>
+              <button class="secondary" data-action="swap" data-i18n="wallet.swap">Échanger</button>
               <button class="primary" data-action="send" data-i18n="wallet.send">Envoyer</button>
             </div>
           </section>
@@ -362,7 +361,7 @@
             </div>
             <div class="row-buttons">
               <button class="secondary" data-action="refresh" data-i18n="wallet.refresh">Actualiser</button>
-              <button class="secondary" data-action="history" data-i18n="wallet.history">Historique</button>
+              <button class="secondary" data-action="swap" data-i18n="wallet.swap">Échanger</button>
               <button class="primary" data-action="send" data-i18n="wallet.send">Envoyer</button>
             </div>
           </section>
@@ -370,6 +369,51 @@
 
         <h2 class="section-title" data-i18n="wallet.marketsTitle">Prix des cryptomonnaies en direct</h2>
         <div id="markets-list" class="markets-list"></div>
+      </section>
+
+      <section class="tab-panel hidden" data-panel="history">
+        <div class="card wide">
+          <h1 data-i18n="nav.history">Historique</h1>
+          <p class="muted" data-i18n="history.subtitle">
+            Triées par réseau, dans le réseau actuellement sélectionné pour chaque carte du
+            portefeuille (mainnet ou testnet).
+          </p>
+          <div class="row-buttons">
+            <button id="refresh-history-btn" class="secondary" data-i18n="wallet.refresh">Actualiser</button>
+          </div>
+
+          <div class="history-section">
+            <div class="history-section-header">
+              <h2 class="section-title" data-i18n="history.ethereum">Ethereum</h2>
+              <span id="history-network-evm" class="muted"></span>
+            </div>
+            <div id="history-list-evm" class="history-list"></div>
+          </div>
+
+          <div class="history-section">
+            <div class="history-section-header">
+              <h2 class="section-title" data-i18n="history.bitcoin">Bitcoin</h2>
+              <span id="history-network-btc" class="muted"></span>
+            </div>
+            <div id="history-list-btc" class="history-list"></div>
+          </div>
+
+          <div class="history-section">
+            <div class="history-section-header">
+              <h2 class="section-title" data-i18n="history.solana">Solana</h2>
+              <span id="history-network-sol" class="muted"></span>
+            </div>
+            <div id="history-list-sol" class="history-list"></div>
+          </div>
+
+          <div class="history-section">
+            <div class="history-section-header">
+              <h2 class="section-title">USDC</h2>
+              <span id="history-network-usdc" class="muted"></span>
+            </div>
+            <div id="history-list-usdc" class="history-list"></div>
+          </div>
+        </div>
       </section>
 
       <section class="tab-panel hidden" data-panel="message">
@@ -573,6 +617,19 @@
           </div>
 
           <div class="settings-section">
+            <h2 class="section-title" data-i18n="settings.thorTitle">Adresse THOR (frais de swap)</h2>
+            <p class="muted" data-i18n="settings.thorHint">
+              Adresse THORChain dérivée de votre clé maîtresse — lecture seule, aucune fonction
+              d'envoi ni de solde RUNE dans cette version. Sert uniquement de référence pour la
+              fonctionnalité d'échange (swap).
+            </p>
+            <p id="thor-address-display" class="address hidden"></p>
+            <button id="show-thor-address-btn" class="secondary" data-i18n="settings.thorShow">
+              Afficher l'adresse
+            </button>
+          </div>
+
+          <div class="settings-section">
             <h2 class="section-title" data-i18n="settings.deviceSecurity">Sécurité de l'appareil</h2>
             <button id="reset-wallet-dashboard" class="link" data-i18n="unlock.resetWallet">
               Réinitialiser cet appareil (supprime le coffre local)
@@ -623,6 +680,152 @@
       </div>
     </div>
 
+    <!-- Aperçu stylé avant la confirmation native de l'OS. La vraie protection
+         contre un frontend compromis reste cette boîte de dialogue native qui
+         s'ouvre juste après (voir confirm_transaction_native côté Rust,
+         jamais modifiable depuis le frontend) — cet aperçu n'est qu'un
+         résumé agréable à lire avant d'y arriver, pas un remplacement. -->
+    <div id="send-preview-modal" class="modal-overlay hidden">
+      <div class="modal">
+        <h2 data-i18n="send.previewTitle">Vérifiez avant d'envoyer</h2>
+        <p class="muted" data-i18n="send.previewSubtitle">
+          Une confirmation de Windows s'ouvrira juste après — c'est elle qui valide réellement l'envoi.
+        </p>
+        <div class="send-preview-rows">
+          <div class="send-preview-row">
+            <span class="send-preview-label" data-i18n="send.previewNetwork">Réseau</span>
+            <span id="send-preview-network" class="send-preview-value"></span>
+          </div>
+          <div class="send-preview-row">
+            <span class="send-preview-label" data-i18n="send.previewFrom">Depuis</span>
+            <span id="send-preview-from" class="send-preview-value"></span>
+          </div>
+          <div class="send-preview-row">
+            <span class="send-preview-label" data-i18n="send.toAddress">Adresse destinataire</span>
+            <span id="send-preview-to" class="send-preview-value mono"></span>
+          </div>
+          <div class="send-preview-row">
+            <span class="send-preview-label" data-i18n="send.amount">Montant</span>
+            <span id="send-preview-amount" class="send-preview-value"></span>
+          </div>
+          <div id="send-preview-fee-row" class="send-preview-row hidden">
+            <span class="send-preview-label" data-i18n="send.feeSpeed">Vitesse d'envoi (frais réseau)</span>
+            <span id="send-preview-fee" class="send-preview-value"></span>
+          </div>
+        </div>
+        <div class="row-buttons">
+          <button id="send-preview-confirm" class="primary" data-i18n="send.previewConfirm">Continuer</button>
+          <button id="send-preview-back" class="link" data-i18n="send.previewBack">Modifier</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modale d'échange (swap) : passe par un protocole externe non audité
+         par cette app — THORChain pour un swap cross-chain (vers BTC/ETH,
+         voir core/src/thorchain_rpc.rs), Jupiter pour SOL<->USDC, même
+         portefeuille (voir core/src/jupiter_rpc.rs). Actifs source limités à
+         SOL/USDC (le moins de nouveau code). -->
+    <div id="swap-modal" class="modal-overlay hidden">
+      <div class="modal">
+        <div class="modal-header-row">
+          <h2 data-i18n="swap.title">Échanger</h2>
+          <button type="button" id="swap-close-x" class="modal-close-btn" data-i18n-title="common.close" title="Fermer" aria-label="Fermer">×</button>
+        </div>
+        <p class="muted" data-i18n="swap.subtitle">
+          Passe par un protocole externe non audité par cette app — voir "Comment ça marche" pour
+          le détail. Un swap cross-chain (vers BTC/ETH) inclut 0,80% de frais d'affiliation.
+        </p>
+        <label data-i18n="swap.fromAsset">Depuis</label>
+        <div class="custom-select dropdown">
+          <select id="swap-from-coin">
+            <option value="sol" data-i18n="swap.fromSol">Solana (SOL)</option>
+            <option value="usdc" data-i18n="swap.fromUsdc">USDC</option>
+          </select>
+          <button type="button" class="custom-select-trigger">
+            <span class="custom-select-label"></span>
+            <span class="select-arrow"></span>
+          </button>
+          <ul class="custom-select-options"></ul>
+        </div>
+        <label data-i18n="swap.toAsset">Vers</label>
+        <div class="custom-select dropdown">
+          <select id="swap-to-coin">
+            <option value="btc" data-i18n="swap.toBtc">Bitcoin (BTC)</option>
+            <option value="evm" data-i18n="swap.toEth">Ethereum (ETH)</option>
+            <option value="usdc" data-i18n="swap.toUsdc">USDC (via Jupiter, même portefeuille)</option>
+            <option value="sol" data-i18n="swap.toSol">Solana (SOL, via Jupiter, même portefeuille)</option>
+          </select>
+          <button type="button" class="custom-select-trigger">
+            <span class="custom-select-label"></span>
+            <span class="select-arrow"></span>
+          </button>
+          <ul class="custom-select-options"></ul>
+        </div>
+        <label id="swap-amount-label" data-i18n="swap.amount">Montant</label>
+        <input id="swap-amount" type="text" placeholder="0.1" />
+        <div id="swap-destination-block">
+          <label data-i18n="swap.destination">Adresse de destination</label>
+          <input id="swap-destination" type="text" />
+          <p class="muted" data-i18n="swap.destinationHint">
+            Pré-remplie avec votre propre adresse sur le réseau choisi — modifiable si vous voulez
+            échanger vers une autre adresse.
+          </p>
+        </div>
+        <p id="swap-jupiter-hint" class="muted hidden" data-i18n="swap.jupiterHint">
+          Même portefeuille : les USDC arrivent directement sur votre adresse Solana, pas besoin
+          d'adresse de destination séparée.
+        </p>
+        <p id="swap-error" class="error hidden"></p>
+        <div class="row-buttons">
+          <button id="swap-quote-btn" class="primary" data-i18n="swap.getQuote">Obtenir un devis</button>
+          <button id="swap-cancel" class="link" data-i18n="common.cancel">Annuler</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Aperçu du devis avant la confirmation native de l'OS — même principe
+         que #send-preview-modal : la vraie protection reste la boîte de
+         dialogue Windows qui s'ouvre juste après, avec un devis relu en
+         direct à ce moment-là (jamais celui affiché ici, qui peut avoir
+         légèrement changé entre-temps). -->
+    <div id="swap-preview-modal" class="modal-overlay hidden">
+      <div class="modal">
+        <div class="modal-header-row">
+          <h2 data-i18n="swap.previewTitle">Vérifiez avant d'échanger</h2>
+          <button type="button" id="swap-preview-close-x" class="modal-close-btn" data-i18n-title="common.close" title="Fermer" aria-label="Fermer">×</button>
+        </div>
+        <p class="muted" data-i18n="send.previewSubtitle">
+          Une confirmation de Windows s'ouvrira juste après — c'est elle qui valide réellement l'envoi.
+        </p>
+        <div class="send-preview-rows">
+          <div class="send-preview-row">
+            <span class="send-preview-label" data-i18n="swap.previewSending">Envoi</span>
+            <span id="swap-preview-sending" class="send-preview-value"></span>
+          </div>
+          <div class="send-preview-row">
+            <span class="send-preview-label" data-i18n="swap.previewReceiving">Réception estimée</span>
+            <span id="swap-preview-receiving" class="send-preview-value"></span>
+          </div>
+          <div class="send-preview-row">
+            <span class="send-preview-label" data-i18n="swap.previewFees">Frais THORChain (inclus)</span>
+            <span id="swap-preview-fees" class="send-preview-value"></span>
+          </div>
+          <div class="send-preview-row">
+            <span class="send-preview-label" data-i18n="send.toAddress">Adresse destinataire</span>
+            <span id="swap-preview-destination" class="send-preview-value mono"></span>
+          </div>
+        </div>
+        <label data-i18n="send.passwordToConfirm">Mot de passe (pour valider la transaction)</label>
+        <input id="swap-preview-password" type="password" />
+        <p id="swap-preview-error" class="error hidden"></p>
+        <p id="swap-success" class="success hidden"></p>
+        <div class="row-buttons">
+          <button id="swap-preview-confirm" class="primary" data-i18n="send.previewConfirm">Continuer</button>
+          <button id="swap-preview-back" class="link" data-i18n="send.previewBack">Modifier</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Modale QR code -->
     <div id="qr-modal" class="modal-overlay hidden">
       <div class="modal narrow-modal">
@@ -630,15 +833,6 @@
         <div id="qr-container" class="qr-container"></div>
         <p class="address" id="qr-address-text"></p>
         <button id="qr-close" class="link" data-i18n="common.close">Fermer</button>
-      </div>
-    </div>
-
-    <!-- Modale historique de transactions (séparée par crypto, voir data-coin de la carte) -->
-    <div id="history-modal" class="modal-overlay hidden">
-      <div class="modal wide-modal">
-        <h2 id="history-modal-title" data-i18n="wallet.history">Historique</h2>
-        <div id="history-list" class="history-list"></div>
-        <button id="history-close" class="link" data-i18n="common.close">Fermer</button>
       </div>
     </div>
 
@@ -686,6 +880,20 @@
     </div>
 
     <!-- Modale mot de passe pour régénérer le kit de sauvegarde -->
+    <!-- Modale mot de passe pour afficher l'adresse THOR (frais de swap) -->
+    <div id="thor-address-password-modal" class="modal-overlay hidden">
+      <div class="modal">
+        <h2 data-i18n="settings.thorTitle">Adresse THOR (frais de swap)</h2>
+        <label data-i18n="deleteProfile.passwordLabel">Mot de passe de l'appareil</label>
+        <input id="thor-address-password" type="password" />
+        <p id="thor-address-error" class="error hidden"></p>
+        <div class="row-buttons">
+          <button id="thor-address-confirm" class="primary" data-i18n="settings.thorShow">Afficher l'adresse</button>
+          <button id="thor-address-cancel" class="link" data-i18n="common.cancel">Annuler</button>
+        </div>
+      </div>
+    </div>
+
     <div id="regenerate-backup-password-modal" class="modal-overlay hidden">
       <div class="modal">
         <h2 data-i18n="regenBackup.title">Régénérer le kit de sauvegarde</h2>
@@ -747,11 +955,8 @@
         <div class="custom-select dropdown">
           <select id="external-wallet-network">
             <option value="evm_mainnet" data-i18n="external.netEvmMainnet">Ethereum — Mainnet</option>
-            <option value="evm_sepolia" data-i18n="external.netEvmSepolia">Ethereum — Sepolia (testnet)</option>
             <option value="btc_mainnet" data-i18n="external.netBtcMainnet">Bitcoin — Mainnet</option>
-            <option value="btc_testnet" data-i18n="external.netBtcTestnet">Bitcoin — Testnet</option>
             <option value="sol_mainnet" data-i18n="external.netSolMainnet">Solana — Mainnet</option>
-            <option value="sol_devnet" data-i18n="external.netSolDevnet">Solana — Devnet</option>
             <option value="usdc_solana" data-i18n="external.netUsdcSolana">USDC — Solana (Mainnet)</option>
           </select>
           <button type="button" class="custom-select-trigger">

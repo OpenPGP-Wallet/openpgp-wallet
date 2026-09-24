@@ -41,7 +41,7 @@
       <a class="nav-link" href="#sec-security" style="font-size: 14.5px; font-weight: 600;">Sécurité</a>
       <a class="nav-link" href="#sec-status" style="font-size: 14.5px; font-weight: 600;">Statut</a>
     </nav>
-    <a href="https://github.com/KHADEVS/pgp-wallet-poc/releases/latest/download/app.exe" style="margin-left: auto; display: flex; align-items: center; gap: 7px; font-size: 13.5px; font-weight: 700; color: #050505; background: #f2f2f0; padding: 9px 16px; border-radius: 8px; white-space: nowrap;">
+    <a href="https://github.com/KHADEVS/pgp-wallet-poc/releases/latest/download/wallet.exe" style="margin-left: auto; display: flex; align-items: center; gap: 7px; font-size: 13.5px; font-weight: 700; color: #050505; background: #f2f2f0; padding: 9px 16px; border-radius: 8px; white-space: nowrap;">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"></path></svg>
       Télécharger
     </a>
@@ -88,7 +88,7 @@
     </div>
 
     <div style="margin-top: 30px; display: flex; gap: 12px; position: relative; z-index: 1;">
-      <a href="https://github.com/KHADEVS/pgp-wallet-poc/releases/latest/download/app.exe" style="display: inline-flex; align-items: center; gap: 8px; padding: 12px 22px; background: #0a0a0a; color: #ffffff; font-weight: 700; font-size: 14px; border-radius: 9px;">
+      <a href="https://github.com/KHADEVS/pgp-wallet-poc/releases/latest/download/wallet.exe" style="display: inline-flex; align-items: center; gap: 8px; padding: 12px 22px; background: #0a0a0a; color: #ffffff; font-weight: 700; font-size: 14px; border-radius: 9px;">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"></path></svg>
         Télécharger le .exe
       </a>
@@ -107,8 +107,8 @@
   <!-- ===== TRANSITION : blanc → noir ===== -->
   <div aria-hidden="true" style="height: 16vh; background: linear-gradient(to bottom, #ffffff, #050505);"></div>
 
-  <!-- ---------- SECTION 0 : DÉVERROUILLAGE (animation auto-jouée à l'arrivée) ---------- -->
-  <div class="reveal-section" id="sec-lock" style="min-height: 100vh; position: relative; display: flex; align-items: center; justify-content: center; padding: 60px 64px; box-sizing: border-box;">
+  <!-- ---------- SECTION 0 : DÉVERROUILLAGE (épinglée, scrubbed) ---------- -->
+  <div class="pin-wrapper" id="sec-lock" style="min-height: 100vh; position: relative; display: flex; align-items: center; justify-content: center; padding: 60px 64px; box-sizing: border-box;">
     <div style="max-width: 1080px; width: 100%; display: flex; gap: 80px; align-items: center;">
       <div style="flex: 1 1 0; min-width: 0;">
         <span style="font-size: 12.5px; font-weight: 600; letter-spacing: 1.4px; color: #9a9a9a; text-transform: uppercase;">01 — À l'ouverture</span>
@@ -127,8 +127,8 @@
     </div>
   </div>
 
-  <!-- ---------- SECTION 1 : MULTI-RÉSEAU (animation auto-jouée à l'arrivée) ---------- -->
-  <div class="reveal-section" id="sec-networks" style="min-height: 100vh; position: relative; display: flex; align-items: center; justify-content: center; padding: 60px 64px; box-sizing: border-box;">
+  <!-- ---------- SECTION 1 : MULTI-RÉSEAU (épinglée, scrubbed) ---------- -->
+  <div class="pin-wrapper" id="sec-networks" style="min-height: 100vh; position: relative; display: flex; align-items: center; justify-content: center; padding: 60px 64px; box-sizing: border-box;">
     <div style="max-width: 1080px; width: 100%; display: flex; gap: 80px; align-items: center;">
       <div style="flex: 1 1 0; min-width: 0;">
         <span style="font-size: 12.5px; font-weight: 600; letter-spacing: 1.4px; color: #9a9a9a; text-transform: uppercase;">02 — Multi-réseau</span>
@@ -145,7 +145,7 @@
   </div>
 
   <!-- ---------- SECTION 2 : CONFIRMATION NATIVE ---------- -->
-  <div class="reveal-section" id="sec-confirm" style="min-height: 100vh; position: relative; display: flex; align-items: center; justify-content: center; padding: 60px 64px; box-sizing: border-box;">
+  <div class="pin-wrapper" id="sec-confirm" style="min-height: 100vh; position: relative; display: flex; align-items: center; justify-content: center; padding: 60px 64px; box-sizing: border-box;">
     <div style="max-width: 1080px; width: 100%; display: flex; gap: 80px; align-items: center;">
       <div style="flex: 1 1 0; min-width: 0;">
         <span style="font-size: 12.5px; font-weight: 600; letter-spacing: 1.4px; color: #9a9a9a; text-transform: uppercase;">03 — À l'envoi</span>
@@ -171,7 +171,7 @@
   </div>
 
   <!-- ---------- SECTION 3 : FRAIS DYNAMIQUES ---------- -->
-  <div class="reveal-section" id="sec-fees" style="min-height: 100vh; position: relative; display: flex; align-items: center; justify-content: center; padding: 60px 64px; box-sizing: border-box;">
+  <div class="pin-wrapper" id="sec-fees" style="min-height: 100vh; position: relative; display: flex; align-items: center; justify-content: center; padding: 60px 64px; box-sizing: border-box;">
     <div style="max-width: 1080px; width: 100%; display: flex; gap: 80px; align-items: center;">
       <div style="flex: 1 1 0; min-width: 0;">
         <span style="font-size: 12.5px; font-weight: 600; letter-spacing: 1.4px; color: #9a9a9a; text-transform: uppercase;">04 — Frais Bitcoin</span>
@@ -188,7 +188,7 @@
   </div>
 
   <!-- ---------- SECTION 4 : MESSAGERIE ---------- -->
-  <div class="reveal-section" id="sec-messaging" style="min-height: 100vh; position: relative; display: flex; align-items: center; justify-content: center; padding: 60px 64px; box-sizing: border-box;">
+  <div class="pin-wrapper" id="sec-messaging" style="min-height: 100vh; position: relative; display: flex; align-items: center; justify-content: center; padding: 60px 64px; box-sizing: border-box;">
     <div style="max-width: 1080px; width: 100%; display: flex; gap: 80px; align-items: center;">
       <div style="flex: 1 1 0; min-width: 0;">
         <span style="font-size: 12.5px; font-weight: 600; letter-spacing: 1.4px; color: #9a9a9a; text-transform: uppercase;">05 — Messagerie</span>
@@ -206,7 +206,7 @@
   </div>
 
   <!-- ---------- SECTION 5 : SÉCURITÉ ---------- -->
-  <div class="reveal-section" id="sec-security" style="min-height: 100vh; position: relative; display: flex; align-items: center; justify-content: center; padding: 60px 64px; box-sizing: border-box;">
+  <div class="pin-wrapper" id="sec-security" style="min-height: 100vh; position: relative; display: flex; align-items: center; justify-content: center; padding: 60px 64px; box-sizing: border-box;">
     <div style="max-width: 1080px; width: 100%; display: flex; gap: 80px; align-items: center;">
       <div style="flex: 1 1 0; min-width: 0;">
         <span style="font-size: 12.5px; font-weight: 600; letter-spacing: 1.4px; color: #9a9a9a; text-transform: uppercase;">06 — Sécurité</span>
@@ -220,11 +220,13 @@
   </div>
 
   <!-- ---------- SECTION 6 : STATUT ---------- -->
-  <div class="reveal-section" id="sec-status" style="min-height: 100vh; position: relative; display: flex; align-items: center; justify-content: center; padding: 60px 64px; box-sizing: border-box;">
-    <div style="max-width: 720px; width: 100%; text-align: center;">
-      <span style="font-size: 12.5px; font-weight: 600; letter-spacing: 1.4px; color: #9a9a9a; text-transform: uppercase;">07 — Statut</span>
-      <h2 style="font-size: 32px; line-height: 1.25; font-weight: 700; color: #fafafa; margin-top: 14px;">Preuve de concept fonctionnelle. Pas encore prête pour de vrais fonds d'un inconnu.</h2>
-      <div id="roadmap-list" style="margin-top: 40px; display: flex; flex-direction: column; gap: 0; text-align: left;"></div>
+  <div class="pin-wrapper" id="sec-status" style="height: 160vh; position: relative;">
+    <div style="position: sticky; top: 0; height: 100vh; display: flex; align-items: center; justify-content: center; padding: 40px 64px; box-sizing: border-box; overflow: hidden;">
+      <div style="max-width: 720px; width: 100%; text-align: center;">
+        <span style="font-size: 12.5px; font-weight: 600; letter-spacing: 1.4px; color: #9a9a9a; text-transform: uppercase;">07 — Statut</span>
+        <h2 style="font-size: 32px; line-height: 1.25; font-weight: 700; color: #fafafa; margin-top: 14px;">Preuve de concept fonctionnelle. Pas encore prête pour de vrais fonds d'un inconnu.</h2>
+        <div id="roadmap-list" style="margin-top: 40px; display: flex; flex-direction: column; gap: 0; text-align: left;"></div>
+      </div>
     </div>
   </div>
 
@@ -583,7 +585,7 @@
   }
 
   // Un par section, dans l'ordre du HTML (même ordre que les points de nav et
-  // que .reveal-section) : durée totale de l'animation auto-jouée + sa fonction
+  // que .pin-wrapper) : durée totale de l'animation auto-jouée + sa fonction
   // de rendu. Rendu à p=0 tout de suite pour l'état initial avant lecture.
   var sections = [
     { wrapper: document.getElementById("sec-lock"), duration: 2400, render: renderLock },
@@ -623,17 +625,19 @@
       raf = null;
       var vh = window.innerHeight;
 
-      // Plus de scroll "épinglé" (voir plus haut, sections redevenues des blocs
-      // normaux) : la position de chaque section ne sert plus qu'à savoir si
-      // elle est à l'écran, pas à calculer une progression pilotée à la main.
-
-      // Point actif = dernière section dont le haut a franchi le milieu de
-      // l'écran (technique "scrollspy" standard).
-      var activeIndex = 0;
-      sections.forEach(function (s, i) {
-        var top = s.wrapper.getBoundingClientRect().top;
-        if (top <= vh * 0.5) activeIndex = i;
+      var progress = sections.map(function (s) {
+        var r = s.wrapper.getBoundingClientRect();
+        var total = r.height - vh;
+        if (total <= 0) return 1;
+        return Math.min(1, Math.max(0, -r.top / total));
       });
+
+      // Section "active" = nombre de sections déjà entièrement terminées (donc
+      // celle en cours de défilement, pas encore à progress=1) — plus fiable
+      // qu'un simple "dernier progress > 0", qui resterait vrai même pour une
+      // section déjà terminée derrière soi.
+      var completedCount = progress.filter(function (p) { return p >= 0.999; }).length;
+      var activeIndex = Math.min(completedCount, sectionDots.length - 1);
       sectionDots.forEach(function (dot, i) {
         var active = i === activeIndex;
         dot.style.background = active ? "#f2f2f0" : "transparent";
@@ -641,13 +645,12 @@
         dot.style.transform = active ? "scale(1.35)" : "scale(1)";
       });
 
-      // À l'écran (au moins aux 3/4) : déclenche son animation automatique une
-      // seule fois par arrivée, la réarme en la quittant (dans un sens comme
-      // dans l'autre) pour qu'elle se rejoue à la prochaine visite plutôt que
-      // de rester figée sur son dernier état.
-      sections.forEach(function (s) {
-        var r = s.wrapper.getBoundingClientRect();
-        var onScreen = r.top < vh * 0.75 && r.bottom > vh * 0.25;
+      // À l'écran = ni avant (0) ni déjà entièrement passée (1) : déclenche son
+      // animation automatique une seule fois par arrivée, la réarme en la
+      // quittant (dans un sens comme dans l'autre) pour qu'elle se rejoue à la
+      // prochaine visite plutôt que de rester figée sur son dernier état.
+      sections.forEach(function (s, i) {
+        var onScreen = progress[i] > 0.001 && progress[i] < 0.999;
         if (onScreen && !s.entered) {
           s.entered = true;
           playSection(s);

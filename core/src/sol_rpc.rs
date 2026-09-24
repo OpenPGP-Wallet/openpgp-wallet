@@ -101,6 +101,31 @@ impl SolRpc {
             .ok_or_else(|| anyhow!("réponse sendTransaction inattendue"))
     }
 
+    /// Simule une transaction sans la diffuser : `Ok(None)` si elle réussirait,
+    /// `Ok(Some(logs))` sinon (journal du programme, généralement assez pour
+    /// comprendre pourquoi — ex: "insufficient lamports X, need Y"). Utile
+    /// pour des transactions dont le coût exact (rent, wrapping...) n'est
+    /// connu qu'une fois entièrement construites — voir `api::send_jupiter_swap`,
+    /// où un plancher de frais estimé à l'avance s'est avéré peu fiable d'une
+    /// route de swap à l'autre.
+    pub fn simulate_transaction(&self, raw_tx: &[u8]) -> Result<Option<String>> {
+        let b64 = base64::engine::general_purpose::STANDARD.encode(raw_tx);
+        let result = self.call(
+            "simulateTransaction",
+            json!([b64, {"encoding": "base64", "replaceRecentBlockhash": true, "sigVerify": false}]),
+        )?;
+        let err = result.pointer("/value/err");
+        if err.is_none() || err == Some(&Value::Null) {
+            return Ok(None);
+        }
+        let logs = result
+            .pointer("/value/logs")
+            .and_then(Value::as_array)
+            .map(|entries| entries.iter().filter_map(Value::as_str).collect::<Vec<_>>().join("\n"))
+            .unwrap_or_default();
+        Ok(Some(logs))
+    }
+
     /// Historique des signatures touchant `pubkey_b58`, du plus récent au plus
     /// ancien (ordre déjà garanti par `getSignaturesForAddress`). Le montant net de
     /// chaque transaction demande un second appel (`getTransaction`) : contrairement
@@ -279,6 +304,26 @@ impl SolRpc {
     }
 }
 
+/// Cherche le motif "Transfer: insufficient lamports X, need Y" dans un
+/// journal de simulation (voir `SolRpc::simulate_transaction`) et, si
+/// trouvé, construit un message clair avec le manque exact — beaucoup plus
+/// lisible que le journal brut pour un montant/frais/rent qui ne peut pas
+/// être prédit à l'avance de façon fiable (ex: coût exact d'une route de
+/// swap Jupiter, qui varie d'un appel à l'autre).
+pub fn insufficient_lamports_error(logs: &str) -> Option<anyhow::Error> {
+    let line = logs.lines().find(|l| l.contains("insufficient lamports"))?;
+    let numbers: Vec<u64> = line
+        .split(|c: char| !c.is_ascii_digit())
+        .filter(|s| !s.is_empty())
+        .filter_map(|s| s.parse::<u64>().ok())
+        .collect();
+    let (&available, &needed) = (numbers.first()?, numbers.get(1)?);
+    let missing = needed.saturating_sub(available);
+    Some(anyhow!(
+        "SOL insuffisant pour cette opération : il manque environ {missing} lamports ({available} disponibles, {needed} requis à cette étape)"
+    ))
+}
+
 pub struct SolTx {
     pub signature: String,
     pub block_time: Option<i64>,
@@ -289,4 +334,27 @@ pub struct SolTx {
     /// Positif si reçu net, négatif si envoyé net, en lamports ; `None` si le détail
     /// n'a pas pu être récupéré.
     pub net_lamports: Option<i128>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Ligne de journal réelle observée lors d'un échec de simulation de swap
+    // Jupiter (rent/wrapping SOL<->wSOL sous-estimé) — vérifie que le motif
+    // exact renvoyé par le validateur Solana est bien reconnu.
+    #[test]
+    fn insufficient_lamports_error_extracts_the_real_shortfall() {
+        let logs = "Program log: Instruction: Route\nProgram 11111111111111111111111111111111 invoke [2]\nTransfer: insufficient lamports 6460932, need 13045440\nProgram 11111111111111111111111111111111 failed: custom program error: 0x1";
+        let err = insufficient_lamports_error(logs).expect("motif reconnu");
+        let message = err.to_string();
+        assert!(message.contains("6460932"), "{message}");
+        assert!(message.contains("13045440"), "{message}");
+        assert!(message.contains("6584508"), "manque exact attendu : {message}");
+    }
+
+    #[test]
+    fn insufficient_lamports_error_returns_none_without_the_pattern() {
+        assert!(insufficient_lamports_error("Program log: Instruction: Route\nProgram ... success").is_none());
+    }
 }

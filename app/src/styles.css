@@ -103,15 +103,17 @@
    les petites puces ci-dessous, assez basses pour qu'un rayon large reste
    dans leur marge intérieure. Formulaires (input/textarea/select/fieldset)
    également exclus : une pilule n'est pas un motif courant pour une zone de
-   saisie. */
+   saisie. Menus déroulants (`.custom-select-options`) aussi exclus : plusieurs
+   options en pilule empilées les unes sur les autres ne se raccordent pas
+   proprement (contrairement à un bouton isolé), le résultat était moche —
+   ils gardent leur rayon normal (8px conteneur / 6px option) dans les deux
+   modes. */
 :root[data-rounded-buttons="true"] .recipient-item,
 :root[data-rounded-buttons="true"] .recipient-picker-item,
 :root[data-rounded-buttons="true"] .backup-item .passphrase,
 :root[data-rounded-buttons="true"] .address,
 :root[data-rounded-buttons="true"] .market-row,
 :root[data-rounded-buttons="true"] .history-row,
-:root[data-rounded-buttons="true"] .custom-select-options,
-:root[data-rounded-buttons="true"] .custom-select-options li,
 :root[data-rounded-buttons="true"] .lang-switcher,
 :root[data-rounded-buttons="true"] .lang-switcher-inline {
   border-radius: 999px;
@@ -513,26 +515,13 @@ legend {
   margin-top: 0;
 }
 
-/* Les cartes wallet ont 3 boutons (Actualiser/Historique/Envoyer) depuis l'ajout de
-   l'historique — 3x `flex:1` sur une seule ligne ne laisse plus assez de place pour
-   le texte, qui déborde et se chevauche. Actualiser/Historique partagent une ligne,
-   Envoyer (l'action principale) passe seul sur la ligne suivante plutôt que de
-   rétrécir les trois indéfiniment. */
+/* Historique déplacé dans son propre onglet (voir nav.history) : il ne reste
+   plus que 2 boutons par carte (Actualiser/Envoyer), qui se partagent la ligne
+   à parts égales. */
 .wallet-card .row-buttons {
-  flex-wrap: wrap;
   /* Marge par défaut de `.row-buttons` (20px, pensée pour les modales) trop
      large ici, juste sous l'adresse/QR d'une carte déjà compacte. */
   margin-top: 8px;
-}
-
-.wallet-card .row-buttons [data-action="refresh"],
-.wallet-card .row-buttons [data-action="history"] {
-  flex: 1 1 0;
-  min-width: 0;
-}
-
-.wallet-card .row-buttons [data-action="send"] {
-  flex: 1 1 100%;
 }
 
 .view-shell {
@@ -1329,8 +1318,31 @@ textarea:focus {
   flex-direction: column;
   gap: 8px;
   margin: 12px 0;
-  max-height: 60vh;
+  /* Onglet dédié (4 sections empilées), pas une modale plein écran : un plus
+     petit plafond que l'ancien 60vh, avec son propre défilement interne, pour
+     qu'une longue section ne pousse pas les 3 autres hors de vue. */
+  max-height: 320px;
   overflow-y: auto;
+}
+
+.history-section {
+  margin-top: 28px;
+}
+
+.history-section:first-of-type {
+  margin-top: 20px;
+}
+
+.history-section-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.history-section-header .section-title {
+  margin-top: 0;
+  margin-bottom: 0;
 }
 
 .history-row {
@@ -1342,6 +1354,47 @@ textarea:focus {
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 12px 14px;
+}
+
+.send-preview-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 16px 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.send-preview-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
+  padding: 11px 14px;
+  background: var(--surface-2);
+}
+
+.send-preview-row:not(:last-child) {
+  border-bottom: 1px solid var(--border);
+}
+
+.send-preview-label {
+  color: var(--muted);
+  font-size: 0.85rem;
+  flex-shrink: 0;
+}
+
+.send-preview-value {
+  font-weight: 600;
+  text-align: right;
+  word-break: break-all;
+}
+
+.send-preview-value.mono {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.8rem;
+  font-weight: 400;
 }
 
 .history-left {
@@ -1440,6 +1493,35 @@ textarea:focus {
 
 .modal h2 {
   margin-top: 0;
+}
+
+.modal-header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.modal-close-btn {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  margin-top: 2px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 1.2rem;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-close-btn:hover {
+  color: var(--text);
+  border-color: var(--muted);
 }
 
 .quick-amounts {

@@ -13,7 +13,10 @@
 //!   qui ne sert qu'à restaurer le wallet sur un NOUVEL appareil si celui-ci est
 //!   perdu — jamais utilisé pour le déverrouillage quotidien.
 
-use crate::{btc_rpc, derivation, entropy, eth_rpc, eth_tx, history, memory_guard, pgp_engine, shamir, sol_rpc, sol_spl, sol_tx, wallet_flow};
+use crate::{
+    btc_rpc, derivation, entropy, eth_rpc, eth_tx, history, jupiter_rpc, memory_guard, pgp_engine, shamir, sol_rpc, sol_spl,
+    sol_tx, thorchain_rpc, wallet_flow,
+};
 use anyhow::{Context, Result};
 use openpgp::armor;
 use openpgp::cert::prelude::*;
@@ -431,6 +434,18 @@ pub fn regenerate_backup_kit(data_dir: &Path, device_password: &str) -> Result<V
     let seed = unlock_seed(data_dir, device_password)?;
     let _seed_lock = memory_guard::lock(&seed);
     generate_backup_kit(data_dir, &seed)
+}
+
+/// Adresse THORChain (RUNE) dérivée de la même entropie maître, index 0 fixe
+/// (jamais un "profil" au sens des autres réseaux — une seule adresse, pas une
+/// par profil). Sert UNIQUEMENT à recevoir les frais d'affiliation des swaps
+/// (voir thorchain_rpc.rs) : purement informatif ici, aucune fonctionnalité
+/// d'envoi/solde RUNE dans cette v1.
+pub fn get_thor_fee_address(data_dir: &Path, device_password: &str) -> Result<String> {
+    let seed = unlock_seed(data_dir, device_password)?;
+    let _seed_lock = memory_guard::lock(&seed);
+    let (_key, hash160) = derivation::derive_thor_key(&seed, 0)?;
+    derivation::format_thor_address(&hash160)
 }
 
 /// Ajoute un nouveau profil (nouvel index de dérivation, jamais réutilisé).
@@ -1275,6 +1290,239 @@ pub fn send_sol(
     );
 
     let raw_tx = sol_tx::build_transfer_transaction(&signing_key, &from_pubkey, &to_pubkey, lamports, &recent_blockhash);
+    rpc.send_transaction(&raw_tx)
+}
+
+/// Traduit un identifiant de coin interne à l'app ("evm"/"btc"/"sol", les
+/// mêmes que `data-coin` côté frontend) en code d'actif natif THORChain +
+/// décimales natives de la chaîne. USDC volontairement absent : la notation
+/// THORChain pour un jeton non natif inclut son adresse de contrat/mint, pas
+/// seulement un ticker — chantier séparé (voir le plan swap), pas cette v1.
+fn thorchain_asset_for_coin(coin: &str) -> Result<(&'static str, u32)> {
+    match coin {
+        "sol" => Ok(("SOL.SOL", 9)),
+        "btc" => Ok(("BTC.BTC", 8)),
+        "evm" => Ok(("ETH.ETH", 18)),
+        other => anyhow::bail!("actif non pris en charge pour le swap : {other}"),
+    }
+}
+
+fn parse_swap_amount_for_coin(coin: &str, amount: &str) -> Result<u128> {
+    match coin {
+        "sol" => wallet_flow::parse_sol_to_lamports(amount).map(u128::from),
+        "btc" => wallet_flow::parse_btc_to_sat(amount).map(u128::from),
+        "evm" => wallet_flow::parse_eth_to_wei(amount),
+        "usdc" => wallet_flow::parse_usdc_to_micros(amount).map(u128::from),
+        other => anyhow::bail!("actif non pris en charge pour le swap : {other}"),
+    }
+}
+
+/// Mint Solana (32 octets) pour un identifiant de coin interne — seuls
+/// "sol"/"usdc" ont un sens ici (swap Jupiter, même chaîne uniquement, voir
+/// jupiter_rpc.rs).
+fn jupiter_mint_bytes_for_coin(coin: &str) -> Result<[u8; 32]> {
+    match coin {
+        "sol" => bs58::decode(jupiter_rpc::SOL_MINT)
+            .into_vec()
+            .ok()
+            .and_then(|v| v.try_into().ok())
+            .context("mint SOL mal formé (bug de compilation)"),
+        "usdc" => Ok(sol_spl::usdc_mint_mainnet()),
+        other => anyhow::bail!("actif non pris en charge pour le swap Jupiter : {other}"),
+    }
+}
+
+fn jupiter_mint_for_coin(coin: &str) -> Result<String> {
+    Ok(bs58::encode(jupiter_mint_bytes_for_coin(coin)?).into_string())
+}
+
+/// Obtient un devis Jupiter (lecture seule, aucun secret impliqué) — montant
+/// de sortie attendu, dans la plus petite unité de l'actif de destination.
+/// `amount` dans l'unité humaine de l'actif SOURCE, comme partout ailleurs
+/// dans cette API.
+pub fn get_jupiter_quote(from_coin: &str, to_coin: &str, amount: &str, slippage_bps: u32) -> Result<u64> {
+    let input_mint = jupiter_mint_for_coin(from_coin)?;
+    let output_mint = jupiter_mint_for_coin(to_coin)?;
+    let amount_native = parse_swap_amount_for_coin(from_coin, amount)?;
+    let amount_native: u64 = amount_native.try_into().context("montant trop grand")?;
+    Ok(jupiter_rpc::quote(&input_mint, &output_mint, amount_native, slippage_bps)?.out_amount)
+}
+
+/// Envoie un swap SOL <-> USDC via Jupiter (même chaîne, contrairement au
+/// swap cross-chain via THORChain) — voir jupiter_rpc.rs pour le contexte
+/// complet, notamment pourquoi la transaction elle-même n'est pas
+/// reconstruite à la main ici (seulement vérifiée puis signée).
+pub fn send_jupiter_swap(
+    data_dir: &Path,
+    device_password: &str,
+    network: &wallet_flow::SolNetwork,
+    from_coin: &str,
+    to_coin: &str,
+    amount: &str,
+    slippage_bps: u32,
+    profile_index: u32,
+) -> Result<String> {
+    let seed = unlock_seed(data_dir, device_password)?;
+    let _seed_lock = memory_guard::lock(&seed);
+    let signing_key = derivation::derive_solana_key(&seed, profile_index);
+    let owner = signing_key.verifying_key().to_bytes();
+    let owner_address = bs58::encode(owner).into_string();
+
+    let input_mint = jupiter_mint_for_coin(from_coin)?;
+    let output_mint = jupiter_mint_for_coin(to_coin)?;
+    let amount_native: u64 = parse_swap_amount_for_coin(from_coin, amount)?
+        .try_into()
+        .context("montant trop grand")?;
+
+    let rpc = sol_rpc::SolRpc::new(network.rpc);
+    let sol_balance = rpc.balance_lamports(&owner_address)?;
+
+    // Réserve conservatrice pour les frais réseau/priorité de calcul : pas de
+    // valeur exacte disponible avant construction de la transaction, ce
+    // plancher reste volontairement généreux plutôt que précis.
+    const SOL_FEE_RESERVE_LAMPORTS: u64 = 50_000;
+    let mut reserve = SOL_FEE_RESERVE_LAMPORTS;
+
+    // Swapper depuis du SOL natif l'enveloppe d'abord en jeton SPL "wSOL" —
+    // exige de financer un compte de jetons temporaire au minimum
+    // d'exemption de rent, EN PLUS du montant du swap lui-même (récupéré à la
+    // clôture de ce même compte en fin de transaction, mais nécessaire un
+    // instant plus tôt dans la même transaction). Interrogé en direct plutôt
+    // que codé en dur (paramètre réseau qui évolue), même principe que pour
+    // l'ATA USDC (voir send_usdc) — un plancher fixe sous-estimerait
+    // largement ce besoin réel.
+    if from_coin == "sol" {
+        reserve = reserve
+            .checked_add(rpc.minimum_rent_exempt_balance(165)?)
+            .context("réserve de frais dépasse la capacité représentable")?;
+    }
+    // Le compte de jetons de destination peut aussi devoir être créé (Jupiter
+    // l'inclut alors dans la transaction, voir CreateIdempotent côté ATA) :
+    // même coût de rent si le compte n'existe pas encore.
+    if to_coin != "sol" {
+        let output_mint = jupiter_mint_bytes_for_coin(to_coin)?;
+        let dest_ata = sol_spl::find_associated_token_address(&owner, &output_mint);
+        let dest_ata_b58 = bs58::encode(dest_ata).into_string();
+        if !rpc.account_exists(&dest_ata_b58)? {
+            reserve = reserve
+                .checked_add(rpc.minimum_rent_exempt_balance(165)?)
+                .context("réserve de frais dépasse la capacité représentable")?;
+        }
+    }
+
+    if from_coin == "sol" {
+        let total_needed = amount_native.checked_add(reserve).context("montant + frais dépasse la capacité représentable")?;
+        anyhow::ensure!(
+            total_needed <= sol_balance,
+            "fonds insuffisants : {sol_balance} lamports disponibles, {amount_native} lamports + ~{reserve} lamports de frais/rent requis"
+        );
+    } else {
+        anyhow::ensure!(
+            reserve <= sol_balance,
+            "SOL insuffisant pour les frais/rent : {sol_balance} lamports disponibles, ~{reserve} lamports requis"
+        );
+        // Source autre que SOL natif (USDC) : le solde de jetons lui-même
+        // n'est jamais couvert par la vérification de solde SOL ci-dessus,
+        // qui ne porte que sur les frais/rent — vérifié séparément ici.
+        let input_mint_bytes = jupiter_mint_bytes_for_coin(from_coin)?;
+        let source_ata = sol_spl::find_associated_token_address(&owner, &input_mint_bytes);
+        let source_ata_b58 = bs58::encode(source_ata).into_string();
+        let source_balance = rpc.token_account_balance(&source_ata_b58)?.unwrap_or(0);
+        anyhow::ensure!(
+            amount_native <= source_balance,
+            "fonds insuffisants : {source_balance} unité(s) disponibles, {amount_native} unité(s) requises"
+        );
+    }
+
+    let quote = jupiter_rpc::quote(&input_mint, &output_mint, amount_native, slippage_bps)?;
+    let raw_tx = jupiter_rpc::build_swap_transaction(&quote, &owner_address)?;
+    let signed_tx = jupiter_rpc::sign_swap_transaction(&raw_tx, &signing_key, &owner)?;
+
+    // Le coût réel exact (rent, wrapping SOL<->wSOL, création de compte...)
+    // varie d'une route de swap Jupiter à l'autre au point qu'une réserve
+    // estimée à l'avance (voir plus haut) ne suffit pas toujours à le
+    // couvrir — simuler la transaction ENTIÈREMENT CONSTRUITE juste avant de
+    // la diffuser permet de le détecter avec un message clair plutôt que de
+    // laisser échouer un envoi réel (aucun fonds ne bouge sur un échec de
+    // simulation, mais le message brut du nœud ne l'est pas pour un humain).
+    if let Some(logs) = rpc.simulate_transaction(&signed_tx)? {
+        return Err(
+            sol_rpc::insufficient_lamports_error(&logs).unwrap_or_else(|| anyhow::anyhow!("échec de simulation du swap Jupiter :\n{logs}")),
+        );
+    }
+
+    rpc.send_transaction(&signed_tx)
+}
+
+/// Obtient un devis de swap THORChain (lecture seule, aucun secret impliqué) —
+/// voir `thorchain_rpc` pour le contexte complet. `amount` dans l'unité
+/// principale de l'actif SOURCE (ex: "0.5" pour 0,5 SOL), comme partout
+/// ailleurs dans cette API. `destination` : l'adresse de l'utilisateur sur la
+/// chaîne DESTINATION (jamais celle du développeur — voir
+/// `thorchain_rpc::AFFILIATE_ADDRESS`, déjà injectée automatiquement par
+/// `thorchain_rpc::quote_swap`).
+pub fn get_swap_quote(from_coin: &str, to_coin: &str, amount: &str, destination: &str) -> Result<thorchain_rpc::SwapQuote> {
+    let (from_asset, from_decimals) = thorchain_asset_for_coin(from_coin)?;
+    let (to_asset, _to_decimals) = thorchain_asset_for_coin(to_coin)?;
+    let amount_native = parse_swap_amount_for_coin(from_coin, amount)?;
+    let amount_thorchain = thorchain_rpc::to_thorchain_amount(amount_native, from_decimals)?;
+    thorchain_rpc::quote_swap(from_asset, to_asset, amount_thorchain, destination)
+}
+
+/// Envoie un swap THORChain depuis Solana : construit un transfert SOL vers
+/// l'adresse de vault du devis, plus une instruction Memo (SPL Memo Program)
+/// portant le memo THORChain — dans la MÊME transaction, pour que THORChain
+/// associe les deux de façon atomique. `quote` doit avoir été obtenu juste
+/// avant cet appel (l'adresse de vault n'est jamais mise en cache, voir la
+/// doc de `thorchain_rpc::SwapQuote`).
+pub fn send_swap_sol(
+    data_dir: &Path,
+    device_password: &str,
+    network: &wallet_flow::SolNetwork,
+    quote: &thorchain_rpc::SwapQuote,
+    amount_sol: &str,
+    profile_index: u32,
+) -> Result<String> {
+    let seed = unlock_seed(data_dir, device_password)?;
+    let _seed_lock = memory_guard::lock(&seed);
+    let signing_key = derivation::derive_solana_key(&seed, profile_index);
+    let owner = signing_key.verifying_key().to_bytes();
+    let amount_lamports = wallet_flow::parse_sol_to_lamports(amount_sol)?;
+
+    let vault_bytes = bs58::decode(quote.inbound_address.trim())
+        .into_vec()
+        .context("adresse de vault THORChain invalide (base58 attendu)")?;
+    let vault: [u8; 32] = vault_bytes.try_into().map_err(|_| anyhow::anyhow!("une adresse Solana fait 32 octets"))?;
+
+    let rpc = sol_rpc::SolRpc::new(network.rpc);
+    let owner_address = bs58::encode(owner).into_string();
+    let (balance, recent_blockhash) = std::thread::scope(|scope| {
+        let balance_handle = scope.spawn(|| rpc.balance_lamports(&owner_address));
+        let blockhash_handle = scope.spawn(|| rpc.latest_blockhash());
+        (
+            balance_handle.join().expect("le thread balance ne doit pas paniquer"),
+            blockhash_handle.join().expect("le thread blockhash ne doit pas paniquer"),
+        )
+    });
+    let balance = balance?;
+    let recent_blockhash = recent_blockhash?;
+
+    const SOL_FEE_LAMPORTS: u64 = 5_000;
+    let total_needed = amount_lamports
+        .checked_add(SOL_FEE_LAMPORTS)
+        .context("montant + frais dépasse la capacité représentable")?;
+    anyhow::ensure!(
+        total_needed <= balance,
+        "fonds insuffisants : {balance} lamports disponibles, {amount_lamports} lamports + {SOL_FEE_LAMPORTS} lamports de frais requis"
+    );
+
+    let transfer_ix = sol_tx::transfer_instruction(&owner, &vault, amount_lamports);
+    let memo_ix = sol_tx::Instruction {
+        program_id: sol_tx::memo_program_id(),
+        accounts: vec![],
+        data: quote.memo.as_bytes().to_vec(),
+    };
+    let raw_tx = sol_tx::build_and_sign_transaction(&signing_key, &owner, &[transfer_ix, memo_ix], &recent_blockhash);
     rpc.send_transaction(&raw_tx)
 }
 

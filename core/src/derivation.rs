@@ -118,6 +118,27 @@ pub fn format_btc_mainnet_address(hash160: &[u8; 20]) -> Result<String> {
     bech32::encode("bc", data, Variant::Bech32).context("encodage bech32 impossible")
 }
 
+/// Dérive la clé privée THORChain n°`index` (chemin m/44'/931'/0'/0/{index},
+/// coin_type 931' — enregistré officiellement pour RUNE dans SLIP-0044) et
+/// retourne le hash160 correspondant. Même courbe (secp256k1) et même calcul
+/// de hash160 que Bitcoin : THORChain, comme les autres chaînes Cosmos SDK,
+/// réutilise exactement RIPEMD160(SHA256(clé publique compressée)) pour
+/// dériver son adresse. Utilisée uniquement pour recevoir les frais
+/// d'affiliation d'un swap (voir api::swap_quote) — jamais pour envoyer,
+/// aucune construction de transaction RUNE dans cette v1.
+pub fn derive_thor_key(seed: &[u8], index: u32) -> Result<(SigningKey, [u8; 20])> {
+    let signing_key = derive_key_from_path(seed, &format!("m/44'/931'/0'/0/{index}"))?;
+    let hash160 = btc_hash160_from_key(&signing_key);
+    Ok((signing_key, hash160))
+}
+
+/// Formatte une adresse THORChain (bech32, préfixe "thor1...") — comme
+/// Bitcoin mais SANS octet de version témoin (pas de SegWit sur Cosmos SDK) :
+/// le hash160 est encodé directement.
+pub fn format_thor_address(hash160: &[u8; 20]) -> Result<String> {
+    bech32::encode("thor", hash160.to_base32(), Variant::Bech32).context("encodage bech32 impossible")
+}
+
 /// Dérivation SLIP-0010 pour ed25519 : contrairement à BIP32/secp256k1, la dérivation
 /// non-durcie n'existe pas sur cette courbe (pas d'arithmétique de point publique
 /// exploitable), donc TOUS les niveaux du chemin sont durcis (indices "'").
@@ -236,5 +257,26 @@ mod tests {
         assert_eq!(parse_btc_testnet_address(&testnet_address).unwrap(), testnet_hash160);
         assert!(parse_btc_mainnet_address(&testnet_address).is_err());
         assert!(parse_btc_testnet_address(&mainnet_address).is_err());
+    }
+
+    // Ne remplace PAS la vérification empirique obligatoire contre un
+    // portefeuille THORChain de référence avant tout usage réel (voir le plan
+    // de la fonctionnalité swap) : garantit seulement la forme (préfixe,
+    // déterminisme, chemin de dérivation distinct de Bitcoin), pas
+    // l'exactitude de l'adresse produite.
+    #[test]
+    fn thor_address_has_the_expected_bech32_shape_and_is_deterministic() {
+        let seed = [7u8; 32];
+        let (_key, hash160) = derive_thor_key(&seed, 0).unwrap();
+        let address = format_thor_address(&hash160).unwrap();
+        assert!(address.starts_with("thor1"), "adresse THOR inattendue : {address}");
+
+        let (_key_again, hash160_again) = derive_thor_key(&seed, 0).unwrap();
+        assert_eq!(hash160, hash160_again, "la dérivation doit être déterministe");
+
+        // Chemin de dérivation distinct de Bitcoin (coin_type 931' vs 0') :
+        // aucune raison de produire le même hash160 pour la même seed/index.
+        let (_btc_key, btc_hash160) = derive_btc_mainnet_key(&seed, 0).unwrap();
+        assert_ne!(hash160, btc_hash160);
     }
 }

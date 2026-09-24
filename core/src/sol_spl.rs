@@ -19,7 +19,7 @@ use sha2::{Digest, Sha256};
 /// Décode une clé publique Solana encodée en base58 — utilisé uniquement pour
 /// les constantes ci-dessous (valeurs fixes, vérifiées), jamais pour une
 /// entrée utilisateur (voir `derivation`/`wallet_flow` pour ça).
-fn decode_pubkey(base58: &str) -> [u8; 32] {
+pub(crate) fn decode_pubkey(base58: &str) -> [u8; 32] {
     let bytes = bs58::decode(base58).into_vec().expect("constante base58 invalide (bug de compilation)");
     bytes.try_into().expect("une clé publique Solana fait 32 octets (bug de compilation)")
 }

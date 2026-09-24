@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "app",
+  "productName": "wallet",
   "version": "2.2.0",
   "identifier": "com.pgpwalletpoc.app",
   "build": {
@@ -10,7 +10,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "app",
+        "title": "wallet",
         "width": 800,
         "height": 600,
         "minWidth": 720,
