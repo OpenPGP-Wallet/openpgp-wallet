@@ -235,6 +235,29 @@ const I18N = {
     "addressBook.remove": "Supprimer",
     "addressBook.empty": "Aucune adresse enregistrée pour l'instant — ajoutez-en une avec le bouton ci-dessus.",
     "addressBook.pickPlaceholder": "— Choisir depuis le carnet d'adresses —",
+    "nav.walletconnect": "Applications",
+    "wc.title": "Applications connectées (WalletConnect)",
+    "wc.subtitle": "Connectez ce portefeuille à un site (dApp) : sur le site, choisissez WalletConnect, copiez le lien de connexion (« wc:… ») et collez-le ici. Chaque signature demandée par un site exigera votre mot de passe et une confirmation de Windows.",
+    "wc.uriLabel": "Lien de connexion",
+    "wc.pair": "Se connecter",
+    "wc.pairing": "En attente de la demande du site…",
+    "wc.sessions": "Sites connectés",
+    "wc.noSession": "Aucun site connecté.",
+    "wc.disconnect": "Déconnecter",
+    "wc.relayConnected": "Relais WalletConnect : connecté.",
+    "wc.relayDisconnected": "Relais WalletConnect : déconnecté.",
+    "wc.proposalTitle": "Demande de connexion",
+    "wc.unverified": "Nom et adresse déclarés par le site lui-même : rien n'est vérifié. Ne connectez que des sites ouverts depuis leur vraie adresse.",
+    "wc.networks": "Réseaux : {chains}",
+    "wc.profile": "Profil à connecter",
+    "wc.noProfile": "Déverrouillez le portefeuille avec votre mot de passe pour connecter un site.",
+    "wc.approve": "Connecter",
+    "wc.reject": "Refuser",
+    "wc.requestTitle": "Demande de signature",
+    "wc.analyzing": "Analyse de la demande…",
+    "wc.danger": "Cette demande comporte un avertissement grave : lisez-la entièrement avant de décider.",
+    "wc.sign": "Signer",
+    "wc.expires": "expire le {date}",
     "wallet.profile": "Profil",
     "wallet.receive": "Recevoir",
     "wallet.receiveEth": "Recevoir ETH",
@@ -534,6 +557,29 @@ const I18N = {
     "addressBook.remove": "Remove",
     "addressBook.empty": "No saved address yet — add one with the button above.",
     "addressBook.pickPlaceholder": "— Choose from the address book —",
+    "nav.walletconnect": "Apps",
+    "wc.title": "Connected apps (WalletConnect)",
+    "wc.subtitle": "Connect this wallet to a site (dApp): on the site, choose WalletConnect, copy the connection link (\"wc:…\") and paste it here. Every signature a site asks for will require your password and a Windows confirmation.",
+    "wc.uriLabel": "Connection link",
+    "wc.pair": "Connect",
+    "wc.pairing": "Waiting for the site's request…",
+    "wc.sessions": "Connected sites",
+    "wc.noSession": "No connected site.",
+    "wc.disconnect": "Disconnect",
+    "wc.relayConnected": "WalletConnect relay: connected.",
+    "wc.relayDisconnected": "WalletConnect relay: disconnected.",
+    "wc.proposalTitle": "Connection request",
+    "wc.unverified": "Name and address declared by the site itself: nothing is verified. Only connect sites opened from their real address.",
+    "wc.networks": "Networks: {chains}",
+    "wc.profile": "Profile to connect",
+    "wc.noProfile": "Unlock the wallet with your password to connect a site.",
+    "wc.approve": "Connect",
+    "wc.reject": "Reject",
+    "wc.requestTitle": "Signature request",
+    "wc.analyzing": "Analyzing the request…",
+    "wc.danger": "This request carries a serious warning: read all of it before deciding.",
+    "wc.sign": "Sign",
+    "wc.expires": "expires on {date}",
     "wallet.profile": "Profile",
     "wallet.receive": "Receive",
     "wallet.receiveEth": "Receive ETH",
@@ -1488,6 +1534,7 @@ document.querySelectorAll(".nav-tab").forEach((tab) => {
     if (target === "message") loadRecipients();
     if (target === "external") loadExternalWallets();
     if (target === "addressbook") loadAddressBook();
+    if (target === "walletconnect") loadWcSessions();
     if (target === "settings") {
       loadArchivedProfiles();
       loadBiometricSettings();
@@ -3501,3 +3548,252 @@ window.addEventListener("DOMContentLoaded", async () => {
     showView("onboarding");
   }
 });
+
+// --- WalletConnect (applications connectées) ---------------------------------
+// Le frontend ne fait qu'afficher et relayer : le contenu d'une demande est
+// relu et préparé côté Rust (`wc_prepare_request`, jamais à partir d'une copie
+// d'ici), et chaque signature passe par une boîte native de Windows. Tout le
+// texte venu d'un site est inséré par `textContent`, jamais comme du HTML.
+
+const { listen } = window.__TAURI__.event;
+const wcQueue = [];
+let wcCurrent = null;
+
+function wcChainLabel(chain) {
+  return (
+    {
+      "eip155:1": "Ethereum",
+      "eip155:11155111": "Ethereum Sepolia",
+      "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp": "Solana",
+      "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1": "Solana devnet",
+    }[chain] || chain
+  );
+}
+
+// Une seule fenêtre à la fois : propositions et demandes attendent leur tour.
+function wcProcessQueue() {
+  if (wcCurrent || wcQueue.length === 0) return;
+  wcCurrent = wcQueue.shift();
+  if (wcCurrent.kind === "Proposal") showWcProposal(wcCurrent);
+  else showWcRequest(wcCurrent);
+}
+
+function wcClose(modalId) {
+  document.getElementById(modalId).classList.add("hidden");
+  wcCurrent = null;
+  wcProcessQueue();
+}
+
+listen("wc-event", (event) => {
+  const e = event.payload;
+  if (e.kind === "Proposal" || e.kind === "Request") {
+    wcQueue.push(e);
+    wcProcessQueue();
+  } else if (e.kind === "SessionsChanged") {
+    loadWcSessions();
+  } else if (e.kind === "RelayStatus") {
+    document.getElementById("wc-status").textContent = e.connected ? t("wc.relayConnected") : t("wc.relayDisconnected");
+    const errorEl = document.getElementById("wc-error");
+    if (e.error) showError(errorEl, e.error);
+    else if (e.connected) hideError(errorEl);
+  }
+});
+
+function showWcProposal(proposal) {
+  document.getElementById("wc-proposal-peer").textContent = proposal.peer.name || "?";
+  document.getElementById("wc-proposal-url").textContent = proposal.peer.url || "?";
+  document.getElementById("wc-proposal-chains").textContent = t("wc.networks", {
+    chains: proposal.chains.map(wcChainLabel).join(", ") || "—",
+  });
+  const incompatible = document.getElementById("wc-proposal-incompatible");
+  if (proposal.incompatible) showError(incompatible, proposal.incompatible);
+  else hideError(incompatible);
+
+  const select = document.getElementById("wc-proposal-profile");
+  select.replaceChildren();
+  const usable = profilesCache.filter((p) => p.addresses);
+  for (const profile of usable) {
+    const option = document.createElement("option");
+    option.value = String(profile.index);
+    option.textContent = profile.label;
+    option.selected = profile.index === currentProfileIndex;
+    select.appendChild(option);
+  }
+  const errorEl = document.getElementById("wc-proposal-error");
+  hideError(errorEl);
+  if (usable.length === 0) showError(errorEl, t("wc.noProfile"));
+  document.getElementById("wc-proposal-approve").disabled = Boolean(proposal.incompatible) || usable.length === 0;
+  document.getElementById("wc-proposal-modal").classList.remove("hidden");
+}
+
+const wcProposalApproveBtn = document.getElementById("wc-proposal-approve");
+wcProposalApproveBtn.addEventListener(
+  "click",
+  withBusyButton(wcProposalApproveBtn, async () => {
+    const proposal = wcCurrent;
+    if (!proposal || proposal.kind !== "Proposal") return;
+    try {
+      // `false` : refusée dans la boîte native (la dApp en est déjà informée).
+      await invoke("wc_approve_session", {
+        proposalId: proposal.id,
+        profileIndex: Number(document.getElementById("wc-proposal-profile").value),
+      });
+      wcClose("wc-proposal-modal");
+      loadWcSessions();
+    } catch (e) {
+      showError(document.getElementById("wc-proposal-error"), String(e));
+    }
+  }),
+);
+
+document.getElementById("wc-proposal-reject").addEventListener("click", async () => {
+  const proposal = wcCurrent;
+  if (proposal && proposal.kind === "Proposal") {
+    try {
+      await invoke("wc_reject_session", { proposalId: proposal.id });
+    } catch (e) {
+      console.error(e);
+    }
+  }
+  wcClose("wc-proposal-modal");
+});
+
+async function showWcRequest(request) {
+  const textEl = document.getElementById("wc-request-text");
+  const loading = document.getElementById("wc-request-loading");
+  const danger = document.getElementById("wc-request-danger");
+  const errorEl = document.getElementById("wc-request-error");
+  const approve = document.getElementById("wc-request-approve");
+  textEl.classList.add("hidden");
+  danger.classList.add("hidden");
+  hideError(errorEl);
+  loading.classList.remove("hidden");
+  approve.disabled = true;
+  document.getElementById("wc-request-password").value = "";
+  document.getElementById("wc-request-modal").classList.remove("hidden");
+  try {
+    const prepared = await invoke("wc_prepare_request", { requestId: request.id });
+    textEl.textContent = prepared.text;
+    textEl.classList.remove("hidden");
+    danger.classList.toggle("hidden", !prepared.danger);
+    approve.disabled = false;
+  } catch (e) {
+    // Demande invalide ou dangereuse par construction : déjà refusée côté Rust.
+    showError(errorEl, String(e));
+  } finally {
+    loading.classList.add("hidden");
+  }
+}
+
+const wcRequestApproveBtn = document.getElementById("wc-request-approve");
+wcRequestApproveBtn.addEventListener(
+  "click",
+  withBusyButton(wcRequestApproveBtn, async () => {
+    const request = wcCurrent;
+    if (!request || request.kind !== "Request") return;
+    const passwordEl = document.getElementById("wc-request-password");
+    const errorEl = document.getElementById("wc-request-error");
+    if (!passwordEl.value) {
+      showError(errorEl, t("common.passwordRequired"));
+      return;
+    }
+    try {
+      // `false` : refusée dans la boîte native (la dApp en est déjà informée).
+      await invoke("wc_approve_request", { requestId: request.id, password: passwordEl.value });
+      passwordEl.value = "";
+      wcClose("wc-request-modal");
+    } catch (e) {
+      // Mauvais mot de passe, fonds insuffisants… : la demande reste ouverte.
+      showError(errorEl, String(e));
+    }
+  }),
+);
+
+document.getElementById("wc-request-reject").addEventListener("click", async () => {
+  const request = wcCurrent;
+  if (request && request.kind === "Request") {
+    try {
+      await invoke("wc_reject_request", { requestId: request.id });
+    } catch (e) {
+      console.error(e);
+    }
+  }
+  document.getElementById("wc-request-password").value = "";
+  wcClose("wc-request-modal");
+});
+
+const wcPairBtn = document.getElementById("wc-pair-btn");
+wcPairBtn.addEventListener(
+  "click",
+  withBusyButton(wcPairBtn, async () => {
+    const input = document.getElementById("wc-uri");
+    const errorEl = document.getElementById("wc-error");
+    hideError(errorEl);
+    const uri = input.value.trim();
+    if (!uri) return;
+    try {
+      await invoke("wc_pair", { uri });
+      input.value = "";
+      document.getElementById("wc-status").textContent = t("wc.pairing");
+    } catch (e) {
+      showError(errorEl, String(e));
+    }
+  }),
+);
+
+async function loadWcSessions() {
+  let sessions = [];
+  try {
+    sessions = await invoke("wc_sessions");
+  } catch (e) {
+    console.error(e);
+  }
+  const container = document.getElementById("wc-sessions");
+  container.replaceChildren();
+  if (sessions.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = t("wc.noSession");
+    container.appendChild(empty);
+    return;
+  }
+  for (const session of sessions) {
+    const row = document.createElement("div");
+    row.className = "recipient-item";
+    const info = document.createElement("div");
+    info.className = "recipient-info";
+    const label = document.createElement("span");
+    label.className = "recipient-label";
+    label.textContent = session.peer.name || "?";
+    const meta = document.createElement("span");
+    meta.className = "recipient-fp";
+    const profile = profilesCache.find((p) => p.index === session.profile_index);
+    const expires = new Date(session.expiry * 1000).toLocaleDateString(currentLang === "en" ? "en-GB" : "fr-FR");
+    meta.textContent = [
+      session.peer.url,
+      session.chains.map(wcChainLabel).join(", "),
+      profile ? profile.label : `#${session.profile_index}`,
+      t("wc.expires", { date: expires }),
+    ].join(" · ");
+    info.appendChild(label);
+    info.appendChild(meta);
+    const actions = document.createElement("div");
+    actions.className = "item-actions";
+    const disconnect = document.createElement("button");
+    disconnect.type = "button";
+    disconnect.className = "link";
+    disconnect.textContent = t("wc.disconnect");
+    disconnect.addEventListener("click", async () => {
+      try {
+        await invoke("wc_disconnect", { topic: session.topic });
+      } catch (e) {
+        console.error(e);
+      }
+      loadWcSessions();
+    });
+    actions.appendChild(disconnect);
+    row.appendChild(info);
+    row.appendChild(actions);
+    container.appendChild(row);
+  }
+}

@@ -1601,3 +1601,21 @@ textarea:focus {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
+
+/* WalletConnect : texte d'une demande de signature (préformaté, lignes
+   citées "│" pour le contenu venu du site). */
+.wc-request-text {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  max-height: 50vh;
+  overflow: auto;
+  margin: 0 0 10px;
+}

@@ -332,7 +332,7 @@ impl TypedData {
                     .or_else(|| kind.strip_prefix("int").map(|b| (true, b)))
                 {
                     let bits: u32 = bits.parse().map_err(|_| anyhow!("type inconnu « {kind} »"))?;
-                    anyhow::ensure!(bits % 8 == 0 && (8..=256).contains(&bits), "type inconnu « {kind} »");
+                    anyhow::ensure!(bits.is_multiple_of(8) && (8..=256).contains(&bits), "type inconnu « {kind} »");
                     let (negative, magnitude) = parse_integer(value)?;
                     if signed {
                         // Plage [-2^(bits-1), 2^(bits-1) - 1], complément à deux sur 256 bits.

@@ -123,6 +123,7 @@
           <button class="nav-tab" data-tab="certificate" data-i18n="nav.certificate">Certificat</button>
           <button class="nav-tab" data-tab="external" data-i18n="nav.external">Wallets externes</button>
           <button class="nav-tab" data-tab="addressbook" data-i18n="nav.addressBook">Carnet d'adresses</button>
+          <button class="nav-tab" data-tab="walletconnect" data-i18n="nav.walletconnect">Applications</button>
           <button class="nav-tab" data-tab="settings" data-i18n="nav.settings">Paramètres</button>
         </div>
         <div class="navbar-right">
@@ -549,6 +550,26 @@
         </div>
       </section>
 
+      <section class="tab-panel hidden" data-panel="walletconnect">
+        <div class="card wide">
+          <h1 data-i18n="wc.title">Applications connectées (WalletConnect)</h1>
+          <p class="muted" data-i18n="wc.subtitle">
+            Connectez ce portefeuille à un site (dApp) : sur le site, choisissez WalletConnect, copiez le
+            lien de connexion (« wc:… ») et collez-le ici. Chaque signature demandée par un site exigera
+            votre mot de passe et une confirmation de Windows.
+          </p>
+          <label for="wc-uri" data-i18n="wc.uriLabel">Lien de connexion</label>
+          <input id="wc-uri" type="text" placeholder="wc:…" autocomplete="off" spellcheck="false" />
+          <div class="row-buttons">
+            <button id="wc-pair-btn" class="primary" data-i18n="wc.pair">Se connecter</button>
+          </div>
+          <p id="wc-status" class="muted"></p>
+          <p id="wc-error" class="error hidden"></p>
+          <h2 class="section-title" data-i18n="wc.sessions">Sites connectés</h2>
+          <div id="wc-sessions" class="recipient-list"></div>
+        </div>
+      </section>
+
       <section class="tab-panel hidden" data-panel="settings">
         <div class="card wide">
           <h1 data-i18n="nav.settings">Paramètres</h1>
@@ -900,6 +921,47 @@
         <div class="row-buttons">
           <button id="delete-profile-confirm" class="primary" data-i18n="deleteProfile.confirm">Supprimer quand même</button>
           <button id="delete-profile-cancel" class="link" data-i18n="common.cancel">Annuler</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- WalletConnect : demande de connexion d'une application -->
+    <div id="wc-proposal-modal" class="modal-overlay hidden">
+      <div class="modal">
+        <h2 data-i18n="wc.proposalTitle">Demande de connexion</h2>
+        <p id="wc-proposal-peer" class="recipient-label"></p>
+        <p id="wc-proposal-url" class="address"></p>
+        <p class="muted" data-i18n="wc.unverified">
+          Nom et adresse déclarés par le site lui-même : rien n'est vérifié. Ne connectez que des sites
+          ouverts depuis leur vraie adresse.
+        </p>
+        <p id="wc-proposal-chains" class="muted"></p>
+        <p id="wc-proposal-incompatible" class="error hidden"></p>
+        <label for="wc-proposal-profile" data-i18n="wc.profile">Profil à connecter</label>
+        <select id="wc-proposal-profile"></select>
+        <p id="wc-proposal-error" class="error hidden"></p>
+        <div class="row-buttons">
+          <button id="wc-proposal-approve" class="primary" data-i18n="wc.approve">Connecter</button>
+          <button id="wc-proposal-reject" class="link" data-i18n="wc.reject">Refuser</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- WalletConnect : demande de signature -->
+    <div id="wc-request-modal" class="modal-overlay hidden">
+      <div class="modal wide-modal">
+        <h2 data-i18n="wc.requestTitle">Demande de signature</h2>
+        <p id="wc-request-loading" class="muted" data-i18n="wc.analyzing">Analyse de la demande…</p>
+        <pre id="wc-request-text" class="wc-request-text hidden"></pre>
+        <p id="wc-request-danger" class="error hidden" data-i18n="wc.danger">
+          Cette demande comporte un avertissement grave : lisez-la entièrement avant de décider.
+        </p>
+        <label for="wc-request-password" data-i18n="deleteProfile.passwordLabel">Mot de passe de l'appareil</label>
+        <input id="wc-request-password" type="password" />
+        <p id="wc-request-error" class="error hidden"></p>
+        <div class="row-buttons">
+          <button id="wc-request-approve" class="primary" data-i18n="wc.sign">Signer</button>
+          <button id="wc-request-reject" class="link" data-i18n="wc.reject">Refuser</button>
         </div>
       </div>
     </div>

@@ -5,11 +5,11 @@
 //! confirmations/erreurs le sont.
 
 use base64::Engine;
-use pgp_wallet_poc::{address_book, api, external_wallets, history, messaging, price_rpc, sent_recipients, wallet_flow};
+use pgp_wallet_poc::{address_book, api, dapp_requests, external_wallets, history, messaging, price_rpc, sent_recipients, wallet_flow};
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_opener::OpenerExt;
 use zeroize::Zeroizing;
@@ -110,6 +110,41 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ),
     ("Réinitialisation annulée (confirmation refusée).", "Reset cancelled (confirmation refused)."),
     ("Échange annulé (confirmation refusée).", "Swap cancelled (confirmation refused)."),
+    // WalletConnect (core/src/walletconnect/, core/src/dapp_requests.rs, lib.rs)
+    ("lien WalletConnect invalide : il doit commencer par « wc: »", "invalid WalletConnect link: it must start with \"wc:\""),
+    ("lien WalletConnect incomplet (paramètres absents)", "incomplete WalletConnect link (missing parameters)"),
+    ("lien WalletConnect incomplet (version absente)", "incomplete WalletConnect link (missing version)"),
+    ("lien WalletConnect invalide (identifiant de canal)", "invalid WalletConnect link (channel identifier)"),
+    ("lien WalletConnect incomplet (clé absente)", "incomplete WalletConnect link (missing key)"),
+    ("lien WalletConnect invalide (clé)", "invalid WalletConnect link (key)"),
+    ("lien WalletConnect : protocole de relais non pris en charge", "WalletConnect link: unsupported relay protocol"),
+    ("ce lien WalletConnect a expiré : demandez-en un nouveau à la dApp", "this WalletConnect link has expired: ask the dApp for a new one"),
+    ("ce lien WalletConnect a déjà été utilisé : demandez-en un nouveau à la dApp", "this WalletConnect link was already used: ask the dApp for a new one"),
+    (
+        "WalletConnect n'est pas encore configuré : le Project ID (dashboard.reown.com) n'a pas été renseigné",
+        "WalletConnect is not configured yet: the Project ID (dashboard.reown.com) has not been set",
+    ),
+    ("proposition de connexion introuvable ou expirée", "connection proposal not found or expired"),
+    ("demande introuvable ou expirée", "request not found or expired"),
+    ("connexion introuvable", "connection not found"),
+    ("WalletConnect indisponible (démarrage impossible)", "WalletConnect unavailable (failed to start)"),
+    (
+        "adresses du profil inconnues : déverrouillez le portefeuille avec le mot de passe",
+        "profile addresses unknown: unlock the wallet with the password",
+    ),
+    (
+        "la dApp demande la signature d'un AUTRE compte que celui connecté — refusé",
+        "the dApp asks for a signature from ANOTHER account than the connected one — refused",
+    ),
+    (
+        "la dApp demande l'envoi depuis un AUTRE compte que celui connecté — refusé",
+        "the dApp asks to send from ANOTHER account than the connected one — refused",
+    ),
+    ("création de contrat (pas de destinataire) non prise en charge — refusé", "contract creation (no recipient) not supported — refused"),
+    ("ce « message » est en réalité une TRANSACTION Solana déguisée — refusé", "this \"message\" is actually a disguised Solana TRANSACTION — refused"),
+    ("transaction à plusieurs signataires : non prise en charge — refusée", "multi-signer transaction: not supported — refused"),
+    ("la transaction n'est pas payée par le compte connecté — refusée", "the transaction is not paid by the connected account — refused"),
+    ("le compte de la session ne correspond pas au profil — signature refusée", "the session account does not match the profile — signature refused"),
     // core/src/messaging.rs
     ("clé publique PGP invalide", "invalid PGP public key"),
     ("au moins un destinataire est requis", "at least one recipient is required"),
@@ -647,7 +682,9 @@ fn reset_wallet(app: tauri::AppHandle) -> Result<(), String> {
     if !confirm_reset_native(&app) {
         return Err(translate_error("Réinitialisation annulée (confirmation refusée)."));
     }
-    api::reset_wallet(&dir).t_err()
+    api::reset_wallet(&dir).t_err()?;
+    forget_wallet_connections(&app);
+    Ok(())
 }
 
 #[tauri::command]
@@ -655,6 +692,7 @@ fn create_wallet(password: String, app: tauri::AppHandle) -> Result<CreateWallet
     let password = Zeroizing::new(password);
     let dir = data_dir(&app)?;
     let result = api::create_wallet(&dir, &password).t_err()?;
+    remember_addresses(&app, 0, &result.addresses.evm, &result.addresses.solana);
 
     let backups = result.backups.into_iter().map(Into::into).collect();
 
@@ -726,9 +764,17 @@ fn get_thor_fee_address(password: String, app: tauri::AppHandle) -> Result<Strin
 fn unlock_wallet(password: String, app: tauri::AppHandle) -> Result<Vec<ProfileDto>, String> {
     let password = Zeroizing::new(password);
     let dir = data_dir(&app)?;
-    api::unlock_wallet(&dir, &password)
-        .map(|profiles| profiles.into_iter().map(Into::into).collect())
-        .t_err()
+    let profiles = api::unlock_wallet(&dir, &password).t_err()?;
+    remember_profiles(&app, &profiles);
+    Ok(profiles.into_iter().map(Into::into).collect())
+}
+
+fn remember_profiles(app: &tauri::AppHandle, profiles: &[api::ProfileAddresses]) {
+    for p in profiles {
+        if let Some(a) = &p.addresses {
+            remember_addresses(app, p.profile.index, &a.evm, &a.solana);
+        }
+    }
 }
 
 /// Heuristique d'affichage uniquement (ne fait pas partie de la barrière de
@@ -791,9 +837,9 @@ fn enroll_biometric_unlock(password: String, app: tauri::AppHandle) -> Result<()
 #[tauri::command]
 fn unlock_wallet_biometric(app: tauri::AppHandle) -> Result<Vec<ProfileDto>, String> {
     let dir = data_dir(&app)?;
-    api::unlock_wallet_biometric(&dir)
-        .map(|profiles| profiles.into_iter().map(Into::into).collect())
-        .t_err()
+    let profiles = api::unlock_wallet_biometric(&dir).t_err()?;
+    remember_profiles(&app, &profiles);
+    Ok(profiles.into_iter().map(Into::into).collect())
 }
 
 fn confirm_disable_biometric_native(app: &tauri::AppHandle) -> bool {
@@ -828,9 +874,9 @@ fn disable_biometric_unlock(password: String, app: tauri::AppHandle) -> Result<(
 fn create_profile(password: Option<String>, label: String, app: tauri::AppHandle) -> Result<ProfileDto, String> {
     let password = password.map(Zeroizing::new);
     let dir = data_dir(&app)?;
-    api::create_profile(&dir, password.as_ref().map(|p| p.as_str()), &label)
-        .map(Into::into)
-        .t_err()
+    let profile = api::create_profile(&dir, password.as_ref().map(|p| p.as_str()), &label).t_err()?;
+    remember_profiles(&app, std::slice::from_ref(&profile));
+    Ok(profile.into())
 }
 
 /// Retire un profil de la liste (voir `api::delete_profile`) : redemande le mot de
@@ -925,14 +971,27 @@ fn restore_wallet(
     // Une restauration ne recrée toujours qu'un seul profil par défaut (voir
     // `api::restore_wallet`) : les éventuelles étiquettes de profils supplémentaires
     // créées sur l'ancien appareil ne font pas partie de la sauvegarde Shamir.
-    api::restore_wallet(
+    let addresses = api::restore_wallet(
         &dir,
         &new_password,
         (&share1, &priv1, &passphrase1),
         (&share2, &priv2, &passphrase2),
     )
-    .map(Into::into)
-    .t_err()
+    .t_err()?;
+    // Nouveau portefeuille : les connexions et adresses de l'ancien ne valent plus.
+    forget_wallet_connections(&app);
+    remember_addresses(&app, 0, &addresses.evm, &addresses.solana);
+    Ok(addresses.into())
+}
+
+/// Réinitialisation/restauration : les dApps connectées l'étaient à l'ANCIEN
+/// portefeuille — déconnectées, et adresses mémorisées oubliées.
+fn forget_wallet_connections(app: &tauri::AppHandle) {
+    if let Ok(client) = wc_client(app) {
+        client.disconnect_all();
+    }
+    app.state::<WcState>().prepared.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    app.state::<ProfileAddressCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
 }
 
 fn evm_network(network: &str) -> Result<&'static wallet_flow::EvmNetwork, String> {
@@ -2078,6 +2137,426 @@ fn remove_address_book_entry(id: u32, app: tauri::AppHandle) -> Result<(), Strin
     address_book::remove_entry(&dir, id).t_err()
 }
 
+// --- WalletConnect (dApps) -----------------------------------------------------
+// Voir core/src/walletconnect/ (protocole) et core/src/dapp_requests.rs
+// (préparation des demandes). Ici : état de l'app, commandes, et les boîtes de
+// confirmation NATIVES — dont le texte est construit uniquement à partir de la
+// demande préparée côté Rust, jamais d'une donnée renvoyée par le frontend.
+
+/// Adresses PUBLIQUES des profils, mémorisées au déverrouillage : connecter une
+/// dApp ne demande pas le mot de passe (aucune signature), seulement de savoir
+/// quelles adresses lui présenter. Vidé à la réinitialisation.
+#[derive(Default)]
+struct ProfileAddressCache(std::sync::Mutex<std::collections::HashMap<u32, (String, String)>>);
+
+#[derive(Default)]
+struct WcState {
+    client: std::sync::OnceLock<std::sync::Arc<pgp_wallet_poc::walletconnect::WalletConnect>>,
+    /// Demandes préparées (ce qui sera signé ET affiché), par identifiant.
+    prepared: std::sync::Mutex<std::collections::HashMap<u64, dapp_requests::Prepared>>,
+}
+
+fn remember_addresses(app: &tauri::AppHandle, index: u32, evm: &str, solana: &str) {
+    if let Some(cache) = app.try_state::<ProfileAddressCache>() {
+        cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, (evm.to_string(), solana.to_string()));
+    }
+}
+
+fn wc_client(app: &tauri::AppHandle) -> Result<std::sync::Arc<pgp_wallet_poc::walletconnect::WalletConnect>, String> {
+    app.state::<WcState>()
+        .client
+        .get()
+        .cloned()
+        .ok_or_else(|| translate_error("WalletConnect indisponible (démarrage impossible)"))
+}
+
+fn caip2_label(chain: &str) -> &'static str {
+    match chain {
+        dapp_requests::EVM_MAINNET => lang("Ethereum MAINNET — fonds réels", "Ethereum MAINNET — real funds"),
+        dapp_requests::EVM_SEPOLIA => "Ethereum Sepolia (testnet)",
+        dapp_requests::SOLANA_MAINNET => lang("Solana MAINNET — fonds réels", "Solana MAINNET — real funds"),
+        dapp_requests::SOLANA_DEVNET => "Solana devnet",
+        _ => lang("réseau inconnu", "unknown network"),
+    }
+}
+
+/// Montant entier (plus petite unité) mis en forme avec `decimals` décimales.
+fn format_units(integer: &str, decimals: Option<u8>) -> String {
+    let Some(decimals) = decimals.map(usize::from) else {
+        return format!("{integer} {}", lang("(unités brutes, décimales inconnues)", "(raw units, unknown decimals)"));
+    };
+    let (negative, digits) = integer.strip_prefix('-').map_or((false, integer), |d| (true, d));
+    let padded = format!("{digits:0>width$}", width = decimals + 1);
+    let (whole, frac) = padded.split_at(padded.len() - decimals);
+    let frac = frac.trim_end_matches('0');
+    let sign = if negative { "-" } else { "" };
+    if frac.is_empty() { format!("{sign}{whole}") } else { format!("{sign}{whole}.{frac}") }
+}
+
+/// Texte libre venu d'une dApp (message à signer, champs EIP-712) montré dans
+/// une boîte native : chaque ligne nettoyée (voir `dialog_label`, sans
+/// troncature à 40), préfixée d'une barre verticale qui la distingue des
+/// lignes de l'app — impossible d'y imiter "Réseau :" ou "Montant :" — et
+/// nombre de lignes borné pour que les boutons restent visibles.
+fn quoted_block(lines: impl IntoIterator<Item = String>, max_lines: usize) -> String {
+    const MAX_CHARS: usize = 90;
+    let all: Vec<String> = lines
+        .into_iter()
+        .map(|l| {
+            let clean: String = l.chars().map(|c| if is_dialog_hazard(c) { ' ' } else { c }).collect();
+            if clean.chars().count() > MAX_CHARS { format!("{}…", clean.chars().take(MAX_CHARS).collect::<String>()) } else { clean }
+        })
+        .collect();
+    let mut out: Vec<String> = all.iter().take(max_lines).map(|l| format!("  │ {l}")).collect();
+    if all.len() > max_lines {
+        out.push(format!("  │ … ({} {})", all.len() - max_lines, lang("ligne(s) de plus", "more line(s)")));
+    }
+    out.join("\n")
+}
+
+fn host_of(url: &str) -> String {
+    tauri::Url::parse(url).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default()
+}
+
+/// Texte de la demande préparée — le même dans la modale de l'app et dans la
+/// boîte native (seule cette dernière fait foi). `danger` : au moins un
+/// avertissement grave (autorisation illimitée, appel non décodé…).
+fn describe_prepared(prepared: &dapp_requests::Prepared, peer: &pgp_wallet_poc::walletconnect::engine::PeerMetadata, from_label: &str, account: &str) -> (String, bool) {
+    use dapp_requests::{Prepared, TypedRisk};
+    use pgp_wallet_poc::evm_sign::CallKind;
+    let en = UI_LANG_IS_ENGLISH.load(Ordering::Relaxed);
+    let mut danger = false;
+    let mut lines: Vec<String> = Vec::new();
+    let site = dialog_label(&peer.name);
+    let url = dialog_label(&peer.url);
+    lines.push(if en {
+        format!("Request from \"{site}\"\nSite (self-declared, NOT verified): {url}")
+    } else {
+        format!("Demande de « {site} »\nSite (déclaré par la dApp, NON vérifié) : {url}")
+    });
+    let network = match prepared {
+        Prepared::EvmPersonalSign { network, .. } | Prepared::EvmTypedData { network, .. } | Prepared::EvmTransaction { network, .. } => {
+            if network.chain_id == 1 { dapp_requests::EVM_MAINNET } else { dapp_requests::EVM_SEPOLIA }
+        }
+        Prepared::SolanaMessage { network, .. } | Prepared::SolanaTransaction { network, .. } => {
+            if network.rpc == wallet_flow::SOLANA_MAINNET.rpc { dapp_requests::SOLANA_MAINNET } else { dapp_requests::SOLANA_DEVNET }
+        }
+    };
+    let from_label = dialog_label(from_label);
+    lines.push(if en {
+        format!("Network: {}\nAccount: {account} (profile \"{from_label}\")", caip2_label(network))
+    } else {
+        format!("Réseau : {}\nCompte : {account} (profil « {from_label} »)", caip2_label(network))
+    });
+
+    let message_block = |view: &dapp_requests::MessageView| -> String {
+        match &view.text {
+            Some(text) => quoted_block(text.lines().map(str::to_string), 12),
+            None => quoted_block(view.hex.as_bytes().chunks(64).map(|c| String::from_utf8_lossy(c).into_owned()), 6),
+        }
+    };
+    match prepared {
+        Prepared::EvmPersonalSign { view, .. } | Prepared::SolanaMessage { view, .. } => {
+            lines.push(lang(
+                "Signature d'un MESSAGE (aucun fonds ne bouge directement) :",
+                "Signing a MESSAGE (no funds move directly):",
+            ).to_string());
+            lines.push(message_block(view));
+            if view.looks_like_hash {
+                danger = true;
+                lines.push(lang(
+                    "⚠ Ce message a la forme d'une empreinte (hash) : le signer peut revenir à signer À L'AVEUGLE une transaction ou un ordre. Refusez si vous n'êtes pas certain de ce que c'est.",
+                    "⚠ This message looks like a hash: signing it can amount to BLINDLY signing a transaction or an order. Reject unless you are certain what it is.",
+                ).to_string());
+            }
+            if let Some(domain) = &view.siwe_domain {
+                let host = host_of(&peer.url);
+                if !host.is_empty() && !domain.eq_ignore_ascii_case(&host) {
+                    danger = true;
+                    let domain = dialog_label(domain);
+                    lines.push(if en {
+                        format!("⚠ The message says \"sign in to {domain}\" but the request comes from {host}: likely a phishing attempt.")
+                    } else {
+                        format!("⚠ Le message annonce « connexion à {domain} » mais la demande vient de {host} : tentative d'hameçonnage probable.")
+                    });
+                }
+            }
+        }
+        Prepared::EvmTypedData { view, .. } => {
+            let primary = dialog_label(&view.primary_type);
+            let contract = view.verifying_contract.as_deref().map(dialog_label).unwrap_or_else(|| "—".into());
+            let app = view.domain_name.as_deref().map(dialog_label).unwrap_or_else(|| "—".into());
+            lines.push(if en {
+                format!("Signing STRUCTURED DATA (EIP-712) \"{primary}\"\nApplication: {app}\nContract: {contract}")
+            } else {
+                format!("Signature de DONNÉES STRUCTURÉES (EIP-712) « {primary} »\nApplication : {app}\nContrat : {contract}")
+            });
+            match &view.risk {
+                TypedRisk::Permit { spender, amount, unlimited } => {
+                    danger = true;
+                    let spender = spender.as_deref().map(dialog_label).unwrap_or_else(|| "?".into());
+                    let amount = if *unlimited {
+                        lang("un montant ILLIMITÉ", "an UNLIMITED amount").to_string()
+                    } else {
+                        amount.clone().map(|a| format!("{a} {}", lang("unité(s) brute(s)", "raw unit(s)"))).unwrap_or_else(|| "?".into())
+                    };
+                    lines.push(if en {
+                        format!("⚠ SPENDING PERMISSION: this signature lets {spender} spend {amount} of your tokens (contract {contract}) WITHOUT any further confirmation from you. This is the #1 way wallets get drained.")
+                    } else {
+                        format!("⚠ AUTORISATION DE DÉPENSE : cette signature permet à {spender} de dépenser {amount} de vos jetons (contrat {contract}) SANS autre confirmation de votre part. C'est la première méthode de vol des portefeuilles.")
+                    });
+                }
+                TypedRisk::Order => {
+                    danger = true;
+                    lines.push(lang(
+                        "⚠ ORDRE DE PLACE DE MARCHÉ : cette signature peut céder vos NFT ou jetons au prix indiqué, à quiconque l'exécutera.",
+                        "⚠ MARKETPLACE ORDER: this signature can hand over your NFTs or tokens at the stated price to whoever executes it.",
+                    ).to_string());
+                }
+                TypedRisk::None => lines.push(lang(
+                    "Ne signez que si vous comprenez ce que ces données autorisent.",
+                    "Only sign if you understand what this data authorizes.",
+                ).to_string()),
+            }
+            let mut field_lines: Vec<String> = view.fields.iter().map(|(p, v)| format!("{p} : {v}")).collect();
+            if view.hidden_fields > 0 {
+                field_lines.push(format!("… ({} {})", view.hidden_fields, lang("champ(s) non affiché(s)", "field(s) not shown")));
+            }
+            lines.push(quoted_block(field_lines, 12));
+        }
+        Prepared::EvmTransaction { to, value, gas_limit, gas_price, call, to_is_contract, token, data, .. } => {
+            let to = pgp_wallet_poc::derivation::format_address(to);
+            let kind = if *to_is_contract { lang("contrat", "contract") } else { lang("adresse ordinaire", "regular address") };
+            let symbol = token.as_ref().and_then(|t| t.symbol.as_deref()).map(dialog_label).unwrap_or_else(|| lang("jetons", "tokens").to_string());
+            let decimals = token.as_ref().and_then(|t| t.decimals);
+            let tokens = |amount: &pgp_wallet_poc::evm_sign::U256| format!("{} {symbol}", format_units(&amount.to_decimal(), decimals));
+            lines.push(if en {
+                format!("TRANSACTION to {to} ({kind})\nETH sent: {}", format_units(&value.to_string(), Some(18)))
+            } else {
+                format!("TRANSACTION vers {to} ({kind})\nETH envoyé : {}", format_units(&value.to_string(), Some(18)))
+            });
+            let addr = |a: &[u8; 20]| pgp_wallet_poc::derivation::format_address(a);
+            lines.push(match call {
+                CallKind::PlainTransfer => lang("Simple envoi d'ETH.", "Plain ETH transfer.").to_string(),
+                CallKind::TokenTransfer { to, amount } => {
+                    if en { format!("Token transfer: {} to {}", tokens(amount), addr(to)) } else { format!("Envoi de jetons : {} vers {}", tokens(amount), addr(to)) }
+                }
+                CallKind::TokenTransferFrom { from, to, amount } => {
+                    if en {
+                        format!("Transfer through an allowance: {} from {} to {}", tokens(amount), addr(from), addr(to))
+                    } else {
+                        format!("Transfert via une autorisation : {} de {} vers {}", tokens(amount), addr(from), addr(to))
+                    }
+                }
+                CallKind::TokenApprove { spender, amount } | CallKind::IncreaseAllowance { spender, amount } => {
+                    danger = true;
+                    if amount.is_practically_unlimited() {
+                        if en {
+                            format!("⚠ UNLIMITED PERMISSION: {} will be able to spend ALL your {symbol}, now and in the future, without any further confirmation.", addr(spender))
+                        } else {
+                            format!("⚠ AUTORISATION ILLIMITÉE : {} pourra dépenser TOUS vos {symbol}, maintenant et à l'avenir, sans autre confirmation.", addr(spender))
+                        }
+                    } else if en {
+                        format!("⚠ Spending permission: {} will be able to spend up to {} without any further confirmation.", addr(spender), tokens(amount))
+                    } else {
+                        format!("⚠ Autorisation de dépense : {} pourra dépenser jusqu'à {} sans autre confirmation.", addr(spender), tokens(amount))
+                    }
+                }
+                CallKind::SetApprovalForAll { operator, approved: true } => {
+                    danger = true;
+                    if en {
+                        format!("⚠ CONTROL OF THE WHOLE COLLECTION: {} will be able to transfer ALL your NFTs from this contract.", addr(operator))
+                    } else {
+                        format!("⚠ CONTRÔLE DE TOUTE LA COLLECTION : {} pourra transférer TOUS vos NFT de ce contrat.", addr(operator))
+                    }
+                }
+                CallKind::SetApprovalForAll { approved: false, .. } => {
+                    lang("Retrait d'une autorisation sur une collection (sans risque).", "Revoking a collection permission (safe).").to_string()
+                }
+                CallKind::Unknown { selector } => {
+                    danger = true;
+                    if en {
+                        format!("⚠ UNDECODED CONTRACT CALL (function 0x{}): there is no way to know what this transaction does. Only confirm if you fully trust this site.", selector.iter().map(|b| format!("{b:02x}")).collect::<String>())
+                    } else {
+                        format!("⚠ APPEL DE CONTRAT NON DÉCODÉ (fonction 0x{}) : impossible de savoir ce que fait cette transaction. Ne confirmez que si vous faites entièrement confiance à ce site.", selector.iter().map(|b| format!("{b:02x}")).collect::<String>())
+                    }
+                }
+            });
+            if !data.is_empty() && !to_is_contract {
+                danger = true;
+                lines.push(lang(
+                    "⚠ Des données sont jointes, mais le destinataire n'est pas un contrat.",
+                    "⚠ Data is attached, but the recipient is not a contract.",
+                ).to_string());
+            }
+            lines.push(evm_fee_line(*gas_price, *gas_limit));
+        }
+        Prepared::SolanaTransaction { send, effects, .. } => {
+            lines.push(if *send {
+                lang("TRANSACTION Solana — signée ET envoyée par ce portefeuille.", "Solana TRANSACTION — signed AND sent by this wallet.")
+            } else {
+                lang("TRANSACTION Solana — signée ici, envoyée ensuite par la dApp.", "Solana TRANSACTION — signed here, then sent by the dApp.")
+            }.to_string());
+            lines.push(lang("Effets simulés sur vos comptes :", "Simulated effects on your accounts:").to_string());
+            let effect_lines: Vec<String> = effects
+                .iter()
+                .map(|e| {
+                    let name = e.label.map(str::to_string).unwrap_or_else(|| format!("{} {}", lang("jeton", "token"), e.asset));
+                    let amount = format_units(&e.delta.to_string(), e.decimals);
+                    let amount = if e.delta > 0 { format!("+{amount}") } else { amount };
+                    format!("{name} : {amount}")
+                })
+                .collect();
+            lines.push(quoted_block(effect_lines, 10));
+            lines.push(lang(
+                "Simulation : l'effet réel peut différer si l'état du réseau change d'ici l'exécution.",
+                "Simulation: the actual effect may differ if the network state changes before execution.",
+            ).to_string());
+        }
+    }
+    (lines.join("\n\n"), danger)
+}
+
+fn confirm_dapp_request_native(app: &tauri::AppHandle, text: &str, danger: bool) -> bool {
+    let footer = lang("Confirmer ? C'est irréversible.", "Confirm? This is irreversible.");
+    app.dialog()
+        .message(format!("{text}\n\n{footer}"))
+        .title(lang("Demande d'une application (WalletConnect)", "Application request (WalletConnect)"))
+        .kind(if danger { MessageDialogKind::Warning } else { MessageDialogKind::Info })
+        .buttons(MessageDialogButtons::OkCancel)
+        .blocking_show()
+}
+
+#[tauri::command]
+fn wc_pair(uri: String, app: tauri::AppHandle) -> Result<(), String> {
+    wc_client(&app)?.pair(&uri).t_err()
+}
+
+#[tauri::command]
+fn wc_sessions(app: tauri::AppHandle) -> Result<Vec<pgp_wallet_poc::walletconnect::SessionView>, String> {
+    Ok(wc_client(&app)?.sessions())
+}
+
+#[tauri::command]
+fn wc_disconnect(topic: String, app: tauri::AppHandle) -> Result<(), String> {
+    wc_client(&app)?.disconnect(&topic).t_err()
+}
+
+/// Connexion d'une dApp : aucune signature, mais la dApp verra les adresses du
+/// profil et pourra ensuite DEMANDER des signatures — d'où une boîte native.
+#[tauri::command]
+fn wc_approve_session(proposal_id: u64, profile_index: u32, app: tauri::AppHandle) -> Result<bool, String> {
+    let client = wc_client(&app)?;
+    let peer = client.proposal_peer(proposal_id).t_err()?;
+    let (evm, solana) = app
+        .state::<ProfileAddressCache>()
+        .0
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .get(&profile_index)
+        .cloned()
+        .ok_or_else(|| translate_error("adresses du profil inconnues : déverrouillez le portefeuille avec le mot de passe"))?;
+    let dir = data_dir(&app)?;
+    let label = api::list_profiles(&dir).into_iter().find(|p| p.index == profile_index).map(|p| p.label).unwrap_or_else(|| format!("#{profile_index}"));
+    let (site, url, label) = (dialog_label(&peer.name), dialog_label(&peer.url), dialog_label(&label));
+    let message = if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
+        format!(
+            "Connect \"{site}\" to your wallet?\nSite (self-declared, NOT verified): {url}\n\nProfile \"{label}\" — the site will see these addresses:\n{evm}\n{solana}\n\nIt will then be able to REQUEST signatures: each one will require your password and a confirmation like this one. Only connect sites you trust, reached through their real address."
+        )
+    } else {
+        format!(
+            "Connecter « {site} » à votre portefeuille ?\nSite (déclaré par la dApp, NON vérifié) : {url}\n\nProfil « {label} » — le site verra ces adresses :\n{evm}\n{solana}\n\nIl pourra ensuite DEMANDER des signatures : chacune exigera votre mot de passe et une confirmation comme celle-ci. Ne connectez que des sites de confiance, ouverts depuis leur vraie adresse."
+        )
+    };
+    let confirmed = app
+        .dialog()
+        .message(message)
+        .title(lang("Connexion d'une application (WalletConnect)", "Application connection (WalletConnect)"))
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancel)
+        .blocking_show();
+    if !confirmed {
+        let _ = client.reject(proposal_id);
+        return Ok(false);
+    }
+    client.approve(proposal_id, profile_index, &dapp_requests::Account { evm, solana }).t_err()?;
+    Ok(true)
+}
+
+#[tauri::command]
+fn wc_reject_session(proposal_id: u64, app: tauri::AppHandle) -> Result<(), String> {
+    wc_client(&app)?.reject(proposal_id).t_err()
+}
+
+#[derive(Serialize)]
+struct PreparedRequestDto {
+    text: String,
+    danger: bool,
+}
+
+/// Analyse une demande reçue (exécution à blanc, simulation, décodage) et
+/// renvoie son texte pour la modale de l'app. Une demande invalide ou
+/// dangereuse par construction est refusée ici et la dApp en est informée.
+#[tauri::command]
+fn wc_prepare_request(request_id: u64, app: tauri::AppHandle) -> Result<PreparedRequestDto, String> {
+    let client = wc_client(&app)?;
+    let request = client.pending_request(request_id).ok_or_else(|| translate_error("demande introuvable ou expirée"))?;
+    let session = client.session(&request.topic).ok_or_else(|| translate_error("connexion introuvable"))?;
+    let prepared = match dapp_requests::prepare(&request.method, &request.params, &request.chain, &session.account()) {
+        Ok(p) => p,
+        Err(e) => {
+            let message = format!("{e:#}");
+            let _ = client.respond(request_id, Err((5000, message.clone())));
+            return Err(translate_error(&message));
+        }
+    };
+    let dir = data_dir(&app)?;
+    let label = api::list_profiles(&dir).into_iter().find(|p| p.index == session.profile_index).map(|p| p.label).unwrap_or_default();
+    let account = if request.chain.starts_with("solana:") { session.solana_address.clone() } else { session.evm_address.clone() };
+    let (text, danger) = describe_prepared(&prepared, &session.peer, &label, &account);
+    app.state::<WcState>().prepared.lock().unwrap_or_else(|p| p.into_inner()).insert(request_id, prepared);
+    Ok(PreparedRequestDto { text, danger })
+}
+
+/// Signe une demande préparée, après mot de passe ET boîte native. Refus dans
+/// la boîte = refus transmis à la dApp. Échec de signature (mauvais mot de
+/// passe…) : la demande reste en attente, l'utilisateur peut réessayer.
+#[tauri::command]
+fn wc_approve_request(request_id: u64, password: String, app: tauri::AppHandle) -> Result<bool, String> {
+    let password = Zeroizing::new(password);
+    let client = wc_client(&app)?;
+    let state = app.state::<WcState>();
+    let prepared = state
+        .prepared
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .remove(&request_id)
+        .ok_or_else(|| translate_error("demande introuvable ou expirée"))?;
+    let request = client.pending_request(request_id).ok_or_else(|| translate_error("demande introuvable ou expirée"))?;
+    let session = client.session(&request.topic).ok_or_else(|| translate_error("connexion introuvable"))?;
+    let dir = data_dir(&app)?;
+    let label = api::list_profiles(&dir).into_iter().find(|p| p.index == session.profile_index).map(|p| p.label).unwrap_or_default();
+    let account = if request.chain.starts_with("solana:") { session.solana_address.clone() } else { session.evm_address.clone() };
+    let (text, danger) = describe_prepared(&prepared, &session.peer, &label, &account);
+    if !confirm_dapp_request_native(&app, &text, danger) {
+        let _ = client.respond(request_id, Err((5000, "User rejected.".to_string())));
+        return Ok(false);
+    }
+    match api::sign_dapp_request(&dir, &password, session.profile_index, &session.account(), &prepared) {
+        Ok(result) => client.respond(request_id, Ok(result)).t_err().map(|_| true),
+        Err(e) => {
+            state.prepared.lock().unwrap_or_else(|p| p.into_inner()).insert(request_id, prepared);
+            Err(translate_error(&e.to_string()))
+        }
+    }
+}
+
+#[tauri::command]
+fn wc_reject_request(request_id: u64, app: tauri::AppHandle) -> Result<(), String> {
+    app.state::<WcState>().prepared.lock().unwrap_or_else(|p| p.into_inner()).remove(&request_id);
+    wc_client(&app)?.respond(request_id, Err((5000, "User rejected.".to_string()))).t_err()
+}
+
 /// `true` uniquement pour les pages de l'app elle-même : `tauri://localhost`
 /// (macOS/Linux) ou `http(s)://tauri.localhost` (Windows/WebView2). Trouvé lors
 /// de l'audit "failles connues des hot wallets" : rien n'empêchait la fenêtre
@@ -2125,10 +2604,25 @@ pub fn run() {
         )
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .manage(ProfileAddressCache::default())
+        .manage(WcState::default())
         .setup(|app| {
             if let Ok(dir) = app.path().app_data_dir() {
                 let _ = std::fs::create_dir_all(&dir);
-                install_panic_hook(dir);
+                install_panic_hook(dir.clone());
+                // Événements WalletConnect (proposition, demande, état du relais)
+                // relayés au frontend ; le contenu des demandes, lui, n'est
+                // jamais relu depuis le frontend (voir `wc_prepare_request`).
+                let handle = app.handle().clone();
+                let sink: pgp_wallet_poc::walletconnect::EventSink = std::sync::Arc::new(move |event| {
+                    let _ = handle.emit("wc-event", &event);
+                });
+                match pgp_wallet_poc::walletconnect::WalletConnect::start(&dir, sink) {
+                    Ok(client) => {
+                        let _ = app.state::<WcState>().client.set(std::sync::Arc::new(client));
+                    }
+                    Err(e) => eprintln!("WalletConnect indisponible : {e:#}"),
+                }
             }
             Ok(())
         })
@@ -2185,6 +2679,14 @@ pub fn run() {
             list_address_book,
             add_address_book_entry,
             remove_address_book_entry,
+            wc_pair,
+            wc_sessions,
+            wc_disconnect,
+            wc_approve_session,
+            wc_reject_session,
+            wc_prepare_request,
+            wc_approve_request,
+            wc_reject_request,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
