@@ -696,6 +696,28 @@ pub fn restore_wallet(
     backup_1: (&[u8], &[u8], &str),
     backup_2: (&[u8], &[u8], &str),
 ) -> Result<Addresses> {
+    restore_wallet_with(data_dir, new_device_password, backup_1, backup_2, &WindowsHelloSealer)
+}
+
+/// `sealer` injectable pour les tests, même raison que `reset_wallet_with` :
+/// trouvé dans le même audit, la même classe de bug existait ici. `restore_
+/// wallet` remplace l'identité "device" de l'appareil (contrairement à
+/// `create_wallet`, il n'exige même pas l'absence d'un coffre existant — voir
+/// sa propre doc, c'est le scénario "appareil d'origine perdu") SANS jamais
+/// invalider un enrôlement biométrique préexistant, qui référence l'ANCIENNE
+/// identité "device" : `device_vault.asc` (nouveau) n'est chiffré que pour la
+/// nouvelle identité, jamais pour l'ancienne "device_biometric", donc un
+/// déverrouillage biométrique après restauration échouerait proprement, mais
+/// resterait affiché comme activé (`biometric_unlock_enrolled` ne vérifie que
+/// l'existence des fichiers) et laisserait la clé TPM de l'ancien appareil
+/// orpheline indéfiniment.
+fn restore_wallet_with(
+    data_dir: &Path,
+    new_device_password: &str,
+    backup_1: (&[u8], &[u8], &str),
+    backup_2: (&[u8], &[u8], &str),
+    sealer: &dyn SecretSealer,
+) -> Result<Addresses> {
     std::fs::create_dir_all(data_dir)?;
 
     // Chaque part déchiffrée est aussi sensible qu'une clé maîtresse partielle
@@ -730,6 +752,21 @@ pub fn restore_wallet(
     write_device_privkey(data_dir, &device_priv)?;
     let vault = encrypt_with_armored_pubkey(&recovered, &data_dir.join("tmp_device_pub.asc"), &device_pub)?;
     std::fs::write(data_dir.join(DEVICE_VAULT_FILE), &vault)?;
+
+    // Un enrôlement biométrique éventuel référençait l'ANCIENNE identité
+    // "device" : plus jamais valide une fois `device_vault.asc` remplacé
+    // ci-dessus (voir la doc de cette fonction) — best-effort, comme le
+    // nettoyage équivalent dans `disable_biometric_unlock_with`.
+    try_remove_existing_biometric_enrollment(data_dir, sealer);
+    for file in [
+        DEVICE_BIOMETRIC_PUBKEY_FILE,
+        DEVICE_BIOMETRIC_PRIVKEY_FILE,
+        DEVICE_BIOMETRIC_SEALED_SECRET_FILE,
+        DEVICE_BIOMETRIC_KEY_META_FILE,
+    ] {
+        let _ = std::fs::remove_file(data_dir.join(file));
+    }
+
     // Prouver la possession de 2 parts de sauvegarde est une preuve d'identité bien
     // plus forte qu'un mot de passe ; un éventuel verrou anti-brute-force accumulé
     // sur l'ancien mot de passe (avant restauration) n'a plus de raison de s'appliquer
@@ -776,7 +813,33 @@ pub fn decrypt_incoming_message(data_dir: &Path, device_password: &str, cipherte
 /// l'utilisateur a bien exporté ses 3 parts de sauvegarde à la création, le wallet
 /// reste récupérable via `restore_wallet`. Aucune erreur si le coffre n'existait déjà pas.
 pub fn reset_wallet(data_dir: &Path) -> Result<()> {
-    for file in [DEVICE_PUBKEY_FILE, DEVICE_VAULT_FILE] {
+    reset_wallet_with(data_dir, &WindowsHelloSealer)
+}
+
+/// Trouvé lors d'un audit indépendant (pas un test qui a échoué) : cette
+/// fonction ne touchait jusqu'ici QUE `device_pubkey.asc`/`device_vault.asc`
+/// et la clé privée "device" — jamais l'enrôlement biométrique. Concrètement,
+/// réinitialiser un appareil sur lequel Windows Hello était activé laissait
+/// une clé orpheline dans le TPM indéfiniment (exactement le risque déjà
+/// documenté par `disable_biometric_unlock`, juste jamais appliqué ici), plus
+/// les 4 fichiers `device_biometric_*` obsolètes sur disque — qui auraient
+/// ensuite fait croire à `biometric_unlock_enrolled` qu'un DEUXIÈME wallet
+/// créé sur ce même appareil après coup a la biométrie active, alors que ce
+/// nouveau coffre n'a jamais été chiffré pour cette identité (l'échec
+/// resterait propre au déverrouillage, mais l'état affiché serait faux).
+/// `sealer` injectable pour les tests, même motif que `enroll_biometric_
+/// unlock`/`disable_biometric_unlock` : ne doit jamais déclencher un vrai
+/// prompt Windows Hello pendant `cargo test`.
+fn reset_wallet_with(data_dir: &Path, sealer: &dyn SecretSealer) -> Result<()> {
+    try_remove_existing_biometric_enrollment(data_dir, sealer);
+    for file in [
+        DEVICE_PUBKEY_FILE,
+        DEVICE_VAULT_FILE,
+        DEVICE_BIOMETRIC_PUBKEY_FILE,
+        DEVICE_BIOMETRIC_PRIVKEY_FILE,
+        DEVICE_BIOMETRIC_SEALED_SECRET_FILE,
+        DEVICE_BIOMETRIC_KEY_META_FILE,
+    ] {
         let path = data_dir.join(file);
         if path.exists() {
             std::fs::remove_file(&path).with_context(|| format!("suppression de {file} impossible"))?;
@@ -2364,6 +2427,73 @@ mod tests {
         let sealer = TrackingSealer { removed: std::cell::Cell::new(false) };
         assert!(enroll_biometric_unlock_with(&dir, password, &sealer).is_err());
         assert!(sealer.removed.get(), "la clé du scelleur doit être nettoyée après un échec post-enrôlement");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Garde-fou direct contre le bug trouvé lors d'un audit indépendant :
+    /// `reset_wallet` ne touchait jusqu'ici que les fichiers "device"
+    /// (mot de passe), jamais l'enrôlement biométrique — laissant une clé
+    /// orpheline dans le TPM (ici, dans le scelleur de test) indéfiniment,
+    /// plus 4 fichiers `device_biometric_*` obsolètes sur disque.
+    #[test]
+    fn reset_wallet_also_cleans_up_the_biometric_enrollment() {
+        let dir = std::env::temp_dir().join(format!("pgp_wallet_reset_bio_cleanup_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let password = "un mot de passe de test bien assez long";
+        create_wallet(&dir, password).expect("création du wallet");
+        enroll_biometric_unlock_with(&dir, password, &FakeSealer { fail_enroll: false }).expect("activation de la biométrie");
+        assert!(biometric_unlock_enrolled(&dir), "la biométrie doit être active avant le test");
+
+        let sealer = TrackingSealer { removed: std::cell::Cell::new(false) };
+        reset_wallet_with(&dir, &sealer).expect("réinitialisation du wallet");
+
+        assert!(sealer.removed.get(), "la clé TPM doit être supprimée par reset_wallet, pas seulement par disable_biometric_unlock");
+        assert!(!biometric_unlock_enrolled(&dir), "aucune trace d'enrôlement biométrique ne doit survivre à une réinitialisation");
+        for file in [
+            DEVICE_BIOMETRIC_PUBKEY_FILE,
+            DEVICE_BIOMETRIC_PRIVKEY_FILE,
+            DEVICE_BIOMETRIC_SEALED_SECRET_FILE,
+            DEVICE_BIOMETRIC_KEY_META_FILE,
+        ] {
+            assert!(!dir.join(file).exists(), "{file} ne doit pas survivre à reset_wallet");
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Même bug que `reset_wallet_also_cleans_up_the_biometric_enrollment`,
+    /// trouvé dans le même audit : `restore_wallet` remplace l'identité
+    /// "device" sans jamais invalider un enrôlement biométrique qui
+    /// référençait l'ANCIENNE identité (voir la doc de `restore_wallet_with`).
+    #[test]
+    fn restore_wallet_also_cleans_up_a_stale_biometric_enrollment_from_the_old_device_identity() {
+        let dir = std::env::temp_dir().join(format!("pgp_wallet_restore_bio_cleanup_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let password = "un mot de passe de test bien assez long";
+        let created = create_wallet(&dir, password).expect("création du wallet");
+        enroll_biometric_unlock_with(&dir, password, &FakeSealer { fail_enroll: false }).expect("activation de la biométrie");
+        assert!(biometric_unlock_enrolled(&dir), "la biométrie doit être active avant le test");
+
+        let b1 = &created.backups[0];
+        let b2 = &created.backups[1];
+        let sealer = TrackingSealer { removed: std::cell::Cell::new(false) };
+        restore_wallet_with(
+            &dir,
+            "un nouveau mot de passe bien assez long aussi",
+            (&b1.encrypted_share, &b1.privkey_armored, &b1.passphrase),
+            (&b2.encrypted_share, &b2.privkey_armored, &b2.passphrase),
+            &sealer,
+        )
+        .expect("restauration du wallet");
+
+        assert!(sealer.removed.get(), "la clé TPM de l'ancien appareil doit être supprimée par restore_wallet");
+        assert!(
+            !biometric_unlock_enrolled(&dir),
+            "aucune trace d'un enrôlement biométrique périmé ne doit survivre à une restauration"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
