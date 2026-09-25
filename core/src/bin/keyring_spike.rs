@@ -44,7 +44,7 @@ fn main() -> Result<()> {
         }
         "read" => {
             let secret = store.read(SPIKE_USERNAME).context("lecture depuis le coffre OS")?;
-            if secret == TEST_SECRET {
+            if secret.as_str() == TEST_SECRET {
                 println!("OK : secret relu identique à l'original.");
             } else {
                 println!("PROBLÈME : secret relu DIFFÉRENT de l'original — ne pas faire confiance à ce module.");

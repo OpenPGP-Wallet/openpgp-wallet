@@ -16,6 +16,7 @@
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 use std::path::Path;
+use zeroize::Zeroizing;
 
 const SERVICE: &str = "pgp-wallet-poc";
 
@@ -37,7 +38,14 @@ pub fn entry_username(data_dir: &Path) -> String {
 /// dépendre d'un coffre OS réellement configuré sur une machine de CI.
 pub trait KeyStore: Sync {
     fn write(&self, username: &str, secret: &str) -> Result<()>;
-    fn read(&self, username: &str) -> Result<String>;
+    /// `Zeroizing<String>` (jamais un `String` nu) : le contenu est une clé
+    /// privée PGP en clair — trouvé lors d'un audit indépendant (pas
+    /// seulement `cargo test`) que la version initiale de ce trait renvoyait
+    /// un `String` ordinaire, jamais effacé de la mémoire après usage,
+    /// contrairement à tous les autres buffers de clé privée/entropie de ce
+    /// projet (`Zeroizing` partout ailleurs, voir le 2ᵉ passage d'auto-revue
+    /// dans ETAPES.md).
+    fn read(&self, username: &str) -> Result<Zeroizing<String>>;
     fn remove(&self, username: &str) -> Result<()>;
 }
 
@@ -67,11 +75,14 @@ impl KeyStore for OsKeyStore {
             .context("écriture dans le coffre natif de l'OS")
     }
 
-    fn read(&self, username: &str) -> Result<String> {
+    fn read(&self, username: &str) -> Result<Zeroizing<String>> {
         let secret = keyring::Entry::new(SERVICE, username)
             .and_then(|e| e.get_secret())
             .context("lecture depuis le coffre natif de l'OS")?;
-        String::from_utf8(secret).context("contenu du coffre OS non-UTF8 (corruption ?)")
+        // `secret` (octets bruts) directement consommé par `from_utf8`, jamais
+        // cloné : un seul buffer existe à tout moment, celui qui finit
+        // enveloppé dans le `Zeroizing` renvoyé.
+        String::from_utf8(secret).map(Zeroizing::new).context("contenu du coffre OS non-UTF8 (corruption ?)")
     }
 
     fn remove(&self, username: &str) -> Result<()> {
@@ -97,12 +108,13 @@ impl KeyStore for InMemoryKeyStore {
         Ok(())
     }
 
-    fn read(&self, username: &str) -> Result<String> {
+    fn read(&self, username: &str) -> Result<Zeroizing<String>> {
         self.0
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .get(username)
             .cloned()
+            .map(Zeroizing::new)
             .ok_or_else(|| anyhow::anyhow!("clé absente du coffre en mémoire (test)"))
     }
 
@@ -130,10 +142,10 @@ mod tests {
         let store = InMemoryKeyStore::default();
         store.write("alice", "secret-a").unwrap();
         store.write("bob", "secret-b").unwrap();
-        assert_eq!(store.read("alice").unwrap(), "secret-a");
-        assert_eq!(store.read("bob").unwrap(), "secret-b");
+        assert_eq!(store.read("alice").unwrap().as_str(), "secret-a");
+        assert_eq!(store.read("bob").unwrap().as_str(), "secret-b");
         store.remove("alice").unwrap();
         assert!(store.read("alice").is_err(), "une entrée supprimée ne doit plus être lisible");
-        assert_eq!(store.read("bob").unwrap(), "secret-b", "supprimer une entrée ne doit pas affecter les autres");
+        assert_eq!(store.read("bob").unwrap().as_str(), "secret-b", "supprimer une entrée ne doit pas affecter les autres");
     }
 }

@@ -639,6 +639,12 @@ pub fn create_wallet(data_dir: &Path, device_password: &str) -> Result<CreateWal
 
     // 1. Coffre local de l'appareil.
     let (device_pub, device_priv) = generate_pgp_identity("device", device_password)?;
+    // Trouvé lors d'un audit indépendant (pas seulement `cargo test`) : contrairement
+    // à l'entropie/la seed/les mots de passe, la clé privée PGP fraîchement générée
+    // ici n'était jamais effacée après usage — même écart que celui corrigé pour
+    // d'autres buffers lors du 2ᵉ passage d'auto-revue (voir ETAPES.md), juste
+    // resté invisible jusqu'ici parce que `generate_pgp_identity` est plus récente.
+    let device_priv = Zeroizing::new(device_priv);
     std::fs::write(data_dir.join(DEVICE_PUBKEY_FILE), &device_pub)?;
     write_device_privkey(data_dir, &device_priv)?;
     let vault = encrypt_with_armored_pubkey(&master_entropy, &data_dir.join("tmp_device_pub.asc"), &device_pub)?;
@@ -719,6 +725,7 @@ pub fn restore_wallet(
     save_profiles(data_dir, std::slice::from_ref(&default_profile))?;
 
     let (device_pub, device_priv) = generate_pgp_identity("device", new_device_password)?;
+    let device_priv = Zeroizing::new(device_priv); // voir le commentaire équivalent dans create_wallet
     std::fs::write(data_dir.join(DEVICE_PUBKEY_FILE), &device_pub)?;
     write_device_privkey(data_dir, &device_priv)?;
     let vault = encrypt_with_armored_pubkey(&recovered, &data_dir.join("tmp_device_pub.asc"), &device_pub)?;
@@ -931,6 +938,7 @@ fn enroll_biometric_unlock_with(data_dir: &Path, device_password: &str, sealer: 
     let secret = Zeroizing::new(entropy::generate_master_entropy());
     let biometric_passphrase = Zeroizing::new(hex::encode(&secret[..]));
     let (bio_pub, bio_priv) = generate_pgp_identity("device_biometric", &biometric_passphrase)?;
+    let bio_priv = Zeroizing::new(bio_priv); // voir le commentaire équivalent dans create_wallet
 
     let (key_name, sealed_blob) = sealer.enroll(&secret)?;
 
