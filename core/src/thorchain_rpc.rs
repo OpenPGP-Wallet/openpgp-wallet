@@ -41,6 +41,19 @@ pub const AFFILIATE_ADDRESS: &str = "thor12j5rrcflhffxmq0ekwvk0h7g0mdy8gn4fg0w3e
 /// 80 points de base = 0,80 %.
 pub const AFFILIATE_FEE_BPS: u32 = 80;
 
+/// Sortie minimale exigée, en points de base SOUS le montant de sortie attendu
+/// (1 % ici). Transmise via `liquidity_tolerance_bps`, PAS `tolerance_bps` —
+/// vérifié en direct : `tolerance_bps` s'applique au prix SANS frais, si bien
+/// qu'avec 100 bps la limite (3 166 856) dépassait déjà la sortie attendue
+/// (3 161 977) une fois les frais déduits, et le swap aurait été
+/// systématiquement remboursé (frais réseau perdus pour rien) ;
+/// `liquidity_tolerance_bps` donne exactement limite = sortie attendue × (1 −
+/// tolérance) (ratios 0,995 / 0,99 / 0,97 mesurés pour 50 / 100 / 300 bps).
+/// Sans aucune tolérance (comportement précédent), le memo avait une limite
+/// VIDE : le swap acceptait n'importe quel taux, exposé à un sandwich ou à
+/// une manipulation de prix pendant les minutes que dure un swap cross-chain.
+pub const SWAP_TOLERANCE_BPS: u32 = 100;
+
 pub struct SwapQuote {
     /// Adresse de vault à laquelle envoyer l'actif source — TOUJOURS relue en
     /// direct, jamais mise en cache : ces adresses tournent régulièrement.
@@ -112,7 +125,7 @@ pub fn to_thorchain_amount(native_amount: u128, native_decimals: u32) -> Result<
 /// développeur).
 pub fn quote_swap(from_asset: &str, to_asset: &str, amount: u64, destination: &str) -> Result<SwapQuote> {
     let url = format!(
-        "{THORNODE_BASE}/thorchain/quote/swap?from_asset={from_asset}&to_asset={to_asset}&amount={amount}&destination={destination}&affiliate={AFFILIATE_ADDRESS}&affiliate_bps={AFFILIATE_FEE_BPS}"
+        "{THORNODE_BASE}/thorchain/quote/swap?from_asset={from_asset}&to_asset={to_asset}&amount={amount}&destination={destination}&affiliate={AFFILIATE_ADDRESS}&affiliate_bps={AFFILIATE_FEE_BPS}&liquidity_tolerance_bps={SWAP_TOLERANCE_BPS}"
     );
     let response: QuoteResponseJson = shared_client()
         .get(&url)
@@ -138,6 +151,8 @@ pub fn quote_swap(from_asset: &str, to_asset: &str, amount: u64, destination: &s
         .and_then(|f| f.total)
         .and_then(|s| s.parse::<u64>().ok());
 
+    verify_swap_memo(&memo, to_asset, destination, expected_amount_out)?;
+
     Ok(SwapQuote {
         inbound_address,
         router: response.router,
@@ -147,9 +162,149 @@ pub fn quote_swap(from_asset: &str, to_asset: &str, amount: u64, destination: &s
     })
 }
 
+/// Code court THORChain d'un actif dans un memo — copié du code source de
+/// THORNode (`common/asset.go`, `Asset::ShortCode`), pas deviné : "s" y
+/// désigne BSC.BNB, PAS SOL (SOL.SOL = "o"), une supposition aurait été
+/// fausse. Limité aux 3 actifs natifs que cette app sait swapper.
+fn memo_short_code(asset: &str) -> Option<&'static str> {
+    match asset {
+        "BTC.BTC" => Some("b"),
+        "ETH.ETH" => Some("e"),
+        "SOL.SOL" => Some("o"),
+        _ => None,
+    }
+}
+
+/// Vérifie que le memo renvoyé par la passerelle THORChain fait EXACTEMENT ce
+/// que l'utilisateur a confirmé — trouvé lors de l'audit "failles connues des
+/// hot wallets" (classe "ce qu'on signe diffère de ce qu'on voit", celle des
+/// plus grosses pertes récentes) : la boîte de confirmation affiche la
+/// destination SAISIE par l'utilisateur, mais la transaction transporte le
+/// memo fourni par un tiers, jamais relu. Une passerelle compromise pouvait
+/// donc renvoyer un memo envoyant la sortie du swap à SA propre adresse, ou
+/// gonflant les frais d'affiliation (ex : 5000 bps = 50 % du swap), sans que
+/// rien ne l'empêche. Ce module ne reconstruit toujours jamais le memo à la
+/// main (voir sa doc) : il le LIT et refuse s'il ne correspond pas.
+///
+/// Format attendu, vérifié en direct (`=:b:bc1q...:3146167:thor1...:80`) et
+/// dans le code source de THORNode : `TYPE:ACTIF:DESTINATION:LIMITE:AFFILIÉ:BPS`,
+/// exactement 6 champs. Tout champ supplémentaire est refusé : THORChain
+/// accepte des champs d'agrégateur DEX après le 6ᵉ (contrat intermédiaire,
+/// jeton final, sortie minimale) qui redirigeraient la sortie ailleurs.
+pub fn verify_swap_memo(memo: &str, to_asset: &str, destination: &str, expected_amount_out: u64) -> Result<()> {
+    let fields: Vec<&str> = memo.split(':').collect();
+    anyhow::ensure!(fields.len() == 6, "memo THORChain inattendu ({} champs au lieu de 6) : {memo}", fields.len());
+
+    // Alias du type "swap" dans le code source de THORNode (`memo.go`) : "swap", "s", "=".
+    anyhow::ensure!(
+        matches!(fields[0].to_ascii_lowercase().as_str(), "=" | "s" | "swap"),
+        "memo THORChain qui n'est pas un swap : {memo}"
+    );
+
+    let asset_ok = fields[1].eq_ignore_ascii_case(to_asset) || memo_short_code(to_asset) == Some(fields[1]);
+    anyhow::ensure!(asset_ok, "le memo THORChain vise un autre actif ({}) que celui demandé ({to_asset})", fields[1]);
+
+    // Adresses EVM (hex) insensibles à la casse ; base58 (Solana) SENSIBLE à la
+    // casse, et bech32 (Bitcoin) comparé tel quel (toujours en minuscules ici).
+    let dest_ok = if destination.starts_with("0x") {
+        fields[2].eq_ignore_ascii_case(destination)
+    } else {
+        fields[2] == destination
+    };
+    anyhow::ensure!(
+        dest_ok,
+        "le memo THORChain enverrait les fonds à une AUTRE adresse ({}) que celle confirmée ({destination}) — swap refusé",
+        fields[2]
+    );
+
+    // "LIMITE" ou "LIMITE/INTERVALLE/QUANTITÉ" (swap en streaming).
+    let limit: u64 = fields[3]
+        .split('/')
+        .next()
+        .unwrap_or("")
+        .parse()
+        .map_err(|_| anyhow!("memo THORChain sans sortie minimale exploitable (« {} ») — swap refusé", fields[3]))?;
+    // Marge de 5 bps pour l'arrondi côté THORChain (ratios mesurés exacts à 1e-5 près).
+    let min_acceptable = u128::from(expected_amount_out) * u128::from(10_000 - SWAP_TOLERANCE_BPS - 5) / 10_000;
+    anyhow::ensure!(
+        limit > 0 && u128::from(limit) >= min_acceptable,
+        "sortie minimale du memo THORChain ({limit}) trop basse par rapport à la sortie attendue ({expected_amount_out}) — swap refusé"
+    );
+
+    anyhow::ensure!(
+        fields[4] == AFFILIATE_ADDRESS && fields[5] == AFFILIATE_FEE_BPS.to_string(),
+        "frais d'affiliation du memo THORChain inattendus ({}:{}) — swap refusé",
+        fields[4],
+        fields[5]
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const DEST_BTC: &str = "bc1qp0jus87dalh7xku22tx3uhyhlf8cjuc0vvkhjz";
+
+    /// Memo réel renvoyé par la passerelle (ETH -> BTC, liquidity_tolerance_bps=50).
+    fn real_memo() -> String {
+        format!("=:b:{DEST_BTC}:3146167:{AFFILIATE_ADDRESS}:80")
+    }
+
+    #[test]
+    fn verify_swap_memo_accepts_the_real_memo_shape() {
+        verify_swap_memo(&real_memo().replace("3146167", "3130357"), "BTC.BTC", DEST_BTC, 3_161_977).expect("memo réel (1 %)");
+        // Variante streaming "LIMITE/INTERVALLE/QUANTITÉ" et type "swap" en toutes lettres.
+        let streaming = format!("SWAP:BTC.BTC:{DEST_BTC}:3130357/1/0:{AFFILIATE_ADDRESS}:80");
+        verify_swap_memo(&streaming, "BTC.BTC", DEST_BTC, 3_161_977).expect("variante streaming");
+    }
+
+    #[test]
+    fn verify_swap_memo_rejects_a_redirected_destination() {
+        let memo = real_memo().replace(DEST_BTC, "bc1qattackerattackerattackerattacker0000");
+        let err = verify_swap_memo(&memo, "BTC.BTC", DEST_BTC, 3_161_977).unwrap_err();
+        assert!(err.to_string().contains("AUTRE adresse"), "{err}");
+    }
+
+    #[test]
+    fn verify_swap_memo_rejects_inflated_affiliate_fees_or_a_foreign_affiliate() {
+        let inflated = real_memo().replace(":80", ":5000");
+        assert!(verify_swap_memo(&inflated, "BTC.BTC", DEST_BTC, 3_161_977).is_err(), "50 % de frais");
+        let foreign = real_memo().replace(AFFILIATE_ADDRESS, "thor1attackerattackerattackerattacker00000");
+        assert!(verify_swap_memo(&foreign, "BTC.BTC", DEST_BTC, 3_161_977).is_err(), "affilié étranger");
+    }
+
+    #[test]
+    fn verify_swap_memo_rejects_a_missing_or_too_low_minimum_output() {
+        // Limite vide = comportement d'AVANT ce correctif (n'importe quel taux accepté).
+        let no_limit = format!("=:b:{DEST_BTC}::{AFFILIATE_ADDRESS}:80");
+        assert!(verify_swap_memo(&no_limit, "BTC.BTC", DEST_BTC, 3_161_977).is_err(), "limite vide");
+        let too_low = real_memo().replace("3146167", "1");
+        assert!(verify_swap_memo(&too_low, "BTC.BTC", DEST_BTC, 3_161_977).is_err(), "limite dérisoire");
+    }
+
+    #[test]
+    fn verify_swap_memo_rejects_extra_aggregator_fields_and_wrong_assets() {
+        let aggregator = format!("{}:0xAggregator:ETH.USDT:1", real_memo());
+        assert!(verify_swap_memo(&aggregator, "BTC.BTC", DEST_BTC, 3_161_977).is_err(), "champs d'agrégateur");
+        // "s" = BSC.BNB dans THORNode, pas SOL : ne doit JAMAIS passer pour SOL.SOL.
+        let sol_dest = "9waCLiN9G99f1GXMVBQqifbPMwGMYvJZFUHywRCQPG5F";
+        let bsc = format!("=:s:{sol_dest}:100:{AFFILIATE_ADDRESS}:80");
+        assert!(verify_swap_memo(&bsc, "SOL.SOL", sol_dest, 100).is_err(), "s n'est pas SOL");
+        let sol = format!("=:o:{sol_dest}:100:{AFFILIATE_ADDRESS}:80");
+        verify_swap_memo(&sol, "SOL.SOL", sol_dest, 100).expect("o = SOL.SOL");
+    }
+
+    #[test]
+    fn verify_swap_memo_address_case_rules() {
+        let evm = "0x0db14a0288f4637f60b46690f1971b756c58a47e";
+        let memo = format!("=:e:{}:100:{AFFILIATE_ADDRESS}:80", evm.to_uppercase().replace("0X", "0x"));
+        verify_swap_memo(&memo, "ETH.ETH", evm, 100).expect("hex EVM insensible à la casse");
+        // Base58 (Solana) : changer la casse donne une AUTRE adresse, doit être refusé.
+        let sol_dest = "9waCLiN9G99f1GXMVBQqifbPMwGMYvJZFUHywRCQPG5F";
+        let memo = format!("=:o:{}:100:{AFFILIATE_ADDRESS}:80", sol_dest.to_lowercase());
+        assert!(verify_swap_memo(&memo, "SOL.SOL", sol_dest, 100).is_err(), "base58 sensible à la casse");
+    }
 
     /// Ne garantit pas que l'adresse existe/est correcte (seule une
     /// vérification contre un portefeuille THORChain de référence le
