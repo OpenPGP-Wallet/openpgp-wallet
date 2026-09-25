@@ -125,6 +125,18 @@ pub fn build_swap_transaction(quote: &JupiterQuote, user_pubkey: &str) -> Result
         // qui n'est pas lui-même un jeton SPL) — comportement par défaut de
         // Jupiter, explicité ici pour ne pas dépendre d'une valeur implicite.
         "wrapAndUnwrapSol": true,
+        // Frais de priorité plafonnés explicitement (1 000 000 lamports, soit
+        // 0,001 SOL) plutôt que laissés au choix automatique de Jupiter : la
+        // vérification des effets avant signature (`api::check_swap_effects`)
+        // refuse toute perte au-delà du montant + un budget de frais fixe —
+        // sans plafond, une congestion réseau pourrait pousser Jupiter
+        // au-delà de ce budget et provoquer des refus légitimes.
+        "prioritizationFeeLamports": {
+            // "medium" et pas "high" : mesuré en direct, "high" faisait monter
+            // le coût réel à ~915 000 lamports contre ~25 000-105 000 par
+            // défaut — le but est un PLAFOND, pas de payer plus cher.
+            "priorityLevelWithMaxLamports": { "maxLamports": 1_000_000, "priorityLevel": "medium" }
+        },
     });
     let response: SwapResponseJson = shared_client()
         .post(format!("{JUPITER_BASE}/swap/v1/swap"))
@@ -189,6 +201,117 @@ fn message_fee_payer(message: &[u8]) -> Result<[u8; 32]> {
     let mut fee_payer = [0u8; 32];
     fee_payer.copy_from_slice(&message[fee_payer_start..fee_payer_start + 32]);
     Ok(fee_payer)
+}
+
+/// Comptes qu'un message Solana peut MODIFIER : le runtime interdit à une
+/// transaction (et à tout CPI qu'elle déclenche) de toucher un compte qu'elle
+/// ne déclare pas inscriptible. Connaître cet ensemble suffit donc à borner
+/// tout ce qu'une transaction construite par un tiers pourrait faire aux
+/// comptes de l'utilisateur (voir `api::verify_swap_effects`).
+pub struct WritableAccounts {
+    /// Clés statiques inscriptibles, déjà résolues.
+    pub static_keys: Vec<[u8; 32]>,
+    /// Tables de correspondance d'adresses (message v0) : adresse de la table
+    /// + index inscriptibles, à résoudre on-chain (jamais en faisant confiance
+    /// au tiers qui a construit la transaction).
+    pub lookups: Vec<([u8; 32], Vec<u8>)>,
+}
+
+/// Lecteur borné : un message venant d'un tiers ne doit jamais pouvoir
+/// provoquer de panique par un index hors limites.
+struct Reader<'a> {
+    bytes: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> Reader<'a> {
+    fn take(&mut self, n: usize) -> Result<&'a [u8]> {
+        let end = self.pos.checked_add(n).ok_or_else(|| anyhow!("message Jupiter : longueur invalide"))?;
+        anyhow::ensure!(end <= self.bytes.len(), "message Jupiter tronqué");
+        let slice = &self.bytes[self.pos..end];
+        self.pos = end;
+        Ok(slice)
+    }
+    fn u8(&mut self) -> Result<u8> {
+        Ok(self.take(1)?[0])
+    }
+    fn shortvec(&mut self) -> Result<usize> {
+        let (len, consumed) = read_shortvec_len(&self.bytes[self.pos.min(self.bytes.len())..])?;
+        self.pos += consumed;
+        Ok(len)
+    }
+    fn key(&mut self) -> Result<[u8; 32]> {
+        let mut key = [0u8; 32];
+        key.copy_from_slice(self.take(32)?);
+        Ok(key)
+    }
+}
+
+/// Parse complet d'un message Solana (legacy ou v0) pour en extraire les
+/// comptes inscriptibles — voir `WritableAccounts`. Règles d'inscriptibilité
+/// des clés statiques d'après l'en-tête du message : parmi les
+/// `num_required_signatures` premières clés, les `num_readonly_signed`
+/// dernières sont en lecture seule ; parmi les suivantes, les
+/// `num_readonly_unsigned` dernières aussi.
+pub fn message_writable_accounts(message: &[u8]) -> Result<WritableAccounts> {
+    let mut r = Reader { bytes: message, pos: 0 };
+    let versioned = message.first().is_some_and(|b| b & 0x80 != 0);
+    if versioned {
+        let version = r.u8()? & 0x7f;
+        anyhow::ensure!(version == 0, "version de message Solana non prise en charge : {version}");
+    }
+    let num_signed = r.u8()? as usize;
+    let num_ro_signed = r.u8()? as usize;
+    let num_ro_unsigned = r.u8()? as usize;
+    let count = r.shortvec()?;
+    let keys: Vec<[u8; 32]> = (0..count).map(|_| r.key()).collect::<Result<_>>()?;
+    anyhow::ensure!(
+        num_signed <= count && num_ro_signed <= num_signed && num_ro_unsigned <= count - num_signed,
+        "en-tête de message Solana incohérent"
+    );
+    let static_keys = keys
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| {
+            if *i < num_signed {
+                *i < num_signed - num_ro_signed
+            } else {
+                *i < count - num_ro_unsigned
+            }
+        })
+        .map(|(_, k)| *k)
+        .collect();
+
+    r.take(32)?; // recent blockhash
+    let instruction_count = r.shortvec()?;
+    for _ in 0..instruction_count {
+        r.u8()?; // index du programme
+        let accounts_len = r.shortvec()?;
+        r.take(accounts_len)?;
+        let data_len = r.shortvec()?;
+        r.take(data_len)?;
+    }
+
+    let mut lookups = Vec::new();
+    if versioned {
+        let lookup_count = r.shortvec()?;
+        for _ in 0..lookup_count {
+            let table = r.key()?;
+            let writable_len = r.shortvec()?;
+            let writable = r.take(writable_len)?.to_vec();
+            let readonly_len = r.shortvec()?;
+            r.take(readonly_len)?;
+            lookups.push((table, writable));
+        }
+    }
+    anyhow::ensure!(r.pos == message.len(), "message Solana avec des octets en trop");
+    Ok(WritableAccounts { static_keys, lookups })
+}
+
+/// Découpe une transaction brute et renvoie son message (voir
+/// `split_single_signer_transaction`).
+pub fn transaction_message(raw_tx: &[u8]) -> Result<&[u8]> {
+    split_single_signer_transaction(raw_tx).map(|(_, message)| message)
 }
 
 /// Signe une transaction Jupiter (voir `build_swap_transaction`) après avoir

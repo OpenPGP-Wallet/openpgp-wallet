@@ -1816,20 +1816,264 @@ pub fn send_jupiter_swap(
     let raw_tx = jupiter_rpc::build_swap_transaction(&quote, &owner_address)?;
     let signed_tx = jupiter_rpc::sign_swap_transaction(&raw_tx, &signing_key, &owner)?;
 
-    // Le coût réel exact (rent, wrapping SOL<->wSOL, création de compte...)
-    // varie d'une route de swap Jupiter à l'autre au point qu'une réserve
-    // estimée à l'avance (voir plus haut) ne suffit pas toujours à le
-    // couvrir — simuler la transaction ENTIÈREMENT CONSTRUITE juste avant de
-    // la diffuser permet de le détecter avec un message clair plutôt que de
-    // laisser échouer un envoi réel (aucun fonds ne bouge sur un échec de
-    // simulation, mais le message brut du nœud ne l'est pas pour un humain).
-    if let Some(logs) = rpc.simulate_transaction(&signed_tx)? {
-        return Err(
-            sol_rpc::insufficient_lamports_error(&logs).unwrap_or_else(|| anyhow::anyhow!("échec de simulation du swap Jupiter :\n{logs}")),
-        );
-    }
+    // Simulation de la transaction ENTIÈREMENT CONSTRUITE juste avant de la
+    // diffuser, avec vérification de ses effets réels sur les comptes de
+    // l'utilisateur (voir `check_swap_effects`) — pas seulement "réussit ou
+    // échoue" comme avant.
+    check_swap_effects(&rpc, &signed_tx, &swap_effect_limits(owner, from_coin, amount_native)?)?;
 
     rpc.send_transaction(&signed_tx)
+}
+
+// --- Vérification des effets d'une transaction construite par un tiers -------
+// Trouvé lors de l'audit "failles connues des hot wallets" (classe "signature
+// aveugle d'une transaction construite par un tiers") : pour un swap Jupiter,
+// la SEULE vérification avant signature portait sur le payeur de frais. Une
+// API Jupiter compromise pouvait renvoyer une transaction avec le bon payeur
+// de frais MAIS aussi un transfert de tout le SOL vers elle, un `Approve`
+// (délégué qui pourra vider l'USDC plus tard), un `SetAuthority` (vol du
+// compte USDC lui-même) ou un `Assign` du compte principal — tout aurait
+// été signé. Désormais : simulation par le nœud RPC (tiers INDÉPENDANT de
+// Jupiter) avec l'état des comptes APRÈS exécution, comparé à l'état avant.
+
+const SYSTEM_PROGRAM_ID: &str = "11111111111111111111111111111111";
+const TOKEN_PROGRAM_ID: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+const TOKEN_2022_PROGRAM_ID: &str = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
+const ADDRESS_LOOKUP_TABLE_PROGRAM_ID: &str = "AddressLookupTab1e1111111111111111111111111";
+/// Taille de l'en-tête d'une table de correspondance d'adresses avant la liste
+/// de clés (discriminant 4 + deactivation_slot 8 + last_extended_slot 8 +
+/// start_index 1 + authority Option<Pubkey> 33 + padding 2).
+const LOOKUP_TABLE_META_SIZE: usize = 56;
+/// Budget maximal de frais réseau (frais de base + priorité) toléré au-delà
+/// du montant échangé : 0,005 SOL. Coût réel mesuré sur de vrais swaps
+/// mainnet simulés (test `jupiter_swap_effects_pass_on_real_mainnet_swaps`) :
+/// entre ~25 000 et ~490 000 lamports selon la route et la congestion, et les
+/// frais de priorité sont plafonnés à 1 000 000 lamports côté Jupiter (voir
+/// `jupiter_rpc::build_swap_transaction`) — ce budget ne peut donc pas être
+/// atteint légitimement, et borne ce qu'une transaction malveillante pourrait
+/// détourner en frais/pourboires.
+const JUPITER_SWAP_FEE_BUDGET_LAMPORTS: u64 = 5_000_000;
+
+/// Ce que l'utilisateur a accepté de perdre dans le swap, et rien de plus.
+struct SwapEffectLimits {
+    user: [u8; 32],
+    /// Perte maximale en lamports, TOUS comptes de l'utilisateur confondus
+    /// (principal + comptes de jetons, rent incluse) : montant de SOL vendu +
+    /// budget de frais. Créer un compte de jetons pour l'utilisateur ou
+    /// envelopper/désenvelopper du SOL déplace des lamports entre SES comptes
+    /// sans en perdre, d'où ce total plutôt qu'un contrôle compte par compte.
+    max_lamport_loss: u64,
+    /// Jeton vendu (hors SOL natif) et quantité maximale qui peut en sortir.
+    input_token: Option<([u8; 32], u64)>,
+}
+
+fn swap_effect_limits(owner: [u8; 32], from_coin: &str, amount_native: u64) -> Result<SwapEffectLimits> {
+    let sold_lamports = if from_coin == "sol" { amount_native } else { 0 };
+    let input_token = if from_coin == "sol" { None } else { Some((jupiter_mint_bytes_for_coin(from_coin)?, amount_native)) };
+    Ok(SwapEffectLimits {
+        user: owner,
+        max_lamport_loss: sold_lamports
+            .checked_add(JUPITER_SWAP_FEE_BUDGET_LAMPORTS)
+            .context("montant + budget de frais dépasse la capacité représentable")?,
+        input_token,
+    })
+}
+
+/// Vue sur un compte de jetons SPL (programme Token ou Token-2022). Disposition
+/// de base identique pour les deux : mint 0..32, propriétaire 32..64, montant
+/// 64..72, délégué COption 72..108, autorité de fermeture COption 129..165.
+struct TokenAccountView {
+    mint: [u8; 32],
+    owner: [u8; 32],
+    amount: u64,
+    delegate: [u8; 36],
+    close_authority: [u8; 36],
+}
+
+fn parse_token_account(state: &sol_rpc::AccountState) -> Option<TokenAccountView> {
+    if state.owner != TOKEN_PROGRAM_ID && state.owner != TOKEN_2022_PROGRAM_ID {
+        return None;
+    }
+    // Compte de jetons : exactement 165 octets, ou plus avec extensions
+    // Token-2022 — auquel cas l'octet 165 vaut 2 (AccountType::Account ; un
+    // mint Token-2022 avec extensions dépasse aussi 165 octets mais vaut 1).
+    let data = &state.data;
+    if !(data.len() == 165 || (data.len() > 165 && data[165] == 2)) {
+        return None;
+    }
+    Some(TokenAccountView {
+        mint: data[0..32].try_into().ok()?,
+        owner: data[32..64].try_into().ok()?,
+        amount: u64::from_le_bytes(data[64..72].try_into().ok()?),
+        delegate: data[72..108].try_into().ok()?,
+        close_authority: data[129..165].try_into().ok()?,
+    })
+}
+
+/// Vérifie les effets d'une transaction sur les comptes de l'utilisateur,
+/// à partir de l'état de ses comptes inscriptibles avant (`pre`) et après
+/// simulation (`post`), alignés sur `addresses`. Fonction pure : testable
+/// contre chaque type d'attaque sans réseau.
+fn verify_swap_effects(
+    addresses: &[String],
+    pre: &[Option<sol_rpc::AccountState>],
+    post: &[Option<sol_rpc::AccountState>],
+    limits: &SwapEffectLimits,
+) -> Result<()> {
+    anyhow::ensure!(addresses.len() == pre.len() && pre.len() == post.len(), "états de comptes désalignés");
+    let user_b58 = bs58::encode(limits.user).into_string();
+    let native_mint: [u8; 32] = bs58::decode(jupiter_rpc::SOL_MINT)
+        .into_vec()
+        .ok()
+        .and_then(|v| v.try_into().ok())
+        .context("mint SOL mal formé (bug de compilation)")?;
+
+    let mut lamports_pre: u128 = 0;
+    let mut lamports_post: u128 = 0;
+    let mut tokens_pre: std::collections::HashMap<[u8; 32], u128> = std::collections::HashMap::new();
+    let mut tokens_post: std::collections::HashMap<[u8; 32], u128> = std::collections::HashMap::new();
+    let mut main_seen = false;
+
+    // Un compte à 0 lamport n'existe plus (purgé en fin de transaction) : la
+    // simulation renvoie un compte FERMÉ comme "0 lamport, programme système,
+    // 0 octet", PAS comme `null` — constaté sur un vrai swap mainnet (compte
+    // wSOL fermé par le désenveloppement de Jupiter), qui déclenchait à tort
+    // le refus "SetAuthority". Normalisé ici en "absent", des deux côtés.
+    let live = |s: &Option<sol_rpc::AccountState>| s.clone().filter(|s| s.lamports > 0);
+    let pre: Vec<_> = pre.iter().map(live).collect();
+    let post: Vec<_> = post.iter().map(live).collect();
+
+    for i in 0..addresses.len() {
+        if addresses[i] == user_b58 {
+            main_seen = true;
+            lamports_pre += pre[i].as_ref().map_or(0, |s| u128::from(s.lamports));
+            if let Some(p) = &post[i] {
+                anyhow::ensure!(
+                    p.owner == SYSTEM_PROGRAM_ID,
+                    "la transaction changerait le programme propriétaire de votre compte principal (Assign) — refus de signer"
+                );
+                anyhow::ensure!(p.data.is_empty(), "la transaction allouerait des données sur votre compte principal — refus de signer");
+                lamports_post += u128::from(p.lamports);
+            }
+            continue;
+        }
+
+        let pre_token = pre[i].as_ref().and_then(parse_token_account);
+        let post_token = post[i].as_ref().and_then(parse_token_account);
+        let pre_is_user = pre_token.as_ref().is_some_and(|t| t.owner == limits.user);
+        let post_is_user = post_token.as_ref().is_some_and(|t| t.owner == limits.user);
+
+        if let (true, Some(before)) = (pre_is_user, &pre_token) {
+            lamports_pre += pre[i].as_ref().map_or(0, |s| u128::from(s.lamports));
+            if before.mint != native_mint {
+                *tokens_pre.entry(before.mint).or_default() += u128::from(before.amount);
+            }
+            match (&post[i], &post_token) {
+                // Compte fermé : sa valeur doit réapparaître ailleurs chez
+                // l'utilisateur, ce que le contrôle global des lamports vérifie.
+                (None, _) => {}
+                (Some(p), Some(after)) if after.owner == limits.user => {
+                    anyhow::ensure!(after.mint == before.mint, "un de vos comptes de jetons changerait de jeton — refus de signer");
+                    anyhow::ensure!(
+                        after.delegate == before.delegate,
+                        "la transaction ajouterait un délégué sur un de vos comptes de jetons (Approve : droit de le vider plus tard) — refus de signer"
+                    );
+                    anyhow::ensure!(
+                        after.close_authority == before.close_authority,
+                        "la transaction changerait l'autorité de fermeture d'un de vos comptes de jetons — refus de signer"
+                    );
+                    lamports_post += u128::from(p.lamports);
+                    if after.mint != native_mint {
+                        *tokens_post.entry(after.mint).or_default() += u128::from(after.amount);
+                    }
+                }
+                _ => anyhow::bail!(
+                    "la transaction transférerait la propriété d'un de vos comptes de jetons (SetAuthority) — refus de signer"
+                ),
+            }
+        } else if let (true, Some(after), Some(p)) = (post_is_user, &post_token, &post[i]) {
+            // Compte qui devient celui de l'utilisateur : seul le cas "créé par
+            // cette transaction" (ex : ATA de destination) est légitime — un
+            // compte EXISTANT remis à l'utilisateur pourrait porter un piège
+            // (délégué déjà fixé, fonds déposés plus tard puis siphonnés).
+            anyhow::ensure!(pre[i].is_none(), "la transaction vous céderait un compte de jetons existant — refus de signer");
+            let none = [0u8; 36];
+            anyhow::ensure!(
+                after.delegate[..4] == none[..4] && after.close_authority[..4] == none[..4],
+                "un compte de jetons créé pour vous aurait déjà un délégué ou une autorité de fermeture — refus de signer"
+            );
+            lamports_post += u128::from(p.lamports);
+            if after.mint != native_mint {
+                *tokens_post.entry(after.mint).or_default() += u128::from(after.amount);
+            }
+        }
+    }
+
+    anyhow::ensure!(main_seen, "votre compte principal n'apparaît pas dans la transaction (payeur de frais attendu)");
+    anyhow::ensure!(
+        lamports_post + u128::from(limits.max_lamport_loss) >= lamports_pre,
+        "la transaction vous coûterait {} lamports, au-delà du montant échangé + frais autorisés ({} lamports) — refus de signer",
+        lamports_pre.saturating_sub(lamports_post),
+        limits.max_lamport_loss
+    );
+    for (mint, before) in &tokens_pre {
+        let allowed = match limits.input_token {
+            Some((input_mint, max)) if &input_mint == mint => u128::from(max),
+            _ => 0,
+        };
+        let after = tokens_post.get(mint).copied().unwrap_or(0);
+        anyhow::ensure!(
+            after + allowed >= *before,
+            "la transaction ferait sortir {} unité(s) du jeton {} au-delà de ce qui a été confirmé — refus de signer",
+            before.saturating_sub(after),
+            bs58::encode(mint).into_string()
+        );
+    }
+    Ok(())
+}
+
+/// Résout les comptes inscriptibles d'une transaction (clés statiques + tables
+/// de correspondance lues ON-CHAIN, jamais fournies par Jupiter), récupère leur
+/// état avant, simule avec leur état après, puis appelle `verify_swap_effects`.
+fn check_swap_effects(rpc: &sol_rpc::SolRpc, tx: &[u8], limits: &SwapEffectLimits) -> Result<()> {
+    let addresses = resolve_writable_addresses(rpc, tx)?;
+    let pre = rpc.multiple_accounts(&addresses)?;
+    match rpc.simulate_with_account_states(tx, &addresses)? {
+        sol_rpc::SimulationOutcome::Failed { logs } => Err(
+            sol_rpc::insufficient_lamports_error(&logs).unwrap_or_else(|| anyhow::anyhow!("échec de simulation du swap Jupiter :\n{logs}")),
+        ),
+        sol_rpc::SimulationOutcome::Succeeded { post_states } => verify_swap_effects(&addresses, &pre, &post_states, limits),
+    }
+}
+
+fn resolve_writable_addresses(rpc: &sol_rpc::SolRpc, tx: &[u8]) -> Result<Vec<String>> {
+    let message = jupiter_rpc::transaction_message(tx)?;
+    let writable = jupiter_rpc::message_writable_accounts(message)?;
+    let mut addresses: Vec<String> = writable.static_keys.iter().map(|k| bs58::encode(k).into_string()).collect();
+
+    if !writable.lookups.is_empty() {
+        let tables: Vec<String> = writable.lookups.iter().map(|(t, _)| bs58::encode(t).into_string()).collect();
+        let table_states = rpc.multiple_accounts(&tables)?;
+        for ((table, indexes), state) in writable.lookups.iter().zip(table_states) {
+            let table_b58 = bs58::encode(table).into_string();
+            let state = state.with_context(|| format!("table de correspondance {table_b58} introuvable on-chain"))?;
+            anyhow::ensure!(
+                state.owner == ADDRESS_LOOKUP_TABLE_PROGRAM_ID,
+                "le compte {table_b58} n'est pas une table de correspondance d'adresses — refus de signer"
+            );
+            for &index in indexes {
+                let start = LOOKUP_TABLE_META_SIZE + 32 * index as usize;
+                let key = state
+                    .data
+                    .get(start..start + 32)
+                    .with_context(|| format!("index {index} hors de la table {table_b58}"))?;
+                addresses.push(bs58::encode(key).into_string());
+            }
+        }
+    }
+    addresses.sort();
+    addresses.dedup();
+    Ok(addresses)
 }
 
 /// Obtient un devis de swap THORChain (lecture seule, aucun secret impliqué) —
@@ -2515,6 +2759,187 @@ mod tests {
         }
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // --- verify_swap_effects : une attaque par cas -------------------------
+
+    const USER: [u8; 32] = [1u8; 32];
+    const ATTACKER: [u8; 32] = [9u8; 32];
+    const USDC_MINT_T: [u8; 32] = [2u8; 32];
+    const OTHER_MINT: [u8; 32] = [3u8; 32];
+    const ATA_RENT: u64 = 2_039_280;
+    const SOL: u64 = 1_000_000_000;
+
+    fn native_mint_bytes() -> [u8; 32] {
+        bs58::decode(jupiter_rpc::SOL_MINT).into_vec().unwrap().try_into().unwrap()
+    }
+
+    fn token_data(mint: [u8; 32], owner: [u8; 32], amount: u64, delegate: Option<[u8; 32]>) -> Vec<u8> {
+        let mut d = vec![0u8; 165];
+        d[0..32].copy_from_slice(&mint);
+        d[32..64].copy_from_slice(&owner);
+        d[64..72].copy_from_slice(&amount.to_le_bytes());
+        if let Some(delegate) = delegate {
+            d[72..76].copy_from_slice(&1u32.to_le_bytes());
+            d[76..108].copy_from_slice(&delegate);
+        }
+        d[108] = 1; // initialisé
+        d
+    }
+
+    fn sys(lamports: u64) -> Option<sol_rpc::AccountState> {
+        Some(sol_rpc::AccountState { lamports, owner: SYSTEM_PROGRAM_ID.to_string(), data: vec![] })
+    }
+
+    fn tok(lamports: u64, data: Vec<u8>) -> Option<sol_rpc::AccountState> {
+        Some(sol_rpc::AccountState { lamports, owner: TOKEN_PROGRAM_ID.to_string(), data })
+    }
+
+    fn addrs(n: usize) -> Vec<String> {
+        let mut v = vec![bs58::encode(USER).into_string()];
+        for i in 1..n {
+            v.push(format!("compte{i}"));
+        }
+        v
+    }
+
+    fn sol_to_usdc_limits(amount: u64) -> SwapEffectLimits {
+        SwapEffectLimits { user: USER, max_lamport_loss: amount + JUPITER_SWAP_FEE_BUDGET_LAMPORTS, input_token: None }
+    }
+
+    #[test]
+    fn swap_effects_accept_a_legit_sol_to_usdc_swap_including_ata_creation() {
+        let pre = vec![sys(10 * SOL), None];
+        let post = vec![sys(10 * SOL - SOL - ATA_RENT - 10_000), tok(ATA_RENT, token_data(USDC_MINT_T, USER, 150_000_000, None))];
+        verify_swap_effects(&addrs(2), &pre, &post, &sol_to_usdc_limits(SOL)).expect("swap légitime + création de l'ATA");
+    }
+
+    #[test]
+    fn swap_effects_reject_a_sol_drain() {
+        let pre = vec![sys(10 * SOL)];
+        let post = vec![sys(SOL / 2)];
+        let err = verify_swap_effects(&addrs(1), &pre, &post, &sol_to_usdc_limits(SOL)).unwrap_err();
+        assert!(err.to_string().contains("coûterait"), "{err}");
+    }
+
+    #[test]
+    fn swap_effects_reject_approve_set_authority_and_assign() {
+        let existing = || tok(ATA_RENT, token_data(USDC_MINT_T, USER, 100, None));
+        let approve = vec![sys(10 * SOL - SOL), tok(ATA_RENT, token_data(USDC_MINT_T, USER, 100, Some(ATTACKER)))];
+        let err = verify_swap_effects(&addrs(2), &[sys(10 * SOL), existing()], &approve, &sol_to_usdc_limits(SOL)).unwrap_err();
+        assert!(err.to_string().contains("Approve"), "{err}");
+
+        let set_authority = vec![sys(10 * SOL - SOL), tok(ATA_RENT, token_data(USDC_MINT_T, ATTACKER, 100, None))];
+        let err = verify_swap_effects(&addrs(2), &[sys(10 * SOL), existing()], &set_authority, &sol_to_usdc_limits(SOL)).unwrap_err();
+        assert!(err.to_string().contains("SetAuthority"), "{err}");
+
+        let assign = vec![Some(sol_rpc::AccountState { lamports: 9 * SOL, owner: "ProgrammeAttaquant".into(), data: vec![] })];
+        let err = verify_swap_effects(&addrs(1), &[sys(10 * SOL)], &assign, &sol_to_usdc_limits(SOL)).unwrap_err();
+        assert!(err.to_string().contains("Assign"), "{err}");
+    }
+
+    #[test]
+    fn swap_effects_bound_the_input_token_and_protect_every_other_token() {
+        let limits = SwapEffectLimits { user: USER, max_lamport_loss: JUPITER_SWAP_FEE_BUDGET_LAMPORTS, input_token: Some((USDC_MINT_T, 10)) };
+        let pre = vec![sys(SOL), tok(ATA_RENT, token_data(USDC_MINT_T, USER, 100, None)), tok(ATA_RENT, token_data(OTHER_MINT, USER, 1000, None))];
+        let legit = vec![sys(SOL + SOL / 2), tok(ATA_RENT, token_data(USDC_MINT_T, USER, 90, None)), pre[2].clone()];
+        verify_swap_effects(&addrs(3), &pre, &legit, &limits).expect("USDC -> SOL légitime");
+
+        let overspend = vec![legit[0].clone(), tok(ATA_RENT, token_data(USDC_MINT_T, USER, 50, None)), pre[2].clone()];
+        assert!(verify_swap_effects(&addrs(3), &pre, &overspend, &limits).is_err(), "plus d'USDC que confirmé");
+
+        let other_drained = vec![legit[0].clone(), legit[1].clone(), tok(ATA_RENT, token_data(OTHER_MINT, USER, 0, None))];
+        assert!(verify_swap_effects(&addrs(3), &pre, &other_drained, &limits).is_err(), "autre jeton vidé");
+    }
+
+    #[test]
+    fn swap_effects_track_wsol_value_and_reject_trapped_accounts() {
+        let wsol = native_mint_bytes();
+        let pre = vec![sys(5 * SOL), tok(ATA_RENT + SOL, token_data(wsol, USER, SOL, None))];
+        let limits = SwapEffectLimits { user: USER, max_lamport_loss: JUPITER_SWAP_FEE_BUDGET_LAMPORTS, input_token: None };
+        // Compte wSOL fermé, valeur rendue à l'utilisateur : légitime.
+        let returned = vec![sys(5 * SOL + SOL + ATA_RENT - 10_000), None];
+        verify_swap_effects(&addrs(2), &pre, &returned, &limits).expect("désenveloppement légitime");
+        // Compte wSOL fermé, valeur partie ailleurs : refusé.
+        let stolen = vec![sys(5 * SOL - 10_000), None];
+        assert!(verify_swap_effects(&addrs(2), &pre, &stolen, &limits).is_err(), "wSOL détourné");
+
+        // Compte EXISTANT cédé à l'utilisateur, ou créé avec un délégué : refusé.
+        let foreign = tok(ATA_RENT, token_data(USDC_MINT_T, ATTACKER, 0, None));
+        let given = vec![sys(5 * SOL - 10_000), tok(ATA_RENT, token_data(USDC_MINT_T, USER, 0, None))];
+        assert!(verify_swap_effects(&addrs(2), &[sys(5 * SOL), foreign], &given, &limits).is_err(), "compte cédé");
+        let trapped = vec![sys(5 * SOL - ATA_RENT - 10_000), tok(ATA_RENT, token_data(USDC_MINT_T, USER, 0, Some(ATTACKER)))];
+        assert!(verify_swap_effects(&addrs(2), &[sys(5 * SOL), None], &trapped, &limits).is_err(), "créé piégé");
+    }
+
+    /// Cas réel reproduit (swap SOL -> USDC mainnet) : le compte wSOL de
+    /// l'utilisateur, fermé par le désenveloppement de Jupiter, revient de la
+    /// simulation comme "0 lamport, programme système", pas `null`.
+    #[test]
+    fn swap_effects_treat_a_zero_lamport_system_account_as_closed() {
+        let wsol = native_mint_bytes();
+        let pre = vec![sys(5 * SOL), tok(ATA_RENT + SOL, token_data(wsol, USER, SOL, None))];
+        let post = vec![sys(5 * SOL + SOL + ATA_RENT - 10_000), sys(0)];
+        let limits = SwapEffectLimits { user: USER, max_lamport_loss: JUPITER_SWAP_FEE_BUDGET_LAMPORTS, input_token: None };
+        verify_swap_effects(&addrs(2), &pre, &post, &limits).expect("compte fermé rapporté à 0 lamport");
+    }
+
+    #[test]
+    fn swap_effects_require_the_user_main_account() {
+        let addresses = vec!["pas_l_utilisateur".to_string()];
+        assert!(verify_swap_effects(&addresses, &[sys(SOL)], &[sys(SOL)], &sol_to_usdc_limits(SOL)).is_err());
+    }
+
+    /// Calibration ET garde-fou contre les faux rejets : vrais swaps Jupiter
+    /// construits pour une adresse publique mainnet très approvisionnée (hot
+    /// wallet Binance, lecture seule — simulation sans signature), passés dans
+    /// le VRAI chemin de production (`check_swap_effects`). Affiche la perte
+    /// réelle mesurée au-delà du montant, pour dimensionner le budget de frais.
+    /// `cargo test -- --ignored jupiter_swap_effects_pass_on_real_mainnet_swaps --nocapture`
+    #[test]
+    #[ignore]
+    fn jupiter_swap_effects_pass_on_real_mainnet_swaps() {
+        let owner_b58 = "5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9";
+        let owner: [u8; 32] = bs58::decode(owner_b58).into_vec().unwrap().try_into().unwrap();
+        let rpc = sol_rpc::SolRpc::new(wallet_flow::SOLANA_MAINNET.rpc);
+        for (from, to, amount) in [("sol", "usdc", 100_000_000u64), ("usdc", "sol", 10_000_000u64)] {
+            let q = jupiter_rpc::quote(&jupiter_mint_for_coin(from).unwrap(), &jupiter_mint_for_coin(to).unwrap(), amount, 50).unwrap();
+            let tx = jupiter_rpc::build_swap_transaction(&q, owner_b58).unwrap();
+            let addresses = resolve_writable_addresses(&rpc, &tx).unwrap();
+            let pre = rpc.multiple_accounts(&addresses).unwrap();
+            let sol_rpc::SimulationOutcome::Succeeded { post_states } = rpc.simulate_with_account_states(&tx, &addresses).unwrap() else {
+                panic!("simulation réelle en échec pour {from}->{to}");
+            };
+            let user_lamports = |states: &[Option<sol_rpc::AccountState>]| -> i128 {
+                addresses
+                    .iter()
+                    .zip(states)
+                    .filter_map(|(a, s)| s.as_ref().map(|s| (a, s)))
+                    .filter(|(a, s)| **a == owner_b58 || parse_token_account(s).is_some_and(|t| t.owner == owner))
+                    .map(|(_, s)| i128::from(s.lamports))
+                    .sum()
+            };
+            let loss = user_lamports(&pre) - user_lamports(&post_states);
+            let sold = if from == "sol" { i128::from(amount) } else { 0 };
+            println!("{from}->{to} : {} comptes inscriptibles, perte lamports réelle au-delà du montant = {}", addresses.len(), loss - sold);
+            let limits = swap_effect_limits(owner, from, amount).unwrap();
+            if let Err(e) = verify_swap_effects(&addresses, &pre, &post_states, &limits) {
+                for ((a, before), after) in addresses.iter().zip(&pre).zip(&post_states) {
+                    let describe = |s: &Option<sol_rpc::AccountState>| match s {
+                        None => "absent".to_string(),
+                        Some(s) => format!(
+                            "{} lamports, programme {}, {} octets, jeton de l'utilisateur : {}",
+                            s.lamports,
+                            s.owner,
+                            s.data.len(),
+                            parse_token_account(s).is_some_and(|t| t.owner == owner)
+                        ),
+                    };
+                    println!("  {a}\n    avant : {}\n    après : {}", describe(before), describe(after));
+                }
+                panic!("faux rejet {from}->{to} : {e:#}");
+            }
+        }
     }
 
     /// Garde-fou du 20ᵉ passage : une clé privée injoignable (ici, retirée du

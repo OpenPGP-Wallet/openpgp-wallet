@@ -101,29 +101,58 @@ impl SolRpc {
             .ok_or_else(|| anyhow!("réponse sendTransaction inattendue"))
     }
 
-    /// Simule une transaction sans la diffuser : `Ok(None)` si elle réussirait,
-    /// `Ok(Some(logs))` sinon (journal du programme, généralement assez pour
-    /// comprendre pourquoi — ex: "insufficient lamports X, need Y"). Utile
-    /// pour des transactions dont le coût exact (rent, wrapping...) n'est
-    /// connu qu'une fois entièrement construites — voir `api::send_jupiter_swap`,
-    /// où un plancher de frais estimé à l'avance s'est avéré peu fiable d'une
-    /// route de swap à l'autre.
-    pub fn simulate_transaction(&self, raw_tx: &[u8]) -> Result<Option<String>> {
+    /// État brut (lamports, programme propriétaire, données) de plusieurs
+    /// comptes à la fois — `None` pour un compte inexistant. Au plus 100 par
+    /// appel (limite de `getMultipleAccounts`), découpé ici en lots.
+    pub fn multiple_accounts(&self, pubkeys: &[String]) -> Result<Vec<Option<AccountState>>> {
+        let mut states = Vec::with_capacity(pubkeys.len());
+        for chunk in pubkeys.chunks(100) {
+            let result = self.call("getMultipleAccounts", json!([chunk, {"encoding": "base64"}]))?;
+            let values = result
+                .get("value")
+                .and_then(Value::as_array)
+                .ok_or_else(|| anyhow!("réponse getMultipleAccounts inattendue"))?;
+            anyhow::ensure!(values.len() == chunk.len(), "réponse getMultipleAccounts incomplète");
+            for value in values {
+                states.push(AccountState::from_rpc_value(value)?);
+            }
+        }
+        Ok(states)
+    }
+
+    /// Comme `simulate_transaction`, mais renvoie aussi l'état de `addresses`
+    /// APRÈS simulation (config `accounts` de `simulateTransaction`) — permet de
+    /// vérifier ce qu'une transaction construite par un tiers ferait réellement
+    /// aux comptes de l'utilisateur, au lieu de lui faire confiance (voir
+    /// `api::verify_swap_effects`). La simulation est faite par CE nœud RPC, un
+    /// tiers indépendant de celui qui a construit la transaction (Jupiter).
+    pub fn simulate_with_account_states(&self, raw_tx: &[u8], addresses: &[String]) -> Result<SimulationOutcome> {
         let b64 = base64::engine::general_purpose::STANDARD.encode(raw_tx);
         let result = self.call(
             "simulateTransaction",
-            json!([b64, {"encoding": "base64", "replaceRecentBlockhash": true, "sigVerify": false}]),
+            json!([b64, {
+                "encoding": "base64",
+                "replaceRecentBlockhash": true,
+                "sigVerify": false,
+                "accounts": {"encoding": "base64", "addresses": addresses},
+            }]),
         )?;
         let err = result.pointer("/value/err");
-        if err.is_none() || err == Some(&Value::Null) {
-            return Ok(None);
+        if !(err.is_none() || err == Some(&Value::Null)) {
+            let logs = result
+                .pointer("/value/logs")
+                .and_then(Value::as_array)
+                .map(|entries| entries.iter().filter_map(Value::as_str).collect::<Vec<_>>().join("\n"))
+                .unwrap_or_default();
+            return Ok(SimulationOutcome::Failed { logs });
         }
-        let logs = result
-            .pointer("/value/logs")
+        let accounts = result
+            .pointer("/value/accounts")
             .and_then(Value::as_array)
-            .map(|entries| entries.iter().filter_map(Value::as_str).collect::<Vec<_>>().join("\n"))
-            .unwrap_or_default();
-        Ok(Some(logs))
+            .ok_or_else(|| anyhow!("simulation sans état de comptes (champ 'accounts' absent)"))?;
+        anyhow::ensure!(accounts.len() == addresses.len(), "simulation : nombre d'états de comptes inattendu");
+        let post_states = accounts.iter().map(AccountState::from_rpc_value).collect::<Result<Vec<_>>>()?;
+        Ok(SimulationOutcome::Succeeded { post_states })
     }
 
     /// Historique des signatures touchant `pubkey_b58`, du plus récent au plus
@@ -322,6 +351,38 @@ pub fn insufficient_lamports_error(logs: &str) -> Option<anyhow::Error> {
     Some(anyhow!(
         "SOL insuffisant pour cette opération : il manque environ {missing} lamports ({available} disponibles, {needed} requis à cette étape)"
     ))
+}
+
+/// État brut d'un compte Solana tel que renvoyé par le RPC (encodage base64).
+#[derive(Clone, Debug, PartialEq)]
+pub struct AccountState {
+    pub lamports: u64,
+    /// Programme propriétaire du compte (base58).
+    pub owner: String,
+    pub data: Vec<u8>,
+}
+
+impl AccountState {
+    fn from_rpc_value(value: &Value) -> Result<Option<Self>> {
+        if value.is_null() {
+            return Ok(None);
+        }
+        let lamports = value.get("lamports").and_then(Value::as_u64).ok_or_else(|| anyhow!("compte sans lamports"))?;
+        let owner = value.get("owner").and_then(Value::as_str).ok_or_else(|| anyhow!("compte sans propriétaire"))?.to_string();
+        let data_b64 = value
+            .get("data")
+            .and_then(Value::as_array)
+            .and_then(|d| d.first())
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("compte sans données base64"))?;
+        let data = base64::engine::general_purpose::STANDARD.decode(data_b64).context("données de compte base64 invalides")?;
+        Ok(Some(Self { lamports, owner, data }))
+    }
+}
+
+pub enum SimulationOutcome {
+    Failed { logs: String },
+    Succeeded { post_states: Vec<Option<AccountState>> },
 }
 
 pub struct SolTx {
