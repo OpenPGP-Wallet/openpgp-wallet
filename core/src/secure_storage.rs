@@ -38,14 +38,15 @@ pub fn entry_username(data_dir: &Path) -> String {
 /// dépendre d'un coffre OS réellement configuré sur une machine de CI.
 pub trait KeyStore: Sync {
     fn write(&self, username: &str, secret: &str) -> Result<()>;
+    /// `Ok(None)` = aucune entrée (cas normal d'un wallet dont la clé vit
+    /// encore en fichier) ; `Err` = VRAIE panne du coffre OS. Les deux cas
+    /// étaient confondus dans la version précédente (tout échec traité comme
+    /// "absent"), ce qui masquait la cause réelle d'un problème — trouvé lors
+    /// du 20ᵉ passage d'auto-revue.
+    ///
     /// `Zeroizing<String>` (jamais un `String` nu) : le contenu est une clé
-    /// privée PGP en clair — trouvé lors d'un audit indépendant (pas
-    /// seulement `cargo test`) que la version initiale de ce trait renvoyait
-    /// un `String` ordinaire, jamais effacé de la mémoire après usage,
-    /// contrairement à tous les autres buffers de clé privée/entropie de ce
-    /// projet (`Zeroizing` partout ailleurs, voir le 2ᵉ passage d'auto-revue
-    /// dans ETAPES.md).
-    fn read(&self, username: &str) -> Result<Zeroizing<String>>;
+    /// privée PGP en clair, voir le 2ᵉ passage d'auto-revue dans ETAPES.md.
+    fn read(&self, username: &str) -> Result<Option<Zeroizing<String>>>;
     fn remove(&self, username: &str) -> Result<()>;
 }
 
@@ -75,14 +76,18 @@ impl KeyStore for OsKeyStore {
             .context("écriture dans le coffre natif de l'OS")
     }
 
-    fn read(&self, username: &str) -> Result<Zeroizing<String>> {
-        let secret = keyring::Entry::new(SERVICE, username)
-            .and_then(|e| e.get_secret())
-            .context("lecture depuis le coffre natif de l'OS")?;
-        // `secret` (octets bruts) directement consommé par `from_utf8`, jamais
-        // cloné : un seul buffer existe à tout moment, celui qui finit
-        // enveloppé dans le `Zeroizing` renvoyé.
-        String::from_utf8(secret).map(Zeroizing::new).context("contenu du coffre OS non-UTF8 (corruption ?)")
+    fn read(&self, username: &str) -> Result<Option<Zeroizing<String>>> {
+        let entry = keyring::Entry::new(SERVICE, username).context("ouverture de l'entrée du coffre natif de l'OS")?;
+        match entry.get_secret() {
+            // `secret` (octets bruts) directement consommé par `from_utf8`,
+            // jamais cloné : un seul buffer existe à tout moment, celui qui
+            // finit enveloppé dans le `Zeroizing` renvoyé.
+            Ok(secret) => String::from_utf8(secret)
+                .map(|s| Some(Zeroizing::new(s)))
+                .context("contenu du coffre OS non-UTF8 (corruption ?)"),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(e) => Err(anyhow::Error::new(e).context("lecture depuis le coffre natif de l'OS")),
+        }
     }
 
     fn remove(&self, username: &str) -> Result<()> {
@@ -108,14 +113,14 @@ impl KeyStore for InMemoryKeyStore {
         Ok(())
     }
 
-    fn read(&self, username: &str) -> Result<Zeroizing<String>> {
-        self.0
+    fn read(&self, username: &str) -> Result<Option<Zeroizing<String>>> {
+        Ok(self
+            .0
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .get(username)
             .cloned()
-            .map(Zeroizing::new)
-            .ok_or_else(|| anyhow::anyhow!("clé absente du coffre en mémoire (test)"))
+            .map(Zeroizing::new))
     }
 
     fn remove(&self, username: &str) -> Result<()> {
@@ -142,10 +147,10 @@ mod tests {
         let store = InMemoryKeyStore::default();
         store.write("alice", "secret-a").unwrap();
         store.write("bob", "secret-b").unwrap();
-        assert_eq!(store.read("alice").unwrap().as_str(), "secret-a");
-        assert_eq!(store.read("bob").unwrap().as_str(), "secret-b");
+        assert_eq!(store.read("alice").unwrap().unwrap().as_str(), "secret-a");
+        assert_eq!(store.read("bob").unwrap().unwrap().as_str(), "secret-b");
         store.remove("alice").unwrap();
-        assert!(store.read("alice").is_err(), "une entrée supprimée ne doit plus être lisible");
-        assert_eq!(store.read("bob").unwrap().as_str(), "secret-b", "supprimer une entrée ne doit pas affecter les autres");
+        assert!(store.read("alice").unwrap().is_none(), "une entrée supprimée doit être absente, pas une erreur");
+        assert_eq!(store.read("bob").unwrap().unwrap().as_str(), "secret-b", "supprimer une entrée ne doit pas affecter les autres");
     }
 }

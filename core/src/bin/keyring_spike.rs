@@ -43,7 +43,10 @@ fn main() -> Result<()> {
             println!("Relance maintenant `cargo run --bin keyring_spike -- read` (idéalement depuis un second lancement du processus).");
         }
         "read" => {
-            let secret = store.read(SPIKE_USERNAME).context("lecture depuis le coffre OS")?;
+            let secret = store
+                .read(SPIKE_USERNAME)
+                .context("lecture depuis le coffre OS")?
+                .context("aucune entrée de spike (as-tu lancé `write` avant ?)")?;
             if secret.as_str() == TEST_SECRET {
                 println!("OK : secret relu identique à l'original.");
             } else {
@@ -64,7 +67,8 @@ fn main() -> Result<()> {
             println!("1. create_wallet...");
             pgp_wallet_poc::api::create_wallet(&data_dir, "un mot de passe de test bien assez long").context("create_wallet")?;
             let privkey_file_exists = data_dir.join("device_privkey.asc").exists();
-            let in_os_store = store.read(&username).is_ok();
+            // `Ok(None)` = absent : `.is_ok()` seul répondrait "présent" à tort.
+            let in_os_store = matches!(store.read(&username), Ok(Some(_)));
             println!(
                 "   fichier device_privkey.asc présent : {privkey_file_exists} (attendu : false)\n   \
                  entrée présente dans le coffre OS : {in_os_store} (attendu : true)"
@@ -81,7 +85,7 @@ fn main() -> Result<()> {
 
             println!("3. reset_wallet (doit supprimer l'entrée du coffre OS)...");
             pgp_wallet_poc::api::reset_wallet(&data_dir).context("reset_wallet")?;
-            let still_in_os_store = store.read(&username).is_ok();
+            let still_in_os_store = matches!(store.read(&username), Ok(Some(_)));
             println!("   entrée encore présente dans le coffre OS après reset : {still_in_os_store} (attendu : false)");
             if still_in_os_store {
                 println!("PROBLÈME : reset_wallet a laissé une entrée orpheline dans le coffre OS.");
@@ -104,11 +108,14 @@ fn main() -> Result<()> {
             pgp_wallet_poc::api::create_wallet(&data_dir, "un mot de passe de test bien assez long").context("create_wallet")?;
 
             println!("2. simulation d'un ancien wallet : déplacement manuel coffre OS -> fichier...");
-            let secret = store.read(&username).context("lecture du secret à migrer manuellement")?;
+            let secret = store
+                .read(&username)
+                .context("lecture du secret à migrer manuellement")?
+                .context("clé absente du coffre OS juste après create_wallet")?;
             std::fs::write(data_dir.join("device_privkey.asc"), secret.as_bytes())?;
             store.remove(&username).context("suppression de l'entrée coffre OS (simulation)")?;
             println!("   fichier device_privkey.asc présent : {} (attendu : true)", data_dir.join("device_privkey.asc").exists());
-            println!("   entrée coffre OS présente : {} (attendu : false)", store.read(&username).is_ok());
+            println!("   entrée coffre OS présente : {} (attendu : false)", matches!(store.read(&username), Ok(Some(_))));
 
             println!("3. unlock_wallet (doit réussir via le repli fichier)...");
             match pgp_wallet_poc::api::unlock_wallet(&data_dir, "un mot de passe de test bien assez long") {

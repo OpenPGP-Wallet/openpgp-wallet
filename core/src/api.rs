@@ -579,16 +579,65 @@ fn write_device_privkey(data_dir: &Path, armored: &[u8]) -> Result<()> {
 /// contre une exposition permanente à un chemin fixe et prévisible avant ce
 /// changement.
 fn with_device_privkey_path<T>(data_dir: &Path, f: impl FnOnce(&str) -> Result<T>) -> Result<T> {
+    with_device_privkey_path_in(data_dir, active_key_store(), f)
+}
+
+/// Erreur "la clé privée n'a même pas pu être atteinte" (coffre OS en panne ET
+/// aucun fichier de repli, ou fichier temporaire impossible à écrire) —
+/// jamais un mauvais mot de passe. Trouvé lors du 20ᵉ passage d'auto-revue :
+/// `unlock_seed` comptait TOUTE erreur de `with_device_privkey_path` comme une
+/// tentative de mot de passe ratée, alors que sa propre doc dit que le verrou
+/// "ne compte que les mauvais mots de passe". Depuis la migration vers le
+/// coffre OS, un simple souci transitoire de celui-ci aurait donc pénalisé un
+/// utilisateur légitime ayant tapé le BON mot de passe (délai croissant
+/// jusqu'à 5 minutes). Type marqueur plutôt qu'une comparaison de texte
+/// (contrairement à `is_user_cancellation`, contraint par un code d'erreur
+/// Windows formaté par une crate tierce) : ici on contrôle les deux bouts.
+#[derive(Debug)]
+struct KeyMaterialUnavailable(String);
+
+impl std::fmt::Display for KeyMaterialUnavailable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for KeyMaterialUnavailable {}
+
+fn is_key_material_unavailable(err: &anyhow::Error) -> bool {
+    err.downcast_ref::<KeyMaterialUnavailable>().is_some()
+}
+
+fn with_device_privkey_path_in<T>(
+    data_dir: &Path,
+    store: &dyn secure_storage::KeyStore,
+    f: impl FnOnce(&str) -> Result<T>,
+) -> Result<T> {
     let username = secure_storage::entry_username(data_dir);
-    if let Ok(secret) = active_key_store().read(&username) {
+    let from_store = store.read(&username);
+    if let Ok(Some(secret)) = &from_store {
         let unique = format!("{:?}-{}", std::thread::current().id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos());
         let tmp_path = data_dir.join(format!("tmp_device_privkey_{unique}.asc"));
-        std::fs::write(&tmp_path, secret.as_bytes()).context("matérialisation temporaire de la clé privée de l'appareil")?;
+        std::fs::write(&tmp_path, secret.as_bytes()).map_err(|e| {
+            anyhow::Error::new(KeyMaterialUnavailable(format!("matérialisation temporaire de la clé privée de l'appareil impossible : {e}")))
+        })?;
         let _guard = TempFileGuard(&tmp_path);
         return f(&tmp_path.to_string_lossy());
     }
+    // `Ok(None)` (wallet dont la clé vit encore en fichier) ET `Err` (coffre OS
+    // en panne) tentent tous deux le fichier : une panne du coffre OS ne doit
+    // jamais bloquer un wallet dont la clé est justement en fichier (ex :
+    // coffre indisponible au moment de la création, voir `write_device_privkey`).
     let path = data_dir.join(DEVICE_PRIVKEY_FILE);
-    anyhow::ensure!(path.exists(), "clé privée de l'appareil introuvable (ni coffre OS, ni fichier)");
+    if !path.exists() {
+        let detail = match &from_store {
+            Err(e) => format!(" (coffre OS : {e:#})"),
+            _ => String::new(),
+        };
+        return Err(anyhow::Error::new(KeyMaterialUnavailable(format!(
+            "clé privée de l'appareil introuvable (ni coffre OS, ni fichier){detail}"
+        ))));
+    }
     f(&path.to_string_lossy())
 }
 
@@ -882,7 +931,12 @@ fn unlock_seed(data_dir: &Path, device_password: &str) -> Result<Zeroizing<Vec<u
             Ok(Zeroizing::new(seed))
         }
         Err(e) => {
-            record_unlock_failure(data_dir);
+            // Seul un vrai échec de déchiffrement (mauvais mot de passe) compte :
+            // une clé privée injoignable n'est pas une tentative de mot de passe,
+            // voir `KeyMaterialUnavailable`.
+            if !is_key_material_unavailable(&e) {
+                record_unlock_failure(data_dir);
+            }
             Err(e)
         }
     }
@@ -2459,6 +2513,67 @@ mod tests {
         ] {
             assert!(!dir.join(file).exists(), "{file} ne doit pas survivre à reset_wallet");
         }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Garde-fou du 20ᵉ passage : une clé privée injoignable (ici, retirée du
+    /// coffre sans fichier de repli) ne doit JAMAIS compter comme une tentative
+    /// de mot de passe ratée — même avec le BON mot de passe répété bien
+    /// au-delà du seuil, le verrou ne doit pas s'enclencher.
+    #[test]
+    fn unreachable_key_material_does_not_count_toward_the_password_lockout() {
+        let dir = std::env::temp_dir().join(format!("pgp_wallet_key_unreachable_lockout_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let password = "un mot de passe de test bien assez long";
+        create_wallet(&dir, password).expect("création du wallet");
+        active_key_store().remove(&secure_storage::entry_username(&dir)).unwrap();
+        assert!(!dir.join(DEVICE_PRIVKEY_FILE).exists(), "aucun fichier de repli pour ce test");
+
+        for _ in 0..(MAX_FREE_ATTEMPTS + 3) {
+            let Err(err) = unlock_wallet(&dir, password) else {
+                panic!("la clé est injoignable, le déverrouillage ne peut pas réussir");
+            };
+            assert!(is_key_material_unavailable(&err), "erreur inattendue : {err:#}");
+        }
+        assert!(
+            enforce_unlock_lockout(&dir).is_ok(),
+            "une clé injoignable ne doit jamais déclencher le verrou anti-brute-force"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Coffre OS qui tombe en panne à chaque lecture (pas "absent" : une vraie
+    /// erreur) — pour vérifier que le repli fichier reste utilisé dans ce cas.
+    struct FailingKeyStore;
+
+    impl secure_storage::KeyStore for FailingKeyStore {
+        fn write(&self, _username: &str, _secret: &str) -> Result<()> {
+            Err(anyhow::anyhow!("coffre OS simulé en panne"))
+        }
+        fn read(&self, _username: &str) -> Result<Option<Zeroizing<String>>> {
+            Err(anyhow::anyhow!("coffre OS simulé en panne"))
+        }
+        fn remove(&self, _username: &str) -> Result<()> {
+            Err(anyhow::anyhow!("coffre OS simulé en panne"))
+        }
+    }
+
+    #[test]
+    fn a_failing_os_keystore_still_falls_back_to_the_key_file_and_otherwise_reports_key_unavailable() {
+        let dir = std::env::temp_dir().join(format!("pgp_wallet_failing_keystore_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let err = with_device_privkey_path_in(&dir, &FailingKeyStore, |_| Ok(())).expect_err("ni coffre ni fichier");
+        assert!(is_key_material_unavailable(&err), "doit être marquée comme clé injoignable : {err:#}");
+        assert!(format!("{err:#}").contains("coffre OS simulé en panne"), "la cause réelle doit rester visible : {err:#}");
+
+        std::fs::write(dir.join(DEVICE_PRIVKEY_FILE), b"contenu factice").unwrap();
+        let used = with_device_privkey_path_in(&dir, &FailingKeyStore, |p| Ok(p.to_string())).expect("repli fichier");
+        assert!(used.ends_with(DEVICE_PRIVKEY_FILE), "une panne du coffre OS ne doit pas bloquer une clé stockée en fichier");
 
         let _ = std::fs::remove_dir_all(&dir);
     }
