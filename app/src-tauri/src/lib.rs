@@ -1992,7 +1992,17 @@ fn remove_address_book_entry(id: u32, app: tauri::AppHandle) -> Result<(), Strin
 /// DANS la fenêtre du wallet, sans barre d'adresse, libre d'imiter l'app pour
 /// demander le mot de passe. Les liens externes légitimes passent déjà par
 /// `open_external_link` (navigateur système + liste blanche de domaines).
-fn is_app_origin(url: &tauri::Url) -> bool {
+///
+/// `dev_url` : serveur de développement de `tauri dev` (`http://127.0.0.1:1430/`
+/// ici), à ne passer QU'EN MODE DÉVELOPPEMENT (voir `run`) — seule son origine
+/// EXACTE (schéma, hôte, port) est alors autorisée. Oubli du 21ᵉ passage,
+/// signalé par l'utilisateur : le garde n'avait été vérifié que sur un build
+/// de production (`http://tauri.localhost/`) ; en `tauri dev`, il bloquait la
+/// page de l'app elle-même au chargement — fenêtre vide.
+fn is_app_origin(url: &tauri::Url, dev_url: Option<&tauri::Url>) -> bool {
+    if dev_url.is_some_and(|dev| url.origin() == dev.origin()) {
+        return true;
+    }
     match url.scheme() {
         "tauri" => true,
         "http" | "https" => url.host_str() == Some("tauri.localhost"),
@@ -2006,8 +2016,12 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(
             tauri::plugin::Builder::<tauri::Wry>::new("navigation-guard")
-                .on_navigation(|_webview, url| {
-                    let allowed = is_app_origin(url);
+                .on_navigation(|webview, url| {
+                    // `tauri::is_dev()` est faux dans tout build produit par
+                    // `tauri build` (fonctionnalité `custom-protocol`) : le
+                    // serveur de développement n'y est jamais autorisé.
+                    let dev_url = if tauri::is_dev() { webview.config().build.dev_url.clone() } else { None };
+                    let allowed = is_app_origin(url, dev_url.as_ref());
                     if !allowed {
                         eprintln!("navigation bloquée hors de l'app : {url}");
                     }
@@ -2125,17 +2139,34 @@ mod tests {
 
     #[test]
     fn navigation_guard_allows_only_the_app_itself() {
-        assert!(is_app_origin(&url("tauri://localhost/index.html")));
-        assert!(is_app_origin(&url("http://tauri.localhost/index.html")));
-        assert!(is_app_origin(&url("https://tauri.localhost/")));
-        assert!(is_app_origin(&url("about:blank")));
+        assert!(is_app_origin(&url("tauri://localhost/index.html"), None));
+        assert!(is_app_origin(&url("http://tauri.localhost/index.html"), None));
+        assert!(is_app_origin(&url("https://tauri.localhost/"), None));
+        assert!(is_app_origin(&url("about:blank"), None));
 
-        assert!(!is_app_origin(&url("https://evil.example/fake-wallet")));
+        assert!(!is_app_origin(&url("https://evil.example/fake-wallet"), None));
         // Sosies du nom d'hôte de l'app : le contrôle doit porter sur l'hôte EXACT.
-        assert!(!is_app_origin(&url("https://tauri.localhost.evil.example/")));
-        assert!(!is_app_origin(&url("https://eviltauri.localhost/")));
-        assert!(!is_app_origin(&url("https://tauri.localhost@evil.example/")));
-        assert!(!is_app_origin(&url("file:///C:/Windows/System32/")));
-        assert!(!is_app_origin(&url("javascript:alert(1)")));
+        assert!(!is_app_origin(&url("https://tauri.localhost.evil.example/"), None));
+        assert!(!is_app_origin(&url("https://eviltauri.localhost/"), None));
+        assert!(!is_app_origin(&url("https://tauri.localhost@evil.example/"), None));
+        assert!(!is_app_origin(&url("file:///C:/Windows/System32/"), None));
+        assert!(!is_app_origin(&url("javascript:alert(1)"), None));
+    }
+
+    /// Régression du 21ᵉ passage signalée par l'utilisateur : en `tauri dev`,
+    /// la page de l'app (servie par le serveur de développement) était
+    /// bloquée. Autorisée désormais — mais seulement l'origine EXACTE du
+    /// serveur, et jamais hors mode développement (`dev_url` = `None`).
+    #[test]
+    fn navigation_guard_allows_the_dev_server_only_in_dev_mode() {
+        let dev = url("http://127.0.0.1:1430/");
+        assert!(is_app_origin(&url("http://127.0.0.1:1430/"), Some(&dev)));
+        assert!(is_app_origin(&url("http://127.0.0.1:1430/index.html"), Some(&dev)));
+
+        assert!(!is_app_origin(&url("http://127.0.0.1:1430/"), None), "build de production : jamais");
+        assert!(!is_app_origin(&url("http://127.0.0.1:1431/"), Some(&dev)), "autre port");
+        assert!(!is_app_origin(&url("https://127.0.0.1:1430/"), Some(&dev)), "autre schéma");
+        assert!(!is_app_origin(&url("http://localhost:1430/"), Some(&dev)), "autre hôte");
+        assert!(!is_app_origin(&url("https://evil.example/"), Some(&dev)));
     }
 }
