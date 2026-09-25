@@ -849,12 +849,22 @@ pub fn read_device_pubkey_armored(data_dir: &Path) -> Result<String> {
 /// que le coffre du wallet, donc l'appeler directement sans cette barrière aurait
 /// offert une deuxième porte, non limitée en tentatives, pour deviner CE mot de
 /// passe — rendant inutile le verrou déjà en place sur `unlock_wallet`/`send_*`.
+///
+/// La clé qui déchiffre ces messages est AUSSI celle qui déchiffre le coffre :
+/// le contenu de `device_vault.asc`, collé ici comme un "message", donnerait
+/// l'entropie maître. Seule protection jusqu'au 22ᵉ passage : 32 octets
+/// aléatoires ne forment presque jamais du texte UTF-8 valide — une
+/// probabilité, pas une garantie. Désormais refusé explicitement.
 pub fn decrypt_incoming_message(data_dir: &Path, device_password: &str, ciphertext: &str) -> Result<String> {
-    let _ = unlock_seed(data_dir, device_password)?;
-    let plaintext = with_device_privkey_path(data_dir, |privkey_path| {
+    let seed = unlock_seed(data_dir, device_password)?;
+    let plaintext = Zeroizing::new(with_device_privkey_path(data_dir, |privkey_path| {
         pgp_engine::decrypt_share(ciphertext.as_bytes(), privkey_path, device_password)
-    })?;
-    String::from_utf8(plaintext).context("le message déchiffré n'est pas du texte UTF-8 valide")
+    })?);
+    anyhow::ensure!(
+        plaintext.as_slice() != seed.as_slice(),
+        "ce « message » est le coffre du portefeuille lui-même — déchiffrement refusé"
+    );
+    String::from_utf8(plaintext.to_vec()).context("le message déchiffré n'est pas du texte UTF-8 valide")
 }
 
 /// Supprime le coffre local de cet appareil (utile pour retester l'onboarding, ou
@@ -1814,6 +1824,32 @@ fn parse_swap_amount_for_coin(coin: &str, amount: &str) -> Result<u128> {
     }
 }
 
+/// Montant à AFFICHER dans une boîte de confirmation native, reconstruit
+/// depuis la valeur exacte qui sera signée (plus petite unité) plutôt que
+/// recopié depuis la saisie — trouvé lors du 22ᵉ passage : les fonctions de
+/// parsing tolèrent des formes que l'œil lit mal (`"0.+5"` = 0,05 BTC, des
+/// retours à la ligne en tête ou en fin, retirés par `trim`), si bien que le
+/// texte affiché pouvait différer de ce qui part réellement. `coin` : "evm",
+/// "btc", "sol" ou "usdc". Le résultat se re-parse en exactement la même
+/// valeur : l'appelant l'utilise pour l'affichage ET pour la signature.
+pub fn canonical_amount(coin: &str, amount: &str) -> Result<String> {
+    let decimals: usize = match coin {
+        "evm" => 18,
+        "btc" => 8,
+        "sol" => 9,
+        "usdc" => 6,
+        other => anyhow::bail!("actif non pris en charge pour le swap : {other}"),
+    };
+    let minor = parse_swap_amount_for_coin(coin, amount)?;
+    let unit = 10u128.pow(decimals as u32);
+    let (whole, frac) = (minor / unit, minor % unit);
+    if frac == 0 {
+        return Ok(whole.to_string());
+    }
+    let frac = format!("{frac:0decimals$}");
+    Ok(format!("{whole}.{}", frac.trim_end_matches('0')))
+}
+
 /// Mint Solana (32 octets) pour un identifiant de coin interne — seuls
 /// "sol"/"usdc" ont un sens ici (swap Jupiter, même chaîne uniquement, voir
 /// jupiter_rpc.rs).
@@ -1934,15 +1970,20 @@ pub fn send_jupiter_swap(
 
     let quote = jupiter_rpc::quote(&input_mint, &output_mint, amount_native, slippage_bps)?;
     let raw_tx = jupiter_rpc::build_swap_transaction(&quote, &owner_address)?;
-    let signed_tx = jupiter_rpc::sign_swap_transaction(&raw_tx, &signing_key, &owner)?;
 
-    // Simulation de la transaction ENTIÈREMENT CONSTRUITE juste avant de la
-    // diffuser, avec vérification de ses effets réels sur les comptes de
-    // l'utilisateur (voir `check_swap_effects`) — pas seulement "réussit ou
-    // échoue" comme avant.
+    // Simulation de la transaction ENTIÈREMENT CONSTRUITE, avec vérification de
+    // ses effets réels sur les comptes de l'utilisateur (voir
+    // `check_swap_effects`) — AVANT de la signer. Trouvé lors du 22ᵉ passage :
+    // la version précédente signait d'abord, puis envoyait la transaction
+    // SIGNÉE au nœud RPC pour la simulation — une transaction malveillante
+    // rejetée ensuite par la vérification avait donc déjà quitté l'app,
+    // signée et diffusable par quiconque la voyait passer. La simulation ne
+    // vérifie aucune signature (`sigVerify: false`) : le message non signé
+    // suffit, et c'est exactement ce message qui est signé juste après.
     let min_out = shown_out_amount.saturating_mul(u64::from(10_000 - slippage_bps.min(10_000))) / 10_000;
-    check_swap_effects(&rpc, &signed_tx, &swap_effect_limits(owner, from_coin, amount_native, to_coin, min_out)?)?;
+    check_swap_effects(&rpc, &raw_tx, &swap_effect_limits(owner, from_coin, amount_native, to_coin, min_out)?)?;
 
+    let signed_tx = jupiter_rpc::sign_swap_transaction(&raw_tx, &signing_key, &owner)?;
     rpc.send_transaction(&signed_tx)
 }
 
@@ -2136,6 +2177,18 @@ fn verify_swap_effects(
             // compte EXISTANT remis à l'utilisateur pourrait porter un piège
             // (délégué déjà fixé, fonds déposés plus tard puis siphonnés).
             anyhow::ensure!(pre[i].is_none(), "la transaction vous céderait un compte de jetons existant — refus de signer");
+            // Et seulement à l'adresse STANDARD (compte associé) de ce jeton —
+            // trouvé lors du 22ᵉ passage : l'utilisateur signant la transaction,
+            // une API compromise pouvait créer un compte de jetons à une adresse
+            // arbitraire (CreateAccountWithSeed avec l'utilisateur comme base)
+            // et y livrer la sortie du swap. Rien de volé, mais des fonds que
+            // l'app n'affiche ni ne dépense jamais (elle ne lit que le compte
+            // associé) : pour l'utilisateur, un swap qui n'a "rien rendu".
+            let canonical = bs58::encode(sol_spl::find_associated_token_address(&limits.user, &after.mint)).into_string();
+            anyhow::ensure!(
+                addresses[i] == canonical,
+                "la transaction livrerait vos jetons sur un compte non standard, invisible dans l'app — refus de signer"
+            );
             let none = [0u8; 36];
             anyhow::ensure!(
                 after.delegate[..4] == none[..4] && after.close_authority[..4] == none[..4],
@@ -3084,11 +3137,27 @@ mod tests {
         SwapEffectLimits { user: USER, max_lamport_loss: amount + JUPITER_SWAP_FEE_BUDGET_LAMPORTS, input_token: None, min_output: MinOutput::Token(USDC_MINT_T, 0) }
     }
 
+    /// [compte principal, compte associé (adresse standard) de `mint`].
+    fn addrs_with_ata(mint: [u8; 32]) -> Vec<String> {
+        vec![bs58::encode(USER).into_string(), bs58::encode(sol_spl::find_associated_token_address(&USER, &mint)).into_string()]
+    }
+
     #[test]
     fn swap_effects_accept_a_legit_sol_to_usdc_swap_including_ata_creation() {
         let pre = vec![sys(10 * SOL), None];
         let post = vec![sys(10 * SOL - SOL - ATA_RENT - 10_000), tok(ATA_RENT, token_data(USDC_MINT_T, USER, 150_000_000, None))];
-        verify_swap_effects(&addrs(2), &pre, &post, &sol_to_usdc_limits(SOL)).expect("swap légitime + création de l'ATA");
+        verify_swap_effects(&addrs_with_ata(USDC_MINT_T), &pre, &post, &sol_to_usdc_limits(SOL)).expect("swap légitime + création de l'ATA");
+    }
+
+    /// 22ᵉ passage : la sortie livrée sur un compte de jetons créé à une adresse
+    /// NON standard (invisible dans l'app) doit être refusée, même si le montant
+    /// est bon — seule l'adresse change par rapport au cas légitime ci-dessus.
+    #[test]
+    fn swap_effects_reject_output_delivered_to_a_non_standard_token_account() {
+        let pre = vec![sys(10 * SOL), None];
+        let post = vec![sys(10 * SOL - SOL - ATA_RENT - 10_000), tok(ATA_RENT, token_data(USDC_MINT_T, USER, 150_000_000, None))];
+        let err = verify_swap_effects(&addrs(2), &pre, &post, &sol_to_usdc_limits(SOL)).unwrap_err();
+        assert!(err.to_string().contains("non standard"), "{err}");
     }
 
     #[test]
@@ -3146,7 +3215,9 @@ mod tests {
         let given = vec![sys(5 * SOL - 10_000), tok(ATA_RENT, token_data(USDC_MINT_T, USER, 0, None))];
         assert!(verify_swap_effects(&addrs(2), &[sys(5 * SOL), foreign], &given, &limits).is_err(), "compte cédé");
         let trapped = vec![sys(5 * SOL - ATA_RENT - 10_000), tok(ATA_RENT, token_data(USDC_MINT_T, USER, 0, Some(ATTACKER)))];
-        assert!(verify_swap_effects(&addrs(2), &[sys(5 * SOL), None], &trapped, &limits).is_err(), "créé piégé");
+        // À l'adresse standard : c'est bien le délégué qui doit faire refuser.
+        let err = verify_swap_effects(&addrs_with_ata(USDC_MINT_T), &[sys(5 * SOL), None], &trapped, &limits).unwrap_err();
+        assert!(err.to_string().contains("délégué"), "créé piégé : {err}");
     }
 
     /// "Prendre le SOL et ne rien rendre" : la perte reste dans ce qui est
@@ -3266,6 +3337,126 @@ mod tests {
                 panic!("faux rejet {from}->{to} : {e:#}");
             }
         }
+    }
+
+    /// 22ᵉ passage : ce qu'affiche la boîte de confirmation doit être la valeur
+    /// réellement signée, jamais une forme trompeuse de la saisie.
+    #[test]
+    fn canonical_amount_shows_exactly_what_will_be_signed() {
+        // Formes acceptées par le parsing mais trompeuses à l'œil.
+        assert_eq!(canonical_amount("btc", "0.+5").unwrap(), "0.05");
+        assert_eq!(canonical_amount("btc", "\n\n\n2.5\n").unwrap(), "2.5");
+        assert_eq!(canonical_amount("sol", "+1").unwrap(), "1");
+        // Formes normales, zéros de fin retirés, précision complète conservée.
+        assert_eq!(canonical_amount("evm", "0.010").unwrap(), "0.01");
+        assert_eq!(canonical_amount("evm", "1.000000000000000001").unwrap(), "1.000000000000000001");
+        assert_eq!(canonical_amount("usdc", ".5").unwrap(), "0.5");
+        assert_eq!(canonical_amount("sol", "3").unwrap(), "3");
+        // Aller-retour : l'affiché se re-parse en EXACTEMENT la même valeur.
+        for (coin, raw) in [("btc", "0.+5"), ("evm", "12.3456789"), ("sol", "0.000000001"), ("usdc", "1000000.123456")] {
+            let shown = canonical_amount(coin, raw).unwrap();
+            assert_eq!(parse_swap_amount_for_coin(coin, &shown).unwrap(), parse_swap_amount_for_coin(coin, raw).unwrap(), "{coin} {raw}");
+        }
+        assert!(canonical_amount("btc", "1 000").is_err());
+        assert!(canonical_amount("doge", "1").is_err());
+    }
+
+    /// 22ᵉ passage : le coffre lui-même, armuré et collé dans "déchiffrer un
+    /// message" (même clé de l'appareil), doit être refusé explicitement — pas
+    /// seulement par le hasard du contrôle UTF-8. Un vrai message, lui, passe.
+    #[test]
+    fn decrypt_incoming_message_refuses_the_wallet_vault_itself() {
+        let dir = std::env::temp_dir().join(format!("pgp_wallet_vault_as_message_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let password = "un mot de passe de test bien assez long";
+        create_wallet(&dir, password).expect("création du wallet");
+
+        let vault = std::fs::read(dir.join(DEVICE_VAULT_FILE)).unwrap();
+        let mut armored = Vec::new();
+        {
+            let mut writer = armor::Writer::new(&mut armored, armor::Kind::Message).unwrap();
+            std::io::Write::write_all(&mut writer, &vault).unwrap();
+            writer.finalize().unwrap();
+        }
+        let err = decrypt_incoming_message(&dir, password, std::str::from_utf8(&armored).unwrap()).unwrap_err();
+        assert!(err.to_string().contains("coffre du portefeuille"), "{err:#}");
+
+        let pubkey = read_device_pubkey_armored(&dir).unwrap();
+        let message = crate::messaging::encrypt_message(&[pubkey], "bonjour").unwrap();
+        assert_eq!(decrypt_incoming_message(&dir, password, &message).unwrap(), "bonjour");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Chemin jamais exercé par le test précédent (le hot wallet Binance a déjà
+    /// son compte USDC) : un swap SOL -> USDC pour un portefeuille qui n'a PAS
+    /// encore de compte USDC, que la transaction Jupiter doit donc CRÉER — c'est
+    /// la branche "compte qui devient celui de l'utilisateur" de
+    /// `verify_swap_effects`. Identités de validateurs mainnet publiques (SOL
+    /// pour les frais de vote, jamais d'USDC en pratique) : la première sans
+    /// compte USDC et avec assez de SOL est utilisée. Lecture seule, rien n'est
+    /// signé (transaction simulée sans signature, comme en production).
+    /// `cargo test -- --ignored jupiter_swap_effects_pass_when_the_destination_token_account_is_created --nocapture`
+    #[test]
+    #[ignore]
+    fn jupiter_swap_effects_pass_when_the_destination_token_account_is_created() {
+        const CANDIDATES: [&str; 15] = [
+            "Fd7btgySsrjuo25CJCj7oE7VPMyezDhnx7pZkj2v69Nk",
+            "HEL1USMZKAL2odpNBj2oCjffnFGaYwmbGmyewGv1e2TU",
+            "DRpbCBMxVnDK7maPM5tGv6MvB3v1sRMC86PZ8okm21hy",
+            "JUPiTERrZqgf1jUyR7dSkhMx4Kn2qJyekWsg3LT1h4b",
+            "E1r4Psq84tHfQ6aPTvvDka4U3u8zPVD7gEUrH25RdxHL",
+            "C8Bey3LKVJHVqN6xPTeW8WJfUgFQAeGNBpT4Rp99JP1k",
+            "CAo1dCGYrB6NhHh5xb1cGjUiu86iyCfMTENxgHumSve4",
+            "EvnRmnMrd69kFdbLMxWkTn1icZ7DCceRhvmb2SJXqDo4",
+            "9eGrDohdNTAo61DRHyfMuqKWXqYnA3i254Wiszxe8FoY",
+            "Awes4Tr6TX8JDzEhCZY2QVNimT6iD1zWHzf1vNyGvpLM",
+            "JD549HsbJHeEKKUrKgg4Fj2iyv2RGjsV7NTZjZUrHybB",
+            "9jxgosAfHgHzwnxsHw4RAZYaLVokMbnYtmiZBreynGFP",
+            "5pPRHniefFjkiaArbGX3Y8NUysJmQ9tMZg3FrFGwHzSm",
+            "5Cchr1XGEg7dbBXByV5NY2ad8jfxAM7HA3x8D56rq9Ux",
+            "GnC339vkyXRm1jRX69dt9mapPPu2LbzXfSDoxc91qta6",
+        ];
+        let rpc = sol_rpc::SolRpc::new(wallet_flow::SOLANA_MAINNET.rpc);
+        let amount = 50_000_000u64; // 0,05 SOL
+        let owner_b58 = CANDIDATES
+            .iter()
+            .find(|c| {
+                let owner: [u8; 32] = bs58::decode(c).into_vec().unwrap().try_into().unwrap();
+                let ata = bs58::encode(sol_spl::find_associated_token_address(&owner, &sol_spl::usdc_mint_mainnet())).into_string();
+                !rpc.account_exists(&ata).unwrap() && rpc.balance_lamports(c).unwrap() > 10 * amount
+            })
+            .expect("au moins une identité de validateur sans compte USDC");
+        println!("portefeuille utilisé (sans compte USDC) : {owner_b58}");
+        let owner: [u8; 32] = bs58::decode(owner_b58).into_vec().unwrap().try_into().unwrap();
+
+        let q = jupiter_rpc::quote(jupiter_rpc::SOL_MINT, &jupiter_mint_for_coin("usdc").unwrap(), amount, 50).unwrap();
+        let tx = jupiter_rpc::build_swap_transaction(&q, owner_b58).unwrap();
+        let limits = swap_effect_limits(owner, "sol", amount, "usdc", q.out_amount * 9_950 / 10_000).unwrap();
+        check_swap_effects(&rpc, &tx, &limits).expect("un vrai swap qui crée le compte USDC de destination ne doit pas être rejeté");
+
+        // Le test ne prouve quelque chose que si la branche "création" a bien
+        // été traversée : compte USDC de l'utilisateur absent avant, présent après.
+        let addresses = resolve_writable_addresses(&rpc, &tx).unwrap();
+        let pre = rpc.multiple_accounts(&addresses).unwrap();
+        let sol_rpc::SimulationOutcome::Succeeded { post_states } = rpc.simulate_with_account_states(&tx, &addresses).unwrap() else {
+            panic!("simulation en échec");
+        };
+        let created: Vec<&String> = addresses
+            .iter()
+            .zip(pre.iter().zip(&post_states))
+            .filter(|(_, (before, after))| {
+                before.is_none()
+                    && after
+                        .as_ref()
+                        .and_then(parse_token_account)
+                        .is_some_and(|t| t.owner == owner && t.mint == sol_spl::usdc_mint_mainnet())
+            })
+            .map(|(a, _)| a)
+            .collect();
+        println!("comptes USDC créés pour l'utilisateur : {created:?}");
+        assert_eq!(created.len(), 1, "la transaction doit créer exactement un compte USDC pour l'utilisateur");
     }
 
     /// Garde-fou du 20ᵉ passage : une clé privée injoignable (ici, retirée du

@@ -175,8 +175,6 @@ const I18N = {
     "unlock.submit": "Déverrouiller",
     "unlock.gotoRestore": "Restaurer depuis une sauvegarde",
     "unlock.resetWallet": "Réinitialiser cet appareil (supprime le coffre local)",
-    "unlock.resetConfirm":
-      "Supprimer le coffre local de cet appareil ? Vous ne pourrez le récupérer qu'avec 2 de vos 3 parts de sauvegarde. Continuer ?",
     "restore.title": "Restaurer depuis une sauvegarde",
     "restore.subtitle":
       "Fournissez 2 des 3 fichiers de part + leur mot de passe, et choisissez un nouveau mot de passe pour cet appareil.",
@@ -476,8 +474,6 @@ const I18N = {
     "unlock.submit": "Unlock",
     "unlock.gotoRestore": "Restore from a backup",
     "unlock.resetWallet": "Reset this device (deletes the local vault)",
-    "unlock.resetConfirm":
-      "Delete the local vault on this device? You will only be able to recover it with 2 of your 3 backup shares. Continue?",
     "restore.title": "Restore from a backup",
     "restore.subtitle":
       "Provide 2 of the 3 share files + their password, and choose a new password for this device.",
@@ -1243,9 +1239,9 @@ async function showUnlockView() {
 document.getElementById("goto-restore").addEventListener("click", () => showView("restore"));
 document.getElementById("goto-unlock").addEventListener("click", () => showUnlockView());
 
+// Pas de confirm() JavaScript : la confirmation est une boîte NATIVE côté Rust
+// (`confirm_reset_native`), la seule qu'un frontend compromis ne peut pas sauter.
 document.getElementById("reset-wallet").addEventListener("click", async () => {
-  const sure = confirm(t("unlock.resetConfirm"));
-  if (!sure) return;
   try {
     await invoke("reset_wallet");
     profilesCache = [];
@@ -1257,8 +1253,6 @@ document.getElementById("reset-wallet").addEventListener("click", async () => {
 });
 
 document.getElementById("reset-wallet-dashboard").addEventListener("click", async () => {
-  const sure = confirm(t("unlock.resetConfirm"));
-  if (!sure) return;
   try {
     await invoke("reset_wallet");
     profilesCache = [];

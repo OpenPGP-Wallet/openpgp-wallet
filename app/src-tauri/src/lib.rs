@@ -95,6 +95,21 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
         "un compte de jetons créé pour vous aurait déjà un délégué ou une autorité de fermeture — refus de signer",
         "a token account created for you would already have a delegate or close authority — refusing to sign",
     ),
+    // core/src/api.rs + app/src-tauri/src/lib.rs — 22ᵉ passage d'auto-revue
+    (
+        "la transaction livrerait vos jetons sur un compte non standard, invisible dans l'app — refus de signer",
+        "the transaction would deliver your tokens to a non-standard account, invisible in the app — refusing to sign",
+    ),
+    (
+        "ce « message » est le coffre du portefeuille lui-même — déchiffrement refusé",
+        "this \"message\" is the wallet's own vault — decryption refused",
+    ),
+    (
+        "adresse invalide : espaces, retours à la ligne ou caractères invisibles refusés",
+        "invalid address: spaces, line breaks or invisible characters are refused",
+    ),
+    ("Réinitialisation annulée (confirmation refusée).", "Reset cancelled (confirmation refused)."),
+    ("Échange annulé (confirmation refusée).", "Swap cancelled (confirmation refused)."),
     // core/src/messaging.rs
     ("clé publique PGP invalide", "invalid PGP public key"),
     ("au moins un destinataire est requis", "at least one recipient is required"),
@@ -597,6 +612,31 @@ fn wallet_exists(app: tauri::AppHandle) -> Result<bool, String> {
     Ok(api::device_vault_exists(&dir))
 }
 
+/// Trouvé lors du 22ᵉ passage : la seule action IRRÉVERSIBLE de l'app sans
+/// confirmation native. Restaurer, régénérer le kit, activer/désactiver
+/// Windows Hello passent tous par une boîte de l'OS (un frontend compromis
+/// ne peut ni la simuler ni la contourner) ; supprimer le coffre ne passait
+/// que par un `confirm()` JavaScript, que ce même frontend peut sauter — un
+/// script aurait pu effacer le portefeuille sans mot de passe ni clic, et
+/// sans kit de sauvegarde les fonds étaient perdus pour toujours. Pas de mot
+/// de passe exigé (réinitialiser reste le recours en cas d'oubli), mais une
+/// boîte native, comme pour les autres actions de ce niveau.
+fn confirm_reset_native(app: &tauri::AppHandle) -> bool {
+    app.dialog()
+        .message(lang(
+            "Ceci va SUPPRIMER le portefeuille de cet appareil (coffre et clé de l'appareil). \
+             Il ne pourra être récupéré qu'avec 2 des 3 parts de votre kit de sauvegarde : sans elles, \
+             les fonds seront définitivement perdus. Ne continuez que si vous avez initié cette action vous-même.",
+            "This will DELETE the wallet from this device (vault and device key). It can only be recovered \
+             with 2 of the 3 shares of your backup kit: without them, the funds will be lost forever. Only \
+             continue if you initiated this action yourself.",
+        ))
+        .title(lang("Confirmer la suppression du portefeuille", "Confirm wallet deletion"))
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancel)
+        .blocking_show()
+}
+
 /// Supprime le coffre local (voir `api::reset_wallet`) : permet de revenir à
 /// l'onboarding sans avoir à retrouver/effacer manuellement le répertoire de
 /// données de l'app. Le wallet reste récupérable via les 3 parts de sauvegarde
@@ -604,6 +644,9 @@ fn wallet_exists(app: tauri::AppHandle) -> Result<bool, String> {
 #[tauri::command]
 fn reset_wallet(app: tauri::AppHandle) -> Result<(), String> {
     let dir = data_dir(&app)?;
+    if !confirm_reset_native(&app) {
+        return Err(translate_error("Réinitialisation annulée (confirmation refusée)."));
+    }
     api::reset_wallet(&dir).t_err()
 }
 
@@ -1141,6 +1184,56 @@ fn get_market_prices() -> Result<Vec<MarketCoinDto>, String> {
         .t_err()
 }
 
+// --- Texte des boîtes de dialogue natives -------------------------------------
+// Trouvé lors du 22ᵉ passage, et reproduit pour de vrai (même bibliothèque,
+// même TaskDialog Windows) : ces boîtes affichaient TELS QUELS des textes
+// venus du frontend ou saisis librement — libellé de profil, libellé d'un
+// contact du carnet, adresse, montant. Un libellé contenant des retours à la
+// ligne y injectait un faux "Destinataire / Montant" en tête, et repoussait
+// les vraies valeurs (et les boutons) hors de l'écran — la touche Entrée
+// confirmait quand même. Or cette boîte est précisément la dernière barrière
+// contre un frontend compromis : rien de ce qu'il contrôle ne doit pouvoir y
+// imiter autre chose que ce qu'il est.
+
+/// Caractère qui ne doit jamais atteindre une boîte native depuis une donnée
+/// non fiable : contrôles (retours à la ligne, tabulations, NEL…), espaces
+/// autres que l'espace ordinaire (séparateurs de ligne/paragraphe Unicode…),
+/// et caractères invisibles ou de contrôle de direction du texte (qui peuvent
+/// réordonner visuellement une adresse).
+fn is_dialog_hazard(c: char) -> bool {
+    c.is_control()
+        || (c.is_whitespace() && c != ' ')
+        || matches!(
+            c,
+            '\u{00AD}' | '\u{034F}' | '\u{061C}' | '\u{180E}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}'
+                | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{206F}' | '\u{FEFF}'
+        )
+}
+
+/// Libellé libre (profil, contact) prêt pour une boîte native : une seule
+/// ligne, sans caractère invisible, longueur bornée.
+fn dialog_label(label: &str) -> String {
+    const MAX_CHARS: usize = 40;
+    let cleaned: String = label.chars().map(|c| if is_dialog_hazard(c) { ' ' } else { c }).collect();
+    let cleaned = cleaned.split(' ').filter(|w| !w.is_empty()).collect::<Vec<_>>().join(" ");
+    if cleaned.chars().count() > MAX_CHARS {
+        format!("{}…", cleaned.chars().take(MAX_CHARS).collect::<String>())
+    } else {
+        cleaned
+    }
+}
+
+/// Adresse saisie : espaces de bord retirés, puis REFUS de tout caractère
+/// invisible ou espace restant — aucune adresse valide n'en contient. La
+/// valeur renvoyée est celle affichée ET transmise à la signature.
+fn canonical_address_input(value: &str) -> Result<String, String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed.chars().any(|c| c == ' ' || is_dialog_hazard(c)) {
+        return Err(translate_error("adresse invalide : espaces, retours à la ligne ou caractères invisibles refusés"));
+    }
+    Ok(trimmed.to_string())
+}
+
 /// Libellé humain du réseau pour la boîte de dialogue de confirmation.
 fn network_label(network: &str) -> &str {
     match network {
@@ -1171,10 +1264,29 @@ fn confirm_transaction_native(
     fee_line: Option<&str>,
     warning: Option<&str>,
 ) -> bool {
+    app.dialog()
+        .message(transaction_confirmation_text(network, to, amount, from_label, fee_line, warning))
+        .title(lang("Confirmer le virement", "Confirm the transfer"))
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancel)
+        .blocking_show()
+}
+
+/// Texte de `confirm_transaction_native`, séparé pour être testable sans
+/// ouvrir de fenêtre (voir `dialog_text_cannot_be_spoofed_by_untrusted_strings`).
+fn transaction_confirmation_text(
+    network: &str,
+    to: &str,
+    amount: &str,
+    from_label: &str,
+    fee_line: Option<&str>,
+    warning: Option<&str>,
+) -> String {
     let fee_line = fee_line.map(|f| format!("\n{f}")).unwrap_or_default();
     // En TÊTE du message : c'est la première chose lue, avant l'adresse.
     let warning = warning.map(|w| format!("{w}\n\n")).unwrap_or_default();
-    let message = if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
+    let from_label = dialog_label(from_label);
+    if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
         format!(
             "{warning}Network: {}\nFrom profile: {from_label}\nRecipient: {to}\nAmount: {amount}{fee_line}\n\nConfirm this transfer? It is irreversible.",
             network_label(network)
@@ -1184,13 +1296,7 @@ fn confirm_transaction_native(
             "{warning}Réseau : {}\nDepuis le profil : {from_label}\nDestinataire : {to}\nMontant : {amount}{fee_line}\n\nConfirmer cet envoi ? C'est irréversible.",
             network_label(network)
         )
-    };
-    app.dialog()
-        .message(message)
-        .title(lang("Confirmer le virement", "Confirm the transfer"))
-        .kind(MessageDialogKind::Warning)
-        .buttons(MessageDialogButtons::OkCancel)
-        .blocking_show()
+    }
 }
 
 /// Avertissement "empoisonnement d'adresse" (voir
@@ -1199,7 +1305,7 @@ fn confirm_transaction_native(
 fn lookalike_warning(dir: &std::path::Path, to: &str) -> Option<String> {
     let entries = address_book::list_entries(dir);
     let entry = address_book::lookalike_entry(&entries, to)?;
-    let label = &entry.label;
+    let label = dialog_label(&entry.label);
     Some(if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
         format!(
             "WARNING: this address LOOKS LIKE \"{label}\" from your address book (same beginning and end) but it is NOT the same address. \
@@ -1239,6 +1345,20 @@ fn send_transaction(
     let password = Zeroizing::new(password);
     let dir = data_dir(&app)?;
 
+    // Réseau validé AVANT la boîte de confirmation (22ᵉ passage) : un réseau
+    // inconnu était jusqu'ici affiché tel quel (texte libre du frontend) dans
+    // la boîte, l'erreur n'arrivant qu'après. Adresse et montant remplacés par
+    // leur forme canonique, utilisée pour l'affichage ET la signature (voir
+    // `canonical_address_input`/`api::canonical_amount`).
+    let coin = match network.as_str() {
+        "evm_sepolia" | "evm_mainnet" => "evm",
+        "btc_testnet" | "btc_mainnet" => "btc",
+        "sol_devnet" | "sol_mainnet" => "sol",
+        other => return Err(translate_error(&format!("réseau inconnu : {other}"))),
+    };
+    let to = canonical_address_input(&to)?;
+    let amount = api::canonical_amount(coin, &amount).t_err()?;
+
     let from_label = api::list_profiles(&dir)
         .into_iter()
         .find(|p| p.index == profile_index)
@@ -1250,19 +1370,25 @@ fn send_transaction(
     // Bitcoin ; pour EVM, prix du gas lu MAINTENANT et utilisé tel quel pour
     // signer — avant, il était lu auprès du nœud APRÈS la confirmation, jamais
     // affiché (voir `api::evm_gas_price_for_confirmation`).
-    let evm_gas_price = match network.as_str() {
-        "evm_sepolia" | "evm_mainnet" => Some(api::evm_gas_price_for_confirmation(evm_network(&network)?).t_err()?),
+    let evm_gas_price = match coin {
+        "evm" => Some(api::evm_gas_price_for_confirmation(evm_network(&network)?).t_err()?),
         _ => None,
     };
     // Destinataire Solana : refus AVANT la confirmation si ce n'est pas un
     // portefeuille (voir `api::check_solana_recipient`).
-    if matches!(network.as_str(), "sol_devnet" | "sol_mainnet") {
+    if coin == "sol" {
         api::check_solana_recipient(&to, sol_network(&network)?).t_err()?;
     }
-    let fee_line = match (fee_sat, evm_gas_price) {
-        (Some(f), _) => Some(format!("{} : {f} sat", lang("Frais", "Fee"))),
-        (None, Some(gas_price)) => Some(evm_fee_line(gas_price, api::EVM_TRANSFER_GAS_LIMIT)),
-        _ => None,
+    // Ligne de frais choisie d'après le RÉSEAU, jamais d'après la simple
+    // présence de `fee_sat` (22ᵉ passage) : un `fee_sat` envoyé pour un
+    // virement ETH remplaçait jusqu'ici l'affichage des vrais frais de gas par
+    // un "Frais : 1 sat" sans rapport avec ce qui serait payé.
+    let fee_line = match coin {
+        "btc" => {
+            let fee_sat = fee_sat.ok_or_else(|| "frais Bitcoin manquants (choisis une vitesse d'envoi)".to_string())?;
+            Some(format!("{} : {fee_sat} sat", lang("Frais", "Fee")))
+        }
+        _ => evm_gas_price.map(|gas_price| evm_fee_line(gas_price, api::EVM_TRANSFER_GAS_LIMIT)),
     };
 
     let warning = lookalike_warning(&dir, &to);
@@ -1383,6 +1509,7 @@ fn confirm_swap_native(
     network_fee_line: Option<&str>,
 ) -> bool {
     let network_fee_line = network_fee_line.map(|f| format!("{f}\n")).unwrap_or_default();
+    let from_label = dialog_label(from_label);
     let english = UI_LANG_IS_ENGLISH.load(Ordering::Relaxed);
     let vault_line = match (router, english) {
         (Some(router), true) => format!("Actual destination: router contract {router}\n(THORChain vault targeted: {pay_to})\n"),
@@ -1434,6 +1561,10 @@ fn swap_transaction(
             "envoi de swap non pris en charge pour cet actif : {from_coin}"
         )));
     }
+    // Formes canoniques, affichées ET utilisées pour le devis et la signature
+    // (voir `send_transaction`).
+    let amount = api::canonical_amount(&from_coin, &amount).t_err()?;
+    let destination = canonical_address_input(&destination)?;
 
     let from_label = api::list_profiles(&dir)
         .into_iter()
@@ -1535,17 +1666,21 @@ fn get_jupiter_quote(from_coin: String, to_coin: String, amount: String) -> Resu
 /// Confirmation native spécifique à Jupiter : contrairement à THORChain, ce
 /// n'est pas un protocole cross-chain, mais reste un protocole EXTERNE non
 /// audité par cette app, et la transaction elle-même est construite par
-/// Jupiter (voir core/src/jupiter_rpc.rs), pas par cette app — vérifiée
-/// (payeur de frais) puis signée, jamais reconstruite.
+/// Jupiter (voir core/src/jupiter_rpc.rs), pas par cette app — simulée et
+/// vérifiée (effets sur les comptes de l'utilisateur, voir
+/// `api::check_swap_effects`) AVANT d'être signée, jamais reconstruite. Le
+/// texte disait encore "vérifiée (payeur de frais)", resté de l'avant-21ᵉ
+/// passage : il sous-décrivait la protection réelle.
 fn confirm_jupiter_swap_native(app: &tauri::AppHandle, from_label: &str, amount: &str, expected_out: &str, to_coin: &str) -> bool {
+    let from_label = dialog_label(from_label);
     let message = if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
         format!(
-            "Swap via Jupiter (external protocol, not audited by this app)\n\nFrom profile: {from_label}\nSending: {amount}\nExpected to receive: ~{expected_out} {}\nIncludes a 0.80% affiliate fee\n\nThe swap transaction itself is built by Jupiter, not by this app — checked (fee payer) then signed, never reconstructed.\nThis is irreversible.\n\nConfirm this swap?",
+            "Swap via Jupiter (external protocol, not audited by this app)\n\nFrom profile: {from_label}\nSending: {amount}\nExpected to receive: ~{expected_out} {}\nIncludes a 0.80% affiliate fee\n\nThe swap transaction itself is built by Jupiter, not by this app. Before signing, it is simulated and refused if it would take more than the amount sent plus network fees, or deliver less than the amount shown (0.5% slippage).\nThis is irreversible.\n\nConfirm this swap?",
             to_coin.to_uppercase()
         )
     } else {
         format!(
-            "Échange via Jupiter (protocole externe, non audité par cette app)\n\nDepuis le profil : {from_label}\nEnvoi : {amount}\nRéception attendue : ~{expected_out} {}\nInclut 0,80% de frais d'affiliation\n\nLa transaction de swap elle-même est construite par Jupiter, pas par cette app — vérifiée (payeur de frais) puis signée, jamais reconstruite.\nC'est irréversible.\n\nConfirmer cet échange ?",
+            "Échange via Jupiter (protocole externe, non audité par cette app)\n\nDepuis le profil : {from_label}\nEnvoi : {amount}\nRéception attendue : ~{expected_out} {}\nInclut 0,80% de frais d'affiliation\n\nLa transaction de swap elle-même est construite par Jupiter, pas par cette app. Avant signature, elle est simulée et refusée si elle prenait plus que le montant envoyé et les frais réseau, ou livrait moins que le montant affiché (glissement de 0,5 %).\nC'est irréversible.\n\nConfirmer cet échange ?",
             to_coin.to_uppercase()
         )
     };
@@ -1569,6 +1704,8 @@ fn jupiter_swap_transaction(
     let password = Zeroizing::new(password);
     let dir = data_dir(&app)?;
     let network = sol_network("sol_mainnet")?; // Jupiter mainnet uniquement (pas de liquidité fiable en devnet)
+    // Forme canonique, affichée ET signée (voir `send_transaction`).
+    let amount = api::canonical_amount(&from_coin, &amount).t_err()?;
 
     let from_label = api::list_profiles(&dir)
         .into_iter()
@@ -1598,6 +1735,9 @@ fn send_usdc_transaction(password: String, to: String, amount: String, profile_i
     let dir = data_dir(&app)?;
     let network = "sol_mainnet"; // USDC v1 : mainnet uniquement (voir sol_spl.rs)
     let net = sol_network(network)?;
+    // Formes canoniques, affichées ET signées (voir `send_transaction`).
+    let to = canonical_address_input(&to)?;
+    let amount = api::canonical_amount("usdc", &amount).t_err()?;
 
     let from_label = api::list_profiles(&dir)
         .into_iter()
@@ -1702,6 +1842,8 @@ fn add_recipient(label: String, pubkey_armored: String, app: tauri::AppHandle) -
         // remplacement de clé pour un contact déjà enregistré n'est pas anodin (voir
         // la doc de `recipient_key_change`), donc pas question de le laisser passer
         // silencieusement comme le ferait `messaging::add_recipient` seule.
+        // Libellé nettoyé pour l'affichage uniquement (voir `dialog_label`).
+        let label = dialog_label(&label);
         let message = if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
             format!(
                 "\"{label}\" already has a registered key, different from this one.\n\n\
@@ -1946,6 +2088,39 @@ mod tests {
 
     fn url(s: &str) -> tauri::Url {
         tauri::Url::parse(s).expect("URL de test valide")
+    }
+
+    /// 22ᵉ passage : reproduit l'attaque vérifiée en réel sur la boîte native
+    /// (libellé de profil contenant de faux "Destinataire/Montant" suivis de
+    /// dizaines de retours à la ligne) — le texte final ne doit contenir
+    /// qu'UNE ligne "Destinataire", la vraie, et garder un nombre de lignes fixe.
+    #[test]
+    fn dialog_text_cannot_be_spoofed_by_untrusted_strings() {
+        let injected_label = format!(
+            "Principal\nDestinataire : bc1qp0jus87dalh7xku22tx3uhyhlf8cjuc0vvkhjz\nMontant : 0.001\u{2028}Frais : 1200 sat{}",
+            "\n".repeat(80)
+        );
+        let real_to = canonical_address_input(&format!("{}bc1qattacker", "\n".repeat(80))).unwrap();
+        let text = transaction_confirmation_text("btc_mainnet", &real_to, "2.5", &injected_label, Some("Frais : 1200 sat"), None);
+        // Le mot peut subsister DANS le libellé (aplati sur la ligne "Depuis le
+        // profil", tronqué avant toute adresse complète) : ce qui compte est
+        // qu'aucune AUTRE ligne ne se présente comme destinataire ou montant.
+        assert_eq!(text.lines().filter(|l| l.starts_with("Destinataire")).count(), 1, "{text}");
+        assert_eq!(text.lines().filter(|l| l.starts_with("Montant")).count(), 1, "{text}");
+        assert!(text.contains("Destinataire : bc1qattacker\nMontant : 2.5\n"), "{text}");
+        let clean = transaction_confirmation_text("btc_mainnet", "bc1qx", "1", "Principal", Some("Frais : 1 sat"), None);
+        assert_eq!(text.lines().count(), clean.lines().count(), "le libellé ne doit ajouter aucune ligne");
+
+        // Chaque caractère dangereux, isolément.
+        for hazard in ['\n', '\r', '\t', '\u{0085}', '\u{2028}', '\u{2029}', '\u{202E}', '\u{2066}', '\u{200B}', '\u{FEFF}', '\u{00AD}'] {
+            assert!(!dialog_label(&format!("a{hazard}b")).contains(hazard), "{:?}", hazard);
+            assert!(canonical_address_input(&format!("bc1q{hazard}abc")).is_err(), "{:?}", hazard);
+        }
+        assert_eq!(dialog_label("  Épargne   perso "), "Épargne perso");
+        assert_eq!(dialog_label(&"x".repeat(100)).chars().count(), 41, "tronqué à 40 + « … »");
+        assert_eq!(canonical_address_input("  0xabc\n").unwrap(), "0xabc");
+        assert!(canonical_address_input("bc1q abc").is_err());
+        assert!(canonical_address_input("  ").is_err());
     }
 
     #[test]
