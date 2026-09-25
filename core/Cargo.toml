@@ -74,6 +74,19 @@ base64 = "0.22"
 # cryptographie sur courbe).
 curve25519-dalek = "4.1.3"
 
+# --- WalletConnect v2 (voir core/src/walletconnect/) ---
+# Protocole implémenté en Rust plutôt que via le SDK JavaScript officiel (choix de
+# l'utilisateur) : aucune dépendance npm dans la webview où le mot de passe est
+# saisi, CSP inchangée. Primitives exigées par la spécification, vérifiées octet
+# par octet contre des vecteurs produits par les bibliothèques du SDK officiel :
+# chacha20poly1305 : chiffrement des enveloppes (RustCrypto).
+# hkdf             : dérivation de la clé symétrique d'une session (déjà présent
+#                    transitivement, même version).
+# L'échange X25519 réutilise `curve25519-dalek` ci-dessus (`MontgomeryPoint`,
+# clampage RFC 7748), sans crate supplémentaire.
+chacha20poly1305 = "0.10"
+hkdf = "0.12"
+
 # region : verrouillage mémoire réel (mlock Unix / VirtualLock Windows) pour les buffers
 # sensibles (entropie, seed reconstruite) — zeroize efface mais ne protège pas contre le
 # swap disque pendant la durée de vie du buffer. Complète memory_guard::wipe, ne le remplace pas.
