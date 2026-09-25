@@ -1586,7 +1586,10 @@ fn jupiter_swap_transaction(
         return Err(translate_error("Échange annulé (confirmation refusée)."));
     }
 
-    api::send_jupiter_swap(&dir, &password, network, &from_coin, &to_coin, &amount, JUPITER_DEFAULT_SLIPPAGE_BPS, profile_index).t_err()
+    // `out_amount` = la sortie AFFICHÉE ci-dessus : la transaction réellement
+    // signée devra la livrer (au glissement près), vérifié par simulation.
+    api::send_jupiter_swap(&dir, &password, network, &from_coin, &to_coin, &amount, JUPITER_DEFAULT_SLIPPAGE_BPS, out_amount, profile_index)
+        .t_err()
 }
 
 #[tauri::command]

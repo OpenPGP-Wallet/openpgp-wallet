@@ -1857,6 +1857,7 @@ pub fn send_jupiter_swap(
     to_coin: &str,
     amount: &str,
     slippage_bps: u32,
+    shown_out_amount: u64,
     profile_index: u32,
 ) -> Result<String> {
     let seed = unlock_seed(data_dir, device_password)?;
@@ -1939,7 +1940,8 @@ pub fn send_jupiter_swap(
     // diffuser, avec vérification de ses effets réels sur les comptes de
     // l'utilisateur (voir `check_swap_effects`) — pas seulement "réussit ou
     // échoue" comme avant.
-    check_swap_effects(&rpc, &signed_tx, &swap_effect_limits(owner, from_coin, amount_native)?)?;
+    let min_out = shown_out_amount.saturating_mul(u64::from(10_000 - slippage_bps.min(10_000))) / 10_000;
+    check_swap_effects(&rpc, &signed_tx, &swap_effect_limits(owner, from_coin, amount_native, to_coin, min_out)?)?;
 
     rpc.send_transaction(&signed_tx)
 }
@@ -1984,17 +1986,35 @@ struct SwapEffectLimits {
     max_lamport_loss: u64,
     /// Jeton vendu (hors SOL natif) et quantité maximale qui peut en sortir.
     input_token: Option<([u8; 32], u64)>,
+    /// Ce que l'utilisateur doit AU MOINS recevoir — trouvé lors du même audit :
+    /// sans ce plancher, borner les PERTES ne suffisait pas, une transaction
+    /// malveillante pouvait prendre le SOL vendu (perte "autorisée") et ne rien
+    /// rendre (route via un pool contrôlé par l'attaquant).
+    min_output: MinOutput,
 }
 
-fn swap_effect_limits(owner: [u8; 32], from_coin: &str, amount_native: u64) -> Result<SwapEffectLimits> {
+enum MinOutput {
+    /// SOL natif : vérifié via le total des lamports de l'utilisateur.
+    Lamports(u64),
+    /// Jeton SPL (mint, quantité minimale).
+    Token([u8; 32], u64),
+}
+
+fn swap_effect_limits(owner: [u8; 32], from_coin: &str, amount_native: u64, to_coin: &str, min_out: u64) -> Result<SwapEffectLimits> {
     let sold_lamports = if from_coin == "sol" { amount_native } else { 0 };
     let input_token = if from_coin == "sol" { None } else { Some((jupiter_mint_bytes_for_coin(from_coin)?, amount_native)) };
+    let min_output = if to_coin == "sol" {
+        MinOutput::Lamports(min_out)
+    } else {
+        MinOutput::Token(jupiter_mint_bytes_for_coin(to_coin)?, min_out)
+    };
     Ok(SwapEffectLimits {
         user: owner,
         max_lamport_loss: sold_lamports
             .checked_add(JUPITER_SWAP_FEE_BUDGET_LAMPORTS)
             .context("montant + budget de frais dépasse la capacité représentable")?,
         input_token,
+        min_output,
     })
 }
 
@@ -2135,6 +2155,23 @@ fn verify_swap_effects(
         lamports_pre.saturating_sub(lamports_post),
         limits.max_lamport_loss
     );
+    match limits.min_output {
+        MinOutput::Lamports(min) => anyhow::ensure!(
+            // Les frais réseau se paient en SOL : ils peuvent réduire le gain
+            // net d'au plus le budget de frais.
+            lamports_post + u128::from(JUPITER_SWAP_FEE_BUDGET_LAMPORTS) >= lamports_pre + u128::from(min),
+            "la transaction vous rendrait moins de SOL que le minimum annoncé ({min} lamports) — refus de signer"
+        ),
+        MinOutput::Token(mint, min) => {
+            let before = tokens_pre.get(&mint).copied().unwrap_or(0);
+            let after = tokens_post.get(&mint).copied().unwrap_or(0);
+            anyhow::ensure!(
+                after >= before + u128::from(min),
+                "la transaction vous rendrait {} unité(s) de jeton, moins que le minimum annoncé ({min}) — refus de signer",
+                after.saturating_sub(before)
+            );
+        }
+    }
     for (mint, before) in &tokens_pre {
         let allowed = match limits.input_token {
             Some((input_mint, max)) if &input_mint == mint => u128::from(max),
@@ -2168,6 +2205,10 @@ fn check_swap_effects(rpc: &sol_rpc::SolRpc, tx: &[u8], limits: &SwapEffectLimit
 fn resolve_writable_addresses(rpc: &sol_rpc::SolRpc, tx: &[u8]) -> Result<Vec<String>> {
     let message = jupiter_rpc::transaction_message(tx)?;
     let writable = jupiter_rpc::message_writable_accounts(message)?;
+    anyhow::ensure!(
+        !writable.advances_durable_nonce,
+        "la transaction utilise un nonce durable (valide indéfiniment, rejouable plus tard à un autre cours) — refus de signer"
+    );
     let mut addresses: Vec<String> = writable.static_keys.iter().map(|k| bs58::encode(k).into_string()).collect();
 
     if !writable.lookups.is_empty() {
@@ -3040,7 +3081,7 @@ mod tests {
     }
 
     fn sol_to_usdc_limits(amount: u64) -> SwapEffectLimits {
-        SwapEffectLimits { user: USER, max_lamport_loss: amount + JUPITER_SWAP_FEE_BUDGET_LAMPORTS, input_token: None }
+        SwapEffectLimits { user: USER, max_lamport_loss: amount + JUPITER_SWAP_FEE_BUDGET_LAMPORTS, input_token: None, min_output: MinOutput::Token(USDC_MINT_T, 0) }
     }
 
     #[test]
@@ -3076,7 +3117,7 @@ mod tests {
 
     #[test]
     fn swap_effects_bound_the_input_token_and_protect_every_other_token() {
-        let limits = SwapEffectLimits { user: USER, max_lamport_loss: JUPITER_SWAP_FEE_BUDGET_LAMPORTS, input_token: Some((USDC_MINT_T, 10)) };
+        let limits = SwapEffectLimits { user: USER, max_lamport_loss: JUPITER_SWAP_FEE_BUDGET_LAMPORTS, input_token: Some((USDC_MINT_T, 10)), min_output: MinOutput::Lamports(0) };
         let pre = vec![sys(SOL), tok(ATA_RENT, token_data(USDC_MINT_T, USER, 100, None)), tok(ATA_RENT, token_data(OTHER_MINT, USER, 1000, None))];
         let legit = vec![sys(SOL + SOL / 2), tok(ATA_RENT, token_data(USDC_MINT_T, USER, 90, None)), pre[2].clone()];
         verify_swap_effects(&addrs(3), &pre, &legit, &limits).expect("USDC -> SOL légitime");
@@ -3092,7 +3133,7 @@ mod tests {
     fn swap_effects_track_wsol_value_and_reject_trapped_accounts() {
         let wsol = native_mint_bytes();
         let pre = vec![sys(5 * SOL), tok(ATA_RENT + SOL, token_data(wsol, USER, SOL, None))];
-        let limits = SwapEffectLimits { user: USER, max_lamport_loss: JUPITER_SWAP_FEE_BUDGET_LAMPORTS, input_token: None };
+        let limits = SwapEffectLimits { user: USER, max_lamport_loss: JUPITER_SWAP_FEE_BUDGET_LAMPORTS, input_token: None, min_output: MinOutput::Lamports(0) };
         // Compte wSOL fermé, valeur rendue à l'utilisateur : légitime.
         let returned = vec![sys(5 * SOL + SOL + ATA_RENT - 10_000), None];
         verify_swap_effects(&addrs(2), &pre, &returned, &limits).expect("désenveloppement légitime");
@@ -3108,6 +3149,33 @@ mod tests {
         assert!(verify_swap_effects(&addrs(2), &[sys(5 * SOL), None], &trapped, &limits).is_err(), "créé piégé");
     }
 
+    /// "Prendre le SOL et ne rien rendre" : la perte reste dans ce qui est
+    /// autorisé (le montant vendu), seul le plancher de sortie l'attrape.
+    #[test]
+    fn swap_effects_reject_taking_the_input_and_returning_nothing_or_too_little() {
+        let mut limits = sol_to_usdc_limits(SOL);
+        limits.min_output = MinOutput::Token(USDC_MINT_T, 149_000_000);
+        let existing_ata = tok(ATA_RENT, token_data(USDC_MINT_T, USER, 0, None));
+        let nothing = vec![sys(9 * SOL - 10_000), existing_ata.clone()];
+        let err = verify_swap_effects(&addrs(2), &[sys(10 * SOL), existing_ata.clone()], &nothing, &limits).unwrap_err();
+        assert!(err.to_string().contains("moins que le minimum"), "{err}");
+        let enough = vec![sys(9 * SOL - 10_000), tok(ATA_RENT, token_data(USDC_MINT_T, USER, 150_000_000, None))];
+        verify_swap_effects(&addrs(2), &[sys(10 * SOL), existing_ata], &enough, &limits).expect("sortie suffisante");
+
+        // USDC -> SOL : le SOL reçu, frais déduits, doit atteindre le minimum.
+        let usdc_to_sol = SwapEffectLimits {
+            user: USER,
+            max_lamport_loss: JUPITER_SWAP_FEE_BUDGET_LAMPORTS,
+            input_token: Some((USDC_MINT_T, 10)),
+            min_output: MinOutput::Lamports(SOL / 2),
+        };
+        let pre = vec![sys(SOL), tok(ATA_RENT, token_data(USDC_MINT_T, USER, 100, None))];
+        let too_little = vec![sys(SOL + SOL / 10), tok(ATA_RENT, token_data(USDC_MINT_T, USER, 90, None))];
+        assert!(verify_swap_effects(&addrs(2), &pre, &too_little, &usdc_to_sol).is_err(), "SOL reçu insuffisant");
+        let fine = vec![sys(SOL + SOL / 2), tok(ATA_RENT, token_data(USDC_MINT_T, USER, 90, None))];
+        verify_swap_effects(&addrs(2), &pre, &fine, &usdc_to_sol).expect("SOL reçu suffisant");
+    }
+
     /// Cas réel reproduit (swap SOL -> USDC mainnet) : le compte wSOL de
     /// l'utilisateur, fermé par le désenveloppement de Jupiter, revient de la
     /// simulation comme "0 lamport, programme système", pas `null`.
@@ -3116,7 +3184,7 @@ mod tests {
         let wsol = native_mint_bytes();
         let pre = vec![sys(5 * SOL), tok(ATA_RENT + SOL, token_data(wsol, USER, SOL, None))];
         let post = vec![sys(5 * SOL + SOL + ATA_RENT - 10_000), sys(0)];
-        let limits = SwapEffectLimits { user: USER, max_lamport_loss: JUPITER_SWAP_FEE_BUDGET_LAMPORTS, input_token: None };
+        let limits = SwapEffectLimits { user: USER, max_lamport_loss: JUPITER_SWAP_FEE_BUDGET_LAMPORTS, input_token: None, min_output: MinOutput::Lamports(0) };
         verify_swap_effects(&addrs(2), &pre, &post, &limits).expect("compte fermé rapporté à 0 lamport");
     }
 
@@ -3163,8 +3231,9 @@ mod tests {
             let tx = jupiter_rpc::build_swap_transaction(&q, owner_b58).unwrap();
             let addresses = resolve_writable_addresses(&rpc, &tx).unwrap();
             let pre = rpc.multiple_accounts(&addresses).unwrap();
-            let sol_rpc::SimulationOutcome::Succeeded { post_states } = rpc.simulate_with_account_states(&tx, &addresses).unwrap() else {
-                panic!("simulation réelle en échec pour {from}->{to}");
+            let post_states = match rpc.simulate_with_account_states(&tx, &addresses).unwrap() {
+                sol_rpc::SimulationOutcome::Succeeded { post_states } => post_states,
+                sol_rpc::SimulationOutcome::Failed { logs } => panic!("simulation réelle en échec pour {from}->{to} :\n{logs}"),
             };
             let user_lamports = |states: &[Option<sol_rpc::AccountState>]| -> i128 {
                 addresses
@@ -3178,7 +3247,8 @@ mod tests {
             let loss = user_lamports(&pre) - user_lamports(&post_states);
             let sold = if from == "sol" { i128::from(amount) } else { 0 };
             println!("{from}->{to} : {} comptes inscriptibles, perte lamports réelle au-delà du montant = {}", addresses.len(), loss - sold);
-            let limits = swap_effect_limits(owner, from, amount).unwrap();
+            let min_out = q.out_amount * 9_950 / 10_000; // sortie "affichée" - 0,5 % de glissement
+            let limits = swap_effect_limits(owner, from, amount, to, min_out).unwrap();
             if let Err(e) = verify_swap_effects(&addresses, &pre, &post_states, &limits) {
                 for ((a, before), after) in addresses.iter().zip(&pre).zip(&post_states) {
                     let describe = |s: &Option<sol_rpc::AccountState>| match s {

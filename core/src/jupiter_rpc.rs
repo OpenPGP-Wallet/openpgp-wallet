@@ -215,6 +215,12 @@ pub struct WritableAccounts {
     /// + index inscriptibles, à résoudre on-chain (jamais en faisant confiance
     /// au tiers qui a construit la transaction).
     pub lookups: Vec<([u8; 32], Vec<u8>)>,
+    /// `true` si la première instruction est `AdvanceNonceAccount` (programme
+    /// système, discriminant 4) : la transaction repose alors sur un "nonce
+    /// durable" au lieu d'un blockhash récent, et reste valide INDÉFINIMENT —
+    /// rejouable bien plus tard, à un cours bien pire. Un vrai swap Jupiter
+    /// n'en utilise jamais.
+    pub advances_durable_nonce: bool,
 }
 
 /// Lecteur borné : un message venant d'un tiers ne doit jamais pouvoir
@@ -284,12 +290,19 @@ pub fn message_writable_accounts(message: &[u8]) -> Result<WritableAccounts> {
 
     r.take(32)?; // recent blockhash
     let instruction_count = r.shortvec()?;
-    for _ in 0..instruction_count {
-        r.u8()?; // index du programme
+    let mut advances_durable_nonce = false;
+    for i in 0..instruction_count {
+        // Les identifiants de programme sont TOUJOURS des clés statiques (le
+        // format v0 interdit de les charger depuis une table de correspondance).
+        let program_index = r.u8()? as usize;
         let accounts_len = r.shortvec()?;
         r.take(accounts_len)?;
         let data_len = r.shortvec()?;
-        r.take(data_len)?;
+        let data = r.take(data_len)?;
+        if i == 0 {
+            let program = keys.get(program_index).ok_or_else(|| anyhow!("message Solana : index de programme invalide"))?;
+            advances_durable_nonce = *program == [0u8; 32] && data.starts_with(&[4, 0, 0, 0]);
+        }
     }
 
     let mut lookups = Vec::new();
@@ -305,7 +318,7 @@ pub fn message_writable_accounts(message: &[u8]) -> Result<WritableAccounts> {
         }
     }
     anyhow::ensure!(r.pos == message.len(), "message Solana avec des octets en trop");
-    Ok(WritableAccounts { static_keys, lookups })
+    Ok(WritableAccounts { static_keys, lookups, advances_durable_nonce })
 }
 
 /// Découpe une transaction brute et renvoie son message (voir
@@ -346,6 +359,38 @@ mod tests {
     fn affiliate_address_has_the_expected_base58_shape() {
         let bytes = bs58::decode(AFFILIATE_ADDRESS).into_vec().expect("base58 valide");
         assert_eq!(bytes.len(), 32, "une adresse Solana fait 32 octets");
+    }
+
+    /// Message legacy minimal : en-tête [1 signataire, 0, 1 lecture seule non
+    /// signée], clés [utilisateur, programme système], blockhash, 1 instruction.
+    fn legacy_message_with_first_instruction(data: &[u8]) -> Vec<u8> {
+        let mut m = vec![1, 0, 1, 2];
+        m.extend_from_slice(&[7u8; 32]); // utilisateur (inscriptible, signataire)
+        m.extend_from_slice(&[0u8; 32]); // programme système (lecture seule)
+        m.extend_from_slice(&[9u8; 32]); // blockhash
+        m.push(1); // 1 instruction
+        m.push(1); // programme = clé n°1 (système)
+        m.push(1); // 1 compte
+        m.push(0);
+        m.push(data.len() as u8);
+        m.extend_from_slice(data);
+        m
+    }
+
+    #[test]
+    fn message_writable_accounts_parses_writability_and_detects_durable_nonces() {
+        let nonce = message_writable_accounts(&legacy_message_with_first_instruction(&[4, 0, 0, 0])).unwrap();
+        assert!(nonce.advances_durable_nonce, "AdvanceNonceAccount (discriminant 4) doit être détecté");
+        assert_eq!(nonce.static_keys, vec![[7u8; 32]], "seul l'utilisateur est inscriptible ici");
+        assert!(nonce.lookups.is_empty(), "un message legacy n'a pas de table de correspondance");
+
+        let transfer = message_writable_accounts(&legacy_message_with_first_instruction(&[2, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0])).unwrap();
+        assert!(!transfer.advances_durable_nonce, "un simple transfert n'est pas un nonce durable");
+
+        // Message tronqué : erreur propre, jamais de panique.
+        let mut truncated = legacy_message_with_first_instruction(&[4, 0, 0, 0]);
+        truncated.truncate(truncated.len() - 3);
+        assert!(message_writable_accounts(&truncated).is_err());
     }
 
     #[test]
