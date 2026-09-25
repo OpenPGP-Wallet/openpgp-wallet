@@ -2215,8 +2215,19 @@ async function loadHistorySection(coin) {
     }
     entries.forEach((tx) => container.appendChild(buildHistoryRow(tx)));
   } catch (e) {
-    container.innerHTML = `<p class="muted">${e}</p>`;
+    // textContent, jamais innerHTML : le message d'erreur vient de Rust, qui y
+    // recopie le JSON d'erreur renvoyé par le serveur RPC — un serveur
+    // malveillant aurait pu y glisser du HTML (faux formulaire, lien de
+    // phishing) directement dans l'interface du wallet.
+    container.replaceChildren(mutedParagraph(String(e)));
   }
+}
+
+function mutedParagraph(text) {
+  const p = document.createElement("p");
+  p.className = "muted";
+  p.textContent = text;
+  return p;
 }
 
 function loadAllHistory() {
@@ -2421,7 +2432,9 @@ async function loadBtcFeeOptions(card, network) {
       container.appendChild(btn);
     });
   } catch (e) {
-    container.innerHTML = `<p class="muted">${t("wallet.feeUnavailable", { err: e })}</p>`;
+    // Même raison que dans loadHistorySection : texte d'erreur venant d'un
+    // serveur tiers (Esplora), jamais interprété comme du HTML.
+    container.replaceChildren(mutedParagraph(t("wallet.feeUnavailable", { err: e })));
   }
 }
 

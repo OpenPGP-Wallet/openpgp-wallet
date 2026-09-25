@@ -1755,9 +1755,37 @@ fn remove_address_book_entry(id: u32, app: tauri::AppHandle) -> Result<(), Strin
     address_book::remove_entry(&dir, id).t_err()
 }
 
+/// `true` uniquement pour les pages de l'app elle-même : `tauri://localhost`
+/// (macOS/Linux) ou `http(s)://tauri.localhost` (Windows/WebView2). Trouvé lors
+/// de l'audit "failles connues des hot wallets" : rien n'empêchait la fenêtre
+/// de l'app de naviguer vers un site externe (lien injecté via un message
+/// d'erreur d'un serveur tiers, par exemple) — ce site se serait alors affiché
+/// DANS la fenêtre du wallet, sans barre d'adresse, libre d'imiter l'app pour
+/// demander le mot de passe. Les liens externes légitimes passent déjà par
+/// `open_external_link` (navigateur système + liste blanche de domaines).
+fn is_app_origin(url: &tauri::Url) -> bool {
+    match url.scheme() {
+        "tauri" => true,
+        "http" | "https" => url.host_str() == Some("tauri.localhost"),
+        "about" => url.path() == "blank",
+        _ => false,
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(
+            tauri::plugin::Builder::<tauri::Wry>::new("navigation-guard")
+                .on_navigation(|_webview, url| {
+                    let allowed = is_app_origin(url);
+                    if !allowed {
+                        eprintln!("navigation bloquée hors de l'app : {url}");
+                    }
+                    allowed
+                })
+                .build(),
+        )
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
@@ -1823,4 +1851,29 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn url(s: &str) -> tauri::Url {
+        tauri::Url::parse(s).expect("URL de test valide")
+    }
+
+    #[test]
+    fn navigation_guard_allows_only_the_app_itself() {
+        assert!(is_app_origin(&url("tauri://localhost/index.html")));
+        assert!(is_app_origin(&url("http://tauri.localhost/index.html")));
+        assert!(is_app_origin(&url("https://tauri.localhost/")));
+        assert!(is_app_origin(&url("about:blank")));
+
+        assert!(!is_app_origin(&url("https://evil.example/fake-wallet")));
+        // Sosies du nom d'hôte de l'app : le contrôle doit porter sur l'hôte EXACT.
+        assert!(!is_app_origin(&url("https://tauri.localhost.evil.example/")));
+        assert!(!is_app_origin(&url("https://eviltauri.localhost/")));
+        assert!(!is_app_origin(&url("https://tauri.localhost@evil.example/")));
+        assert!(!is_app_origin(&url("file:///C:/Windows/System32/")));
+        assert!(!is_app_origin(&url("javascript:alert(1)")));
+    }
 }
