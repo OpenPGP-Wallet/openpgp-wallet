@@ -20,6 +20,8 @@ pub mod external_wallets;
 pub mod address_book;
 pub mod sent_recipients;
 pub mod walletconnect;
+pub mod evm_sign;
+pub mod dapp_requests;
 pub mod thorchain_rpc;
 pub mod jupiter_rpc;
 #[cfg(windows)]

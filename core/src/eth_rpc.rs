@@ -92,6 +92,31 @@ impl EthRpc {
         )
     }
 
+    /// Exécute un appel SANS rien diffuser (`eth_call`, état "latest") et
+    /// renvoie les octets rendus — sert à lire un contrat (décimales/symbole
+    /// d'un jeton) et à détecter AVANT signature une transaction de dApp qui
+    /// échouerait (le nœud renvoie alors une erreur "execution reverted").
+    pub fn call_contract(&self, from: &str, to: &str, value_wei: u128, data: &[u8]) -> Result<Vec<u8>> {
+        let result = self.call(
+            "eth_call",
+            json!([{
+                "from": from,
+                "to": to,
+                "value": format!("0x{value_wei:x}"),
+                "data": format!("0x{}", hex::encode(data)),
+            }, "latest"]),
+        )?;
+        let hex_str = result.as_str().ok_or_else(|| anyhow!("réponse eth_call non textuelle"))?;
+        hex::decode(hex_str.trim_start_matches("0x")).with_context(|| format!("réponse eth_call non hexadécimale : {hex_str}"))
+    }
+
+    /// Code déployé à `address` (vide pour une adresse ordinaire, sans contrat).
+    pub fn code(&self, address: &str) -> Result<Vec<u8>> {
+        let result = self.call("eth_getCode", json!([address, "latest"]))?;
+        let hex_str = result.as_str().ok_or_else(|| anyhow!("réponse eth_getCode non textuelle"))?;
+        hex::decode(hex_str.trim_start_matches("0x")).with_context(|| format!("réponse eth_getCode non hexadécimale : {hex_str}"))
+    }
+
     pub fn gas_price(&self) -> Result<u128> {
         let result = self.call("eth_gasPrice", json!([]))?;
         let hex_str = result

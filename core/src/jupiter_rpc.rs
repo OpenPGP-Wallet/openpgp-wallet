@@ -176,7 +176,7 @@ fn read_shortvec_len(bytes: &[u8]) -> Result<(usize, usize)> {
 /// toute transaction demandant plus d'un signataire : ce projet ne construit
 /// jamais de swap multi-signataires, une telle réponse serait inattendue et
 /// mieux vaut échouer bruyamment que de deviner quoi faire.
-fn split_single_signer_transaction(raw_tx: &[u8]) -> Result<(usize, &[u8])> {
+pub(crate) fn split_single_signer_transaction(raw_tx: &[u8]) -> Result<(usize, &[u8])> {
     let (sig_count, consumed) = read_shortvec_len(raw_tx)?;
     anyhow::ensure!(sig_count == 1, "transaction Jupiter à {sig_count} signataires, un seul attendu");
     let message_start = consumed + 64 * sig_count;
@@ -187,7 +187,7 @@ fn split_single_signer_transaction(raw_tx: &[u8]) -> Result<(usize, &[u8])> {
 /// Premier compte du message = le payeur des frais (et unique signataire
 /// attendu, voir `split_single_signer_transaction`) — vérifié comme devant
 /// être NOTRE PROPRE clé avant toute signature (voir la doc du module).
-fn message_fee_payer(message: &[u8]) -> Result<[u8; 32]> {
+pub(crate) fn message_fee_payer(message: &[u8]) -> Result<[u8; 32]> {
     // Message versionné (v0) : le premier octet a son bit de poids fort à 1
     // (impossible pour un message "legacy", où ce même octet est
     // `num_required_signatures`, toujours petit). L'en-tête (3 octets) suit

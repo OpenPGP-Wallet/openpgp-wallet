@@ -14,7 +14,7 @@
 //!   perdu — jamais utilisé pour le déverrouillage quotidien.
 
 use crate::{
-    btc_rpc, derivation, entropy, eth_rpc, eth_tx, history, jupiter_rpc, memory_guard, pgp_engine, secure_storage, shamir,
+    btc_rpc, dapp_requests, derivation, entropy, eth_rpc, eth_tx, history, jupiter_rpc, memory_guard, pgp_engine, secure_storage, shamir,
     sol_rpc, sol_spl, sol_tx, thorchain_rpc, wallet_flow,
 };
 use anyhow::{Context, Result};
@@ -2119,8 +2119,8 @@ pub fn send_jupiter_swap(
 // Jupiter) avec l'état des comptes APRÈS exécution, comparé à l'état avant.
 
 const SYSTEM_PROGRAM_ID: &str = "11111111111111111111111111111111";
-const TOKEN_PROGRAM_ID: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
-const TOKEN_2022_PROGRAM_ID: &str = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
+pub(crate) const TOKEN_PROGRAM_ID: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+pub(crate) const TOKEN_2022_PROGRAM_ID: &str = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
 const ADDRESS_LOOKUP_TABLE_PROGRAM_ID: &str = "AddressLookupTab1e1111111111111111111111111";
 /// Taille de l'en-tête d'une table de correspondance d'adresses avant la liste
 /// de clés (discriminant 4 + deactivation_slot 8 + last_extended_slot 8 +
@@ -2210,18 +2210,32 @@ fn parse_token_account(state: &sol_rpc::AccountState) -> Option<TokenAccountView
     })
 }
 
-/// Vérifie les effets d'une transaction sur les comptes de l'utilisateur,
-/// à partir de l'état de ses comptes inscriptibles avant (`pre`) et après
-/// simulation (`post`), alignés sur `addresses`. Fonction pure : testable
-/// contre chaque type d'attaque sans réseau.
-fn verify_swap_effects(
+/// Bilan d'une transaction simulée sur les comptes de l'utilisateur : lamports
+/// (compte principal + rent de ses comptes de jetons, wSOL compris) et jetons
+/// par mint (hors wSOL, déjà compté en lamports), avant et après.
+pub(crate) struct UserEffects {
+    pub lamports_pre: u128,
+    pub lamports_post: u128,
+    pub tokens_pre: std::collections::HashMap<[u8; 32], u128>,
+    pub tokens_post: std::collections::HashMap<[u8; 32], u128>,
+}
+
+/// Effets d'une transaction sur les comptes de `user`, à partir de l'état de
+/// ses comptes inscriptibles avant (`pre`) et après simulation (`post`),
+/// alignés sur `addresses` — avec les REFUS STRUCTURELS qui ne dépendent pas
+/// de ce que la transaction est censée faire (Assign, délégué, changement de
+/// propriétaire, compte cédé, compte non standard). Partagé par le swap
+/// Jupiter (`verify_swap_effects`, qui borne en plus pertes et gains) et les
+/// transactions de dApps WalletConnect (qui AFFICHENT ce bilan). Fonction
+/// pure : testable contre chaque type d'attaque sans réseau.
+pub(crate) fn user_effects(
     addresses: &[String],
     pre: &[Option<sol_rpc::AccountState>],
     post: &[Option<sol_rpc::AccountState>],
-    limits: &SwapEffectLimits,
-) -> Result<()> {
+    user: &[u8; 32],
+) -> Result<UserEffects> {
     anyhow::ensure!(addresses.len() == pre.len() && pre.len() == post.len(), "états de comptes désalignés");
-    let user_b58 = bs58::encode(limits.user).into_string();
+    let user_b58 = bs58::encode(user).into_string();
     let native_mint: [u8; 32] = bs58::decode(jupiter_rpc::SOL_MINT)
         .into_vec()
         .ok()
@@ -2260,8 +2274,8 @@ fn verify_swap_effects(
 
         let pre_token = pre[i].as_ref().and_then(parse_token_account);
         let post_token = post[i].as_ref().and_then(parse_token_account);
-        let pre_is_user = pre_token.as_ref().is_some_and(|t| t.owner == limits.user);
-        let post_is_user = post_token.as_ref().is_some_and(|t| t.owner == limits.user);
+        let pre_is_user = pre_token.as_ref().is_some_and(|t| t.owner == *user);
+        let post_is_user = post_token.as_ref().is_some_and(|t| t.owner == *user);
 
         if let (true, Some(before)) = (pre_is_user, &pre_token) {
             lamports_pre += pre[i].as_ref().map_or(0, |s| u128::from(s.lamports));
@@ -2272,7 +2286,7 @@ fn verify_swap_effects(
                 // Compte fermé : sa valeur doit réapparaître ailleurs chez
                 // l'utilisateur, ce que le contrôle global des lamports vérifie.
                 (None, _) => {}
-                (Some(p), Some(after)) if after.owner == limits.user => {
+                (Some(p), Some(after)) if after.owner == *user => {
                     anyhow::ensure!(after.mint == before.mint, "un de vos comptes de jetons changerait de jeton — refus de signer");
                     anyhow::ensure!(
                         after.delegate == before.delegate,
@@ -2304,7 +2318,7 @@ fn verify_swap_effects(
             // et y livrer la sortie du swap. Rien de volé, mais des fonds que
             // l'app n'affiche ni ne dépense jamais (elle ne lit que le compte
             // associé) : pour l'utilisateur, un swap qui n'a "rien rendu".
-            let canonical = bs58::encode(sol_spl::find_associated_token_address(&limits.user, &after.mint)).into_string();
+            let canonical = bs58::encode(sol_spl::find_associated_token_address(user, &after.mint)).into_string();
             anyhow::ensure!(
                 addresses[i] == canonical,
                 "la transaction livrerait vos jetons sur un compte non standard, invisible dans l'app — refus de signer"
@@ -2322,6 +2336,18 @@ fn verify_swap_effects(
     }
 
     anyhow::ensure!(main_seen, "votre compte principal n'apparaît pas dans la transaction (payeur de frais attendu)");
+    Ok(UserEffects { lamports_pre, lamports_post, tokens_pre, tokens_post })
+}
+
+/// Vérifie les effets d'un swap Jupiter : refus structurels de `user_effects`,
+/// puis perte bornée au montant vendu + budget de frais, et sortie minimale.
+fn verify_swap_effects(
+    addresses: &[String],
+    pre: &[Option<sol_rpc::AccountState>],
+    post: &[Option<sol_rpc::AccountState>],
+    limits: &SwapEffectLimits,
+) -> Result<()> {
+    let UserEffects { lamports_pre, lamports_post, tokens_pre, tokens_post } = user_effects(addresses, pre, post, &limits.user)?;
     anyhow::ensure!(
         lamports_post + u128::from(limits.max_lamport_loss) >= lamports_pre,
         "la transaction vous coûterait {} lamports, au-delà du montant échangé + frais autorisés ({} lamports) — refus de signer",
@@ -2375,7 +2401,7 @@ fn check_swap_effects(rpc: &sol_rpc::SolRpc, tx: &[u8], limits: &SwapEffectLimit
     }
 }
 
-fn resolve_writable_addresses(rpc: &sol_rpc::SolRpc, tx: &[u8]) -> Result<Vec<String>> {
+pub(crate) fn resolve_writable_addresses(rpc: &sol_rpc::SolRpc, tx: &[u8]) -> Result<Vec<String>> {
     let message = jupiter_rpc::transaction_message(tx)?;
     let writable = jupiter_rpc::message_writable_accounts(message)?;
     anyhow::ensure!(
@@ -2600,6 +2626,103 @@ pub fn send_usdc(
     let transfer_ix = sol_spl::transfer_checked_instruction(&source_ata, &mint, &dest_ata, &owner, amount, sol_spl::USDC_DECIMALS);
     let raw_tx = sol_tx::build_and_sign_transaction(&signing_key, &owner, &[create_ata_ix, transfer_ix], &recent_blockhash);
     rpc.send_transaction(&raw_tx)
+}
+
+// --- Signatures demandées par des dApps (WalletConnect) ---------------------
+
+/// Signe une demande de dApp DÉJÀ préparée (voir `dapp_requests::prepare` :
+/// validation, exécution à blanc ou simulation, décodage) et confirmée dans la
+/// boîte native — rien n'est relu ni recalculé ici à partir de la dApp. Mot
+/// de passe exigé à chaque signature, comme pour tout envoi de fonds. `account`
+/// : les adresses de la session ; la clé dérivée doit y correspondre (défense
+/// en profondeur : une session liée à un autre profil ne peut rien signer).
+/// Renvoie le résultat JSON attendu par la dApp.
+pub fn sign_dapp_request(
+    data_dir: &Path,
+    device_password: &str,
+    profile_index: u32,
+    account: &dapp_requests::Account,
+    prepared: &dapp_requests::Prepared,
+) -> Result<serde_json::Value> {
+    use dapp_requests::Prepared;
+    use ed25519_dalek::Signer;
+    use serde_json::json;
+
+    let seed = unlock_seed(data_dir, device_password)?;
+    let _seed_lock = memory_guard::lock(&seed);
+    let evm_key = || -> Result<k256::ecdsa::SigningKey> {
+        let (key, address) = derivation::derive_evm_key(&seed, profile_index)?;
+        anyhow::ensure!(
+            derivation::format_address(&address).eq_ignore_ascii_case(&account.evm),
+            "le compte de la session ne correspond pas au profil — signature refusée"
+        );
+        Ok(key)
+    };
+    let solana_key = || -> Result<ed25519_dalek::SigningKey> {
+        let key = derivation::derive_solana_key(&seed, profile_index);
+        anyhow::ensure!(
+            bs58::encode(key.verifying_key().to_bytes()).into_string() == account.solana,
+            "le compte de la session ne correspond pas au profil — signature refusée"
+        );
+        Ok(key)
+    };
+
+    match prepared {
+        Prepared::EvmPersonalSign { message, .. } => {
+            let signature = crate::evm_sign::sign_digest(&evm_key()?, &crate::evm_sign::personal_message_hash(message))?;
+            Ok(json!(format!("0x{}", hex::encode(signature))))
+        }
+        Prepared::EvmTypedData { digest, .. } => {
+            let signature = crate::evm_sign::sign_digest(&evm_key()?, digest)?;
+            Ok(json!(format!("0x{}", hex::encode(signature))))
+        }
+        Prepared::EvmTransaction { network, to, value, data, gas_limit, gas_price, .. } => {
+            check_evm_gas_price(network, *gas_price)?;
+            let signing_key = evm_key()?;
+            let rpc = eth_rpc::EthRpc::new(network.rpc);
+            let (nonce, chain_id, balance) = std::thread::scope(|scope| {
+                let nonce_handle = scope.spawn(|| rpc.nonce(&account.evm));
+                let chain_id_handle = scope.spawn(|| rpc.chain_id());
+                let balance_handle = scope.spawn(|| rpc.balance(&account.evm));
+                (
+                    nonce_handle.join().expect("le thread nonce ne doit pas paniquer"),
+                    chain_id_handle.join().expect("le thread chain_id ne doit pas paniquer"),
+                    balance_handle.join().expect("le thread balance ne doit pas paniquer"),
+                )
+            });
+            let (nonce, chain_id, balance) = (nonce?, chain_id?, balance?);
+            anyhow::ensure!(
+                chain_id == network.chain_id,
+                "le nœud RPC répond pour le réseau {chain_id}, pas {} — envoi refusé",
+                network.chain_id
+            );
+            let gas_cost = gas_price
+                .checked_mul(u128::from(*gas_limit))
+                .context("gas_price * gas_limit dépasse la capacité représentable")?;
+            let total_needed = value.checked_add(gas_cost).context("montant + frais de gas dépasse la capacité représentable")?;
+            anyhow::ensure!(
+                total_needed <= balance,
+                "fonds insuffisants : {balance} wei disponibles, {value} wei + {gas_cost} wei de frais de gas requis"
+            );
+            let tx = eth_tx::EthTx { nonce, gas_price: *gas_price, gas_limit: *gas_limit, to: *to, value: *value, chain_id, data: data.clone() };
+            Ok(json!(rpc.send_raw_transaction(&tx.sign(&signing_key)?)?))
+        }
+        Prepared::SolanaMessage { message, .. } => {
+            let signature = solana_key()?.sign(message);
+            Ok(json!({"signature": bs58::encode(signature.to_bytes()).into_string()}))
+        }
+        Prepared::SolanaTransaction { network, tx, send, .. } => {
+            let key = solana_key()?;
+            let signed = jupiter_rpc::sign_swap_transaction(tx, &key, &key.verifying_key().to_bytes())?;
+            let signature = bs58::encode(&signed[1..65]).into_string();
+            if *send {
+                Ok(json!({"signature": sol_rpc::SolRpc::new(network.rpc).send_transaction(&signed)?}))
+            } else {
+                use base64::Engine;
+                Ok(json!({"signature": signature, "transaction": base64::engine::general_purpose::STANDARD.encode(&signed)}))
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -3410,6 +3533,11 @@ mod tests {
     /// wallet Binance, lecture seule — simulation sans signature), passés dans
     /// le VRAI chemin de production (`check_swap_effects`). Affiche la perte
     /// réelle mesurée au-delà du montant, pour dimensionner le budget de frais.
+    /// Échec isolé possible sans bug : ce hot wallet reçoit et envoie du SOL en
+    /// continu, son solde peut bouger entre la lecture "avant" et la simulation
+    /// (observé une fois, 3/3 au relancement). Pour un portefeuille personnel,
+    /// seule une réception pourrait s'intercaler — elle gonflerait le gain, et
+    /// un attaquant devrait payer ce qu'il vole : rien d'exploitable.
     /// `cargo test -- --ignored jupiter_swap_effects_pass_on_real_mainnet_swaps --nocapture`
     #[test]
     #[ignore]
@@ -3510,6 +3638,54 @@ mod tests {
         assert_eq!(usdc_recipient_activity("E645TckHQnDcavVv92Etc6xSWQaq8zzPtPRGBheviRAk", &wallet_flow::SOLANA_MAINNET).unwrap(), Funded);
         assert_eq!(usdc_recipient_activity(&fresh_sol, &wallet_flow::SOLANA_MAINNET).unwrap(), Unused);
         println!("neuves testées : {fresh_evm} / {fresh_btc} / {fresh_sol}");
+    }
+
+    /// Signatures de dApps sur un vrai wallet de test : l'adresse RECOUVRÉE
+    /// depuis chaque signature EVM doit être celle du profil, la signature
+    /// Solana doit vérifier contre sa clé publique, et une session liée à un
+    /// autre compte ne doit rien pouvoir signer.
+    #[test]
+    fn dapp_signatures_recover_to_the_session_account() {
+        use dapp_requests::{Account, Prepared};
+        let dir = std::env::temp_dir().join(format!("pgp_wallet_dapp_sign_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let password = "un mot de passe de test bien assez long";
+        let created = create_wallet(&dir, password).unwrap();
+        let account = Account { evm: created.addresses.evm.clone(), solana: created.addresses.solana.clone() };
+
+        let recover = |digest: [u8; 32], sig: &str| -> String {
+            let bytes = hex::decode(sig.trim_start_matches("0x")).unwrap();
+            let signature = k256::ecdsa::Signature::from_slice(&bytes[..64]).unwrap();
+            let recid = k256::ecdsa::RecoveryId::from_byte(bytes[64] - 27).unwrap();
+            let key = k256::ecdsa::VerifyingKey::recover_from_prehash(&digest, &signature, recid).unwrap();
+            let point = key.to_encoded_point(false);
+            let hash = crate::evm_sign::keccak(&point.as_bytes()[1..]);
+            derivation::format_address(&hash[12..].try_into().unwrap())
+        };
+
+        let personal = dapp_requests::prepare("personal_sign", &serde_json::json!(["0x48656c6c6f", account.evm]), dapp_requests::EVM_MAINNET, &account).unwrap();
+        let sig = sign_dapp_request(&dir, password, 0, &account, &personal).unwrap();
+        assert_eq!(recover(crate::evm_sign::personal_message_hash(b"Hello"), sig.as_str().unwrap()), account.evm);
+
+        let message = bs58::encode("Connexion").into_string();
+        let sol = dapp_requests::prepare("solana_signMessage", &serde_json::json!({"message": message, "pubkey": account.solana}), dapp_requests::SOLANA_MAINNET, &account).unwrap();
+        let sig = sign_dapp_request(&dir, password, 0, &account, &sol).unwrap();
+        let sig: [u8; 64] = bs58::decode(sig["signature"].as_str().unwrap()).into_vec().unwrap().try_into().unwrap();
+        let pubkey: [u8; 32] = bs58::decode(&account.solana).into_vec().unwrap().try_into().unwrap();
+        ed25519_dalek::VerifyingKey::from_bytes(&pubkey)
+            .unwrap()
+            .verify_strict(b"Connexion", &ed25519_dalek::Signature::from_bytes(&sig))
+            .expect("signature Solana valide");
+
+        // Session liée à un autre compte (ou profil) : refus avant toute signature.
+        let other = Account { evm: "0x5555555555555555555555555555555555555555".to_string(), solana: account.solana.clone() };
+        assert!(sign_dapp_request(&dir, password, 0, &other, &personal).is_err());
+        assert!(matches!(personal, Prepared::EvmPersonalSign { .. }));
+        // Mauvais mot de passe : refus (et compté dans le verrou, comme partout).
+        assert!(sign_dapp_request(&dir, "mauvais mot de passe", 0, &account, &personal).is_err());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// 22ᵉ passage : ce qu'affiche la boîte de confirmation doit être la valeur
