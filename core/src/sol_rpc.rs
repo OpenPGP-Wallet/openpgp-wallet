@@ -177,6 +177,15 @@ impl SolRpc {
             .is_some_and(|status| status != "finalized"))
     }
 
+    /// `true` si au moins une transaction a déjà touché `pubkey_b58` — distingue
+    /// une adresse jamais utilisée d'une adresse vidée (les deux n'ont plus de
+    /// compte on-chain). Une seule signature demandée, aucun détail.
+    pub fn has_any_signature(&self, pubkey_b58: &str) -> Result<bool> {
+        let result = self.call("getSignaturesForAddress", json!([pubkey_b58, {"limit": 1}]))?;
+        let entries = result.as_array().ok_or_else(|| anyhow!("réponse getSignaturesForAddress inattendue"))?;
+        Ok(!entries.is_empty())
+    }
+
     pub fn signature_history(&self, pubkey_b58: &str, limit: u32) -> Result<Vec<SolTx>> {
         let result = self.call("getSignaturesForAddress", json!([pubkey_b58, {"limit": limit}]))?;
         let entries = result.as_array().cloned().unwrap_or_default();

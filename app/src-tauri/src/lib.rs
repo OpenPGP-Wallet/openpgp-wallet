@@ -5,7 +5,7 @@
 //! confirmations/erreurs le sont.
 
 use base64::Engine;
-use pgp_wallet_poc::{address_book, api, external_wallets, history, messaging, price_rpc, wallet_flow};
+use pgp_wallet_poc::{address_book, api, external_wallets, history, messaging, price_rpc, sent_recipients, wallet_flow};
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -1319,6 +1319,72 @@ fn lookalike_warning(dir: &std::path::Path, to: &str) -> Option<String> {
     })
 }
 
+/// Avertissements "adresse destinataire" en tête de la boîte de confirmation,
+/// demandés par l'utilisateur : (1) aucun envoi vers cette adresse n'est
+/// enregistré dans ce portefeuille (voir `sent_recipients`) ; (2) sur la
+/// blockchain, l'adresse n'a jamais servi, ou est vide ; `activity` à `None`
+/// si cette lecture a échoué — dit explicitement plutôt qu'un silence qui
+/// passerait pour rassurant. `coin` : "evm", "btc", "sol" ou "usdc" (nomme
+/// l'actif absent, une adresse "vide" de SOL pouvant détenir autre chose).
+fn recipient_warning_lines(first_send: bool, coin: &str, activity: Option<api::RecipientActivity>) -> Vec<String> {
+    let mut lines = Vec::new();
+    if first_send {
+        lines.push(
+            lang(
+                "ATTENTION — NOUVELLE ADRESSE : vous n'avez jamais envoyé de fonds à cette adresse depuis ce portefeuille. \
+                 Vérifiez-la caractère par caractère auprès du destinataire.",
+                "WARNING — NEW ADDRESS: you have never sent funds to this address from this wallet. \
+                 Check it character by character with the recipient.",
+            )
+            .to_string(),
+        );
+    }
+    let (asset_fr, asset_en) = match coin {
+        "evm" => ("aucun ETH", "no ETH"),
+        "btc" => ("aucun BTC", "no BTC"),
+        "usdc" => ("ni SOL ni USDC", "neither SOL nor USDC"),
+        _ => ("aucun SOL", "no SOL"),
+    };
+    let (history_fr, history_en) = if coin == "evm" {
+        ("aucune transaction envoyée, aucun ETH", "no transaction sent, no ETH")
+    } else {
+        ("aucune transaction", "no transaction")
+    };
+    match activity {
+        Some(api::RecipientActivity::Funded) => {}
+        Some(api::RecipientActivity::Unused) => lines.push(if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
+            format!(
+                "On the blockchain, this address has NEVER been used ({history_en}). If you meant to pay an exchange or a usual contact, this is probably a copy mistake."
+            )
+        } else {
+            format!(
+                "Sur la blockchain, cette adresse n'a JAMAIS servi ({history_fr}). Si vous pensiez payer une plateforme ou un contact habituel, c'est probablement une erreur de copie."
+            )
+        }),
+        Some(api::RecipientActivity::Empty) => lines.push(if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
+            format!("On the blockchain, this address is EMPTY: it has been used before, but currently holds {asset_en}.")
+        } else {
+            format!("Sur la blockchain, cette adresse est VIDE : elle a déjà servi, mais ne contient actuellement {asset_fr}.")
+        }),
+        None => lines.push(
+            lang(
+                "État de cette adresse sur la blockchain : impossible à vérifier pour le moment (réseau).",
+                "Status of this address on the blockchain: could not be checked right now (network).",
+            )
+            .to_string(),
+        ),
+    }
+    lines
+}
+
+/// Tous les avertissements d'un envoi, dans l'ordre de gravité : sosie d'un
+/// contact du carnet, puis nouvelle adresse, puis état on-chain.
+fn send_warnings(dir: &std::path::Path, network: &str, coin: &str, to: &str, activity: Option<api::RecipientActivity>) -> Option<String> {
+    let mut lines: Vec<String> = lookalike_warning(dir, to).into_iter().collect();
+    lines.extend(recipient_warning_lines(!sent_recipients::has_sent_to(dir, network, to), coin, activity));
+    (!lines.is_empty()).then(|| lines.join("\n\n"))
+}
+
 /// Frais EVM MAXIMUM (prix du gas × limite de gas) : une transaction legacy
 /// paie `gas consommé × prix`, jamais plus que la limite — c'est donc une
 /// borne réelle, pas une estimation qui pourrait être dépassée.
@@ -1374,11 +1440,26 @@ fn send_transaction(
         "evm" => Some(api::evm_gas_price_for_confirmation(evm_network(&network)?).t_err()?),
         _ => None,
     };
-    // Destinataire Solana : refus AVANT la confirmation si ce n'est pas un
-    // portefeuille (voir `api::check_solana_recipient`).
-    if coin == "sol" {
-        api::check_solana_recipient(&to, sol_network(&network)?).t_err()?;
-    }
+    // Adresse refusée AVANT la confirmation si elle est mal formée (EVM/BTC :
+    // jusqu'ici seulement au moment de signer) ou, pour Solana, si ce n'est
+    // pas un portefeuille (voir `api::check_solana_recipient`). Puis état de
+    // l'adresse sur la blockchain, pour les avertissements de la boîte.
+    let activity = match coin {
+        "evm" => {
+            api::validate_evm_recipient(&to).t_err()?;
+            api::evm_recipient_activity(&to, evm_network(&network)?).ok()
+        }
+        "btc" => {
+            let net = btc_network(&network)?;
+            api::validate_btc_recipient(&to, net).t_err()?;
+            api::btc_recipient_activity(&to, net).ok()
+        }
+        _ => {
+            let net = sol_network(&network)?;
+            api::check_solana_recipient(&to, net).t_err()?;
+            api::sol_recipient_activity(&to, net).ok()
+        }
+    };
     // Ligne de frais choisie d'après le RÉSEAU, jamais d'après la simple
     // présence de `fee_sat` (22ᵉ passage) : un `fee_sat` envoyé pour un
     // virement ETH remplaçait jusqu'ici l'affichage des vrais frais de gas par
@@ -1391,12 +1472,12 @@ fn send_transaction(
         _ => evm_gas_price.map(|gas_price| evm_fee_line(gas_price, api::EVM_TRANSFER_GAS_LIMIT)),
     };
 
-    let warning = lookalike_warning(&dir, &to);
+    let warning = send_warnings(&dir, &network, coin, &to, activity);
     if !confirm_transaction_native(&app, &network, &to, &amount, &from_label, fee_line.as_deref(), warning.as_deref()) {
         return Err(translate_error("Virement annulé (confirmation refusée)."));
     }
 
-    match network.as_str() {
+    let result = match network.as_str() {
         "evm_sepolia" | "evm_mainnet" => {
             let net = evm_network(&network)?;
             let gas_price = evm_gas_price.ok_or_else(|| "prix du gas manquant".to_string())?;
@@ -1412,7 +1493,14 @@ fn send_transaction(
             api::send_sol(&dir, &password, net, &to, &amount, profile_index).t_err()
         }
         other => Err(translate_error(&format!("réseau inconnu : {other}"))),
+    };
+    // Destinataire mémorisé SEULEMENT après une diffusion réussie (voir
+    // `sent_recipients`). Un échec d'écriture du journal ne doit pas faire
+    // croire à l'échec d'un envoi déjà parti.
+    if result.is_ok() {
+        let _ = sent_recipients::record_sent(&dir, &network, &to);
     }
+    result
 }
 
 /// Indique si l'envoi USDC vers `to` va facturer un rent supplémentaire (le
@@ -1752,12 +1840,18 @@ fn send_usdc_transaction(password: String, to: String, amount: String, profile_i
 
     let rent_line = describe_possible_ata_rent(net, &to);
     let amount_line = format!("{amount} USDC");
-    let warning = lookalike_warning(&dir, &to);
+    // Même journal que les envois SOL (même réseau, même portefeuille
+    // destinataire) : avoir déjà payé cette adresse en SOL compte.
+    let warning = send_warnings(&dir, network, "usdc", &to, api::usdc_recipient_activity(&to, net).ok());
     if !confirm_transaction_native(&app, network, &to, &amount_line, &from_label, rent_line.as_deref(), warning.as_deref()) {
         return Err(translate_error("Virement annulé (confirmation refusée)."));
     }
 
-    api::send_usdc(&dir, &password, net, &to, &amount, profile_index).t_err()
+    let result = api::send_usdc(&dir, &password, net, &to, &amount, profile_index).t_err();
+    if result.is_ok() {
+        let _ = sent_recipients::record_sent(&dir, network, &to);
+    }
+    result
 }
 
 #[derive(Serialize)]
@@ -2135,6 +2229,36 @@ mod tests {
         assert_eq!(canonical_address_input("  0xabc\n").unwrap(), "0xabc");
         assert!(canonical_address_input("bc1q abc").is_err());
         assert!(canonical_address_input("  ").is_err());
+    }
+
+    #[test]
+    fn recipient_warnings_cover_new_unused_empty_and_unknown_addresses() {
+        use api::RecipientActivity::*;
+        // Adresse jamais payée ET jamais utilisée on-chain : les deux avertissements.
+        let lines = recipient_warning_lines(true, "evm", Some(Unused));
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(lines[0].contains("NOUVELLE ADRESSE"), "{lines:?}");
+        assert!(lines[1].contains("JAMAIS servi") && lines[1].contains("aucun ETH"), "{lines:?}");
+
+        // Destinataire habituel qui détient des fonds : rien à signaler.
+        assert!(recipient_warning_lines(false, "btc", Some(Funded)).is_empty());
+
+        // Vide : l'actif absent est nommé (un portefeuille sans SOL peut détenir de l'USDC).
+        let lines = recipient_warning_lines(false, "usdc", Some(Empty));
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("VIDE") && lines[0].contains("ni SOL ni USDC"), "{lines:?}");
+        assert!(recipient_warning_lines(false, "sol", Some(Empty))[0].contains("aucun SOL"));
+
+        // Lecture réseau en échec : dit explicitement, jamais un silence rassurant.
+        let lines = recipient_warning_lines(false, "sol", None);
+        assert!(lines.len() == 1 && lines[0].contains("impossible à vérifier"), "{lines:?}");
+
+        // Chaque avertissement tient sur un seul paragraphe (mise en page de la boîte).
+        for coin in ["evm", "btc", "sol", "usdc"] {
+            for activity in [Some(Unused), Some(Empty), None] {
+                assert!(recipient_warning_lines(true, coin, activity).iter().all(|l| !l.contains('\n')));
+            }
+        }
     }
 
     #[test]

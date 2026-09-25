@@ -1746,6 +1746,126 @@ fn classify_solana_recipient(pubkey: &[u8; 32], state: Option<&sol_rpc::AccountS
     }
 }
 
+// --- État d'une adresse destinataire sur la blockchain ----------------------
+// Demandé explicitement par l'utilisateur : prévenir, dans la boîte de
+// confirmation native, qu'une adresse destinataire n'a jamais servi (adresse
+// mal recopiée, ou fraîchement générée par un escroc) ou qu'elle est vide.
+// Lecture seule, AVANT la confirmation ; un échec réseau n'empêche pas l'envoi
+// (l'app affiche alors "impossible à vérifier" plutôt qu'un silence rassurant).
+
+/// Voir le bloc ci-dessus.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecipientActivity {
+    /// Aucune trace sur la blockchain : adresse jamais utilisée (EVM : aucune
+    /// transaction envoyée et aucun ETH — un nœud EVM n'expose pas les
+    /// transactions REÇUES, voir `history::evm_history`).
+    Unused,
+    /// Déjà utilisée, mais ne détient aucun fonds actuellement.
+    Empty,
+    /// Détient des fonds.
+    Funded,
+}
+
+fn classify_evm_activity(nonce: u64, balance_wei: u128) -> RecipientActivity {
+    if balance_wei > 0 {
+        RecipientActivity::Funded
+    } else if nonce == 0 {
+        RecipientActivity::Unused
+    } else {
+        RecipientActivity::Empty
+    }
+}
+
+fn classify_btc_activity(stats: &btc_rpc::AddressStats) -> RecipientActivity {
+    if stats.balance_sat > 0 {
+        RecipientActivity::Funded
+    } else if stats.tx_count == 0 {
+        RecipientActivity::Unused
+    } else {
+        RecipientActivity::Empty
+    }
+}
+
+/// `lamports` : `None` si le compte n'existe pas on-chain (jamais utilisé OU
+/// vidé : Solana supprime un compte à 0 lamport), d'où `has_history` pour
+/// distinguer les deux.
+fn classify_sol_activity(lamports: Option<u64>, has_history: bool) -> RecipientActivity {
+    match lamports {
+        Some(l) if l > 0 => RecipientActivity::Funded,
+        _ if has_history => RecipientActivity::Empty,
+        _ => RecipientActivity::Unused,
+    }
+}
+
+/// Refuse AVANT la boîte de confirmation une adresse EVM mal formée (ou au
+/// checksum EIP-55 faux) — elle n'était jusqu'ici rejetée qu'après la
+/// confirmation, au moment de signer.
+pub fn validate_evm_recipient(to: &str) -> Result<()> {
+    wallet_flow::parse_evm_address(to).map(|_| ())
+}
+
+/// Même principe que `validate_evm_recipient`, pour Bitcoin.
+pub fn validate_btc_recipient(to: &str, network: &wallet_flow::BtcNetwork) -> Result<()> {
+    (network.parse_address)(to).map(|_| ())
+}
+
+pub fn evm_recipient_activity(to: &str, network: &wallet_flow::EvmNetwork) -> Result<RecipientActivity> {
+    let address = derivation::format_address(&wallet_flow::parse_evm_address(to)?);
+    let rpc = eth_rpc::EthRpc::new(network.rpc);
+    let (nonce, balance) = std::thread::scope(|scope| {
+        let nonce_handle = scope.spawn(|| rpc.nonce(&address));
+        let balance_handle = scope.spawn(|| rpc.balance(&address));
+        (
+            nonce_handle.join().expect("le thread nonce ne doit pas paniquer"),
+            balance_handle.join().expect("le thread balance ne doit pas paniquer"),
+        )
+    });
+    Ok(classify_evm_activity(nonce?, balance?))
+}
+
+pub fn btc_recipient_activity(to: &str, network: &wallet_flow::BtcNetwork) -> Result<RecipientActivity> {
+    // Format validé d'abord : l'adresse est insérée dans le chemin de l'URL.
+    (network.parse_address)(to)?;
+    let stats = btc_rpc::EsploraClient::new(network.esplora_base).address_stats(&to.trim().to_ascii_lowercase())?;
+    Ok(classify_btc_activity(&stats))
+}
+
+/// Pour un envoi USDC aussi : c'est le PORTEFEUILLE destinataire qui est
+/// évalué (l'absence de compte USDC est déjà signalée à part, avec son coût).
+pub fn sol_recipient_activity(to: &str, network: &wallet_flow::SolNetwork) -> Result<RecipientActivity> {
+    let pubkey: [u8; 32] = bs58::decode(to.trim())
+        .into_vec()
+        .context("adresse Solana invalide (base58 attendu)")?
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("une adresse Solana fait 32 octets"))?;
+    let address = bs58::encode(pubkey).into_string();
+    let rpc = sol_rpc::SolRpc::new(network.rpc);
+    let lamports = rpc.multiple_accounts(std::slice::from_ref(&address))?.into_iter().next().flatten().map(|s| s.lamports);
+    let has_history = if lamports.is_some_and(|l| l > 0) { true } else { rpc.has_any_signature(&address)? };
+    Ok(classify_sol_activity(lamports, has_history))
+}
+
+/// Envoi USDC : un portefeuille peut détenir de l'USDC sans aucun SOL (son
+/// compte principal est alors purgé, seul son compte USDC existe) — le dire
+/// "vide" serait faux. Détient de l'USDC => `Funded` ; un compte USDC existant
+/// même vide prouve que l'adresse a servi => au moins `Empty`.
+pub fn usdc_recipient_activity(to: &str, network: &wallet_flow::SolNetwork) -> Result<RecipientActivity> {
+    let owner: [u8; 32] = bs58::decode(to.trim())
+        .into_vec()
+        .context("adresse Solana invalide (base58 attendu)")?
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("une adresse Solana fait 32 octets"))?;
+    let ata = bs58::encode(sol_spl::find_associated_token_address(&owner, &sol_spl::usdc_mint_mainnet())).into_string();
+    let usdc_balance = sol_rpc::SolRpc::new(network.rpc).token_account_balance(&ata)?;
+    if usdc_balance.is_some_and(|b| b > 0) {
+        return Ok(RecipientActivity::Funded);
+    }
+    Ok(match (sol_recipient_activity(to, network)?, usdc_balance) {
+        (RecipientActivity::Unused, Some(_)) => RecipientActivity::Empty,
+        (wallet, _) => wallet,
+    })
+}
+
 pub fn send_sol(
     data_dir: &Path,
     device_password: &str,
@@ -3337,6 +3457,59 @@ mod tests {
                 panic!("faux rejet {from}->{to} : {e:#}");
             }
         }
+    }
+
+    #[test]
+    fn recipient_activity_distinguishes_unused_empty_and_funded() {
+        use RecipientActivity::*;
+        assert_eq!(classify_evm_activity(0, 0), Unused);
+        assert_eq!(classify_evm_activity(5, 0), Empty);
+        assert_eq!(classify_evm_activity(0, 1), Funded, "reçu de l'ETH sans jamais en envoyer");
+        assert_eq!(classify_evm_activity(7, 10), Funded);
+
+        let btc = |tx_count, balance_sat| btc_rpc::AddressStats { tx_count, balance_sat };
+        assert_eq!(classify_btc_activity(&btc(0, 0)), Unused);
+        assert_eq!(classify_btc_activity(&btc(2, 0)), Empty);
+        assert_eq!(classify_btc_activity(&btc(1, 1_000)), Funded, "réception en mempool comprise");
+
+        assert_eq!(classify_sol_activity(None, false), Unused);
+        assert_eq!(classify_sol_activity(None, true), Empty, "compte vidé puis purgé par Solana");
+        assert_eq!(classify_sol_activity(Some(0), true), Empty);
+        assert_eq!(classify_sol_activity(Some(890_880), true), Funded);
+    }
+
+    /// Vérification sur de vraies adresses mainnet (lecture seule) des trois
+    /// états, pour chaque réseau — adresses "neuves" tirées au hasard à chaque
+    /// exécution (jamais utilisées, par construction). L'adresse Bitcoin "vide"
+    /// a été trouvée en direct (2 transactions, solde nul) : si quelqu'un y
+    /// envoie un jour de la poussière, elle passera "Funded" (test manuel).
+    /// `cargo test -- --ignored recipient_activity_matches_real_mainnet_addresses --nocapture`
+    #[test]
+    #[ignore]
+    fn recipient_activity_matches_real_mainnet_addresses() {
+        use RecipientActivity::*;
+        let random: [u8; 32] = entropy::generate_master_entropy()[..32].try_into().unwrap();
+
+        let fresh_evm = derivation::format_address(&random[..20].try_into().unwrap());
+        assert_eq!(evm_recipient_activity(&fresh_evm, &wallet_flow::ETHEREUM_MAINNET).unwrap(), Unused);
+        assert_eq!(evm_recipient_activity("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045", &wallet_flow::ETHEREUM_MAINNET).unwrap(), Funded);
+
+        let fresh_btc = derivation::format_btc_mainnet_address(&random[..20].try_into().unwrap()).unwrap();
+        assert_eq!(btc_recipient_activity(&fresh_btc, &wallet_flow::BTC_MAINNET).unwrap(), Unused);
+        assert_eq!(btc_recipient_activity("bc1q2zq2dkxrkrqn7dlqdgp4xda65mzfae8437he6z", &wallet_flow::BTC_MAINNET).unwrap(), Empty);
+        assert_eq!(btc_recipient_activity("bc1qm34lsc65zpw79lxes69zkqmk6ee3ewf0j77s3h", &wallet_flow::BTC_MAINNET).unwrap(), Funded);
+
+        let fresh_sol = bs58::encode(ed25519_dalek::SigningKey::from_bytes(&random).verifying_key().to_bytes()).into_string();
+        assert_eq!(sol_recipient_activity(&fresh_sol, &wallet_flow::SOLANA_MAINNET).unwrap(), Unused);
+        assert_eq!(sol_recipient_activity("5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9", &wallet_flow::SOLANA_MAINNET).unwrap(), Funded);
+        // Compte wSOL (fermé) du portefeuille public E645Tck… : historique, mais
+        // plus de compte on-chain — le cas "vidé puis purgé" propre à Solana.
+        assert_eq!(sol_recipient_activity("DvW59wVbiXr2zCbQNxUnLGS544XoQjpy7YBUC38HtcJ2", &wallet_flow::SOLANA_MAINNET).unwrap(), Empty);
+        // USDC : portefeuille public qui détient de l'USDC (voir
+        // `get_usdc_balance_matches_the_real_network`), et adresse neuve.
+        assert_eq!(usdc_recipient_activity("E645TckHQnDcavVv92Etc6xSWQaq8zzPtPRGBheviRAk", &wallet_flow::SOLANA_MAINNET).unwrap(), Funded);
+        assert_eq!(usdc_recipient_activity(&fresh_sol, &wallet_flow::SOLANA_MAINNET).unwrap(), Unused);
+        println!("neuves testées : {fresh_evm} / {fresh_btc} / {fresh_sol}");
     }
 
     /// 22ᵉ passage : ce qu'affiche la boîte de confirmation doit être la valeur

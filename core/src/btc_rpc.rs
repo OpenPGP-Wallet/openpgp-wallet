@@ -72,6 +72,27 @@ struct AddressTxStatusJson {
     block_time: Option<i64>,
 }
 
+#[derive(Deserialize)]
+struct TxoStatsJson {
+    funded_txo_sum: u64,
+    spent_txo_sum: u64,
+    tx_count: u64,
+}
+
+#[derive(Deserialize)]
+struct AddressStatsJson {
+    chain_stats: TxoStatsJson,
+    mempool_stats: TxoStatsJson,
+}
+
+/// Voir `EsploraClient::address_stats`.
+pub struct AddressStats {
+    /// Transactions confirmées + en mempool touchant l'adresse.
+    pub tx_count: u64,
+    /// Solde confirmé + mempool, en satoshis.
+    pub balance_sat: i128,
+}
+
 pub struct AddressTx {
     pub txid: String,
     pub confirmed: bool,
@@ -175,6 +196,28 @@ impl EsploraClient {
                 }
             })
             .collect())
+    }
+
+    /// Nombre total de transactions et solde (confirmé + mempool) de `address` —
+    /// un seul appel (`/address/{address}`), sans le détail des transactions.
+    /// Sert à prévenir avant un envoi vers une adresse jamais utilisée ou vide
+    /// (voir `api::btc_recipient_activity`). Solde calculé en signé : les
+    /// dépenses en mempool peuvent dépasser les réceptions en mempool (elles
+    /// consomment des sorties déjà confirmées) — constaté sur de vraies adresses.
+    pub fn address_stats(&self, address: &str) -> Result<AddressStats> {
+        let url = format!("{}/address/{address}", self.base_url);
+        let raw: AddressStatsJson = self
+            .client
+            .get(&url)
+            .send()
+            .context("appel esplora /address impossible")?
+            .json()
+            .context("réponse esplora /address illisible")?;
+        let balance = |s: &TxoStatsJson| i128::from(s.funded_txo_sum) - i128::from(s.spent_txo_sum);
+        Ok(AddressStats {
+            tx_count: raw.chain_stats.tx_count.saturating_add(raw.mempool_stats.tx_count),
+            balance_sat: balance(&raw.chain_stats) + balance(&raw.mempool_stats),
+        })
     }
 
     /// Diffuse une transaction brute (hex-encodée pour l'API) et renvoie son txid.
