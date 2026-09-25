@@ -46,6 +46,55 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("montant + frais dépasse la capacité représentable", "amount + fee exceeds the representable range"),
     ("adresse Solana invalide (base58 attendu)", "invalid Solana address (base58 expected)"),
     ("une adresse Solana fait 32 octets", "a Solana address is 32 bytes"),
+    // core/src/api.rs — audit "failles connues des hot wallets"
+    (
+        "cette adresse est un compte de jetons (ou un mint), pas un portefeuille : les fonds y seraient perdus. Demandez l'adresse du PORTEFEUILLE du destinataire.",
+        "this address is a token account (or a mint), not a wallet: funds sent there would be lost. Ask for the recipient's WALLET address.",
+    ),
+    (
+        "cette adresse appartient à un programme, pas à un portefeuille — envoi refusé (fonds probablement irrécupérables)",
+        "this address belongs to a program, not a wallet — transfer refused (funds would likely be unrecoverable)",
+    ),
+    (
+        "cette adresse n'a aucune clé privée (dérivée d'un programme) et n'a jamais été utilisée — les fonds y seraient très probablement perdus",
+        "this address has no private key (program-derived) and has never been used — funds sent there would very likely be lost",
+    ),
+    (
+        "l'adresse de dépôt THORChain a changé pendant la confirmation — relancez l'échange pour voir la nouvelle",
+        "the THORChain deposit address changed during confirmation — restart the swap to see the new one",
+    ),
+    (
+        "le cours a bougé pendant la confirmation (sortie minimale sous 99 % du montant affiché) — relancez l'échange",
+        "the price moved during confirmation (minimum output below 99% of the amount shown) — restart the swap",
+    ),
+    (
+        "la transaction changerait le programme propriétaire de votre compte principal (Assign) — refus de signer",
+        "the transaction would change your main account's owner program (Assign) — refusing to sign",
+    ),
+    (
+        "la transaction allouerait des données sur votre compte principal — refus de signer",
+        "the transaction would allocate data on your main account — refusing to sign",
+    ),
+    (
+        "la transaction ajouterait un délégué sur un de vos comptes de jetons (Approve : droit de le vider plus tard) — refus de signer",
+        "the transaction would add a delegate on one of your token accounts (Approve: the right to drain it later) — refusing to sign",
+    ),
+    (
+        "la transaction changerait l'autorité de fermeture d'un de vos comptes de jetons — refus de signer",
+        "the transaction would change the close authority of one of your token accounts — refusing to sign",
+    ),
+    (
+        "la transaction transférerait la propriété d'un de vos comptes de jetons (SetAuthority) — refus de signer",
+        "the transaction would transfer ownership of one of your token accounts (SetAuthority) — refusing to sign",
+    ),
+    (
+        "la transaction vous céderait un compte de jetons existant — refus de signer",
+        "the transaction would hand you an existing token account — refusing to sign",
+    ),
+    (
+        "un compte de jetons créé pour vous aurait déjà un délégué ou une autorité de fermeture — refus de signer",
+        "a token account created for you would already have a delegate or close authority — refusing to sign",
+    ),
     // core/src/messaging.rs
     ("clé publique PGP invalide", "invalid PGP public key"),
     ("au moins un destinataire est requis", "at least one recipient is required"),
@@ -1182,6 +1231,11 @@ fn send_transaction(
         "evm_sepolia" | "evm_mainnet" => Some(api::evm_gas_price_for_confirmation(evm_network(&network)?).t_err()?),
         _ => None,
     };
+    // Destinataire Solana : refus AVANT la confirmation si ce n'est pas un
+    // portefeuille (voir `api::check_solana_recipient`).
+    if matches!(network.as_str(), "sol_devnet" | "sol_mainnet") {
+        api::check_solana_recipient(&to, sol_network(&network)?).t_err()?;
+    }
     let fee_line = match (fee_sat, evm_gas_price) {
         (Some(f), _) => Some(format!("{} : {f} sat", lang("Frais", "Fee"))),
         (None, Some(gas_price)) => Some(evm_fee_line(gas_price, api::EVM_TRANSFER_GAS_LIMIT)),
@@ -1523,6 +1577,11 @@ fn send_usdc_transaction(password: String, to: String, amount: String, profile_i
         .find(|p| p.index == profile_index)
         .map(|p| p.label)
         .unwrap_or_else(|| format!("profil #{profile_index}"));
+
+    // Refus AVANT la boîte de confirmation si le destinataire n'est pas un
+    // portefeuille (voir `api::check_solana_recipient`) — le cas type étant
+    // l'adresse d'un compte de jetons copiée depuis un explorateur.
+    api::check_solana_recipient(&to, net).t_err()?;
 
     let rent_line = describe_possible_ata_rent(net, &to);
     let amount_line = format!("{amount} USDC");

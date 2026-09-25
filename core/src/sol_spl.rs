@@ -62,6 +62,13 @@ pub const USDC_DECIMALS: u8 = 6;
 /// de clés). `CompressedEdwardsY::decompress()` renvoie `None` exactement
 /// quand les 32 octets ne décodent pas en un point valide — c'est le test
 /// utilisé ici.
+/// `true` si `pubkey` est un vrai point de la courbe ed25519, donc une clé
+/// publique pour laquelle une clé privée PEUT exister. Une adresse hors-courbe
+/// (PDA, dérivée d'un programme) n'a par construction aucune clé privée.
+pub fn is_on_curve(pubkey: &[u8; 32]) -> bool {
+    CompressedEdwardsY(*pubkey).decompress().is_some()
+}
+
 fn find_program_address(seeds: &[&[u8]], program_id: &[u8; 32]) -> Option<[u8; 32]> {
     for bump in (0u8..=255).rev() {
         let mut hasher = Sha256::new();

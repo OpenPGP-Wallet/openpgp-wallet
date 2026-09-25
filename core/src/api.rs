@@ -1697,6 +1697,45 @@ pub fn send_swap_btc(
 }
 
 /// Déverrouille le coffre, signe et diffuse un virement Solana.
+/// Vérifie qu'une adresse Solana est bien un PORTEFEUILLE avant d'y envoyer
+/// des fonds — trouvé lors de l'audit "failles connues des hot wallets"
+/// (classe "envoi vers un type d'adresse où les fonds sont perdus", piège
+/// classique de Solana contre lequel Phantom/Solflare avertissent). Aucune
+/// vérification n'existait : coller par erreur l'adresse d'un COMPTE DE
+/// JETONS (celle que montrent souvent les explorateurs) au lieu de celle du
+/// portefeuille faisait créer un compte USDC détenu par... ce compte de
+/// jetons, que personne ne pourra jamais signer — fonds définitivement perdus.
+/// À appeler AVANT la confirmation (voir app-tauri), et de nouveau juste avant
+/// de signer (défense en profondeur).
+pub fn check_solana_recipient(to: &str, network: &wallet_flow::SolNetwork) -> Result<()> {
+    let pubkey: [u8; 32] = bs58::decode(to.trim())
+        .into_vec()
+        .context("adresse Solana invalide (base58 attendu)")?
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("une adresse Solana fait 32 octets"))?;
+    let state = sol_rpc::SolRpc::new(network.rpc)
+        .multiple_accounts(&[bs58::encode(pubkey).into_string()])?
+        .into_iter()
+        .next()
+        .flatten();
+    classify_solana_recipient(&pubkey, state.as_ref())
+}
+
+fn classify_solana_recipient(pubkey: &[u8; 32], state: Option<&sol_rpc::AccountState>) -> Result<()> {
+    match state {
+        // Portefeuille (ou coffre multisig, lui aussi détenu par le programme système).
+        Some(s) if s.owner == SYSTEM_PROGRAM_ID => Ok(()),
+        Some(s) if s.owner == TOKEN_PROGRAM_ID || s.owner == TOKEN_2022_PROGRAM_ID => anyhow::bail!(
+            "cette adresse est un compte de jetons (ou un mint), pas un portefeuille : les fonds y seraient perdus. Demandez l'adresse du PORTEFEUILLE du destinataire."
+        ),
+        Some(_) => anyhow::bail!("cette adresse appartient à un programme, pas à un portefeuille — envoi refusé (fonds probablement irrécupérables)"),
+        None if sol_spl::is_on_curve(pubkey) => Ok(()), // portefeuille neuf, jamais utilisé
+        None => anyhow::bail!(
+            "cette adresse n'a aucune clé privée (dérivée d'un programme) et n'a jamais été utilisée — les fonds y seraient très probablement perdus"
+        ),
+    }
+}
+
 pub fn send_sol(
     data_dir: &Path,
     device_password: &str,
@@ -1705,6 +1744,7 @@ pub fn send_sol(
     amount_sol: &str,
     profile_index: u32,
 ) -> Result<String> {
+    check_solana_recipient(to, network)?;
     let seed = unlock_seed(data_dir, device_password)?;
     let _seed_lock = memory_guard::lock(&seed);
     let signing_key = derivation::derive_solana_key(&seed, profile_index);
@@ -2278,6 +2318,7 @@ pub fn send_usdc(
     amount_usdc: &str,
     profile_index: u32,
 ) -> Result<String> {
+    check_solana_recipient(to, network)?;
     let seed = unlock_seed(data_dir, device_password)?;
     let _seed_lock = memory_guard::lock(&seed);
     let signing_key = derivation::derive_solana_key(&seed, profile_index);
@@ -2874,6 +2915,45 @@ mod tests {
         }
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // --- Type d'adresse du destinataire Solana -------------------------------
+
+    #[test]
+    fn solana_recipient_must_be_a_wallet() {
+        let on_curve = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]).verifying_key().to_bytes();
+        let off_curve = sol_spl::find_associated_token_address(&on_curve, &sol_spl::usdc_mint_mainnet());
+        assert!(!sol_spl::is_on_curve(&off_curve), "une ATA est hors-courbe par construction");
+
+        let state = |owner: &str| sol_rpc::AccountState { lamports: 1, owner: owner.to_string(), data: vec![] };
+        classify_solana_recipient(&on_curve, Some(&state(SYSTEM_PROGRAM_ID))).expect("portefeuille existant");
+        classify_solana_recipient(&off_curve, Some(&state(SYSTEM_PROGRAM_ID))).expect("coffre multisig (PDA détenue par le système)");
+        classify_solana_recipient(&on_curve, None).expect("portefeuille neuf");
+
+        let err = classify_solana_recipient(&off_curve, Some(&state(TOKEN_PROGRAM_ID))).unwrap_err();
+        assert!(err.to_string().contains("compte de jetons"), "{err}");
+        assert!(classify_solana_recipient(&off_curve, Some(&state(TOKEN_2022_PROGRAM_ID))).is_err());
+        assert!(classify_solana_recipient(&on_curve, Some(&state("BPFLoaderUpgradeab1e11111111111111111111111"))).is_err());
+        let err = classify_solana_recipient(&off_curve, None).unwrap_err();
+        assert!(err.to_string().contains("aucune clé privée"), "{err}");
+    }
+
+    /// Vraies adresses mainnet : un portefeuille, SON compte USDC (l'erreur type
+    /// d'un utilisateur qui copie l'adresse depuis un explorateur), le mint
+    /// USDC et le programme Jupiter. `cargo test -- --ignored solana_recipient_check_on_real`
+    #[test]
+    #[ignore]
+    fn solana_recipient_check_on_real_mainnet_addresses() {
+        let net = &wallet_flow::SOLANA_MAINNET;
+        check_solana_recipient("5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9", net).expect("vrai portefeuille accepté");
+        for (label, address) in [
+            ("compte USDC de ce portefeuille", "FzbcyEZ9m8xjtergWgWDq7mfPoHEbboBF791B6cTpzbq"),
+            ("mint USDC", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"),
+            ("programme Jupiter", "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"),
+        ] {
+            let err = check_solana_recipient(address, net).expect_err(label);
+            println!("{label} refusé : {err}");
+        }
     }
 
     // --- Frais et devis : "on signe ce qu'on voit" ---------------------------
