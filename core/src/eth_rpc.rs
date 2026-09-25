@@ -76,6 +76,22 @@ impl EthRpc {
         self.call_hex_u64("eth_getTransactionCount", json!([address, "pending"]))
     }
 
+    /// Gas réellement consommé par l'exécution d'un appel (`eth_estimateGas`,
+    /// simulation par le nœud) — indispensable pour un appel de CONTRAT : le
+    /// gas intrinsèque (`eth_tx::intrinsic_gas`) n'est que le minimum pour
+    /// SOUMETTRE une transaction, pas pour l'exécuter.
+    pub fn estimate_gas(&self, from: &str, to: &str, value_wei: u128, data: &[u8]) -> Result<u64> {
+        self.call_hex_u64(
+            "eth_estimateGas",
+            json!([{
+                "from": from,
+                "to": to,
+                "value": format!("0x{value_wei:x}"),
+                "data": format!("0x{}", hex::encode(data)),
+            }]),
+        )
+    }
+
     pub fn gas_price(&self) -> Result<u128> {
         let result = self.call("eth_gasPrice", json!([]))?;
         let hex_str = result

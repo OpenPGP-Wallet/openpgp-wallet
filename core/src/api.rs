@@ -1274,16 +1274,63 @@ pub fn has_pending_sol(address: &str, network: &wallet_flow::SolNetwork) -> Resu
     sol_rpc::SolRpc::new(network.rpc).has_unfinalized_tx(address)
 }
 
+/// Plafond de sécurité du prix du gas sur Ethereum MAINNET (200 gwei) — trouvé
+/// lors de l'audit "failles connues des hot wallets" (manipulation des frais
+/// par un nœud RPC) : le prix du gas était lu auprès du nœud APRÈS la
+/// confirmation, jamais affiché, jamais plafonné. Un nœud compromis annonçant
+/// 100 000 gwei aurait fait payer 2,1 ETH de frais pour un simple virement,
+/// le seul contrôle étant que le solde les couvre. 200 gwei laisse une marge
+/// énorme sur les prix réels de mainnet ; au-delà, l'envoi est refusé plutôt
+/// que de faire confiance au nœud. Pas de plafond sur les testnets (fonds sans
+/// valeur, prix du gas parfois erratiques).
+const MAINNET_MAX_GAS_PRICE_WEI: u128 = 200_000_000_000;
+/// Plafond du tarif de frais d'un swap Bitcoin (frais choisis automatiquement,
+/// voir `send_swap_btc`) — largement au-dessus des tarifs usuels, seuls des
+/// pics extrêmes et brefs l'ont dépassé.
+pub const BTC_SWAP_MAX_FEE_RATE_SAT_VB: u32 = 300;
+/// Gas d'un virement ETH simple vers une adresse ordinaire.
+pub const EVM_TRANSFER_GAS_LIMIT: u64 = 21_000;
+/// Plafond du gas d'un dépôt sur le routeur THORChain : mesuré à 45 632 en
+/// réel (`eth_estimateGas`, test `thorchain_router_deposit_gas_vs_intrinsic_on_
+/// the_real_network`) — plus de 3x de marge, sert aussi de borne à afficher
+/// comme frais maximum AVANT confirmation.
+pub const EVM_SWAP_MAX_GAS_LIMIT: u64 = 150_000;
+
+/// Prix du gas à afficher dans la boîte de confirmation PUIS à utiliser tel
+/// quel pour signer (jamais relu après la confirmation) — "on signe ce qu'on
+/// voit", appliqué aux frais. Refusé au-delà du plafond de sécurité sur mainnet.
+pub fn evm_gas_price_for_confirmation(network: &wallet_flow::EvmNetwork) -> Result<u128> {
+    let gas_price = eth_rpc::EthRpc::new(network.rpc).gas_price()?;
+    check_evm_gas_price(network, gas_price)?;
+    Ok(gas_price)
+}
+
+fn check_evm_gas_price(network: &wallet_flow::EvmNetwork, gas_price: u128) -> Result<()> {
+    if network.chain_id == wallet_flow::ETHEREUM_MAINNET.chain_id {
+        anyhow::ensure!(
+            gas_price <= MAINNET_MAX_GAS_PRICE_WEI,
+            "prix du gas annoncé par le nœud anormalement élevé ({} gwei, plafond de sécurité {} gwei) — envoi refusé",
+            gas_price / 1_000_000_000,
+            MAINNET_MAX_GAS_PRICE_WEI / 1_000_000_000
+        );
+    }
+    Ok(())
+}
+
 /// Déverrouille le coffre (mot de passe requis : c'est la barrière d'authentification
-/// avant toute dépense), signe et diffuse un virement EVM.
+/// avant toute dépense), signe et diffuse un virement EVM. `gas_price` : celui
+/// AFFICHÉ dans la boîte de confirmation (voir `evm_gas_price_for_confirmation`),
+/// utilisé tel quel — jamais un prix relu auprès du nœud après coup.
 pub fn send_evm(
     data_dir: &Path,
     device_password: &str,
     network: &wallet_flow::EvmNetwork,
     to: &str,
     amount_eth: &str,
+    gas_price: u128,
     profile_index: u32,
 ) -> Result<String> {
+    check_evm_gas_price(network, gas_price)?;
     let seed = unlock_seed(data_dir, device_password)?;
     let _seed_lock = memory_guard::lock(&seed);
     let (signing_key, address) = derivation::derive_evm_key(&seed, profile_index)?;
@@ -1293,35 +1340,37 @@ pub fn send_evm(
 
     let rpc = eth_rpc::EthRpc::new(network.rpc);
     let address_str = derivation::format_address(&address);
-    // Les 4 appels ci-dessous sont des lectures RPC indépendantes (aucune ne dépend
+    // Les 3 appels ci-dessous sont des lectures RPC indépendantes (aucune ne dépend
     // du résultat d'une autre) : les lancer en parallèle plutôt que l'une après
-    // l'autre réduit la latence perçue d'un envoi ETH d'environ 4x à ~1x un
-    // aller-retour réseau.
-    let (nonce, gas_price, chain_id, balance) = std::thread::scope(|scope| {
+    // l'autre réduit la latence perçue d'un envoi ETH à ~1x un aller-retour réseau.
+    let (nonce, chain_id, balance) = std::thread::scope(|scope| {
         let nonce_handle = scope.spawn(|| rpc.nonce(&address_str));
-        let gas_price_handle = scope.spawn(|| rpc.gas_price());
         let chain_id_handle = scope.spawn(|| rpc.chain_id());
         let balance_handle = scope.spawn(|| rpc.balance(&address_str));
         (
             nonce_handle.join().expect("le thread nonce ne doit pas paniquer"),
-            gas_price_handle.join().expect("le thread gas_price ne doit pas paniquer"),
             chain_id_handle.join().expect("le thread chain_id ne doit pas paniquer"),
             balance_handle.join().expect("le thread balance ne doit pas paniquer"),
         )
     });
     let nonce = nonce?;
-    let gas_price = gas_price?;
     let chain_id = chain_id?;
     let balance = balance?;
+    // Un nœud qui répondrait un autre réseau que celui choisi ferait signer une
+    // transaction rejouable ailleurs (EIP-155 lie la signature au chain_id).
+    anyhow::ensure!(
+        chain_id == network.chain_id,
+        "le nœud RPC répond pour le réseau {chain_id}, pas {} — envoi refusé",
+        network.chain_id
+    );
 
     // Contrairement à Bitcoin (UTXO, vérifié dans `send_btc`), rien ne vérifiait ici
     // que le solde couvre montant + frais de gas avant de signer et diffuser : sans
     // ce contrôle, l'erreur ne remonte que via le rejet du nœud RPC après signature,
     // ce qui masque la vraie cause côté utilisateur ("fonds insuffisants") derrière un
     // message d'erreur RPC générique.
-    const GAS_LIMIT: u128 = 21_000;
     let gas_cost = gas_price
-        .checked_mul(GAS_LIMIT)
+        .checked_mul(u128::from(EVM_TRANSFER_GAS_LIMIT))
         .context("gas_price * gas_limit dépasse la capacité représentable")?;
     let total_needed = value
         .checked_add(gas_cost)
@@ -1334,7 +1383,7 @@ pub fn send_evm(
     let tx = eth_tx::EthTx {
         nonce,
         gas_price,
-        gas_limit: 21_000,
+        gas_limit: EVM_TRANSFER_GAS_LIMIT,
         to: to_bytes,
         value,
         chain_id,
@@ -1353,15 +1402,18 @@ pub fn send_evm(
 /// (c'est `msg.value`, donc `value`, qui compte réellement). `expiration` :
 /// horodatage Unix + marge large (1h), comme documenté par THORChain pour
 /// éviter qu'un appel resté longtemps en attente ne s'exécute à un cours
-/// périmé.
+/// périmé. `gas_price` : celui AFFICHÉ dans la boîte de confirmation (voir
+/// `evm_gas_price_for_confirmation`), utilisé tel quel.
 pub fn send_swap_evm(
     data_dir: &Path,
     device_password: &str,
     network: &wallet_flow::EvmNetwork,
     quote: &thorchain_rpc::SwapQuote,
     amount_eth: &str,
+    gas_price: u128,
     profile_index: u32,
 ) -> Result<String> {
+    check_evm_gas_price(network, gas_price)?;
     let router = quote
         .router
         .as_deref()
@@ -1383,22 +1435,24 @@ pub fn send_swap_evm(
 
     let rpc = eth_rpc::EthRpc::new(network.rpc);
     let address_str = derivation::format_address(&address);
-    let (nonce, gas_price, chain_id, balance) = std::thread::scope(|scope| {
+    let (nonce, chain_id, balance) = std::thread::scope(|scope| {
         let nonce_handle = scope.spawn(|| rpc.nonce(&address_str));
-        let gas_price_handle = scope.spawn(|| rpc.gas_price());
         let chain_id_handle = scope.spawn(|| rpc.chain_id());
         let balance_handle = scope.spawn(|| rpc.balance(&address_str));
         (
             nonce_handle.join().expect("le thread nonce ne doit pas paniquer"),
-            gas_price_handle.join().expect("le thread gas_price ne doit pas paniquer"),
             chain_id_handle.join().expect("le thread chain_id ne doit pas paniquer"),
             balance_handle.join().expect("le thread balance ne doit pas paniquer"),
         )
     });
     let nonce = nonce?;
-    let gas_price = gas_price?;
     let chain_id = chain_id?;
     let balance = balance?;
+    anyhow::ensure!(
+        chain_id == network.chain_id,
+        "le nœud RPC répond pour le réseau {chain_id}, pas {} — envoi refusé",
+        network.chain_id
+    );
 
     let expiration = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1407,7 +1461,22 @@ pub fn send_swap_evm(
         + 3600;
 
     let calldata = eth_tx::thorchain_deposit_calldata(&vault_bytes, &native_asset_bytes, 0, &quote.memo, expiration);
-    let gas_limit = eth_tx::intrinsic_gas(&calldata);
+    // Gas RÉELLEMENT nécessaire à l'exécution du contrat (+20 %), pas le gas
+    // intrinsèque — trouvé lors du même audit : la version précédente prenait
+    // `intrinsic_gas` (23 844 mesuré) comme limite, alors qu'un dépôt réel sur
+    // le routeur en consomme 45 632 (`eth_estimateGas` sur mainnet) : CHAQUE
+    // swap ETH aurait manqué de gas et échoué on-chain, en brûlant les frais,
+    // sans jamais rien échanger. Borné par `EVM_SWAP_MAX_GAS_LIMIT`, le
+    // maximum affiché dans la boîte de confirmation.
+    let estimated = rpc.estimate_gas(&address_str, router, value, &calldata)?;
+    let gas_limit = estimated
+        .saturating_mul(12)
+        .div_ceil(10)
+        .max(eth_tx::intrinsic_gas(&calldata));
+    anyhow::ensure!(
+        gas_limit <= EVM_SWAP_MAX_GAS_LIMIT,
+        "gas estimé anormalement élevé pour un dépôt THORChain ({gas_limit}, maximum {EVM_SWAP_MAX_GAS_LIMIT}) — swap refusé"
+    );
 
     let gas_cost = gas_price
         .checked_mul(u128::from(gas_limit))
@@ -1592,7 +1661,17 @@ pub fn send_swap_btc(
     // ici ; la marge (~60 vbytes) reste négligeable face à la volatilité des
     // frais réseau eux-mêmes.
     let vsize = crate::btc_tx::estimate_p2wpkh_vsize(utxos.len(), 2) as f64;
-    let fee_sat = (fee_rate_for_target(&estimates, 3) * vsize).ceil() as u64;
+    let fee_rate = fee_rate_for_target(&estimates, 3);
+    // Tarif lu auprès d'Esplora sans intervention de l'utilisateur (contrairement
+    // à `send_btc`, où il choisit un palier affiché en sats) : plafonné pour qu'un
+    // serveur compromis ne puisse pas gonfler les frais à volonté — même famille
+    // que le plafond du prix du gas EVM (`MAINNET_MAX_GAS_PRICE_WEI`). Plafond
+    // affiché dans la boîte de confirmation du swap.
+    anyhow::ensure!(
+        fee_rate.is_finite() && fee_rate <= BTC_SWAP_MAX_FEE_RATE_SAT_VB as f64,
+        "tarif de frais Bitcoin anormalement élevé ({fee_rate:.1} sat/vB, plafond {BTC_SWAP_MAX_FEE_RATE_SAT_VB}) — swap refusé"
+    );
+    let fee_sat = (fee_rate * vsize).ceil() as u64;
 
     const DUST_THRESHOLD_SAT: u64 = 1_000;
     let total_needed = amount_sat
@@ -2089,6 +2168,42 @@ pub fn get_swap_quote(from_coin: &str, to_coin: &str, amount: &str, destination:
     let amount_native = parse_swap_amount_for_coin(from_coin, amount)?;
     let amount_thorchain = thorchain_rpc::to_thorchain_amount(amount_native, from_decimals)?;
     thorchain_rpc::quote_swap(from_asset, to_asset, amount_thorchain, destination)
+}
+
+/// Re-demande un devis JUSTE AVANT l'envoi (jamais de vault périmé, voir la doc
+/// de `thorchain_rpc::SwapQuote`) tout en garantissant que ce qui part est ce
+/// qui a été AFFICHÉ dans la boîte de confirmation (`shown`) : même adresse de
+/// vault, même routeur, et une sortie minimale d'au moins 99 % de la sortie
+/// attendue affichée — sinon refus (l'utilisateur relance et voit les nouvelles
+/// valeurs). Résout la tension laissée par le 18ᵉ passage d'auto-revue entre
+/// "devis toujours frais" et "on signe ce qu'on voit" : relire le devis après la
+/// confirmation pouvait faire payer un vault/routeur jamais affiché, ou livrer
+/// moins que la sortie annoncée si le cours avait bougé entre-temps.
+pub fn refresh_swap_quote_matching(
+    from_coin: &str,
+    to_coin: &str,
+    amount: &str,
+    destination: &str,
+    shown: &thorchain_rpc::SwapQuote,
+) -> Result<thorchain_rpc::SwapQuote> {
+    let fresh = get_swap_quote(from_coin, to_coin, amount, destination)?;
+    let (to_asset, _) = thorchain_asset_for_coin(to_coin)?;
+    ensure_quote_matches_shown(&fresh, shown, to_asset, destination)?;
+    Ok(fresh)
+}
+
+fn ensure_quote_matches_shown(
+    fresh: &thorchain_rpc::SwapQuote,
+    shown: &thorchain_rpc::SwapQuote,
+    to_asset: &str,
+    destination: &str,
+) -> Result<()> {
+    anyhow::ensure!(
+        fresh.inbound_address == shown.inbound_address && fresh.router == shown.router,
+        "l'adresse de dépôt THORChain a changé pendant la confirmation — relancez l'échange pour voir la nouvelle"
+    );
+    thorchain_rpc::verify_swap_memo(&fresh.memo, to_asset, destination, shown.expected_amount_out)
+        .context("le cours a bougé pendant la confirmation (sortie minimale sous 99 % du montant affiché) — relancez l'échange")
 }
 
 /// Envoie un swap THORChain depuis Solana : construit un transfert SOL vers
@@ -2761,6 +2876,47 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    // --- Frais et devis : "on signe ce qu'on voit" ---------------------------
+
+    #[test]
+    fn evm_gas_price_is_capped_on_mainnet_only() {
+        let cap = MAINNET_MAX_GAS_PRICE_WEI;
+        assert!(check_evm_gas_price(&wallet_flow::ETHEREUM_MAINNET, cap).is_ok());
+        let err = check_evm_gas_price(&wallet_flow::ETHEREUM_MAINNET, 100_000 * 1_000_000_000).unwrap_err();
+        assert!(err.to_string().contains("anormalement élevé"), "{err}");
+        assert!(check_evm_gas_price(&wallet_flow::SEPOLIA, 100_000 * 1_000_000_000).is_ok(), "pas de plafond sur testnet");
+    }
+
+    fn shown_quote(memo_limit: u64) -> thorchain_rpc::SwapQuote {
+        thorchain_rpc::SwapQuote {
+            inbound_address: "bc1qvaultvaultvaultvaultvaultvaultvault00".into(),
+            router: None,
+            memo: format!("=:b:bc1qdest:{memo_limit}:{}:80", thorchain_rpc::AFFILIATE_ADDRESS),
+            expected_amount_out: 1_000_000,
+            total_fees: None,
+        }
+    }
+
+    #[test]
+    fn refreshed_quote_must_match_what_was_shown() {
+        let shown = shown_quote(990_000);
+        ensure_quote_matches_shown(&shown_quote(990_000), &shown, "BTC.BTC", "bc1qdest").expect("identique");
+
+        let mut churned = shown_quote(990_000);
+        churned.inbound_address = "bc1qautrevaultautrevaultautrevault00000".into();
+        assert!(ensure_quote_matches_shown(&churned, &shown, "BTC.BTC", "bc1qdest").is_err(), "vault changé");
+
+        let mut rerouted = shown_quote(990_000);
+        rerouted.router = Some("0xAutreRouteur".into());
+        assert!(ensure_quote_matches_shown(&rerouted, &shown, "BTC.BTC", "bc1qdest").is_err(), "routeur changé");
+
+        // Cours tombé à 950 000 : la nouvelle sortie minimale (99 % de 950 000)
+        // est sous 99 % de ce qui a été AFFICHÉ (1 000 000) — refusé.
+        let price_dropped = shown_quote(940_500);
+        let err = ensure_quote_matches_shown(&price_dropped, &shown, "BTC.BTC", "bc1qdest").unwrap_err();
+        assert!(format!("{err:#}").contains("cours a bougé"), "{err:#}");
+    }
+
     // --- verify_swap_effects : une attaque par cas -------------------------
 
     const USER: [u8; 32] = [1u8; 32];
@@ -2888,6 +3044,26 @@ mod tests {
     fn swap_effects_require_the_user_main_account() {
         let addresses = vec!["pas_l_utilisateur".to_string()];
         assert!(verify_swap_effects(&addresses, &[sys(SOL)], &[sys(SOL)], &sol_to_usdc_limits(SOL)).is_err());
+    }
+
+    /// Vérifie contre le réseau réel combien de gas coûte VRAIMENT un
+    /// `depositWithExpiry` sur le routeur THORChain (simulation `eth_estimateGas`
+    /// depuis une adresse publique approvisionnée, lecture seule), comparé au
+    /// gas intrinsèque. `cargo test -- --ignored thorchain_router_deposit_gas --nocapture`
+    #[test]
+    #[ignore]
+    fn thorchain_router_deposit_gas_vs_intrinsic_on_the_real_network() {
+        let from = "0x28C6c06298d514Db089934071355E5743bf21d60"; // hot wallet public (lecture seule)
+        let quote = thorchain_rpc::quote_swap("ETH.ETH", "BTC.BTC", 1_000_000, "bc1qp0jus87dalh7xku22tx3uhyhlf8cjuc0vvkhjz").unwrap();
+        let router = quote.router.clone().unwrap();
+        let vault = wallet_flow::parse_evm_address(&quote.inbound_address).unwrap();
+        let expiration = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() + 3600;
+        let calldata = eth_tx::thorchain_deposit_calldata(&vault, &[0u8; 20], 0, &quote.memo, expiration);
+        let value = 10_000_000_000_000_000u128; // 0,01 ETH
+        let rpc = eth_rpc::EthRpc::new(wallet_flow::ETHEREUM_MAINNET.rpc);
+        let estimated = rpc.estimate_gas(from, &router, value, &calldata).expect("estimation réelle");
+        let intrinsic = eth_tx::intrinsic_gas(&calldata);
+        println!("gas intrinsèque = {intrinsic}, gas réellement nécessaire (eth_estimateGas) = {estimated}");
     }
 
     /// Calibration ET garde-fou contre les faux rejets : vrais swaps Jupiter

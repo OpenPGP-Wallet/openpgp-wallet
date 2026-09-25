@@ -15,9 +15,11 @@ pub struct EthTx {
     pub chain_id: u64,
     /// Calldata d'appel de contrat. Vide pour un simple transfert (comportement
     /// strictement identique à avant cet ajout). Non-vide pour un swap
-    /// THORChain (`thorchain_deposit_calldata`) — voir `intrinsic_gas`, dont le
-    /// résultat DOIT être utilisé comme `gas_limit` dès que `data` n'est pas vide
-    /// (21 000 fixe sous-estime le coût réel et ferait rejeter la transaction).
+    /// THORChain (`thorchain_deposit_calldata`) — `gas_limit` doit alors venir
+    /// d'une estimation réelle de l'exécution (`EthRpc::estimate_gas`), jamais
+    /// de `intrinsic_gas` seul : ce dernier n'est que le minimum pour SOUMETTRE
+    /// la transaction (mesuré : 23 844 contre 45 632 réellement consommés par
+    /// un dépôt sur le routeur THORChain).
     pub data: Vec<u8>,
 }
 
@@ -86,10 +88,9 @@ impl EthTx {
 /// Gas intrinsèque réel d'une transaction (règle post-EIP-2028, en vigueur
 /// depuis Istanbul) : 21 000 de base + 16 par octet non-nul de calldata + 4 par
 /// octet nul. Un simple transfert (`data` vide) redonne exactement 21 000,
-/// donc aucune régression sur le chemin d'envoi existant. Indispensable pour
-/// tout appel de contrat (ex : swap THORChain) : la constante fixe 21 000
-/// précédemment codée en dur ferait rejeter la transaction par le nœud
-/// ("intrinsic gas too low") dès que `data` n'est pas vide.
+/// donc aucune régression sur le chemin d'envoi existant. Ce n'est qu'un
+/// PLANCHER (le minimum pour soumettre la transaction) : pour un appel de
+/// contrat, l'exécution consomme bien davantage — voir `EthTx::data`.
 pub fn intrinsic_gas(data: &[u8]) -> u64 {
     const BASE: u64 = 21_000;
     let (zero, nonzero) = data.iter().fold((0u64, 0u64), |(zero, nonzero), &b| {
