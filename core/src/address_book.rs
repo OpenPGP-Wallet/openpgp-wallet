@@ -70,9 +70,88 @@ pub fn remove_entry(data_dir: &Path, id: u32) -> Result<()> {
     save(data_dir, &data)
 }
 
+/// Partie "visible" d'une adresse, sans le préfixe fixe commun à TOUTES les
+/// adresses de son format (sinon toutes les adresses Bitcoin, qui commencent
+/// par `bc1q`, se "ressembleraient"), en minuscules pour la comparaison.
+fn distinctive_part(address: &str) -> String {
+    let lower = address.trim().to_ascii_lowercase();
+    for prefix in ["0x", "bc1q", "bc1p", "tb1q", "tb1p"] {
+        if let Some(rest) = lower.strip_prefix(prefix) {
+            return rest.to_string();
+        }
+    }
+    lower
+}
+
+fn same_address(a: &str, b: &str) -> bool {
+    let (a, b) = (a.trim(), b.trim());
+    // Hex EVM et bech32 : insensibles à la casse ; base58 (Solana) : sensible.
+    if a.starts_with("0x") || a.starts_with("bc1") || a.starts_with("tb1") {
+        a.eq_ignore_ascii_case(b)
+    } else {
+        a == b
+    }
+}
+
+/// Entrée du carnet dont l'adresse RESSEMBLE à `address` sans lui être
+/// identique : mêmes 4 premiers ET 4 derniers caractères distinctifs, milieu
+/// différent — trouvé lors de l'audit "failles connues des hot wallets"
+/// (empoisonnement d'adresse, "address poisoning" : un attaquant génère une
+/// adresse qui imite début et fin de celle d'un contact habituel, pour qu'elle
+/// soit copiée par erreur ; c'est précisément ce que l'œil vérifie d'une
+/// adresse). `None` si l'adresse est exactement celle d'un contact, ou ne
+/// ressemble à aucun.
+pub fn lookalike_entry<'a>(entries: &'a [AddressBookEntry], address: &str) -> Option<&'a AddressBookEntry> {
+    const EDGE: usize = 4;
+    // `.get()` plutôt qu'un découpage direct : l'adresse est saisie par
+    // l'utilisateur, un caractère non-ASCII (é, emoji collé par erreur) ferait
+    // tomber un découpage direct au milieu d'un caractère — panique, donc
+    // arrêt de l'app (`panic = "abort"`). Une telle saisie n'est de toute façon
+    // pas une adresse valide : aucun avertissement de ressemblance à émettre.
+    let edges = |s: &str| -> Option<(String, String)> {
+        let s = distinctive_part(s);
+        if s.len() < 2 * EDGE {
+            return None;
+        }
+        Some((s.get(..EDGE)?.to_string(), s.get(s.len() - EDGE..)?.to_string()))
+    };
+    let target = edges(address)?;
+    if entries.iter().any(|e| same_address(&e.address, address)) {
+        return None;
+    }
+    entries.iter().find(|entry| edges(&entry.address).as_ref() == Some(&target))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn entry(label: &str, address: &str) -> AddressBookEntry {
+        AddressBookEntry { id: 0, label: label.into(), network: "evm_mainnet".into(), address: address.into() }
+    }
+
+    #[test]
+    fn lookalike_entry_flags_a_poisoned_address_but_not_the_real_one() {
+        let book = vec![
+            entry("Alice", "0x7a2F5c1e8B9d0e3f4A6b7C8d9E0f1A2b3C4d9e1F"),
+            entry("Bob BTC", "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh"),
+        ];
+        // Même début (7a2f) et même fin (9e1f), milieu différent : empoisonnée.
+        let poisoned = "0x7A2F000000000000000000000000000000009E1F";
+        assert_eq!(lookalike_entry(&book, poisoned).map(|e| e.label.as_str()), Some("Alice"));
+        // La vraie adresse (casse différente, hex insensible à la casse) : aucun avertissement.
+        assert!(lookalike_entry(&book, "0x7a2f5c1e8b9d0e3f4a6b7c8d9e0f1a2b3c4d9e1f").is_none());
+        // Adresse Bitcoin sans rapport : le préfixe commun "bc1q" ne doit pas suffire.
+        assert!(lookalike_entry(&book, "bc1qp0jus87dalh7xku22tx3uhyhlf8cjuc0vvkhjz").is_none());
+        // Adresse Bitcoin imitant début et fin de celle de Bob : signalée.
+        assert_eq!(
+            lookalike_entry(&book, "bc1qxy2k000000000000000000000000000000x0wlh").map(|e| e.label.as_str()),
+            Some("Bob BTC")
+        );
+        // Saisie non-ASCII : jamais de panique (arrêt de l'app), simplement aucun avertissement.
+        assert!(lookalike_entry(&book, "0x7a2é00000000000000000000000000000009e1f").is_none());
+        assert!(lookalike_entry(&book, "🔥🔥🔥🔥🔥🔥🔥🔥🔥").is_none());
+    }
 
     fn temp_dir(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("pgp_wallet_address_book_{name}_{}", std::process::id()));

@@ -1169,16 +1169,19 @@ fn confirm_transaction_native(
     amount: &str,
     from_label: &str,
     fee_line: Option<&str>,
+    warning: Option<&str>,
 ) -> bool {
     let fee_line = fee_line.map(|f| format!("\n{f}")).unwrap_or_default();
+    // En TÊTE du message : c'est la première chose lue, avant l'adresse.
+    let warning = warning.map(|w| format!("{w}\n\n")).unwrap_or_default();
     let message = if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
         format!(
-            "Network: {}\nFrom profile: {from_label}\nRecipient: {to}\nAmount: {amount}{fee_line}\n\nConfirm this transfer? It is irreversible.",
+            "{warning}Network: {}\nFrom profile: {from_label}\nRecipient: {to}\nAmount: {amount}{fee_line}\n\nConfirm this transfer? It is irreversible.",
             network_label(network)
         )
     } else {
         format!(
-            "Réseau : {}\nDepuis le profil : {from_label}\nDestinataire : {to}\nMontant : {amount}{fee_line}\n\nConfirmer cet envoi ? C'est irréversible.",
+            "{warning}Réseau : {}\nDepuis le profil : {from_label}\nDestinataire : {to}\nMontant : {amount}{fee_line}\n\nConfirmer cet envoi ? C'est irréversible.",
             network_label(network)
         )
     };
@@ -1188,6 +1191,26 @@ fn confirm_transaction_native(
         .kind(MessageDialogKind::Warning)
         .buttons(MessageDialogButtons::OkCancel)
         .blocking_show()
+}
+
+/// Avertissement "empoisonnement d'adresse" (voir
+/// `address_book::lookalike_entry`) : l'adresse saisie imite début et fin
+/// d'un contact du carnet sans être la sienne.
+fn lookalike_warning(dir: &std::path::Path, to: &str) -> Option<String> {
+    let entries = address_book::list_entries(dir);
+    let entry = address_book::lookalike_entry(&entries, to)?;
+    let label = &entry.label;
+    Some(if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
+        format!(
+            "WARNING: this address LOOKS LIKE \"{label}\" from your address book (same beginning and end) but it is NOT the same address. \
+             This is a common scam (address poisoning): compare every character before confirming."
+        )
+    } else {
+        format!(
+            "ATTENTION : cette adresse RESSEMBLE à « {label} » de votre carnet (même début, même fin) mais ce n'est PAS la même adresse. \
+             Arnaque courante (empoisonnement d'adresse) : comparez chaque caractère avant de confirmer."
+        )
+    })
 }
 
 /// Frais EVM MAXIMUM (prix du gas × limite de gas) : une transaction legacy
@@ -1242,7 +1265,8 @@ fn send_transaction(
         _ => None,
     };
 
-    if !confirm_transaction_native(&app, &network, &to, &amount, &from_label, fee_line.as_deref()) {
+    let warning = lookalike_warning(&dir, &to);
+    if !confirm_transaction_native(&app, &network, &to, &amount, &from_label, fee_line.as_deref(), warning.as_deref()) {
         return Err(translate_error("Virement annulé (confirmation refusée)."));
     }
 
@@ -1585,7 +1609,8 @@ fn send_usdc_transaction(password: String, to: String, amount: String, profile_i
 
     let rent_line = describe_possible_ata_rent(net, &to);
     let amount_line = format!("{amount} USDC");
-    if !confirm_transaction_native(&app, network, &to, &amount_line, &from_label, rent_line.as_deref()) {
+    let warning = lookalike_warning(&dir, &to);
+    if !confirm_transaction_native(&app, network, &to, &amount_line, &from_label, rent_line.as_deref(), warning.as_deref()) {
         return Err(translate_error("Virement annulé (confirmation refusée)."));
     }
 
