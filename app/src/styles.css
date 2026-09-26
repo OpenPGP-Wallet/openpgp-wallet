@@ -1455,6 +1455,43 @@ textarea:focus {
   color: var(--danger);
 }
 
+.history-amount-box {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.history-usd {
+  font-size: 0.72rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.history-kind {
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
+.history-kind-received {
+  color: var(--success);
+}
+
+.history-kind-sent {
+  color: var(--danger);
+}
+
+.history-kind-swap {
+  color: var(--warning);
+}
+
+.history-kind-other {
+  color: var(--muted);
+}
+
 .history-link {
   background: none;
   border: none;

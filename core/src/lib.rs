@@ -11,6 +11,7 @@ pub mod sol_tx;
 pub mod sol_rpc;
 pub mod sol_spl;
 pub mod price_rpc;
+pub mod price_history;
 pub mod blockscout;
 pub mod history;
 pub mod wallet_flow;

@@ -201,13 +201,14 @@ impl SolRpc {
                 // une transaction dont le montant n'a pas pu être déterminé (nœud qui a purgé
                 // une signature ancienne, etc.) doit rester affichable sans montant plutôt que
                 // de faire échouer tout l'historique.
-                let net_lamports = self.net_lamports_for(&signature, pubkey_b58).ok().flatten();
+                let details = self.transaction(&signature).ok().flatten();
                 SolTx {
+                    net_lamports: details.as_ref().and_then(|tx| net_lamports(tx, pubkey_b58)),
+                    swap: details.as_ref().is_some_and(is_swap_transaction),
                     signature,
                     block_time,
                     confirmed: matches!(confirmation_status, "confirmed" | "finalized"),
                     failed,
-                    net_lamports,
                 }
             })
             .collect())
@@ -251,27 +252,14 @@ impl SolRpc {
         result.as_u64().ok_or_else(|| anyhow!("réponse getMinimumBalanceForRentExemption inattendue"))
     }
 
-    fn net_lamports_for(&self, signature: &str, pubkey_b58: &str) -> Result<Option<i128>> {
+    /// Détail d'une transaction (`getTransaction`) ; `None` si le nœud ne l'a
+    /// plus (signature ancienne purgée).
+    fn transaction(&self, signature: &str) -> Result<Option<Value>> {
         let result = self.call(
             "getTransaction",
             json!([signature, {"encoding": "json", "maxSupportedTransactionVersion": 0}]),
         )?;
-        if result.is_null() {
-            return Ok(None);
-        }
-        let account_keys = result.pointer("/transaction/message/accountKeys").and_then(Value::as_array);
-        let pre_balances = result.pointer("/meta/preBalances").and_then(Value::as_array);
-        let post_balances = result.pointer("/meta/postBalances").and_then(Value::as_array);
-        let (Some(account_keys), Some(pre_balances), Some(post_balances)) = (account_keys, pre_balances, post_balances)
-        else {
-            return Ok(None);
-        };
-        let index = account_keys.iter().position(|k| k.as_str() == Some(pubkey_b58));
-        Ok(index.and_then(|i| {
-            let pre = pre_balances.get(i).and_then(Value::as_i64)?;
-            let post = post_balances.get(i).and_then(Value::as_i64)?;
-            Some((post - pre) as i128)
-        }))
+        Ok((!result.is_null()).then_some(result))
     }
 
     /// Même principe que `signature_history`, mais pour l'historique d'un jeton SPL
@@ -292,54 +280,73 @@ impl SolRpc {
                 let block_time = entry.get("blockTime").and_then(Value::as_i64);
                 let confirmation_status = entry.get("confirmationStatus").and_then(Value::as_str).unwrap_or("");
                 let failed = entry.get("err").map(|e| !e.is_null()).unwrap_or(false);
-                let net_lamports = self.net_token_amount_for(&signature, ata_b58).ok().flatten();
+                let details = self.transaction(&signature).ok().flatten();
                 SolTx {
+                    net_lamports: details.as_ref().and_then(|tx| net_token_amount(tx, ata_b58)),
+                    swap: details.as_ref().is_some_and(is_swap_transaction),
                     signature,
                     block_time,
                     confirmed: matches!(confirmation_status, "confirmed" | "finalized"),
                     failed,
-                    net_lamports,
                 }
             })
             .collect())
     }
 
-    /// Équivalent de `net_lamports_for` pour un compte de jetons SPL : Solana ne
-    /// donne pas l'historique des soldes de jetons dans `preBalances`/`postBalances`
-    /// (réservés au solde natif SOL), mais dans `preTokenBalances`/`postTokenBalances`,
-    /// indexés par la position du compte dans `accountKeys` (même mécanisme
-    /// d'indexation). Absence dans `preTokenBalances` traitée comme un solde de 0
-    /// avant la transaction (cas d'un ATA tout juste créé par cette même
-    /// transaction, via CreateIdempotent).
-    fn net_token_amount_for(&self, signature: &str, ata_b58: &str) -> Result<Option<i128>> {
-        let result = self.call(
-            "getTransaction",
-            json!([signature, {"encoding": "json", "maxSupportedTransactionVersion": 0}]),
-        )?;
-        if result.is_null() {
-            return Ok(None);
-        }
-        let account_keys = result.pointer("/transaction/message/accountKeys").and_then(Value::as_array);
-        let pre_token_balances = result.pointer("/meta/preTokenBalances").and_then(Value::as_array);
-        let post_token_balances = result.pointer("/meta/postTokenBalances").and_then(Value::as_array);
-        let (Some(account_keys), Some(post_token_balances)) = (account_keys, post_token_balances) else {
-            return Ok(None);
-        };
-        let index = account_keys.iter().position(|k| k.as_str() == Some(ata_b58));
-        let Some(index) = index else { return Ok(None) };
+}
 
-        let amount_at_index = |balances: &[Value]| -> Option<i128> {
-            balances
-                .iter()
-                .find(|entry| entry.get("accountIndex").and_then(Value::as_u64) == Some(index as u64))
-                .and_then(|entry| entry.pointer("/uiTokenAmount/amount"))
-                .and_then(Value::as_str)
-                .and_then(|s| s.parse::<i128>().ok())
-        };
+/// Variation du solde SOL de `pubkey_b58` dans une transaction (`getTransaction`).
+fn net_lamports(tx: &Value, pubkey_b58: &str) -> Option<i128> {
+    let account_keys = tx.pointer("/transaction/message/accountKeys")?.as_array()?;
+    let index = account_keys.iter().position(|k| k.as_str() == Some(pubkey_b58))?;
+    let pre = tx.pointer("/meta/preBalances")?.as_array()?.get(index)?.as_i64()?;
+    let post = tx.pointer("/meta/postBalances")?.as_array()?.get(index)?.as_i64()?;
+    Some((post - pre) as i128)
+}
 
-        let pre_amount = pre_token_balances.and_then(|b| amount_at_index(b)).unwrap_or(0);
-        Ok(amount_at_index(post_token_balances).map(|post| post - pre_amount))
-    }
+/// Équivalent de `net_lamports` pour un compte de jetons SPL : Solana ne
+/// donne pas l'historique des soldes de jetons dans `preBalances`/`postBalances`
+/// (réservés au solde natif SOL), mais dans `preTokenBalances`/`postTokenBalances`,
+/// indexés par la position du compte dans `accountKeys` (même mécanisme
+/// d'indexation). Absence dans `preTokenBalances` traitée comme un solde de 0
+/// avant la transaction (cas d'un ATA tout juste créé par cette même
+/// transaction, via CreateIdempotent).
+fn net_token_amount(tx: &Value, ata_b58: &str) -> Option<i128> {
+    let account_keys = tx.pointer("/transaction/message/accountKeys")?.as_array()?;
+    let index = account_keys.iter().position(|k| k.as_str() == Some(ata_b58))?;
+    let amount_at_index = |balances: &[Value]| -> Option<i128> {
+        balances
+            .iter()
+            .find(|entry| entry.get("accountIndex").and_then(Value::as_u64) == Some(index as u64))
+            .and_then(|entry| entry.pointer("/uiTokenAmount/amount"))
+            .and_then(Value::as_str)
+            .and_then(|s| s.parse::<i128>().ok())
+    };
+    let pre_amount = tx.pointer("/meta/preTokenBalances").and_then(Value::as_array).and_then(|b| amount_at_index(b)).unwrap_or(0);
+    amount_at_index(tx.pointer("/meta/postTokenBalances")?.as_array()?).map(|post| post - pre_amount)
+}
+
+/// Programme d'agrégation de swaps Jupiter (v6), celui qu'utilise l'app.
+const JUPITER_PROGRAM: &str = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4";
+
+/// Swap : programme Jupiter appelé (toujours parmi les clés statiques du
+/// message, un programme ne pouvant venir d'une table d'adresses), ou memo de
+/// swap THORChain dans le journal du programme Memo
+/// (`Program log: Memo (len N): "…"`).
+fn is_swap_transaction(tx: &Value) -> bool {
+    let jupiter = tx
+        .pointer("/transaction/message/accountKeys")
+        .and_then(Value::as_array)
+        .is_some_and(|keys| keys.iter().any(|k| k.as_str() == Some(JUPITER_PROGRAM)));
+    let memo_swap = tx.pointer("/meta/logMessages").and_then(Value::as_array).is_some_and(|logs| {
+        logs.iter().filter_map(Value::as_str).any(|line| {
+            line.strip_prefix("Program log: Memo (len ")
+                .and_then(|rest| rest.split_once("): \""))
+                .and_then(|(_, memo)| memo.strip_suffix('"'))
+                .is_some_and(crate::history::is_swap_memo)
+        })
+    });
+    jupiter || memo_swap
 }
 
 /// Cherche le motif "Transfer: insufficient lamports X, need Y" dans un
@@ -404,6 +411,8 @@ pub struct SolTx {
     /// Positif si reçu net, négatif si envoyé net, en lamports ; `None` si le détail
     /// n'a pas pu être récupéré.
     pub net_lamports: Option<i128>,
+    /// Swap Jupiter ou THORChain (voir `is_swap_transaction`).
+    pub swap: bool,
 }
 
 #[cfg(test)]
@@ -426,5 +435,45 @@ mod tests {
     #[test]
     fn insufficient_lamports_error_returns_none_without_the_pattern() {
         assert!(insufficient_lamports_error("Program log: Instruction: Route\nProgram ... success").is_none());
+    }
+
+    /// Formats de vraies transactions du réseau principal : swap Jupiter
+    /// (programme parmi les clés statiques d'une transaction v0), dépôt de swap
+    /// THORChain et paiement THORChain (lignes de journal du programme Memo
+    /// recopiées telles quelles), virement ordinaire.
+    #[test]
+    fn swaps_are_detected_in_real_transaction_formats() {
+        let tx = |keys: &[&str], logs: &[&str]| json!({"transaction": {"message": {"accountKeys": keys}}, "meta": {"logMessages": logs}});
+        let jupiter = tx(&["7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU", JUPITER_PROGRAM], &["Program JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 invoke [1]"]);
+        assert!(is_swap_transaction(&jupiter));
+        let deposit = tx(
+            &["11111111111111111111111111111111", "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"],
+            &[
+                "Program MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr invoke [1]",
+                "Program log: Memo (len 53): \"=:BSC.USDT:0xd63678741D8e155e337c0Fe35cE143886fA04750\"",
+            ],
+        );
+        assert!(is_swap_transaction(&deposit));
+        let payout = tx(&[], &["Program log: Memo (len 68): \"OUT:69F129E7A9CC7D8C71D4A261C56EF2291275DF572A29F9218A535B743EAAEB15\""]);
+        assert!(is_swap_transaction(&payout));
+        let transfer = tx(&["11111111111111111111111111111111"], &["Program 11111111111111111111111111111111 invoke [1]", "Program log: Memo (len 5): \"merci\""]);
+        assert!(!is_swap_transaction(&transfer));
+        assert!(!is_swap_transaction(&json!({})));
+    }
+
+    /// Montants nets SOL et jeton, calculés sur le même détail de transaction.
+    #[test]
+    fn net_amounts_are_read_from_transaction_details() {
+        let tx = json!({
+            "transaction": {"message": {"accountKeys": ["Owner", "Ata", "Other"]}},
+            "meta": {
+                "preBalances": [1_000_000, 2_039_280, 5], "postBalances": [990_000, 2_039_280, 5],
+                "preTokenBalances": [], "postTokenBalances": [{"accountIndex": 1, "uiTokenAmount": {"amount": "2500000"}}]
+            }
+        });
+        assert_eq!(net_lamports(&tx, "Owner"), Some(-10_000));
+        assert_eq!(net_lamports(&tx, "Absent"), None);
+        assert_eq!(net_token_amount(&tx, "Ata"), Some(2_500_000), "compte de jetons créé par la transaction : solde avant = 0");
+        assert_eq!(net_token_amount(&tx, "Other"), None);
     }
 }

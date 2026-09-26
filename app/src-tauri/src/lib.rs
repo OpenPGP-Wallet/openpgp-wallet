@@ -5,7 +5,7 @@
 //! confirmations/erreurs le sont.
 
 use base64::Engine;
-use pgp_wallet_poc::{address_book, api, dapp_requests, external_wallets, hardware, history, messaging, price_rpc, sent_recipients, wallet_flow};
+use pgp_wallet_poc::{address_book, api, dapp_requests, external_wallets, hardware, history, messaging, price_history, price_rpc, sent_recipients, wallet_flow};
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -1168,6 +1168,12 @@ struct TxEntryDto {
     /// Chaîne décimale signée dans l'unité principale du réseau (ex: "+0.001234",
     /// "-0.05") ; `None` quand le montant n'a pas pu être déterminé.
     amount: Option<String>,
+    /// "received", "sent", "swap" ou "other" (voir `history::TxKind`).
+    kind: &'static str,
+    /// Valeur absolue du montant en dollars AU MOMENT de la transaction (voir
+    /// `price_history`) ; `None` sur un réseau de test, pour une transaction
+    /// trop ancienne, ou si le service de prix est injoignable.
+    usd_value: Option<f64>,
     explorer_url: String,
 }
 
@@ -1178,8 +1184,8 @@ fn format_signed_amount(net_amount_minor: Option<i128>, decimals: i32) -> Option
     })
 }
 
-fn status_str(status: &pgp_wallet_poc::history::TxStatus) -> &'static str {
-    use pgp_wallet_poc::history::TxStatus;
+fn status_str(status: &history::TxStatus) -> &'static str {
+    use history::TxStatus;
     match status {
         TxStatus::Confirmed => "confirmed",
         TxStatus::Pending => "pending",
@@ -1187,51 +1193,81 @@ fn status_str(status: &pgp_wallet_poc::history::TxStatus) -> &'static str {
     }
 }
 
+fn kind_str(kind: &history::TxKind) -> &'static str {
+    use history::TxKind;
+    match kind {
+        TxKind::Received => "received",
+        TxKind::Sent => "sent",
+        TxKind::Swap => "swap",
+        TxKind::Other => "other",
+    }
+}
+
+/// Entrées d'historique prêtes à afficher. `asset` : actif valorisé en
+/// dollars au moment de chaque transaction (`None` sur un réseau de test :
+/// fonds sans valeur). Historique et séries de prix lus en parallèle ; sans
+/// prix (service injoignable), l'historique s'affiche quand même, sans valeur.
+fn history_dtos<E: std::fmt::Display>(
+    fetch: impl FnOnce() -> Result<Vec<history::TxEntry>, E>,
+    asset: Option<price_history::Asset>,
+    decimals: i32,
+    explorer_url: impl Fn(&str) -> String,
+) -> Result<Vec<TxEntryDto>, String> {
+    let (entries, prices) = std::thread::scope(|scope| {
+        let prices = asset.map(|a| scope.spawn(move || price_history::series(a)));
+        let entries = fetch();
+        (entries, prices.and_then(|handle| handle.join().ok()).and_then(Result::ok))
+    });
+    Ok(entries
+        .t_err()?
+        .into_iter()
+        .map(|tx| TxEntryDto {
+            // Pas de « ≈ 0,00 $ » pour une transaction qui ne déplace rien.
+            usd_value: prices
+                .as_deref()
+                .zip(tx.net_amount_minor.filter(|net| *net != 0))
+                .and_then(|(series, net)| price_history::usd_value(series, net, decimals, tx.timestamp_unix)),
+            kind: kind_str(&tx.kind),
+            explorer_url: explorer_url(&tx.id),
+            amount: format_signed_amount(tx.net_amount_minor, decimals),
+            status: status_str(&tx.status).to_string(),
+            timestamp_unix: tx.timestamp_unix,
+            id: tx.id,
+        })
+        .collect())
+}
+
 #[tauri::command]
-fn get_tx_history(network: String, address: String) -> Result<Vec<TxEntryDto>, String> {
-    let entries = match network.as_str() {
+async fn get_tx_history(network: String, address: String) -> Result<Vec<TxEntryDto>, String> {
+    run_blocking(move || match network.as_str() {
         "evm_sepolia" | "evm_mainnet" => {
             let net = evm_network(&network)?;
-            let txs = history::evm_history(net.chain_id, &address, HISTORY_LIMIT as usize).t_err()?;
-            txs.into_iter()
-                .map(|tx| TxEntryDto {
-                    id: tx.id.clone(),
-                    timestamp_unix: tx.timestamp_unix,
-                    status: status_str(&tx.status).to_string(),
-                    amount: format_signed_amount(tx.net_amount_minor, 18),
-                    explorer_url: format!("{}{}", net.explorer_tx_prefix, tx.id),
-                })
-                .collect()
+            let asset = (network == "evm_mainnet").then_some(price_history::Asset::Eth);
+            history_dtos(
+                || history::evm_history(net.chain_id, &address, HISTORY_LIMIT as usize),
+                asset,
+                18,
+                |id| format!("{}{}", net.explorer_tx_prefix, id),
+            )
         }
         "btc_testnet" | "btc_mainnet" => {
             let net = btc_network(&network)?;
-            let txs = history::btc_history(net, &address).t_err()?;
-            txs.into_iter()
-                .map(|tx| TxEntryDto {
-                    id: tx.id.clone(),
-                    timestamp_unix: tx.timestamp_unix,
-                    status: status_str(&tx.status).to_string(),
-                    amount: format_signed_amount(tx.net_amount_minor, 8),
-                    explorer_url: format!("{}{}", net.explorer_tx_prefix, tx.id),
-                })
-                .collect()
+            let asset = (network == "btc_mainnet").then_some(price_history::Asset::Btc);
+            history_dtos(|| history::btc_history(net, &address), asset, 8, |id| format!("{}{}", net.explorer_tx_prefix, id))
         }
         "sol_devnet" | "sol_mainnet" => {
             let net = sol_network(&network)?;
-            let txs = history::sol_history(net.rpc, &address, HISTORY_LIMIT).t_err()?;
-            txs.into_iter()
-                .map(|tx| TxEntryDto {
-                    id: tx.id.clone(),
-                    timestamp_unix: tx.timestamp_unix,
-                    status: status_str(&tx.status).to_string(),
-                    amount: format_signed_amount(tx.net_amount_minor, 9),
-                    explorer_url: format!("{}{}{}", net.explorer_tx_prefix, tx.id, net.explorer_tx_suffix),
-                })
-                .collect()
+            let asset = (network == "sol_mainnet").then_some(price_history::Asset::Sol);
+            history_dtos(
+                || history::sol_history(net.rpc, &address, HISTORY_LIMIT),
+                asset,
+                9,
+                |id| format!("{}{}{}", net.explorer_tx_prefix, id, net.explorer_tx_suffix),
+            )
         }
-        other => return Err(translate_error(&format!("réseau inconnu : {other}"))),
-    };
-    Ok(entries)
+        other => Err(translate_error(&format!("réseau inconnu : {other}"))),
+    })
+    .await
 }
 
 /// Mainnet uniquement (v1, voir core/src/sol_spl.rs — même contrainte que
@@ -1239,22 +1275,20 @@ fn get_tx_history(network: String, address: String) -> Result<Vec<TxEntryDto>, S
 /// rester cohérent avec `get_tx_history` côté frontend, une seule valeur est
 /// acceptée.
 #[tauri::command]
-fn get_usdc_tx_history(network: String, address: String) -> Result<Vec<TxEntryDto>, String> {
-    if network != "sol_mainnet" {
-        return Err(translate_error(&format!("réseau inconnu : {network}")));
-    }
-    let net = sol_network(&network)?;
-    let txs = api::get_usdc_tx_history(&address, net, HISTORY_LIMIT).t_err()?;
-    Ok(txs
-        .into_iter()
-        .map(|tx| TxEntryDto {
-            id: tx.id.clone(),
-            timestamp_unix: tx.timestamp_unix,
-            status: status_str(&tx.status).to_string(),
-            amount: format_signed_amount(tx.net_amount_minor, 6),
-            explorer_url: format!("{}{}{}", net.explorer_tx_prefix, tx.id, net.explorer_tx_suffix),
-        })
-        .collect())
+async fn get_usdc_tx_history(network: String, address: String) -> Result<Vec<TxEntryDto>, String> {
+    run_blocking(move || {
+        if network != "sol_mainnet" {
+            return Err(translate_error(&format!("réseau inconnu : {network}")));
+        }
+        let net = sol_network(&network)?;
+        history_dtos(
+            || api::get_usdc_tx_history(&address, net, HISTORY_LIMIT),
+            Some(price_history::Asset::Usdc),
+            6,
+            |id| format!("{}{}{}", net.explorer_tx_prefix, id, net.explorer_tx_suffix),
+        )
+    })
+    .await
 }
 
 #[derive(Serialize)]

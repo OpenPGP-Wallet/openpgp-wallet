@@ -64,6 +64,8 @@ struct PrevoutJson {
 struct VoutJson {
     scriptpubkey_address: Option<String>,
     value: u64,
+    #[serde(default)]
+    scriptpubkey: String,
 }
 
 #[derive(Deserialize)]
@@ -102,6 +104,24 @@ pub struct AddressTx {
     /// supplémentaire nécessaire, contrairement à Solana où le détail par
     /// transaction demande une requête séparée).
     pub net_sat: i128,
+    /// Texte de la première sortie OP_RETURN (memo), s'il y en a une lisible
+    /// (ex : memo d'un swap THORChain, voir `history`).
+    pub memo: Option<String>,
+}
+
+/// Données d'un script OP_RETURN, en texte : `OP_RETURN` suivi d'UNE poussée
+/// (directe jusqu'à 75 octets, `OP_PUSHDATA1` ou `OP_PUSHDATA2`) couvrant le
+/// reste du script. `None` pour tout autre script ou un texte non UTF-8.
+fn op_return_text(script_hex: &str) -> Option<String> {
+    let script = hex::decode(script_hex).ok()?;
+    let (&opcode, rest) = script.strip_prefix(&[0x6a])?.split_first()?;
+    let (len, data) = match opcode {
+        1..=75 => (opcode as usize, rest),
+        0x4c => (*rest.first()? as usize, &rest[1..]),
+        0x4d => (u16::from_le_bytes([*rest.first()?, *rest.get(1)?]) as usize, &rest[2..]),
+        _ => return None,
+    };
+    (data.len() == len).then(|| String::from_utf8(data.to_vec()).ok()).flatten()
 }
 
 impl EsploraClient {
@@ -189,6 +209,7 @@ impl EsploraClient {
                     .map(|p| p.value as i128)
                     .sum();
                 AddressTx {
+                    memo: tx.vout.iter().find_map(|o| op_return_text(&o.scriptpubkey)),
                     txid: tx.txid,
                     confirmed: tx.status.confirmed,
                     block_time: tx.status.block_time,
@@ -270,5 +291,33 @@ impl EsploraClient {
             .collect();
         estimates.sort_by_key(|(target, _)| *target);
         Ok(estimates)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Scripts OP_RETURN de vraies transactions THORChain du réseau principal
+    /// (lues sur Esplora) : poussée directe (e8bf29df…), `OP_PUSHDATA1`
+    /// (990fb6f4…), paiement sortant « OUT: » (909686b5…).
+    #[test]
+    fn op_return_memos_of_real_transactions_are_read() {
+        assert_eq!(
+            op_return_text("6a423d3a783a72444466356e47696d3352514e4475536150626d79727848714448676f796e6876563a3435363632313837373830302f302f303a2d5f2f74313a302f3730").as_deref(),
+            Some("=:x:rDDf5nGim3RQNDuSaPbmyrxHqDHgoynhvV:456621877800/0/0:-_/t1:0/70")
+        );
+        assert_eq!(
+            op_return_text("6a4c503d3a4554482e555344433a3078643139303266363632613239326362393634614231334546354661344630343541633235386138323a32343438333135303430302f302f303a2d5f2f74313a302f3730").as_deref(),
+            Some("=:ETH.USDC:0xd1902f662a292cb964aB13EF5Fa4F045Ac258a82:24483150400/0/0:-_/t1:0/70")
+        );
+        assert_eq!(
+            op_return_text("6a444f55543a32363430324233373338463143463934423431454630423739343645463141423734464239354145463045374137443345423945443636433833443236313636").as_deref(),
+            Some("OUT:26402B3738F1CF94B41EF0B7946EF1AB74FB95AEF0E7A7D3EB9ED66C83D26166")
+        );
+        // Pas un OP_RETURN, longueur incohérente, texte non UTF-8, script vide.
+        for bad in ["0014751e76e8199196d454941c45d1b3a323f1433bd6", "6a05616263", "6a02ffff", "", "zz"] {
+            assert_eq!(op_return_text(bad), None, "{bad}");
+        }
     }
 }

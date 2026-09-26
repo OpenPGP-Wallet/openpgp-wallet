@@ -291,6 +291,11 @@ const I18N = {
     "history.ethereum": "Ethereum",
     "history.bitcoin": "Bitcoin",
     "history.solana": "Solana",
+    "history.kindReceived": "Reçu",
+    "history.kindSent": "Envoyé",
+    "history.kindSwap": "Swap",
+    "history.kindOther": "Autre",
+    "history.usdAtTime": "Valeur en dollars au moment de la transaction",
     "wallet.historyLoading": "Chargement…",
     "wallet.historyAddressUnavailable":
       "Adresse pas encore disponible pour ce profil — déverrouillez le portefeuille une fois pour la faire apparaître.",
@@ -645,6 +650,11 @@ const I18N = {
     "history.ethereum": "Ethereum",
     "history.bitcoin": "Bitcoin",
     "history.solana": "Solana",
+    "history.kindReceived": "Received",
+    "history.kindSent": "Sent",
+    "history.kindSwap": "Swap",
+    "history.kindOther": "Other",
+    "history.usdAtTime": "Value in dollars at the time of the transaction",
     "wallet.historyLoading": "Loading…",
     "wallet.historyAddressUnavailable":
       "Address not available yet for this profile — unlock the wallet once to make it appear.",
@@ -2239,6 +2249,14 @@ function historyStatusLabel(status) {
   return status;
 }
 
+// "≈ 1 234,56 $" / "≈ $1,234.56" ; sous le centime : "< 0,01 $".
+function formatUsdApprox(usd) {
+  const english = currentLang === "en";
+  if (usd > 0 && usd < 0.01) return english ? "< $0.01" : "< 0,01 $";
+  const number = usd.toLocaleString(english ? "en-US" : "fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return english ? `≈ $${number}` : `≈ ${number} $`;
+}
+
 function buildHistoryRow(tx) {
   const row = document.createElement("div");
   row.className = "history-row";
@@ -2255,6 +2273,13 @@ function buildHistoryRow(tx) {
   const statusSpan = document.createElement("span");
   statusSpan.className = `history-status history-status-${tx.status}`;
   statusSpan.textContent = historyStatusLabel(tx.status);
+  const kindKey = { received: "history.kindReceived", sent: "history.kindSent", swap: "history.kindSwap", other: "history.kindOther" }[tx.kind];
+  if (kindKey) {
+    const kindSpan = document.createElement("span");
+    kindSpan.className = `history-kind history-kind-${tx.kind}`;
+    kindSpan.textContent = t(kindKey);
+    meta.appendChild(kindSpan);
+  }
   meta.appendChild(dateSpan);
   meta.appendChild(statusSpan);
   left.appendChild(idDiv);
@@ -2265,10 +2290,25 @@ function buildHistoryRow(tx) {
   const amountDiv = document.createElement("div");
   amountDiv.className = "history-amount";
   if (tx.amount != null) {
-    amountDiv.classList.add(tx.amount.startsWith("-") ? "negative" : "positive");
+    // Montant nul (transaction « Autre ») : ni vert ni rouge.
+    if (Number.parseFloat(tx.amount) !== 0) {
+      amountDiv.classList.add(tx.amount.startsWith("-") ? "negative" : "positive");
+    }
     amountDiv.textContent = tx.amount;
   } else {
     amountDiv.textContent = "—";
+  }
+  const amountBox = document.createElement("div");
+  amountBox.className = "history-amount-box";
+  amountBox.appendChild(amountDiv);
+  // Valeur calculée côté Rust au prix du moment de la transaction (voir
+  // core/src/price_history.rs) ; absente sur les réseaux de test.
+  if (tx.usd_value != null) {
+    const usdDiv = document.createElement("div");
+    usdDiv.className = "history-usd";
+    usdDiv.textContent = formatUsdApprox(tx.usd_value);
+    usdDiv.title = t("history.usdAtTime");
+    amountBox.appendChild(usdDiv);
   }
   // Un <a target="_blank"> classique ne s'ouvre pas de façon fiable dans la
   // webview Tauri (navigation interceptée pour raisons de sécurité) : on passe
@@ -2281,7 +2321,7 @@ function buildHistoryRow(tx) {
   link.addEventListener("click", () => {
     invoke("open_external_link", { url: tx.explorer_url }).catch((e) => alert(t("wallet.linkError", { err: e })));
   });
-  right.appendChild(amountDiv);
+  right.appendChild(amountBox);
   right.appendChild(link);
 
   row.appendChild(left);

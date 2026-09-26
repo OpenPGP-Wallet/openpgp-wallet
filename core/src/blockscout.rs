@@ -42,6 +42,8 @@ struct TxJson {
     status: Option<String>,
     value: String,
     from: AddressRef,
+    #[serde(default)]
+    method: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -57,6 +59,8 @@ pub struct EvmTx {
     /// Positif si l'adresse interrogée a reçu net, négatif si elle a envoyé net,
     /// en wei.
     pub net_wei: i128,
+    /// Appel d'une fonction de swap (voir is_swap_method).
+    pub swap: bool,
 }
 
 impl BlockscoutClient {
@@ -91,6 +95,7 @@ impl BlockscoutClient {
                     timestamp_unix: tx.timestamp.as_deref().and_then(parse_iso8601_utc),
                     failed: tx.status.as_deref() == Some("error"),
                     net_wei,
+                    swap: tx.method.as_deref().is_some_and(is_swap_method),
                 })
             })
             .collect()
@@ -102,6 +107,13 @@ impl BlockscoutClient {
 /// UTC, toujours cette forme), donc un calcul manuel du nombre de jours depuis
 /// l'epoch suffit et évite d'ajouter un crate de dates (`chrono`) pour cet unique
 /// besoin de parsing.
+/// Méthode (nom décodé par Blockscout) d'un swap : dépôt sur le routeur
+/// THORChain (depositWithExpiry, celui qu'utilise l'app), ou toute fonction
+/// dont le nom contient swap (routeurs d'échange décentralisés).
+fn is_swap_method(method: &str) -> bool {
+    method == "depositWithExpiry" || method.to_ascii_lowercase().contains("swap")
+}
+
 fn parse_iso8601_utc(s: &str) -> Option<i64> {
     let date_part = s.get(0..10)?;
     let time_part = s.get(11..19)?;
@@ -139,5 +151,18 @@ mod tests {
         assert_eq!(parse_iso8601_utc("1970-01-01T00:00:00.000000Z"), Some(0));
         // 2024-01-01T00:00:00Z, vérifié indépendamment (ex: `date -u -d ... +%s`).
         assert_eq!(parse_iso8601_utc("2024-01-01T00:00:00.000000Z"), Some(1_704_067_200));
+    }
+
+    /// Méthodes lues sur de vraies transactions (Blockscout) : dépôt THORChain
+    /// (0xfce530aa…), paiement THORChain vu du coffre (transferOut, pas un swap
+    /// de l'utilisateur), virement de jeton.
+    #[test]
+    fn swap_methods_are_recognised() {
+        for swap in ["depositWithExpiry", "swapExactETHForTokens", "swapETHForExactTokens", "multiSwap"] {
+            assert!(is_swap_method(swap), "{swap}");
+        }
+        for other in ["transfer", "approve", "transferOut", "deposit", "execute"] {
+            assert!(!is_swap_method(other), "{other}");
+        }
     }
 }
