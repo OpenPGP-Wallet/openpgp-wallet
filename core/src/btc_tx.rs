@@ -28,7 +28,7 @@ pub struct BtcTx {
     pub op_return_data: Option<Vec<u8>>,
 }
 
-fn dsha256(data: &[u8]) -> [u8; 32] {
+pub(crate) fn dsha256(data: &[u8]) -> [u8; 32] {
     let first = Sha256::digest(data);
     let second = Sha256::digest(first);
     let mut out = [0u8; 32];
@@ -36,7 +36,7 @@ fn dsha256(data: &[u8]) -> [u8; 32] {
     out
 }
 
-fn push_varint(buf: &mut Vec<u8>, n: u64) {
+pub(crate) fn push_varint(buf: &mut Vec<u8>, n: u64) {
     if n < 0xfd {
         buf.push(n as u8);
     } else if n <= 0xffff {
@@ -64,7 +64,7 @@ pub fn estimate_p2wpkh_vsize(num_inputs: usize, num_outputs: usize) -> u64 {
     (10.5 + (num_inputs as f64) * 68.0 + (num_outputs as f64) * 31.0).ceil() as u64
 }
 
-fn p2wpkh_script_pubkey(hash160: &[u8; 20]) -> Vec<u8> {
+pub(crate) fn p2wpkh_script_pubkey(hash160: &[u8; 20]) -> Vec<u8> {
     let mut s = vec![0x00, 0x14]; // OP_0 + push(20)
     s.extend_from_slice(hash160);
     s

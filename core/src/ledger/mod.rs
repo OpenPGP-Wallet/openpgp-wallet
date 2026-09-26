@@ -11,6 +11,7 @@
 //! vérifiés contre des vecteurs produits par ce code officiel et contre les
 //! vraies applications Ledger exécutées dans l'émulateur.
 
+pub mod btc;
 pub mod eth;
 pub mod solana;
 
