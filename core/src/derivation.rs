@@ -167,6 +167,21 @@ fn slip10_ed25519_child(parent_key: &[u8; 32], parent_chain_code: &[u8; 32], ind
     (key, chain_code)
 }
 
+/// Clé ed25519 SLIP-10 pour un chemin quelconque, entièrement durci (indices
+/// donnés sans le bit de durcissement, SLIP-10 n'admettant que des dérivations
+/// durcies sur ed25519). Tests seulement : recouper les clés renvoyées par un
+/// Ledger (chemin Ledger Live m/44'/501'/i') avec une dérivation indépendante.
+#[cfg(test)]
+pub(crate) fn derive_ed25519_path(seed: &[u8], path: &[u32]) -> ed25519_dalek::SigningKey {
+    let (mut key, mut chain_code) = slip10_ed25519_master(seed);
+    for &index in path {
+        let (k, cc) = slip10_ed25519_child(&key, &chain_code, index);
+        key = k;
+        chain_code = cc;
+    }
+    ed25519_dalek::SigningKey::from_bytes(&key)
+}
+
 /// Dérive la clé Solana n°`account_index` (chemin m/44'/501'/{account_index}'/0',
 /// convention utilisée par la plupart des wallets Solana) à partir de la seed maîtresse.
 pub fn derive_solana_key(seed: &[u8], account_index: u32) -> ed25519_dalek::SigningKey {

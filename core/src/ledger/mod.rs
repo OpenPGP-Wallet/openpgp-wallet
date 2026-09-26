@@ -12,6 +12,7 @@
 //! vraies applications Ledger exécutées dans l'émulateur.
 
 pub mod eth;
+pub mod solana;
 
 use anyhow::{anyhow, bail, Context, Result};
 use std::io::{Read, Write};
@@ -164,7 +165,7 @@ impl Transport for TcpTransport {
 // --- APDU ---------------------------------------------------------------------
 
 /// Mots d'état Ledger, traduits en messages compréhensibles.
-fn status_error(sw: u16) -> anyhow::Error {
+pub(crate) fn status_error(sw: u16) -> anyhow::Error {
     let message = match sw {
         0x6985 | 0x5501 => "opération refusée sur le Ledger",
         0x5515 | 0x6982 => "Ledger verrouillé : saisissez votre code PIN sur l'appareil",
@@ -178,19 +179,27 @@ fn status_error(sw: u16) -> anyhow::Error {
     anyhow!("{message} (0x{sw:04x})")
 }
 
-/// Envoie une commande et renvoie les données de réponse (mot d'état 0x9000
-/// exigé, tout autre mot d'état devient une erreur explicite).
-pub fn send(transport: &mut dyn Transport, cla: u8, ins: u8, p1: u8, p2: u8, data: &[u8]) -> Result<Vec<u8>> {
+/// Envoie une commande ; renvoie les données et le mot d'état, sans
+/// interprétation (certaines applications donnent un sens propre à un mot
+/// d'état : 0x6982 = refus de l'utilisateur pour Solana, par exemple).
+pub fn send_raw(transport: &mut dyn Transport, cla: u8, ins: u8, p1: u8, p2: u8, data: &[u8]) -> Result<(Vec<u8>, u16)> {
     anyhow::ensure!(data.len() <= 255, "commande Ledger trop longue ({} octets)", data.len());
     let mut apdu = vec![cla, ins, p1, p2, data.len() as u8];
     apdu.extend_from_slice(data);
     let mut response = transport.exchange(&apdu)?;
     anyhow::ensure!(response.len() >= 2, "réponse du Ledger trop courte");
     let sw = u16::from_be_bytes([response[response.len() - 2], response[response.len() - 1]]);
+    response.truncate(response.len() - 2);
+    Ok((response, sw))
+}
+
+/// Envoie une commande et renvoie les données de réponse (mot d'état 0x9000
+/// exigé, tout autre mot d'état devient une erreur explicite).
+pub fn send(transport: &mut dyn Transport, cla: u8, ins: u8, p1: u8, p2: u8, data: &[u8]) -> Result<Vec<u8>> {
+    let (response, sw) = send_raw(transport, cla, ins, p1, p2, data)?;
     if sw != 0x9000 {
         return Err(status_error(sw));
     }
-    response.truncate(response.len() - 2);
     Ok(response)
 }
 
