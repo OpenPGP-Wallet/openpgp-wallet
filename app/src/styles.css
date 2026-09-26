@@ -1656,3 +1656,264 @@ textarea:focus {
   overflow: auto;
   margin: 0 0 10px;
 }
+
+/* --- Courbes (app/src/charts.js) ------------------------------------------
+   Couleur de ligne par thème, contraste validée contre la surface du thème
+   (script de validation de la charte graphique : clarté, chroma, contraste
+   ≥ 3:1) : l'accent du thème noir (#3f3f46) échouait, l'orange a été assombri
+   d'un cran pour entrer dans la plage de clarté. */
+:root {
+  --chart-line: #6c8bff;
+}
+:root[data-theme="purple"] {
+  --chart-line: #a855f7;
+}
+:root[data-theme="orange"] {
+  --chart-line: #e36410;
+}
+:root[data-theme="dark"] {
+  --chart-line: #3987e5;
+}
+
+.chart-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px 18px;
+  margin-top: 20px;
+}
+
+.chart-section .section-title {
+  margin-top: 0;
+  margin-bottom: 2px;
+}
+
+.chart-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.chart-modal .chart-section-header h2 {
+  margin: 0;
+}
+
+.chart-scope {
+  font-size: 0.8rem;
+  margin: 0 0 4px;
+}
+
+.chart-summary {
+  margin: 10px 0 4px;
+  font-size: 1.4rem;
+  font-weight: 600;
+  min-height: 1.4em;
+}
+
+.chart-delta {
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-left: 10px;
+  color: var(--muted);
+}
+
+.chart-delta.up {
+  color: var(--success);
+}
+
+.chart-delta.down {
+  color: var(--danger);
+}
+
+.chart-ranges {
+  display: flex;
+  gap: 6px;
+  margin: 8px 0 10px;
+}
+
+.chart-ranges button {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 12px;
+  font-family: inherit;
+  font-size: 0.8rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.chart-ranges button[aria-pressed="true"] {
+  color: var(--text);
+  border-color: var(--chart-line);
+  font-weight: 600;
+}
+
+.chart-area {
+  position: relative;
+  min-height: 220px;
+}
+
+.chart-area-large {
+  min-height: 320px;
+}
+
+/* Rechargement : l'ancienne courbe reste affichée, estompée (pas de saut). */
+.chart-area.chart-loading {
+  opacity: 0.45;
+  transition: opacity 0.2s;
+}
+
+.chart-area:focus-visible {
+  outline: 2px solid var(--chart-line);
+  outline-offset: 4px;
+  border-radius: 6px;
+}
+
+.chart-grid {
+  stroke: var(--border);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+
+.chart-axis {
+  fill: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-line {
+  fill: none;
+  stroke: var(--chart-line);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.chart-line-thin {
+  stroke-width: 1.5;
+}
+
+.chart-fill {
+  fill: var(--chart-line);
+  opacity: 0.1;
+}
+
+.chart-dot {
+  fill: var(--chart-line);
+  stroke: var(--surface);
+  stroke-width: 2;
+}
+
+.chart-crosshair {
+  stroke: var(--muted);
+  stroke-width: 1;
+}
+
+.chart-overlay {
+  fill: transparent;
+  cursor: crosshair;
+}
+
+.chart-tooltip {
+  position: absolute;
+  pointer-events: none;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  white-space: nowrap;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+
+.chart-tooltip strong {
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.chart-tooltip span {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.chart-empty {
+  padding: 70px 0;
+  margin: 0;
+  text-align: center;
+}
+
+.chart-note {
+  font-size: 0.78rem;
+  margin: 6px 0 0;
+}
+
+.chart-modal {
+  max-width: 760px;
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+}
+
+.chart-section-header > :first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.chart-section-header > button {
+  width: auto;
+  flex: 0 0 auto;
+  margin-top: 0;
+}
+
+.chart-table {
+  max-height: 240px;
+  overflow-y: auto;
+  margin-top: 8px;
+}
+
+.chart-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-table th,
+.chart-table td {
+  text-align: left;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.chart-table th:last-child,
+.chart-table td:last-child {
+  text-align: right;
+}
+
+.market-row.clickable {
+  cursor: pointer;
+}
+
+.market-row.clickable:hover {
+  border-color: var(--chart-line);
+}
+
+.market-row.clickable:focus-visible {
+  outline: 2px solid var(--chart-line);
+  outline-offset: 2px;
+}
+
+.market-spark {
+  flex: 0 0 96px;
+  height: 30px;
+  margin-left: auto;
+}
+
+.external-chart-scope {
+  width: auto;
+  margin-top: 4px;
+  padding: 4px 8px;
+  font-size: 0.85rem;
+}

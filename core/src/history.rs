@@ -40,7 +40,17 @@ pub struct TxEntry {
     /// `None` quand le montant n'a pas pu être déterminé (voir
     /// `sol_rpc::SolTx::net_lamports`) — l'entrée reste affichable sans montant.
     pub net_amount_minor: Option<i128>,
+    /// Frais payés en plus de `net_amount_minor` (Ethereum : le montant net ne
+    /// les inclut pas) ; 0 quand ils y sont déjà (Bitcoin, Solana).
+    pub fee_minor: i128,
     pub kind: TxKind,
+}
+
+impl TxEntry {
+    /// Variation réelle du solde (montant net moins frais), si connue.
+    pub fn balance_change(&self) -> Option<i128> {
+        self.net_amount_minor.map(|net| net - self.fee_minor)
+    }
 }
 
 /// Envoi ou réception d'après le signe du montant, sauf swap détecté.
@@ -75,6 +85,7 @@ pub fn btc_history(network: &wallet_flow::BtcNetwork, address: &str) -> Result<V
             timestamp_unix: tx.block_time,
             status: if tx.confirmed { TxStatus::Confirmed } else { TxStatus::Pending },
             net_amount_minor: Some(tx.net_sat),
+            fee_minor: 0,
         })
         .collect())
 }
@@ -95,6 +106,7 @@ pub fn sol_history(rpc_url: &str, pubkey_b58: &str, limit: u32) -> Result<Vec<Tx
                 TxStatus::Pending
             },
             net_amount_minor: tx.net_lamports,
+            fee_minor: 0,
         })
         .collect())
 }
@@ -120,6 +132,7 @@ pub fn usdc_history(rpc_url: &str, ata_b58: &str, limit: u32) -> Result<Vec<TxEn
                 TxStatus::Pending
             },
             net_amount_minor: tx.net_lamports,
+            fee_minor: 0,
         })
         .collect())
 }
@@ -142,6 +155,7 @@ pub fn evm_history(chain_id: u64, address: &str, limit: usize) -> Result<Vec<TxE
             timestamp_unix: tx.timestamp_unix,
             status: if tx.failed { TxStatus::Failed } else { TxStatus::Confirmed },
             net_amount_minor: Some(tx.net_wei),
+            fee_minor: tx.fee_wei,
         })
         .collect())
 }

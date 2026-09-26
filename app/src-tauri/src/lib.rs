@@ -1291,6 +1291,53 @@ async fn get_usdc_tx_history(network: String, address: String) -> Result<Vec<TxE
     .await
 }
 
+fn chart_range(range: &str) -> Result<price_history::ChartRange, String> {
+    price_history::ChartRange::parse(range).ok_or_else(|| translate_error(&format!("période inconnue : {range}")))
+}
+
+/// Courbe de prix (instant, prix en dollars) d'une crypto sur la période
+/// ("1d", "7d", "30d", "1y") ; `symbol` : "BTC", "ETH", "SOL" ou "USDC".
+#[tauri::command]
+async fn get_price_chart(symbol: String, range: String) -> Result<Vec<(i64, f64)>, String> {
+    run_blocking(move || {
+        let asset = match symbol.to_ascii_uppercase().as_str() {
+            "BTC" => price_history::Asset::Btc,
+            "ETH" => price_history::Asset::Eth,
+            "SOL" => price_history::Asset::Sol,
+            "USDC" => price_history::Asset::Usdc,
+            other => return Err(translate_error(&format!("crypto inconnue : {other}"))),
+        };
+        price_history::chart(asset, chart_range(&range)?).map(|points| points.as_ref().clone()).t_err()
+    })
+    .await
+}
+
+#[derive(serde::Deserialize)]
+struct HoldingDto {
+    network: String,
+    address: String,
+}
+
+#[derive(Serialize)]
+struct PortfolioHistoryDto {
+    points: Vec<(i64, f64)>,
+    since: Option<i64>,
+    approximate: bool,
+}
+
+/// Valeur en dollars d'un ensemble d'adresses publiques au fil de la période
+/// (voir `core/src/portfolio.rs`) : profil du portefeuille ou wallets externes.
+#[tauri::command]
+async fn get_portfolio_history(holdings: Vec<HoldingDto>, range: String) -> Result<PortfolioHistoryDto, String> {
+    run_blocking(move || {
+        let holdings: Vec<pgp_wallet_poc::portfolio::Holding> =
+            holdings.into_iter().map(|h| pgp_wallet_poc::portfolio::Holding { network: h.network, address: h.address }).collect();
+        let history = pgp_wallet_poc::portfolio::portfolio_history(&holdings, chart_range(&range)?).t_err()?;
+        Ok(PortfolioHistoryDto { points: history.points, since: history.since, approximate: history.approximate })
+    })
+    .await
+}
+
 #[derive(Serialize)]
 struct PricesDto {
     eth_usd: f64,
@@ -2942,6 +2989,8 @@ pub fn run() {
             hardware_balance,
             hardware_estimate_btc_fees,
             hardware_send,
+            get_price_chart,
+            get_portfolio_history,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

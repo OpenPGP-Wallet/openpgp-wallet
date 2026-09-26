@@ -371,7 +371,22 @@
           </section>
         </div>
 
+        <section class="chart-section" id="portfolio-chart-section">
+          <div class="chart-section-header">
+            <div>
+              <h2 class="section-title" data-i18n="charts.portfolioTitle">Évolution du portefeuille</h2>
+              <p class="muted chart-scope" data-i18n="charts.portfolioScope">Profil affiché, fonds réels (mainnet)</p>
+            </div>
+            <button type="button" class="link chart-expand" data-i18n="charts.expand">Agrandir</button>
+          </div>
+          <p class="chart-summary" data-field="summary"></p>
+          <div class="chart-ranges" role="group"></div>
+          <div class="chart-area" data-field="chart"></div>
+          <p class="muted chart-note" data-field="note"></p>
+        </section>
+
         <h2 class="section-title" data-i18n="wallet.marketsTitle">Prix des cryptomonnaies en direct</h2>
+        <p class="muted chart-scope" data-i18n="charts.marketsHint">Cliquez sur une crypto pour voir sa courbe en grand.</p>
         <div id="markets-list" class="markets-list"></div>
       </section>
 
@@ -531,6 +546,19 @@
               Actualiser
             </button>
           </div>
+          <section class="chart-section" id="external-chart-section">
+            <div class="chart-section-header">
+              <div>
+                <h2 class="section-title" data-i18n="charts.externalTitle">Évolution des wallets externes</h2>
+                <select id="external-chart-scope" class="external-chart-scope"></select>
+              </div>
+              <button type="button" class="link chart-expand" data-i18n="charts.expand">Agrandir</button>
+            </div>
+            <p class="chart-summary" data-field="summary"></p>
+            <div class="chart-ranges" role="group"></div>
+            <div class="chart-area" data-field="chart"></div>
+            <p class="muted chart-note" data-field="note"></p>
+          </section>
           <div id="external-wallets-container"></div>
         </div>
       </section>
@@ -1087,6 +1115,22 @@
           <button id="add-external-wallet-confirm" class="primary" data-i18n="external.add">Ajouter</button>
           <button id="add-external-wallet-cancel" class="link" data-i18n="common.cancel">Annuler</button>
         </div>
+      </div>
+    </div>
+
+    <!-- Courbe en grand (prix d'une crypto, évolution du portefeuille ou des wallets externes) -->
+    <div id="chart-modal" class="modal-overlay hidden">
+      <div class="modal chart-modal" role="dialog" aria-labelledby="chart-modal-title">
+        <div class="chart-section-header">
+          <h2 id="chart-modal-title"></h2>
+          <button id="chart-modal-close" type="button" class="link" data-i18n="common.close">Fermer</button>
+        </div>
+        <p id="chart-modal-summary" class="chart-summary"></p>
+        <div id="chart-modal-ranges" class="chart-ranges" role="group"></div>
+        <div id="chart-modal-chart" class="chart-area chart-area-large"></div>
+        <p id="chart-modal-note" class="muted chart-note"></p>
+        <button id="chart-modal-table-toggle" type="button" class="link" data-i18n="charts.showTable">Afficher les données</button>
+        <div id="chart-modal-table" class="chart-table hidden"></div>
       </div>
     </div>
 

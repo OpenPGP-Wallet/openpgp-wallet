@@ -124,10 +124,10 @@ fn shared_client() -> &'static reqwest::blocking::Client {
     })
 }
 
-fn fetch_klines(asset: Asset, interval: &str) -> Result<Vec<Candle>> {
+fn fetch_klines(asset: Asset, interval: &str, limit: &str) -> Result<Vec<Candle>> {
     let response = shared_client()
         .get(KLINES_URL)
-        .query(&[("symbol", asset.symbol()), ("interval", interval), ("limit", "1000")])
+        .query(&[("symbol", asset.symbol()), ("interval", interval), ("limit", limit)])
         .send()
         .context("appel du service de prix impossible")?;
     ensure!(response.status().is_success(), "le service de prix a répondu {}", response.status());
@@ -147,8 +147,8 @@ pub fn series(asset: Asset) -> Result<Arc<PriceSeries>> {
         }
     }
     let (hourly, daily) = std::thread::scope(|scope| {
-        let hourly = scope.spawn(|| fetch_klines(asset, "1h"));
-        let daily = scope.spawn(|| fetch_klines(asset, "1d"));
+        let hourly = scope.spawn(|| fetch_klines(asset, "1h", "1000"));
+        let daily = scope.spawn(|| fetch_klines(asset, "1d", "1000"));
         (
             hourly.join().expect("le fil des prix horaires ne doit pas paniquer"),
             daily.join().expect("le fil des prix journaliers ne doit pas paniquer"),
@@ -157,6 +157,90 @@ pub fn series(asset: Asset) -> Result<Arc<PriceSeries>> {
     let series = Arc::new(PriceSeries { hourly: hourly?, daily: daily? });
     cache.lock().unwrap_or_else(|p| p.into_inner()).insert(asset, (Instant::now(), series.clone()));
     Ok(series)
+}
+
+/// Période d'un graphique.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum ChartRange {
+    Day,
+    Week,
+    Month,
+    Year,
+}
+
+impl ChartRange {
+    /// "1d", "7d", "30d", "1y".
+    pub fn parse(range: &str) -> Option<Self> {
+        Some(match range {
+            "1d" => ChartRange::Day,
+            "7d" => ChartRange::Week,
+            "30d" => ChartRange::Month,
+            "1y" => ChartRange::Year,
+            _ => return None,
+        })
+    }
+
+    /// Durée couverte, en secondes.
+    pub fn span(self) -> i64 {
+        match self {
+            ChartRange::Day => DAY,
+            ChartRange::Week => 7 * DAY,
+            ChartRange::Month => 30 * DAY,
+            ChartRange::Year => 365 * DAY,
+        }
+    }
+
+    /// Pas entre deux points (bougies, ou échantillons d'une valeur de portefeuille).
+    pub fn step(self) -> i64 {
+        match self {
+            ChartRange::Day => 15 * 60,
+            ChartRange::Week => HOUR,
+            ChartRange::Month => 4 * HOUR,
+            ChartRange::Year => DAY,
+        }
+    }
+
+    /// Intervalle Binance correspondant à `step`.
+    fn interval(self) -> &'static str {
+        match self {
+            ChartRange::Day => "15m",
+            ChartRange::Week => "1h",
+            ChartRange::Month => "4h",
+            ChartRange::Year => "1d",
+        }
+    }
+}
+
+pub fn unix_now() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+}
+
+/// Points d'une courbe : prix d'ouverture de chaque bougie, puis le dernier
+/// prix (clôture courante) à l'instant présent.
+fn chart_points(candles: &[Candle], now: i64) -> Vec<(i64, f64)> {
+    let mut points: Vec<(i64, f64)> = candles.iter().map(|c| (c.open_time, c.open)).collect();
+    if let Some(last) = candles.last() {
+        points.push((now.max(last.open_time), last.close));
+    }
+    points
+}
+
+/// Courbe de prix de `asset` sur la période (série identique pour tout le
+/// monde, voir l'en-tête). Cache : 2 minutes sur 24 h, 10 minutes sinon.
+pub fn chart(asset: Asset, range: ChartRange) -> Result<Arc<Vec<(i64, f64)>>> {
+    type ChartCache = Mutex<HashMap<(Asset, ChartRange), (Instant, Arc<Vec<(i64, f64)>>)>>;
+    static CACHE: OnceLock<ChartCache> = OnceLock::new();
+    let ttl = if range == ChartRange::Day { Duration::from_secs(120) } else { CACHE_TTL };
+    let cache = CACHE.get_or_init(Default::default);
+    if let Some((fetched, points)) = cache.lock().unwrap_or_else(|p| p.into_inner()).get(&(asset, range)) {
+        if fetched.elapsed() < ttl {
+            return Ok(points.clone());
+        }
+    }
+    let limit = (range.span() / range.step()).to_string();
+    let points = Arc::new(chart_points(&fetch_klines(asset, range.interval(), &limit)?, unix_now()));
+    cache.lock().unwrap_or_else(|p| p.into_inner()).insert((asset, range), (Instant::now(), points.clone()));
+    Ok(points)
 }
 
 /// Valeur absolue en dollars d'un montant signé en plus petite unité

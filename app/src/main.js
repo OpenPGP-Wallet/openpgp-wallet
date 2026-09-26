@@ -1,3 +1,5 @@
+import { renderLineChart, renderSparkline } from "./charts.js";
+
 const { invoke } = window.__TAURI__.core;
 
 // --- Thème -----------------------------------------------------------------
@@ -488,6 +490,35 @@ const I18N = {
     "ledger.waitDevice": "Confirmez sur le Ledger…",
     "ledger.sent": "Transaction envoyée : {txid}",
     "ledger.fieldsRequired": "Le destinataire et le montant sont requis.",
+    "charts.portfolioTitle": "Évolution du portefeuille",
+    "charts.portfolioScope": "Profil affiché, fonds réels (mainnet)",
+    "charts.externalTitle": "Évolution des wallets externes",
+    "charts.externalAll": "Tous les wallets externes",
+    "charts.expand": "Agrandir",
+    "charts.marketsHint": "Cliquez sur une crypto pour voir sa courbe en grand.",
+    "charts.showTable": "Afficher les données",
+    "charts.hideTable": "Masquer les données",
+    "charts.loading": "Chargement de la courbe…",
+    "charts.noData": "Aucune donnée pour cette période.",
+    "charts.portfolioEmpty": "Aucun fonds réel sur ce profil pour le moment.",
+    "charts.externalEmpty": "Aucun fonds réel sur ces wallets externes.",
+    "charts.since": "Valeur reconstruite à partir des dernières transactions de chaque adresse : connue depuis le {date}.",
+    "charts.approximate":
+      "Valeur indicative : certains mouvements n'apparaissent pas dans l'historique lu (transferts internes de contrats, par exemple).",
+    "charts.priceSource": "Prix Binance (paires en USDT, ≈ 1 dollar).",
+    "charts.delta": "{arrow} {pct} % {period}",
+    "charts.period.1d": "sur 24 h",
+    "charts.period.7d": "sur 7 jours",
+    "charts.period.30d": "sur 30 jours",
+    "charts.period.1y": "sur 1 an",
+    "charts.periodSince": "depuis le {date}",
+    "charts.range.1d": "24 h",
+    "charts.range.7d": "7 j",
+    "charts.range.30d": "30 j",
+    "charts.range.1y": "1 an",
+    "charts.openPrice": "Voir la courbe de {name}",
+    "charts.tableDate": "Date",
+    "charts.tableValue": "Valeur",
   },
   en: {
     "loading.text": "Loading…",
@@ -845,6 +876,34 @@ const I18N = {
     "ledger.waitDevice": "Confirm on the Ledger…",
     "ledger.sent": "Transaction sent: {txid}",
     "ledger.fieldsRequired": "Recipient and amount are required.",
+    "charts.portfolioTitle": "Wallet value over time",
+    "charts.portfolioScope": "Displayed profile, real funds (mainnet)",
+    "charts.externalTitle": "External wallets over time",
+    "charts.externalAll": "All external wallets",
+    "charts.expand": "Expand",
+    "charts.marketsHint": "Click a crypto to see its chart in full size.",
+    "charts.showTable": "Show data",
+    "charts.hideTable": "Hide data",
+    "charts.loading": "Loading chart…",
+    "charts.noData": "No data for this period.",
+    "charts.portfolioEmpty": "No real funds on this profile yet.",
+    "charts.externalEmpty": "No real funds on these external wallets.",
+    "charts.since": "Value rebuilt from each address's latest transactions: known since {date}.",
+    "charts.approximate": "Indicative value: some movements are missing from the history read (internal contract transfers, for example).",
+    "charts.priceSource": "Binance prices (USDT pairs, ≈ 1 dollar).",
+    "charts.delta": "{arrow} {pct}% {period}",
+    "charts.period.1d": "over 24h",
+    "charts.period.7d": "over 7 days",
+    "charts.period.30d": "over 30 days",
+    "charts.period.1y": "over 1 year",
+    "charts.periodSince": "since {date}",
+    "charts.range.1d": "24h",
+    "charts.range.7d": "7d",
+    "charts.range.30d": "30d",
+    "charts.range.1y": "1y",
+    "charts.openPrice": "See the {name} chart",
+    "charts.tableDate": "Date",
+    "charts.tableValue": "Value",
   },
 };
 
@@ -1826,7 +1885,35 @@ async function loadMarkets() {
       figures.appendChild(priceDiv);
       figures.appendChild(capDiv);
 
+      // Courbe des dernières 24 h (comme la variation affichée) ; un clic
+      // (ou Entrée) ouvre la courbe en grand, période au choix.
+      const spark = document.createElement("div");
+      spark.className = "market-spark";
+      invoke("get_price_chart", { symbol: coin.symbol, range: "1d" })
+        .then((points) => renderSparkline(spark, points))
+        .catch((e) => console.error(e));
+      const openChart = () =>
+        openChartModal({
+          title: `${coin.name} (${coin.symbol})`,
+          ranges: CHART_RANGES,
+          range: "7d",
+          load: (range) => loadPriceChart(coin.symbol, range),
+          emptyKey: "charts.noData",
+        });
+      row.classList.add("clickable");
+      row.tabIndex = 0;
+      row.setAttribute("role", "button");
+      row.setAttribute("aria-label", t("charts.openPrice", { name: coin.name }));
+      row.addEventListener("click", openChart);
+      row.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          openChart();
+        }
+      });
+
       row.appendChild(nameDiv);
+      row.appendChild(spark);
       row.appendChild(figures);
       container.appendChild(row);
     });
@@ -1914,6 +2001,9 @@ function renderCardAddress(card) {
 
 function renderCardAddresses() {
   document.querySelectorAll(".wallet-card").forEach(renderCardAddress);
+  // Adresses du profil changées (déverrouillage, changement de profil) : la
+  // courbe d'évolution suit.
+  loadPortfolioChart();
 }
 
 function renderDashboardAddresses(profiles) {
@@ -3183,6 +3273,7 @@ async function loadExternalWallets() {
   }
   renderExternalWallets();
   refreshExternalWalletBalances();
+  loadExternalChart();
 }
 
 function renderExternalWalletRow(wallet) {
@@ -4133,5 +4224,305 @@ ledgerSendConfirmBtn.addEventListener(
       statusEl.textContent = "";
       showError(errorEl, String(e));
     }
+  })
+);
+
+// --- Courbes : prix, évolution du portefeuille, wallets externes -----------------
+// Données calculées côté Rust (core/src/price_history.rs, core/src/portfolio.rs) ;
+// tracé par app/src/charts.js. Une vue = un graphique et ses contrôles
+// (boutons de période au-dessus, résumé, note), rechargée en gardant l'ancienne
+// courbe estompée plutôt qu'un écran vide.
+
+const CHART_RANGES = ["1d", "7d", "30d", "1y"];
+
+function chartLocale() {
+  return currentLang === "en" ? "en-US" : "fr-FR";
+}
+
+function withDollar(number) {
+  return currentLang === "en" ? `$${number}` : `${number} $`;
+}
+
+function formatUsdValue(value) {
+  const maxDigits = Math.abs(value) < 10 ? 4 : 2;
+  return withDollar(value.toLocaleString(chartLocale(), { minimumFractionDigits: 2, maximumFractionDigits: maxDigits }));
+}
+
+function formatAxisValue(value, step) {
+  if (Math.abs(value) >= 10000) {
+    return withDollar(new Intl.NumberFormat(chartLocale(), { notation: "compact", maximumFractionDigits: 1 }).format(value));
+  }
+  const digits = step >= 1 ? 0 : Math.min(6, Math.ceil(-Math.log10(step)));
+  return withDollar(value.toLocaleString(chartLocale(), { minimumFractionDigits: digits, maximumFractionDigits: digits }));
+}
+
+// Précision des dates selon la durée RÉELLEMENT couverte par les points (une
+// courbe de portefeuille peut ne couvrir que quelques jours d'une période de
+// 30 jours) : sinon des graduations voisines affichaient la même date.
+const DAY_SECONDS = 86400;
+
+function formatChartTime(t, span) {
+  const options =
+    span <= 1.5 * DAY_SECONDS
+      ? { hour: "2-digit", minute: "2-digit" }
+      : span <= 6 * DAY_SECONDS
+        ? { day: "numeric", month: "short", hour: "2-digit" }
+        : span <= 60 * DAY_SECONDS
+          ? { day: "numeric", month: "short" }
+          : { month: "short", year: "2-digit" };
+  return new Date(t * 1000).toLocaleString(chartLocale(), options);
+}
+
+function formatChartTooltipTime(t, span) {
+  const options =
+    span > 60 * DAY_SECONDS ? { day: "numeric", month: "short", year: "numeric" } : { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" };
+  return new Date(t * 1000).toLocaleString(chartLocale(), options);
+}
+
+function chartSpan(points) {
+  return points.length ? points[points.length - 1][0] - points[0][0] : 0;
+}
+
+// Valeur actuelle, puis variation sur la période (couleur selon le sens) — ou
+// depuis le début des données connues, quand elles ne couvrent pas toute la période.
+function renderChartSummary(el, points, range, since) {
+  el.replaceChildren();
+  if (points.length === 0) return;
+  const first = points[0][1];
+  const last = points[points.length - 1][1];
+  el.appendChild(document.createTextNode(formatUsdValue(last)));
+  if (first > 0) {
+    const pct = ((last - first) / first) * 100;
+    const delta = document.createElement("span");
+    delta.className = `chart-delta ${pct >= 0 ? "up" : "down"}`;
+    delta.textContent = t("charts.delta", {
+      arrow: pct >= 0 ? "▲" : "▼",
+      pct: Math.abs(pct).toLocaleString(chartLocale(), { maximumFractionDigits: 2 }),
+      period: since
+        ? t("charts.periodSince", { date: new Date(since * 1000).toLocaleDateString(chartLocale()) })
+        : t(`charts.period.${range}`),
+    });
+    el.appendChild(delta);
+  }
+}
+
+function mountChart(view) {
+  view.rangesEl.replaceChildren(
+    ...view.ranges.map((range) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.range = range;
+      button.textContent = t(`charts.range.${range}`);
+      button.addEventListener("click", () => {
+        view.range = range;
+        refreshChart(view);
+      });
+      return button;
+    })
+  );
+  return refreshChart(view);
+}
+
+async function refreshChart(view) {
+  const token = (view.token = (view.token || 0) + 1);
+  view.rangesEl.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.range === view.range)));
+  if (!view.chartEl.firstChild) view.chartEl.replaceChildren(mutedParagraph(t("charts.loading")));
+  view.chartEl.classList.add("chart-loading");
+  try {
+    const data = await view.load(view.range);
+    if (token !== view.token) return; // une demande plus récente l'emporte
+    const points = data.points.every((p) => p[1] === 0) ? [] : data.points;
+    view.points = points;
+    renderChartSummary(view.summaryEl, points, view.range, data.since);
+    renderLineChart(view.chartEl, points, {
+      height: view.height,
+      formatValue: formatUsdValue,
+      formatAxis: formatAxisValue,
+      formatTime: formatChartTime,
+      formatTooltipTime: formatChartTooltipTime,
+      emptyText: t(view.emptyKey),
+      ariaLabel: view.title(),
+    });
+    view.noteEl.textContent = data.note || "";
+    if (view.onRender) view.onRender();
+  } catch (e) {
+    if (token !== view.token) return;
+    view.points = [];
+    view.chartEl.classList.remove("chart-loading");
+    view.chartEl.replaceChildren(mutedParagraph(String(e)));
+    view.summaryEl.replaceChildren();
+    view.noteEl.textContent = "";
+  }
+}
+
+// Valeur d'un ensemble d'adresses (portefeuille ou wallets externes).
+async function loadHoldingsHistory(holdings, range) {
+  if (holdings.length === 0) return { points: [] };
+  const result = await invoke("get_portfolio_history", { holdings, range });
+  const notes = [];
+  if (result.since) notes.push(t("charts.since", { date: new Date(result.since * 1000).toLocaleDateString(chartLocale()) }));
+  if (result.approximate) notes.push(t("charts.approximate"));
+  return { points: result.points, since: result.since, note: notes.join(" ") };
+}
+
+async function loadPriceChart(symbol, range) {
+  return { points: await invoke("get_price_chart", { symbol, range }), note: t("charts.priceSource") };
+}
+
+// --- Courbe en grand -------------------------------------------------------------
+
+const chartModal = document.getElementById("chart-modal");
+const chartModalTable = document.getElementById("chart-modal-table");
+const chartModalTableToggle = document.getElementById("chart-modal-table-toggle");
+const chartModalView = {
+  chartEl: document.getElementById("chart-modal-chart"),
+  summaryEl: document.getElementById("chart-modal-summary"),
+  noteEl: document.getElementById("chart-modal-note"),
+  rangesEl: document.getElementById("chart-modal-ranges"),
+  height: 320,
+  onRender: () => {
+    if (!chartModalTable.classList.contains("hidden")) renderChartTable();
+  },
+};
+
+// Vue tableau : les mêmes valeurs sans survol (accessibilité).
+function renderChartTable() {
+  const table = document.createElement("table");
+  const head = table.createTHead().insertRow();
+  [t("charts.tableDate"), t("charts.tableValue")].forEach((label) => {
+    const th = document.createElement("th");
+    th.textContent = label;
+    head.appendChild(th);
+  });
+  const body = table.createTBody();
+  for (const [time, value] of chartModalView.points || []) {
+    const row = body.insertRow();
+    row.insertCell().textContent = formatChartTooltipTime(time, chartSpan(chartModalView.points));
+    row.insertCell().textContent = formatUsdValue(value);
+  }
+  chartModalTable.replaceChildren(table);
+}
+
+function openChartModal({ title, ranges, range, load, emptyKey }) {
+  document.getElementById("chart-modal-title").textContent = title;
+  Object.assign(chartModalView, { title: () => title, ranges, range, load, emptyKey, points: [] });
+  chartModalView.chartEl.replaceChildren();
+  chartModalView.summaryEl.replaceChildren();
+  chartModalView.noteEl.textContent = "";
+  chartModalTable.classList.add("hidden");
+  chartModalTableToggle.textContent = t("charts.showTable");
+  chartModal.classList.remove("hidden");
+  mountChart(chartModalView);
+}
+
+function closeChartModal() {
+  chartModal.classList.add("hidden");
+  chartModalView.token = (chartModalView.token || 0) + 1; // ignore une réponse tardive
+}
+
+document.getElementById("chart-modal-close").addEventListener("click", closeChartModal);
+chartModal.addEventListener("click", (e) => {
+  if (e.target === chartModal) closeChartModal();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !chartModal.classList.contains("hidden")) closeChartModal();
+});
+chartModalTableToggle.addEventListener("click", () => {
+  const show = chartModalTable.classList.contains("hidden");
+  chartModalTable.classList.toggle("hidden", !show);
+  chartModalTableToggle.textContent = t(show ? "charts.hideTable" : "charts.showTable");
+  if (show) renderChartTable();
+});
+
+// --- Évolution du portefeuille (profil affiché, réseaux principaux) ----------------
+
+function currentProfileHoldings() {
+  return [
+    ["evm_mainnet", addressForCoin("evm", "evm_mainnet")],
+    ["btc_mainnet", addressForCoin("btc", "btc_mainnet")],
+    ["sol_mainnet", addressForCoin("sol", "sol_mainnet")],
+    ["usdc_solana", addressForCoin("usdc", "sol_mainnet")],
+  ]
+    .filter(([, address]) => address)
+    .map(([network, address]) => ({ network, address }));
+}
+
+function sectionView(section, extra) {
+  return {
+    chartEl: section.querySelector('[data-field="chart"]'),
+    summaryEl: section.querySelector('[data-field="summary"]'),
+    noteEl: section.querySelector('[data-field="note"]'),
+    rangesEl: section.querySelector(".chart-ranges"),
+    height: 220,
+    range: "30d",
+    ranges: ["7d", "30d", "1y"],
+    ...extra,
+  };
+}
+
+const portfolioSection = document.getElementById("portfolio-chart-section");
+const portfolioView = sectionView(portfolioSection, {
+  title: () => t("charts.portfolioTitle"),
+  emptyKey: "charts.portfolioEmpty",
+  load: (range) => loadHoldingsHistory(currentProfileHoldings(), range),
+});
+
+function loadPortfolioChart() {
+  if (portfolioView.rangesEl.childElementCount === 0) mountChart(portfolioView);
+  else refreshChart(portfolioView);
+}
+
+portfolioSection.querySelector(".chart-expand").addEventListener("click", () =>
+  openChartModal({ title: t("charts.portfolioTitle"), ranges: portfolioView.ranges, range: portfolioView.range, load: portfolioView.load, emptyKey: portfolioView.emptyKey })
+);
+
+// --- Évolution des wallets externes (tous, ou un groupe) -------------------------
+
+const externalChartSection = document.getElementById("external-chart-section");
+const externalChartScope = document.getElementById("external-chart-scope");
+
+function externalChartHoldings() {
+  const scope = externalChartScope.value || "all";
+  return externalWalletsCache
+    .filter((w) => scope === "all" || String(w.group_id) === scope)
+    .map((w) => ({ network: w.network, address: w.address }));
+}
+
+const externalChartView = sectionView(externalChartSection, {
+  title: () => t("charts.externalTitle"),
+  emptyKey: "charts.externalEmpty",
+  load: (range) => loadHoldingsHistory(externalChartHoldings(), range),
+});
+
+function renderExternalChartScope() {
+  const previous = externalChartScope.value || "all";
+  externalChartScope.replaceChildren();
+  const all = document.createElement("option");
+  all.value = "all";
+  all.textContent = t("charts.externalAll");
+  externalChartScope.appendChild(all);
+  externalGroupsCache.forEach((g) => {
+    const option = document.createElement("option");
+    option.value = String(g.id);
+    option.textContent = g.name;
+    externalChartScope.appendChild(option);
+  });
+  externalChartScope.value = [...externalChartScope.options].some((o) => o.value === previous) ? previous : "all";
+}
+
+function loadExternalChart() {
+  renderExternalChartScope();
+  if (externalChartView.rangesEl.childElementCount === 0) mountChart(externalChartView);
+  else refreshChart(externalChartView);
+}
+
+externalChartScope.addEventListener("change", () => refreshChart(externalChartView));
+externalChartSection.querySelector(".chart-expand").addEventListener("click", () =>
+  openChartModal({
+    title: t("charts.externalTitle"),
+    ranges: externalChartView.ranges,
+    range: externalChartView.range,
+    load: externalChartView.load,
+    emptyKey: externalChartView.emptyKey,
   })
 );

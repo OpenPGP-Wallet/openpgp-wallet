@@ -44,6 +44,13 @@ struct TxJson {
     from: AddressRef,
     #[serde(default)]
     method: Option<String>,
+    #[serde(default)]
+    fee: Option<FeeJson>,
+}
+
+#[derive(Deserialize)]
+struct FeeJson {
+    value: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -57,8 +64,11 @@ pub struct EvmTx {
     /// `true` si la transaction a été minée mais a échoué à l'exécution (revert).
     pub failed: bool,
     /// Positif si l'adresse interrogée a reçu net, négatif si elle a envoyé net,
-    /// en wei.
+    /// en wei, frais non compris ; 0 pour une transaction échouée (le montant
+    /// n'est alors pas transféré, seuls les frais sont payés).
     pub net_wei: i128,
+    /// Frais payés par l'adresse interrogée (transaction qu'elle a émise), en wei.
+    pub fee_wei: i128,
     /// Appel d'une fonction de swap (voir is_swap_method).
     pub swap: bool,
 }
@@ -89,12 +99,23 @@ impl BlockscoutClient {
             .take(limit)
             .map(|tx| {
                 let value: i128 = tx.value.parse().context("montant de transaction Blockscout invalide")?;
-                let net_wei = if tx.from.hash.to_lowercase() == address_lower { -value } else { value };
+                let sender = tx.from.hash.to_lowercase() == address_lower;
+                let failed = tx.status.as_deref() == Some("error");
+                let net_wei = match (failed, sender) {
+                    (true, _) => 0,
+                    (false, true) => -value,
+                    (false, false) => value,
+                };
+                let fee_wei = match (sender, tx.fee.as_ref().and_then(|f| f.value.as_deref())) {
+                    (true, Some(fee)) => fee.parse().context("frais de transaction Blockscout invalides")?,
+                    _ => 0,
+                };
                 Ok(EvmTx {
                     hash: tx.hash,
                     timestamp_unix: tx.timestamp.as_deref().and_then(parse_iso8601_utc),
-                    failed: tx.status.as_deref() == Some("error"),
+                    failed,
                     net_wei,
+                    fee_wei,
                     swap: tx.method.as_deref().is_some_and(is_swap_method),
                 })
             })

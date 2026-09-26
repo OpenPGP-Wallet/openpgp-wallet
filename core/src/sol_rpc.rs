@@ -187,23 +187,28 @@ impl SolRpc {
     }
 
     pub fn signature_history(&self, pubkey_b58: &str, limit: u32) -> Result<Vec<SolTx>> {
-        let result = self.call("getSignaturesForAddress", json!([pubkey_b58, {"limit": limit}]))?;
+        self.history_with_details(pubkey_b58, limit, net_lamports)
+    }
+
+    /// Signatures touchant `account`, avec pour chacune son détail lu (montant
+    /// par `amount`, détection de swap).
+    fn history_with_details(&self, account: &str, limit: u32, amount: fn(&Value, &str) -> Option<i128>) -> Result<Vec<SolTx>> {
+        let result = self.call("getSignaturesForAddress", json!([account, {"limit": limit}]))?;
         let entries = result.as_array().cloned().unwrap_or_default();
+        let signatures: Vec<String> =
+            entries.iter().map(|e| e.get("signature").and_then(Value::as_str).unwrap_or_default().to_string()).collect();
+        let details = self.transactions(&signatures);
 
         Ok(entries
             .into_iter()
-            .map(|entry| {
-                let signature = entry.get("signature").and_then(Value::as_str).unwrap_or_default().to_string();
+            .zip(signatures)
+            .zip(details)
+            .map(|((entry, signature), details)| {
                 let block_time = entry.get("blockTime").and_then(Value::as_i64);
                 let confirmation_status = entry.get("confirmationStatus").and_then(Value::as_str).unwrap_or("");
                 let failed = entry.get("err").map(|e| !e.is_null()).unwrap_or(false);
-                // Erreur de récupération du détail volontairement avalée (`.ok().flatten()`) :
-                // une transaction dont le montant n'a pas pu être déterminé (nœud qui a purgé
-                // une signature ancienne, etc.) doit rester affichable sans montant plutôt que
-                // de faire échouer tout l'historique.
-                let details = self.transaction(&signature).ok().flatten();
                 SolTx {
-                    net_lamports: details.as_ref().and_then(|tx| net_lamports(tx, pubkey_b58)),
+                    net_lamports: details.as_ref().and_then(|tx| amount(tx, account)),
                     swap: details.as_ref().is_some_and(is_swap_transaction),
                     signature,
                     block_time,
@@ -212,6 +217,24 @@ impl SolRpc {
                 }
             })
             .collect())
+    }
+
+    /// Détails de plusieurs transactions, par lots de 4 requêtes simultanées
+    /// (au lieu d'une à la fois ; lots courts pour rester sous la limite de
+    /// débit des nœuds publics). Erreur de récupération d'un détail
+    /// volontairement avalée : une transaction dont le montant n'a pas pu être
+    /// déterminé (nœud qui a purgé une signature ancienne, etc.) doit rester
+    /// affichable sans montant plutôt que de faire échouer tout l'historique.
+    fn transactions(&self, signatures: &[String]) -> Vec<Option<Value>> {
+        const PARALLEL: usize = 4;
+        let mut details = Vec::with_capacity(signatures.len());
+        for chunk in signatures.chunks(PARALLEL) {
+            std::thread::scope(|scope| {
+                let handles: Vec<_> = chunk.iter().map(|signature| scope.spawn(move || self.transaction(signature).ok().flatten())).collect();
+                details.extend(handles.into_iter().map(|h| h.join().ok().flatten()));
+            });
+        }
+        details
     }
 
     /// Solde d'un compte de jeton SPL (Associated Token Account), en plus
@@ -270,29 +293,8 @@ impl SolRpc {
     /// montant en plus petite unité du jeton (ex: micro-USDC), pas des lamports —
     /// réutilise la même structure plutôt que d'en dupliquer une identique.
     pub fn token_signature_history(&self, ata_b58: &str, limit: u32) -> Result<Vec<SolTx>> {
-        let result = self.call("getSignaturesForAddress", json!([ata_b58, {"limit": limit}]))?;
-        let entries = result.as_array().cloned().unwrap_or_default();
-
-        Ok(entries
-            .into_iter()
-            .map(|entry| {
-                let signature = entry.get("signature").and_then(Value::as_str).unwrap_or_default().to_string();
-                let block_time = entry.get("blockTime").and_then(Value::as_i64);
-                let confirmation_status = entry.get("confirmationStatus").and_then(Value::as_str).unwrap_or("");
-                let failed = entry.get("err").map(|e| !e.is_null()).unwrap_or(false);
-                let details = self.transaction(&signature).ok().flatten();
-                SolTx {
-                    net_lamports: details.as_ref().and_then(|tx| net_token_amount(tx, ata_b58)),
-                    swap: details.as_ref().is_some_and(is_swap_transaction),
-                    signature,
-                    block_time,
-                    confirmed: matches!(confirmation_status, "confirmed" | "finalized"),
-                    failed,
-                }
-            })
-            .collect())
+        self.history_with_details(ata_b58, limit, net_token_amount)
     }
-
 }
 
 /// Variation du solde SOL de `pubkey_b58` dans une transaction (`getTransaction`).
