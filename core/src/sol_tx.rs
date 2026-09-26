@@ -77,6 +77,16 @@ fn note_account(key: [u8; 32], is_signer: bool, is_writable: bool, order: &mut V
 /// pour ne jamais produire une transaction avec plus de comptes signataires
 /// que de signatures réellement apposées.
 pub fn build_and_sign_transaction(signing_key: &SigningKey, payer: &[u8; 32], instructions: &[Instruction], recent_blockhash: &[u8; 32]) -> Vec<u8> {
+    let message = build_message(payer, instructions, recent_blockhash);
+    // ed25519 signe directement le message (pas de pré-hash comme pour ECDSA).
+    let signature = signing_key.sign(&message);
+    assemble_transaction(&signature.to_bytes(), &message)
+}
+
+/// Message (partie signée) de `build_and_sign_transaction`, sans signature :
+/// c'est ce qu'un portefeuille matériel reçoit pour l'afficher puis le signer
+/// (voir `ledger::solana`).
+pub fn build_message(payer: &[u8; 32], instructions: &[Instruction], recent_blockhash: &[u8; 32]) -> Vec<u8> {
     let mut order: Vec<[u8; 32]> = Vec::new();
     let mut flags: HashMap<[u8; 32], (bool, bool)> = HashMap::new();
 
@@ -145,13 +155,15 @@ pub fn build_and_sign_transaction(signing_key: &SigningKey, payer: &[u8; 32], in
         message.extend_from_slice(&instruction.data);
     }
 
-    // ed25519 signe directement le message (pas de pré-hash comme pour ECDSA).
-    let signature = signing_key.sign(&message);
+    message
+}
 
+/// Transaction complète à UN signataire : la signature puis le message.
+pub fn assemble_transaction(signature: &[u8; 64], message: &[u8]) -> Vec<u8> {
     let mut tx = Vec::new();
-    write_shortvec_len(&mut tx, 1); // une seule signature (voir l'assertion ci-dessus)
-    tx.extend_from_slice(&signature.to_bytes());
-    tx.extend_from_slice(&message);
+    write_shortvec_len(&mut tx, 1); // une seule signature (voir l'assertion de `build_message`)
+    tx.extend_from_slice(signature);
+    tx.extend_from_slice(message);
     tx
 }
 

@@ -124,6 +124,7 @@
           <button class="nav-tab" data-tab="external" data-i18n="nav.external">Wallets externes</button>
           <button class="nav-tab" data-tab="addressbook" data-i18n="nav.addressBook">Carnet d'adresses</button>
           <button class="nav-tab" data-tab="walletconnect" data-i18n="nav.walletconnect">Applications</button>
+          <button class="nav-tab" data-tab="ledger" data-i18n="nav.ledger">Ledger</button>
           <button class="nav-tab" data-tab="settings" data-i18n="nav.settings">Paramètres</button>
         </div>
         <div class="navbar-right">
@@ -567,6 +568,22 @@
           <p id="wc-error" class="error hidden"></p>
           <h2 class="section-title" data-i18n="wc.sessions">Sites connectés</h2>
           <div id="wc-sessions" class="recipient-list"></div>
+        </div>
+      </section>
+
+      <section class="tab-panel hidden" data-panel="ledger">
+        <div class="card wide">
+          <h1 data-i18n="ledger.title">Portefeuille matériel Ledger</h1>
+          <p class="muted" data-i18n="ledger.subtitle">
+            Les clés d'un Ledger ne quittent jamais l'appareil : chaque envoi s'affiche sur son écran et
+            doit y être confirmé.
+          </p>
+          <div class="row-buttons">
+            <button id="ledger-add-btn" class="primary" data-i18n="ledger.add">+ Ajouter un compte Ledger</button>
+            <button id="ledger-refresh-btn" class="secondary" data-i18n="ledger.refresh">Actualiser</button>
+          </div>
+          <div id="ledger-accounts" class="recipient-list"></div>
+          <p class="muted" data-i18n="ledger.btcNote"></p>
         </div>
       </section>
 
@@ -1069,6 +1086,60 @@
         <div class="row-buttons">
           <button id="add-external-wallet-confirm" class="primary" data-i18n="external.add">Ajouter</button>
           <button id="add-external-wallet-cancel" class="link" data-i18n="common.cancel">Annuler</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modale ajout d'un compte Ledger -->
+    <div id="ledger-add-modal" class="modal-overlay hidden">
+      <div class="modal">
+        <h2 data-i18n="ledger.addTitle">Ajouter un compte Ledger</h2>
+        <p class="muted" data-i18n="ledger.addHint"></p>
+        <label data-i18n="ledger.label">Nom (pour vous y retrouver)</label>
+        <input id="ledger-add-label" type="text" maxlength="60" />
+        <label data-i18n="ledger.network">Réseau</label>
+        <div class="custom-select dropdown">
+          <select id="ledger-add-network">
+            <option value="evm_mainnet" data-i18n="external.netEvmMainnet">Ethereum — Mainnet</option>
+            <option value="btc_mainnet" data-i18n="external.netBtcMainnet">Bitcoin — Mainnet</option>
+            <option value="sol_mainnet" data-i18n="external.netSolMainnet">Solana — Mainnet</option>
+            <option value="evm_sepolia" data-i18n="external.netEvmSepolia">Ethereum — Sepolia (testnet)</option>
+            <option value="btc_testnet" data-i18n="external.netBtcTestnet">Bitcoin — Testnet</option>
+            <option value="sol_devnet" data-i18n="external.netSolDevnet">Solana — Devnet</option>
+          </select>
+          <button type="button" class="custom-select-trigger">
+            <span class="custom-select-label"></span>
+            <span class="select-arrow"></span>
+          </button>
+          <ul class="custom-select-options"></ul>
+        </div>
+        <p id="ledger-add-error" class="error hidden"></p>
+        <div class="row-buttons">
+          <button id="ledger-add-confirm" class="primary" data-i18n="ledger.read">Lire le compte sur le Ledger</button>
+          <button id="ledger-add-cancel" class="link" data-i18n="common.cancel">Annuler</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modale envoi depuis un compte Ledger -->
+    <div id="ledger-send-modal" class="modal-overlay hidden">
+      <div class="modal">
+        <h2 id="ledger-send-title"></h2>
+        <p id="ledger-send-from" class="address"></p>
+        <label for="ledger-send-to" data-i18n="ledger.to">Destinataire</label>
+        <input id="ledger-send-to" type="text" autocomplete="off" spellcheck="false" />
+        <label for="ledger-send-amount" id="ledger-send-amount-label"></label>
+        <input id="ledger-send-amount" type="text" inputmode="decimal" autocomplete="off" />
+        <div id="ledger-send-fee-block" class="hidden">
+          <label for="ledger-send-fee" data-i18n="ledger.fee">Frais</label>
+          <select id="ledger-send-fee"></select>
+        </div>
+        <p class="muted" data-i18n="ledger.sendHint"></p>
+        <p id="ledger-send-status" class="muted"></p>
+        <p id="ledger-send-error" class="error hidden"></p>
+        <div class="row-buttons">
+          <button id="ledger-send-confirm" class="primary" data-i18n="ledger.send">Envoyer</button>
+          <button id="ledger-send-cancel" class="link" data-i18n="common.close">Fermer</button>
         </div>
       </div>
     </div>

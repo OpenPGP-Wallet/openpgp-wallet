@@ -997,6 +997,7 @@ mod tests {
     ///   sur 1/4) signée après revue à l'écran (montant, destinataire, frais ;
     ///   monnaie non affichée), signatures vérifiées contre NOTRE condensat ;
     /// - refus -> erreur claire.
+    ///
     /// Speculos doit tourner avec `bitcoin-nanosp.elf`.
     /// `cargo test -- --ignored ledger_btc_against_the_official_app_in_speculos --nocapture --test-threads=1`
     #[test]

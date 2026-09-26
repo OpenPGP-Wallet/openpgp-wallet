@@ -451,6 +451,38 @@ const I18N = {
     "regenBackup.resultSubtitle":
       "<strong>2 des 3 suffisent</strong> à tout récupérer. Téléchargez les 3 et notez les 3 mots de passe quelque part de sûr, séparément.",
     "regenBackup.resultClose": "J'ai téléchargé mes 3 nouvelles parts",
+    "nav.ledger": "Ledger",
+    "ledger.title": "Portefeuille matériel Ledger",
+    "ledger.subtitle":
+      "Les clés d'un Ledger ne quittent jamais l'appareil : chaque envoi s'affiche sur son écran et doit y être confirmé. Avant chaque opération, branchez-le, déverrouillez-le et ouvrez l'application du réseau (Ethereum, Bitcoin ou Solana).",
+    "ledger.add": "+ Ajouter un compte Ledger",
+    "ledger.refresh": "Actualiser",
+    "ledger.btcNote":
+      "Bitcoin : compte natif SegWit (m/84'), première adresse de réception et première adresse de monnaie. Des fonds reçus sur d'autres adresses (par exemple avec Ledger Live) n'apparaissent pas ici.",
+    "ledger.empty": "Aucun compte Ledger pour l'instant — ajoutez-en un avec le bouton ci-dessus.",
+    "ledger.addTitle": "Ajouter un compte Ledger",
+    "ledger.addHint": "Branchez et déverrouillez le Ledger, puis ouvrez-y l'application du réseau choisi.",
+    "ledger.label": "Nom (pour vous y retrouver)",
+    "ledger.network": "Réseau",
+    "ledger.read": "Lire le compte sur le Ledger",
+    "ledger.labelRequired": "Le nom est requis.",
+    "ledger.verify": "Vérifier sur le Ledger",
+    "ledger.verifyPrompt": "Comparez l'adresse affichée par le Ledger avec celle-ci, puis confirmez-la sur l'appareil :\n{address}",
+    "ledger.verified": "Adresse confirmée sur le Ledger.",
+    "ledger.send": "Envoyer",
+    "ledger.remove": "Retirer",
+    "ledger.sendTitle": "Envoyer depuis « {label} »",
+    "ledger.to": "Destinataire",
+    "ledger.amount": "Montant ({unit})",
+    "ledger.fee": "Frais",
+    "ledger.feeFast": "Rapide (~10 min) : {sat} sat",
+    "ledger.feeMedium": "Moyen (~30 min) : {sat} sat",
+    "ledger.feeSlow": "Lent (~1 h) : {sat} sat",
+    "ledger.feeLoading": "Estimation des frais…",
+    "ledger.sendHint": "Après la confirmation de Windows, vérifiez le destinataire et le montant sur l'écran du Ledger, puis confirmez-y.",
+    "ledger.waitDevice": "Confirmez sur le Ledger…",
+    "ledger.sent": "Transaction envoyée : {txid}",
+    "ledger.fieldsRequired": "Le destinataire et le montant sont requis.",
   },
   en: {
     "loading.text": "Loading…",
@@ -771,6 +803,38 @@ const I18N = {
     "regenBackup.resultSubtitle":
       "<strong>2 out of 3 are enough</strong> to recover everything. Download all 3 and write down the 3 passwords somewhere safe, separately.",
     "regenBackup.resultClose": "I have downloaded my 3 new shares",
+    "nav.ledger": "Ledger",
+    "ledger.title": "Ledger hardware wallet",
+    "ledger.subtitle":
+      "A Ledger's keys never leave the device: every transfer is shown on its screen and must be confirmed there. Before each operation, plug it in, unlock it and open the network's app (Ethereum, Bitcoin or Solana).",
+    "ledger.add": "+ Add a Ledger account",
+    "ledger.refresh": "Refresh",
+    "ledger.btcNote":
+      "Bitcoin: native SegWit account (m/84'), first receive address and first change address. Funds received on other addresses (for example with Ledger Live) do not show up here.",
+    "ledger.empty": "No Ledger account yet — add one with the button above.",
+    "ledger.addTitle": "Add a Ledger account",
+    "ledger.addHint": "Plug in and unlock the Ledger, then open the chosen network's app on it.",
+    "ledger.label": "Name (for your own reference)",
+    "ledger.network": "Network",
+    "ledger.read": "Read the account from the Ledger",
+    "ledger.labelRequired": "The name is required.",
+    "ledger.verify": "Verify on the Ledger",
+    "ledger.verifyPrompt": "Compare the address shown by the Ledger with this one, then confirm it on the device:\n{address}",
+    "ledger.verified": "Address confirmed on the Ledger.",
+    "ledger.send": "Send",
+    "ledger.remove": "Remove",
+    "ledger.sendTitle": "Send from \"{label}\"",
+    "ledger.to": "Recipient",
+    "ledger.amount": "Amount ({unit})",
+    "ledger.fee": "Fee",
+    "ledger.feeFast": "Fast (~10 min): {sat} sat",
+    "ledger.feeMedium": "Medium (~30 min): {sat} sat",
+    "ledger.feeSlow": "Slow (~1 h): {sat} sat",
+    "ledger.feeLoading": "Estimating fees…",
+    "ledger.sendHint": "After the Windows confirmation, check the recipient and amount on the Ledger's screen, then confirm there.",
+    "ledger.waitDevice": "Confirm on the Ledger…",
+    "ledger.sent": "Transaction sent: {txid}",
+    "ledger.fieldsRequired": "Recipient and amount are required.",
   },
 };
 
@@ -1535,6 +1599,7 @@ document.querySelectorAll(".nav-tab").forEach((tab) => {
     if (target === "external") loadExternalWallets();
     if (target === "addressbook") loadAddressBook();
     if (target === "walletconnect") loadWcSessions();
+    if (target === "ledger") loadLedgerAccounts();
     if (target === "settings") {
       loadArchivedProfiles();
       loadBiometricSettings();
@@ -3797,3 +3862,236 @@ async function loadWcSessions() {
     container.appendChild(row);
   }
 }
+
+// --- Comptes Ledger ------------------------------------------------------------
+// Tout ce qui parle à l'appareil passe par le backend Rust (core/src/hardware.rs),
+// qui revérifie chaque réponse ; la dernière barrière reste l'écran du Ledger.
+
+let ledgerAccountsCache = [];
+let ledgerSendAccount = null;
+
+function ledgerCoin(network) {
+  if (network.startsWith("evm")) return "evm";
+  if (network.startsWith("btc")) return "btc";
+  return "sol";
+}
+
+function ledgerUnit(network) {
+  return { evm: "ETH", btc: "BTC", sol: "SOL" }[ledgerCoin(network)];
+}
+
+async function loadLedgerAccounts() {
+  try {
+    ledgerAccountsCache = await invoke("hardware_accounts");
+  } catch (e) {
+    console.error(e);
+    return;
+  }
+  renderLedgerAccounts();
+  refreshLedgerBalances();
+}
+
+function ledgerLinkButton(text, onClick) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "link";
+  b.textContent = text;
+  b.addEventListener("click", onClick);
+  return b;
+}
+
+function renderLedgerAccounts() {
+  const container = document.getElementById("ledger-accounts");
+  container.innerHTML = "";
+  if (ledgerAccountsCache.length === 0) {
+    container.innerHTML = `<p class="muted">${t("ledger.empty")}</p>`;
+    return;
+  }
+  ledgerAccountsCache.forEach((account) => {
+    const row = document.createElement("div");
+    row.className = "recipient-item";
+    row.dataset.ledgerRow = String(account.id);
+
+    const info = document.createElement("div");
+    info.className = "recipient-info";
+    const labelEl = document.createElement("span");
+    labelEl.className = "recipient-label";
+    labelEl.textContent = account.label;
+    const meta = document.createElement("span");
+    meta.className = "recipient-fp";
+    meta.textContent = `${externalNetworkLabel(account.network)} · ${account.address} · m/${account.path}`;
+    info.append(labelEl, meta);
+
+    const actions = document.createElement("div");
+    actions.className = "item-actions";
+    const balanceEl = document.createElement("span");
+    balanceEl.dataset.field = "ledger-balance";
+    balanceEl.textContent = "…";
+
+    const copyBtn = ledgerLinkButton(t("common.copy"), () => copyText(account.address, t("wallet.addressCopied")));
+    const verifyBtn = ledgerLinkButton(t("ledger.verify"), () => {});
+    verifyBtn.title = t("ledger.verifyPrompt", { address: account.address });
+    verifyBtn.addEventListener(
+      "click",
+      withBusyButton(verifyBtn, async () => {
+        showCopyToast(t("ledger.waitDevice"));
+        try {
+          await invoke("hardware_verify_address", { id: account.id });
+          alert(t("ledger.verified"));
+        } catch (e) {
+          alert(t("common.error", { err: e }));
+        }
+      })
+    );
+    const sendBtn = ledgerLinkButton(t("ledger.send"), () => openLedgerSend(account));
+    const removeBtn = ledgerLinkButton(t("ledger.remove"), async () => {
+      try {
+        await invoke("hardware_remove", { id: account.id });
+      } catch (e) {
+        alert(t("common.error", { err: e }));
+      }
+      loadLedgerAccounts();
+    });
+
+    actions.append(balanceEl, copyBtn, verifyBtn, sendBtn, removeBtn);
+    row.append(info, actions);
+    container.appendChild(row);
+  });
+}
+
+async function refreshLedgerBalances() {
+  await Promise.all(
+    ledgerAccountsCache.map(async (account) => {
+      const balanceEl = document.querySelector(`[data-ledger-row="${account.id}"] [data-field="ledger-balance"]`);
+      if (!balanceEl) return;
+      try {
+        balanceEl.textContent = `${await invoke("hardware_balance", { id: account.id })} ${ledgerUnit(account.network)}`;
+      } catch (e) {
+        balanceEl.textContent = t("wallet.balanceError");
+      }
+    })
+  );
+}
+
+const ledgerRefreshBtn = document.getElementById("ledger-refresh-btn");
+ledgerRefreshBtn.addEventListener(
+  "click",
+  withThrottledButton(ledgerRefreshBtn, REFRESH_COOLDOWN_MS, async () => {
+    renderLedgerAccounts();
+    await refreshLedgerBalances();
+  })
+);
+
+document.getElementById("ledger-add-btn").addEventListener("click", () => {
+  document.getElementById("ledger-add-label").value = "";
+  hideError(document.getElementById("ledger-add-error"));
+  document.getElementById("ledger-add-modal").classList.remove("hidden");
+});
+
+document.getElementById("ledger-add-cancel").addEventListener("click", () => {
+  document.getElementById("ledger-add-modal").classList.add("hidden");
+});
+
+const ledgerAddConfirmBtn = document.getElementById("ledger-add-confirm");
+ledgerAddConfirmBtn.addEventListener(
+  "click",
+  withBusyButton(ledgerAddConfirmBtn, async () => {
+    const errorEl = document.getElementById("ledger-add-error");
+    hideError(errorEl);
+    const label = document.getElementById("ledger-add-label").value.trim();
+    const network = document.getElementById("ledger-add-network").value;
+    if (!label) {
+      showError(errorEl, t("ledger.labelRequired"));
+      return;
+    }
+    try {
+      await invoke("hardware_connect", { network, label });
+      document.getElementById("ledger-add-modal").classList.add("hidden");
+      loadLedgerAccounts();
+    } catch (e) {
+      showError(errorEl, String(e));
+    }
+  })
+);
+
+async function openLedgerSend(account) {
+  ledgerSendAccount = account;
+  document.getElementById("ledger-send-title").textContent = t("ledger.sendTitle", { label: account.label });
+  document.getElementById("ledger-send-from").textContent = `${externalNetworkLabel(account.network)} · ${account.address}`;
+  document.getElementById("ledger-send-amount-label").textContent = t("ledger.amount", { unit: ledgerUnit(account.network) });
+  document.getElementById("ledger-send-to").value = "";
+  document.getElementById("ledger-send-amount").value = "";
+  document.getElementById("ledger-send-status").textContent = "";
+  hideError(document.getElementById("ledger-send-error"));
+  const feeBlock = document.getElementById("ledger-send-fee-block");
+  const feeSelect = document.getElementById("ledger-send-fee");
+  feeSelect.innerHTML = "";
+  const isBtc = ledgerCoin(account.network) === "btc";
+  feeBlock.classList.toggle("hidden", !isBtc);
+  document.getElementById("ledger-send-modal").classList.remove("hidden");
+  if (!isBtc) return;
+  const loading = document.createElement("option");
+  loading.value = "";
+  loading.textContent = t("ledger.feeLoading");
+  feeSelect.appendChild(loading);
+  try {
+    const fees = await invoke("hardware_estimate_btc_fees", { id: account.id });
+    if (ledgerSendAccount !== account) return;
+    feeSelect.innerHTML = "";
+    [
+      ["ledger.feeFast", fees.fast_sat],
+      ["ledger.feeMedium", fees.medium_sat],
+      ["ledger.feeSlow", fees.slow_sat],
+    ].forEach(([key, sat]) => {
+      const opt = document.createElement("option");
+      opt.value = String(sat);
+      opt.textContent = t(key, { sat });
+      feeSelect.appendChild(opt);
+    });
+    feeSelect.value = String(fees.medium_sat);
+  } catch (e) {
+    feeSelect.innerHTML = "";
+    showError(document.getElementById("ledger-send-error"), String(e));
+  }
+}
+
+document.getElementById("ledger-send-cancel").addEventListener("click", () => {
+  ledgerSendAccount = null;
+  document.getElementById("ledger-send-modal").classList.add("hidden");
+});
+
+const ledgerSendConfirmBtn = document.getElementById("ledger-send-confirm");
+ledgerSendConfirmBtn.addEventListener(
+  "click",
+  withBusyButton(ledgerSendConfirmBtn, async () => {
+    const account = ledgerSendAccount;
+    if (!account) return;
+    const errorEl = document.getElementById("ledger-send-error");
+    const statusEl = document.getElementById("ledger-send-status");
+    hideError(errorEl);
+    statusEl.textContent = "";
+    const to = document.getElementById("ledger-send-to").value;
+    const amount = document.getElementById("ledger-send-amount").value;
+    if (!to.trim() || !amount.trim()) {
+      showError(errorEl, t("ledger.fieldsRequired"));
+      return;
+    }
+    let feeSat = null;
+    if (ledgerCoin(account.network) === "btc") {
+      feeSat = Number.parseInt(document.getElementById("ledger-send-fee").value, 10);
+      if (!Number.isSafeInteger(feeSat)) {
+        showError(errorEl, t("ledger.feeLoading"));
+        return;
+      }
+    }
+    statusEl.textContent = t("ledger.waitDevice");
+    try {
+      const txid = await invoke("hardware_send", { id: account.id, to, amount, feeSat });
+      statusEl.textContent = t("ledger.sent", { txid });
+      refreshLedgerBalances();
+    } catch (e) {
+      statusEl.textContent = "";
+      showError(errorEl, String(e));
+    }
+  })
+);

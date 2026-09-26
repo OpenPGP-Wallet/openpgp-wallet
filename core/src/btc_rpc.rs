@@ -220,6 +220,16 @@ impl EsploraClient {
         })
     }
 
+    /// Transaction brute `txid` (ordre affiché). Aucune confiance accordée au
+    /// serveur : l'appelant recalcule le txid de ce qu'il reçoit (voir
+    /// `ledger::btc`, qui refuse toute transaction ne correspondant pas à l'UTXO).
+    pub fn raw_transaction(&self, txid: &[u8; 32]) -> Result<Vec<u8>> {
+        let url = format!("{}/tx/{}/hex", self.base_url, hex::encode(txid));
+        let resp = self.client.get(&url).send().context("appel esplora /tx/hex impossible")?;
+        anyhow::ensure!(resp.status().is_success(), "transaction {} introuvable sur esplora", hex::encode(txid));
+        hex::decode(resp.text().context("réponse esplora /tx/hex illisible")?.trim()).context("transaction brute esplora invalide")
+    }
+
     /// Diffuse une transaction brute (hex-encodée pour l'API) et renvoie son txid.
     pub fn broadcast(&self, raw_tx: &[u8]) -> Result<String> {
         let url = format!("{}/tx", self.base_url);

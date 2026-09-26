@@ -1344,12 +1344,27 @@ pub fn send_evm(
     let seed = unlock_seed(data_dir, device_password)?;
     let _seed_lock = memory_guard::lock(&seed);
     let (signing_key, address) = derivation::derive_evm_key(&seed, profile_index)?;
+    let tx = prepare_evm_transfer(network, &address, to, amount_eth, gas_price)?;
+    let raw_tx = tx.sign(&signing_key)?;
+    eth_rpc::EthRpc::new(network.rpc).send_raw_transaction(&raw_tx)
+}
 
+/// Virement EVM prêt à signer depuis `address` (portefeuille logiciel ou
+/// matériel, voir `hardware::send_evm`) : nonce, réseau et solde lus auprès
+/// du nœud, réseau vérifié, solde suffisant pour montant + frais maximum.
+pub(crate) fn prepare_evm_transfer(
+    network: &wallet_flow::EvmNetwork,
+    address: &[u8; 20],
+    to: &str,
+    amount_eth: &str,
+    gas_price: u128,
+) -> Result<eth_tx::EthTx> {
+    check_evm_gas_price(network, gas_price)?;
     let to_bytes = wallet_flow::parse_evm_address(to)?;
     let value = wallet_flow::parse_eth_to_wei(amount_eth)?;
 
     let rpc = eth_rpc::EthRpc::new(network.rpc);
-    let address_str = derivation::format_address(&address);
+    let address_str = derivation::format_address(address);
     // Les 3 appels ci-dessous sont des lectures RPC indépendantes (aucune ne dépend
     // du résultat d'une autre) : les lancer en parallèle plutôt que l'une après
     // l'autre réduit la latence perçue d'un envoi ETH à ~1x un aller-retour réseau.
@@ -1390,7 +1405,7 @@ pub fn send_evm(
         "fonds insuffisants : {balance} wei disponibles, {value} wei + {gas_cost} wei de frais de gas requis"
     );
 
-    let tx = eth_tx::EthTx {
+    Ok(eth_tx::EthTx {
         nonce,
         gas_price,
         gas_limit: EVM_TRANSFER_GAS_LIMIT,
@@ -1398,9 +1413,7 @@ pub fn send_evm(
         value,
         chain_id,
         data: Vec::new(),
-    };
-    let raw_tx = tx.sign(&signing_key)?;
-    rpc.send_raw_transaction(&raw_tx)
+    })
 }
 
 /// Déverrouille le coffre, signe et diffuse un swap Ethereum -> THORChain :
@@ -1533,6 +1546,25 @@ fn fee_rate_for_target(estimates: &[(u32, f64)], target: u32) -> f64 {
         .unwrap_or(1.0)
 }
 
+/// Monnaie d'un envoi Bitcoin qui consomme `total_sat` : fonds suffisants
+/// exigés ; 0 sous le seuil de poussière (le reliquat part alors en frais).
+pub(crate) fn btc_change(total_sat: u64, amount_sat: u64, fee_sat: u64) -> Result<u64> {
+    const DUST_THRESHOLD_SAT: u64 = 1_000;
+    // `checked_add` plutôt que `+` : `amount_sat` vient du montant tapé par
+    // l'utilisateur, potentiellement proche de u64::MAX (voir parse_btc_to_sat) —
+    // un dépassement ici s'enroulerait silencieusement en release et pourrait
+    // faire passer un montant invalide comme "suffisant".
+    let total_needed = amount_sat
+        .checked_add(fee_sat)
+        .context("montant + frais dépasse la capacité représentable")?;
+    anyhow::ensure!(
+        total_needed <= total_sat,
+        "fonds insuffisants : {total_sat} sat disponibles, {amount_sat} sat + {fee_sat} sat de frais requis"
+    );
+    let remaining = total_sat - total_needed;
+    Ok(if remaining > DUST_THRESHOLD_SAT { remaining } else { 0 })
+}
+
 /// Estime les frais rapide/moyen/lent (~1/~3/~6 blocs, soit environ 10 minutes,
 /// 30 minutes et 1 heure — une cible d'un jour entier n'a d'intérêt pratique pour
 /// personne) pour un virement depuis `address`, en sats — à choisir avant
@@ -1542,20 +1574,29 @@ fn fee_rate_for_target(estimates: &[(u32, f64)], target: u32) -> f64 {
 /// transaction réelle n'a finalement qu'une sortie, les frais payés seront très
 /// légèrement supérieurs à nécessaire (quelques sats), jamais insuffisants.
 pub fn estimate_btc_fees(address: &str, network: &wallet_flow::BtcNetwork) -> Result<BtcFeeEstimate> {
+    estimate_btc_fees_for(&[address], network)
+}
+
+/// `estimate_btc_fees` pour un envoi qui consomme les UTXOs de plusieurs
+/// adresses (compte Ledger : réception et monnaie, voir `hardware::send_btc`).
+pub(crate) fn estimate_btc_fees_for(addresses: &[&str], network: &wallet_flow::BtcNetwork) -> Result<BtcFeeEstimate> {
     let esplora = btc_rpc::EsploraClient::new(network.esplora_base);
-    // Les UTXOs de l'adresse et les estimations de frais du réseau sont deux appels
-    // HTTP indépendants (l'un ne dépend pas du résultat de l'autre) : les lancer en
+    // Les UTXOs des adresses et les estimations de frais du réseau sont des appels
+    // HTTP indépendants (aucun ne dépend du résultat d'un autre) : les lancer en
     // parallèle plutôt que l'un après l'autre coupe environ de moitié la latence
     // perçue à l'ouverture de la modale d'envoi Bitcoin.
     let (utxos, estimates) = std::thread::scope(|scope| {
-        let utxos_handle = scope.spawn(|| esplora.utxos(address));
+        let utxo_handles: Vec<_> = addresses.iter().map(|a| scope.spawn(|| esplora.utxos(a))).collect();
         let estimates_handle = scope.spawn(|| esplora.fee_estimates());
         (
-            utxos_handle.join().expect("le thread UTXOs ne doit pas paniquer"),
+            utxo_handles
+                .into_iter()
+                .map(|h| h.join().expect("le thread UTXOs ne doit pas paniquer"))
+                .collect::<Result<Vec<_>>>(),
             estimates_handle.join().expect("le thread frais ne doit pas paniquer"),
         )
     });
-    let num_inputs = utxos?.len().max(1);
+    let num_inputs = utxos?.iter().map(Vec::len).sum::<usize>().max(1);
     let vsize = crate::btc_tx::estimate_p2wpkh_vsize(num_inputs, 2) as f64;
     let estimates = estimates?;
 
@@ -1593,21 +1634,7 @@ pub fn send_btc(
     let esplora = btc_rpc::EsploraClient::new(network.esplora_base);
     let utxos = esplora.utxos(&address)?;
     let total_sat: u64 = utxos.iter().map(|u| u.value_sat).sum();
-
-    const DUST_THRESHOLD_SAT: u64 = 1_000;
-    // `checked_add` plutôt que `+` : `amount_sat` vient du montant tapé par
-    // l'utilisateur, potentiellement proche de u64::MAX (voir parse_btc_to_sat) —
-    // un dépassement ici s'enroulerait silencieusement en release et pourrait
-    // faire passer un montant invalide comme "suffisant".
-    let total_needed = amount_sat
-        .checked_add(fee_sat)
-        .context("montant + frais dépasse la capacité représentable")?;
-    anyhow::ensure!(
-        total_needed <= total_sat,
-        "fonds insuffisants : {total_sat} sat disponibles, {amount_sat} sat + {fee_sat} sat de frais requis"
-    );
-    let remaining = total_sat - total_needed;
-    let change_sat = if remaining > DUST_THRESHOLD_SAT { remaining } else { 0 };
+    let change_sat = btc_change(total_sat, amount_sat, fee_sat)?;
 
     let tx = crate::btc_tx::BtcTx {
         inputs: utxos,
@@ -1878,8 +1905,15 @@ pub fn send_sol(
     let seed = unlock_seed(data_dir, device_password)?;
     let _seed_lock = memory_guard::lock(&seed);
     let signing_key = derivation::derive_solana_key(&seed, profile_index);
+    let message = prepare_sol_transfer(network, &signing_key.verifying_key().to_bytes(), to, amount_sol)?;
+    let raw_tx = sol_tx::assemble_transaction(&ed25519_dalek::Signer::sign(&signing_key, &message).to_bytes(), &message);
+    sol_rpc::SolRpc::new(network.rpc).send_transaction(&raw_tx)
+}
 
-    let from_pubkey = signing_key.verifying_key().to_bytes();
+/// Message d'un virement SOL prêt à signer depuis `from_pubkey` (portefeuille
+/// logiciel ou matériel, voir `hardware::send_sol`) : solde suffisant pour
+/// montant + frais, dernier blockhash.
+pub(crate) fn prepare_sol_transfer(network: &wallet_flow::SolNetwork, from_pubkey: &[u8; 32], to: &str, amount_sol: &str) -> Result<Vec<u8>> {
     let to_bytes = bs58::decode(to.trim())
         .into_vec()
         .context("adresse Solana invalide (base58 attendu)")?;
@@ -1916,8 +1950,7 @@ pub fn send_sol(
         "fonds insuffisants : {balance} lamports disponibles, {lamports} lamports + {SOL_FEE_LAMPORTS} lamports de frais requis"
     );
 
-    let raw_tx = sol_tx::build_transfer_transaction(&signing_key, &from_pubkey, &to_pubkey, lamports, &recent_blockhash);
-    rpc.send_transaction(&raw_tx)
+    Ok(sol_tx::build_message(from_pubkey, &[sol_tx::transfer_instruction(from_pubkey, &to_pubkey, lamports)], &recent_blockhash))
 }
 
 /// Traduit un identifiant de coin interne à l'app ("evm"/"btc"/"sol", les

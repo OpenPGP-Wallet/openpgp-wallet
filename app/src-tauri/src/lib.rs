@@ -5,7 +5,7 @@
 //! confirmations/erreurs le sont.
 
 use base64::Engine;
-use pgp_wallet_poc::{address_book, api, dapp_requests, external_wallets, history, messaging, price_rpc, sent_recipients, wallet_flow};
+use pgp_wallet_poc::{address_book, api, dapp_requests, external_wallets, hardware, history, messaging, price_rpc, sent_recipients, wallet_flow};
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -276,12 +276,76 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     // core/src/address_book.rs
     ("sérialisation du carnet d'adresses", "address book serialization"),
     ("écriture du carnet d'adresses", "writing the address book"),
+    // core/src/hardware.rs, core/src/ledger/
+    ("compte Ledger introuvable", "Ledger account not found"),
+    ("ce compte Ledger est déjà ajouté", "this Ledger account has already been added"),
+    ("nom du compte Ledger invalide (1 à 60 caractères)", "invalid Ledger account name (1 to 60 characters)"),
+    ("nombre maximal de comptes Ledger atteint", "maximum number of Ledger accounts reached"),
+    ("l'adresse affichée par le Ledger diffère de celle enregistrée", "the address shown by the Ledger differs from the saved one"),
+    (
+        "aucun Ledger détecté : branchez-le, déverrouillez-le et ouvrez l'application du réseau",
+        "no Ledger detected: plug it in, unlock it and open the network's app",
+    ),
+    ("ouverture du Ledger impossible (déjà utilisé par une autre application ?)", "cannot open the Ledger (already used by another application?)"),
+    ("accès USB (HID) impossible", "USB (HID) access unavailable"),
+    ("écriture USB vers le Ledger impossible", "USB write to the Ledger failed"),
+    ("lecture USB depuis le Ledger impossible", "USB read from the Ledger failed"),
+    (
+        "la signature du Ledger ne correspond pas à la transaction attendue — transaction non diffusée",
+        "the Ledger signature does not match the expected transaction — transaction not broadcast",
+    ),
+    (
+        "la signature du Ledger ne correspond pas au compte attendu — transaction non diffusée",
+        "the Ledger signature does not match the expected account — transaction not broadcast",
+    ),
+    ("le Ledger n'a pas signé toutes les entrées", "the Ledger did not sign every input"),
+    ("l'adresse calculée par le Ledger ne correspond pas à celle du compte", "the address computed by the Ledger does not match the account's"),
+    ("le Ledger a renvoyé une adresse qui ne correspond pas à sa clé publique", "the Ledger returned an address that does not match its public key"),
+];
+
+/// Messages Ledger suivis d'une valeur (mot d'état, nom d'application...) :
+/// préfixe français -> préfixe anglais, la suite étant conservée.
+const LEDGER_PREFIX_TRANSLATIONS: &[(&str, &str)] = &[
+    ("opération refusée sur le Ledger", "operation refused on the Ledger"),
+    ("Ledger verrouillé : saisissez votre code PIN sur l'appareil", "Ledger locked: enter your PIN on the device"),
+    (
+        "application non ouverte sur le Ledger : ouvrez l'application du réseau concerné",
+        "app not open on the Ledger: open the app of the network concerned",
+    ),
+    (
+        "données refusées par le Ledger (option « signature à l'aveugle » désactivée, ou transaction non prise en charge)",
+        "data refused by the Ledger (\"Blind signing\" option disabled, or unsupported transaction)",
+    ),
+    (
+        "le Ledger exige l'option « signature à l'aveugle » (Blind signing) dans l'application Solana pour cette transaction",
+        "the Ledger requires the \"Blind signing\" option in the Solana app for this transaction",
+    ),
+    (
+        "transaction refusée par l'application Bitcoin du Ledger : données incohérentes",
+        "transaction refused by the Ledger Bitcoin app: inconsistent data",
+    ),
+    ("le Ledger n'est pas sur le bon réseau : ouvrez l'application", "the Ledger is not on the right network: open the app"),
+    ("Ledger : mémoire insuffisante pour cette opération", "Ledger: not enough memory for this operation"),
+    ("Ledger : paramètre de commande refusé (version d'application trop ancienne ?)", "Ledger: command parameter refused (app version too old?)"),
+    ("le Ledger a renvoyé l'erreur", "the Ledger returned error"),
 ];
 
 /// Messages avec une valeur interpolée (index, méthode RPC, montant...) : la
 /// correspondance exacte ne peut pas fonctionner, donc reconstruction par
 /// découpage autour de la partie fixe du message.
 fn translate_dynamic_error(msg: &str) -> Option<String> {
+    if let Some((en, rest)) = LEDGER_PREFIX_TRANSLATIONS.iter().find_map(|(fr, en)| msg.strip_prefix(fr).map(|rest| (en, rest))) {
+        return Some(format!("{en}{rest}"));
+    }
+    if let Some(label) = msg
+        .strip_prefix("ce Ledger ne correspond pas au compte « ")
+        .and_then(|rest| rest.strip_suffix(" » (autre appareil ou autre phrase de récupération)"))
+    {
+        return Some(format!("this Ledger does not match the account \"{label}\" (another device or another recovery phrase)"));
+    }
+    if let Some(label) = msg.strip_prefix("le compte Ledger « ").and_then(|rest| rest.strip_suffix(" » n'est pas sur ce réseau")) {
+        return Some(format!("the Ledger account \"{label}\" is not on this network"));
+    }
     if let Some(rest) = msg.strip_prefix("profil actif introuvable (index ") {
         return Some(format!("active profile not found (index {rest}"));
     }
@@ -1469,26 +1533,84 @@ fn send_transaction(
 ) -> Result<String, String> {
     let password = Zeroizing::new(password);
     let dir = data_dir(&app)?;
-
-    // Réseau validé AVANT la boîte de confirmation (22ᵉ passage) : un réseau
-    // inconnu était jusqu'ici affiché tel quel (texte libre du frontend) dans
-    // la boîte, l'erreur n'arrivant qu'après. Adresse et montant remplacés par
-    // leur forme canonique, utilisée pour l'affichage ET la signature (voir
-    // `canonical_address_input`/`api::canonical_amount`).
-    let coin = match network.as_str() {
-        "evm_sepolia" | "evm_mainnet" => "evm",
-        "btc_testnet" | "btc_mainnet" => "btc",
-        "sol_devnet" | "sol_mainnet" => "sol",
-        other => return Err(translate_error(&format!("réseau inconnu : {other}"))),
-    };
-    let to = canonical_address_input(&to)?;
-    let amount = api::canonical_amount(coin, &amount).t_err()?;
-
     let from_label = api::list_profiles(&dir)
         .into_iter()
         .find(|p| p.index == profile_index)
         .map(|p| p.label)
         .unwrap_or_else(|| format!("profil #{profile_index}"));
+    let send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &from_label, None)?;
+
+    let result = match network.as_str() {
+        "evm_sepolia" | "evm_mainnet" => {
+            let net = evm_network(&network)?;
+            let gas_price = send.evm_gas_price.ok_or_else(|| "prix du gas manquant".to_string())?;
+            api::send_evm(&dir, &password, net, &send.to, &send.amount, gas_price, profile_index).t_err()
+        }
+        "btc_testnet" | "btc_mainnet" => {
+            let net = btc_network(&network)?;
+            let fee_sat = send.fee_sat.ok_or_else(|| "frais Bitcoin manquants (choisis une vitesse d'envoi)".to_string())?;
+            api::send_btc(&dir, &password, net, &send.to, &send.amount, fee_sat, profile_index).t_err()
+        }
+        "sol_devnet" | "sol_mainnet" => {
+            let net = sol_network(&network)?;
+            api::send_sol(&dir, &password, net, &send.to, &send.amount, profile_index).t_err()
+        }
+        other => Err(translate_error(&format!("réseau inconnu : {other}"))),
+    };
+    // Destinataire mémorisé SEULEMENT après une diffusion réussie (voir
+    // `sent_recipients`). Un échec d'écriture du journal ne doit pas faire
+    // croire à l'échec d'un envoi déjà parti.
+    if result.is_ok() {
+        let _ = sent_recipients::record_sent(&dir, &network, &send.to);
+    }
+    result
+}
+
+/// Ligne de frais suivie, après une ligne vide, de la consigne de l'appareil
+/// (la ligne de frais est déjà précédée d'un retour à la ligne dans la boîte).
+fn fee_and_device_note(fee_line: Option<String>, device_note: Option<&str>) -> Option<String> {
+    match (fee_line, device_note) {
+        (Some(fee), Some(note)) => Some(format!("{fee}\n\n{note}")),
+        (None, Some(note)) => Some(format!("\n{note}")),
+        (fee, None) => fee,
+    }
+}
+
+/// Ce qu'un envoi a validé et fait confirmer : exactement ce qui sera signé.
+struct ConfirmedSend {
+    to: String,
+    amount: String,
+    evm_gas_price: Option<u128>,
+    fee_sat: Option<u64>,
+}
+
+/// Validation, avertissements et boîte de confirmation native, communs aux
+/// envois du portefeuille et des comptes Ledger (`device_note` : consigne
+/// ajoutée à la boîte pour la confirmation sur l'appareil). `Err` si refusé.
+#[allow(clippy::too_many_arguments)]
+fn confirm_send(
+    app: &tauri::AppHandle,
+    dir: &std::path::Path,
+    network: &str,
+    to: &str,
+    amount: &str,
+    fee_sat: Option<u64>,
+    from_label: &str,
+    device_note: Option<&str>,
+) -> Result<ConfirmedSend, String> {
+    // Réseau validé AVANT la boîte de confirmation (22ᵉ passage) : un réseau
+    // inconnu était jusqu'ici affiché tel quel (texte libre du frontend) dans
+    // la boîte, l'erreur n'arrivant qu'après. Adresse et montant remplacés par
+    // leur forme canonique, utilisée pour l'affichage ET la signature (voir
+    // `canonical_address_input`/`api::canonical_amount`).
+    let coin = match network {
+        "evm_sepolia" | "evm_mainnet" => "evm",
+        "btc_testnet" | "btc_mainnet" => "btc",
+        "sol_devnet" | "sol_mainnet" => "sol",
+        other => return Err(translate_error(&format!("réseau inconnu : {other}"))),
+    };
+    let to = canonical_address_input(to)?;
+    let amount = api::canonical_amount(coin, amount).t_err()?;
 
     // Frais affichés dans la boîte de dialogue native (voir sa doc : "montre
     // exactement ce que le backend a compris") : choisis par l'utilisateur pour
@@ -1496,7 +1618,7 @@ fn send_transaction(
     // signer — avant, il était lu auprès du nœud APRÈS la confirmation, jamais
     // affiché (voir `api::evm_gas_price_for_confirmation`).
     let evm_gas_price = match coin {
-        "evm" => Some(api::evm_gas_price_for_confirmation(evm_network(&network)?).t_err()?),
+        "evm" => Some(api::evm_gas_price_for_confirmation(evm_network(network)?).t_err()?),
         _ => None,
     };
     // Adresse refusée AVANT la confirmation si elle est mal formée (EVM/BTC :
@@ -1506,15 +1628,15 @@ fn send_transaction(
     let activity = match coin {
         "evm" => {
             api::validate_evm_recipient(&to).t_err()?;
-            api::evm_recipient_activity(&to, evm_network(&network)?).ok()
+            api::evm_recipient_activity(&to, evm_network(network)?).ok()
         }
         "btc" => {
-            let net = btc_network(&network)?;
+            let net = btc_network(network)?;
             api::validate_btc_recipient(&to, net).t_err()?;
             api::btc_recipient_activity(&to, net).ok()
         }
         _ => {
-            let net = sol_network(&network)?;
+            let net = sol_network(network)?;
             api::check_solana_recipient(&to, net).t_err()?;
             api::sol_recipient_activity(&to, net).ok()
         }
@@ -1530,36 +1652,128 @@ fn send_transaction(
         }
         _ => evm_gas_price.map(|gas_price| evm_fee_line(gas_price, api::EVM_TRANSFER_GAS_LIMIT)),
     };
+    let fee_line = fee_and_device_note(fee_line, device_note);
 
-    let warning = send_warnings(&dir, &network, coin, &to, activity);
-    if !confirm_transaction_native(&app, &network, &to, &amount, &from_label, fee_line.as_deref(), warning.as_deref()) {
+    let warning = send_warnings(dir, network, coin, &to, activity);
+    if !confirm_transaction_native(app, network, &to, &amount, from_label, fee_line.as_deref(), warning.as_deref()) {
         return Err(translate_error("Virement annulé (confirmation refusée)."));
     }
+    Ok(ConfirmedSend { to, amount, evm_gas_price, fee_sat })
+}
 
-    let result = match network.as_str() {
-        "evm_sepolia" | "evm_mainnet" => {
-            let net = evm_network(&network)?;
-            let gas_price = evm_gas_price.ok_or_else(|| "prix du gas manquant".to_string())?;
-            api::send_evm(&dir, &password, net, &to, &amount, gas_price, profile_index).t_err()
-        }
-        "btc_testnet" | "btc_mainnet" => {
-            let net = btc_network(&network)?;
-            let fee_sat = fee_sat.ok_or_else(|| "frais Bitcoin manquants (choisis une vitesse d'envoi)".to_string())?;
-            api::send_btc(&dir, &password, net, &to, &amount, fee_sat, profile_index).t_err()
-        }
-        "sol_devnet" | "sol_mainnet" => {
-            let net = sol_network(&network)?;
-            api::send_sol(&dir, &password, net, &to, &amount, profile_index).t_err()
-        }
-        other => Err(translate_error(&format!("réseau inconnu : {other}"))),
-    };
-    // Destinataire mémorisé SEULEMENT après une diffusion réussie (voir
-    // `sent_recipients`). Un échec d'écriture du journal ne doit pas faire
-    // croire à l'échec d'un envoi déjà parti.
-    if result.is_ok() {
-        let _ = sent_recipients::record_sent(&dir, &network, &to);
+// --- Comptes Ledger (core/src/hardware.rs) -------------------------------------
+// Commandes qui parlent à l'appareil ou au réseau exécutées via `run_blocking` :
+// l'appareil attend la confirmation physique de l'utilisateur, parfois
+// longtemps, et la fenêtre ne doit pas se figer pendant ce temps.
+
+/// Compte Ledger tel qu'affiché : l'empreinte et la clé publique étendue
+/// Bitcoin restent côté Rust (inutiles à l'affichage).
+#[derive(Serialize)]
+struct HardwareAccountDto {
+    id: u32,
+    label: String,
+    network: String,
+    address: String,
+    path: String,
+}
+
+impl From<hardware::HardwareAccount> for HardwareAccountDto {
+    fn from(a: hardware::HardwareAccount) -> Self {
+        Self { id: a.id, label: a.label, network: a.network, address: a.address, path: a.path }
     }
-    result
+}
+
+fn hardware_account(dir: &std::path::Path, id: u32) -> Result<hardware::HardwareAccount, String> {
+    hardware::list_accounts(dir).into_iter().find(|a| a.id == id).ok_or_else(|| translate_error("compte Ledger introuvable"))
+}
+
+#[tauri::command]
+fn hardware_accounts(app: tauri::AppHandle) -> Result<Vec<HardwareAccountDto>, String> {
+    Ok(hardware::list_accounts(&data_dir(&app)?).into_iter().map(Into::into).collect())
+}
+
+/// Exécute `work` sur un fil réservé aux opérations bloquantes (attente de la
+/// confirmation sur l'appareil, appels réseau `reqwest::blocking`, boîte de
+/// dialogue native) : ni sur le fil principal (fenêtre figée), ni directement
+/// dans une tâche asynchrone — ce que fait `#[tauri::command(async)]` sur une
+/// fonction synchrone, où `reqwest::blocking` panique et la commande reste
+/// alors sans réponse (constaté en réel sur le solde d'un compte Ledger).
+async fn run_blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(work).await.map_err(|e| format!("opération interrompue : {e}"))?
+}
+
+#[tauri::command]
+async fn hardware_connect(network: String, label: String, app: tauri::AppHandle) -> Result<HardwareAccountDto, String> {
+    run_blocking(move || hardware::connect_ledger(&data_dir(&app)?, &network, &label).map(Into::into).t_err()).await
+}
+
+#[tauri::command]
+fn hardware_remove(id: u32, app: tauri::AppHandle) -> Result<(), String> {
+    hardware::remove_account(&data_dir(&app)?, id).t_err()
+}
+
+#[tauri::command]
+async fn hardware_verify_address(id: u32, app: tauri::AppHandle) -> Result<(), String> {
+    run_blocking(move || hardware::verify_address_on_device(&data_dir(&app)?, id).t_err()).await
+}
+
+/// Même format que `get_balance` (Bitcoin : réception + monnaie).
+#[tauri::command]
+async fn hardware_balance(id: u32, app: tauri::AppHandle) -> Result<String, String> {
+    run_blocking(move || {
+        let dir = data_dir(&app)?;
+        let network = hardware_account(&dir, id)?.network;
+        let amount = hardware::balance(&dir, id).t_err()? as f64;
+        Ok(match network.as_str() {
+            "evm_sepolia" | "evm_mainnet" => format!("{:.6}", amount / 1e18),
+            "btc_testnet" | "btc_mainnet" => format!("{:.8}", amount / 1e8),
+            _ => format!("{:.9}", amount / 1e9),
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+async fn hardware_estimate_btc_fees(id: u32, app: tauri::AppHandle) -> Result<BtcFeeEstimateDto, String> {
+    run_blocking(move || {
+        let estimate = hardware::estimate_btc_fees(&data_dir(&app)?, id).t_err()?;
+        Ok(BtcFeeEstimateDto { fast_sat: estimate.fast_sat, medium_sat: estimate.medium_sat, slow_sat: estimate.slow_sat })
+    })
+    .await
+}
+
+/// Envoi depuis un compte Ledger : mêmes validations, avertissements et boîte
+/// native qu'un envoi du portefeuille (aucun mot de passe : rien à
+/// déverrouiller ici), puis revue et confirmation sur l'écran de l'appareil.
+#[tauri::command]
+async fn hardware_send(id: u32, to: String, amount: String, fee_sat: Option<u64>, app: tauri::AppHandle) -> Result<String, String> {
+    run_blocking(move || {
+        let dir = data_dir(&app)?;
+        let account = hardware_account(&dir, id)?;
+        let network = account.network.clone();
+        let note = lang(
+            "Signature sur le Ledger : vérifiez sur SON écran que le destinataire et le montant sont identiques, puis confirmez-y.",
+            "Signed on the Ledger: check on ITS screen that the recipient and amount are identical, then confirm there.",
+        );
+        let send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &format!("Ledger — {}", account.label), Some(note))?;
+        let result = match network.as_str() {
+            "evm_sepolia" | "evm_mainnet" => {
+                let gas_price = send.evm_gas_price.ok_or_else(|| "prix du gas manquant".to_string())?;
+                hardware::send_evm(&dir, id, &network, &send.to, &send.amount, gas_price).t_err()
+            }
+            "btc_testnet" | "btc_mainnet" => {
+                let fee_sat = send.fee_sat.ok_or_else(|| "frais Bitcoin manquants (choisis une vitesse d'envoi)".to_string())?;
+                hardware::send_btc(&dir, id, &network, &send.to, &send.amount, fee_sat).t_err()
+            }
+            "sol_devnet" | "sol_mainnet" => hardware::send_sol(&dir, id, &network, &send.to, &send.amount).t_err(),
+            other => Err(translate_error(&format!("réseau inconnu : {other}"))),
+        };
+        if result.is_ok() {
+            let _ = sent_recipients::record_sent(&dir, &network, &send.to);
+        }
+        result
+    })
+    .await
 }
 
 /// Indique si l'envoi USDC vers `to` va facturer un rent supplémentaire (le
@@ -2687,6 +2901,13 @@ pub fn run() {
             wc_prepare_request,
             wc_approve_request,
             wc_reject_request,
+            hardware_accounts,
+            hardware_connect,
+            hardware_remove,
+            hardware_verify_address,
+            hardware_balance,
+            hardware_estimate_btc_fees,
+            hardware_send,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -2794,5 +3015,34 @@ mod tests {
         assert!(!is_app_origin(&url("https://127.0.0.1:1430/"), Some(&dev)), "autre schéma");
         assert!(!is_app_origin(&url("http://localhost:1430/"), Some(&dev)), "autre hôte");
         assert!(!is_app_origin(&url("https://evil.example/"), Some(&dev)));
+    }
+
+    /// Messages Ledger suivis d'un mot d'état ou d'un nom : traduits en
+    /// conservant la valeur ; nom de compte repris tel quel.
+    #[test]
+    fn ledger_errors_are_translated_with_their_values() {
+        assert_eq!(translate_dynamic_error("opération refusée sur le Ledger (0x6985)").unwrap(), "operation refused on the Ledger (0x6985)");
+        assert_eq!(translate_dynamic_error("le Ledger a renvoyé l'erreur 0x1234").unwrap(), "the Ledger returned error 0x1234");
+        assert_eq!(
+            translate_dynamic_error("le Ledger n'est pas sur le bon réseau : ouvrez l'application « Bitcoin Test »").unwrap(),
+            "the Ledger is not on the right network: open the app « Bitcoin Test »"
+        );
+        assert_eq!(
+            translate_dynamic_error("ce Ledger ne correspond pas au compte « Épargne » (autre appareil ou autre phrase de récupération)").unwrap(),
+            "this Ledger does not match the account \"Épargne\" (another device or another recovery phrase)"
+        );
+        assert_eq!(translate_dynamic_error("le compte Ledger « A » n'est pas sur ce réseau").unwrap(), "the Ledger account \"A\" is not on this network");
+        assert!(EXACT_ERROR_TRANSLATIONS.iter().any(|(fr, _)| *fr == "compte Ledger introuvable"));
+    }
+
+    /// Consigne Ledger toujours séparée du montant ou des frais par une ligne
+    /// vide (constaté sans ligne vide pour Solana, qui n'a pas de ligne de frais).
+    #[test]
+    fn device_note_is_set_apart_in_the_confirmation() {
+        let text = |fee: Option<&str>| transaction_confirmation_text("sol_devnet", "Dest", "0.01", "Ledger — A", fee_and_device_note(fee.map(str::to_string), Some("NOTE")).as_deref(), None);
+        assert!(text(None).contains("0.01\n\nNOTE\n\n"), "{}", text(None));
+        assert!(text(Some("Frais : 212 sat")).contains("0.01\nFrais : 212 sat\n\nNOTE\n\n"));
+        assert_eq!(fee_and_device_note(Some("F".into()), None).as_deref(), Some("F"));
+        assert_eq!(fee_and_device_note(None, None), None);
     }
 }
