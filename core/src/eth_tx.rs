@@ -60,6 +60,18 @@ impl EthTx {
         s.out().to_vec()
     }
 
+    /// Encodage RLP NON signé (tuple EIP-155 `chain_id, 0, 0` en fin) : ce que
+    /// signe un portefeuille matériel (voir `ledger::eth`).
+    pub fn unsigned_rlp(&self) -> Vec<u8> {
+        self.encode(None)
+    }
+
+    /// Transaction finale à partir d'une signature produite ailleurs (appareil
+    /// matériel) : `v` EIP-155 complet, `r`/`s` sur 32 octets.
+    pub fn encode_with_signature(&self, v: u64, r: &[u8; 32], s: &[u8; 32]) -> Vec<u8> {
+        self.encode(Some((v, trim_be(r).as_slice(), trim_be(s).as_slice())))
+    }
+
     fn hash_unsigned(&self) -> [u8; 32] {
         let unsigned = self.encode(None);
         let digest = Keccak256::digest(&unsigned);

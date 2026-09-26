@@ -114,6 +114,11 @@ region = "3"
 # pertinente(s) pour la cible réellement compilée.
 keyring = { version = "3", features = ["windows-native", "apple-native", "linux-native-sync-persistent"] }
 
+# hidapi : communication USB HID avec un portefeuille matériel Ledger (voir
+# core/src/ledger/). Bibliothèque de référence multiplateforme (API HID native de
+# Windows, IOKit, hidraw) ; le protocole Ledger au-dessus est implémenté ici.
+hidapi = "2"
+
 # --- Backend crypto de sequoia-openpgp : un par famille d'OS, jamais "crypto-rust" ---
 # (marqué "non production ready"/"non constant-time" par sequoia lui-même). Les deux backends
 # ci-dessous sont considérés production-ready par sequoia (pas de flag
