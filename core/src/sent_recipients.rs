@@ -22,6 +22,12 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::sync::Mutex;
+
+/// Lecture-modification-écriture du journal : deux envois simultanés (commandes
+/// exécutées en parallèle, envoi matériel pendant un envoi logiciel) auraient
+/// chacun réécrit le journal sans l'entrée de l'autre.
+static JOURNAL_MUTEX: Mutex<()> = Mutex::new(());
 
 const SENT_RECIPIENTS_FILE: &str = "sent_recipients.json";
 
@@ -73,6 +79,7 @@ pub fn has_sent_to(data_dir: &Path, network: &str, address: &str) -> bool {
 /// À appeler après une diffusion RÉUSSIE uniquement. Sans effet si l'adresse
 /// est déjà connue.
 pub fn record_sent(data_dir: &Path, network: &str, address: &str) -> Result<()> {
+    let _serialize = JOURNAL_MUTEX.lock().unwrap_or_else(|p| p.into_inner());
     let entry = Entry { network: network.to_string(), address: normalize(address) };
     let mut journal = load(data_dir);
     if journal.entries.contains(&entry) {
@@ -80,7 +87,11 @@ pub fn record_sent(data_dir: &Path, network: &str, address: &str) -> Result<()> 
     }
     journal.entries.push(entry);
     let content = serde_json::to_string_pretty(&journal).context("sérialisation du journal des destinataires")?;
-    std::fs::write(path(data_dir), content).context("écriture du journal des destinataires")
+    // Fichier temporaire puis renommage : une coupure pendant l'écriture ne laisse
+    // pas un journal tronqué.
+    let tmp = path(data_dir).with_extension("json.tmp");
+    std::fs::write(&tmp, content).context("écriture du journal des destinataires")?;
+    std::fs::rename(&tmp, path(data_dir)).context("écriture du journal des destinataires")
 }
 
 #[cfg(test)]

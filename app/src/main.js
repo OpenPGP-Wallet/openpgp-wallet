@@ -1777,16 +1777,17 @@ restoreSubmitBtn.addEventListener("click", withBusyButton(restoreSubmitBtn, asyn
 
 let balanceRefreshTimer = null;
 
-// Rafraîchit les soldes toutes les 15s tant que le tableau de bord est ouvert,
-// pour que les montants suivent les changements réels sur la blockchain sans
-// action manuelle. Arrêté au verrouillage/réinitialisation pour ne pas laisser
+// Rafraîchit les soldes toutes les 60 s tant que le tableau de bord est ouvert :
+// filet de sécurité, les changements étant signalés en direct (voir
+// updateBalanceWatch) — 15 s auparavant, avant la surveillance en direct, soit
+// quatre fois plus d'appels aux nœuds publics pour rien. Arrêté au verrouillage/réinitialisation pour ne pas laisser
 // tourner des appels réseau en arrière-plan une fois le wallet quitté. Les prix
 // (voir plus bas) suivent le même cycle de vie, avec un intervalle plus long : ce
 // sont des cours de marché, pas des montants qui bougent à chaque bloc, et l'API
 // publique utilisée (CoinGecko, gratuite) a une limite de requêtes par minute.
 function startBalanceAutoRefresh() {
   stopBalanceAutoRefresh();
-  balanceRefreshTimer = setInterval(refreshAllBalances, 15000);
+  balanceRefreshTimer = setInterval(refreshAllBalances, 60000);
   startPriceAutoRefresh();
 }
 
@@ -1846,14 +1847,21 @@ async function refreshPrices() {
   if (pricesRefreshing) return;
   pricesRefreshing = true;
   try {
+    // Un seul appel CoinGecko par cycle : la liste des marchés donne déjà le
+    // cours de BTC/ETH/SOL (un appel `simple/price` séparé doublait la
+    // consommation de la limite gratuite). Échec passager : les derniers prix
+    // restent, au lieu de faire passer toutes les valeurs en dollars à « — ».
+    let coins = null;
     try {
-      latestPrices = await invoke("get_crypto_prices");
+      coins = await invoke("get_market_prices");
+      const price = (symbol) => coins.find((c) => c.symbol === symbol)?.price_usd;
+      const next = { eth_usd: price("ETH"), btc_usd: price("BTC"), sol_usd: price("SOL") };
+      if (Object.values(next).every((v) => Number.isFinite(v) && v > 0)) latestPrices = next;
     } catch (e) {
       console.error(e);
-      latestPrices = null;
     }
     document.querySelectorAll(".wallet-card").forEach(updateFiatValue);
-    await loadMarkets();
+    renderMarkets(coins);
     // Garde les montants rapides de la modale d'envoi synchronisés avec le cours si
     // elle reste ouverte pendant un cycle de rafraîchissement (toutes les 60s, voir
     // startPriceAutoRefresh) — sans ça, un montant rapide cliqué plus tard dans une
@@ -1931,10 +1939,11 @@ function fillMarketRow(row, coin) {
     .catch((e) => console.error(e));
 }
 
-async function loadMarkets() {
+// `coins` : liste reçue par refreshPrices, `null` si l'appel a échoué.
+function renderMarkets(coins) {
   const container = document.getElementById("markets-list");
   try {
-    const coins = await invoke("get_market_prices");
+    if (!coins) throw new Error("marchés indisponibles");
     const existing = new Map([...container.querySelectorAll(".market-row")].map((row) => [row.dataset.symbol, row]));
     const rows = coins.map((coin) => {
       const row = existing.get(coin.symbol) || createMarketRow(coin);
@@ -2240,7 +2249,7 @@ function balanceKey(card) {
 
 async function refreshBalance(card) {
   // Verrou par carte, partagé entre le clic manuel (bouton "Actualiser") et le
-  // rafraîchissement automatique (setInterval, toutes les 15s) : sans lui, un appel
+  // rafraîchissement automatique (setInterval, toutes les 60 s) : sans lui, un appel
   // réseau qui dépasse 15s (fréquent sur des endpoints publics gratuits) se ferait
   // recouvrir par le tick suivant, empilant des requêtes concurrentes pour la même
   // carte — même symptôme de lag qu'un double-clic, mais déclenché par le minuteur.
@@ -2333,6 +2342,11 @@ async function checkPendingTx(card, address, network) {
     const text = incoming ? t("wallet.pendingIncoming", { amount: incoming }) : t("wallet.pendingBadge");
     if (badge.textContent !== text) badge.textContent = text;
     badge.classList.toggle("visible", pending);
+    // Transaction pas encore finalisée : revérifiée dans 15 s, la surveillance
+    // en direct ne signalant pas la finalisation (le solde ne bouge plus). Un
+    // seul minuteur par carte : chaque actualisation le remplace.
+    clearTimeout(card._pendingRecheck);
+    if (pending) card._pendingRecheck = setTimeout(() => refreshBalance(card), 15000);
   } catch (e) {
     console.error(e);
   }

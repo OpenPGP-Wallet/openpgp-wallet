@@ -1129,27 +1129,30 @@ fn btc_network(network: &str) -> Result<&'static wallet_flow::BtcNetwork, String
 }
 
 #[tauri::command]
-fn get_balance(network: String, address: String) -> Result<String, String> {
-    match network.as_str() {
-        "evm_sepolia" | "evm_mainnet" => {
-            let net = evm_network(&network)?;
-            let wei = api::get_evm_balance(&address, net).t_err()?;
-            Ok(format!("{:.6}", wei as f64 / 1e18))
+async fn get_balance(network: String, address: String) -> Result<String, String> {
+    run_blocking(move || {
+        match network.as_str() {
+            "evm_sepolia" | "evm_mainnet" => {
+                let net = evm_network(&network)?;
+                let wei = api::get_evm_balance(&address, net).t_err()?;
+                Ok(format!("{:.6}", wei as f64 / 1e18))
+            }
+            "btc_testnet" | "btc_mainnet" => {
+                let net = btc_network(&network)?;
+                // Confirmé moins les envois en attente ; les réceptions non
+                // confirmées sont montrées à part (`get_btc_pending_incoming`).
+                let sat = api::get_btc_balance_view(&address, net).t_err()?.settled_sat;
+                Ok(format!("{:.8}", sat as f64 / 1e8))
+            }
+            "sol_devnet" | "sol_mainnet" => {
+                let net = sol_network(&network)?;
+                let lamports = api::get_sol_balance(&address, net).t_err()?;
+                Ok(format!("{:.9}", lamports as f64 / 1e9))
+            }
+            other => Err(translate_error(&format!("réseau inconnu : {other}"))),
         }
-        "btc_testnet" | "btc_mainnet" => {
-            let net = btc_network(&network)?;
-            // Confirmé moins les envois en attente ; les réceptions non
-            // confirmées sont montrées à part (`get_btc_pending_incoming`).
-            let sat = api::get_btc_balance_view(&address, net).t_err()?.settled_sat;
-            Ok(format!("{:.8}", sat as f64 / 1e8))
-        }
-        "sol_devnet" | "sol_mainnet" => {
-            let net = sol_network(&network)?;
-            let lamports = api::get_sol_balance(&address, net).t_err()?;
-            Ok(format!("{:.9}", lamports as f64 / 1e9))
-        }
-        other => Err(translate_error(&format!("réseau inconnu : {other}"))),
-    }
+    })
+    .await
 }
 
 /// Réceptions Bitcoin non confirmées de `address` (montant BTC), `None` s'il n'y
@@ -1169,13 +1172,16 @@ async fn get_btc_pending_incoming(network: String, address: String) -> Result<Op
 /// Solde USDC — mainnet uniquement (voir sol_spl.rs : pas de mint devnet
 /// vérifié avec confiance, et aucun intérêt pratique à en tester un).
 #[tauri::command]
-fn get_usdc_balance(network: String, address: String) -> Result<String, String> {
-    if network != "sol_mainnet" {
-        return Err(translate_error("USDC n'est disponible que sur Solana mainnet."));
-    }
-    let net = sol_network(&network)?;
-    let micros = api::get_usdc_balance(&address, net).t_err()?;
-    Ok(format!("{:.6}", micros as f64 / 1e6))
+async fn get_usdc_balance(network: String, address: String) -> Result<String, String> {
+    run_blocking(move || {
+        if network != "sol_mainnet" {
+            return Err(translate_error("USDC n'est disponible que sur Solana mainnet."));
+        }
+        let net = sol_network(&network)?;
+        let micros = api::get_usdc_balance(&address, net).t_err()?;
+        Ok(format!("{:.6}", micros as f64 / 1e6))
+    })
+    .await
 }
 
 #[derive(serde::Deserialize)]
@@ -1223,14 +1229,17 @@ struct BtcFeeEstimateDto {
 /// uniquement Bitcoin : EVM/Solana calculent déjà leurs frais automatiquement
 /// (gas price / frais de base réseau), pas de choix à proposer à l'utilisateur.
 #[tauri::command]
-fn estimate_btc_fees(network: String, address: String) -> Result<BtcFeeEstimateDto, String> {
-    let net = btc_network(&network)?;
-    let estimate = api::estimate_btc_fees(&address, net).t_err()?;
-    Ok(BtcFeeEstimateDto {
-        fast_sat: estimate.fast_sat,
-        medium_sat: estimate.medium_sat,
-        slow_sat: estimate.slow_sat,
+async fn estimate_btc_fees(network: String, address: String) -> Result<BtcFeeEstimateDto, String> {
+    run_blocking(move || {
+        let net = btc_network(&network)?;
+        let estimate = api::estimate_btc_fees(&address, net).t_err()?;
+        Ok(BtcFeeEstimateDto {
+            fast_sat: estimate.fast_sat,
+            medium_sat: estimate.medium_sat,
+            slow_sat: estimate.slow_sat,
+        })
     })
+    .await
 }
 
 /// `false` pour EVM plutôt qu'une erreur : aucun nœud public n'expose les
@@ -1239,19 +1248,22 @@ fn estimate_btc_fees(network: String, address: String) -> Result<BtcFeeEstimateD
 /// s'allumer pour ETH — un no-op silencieux, pas un échec, pour ne pas faire
 /// planter le rafraîchissement automatique du solde sur ce réseau.
 #[tauri::command]
-fn has_pending_tx(network: String, address: String) -> Result<bool, String> {
-    match network.as_str() {
-        "evm_sepolia" | "evm_mainnet" => Ok(false),
-        "btc_testnet" | "btc_mainnet" => {
-            let net = btc_network(&network)?;
-            api::has_pending_btc(&address, net).t_err()
+async fn has_pending_tx(network: String, address: String) -> Result<bool, String> {
+    run_blocking(move || {
+        match network.as_str() {
+            "evm_sepolia" | "evm_mainnet" => Ok(false),
+            "btc_testnet" | "btc_mainnet" => {
+                let net = btc_network(&network)?;
+                api::has_pending_btc(&address, net).t_err()
+            }
+            "sol_devnet" | "sol_mainnet" => {
+                let net = sol_network(&network)?;
+                api::has_pending_sol(&address, net).t_err()
+            }
+            other => Err(translate_error(&format!("réseau inconnu : {other}"))),
         }
-        "sol_devnet" | "sol_mainnet" => {
-            let net = sol_network(&network)?;
-            api::has_pending_sol(&address, net).t_err()
-        }
-        other => Err(translate_error(&format!("réseau inconnu : {other}"))),
-    }
+    })
+    .await
 }
 
 const HISTORY_LIMIT: u32 = 15;
@@ -1452,11 +1464,14 @@ struct PricesDto {
 /// Prix indicatifs en USD (voir `core/src/price_rpc.rs`) : purement informatif,
 /// aucune donnée sur l'utilisateur ou ses adresses n'est envoyée à ce service.
 #[tauri::command]
-fn get_crypto_prices() -> Result<PricesDto, String> {
-    price_rpc::PriceRpc::new()
-        .get_prices()
-        .map(|p| PricesDto { eth_usd: p.eth_usd, btc_usd: p.btc_usd, sol_usd: p.sol_usd })
-        .t_err()
+async fn get_crypto_prices() -> Result<PricesDto, String> {
+    run_blocking(move || {
+        price_rpc::PriceRpc::new()
+            .get_prices()
+            .map(|p| PricesDto { eth_usd: p.eth_usd, btc_usd: p.btc_usd, sol_usd: p.sol_usd })
+            .t_err()
+    })
+    .await
 }
 
 #[derive(Serialize)]
@@ -1474,22 +1489,25 @@ struct MarketCoinDto {
 /// décroissante côté Rust (voir `price_rpc::get_market_data`), le frontend n'a
 /// qu'à afficher l'ordre reçu.
 #[tauri::command]
-fn get_market_prices() -> Result<Vec<MarketCoinDto>, String> {
-    price_rpc::PriceRpc::new()
-        .get_market_data()
-        .map(|coins| {
-            coins
-                .into_iter()
-                .map(|c| MarketCoinDto {
-                    symbol: c.symbol,
-                    name: c.name,
-                    price_usd: c.price_usd,
-                    market_cap_usd: c.market_cap_usd,
-                    change_24h_percent: c.change_24h_percent,
-                })
-                .collect()
-        })
-        .t_err()
+async fn get_market_prices() -> Result<Vec<MarketCoinDto>, String> {
+    run_blocking(move || {
+        price_rpc::PriceRpc::new()
+            .get_market_data()
+            .map(|coins| {
+                coins
+                    .into_iter()
+                    .map(|c| MarketCoinDto {
+                        symbol: c.symbol,
+                        name: c.name,
+                        price_usd: c.price_usd,
+                        market_cap_usd: c.market_cap_usd,
+                        change_24h_percent: c.change_24h_percent,
+                    })
+                    .collect()
+            })
+            .t_err()
+    })
+    .await
 }
 
 // --- Texte des boîtes de dialogue natives -------------------------------------
@@ -1707,7 +1725,7 @@ fn evm_fee_line(gas_price: u128, gas_limit: u64) -> String {
 }
 
 #[tauri::command]
-fn send_transaction(
+async fn send_transaction(
     network: String,
     password: String,
     to: String,
@@ -1716,39 +1734,42 @@ fn send_transaction(
     profile_index: u32,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
-    let password = Zeroizing::new(password);
-    let dir = data_dir(&app)?;
-    let from_label = api::list_profiles(&dir)
-        .into_iter()
-        .find(|p| p.index == profile_index)
-        .map(|p| p.label)
-        .unwrap_or_else(|| format!("profil #{profile_index}"));
-    let send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &from_label, None)?;
+    run_blocking(move || {
+        let password = Zeroizing::new(password);
+        let dir = data_dir(&app)?;
+        let from_label = api::list_profiles(&dir)
+            .into_iter()
+            .find(|p| p.index == profile_index)
+            .map(|p| p.label)
+            .unwrap_or_else(|| format!("profil #{profile_index}"));
+        let send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &from_label, None)?;
 
-    let result = match network.as_str() {
-        "evm_sepolia" | "evm_mainnet" => {
-            let net = evm_network(&network)?;
-            let gas_price = send.evm_gas_price.ok_or_else(|| "prix du gas manquant".to_string())?;
-            api::send_evm(&dir, &password, net, &send.to, &send.amount, gas_price, profile_index).t_err()
+        let result = match network.as_str() {
+            "evm_sepolia" | "evm_mainnet" => {
+                let net = evm_network(&network)?;
+                let gas_price = send.evm_gas_price.ok_or_else(|| "prix du gas manquant".to_string())?;
+                api::send_evm(&dir, &password, net, &send.to, &send.amount, gas_price, profile_index).t_err()
+            }
+            "btc_testnet" | "btc_mainnet" => {
+                let net = btc_network(&network)?;
+                let fee_sat = send.fee_sat.ok_or_else(|| "frais Bitcoin manquants (choisis une vitesse d'envoi)".to_string())?;
+                api::send_btc(&dir, &password, net, &send.to, &send.amount, fee_sat, profile_index).t_err()
+            }
+            "sol_devnet" | "sol_mainnet" => {
+                let net = sol_network(&network)?;
+                api::send_sol(&dir, &password, net, &send.to, &send.amount, profile_index).t_err()
+            }
+            other => Err(translate_error(&format!("réseau inconnu : {other}"))),
+        };
+        // Destinataire mémorisé SEULEMENT après une diffusion réussie (voir
+        // `sent_recipients`). Un échec d'écriture du journal ne doit pas faire
+        // croire à l'échec d'un envoi déjà parti.
+        if result.is_ok() {
+            let _ = sent_recipients::record_sent(&dir, &network, &send.to);
         }
-        "btc_testnet" | "btc_mainnet" => {
-            let net = btc_network(&network)?;
-            let fee_sat = send.fee_sat.ok_or_else(|| "frais Bitcoin manquants (choisis une vitesse d'envoi)".to_string())?;
-            api::send_btc(&dir, &password, net, &send.to, &send.amount, fee_sat, profile_index).t_err()
-        }
-        "sol_devnet" | "sol_mainnet" => {
-            let net = sol_network(&network)?;
-            api::send_sol(&dir, &password, net, &send.to, &send.amount, profile_index).t_err()
-        }
-        other => Err(translate_error(&format!("réseau inconnu : {other}"))),
-    };
-    // Destinataire mémorisé SEULEMENT après une diffusion réussie (voir
-    // `sent_recipients`). Un échec d'écriture du journal ne doit pas faire
-    // croire à l'échec d'un envoi déjà parti.
-    if result.is_ok() {
-        let _ = sent_recipients::record_sent(&dir, &network, &send.to);
-    }
-    result
+        result
+    })
+    .await
 }
 
 /// Ligne de frais suivie, après une ligne vide, de la consigne de l'appareil
@@ -2011,14 +2032,17 @@ fn format_1e8(amount: u64) -> String {
 }
 
 #[tauri::command]
-fn get_swap_quote(from_coin: String, to_coin: String, amount: String, destination: String) -> Result<SwapQuoteDto, String> {
-    let quote = api::get_swap_quote(&from_coin, &to_coin, &amount, &destination).t_err()?;
-    Ok(SwapQuoteDto {
-        inbound_address: quote.inbound_address,
-        memo: quote.memo,
-        expected_amount_out: format_1e8(quote.expected_amount_out),
-        total_fees: quote.total_fees.map(format_1e8),
+async fn get_swap_quote(from_coin: String, to_coin: String, amount: String, destination: String) -> Result<SwapQuoteDto, String> {
+    run_blocking(move || {
+        let quote = api::get_swap_quote(&from_coin, &to_coin, &amount, &destination).t_err()?;
+        Ok(SwapQuoteDto {
+            inbound_address: quote.inbound_address,
+            memo: quote.memo,
+            expected_amount_out: format_1e8(quote.expected_amount_out),
+            total_fees: quote.total_fees.map(format_1e8),
+        })
     })
+    .await
 }
 
 /// Confirmation native spécifique au swap : contrairement à un envoi normal,
@@ -2094,7 +2118,7 @@ fn confirm_swap_native(
 }
 
 #[tauri::command]
-fn swap_transaction(
+async fn swap_transaction(
     password: String,
     from_coin: String,
     to_coin: String,
@@ -2103,88 +2127,91 @@ fn swap_transaction(
     profile_index: u32,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
-    let password = Zeroizing::new(password);
-    let dir = data_dir(&app)?;
+    run_blocking(move || {
+        let password = Zeroizing::new(password);
+        let dir = data_dir(&app)?;
 
-    if !matches!(from_coin.as_str(), "sol" | "btc" | "evm") {
-        return Err(translate_error(&format!(
-            "envoi de swap non pris en charge pour cet actif : {from_coin}"
-        )));
-    }
-    // Formes canoniques, affichées ET utilisées pour le devis et la signature
-    // (voir `send_transaction`).
-    let amount = api::canonical_amount(&from_coin, &amount).t_err()?;
-    let destination = canonical_address_input(&destination)?;
-
-    let from_label = api::list_profiles(&dir)
-        .into_iter()
-        .find(|p| p.index == profile_index)
-        .map(|p| p.label)
-        .unwrap_or_else(|| format!("profil #{profile_index}"));
-
-    // Devis obtenu ICI, juste avant la confirmation, jamais mis en cache
-    // (adresse de vault THORChain vivante, voir thorchain_rpc::SwapQuote).
-    let quote = api::get_swap_quote(&from_coin, &to_coin, &amount, &destination).t_err()?;
-    let amount_line = format!("{amount} {}", from_coin.to_uppercase());
-
-    // Frais réseau affichés AVANT confirmation (et, pour EVM, prix du gas
-    // réutilisé tel quel pour signer — voir `api::evm_gas_price_for_confirmation`).
-    // Swap mainnet uniquement dans tous les cas : les pools THORChain n'ont
-    // aucune existence sur les réseaux de test.
-    let evm_gas_price = if from_coin == "evm" {
-        Some(api::evm_gas_price_for_confirmation(evm_network("evm_mainnet")?).t_err()?)
-    } else {
-        None
-    };
-    let network_fee_line = match from_coin.as_str() {
-        "evm" => evm_gas_price.map(|gp| evm_fee_line(gp, api::EVM_SWAP_MAX_GAS_LIMIT)),
-        "sol" => Some(lang("Frais réseau : 0,000005 SOL", "Network fee: 0.000005 SOL").to_string()),
-        _ => Some(
-            lang(
-                &format!("Frais réseau : vitesse moyenne, au plus {} sat/vB", api::BTC_SWAP_MAX_FEE_RATE_SAT_VB),
-                &format!("Network fee: medium speed, at most {} sat/vB", api::BTC_SWAP_MAX_FEE_RATE_SAT_VB),
-            )
-            .to_string(),
-        ),
-    };
-
-    let router_for_from_coin = if from_coin == "evm" { quote.router.as_deref() } else { None };
-    if !confirm_swap_native(
-        &app,
-        &from_label,
-        &amount_line,
-        &format_1e8(quote.expected_amount_out),
-        &to_coin,
-        &quote.inbound_address,
-        router_for_from_coin,
-        &destination,
-        network_fee_line.as_deref(),
-    ) {
-        return Err(translate_error("Échange annulé (confirmation refusée)."));
-    }
-
-    // Devis RE-lu après la confirmation (la boîte native bloque un temps
-    // arbitraire, pendant lequel le vault peut tourner), mais refusé s'il ne
-    // correspond plus à ce qui a été AFFICHÉ — voir
-    // `api::refresh_swap_quote_matching`.
-    let quote = api::refresh_swap_quote_matching(&from_coin, &to_coin, &amount, &destination, &quote).t_err()?;
-
-    match from_coin.as_str() {
-        "sol" => {
-            let network = sol_network("sol_mainnet")?;
-            api::send_swap_sol(&dir, &password, network, &quote, &amount, profile_index).t_err()
+        if !matches!(from_coin.as_str(), "sol" | "btc" | "evm") {
+            return Err(translate_error(&format!(
+                "envoi de swap non pris en charge pour cet actif : {from_coin}"
+            )));
         }
-        "btc" => {
-            let network = btc_network("btc_mainnet")?;
-            api::send_swap_btc(&dir, &password, network, &quote, &amount, profile_index).t_err()
+        // Formes canoniques, affichées ET utilisées pour le devis et la signature
+        // (voir `send_transaction`).
+        let amount = api::canonical_amount(&from_coin, &amount).t_err()?;
+        let destination = canonical_address_input(&destination)?;
+
+        let from_label = api::list_profiles(&dir)
+            .into_iter()
+            .find(|p| p.index == profile_index)
+            .map(|p| p.label)
+            .unwrap_or_else(|| format!("profil #{profile_index}"));
+
+        // Devis obtenu ICI, juste avant la confirmation, jamais mis en cache
+        // (adresse de vault THORChain vivante, voir thorchain_rpc::SwapQuote).
+        let quote = api::get_swap_quote(&from_coin, &to_coin, &amount, &destination).t_err()?;
+        let amount_line = format!("{amount} {}", from_coin.to_uppercase());
+
+        // Frais réseau affichés AVANT confirmation (et, pour EVM, prix du gas
+        // réutilisé tel quel pour signer — voir `api::evm_gas_price_for_confirmation`).
+        // Swap mainnet uniquement dans tous les cas : les pools THORChain n'ont
+        // aucune existence sur les réseaux de test.
+        let evm_gas_price = if from_coin == "evm" {
+            Some(api::evm_gas_price_for_confirmation(evm_network("evm_mainnet")?).t_err()?)
+        } else {
+            None
+        };
+        let network_fee_line = match from_coin.as_str() {
+            "evm" => evm_gas_price.map(|gp| evm_fee_line(gp, api::EVM_SWAP_MAX_GAS_LIMIT)),
+            "sol" => Some(lang("Frais réseau : 0,000005 SOL", "Network fee: 0.000005 SOL").to_string()),
+            _ => Some(
+                lang(
+                    &format!("Frais réseau : vitesse moyenne, au plus {} sat/vB", api::BTC_SWAP_MAX_FEE_RATE_SAT_VB),
+                    &format!("Network fee: medium speed, at most {} sat/vB", api::BTC_SWAP_MAX_FEE_RATE_SAT_VB),
+                )
+                .to_string(),
+            ),
+        };
+
+        let router_for_from_coin = if from_coin == "evm" { quote.router.as_deref() } else { None };
+        if !confirm_swap_native(
+            &app,
+            &from_label,
+            &amount_line,
+            &format_1e8(quote.expected_amount_out),
+            &to_coin,
+            &quote.inbound_address,
+            router_for_from_coin,
+            &destination,
+            network_fee_line.as_deref(),
+        ) {
+            return Err(translate_error("Échange annulé (confirmation refusée)."));
         }
-        "evm" => {
-            let network = evm_network("evm_mainnet")?;
-            let gas_price = evm_gas_price.ok_or_else(|| "prix du gas manquant".to_string())?;
-            api::send_swap_evm(&dir, &password, network, &quote, &amount, gas_price, profile_index).t_err()
+
+        // Devis RE-lu après la confirmation (la boîte native bloque un temps
+        // arbitraire, pendant lequel le vault peut tourner), mais refusé s'il ne
+        // correspond plus à ce qui a été AFFICHÉ — voir
+        // `api::refresh_swap_quote_matching`.
+        let quote = api::refresh_swap_quote_matching(&from_coin, &to_coin, &amount, &destination, &quote).t_err()?;
+
+        match from_coin.as_str() {
+            "sol" => {
+                let network = sol_network("sol_mainnet")?;
+                api::send_swap_sol(&dir, &password, network, &quote, &amount, profile_index).t_err()
+            }
+            "btc" => {
+                let network = btc_network("btc_mainnet")?;
+                api::send_swap_btc(&dir, &password, network, &quote, &amount, profile_index).t_err()
+            }
+            "evm" => {
+                let network = evm_network("evm_mainnet")?;
+                let gas_price = evm_gas_price.ok_or_else(|| "prix du gas manquant".to_string())?;
+                api::send_swap_evm(&dir, &password, network, &quote, &amount, gas_price, profile_index).t_err()
+            }
+            other => Err(translate_error(&format!("envoi de swap non pris en charge pour cet actif : {other}"))),
         }
-        other => Err(translate_error(&format!("envoi de swap non pris en charge pour cet actif : {other}"))),
-    }
+    })
+    .await
 }
 
 // --- Swap (Jupiter) ----------------------------------------------------------
@@ -2208,9 +2235,12 @@ fn format_native_amount(amount: u64, decimals: u32) -> String {
 }
 
 #[tauri::command]
-fn get_jupiter_quote(from_coin: String, to_coin: String, amount: String) -> Result<String, String> {
-    let out_amount = api::get_jupiter_quote(&from_coin, &to_coin, &amount, JUPITER_DEFAULT_SLIPPAGE_BPS).t_err()?;
-    Ok(format_native_amount(out_amount, decimals_for_swap_coin(&to_coin)))
+async fn get_jupiter_quote(from_coin: String, to_coin: String, amount: String) -> Result<String, String> {
+    run_blocking(move || {
+        let out_amount = api::get_jupiter_quote(&from_coin, &to_coin, &amount, JUPITER_DEFAULT_SLIPPAGE_BPS).t_err()?;
+        Ok(format_native_amount(out_amount, decimals_for_swap_coin(&to_coin)))
+    })
+    .await
 }
 
 /// Confirmation native spécifique à Jupiter : contrairement à THORChain, ce
@@ -2243,7 +2273,7 @@ fn confirm_jupiter_swap_native(app: &tauri::AppHandle, from_label: &str, amount:
 }
 
 #[tauri::command]
-fn jupiter_swap_transaction(
+async fn jupiter_swap_transaction(
     password: String,
     from_coin: String,
     to_coin: String,
@@ -2251,69 +2281,75 @@ fn jupiter_swap_transaction(
     profile_index: u32,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
-    let password = Zeroizing::new(password);
-    let dir = data_dir(&app)?;
-    let network = sol_network("sol_mainnet")?; // Jupiter mainnet uniquement (pas de liquidité fiable en devnet)
-    // Forme canonique, affichée ET signée (voir `send_transaction`).
-    let amount = api::canonical_amount(&from_coin, &amount).t_err()?;
+    run_blocking(move || {
+        let password = Zeroizing::new(password);
+        let dir = data_dir(&app)?;
+        let network = sol_network("sol_mainnet")?; // Jupiter mainnet uniquement (pas de liquidité fiable en devnet)
+        // Forme canonique, affichée ET signée (voir `send_transaction`).
+        let amount = api::canonical_amount(&from_coin, &amount).t_err()?;
 
-    let from_label = api::list_profiles(&dir)
-        .into_iter()
-        .find(|p| p.index == profile_index)
-        .map(|p| p.label)
-        .unwrap_or_else(|| format!("profil #{profile_index}"));
+        let from_label = api::list_profiles(&dir)
+            .into_iter()
+            .find(|p| p.index == profile_index)
+            .map(|p| p.label)
+            .unwrap_or_else(|| format!("profil #{profile_index}"));
 
-    // Devis relu ICI, juste avant la confirmation — jamais celui affiché dans
-    // l'aperçu du frontend, potentiellement déjà légèrement périmé.
-    let out_amount = api::get_jupiter_quote(&from_coin, &to_coin, &amount, JUPITER_DEFAULT_SLIPPAGE_BPS).t_err()?;
-    let expected_out = format_native_amount(out_amount, decimals_for_swap_coin(&to_coin));
-    let amount_line = format!("{amount} {}", from_coin.to_uppercase());
+        // Devis relu ICI, juste avant la confirmation — jamais celui affiché dans
+        // l'aperçu du frontend, potentiellement déjà légèrement périmé.
+        let out_amount = api::get_jupiter_quote(&from_coin, &to_coin, &amount, JUPITER_DEFAULT_SLIPPAGE_BPS).t_err()?;
+        let expected_out = format_native_amount(out_amount, decimals_for_swap_coin(&to_coin));
+        let amount_line = format!("{amount} {}", from_coin.to_uppercase());
 
-    if !confirm_jupiter_swap_native(&app, &from_label, &amount_line, &expected_out, &to_coin) {
-        return Err(translate_error("Échange annulé (confirmation refusée)."));
-    }
+        if !confirm_jupiter_swap_native(&app, &from_label, &amount_line, &expected_out, &to_coin) {
+            return Err(translate_error("Échange annulé (confirmation refusée)."));
+        }
 
-    // `out_amount` = la sortie AFFICHÉE ci-dessus : la transaction réellement
-    // signée devra la livrer (au glissement près), vérifié par simulation.
-    api::send_jupiter_swap(&dir, &password, network, &from_coin, &to_coin, &amount, JUPITER_DEFAULT_SLIPPAGE_BPS, out_amount, profile_index)
-        .t_err()
+        // `out_amount` = la sortie AFFICHÉE ci-dessus : la transaction réellement
+        // signée devra la livrer (au glissement près), vérifié par simulation.
+        api::send_jupiter_swap(&dir, &password, network, &from_coin, &to_coin, &amount, JUPITER_DEFAULT_SLIPPAGE_BPS, out_amount, profile_index)
+            .t_err()
+    })
+    .await
 }
 
 #[tauri::command]
-fn send_usdc_transaction(password: String, to: String, amount: String, profile_index: u32, app: tauri::AppHandle) -> Result<String, String> {
-    let password = Zeroizing::new(password);
-    let dir = data_dir(&app)?;
-    let network = "sol_mainnet"; // USDC v1 : mainnet uniquement (voir sol_spl.rs)
-    let net = sol_network(network)?;
-    // Formes canoniques, affichées ET signées (voir `send_transaction`).
-    let to = canonical_address_input(&to)?;
-    let amount = api::canonical_amount("usdc", &amount).t_err()?;
+async fn send_usdc_transaction(password: String, to: String, amount: String, profile_index: u32, app: tauri::AppHandle) -> Result<String, String> {
+    run_blocking(move || {
+        let password = Zeroizing::new(password);
+        let dir = data_dir(&app)?;
+        let network = "sol_mainnet"; // USDC v1 : mainnet uniquement (voir sol_spl.rs)
+        let net = sol_network(network)?;
+        // Formes canoniques, affichées ET signées (voir `send_transaction`).
+        let to = canonical_address_input(&to)?;
+        let amount = api::canonical_amount("usdc", &amount).t_err()?;
 
-    let from_label = api::list_profiles(&dir)
-        .into_iter()
-        .find(|p| p.index == profile_index)
-        .map(|p| p.label)
-        .unwrap_or_else(|| format!("profil #{profile_index}"));
+        let from_label = api::list_profiles(&dir)
+            .into_iter()
+            .find(|p| p.index == profile_index)
+            .map(|p| p.label)
+            .unwrap_or_else(|| format!("profil #{profile_index}"));
 
-    // Refus AVANT la boîte de confirmation si le destinataire n'est pas un
-    // portefeuille (voir `api::check_solana_recipient`) — le cas type étant
-    // l'adresse d'un compte de jetons copiée depuis un explorateur.
-    api::check_solana_recipient(&to, net).t_err()?;
+        // Refus AVANT la boîte de confirmation si le destinataire n'est pas un
+        // portefeuille (voir `api::check_solana_recipient`) — le cas type étant
+        // l'adresse d'un compte de jetons copiée depuis un explorateur.
+        api::check_solana_recipient(&to, net).t_err()?;
 
-    let rent_line = describe_possible_ata_rent(net, &to);
-    let amount_line = format!("{amount} USDC");
-    // Même journal que les envois SOL (même réseau, même portefeuille
-    // destinataire) : avoir déjà payé cette adresse en SOL compte.
-    let warning = send_warnings(&dir, network, "usdc", &to, api::usdc_recipient_activity(&to, net).ok());
-    if !confirm_transaction_native(&app, network, &to, &amount_line, &from_label, rent_line.as_deref(), warning.as_deref()) {
-        return Err(translate_error("Virement annulé (confirmation refusée)."));
-    }
+        let rent_line = describe_possible_ata_rent(net, &to);
+        let amount_line = format!("{amount} USDC");
+        // Même journal que les envois SOL (même réseau, même portefeuille
+        // destinataire) : avoir déjà payé cette adresse en SOL compte.
+        let warning = send_warnings(&dir, network, "usdc", &to, api::usdc_recipient_activity(&to, net).ok());
+        if !confirm_transaction_native(&app, network, &to, &amount_line, &from_label, rent_line.as_deref(), warning.as_deref()) {
+            return Err(translate_error("Virement annulé (confirmation refusée)."));
+        }
 
-    let result = api::send_usdc(&dir, &password, net, &to, &amount, profile_index).t_err();
-    if result.is_ok() {
-        let _ = sent_recipients::record_sent(&dir, network, &to);
-    }
-    result
+        let result = api::send_usdc(&dir, &password, net, &to, &amount, profile_index).t_err();
+        if result.is_ok() {
+            let _ = sent_recipients::record_sent(&dir, network, &to);
+        }
+        result
+    })
+    .await
 }
 
 #[derive(Serialize)]
@@ -2446,10 +2482,13 @@ fn encrypt_message(pubkeys_armored: Vec<String>, message: String) -> Result<Stri
 /// Déchiffre un message reçu par cet appareil (nécessite le mot de passe pour
 /// déverrouiller la clé privée locale, comme pour un envoi de fonds).
 #[tauri::command]
-fn decrypt_message(password: String, ciphertext: String, app: tauri::AppHandle) -> Result<String, String> {
-    let password = Zeroizing::new(password);
-    let dir = data_dir(&app)?;
-    api::decrypt_incoming_message(&dir, &password, &ciphertext).t_err()
+async fn decrypt_message(password: String, ciphertext: String, app: tauri::AppHandle) -> Result<String, String> {
+    run_blocking(move || {
+        let password = Zeroizing::new(password);
+        let dir = data_dir(&app)?;
+        api::decrypt_incoming_message(&dir, &password, &ciphertext).t_err()
+    })
+    .await
 }
 
 // --- Wallets externes --------------------------------------------------------
@@ -2849,42 +2888,45 @@ fn wc_disconnect(topic: String, app: tauri::AppHandle) -> Result<(), String> {
 /// Connexion d'une dApp : aucune signature, mais la dApp verra les adresses du
 /// profil et pourra ensuite DEMANDER des signatures — d'où une boîte native.
 #[tauri::command]
-fn wc_approve_session(proposal_id: u64, profile_index: u32, app: tauri::AppHandle) -> Result<bool, String> {
-    let client = wc_client(&app)?;
-    let peer = client.proposal_peer(proposal_id).t_err()?;
-    let (evm, solana) = app
-        .state::<ProfileAddressCache>()
-        .0
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .get(&profile_index)
-        .cloned()
-        .ok_or_else(|| translate_error("adresses du profil inconnues : déverrouillez le portefeuille avec le mot de passe"))?;
-    let dir = data_dir(&app)?;
-    let label = api::list_profiles(&dir).into_iter().find(|p| p.index == profile_index).map(|p| p.label).unwrap_or_else(|| format!("#{profile_index}"));
-    let (site, url, label) = (dialog_label(&peer.name), dialog_label(&peer.url), dialog_label(&label));
-    let message = if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
-        format!(
-            "Connect \"{site}\" to your wallet?\nSite (self-declared, NOT verified): {url}\n\nProfile \"{label}\" — the site will see these addresses:\n{evm}\n{solana}\n\nIt will then be able to REQUEST signatures: each one will require your password and a confirmation like this one. Only connect sites you trust, reached through their real address."
-        )
-    } else {
-        format!(
-            "Connecter « {site} » à votre portefeuille ?\nSite (déclaré par la dApp, NON vérifié) : {url}\n\nProfil « {label} » — le site verra ces adresses :\n{evm}\n{solana}\n\nIl pourra ensuite DEMANDER des signatures : chacune exigera votre mot de passe et une confirmation comme celle-ci. Ne connectez que des sites de confiance, ouverts depuis leur vraie adresse."
-        )
-    };
-    let confirmed = app
-        .dialog()
-        .message(message)
-        .title(lang("Connexion d'une application (WalletConnect)", "Application connection (WalletConnect)"))
-        .kind(MessageDialogKind::Warning)
-        .buttons(MessageDialogButtons::OkCancel)
-        .blocking_show();
-    if !confirmed {
-        let _ = client.reject(proposal_id);
-        return Ok(false);
-    }
-    client.approve(proposal_id, profile_index, &dapp_requests::Account { evm, solana }).t_err()?;
-    Ok(true)
+async fn wc_approve_session(proposal_id: u64, profile_index: u32, app: tauri::AppHandle) -> Result<bool, String> {
+    run_blocking(move || {
+        let client = wc_client(&app)?;
+        let peer = client.proposal_peer(proposal_id).t_err()?;
+        let (evm, solana) = app
+            .state::<ProfileAddressCache>()
+            .0
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(&profile_index)
+            .cloned()
+            .ok_or_else(|| translate_error("adresses du profil inconnues : déverrouillez le portefeuille avec le mot de passe"))?;
+        let dir = data_dir(&app)?;
+        let label = api::list_profiles(&dir).into_iter().find(|p| p.index == profile_index).map(|p| p.label).unwrap_or_else(|| format!("#{profile_index}"));
+        let (site, url, label) = (dialog_label(&peer.name), dialog_label(&peer.url), dialog_label(&label));
+        let message = if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
+            format!(
+                "Connect \"{site}\" to your wallet?\nSite (self-declared, NOT verified): {url}\n\nProfile \"{label}\" — the site will see these addresses:\n{evm}\n{solana}\n\nIt will then be able to REQUEST signatures: each one will require your password and a confirmation like this one. Only connect sites you trust, reached through their real address."
+            )
+        } else {
+            format!(
+                "Connecter « {site} » à votre portefeuille ?\nSite (déclaré par la dApp, NON vérifié) : {url}\n\nProfil « {label} » — le site verra ces adresses :\n{evm}\n{solana}\n\nIl pourra ensuite DEMANDER des signatures : chacune exigera votre mot de passe et une confirmation comme celle-ci. Ne connectez que des sites de confiance, ouverts depuis leur vraie adresse."
+            )
+        };
+        let confirmed = app
+            .dialog()
+            .message(message)
+            .title(lang("Connexion d'une application (WalletConnect)", "Application connection (WalletConnect)"))
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::OkCancel)
+            .blocking_show();
+        if !confirmed {
+            let _ = client.reject(proposal_id);
+            return Ok(false);
+        }
+        client.approve(proposal_id, profile_index, &dapp_requests::Account { evm, solana }).t_err()?;
+        Ok(true)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -2902,63 +2944,69 @@ struct PreparedRequestDto {
 /// renvoie son texte pour la modale de l'app. Une demande invalide ou
 /// dangereuse par construction est refusée ici et la dApp en est informée.
 #[tauri::command]
-fn wc_prepare_request(request_id: u64, app: tauri::AppHandle) -> Result<PreparedRequestDto, String> {
-    let client = wc_client(&app)?;
-    let request = client.pending_request(request_id).ok_or_else(|| translate_error("demande introuvable ou expirée"))?;
-    let session = client.session(&request.topic).ok_or_else(|| translate_error("connexion introuvable"))?;
-    let prepared = match dapp_requests::prepare(&request.method, &request.params, &request.chain, &session.account()) {
-        Ok(p) => p,
-        Err(e) => {
-            let message = format!("{e:#}");
-            let _ = client.respond(request_id, Err((5000, message.clone())));
-            return Err(translate_error(&message));
-        }
-    };
-    let dir = data_dir(&app)?;
-    let label = api::list_profiles(&dir).into_iter().find(|p| p.index == session.profile_index).map(|p| p.label).unwrap_or_default();
-    let account = if request.chain.starts_with("solana:") { session.solana_address.clone() } else { session.evm_address.clone() };
-    let (text, danger) = describe_prepared(&prepared, &session.peer, &label, &account);
-    app.state::<WcState>().prepared.lock().unwrap_or_else(|p| p.into_inner()).insert(request_id, (request.topic.clone(), prepared));
-    Ok(PreparedRequestDto { text, danger })
+async fn wc_prepare_request(request_id: u64, app: tauri::AppHandle) -> Result<PreparedRequestDto, String> {
+    run_blocking(move || {
+        let client = wc_client(&app)?;
+        let request = client.pending_request(request_id).ok_or_else(|| translate_error("demande introuvable ou expirée"))?;
+        let session = client.session(&request.topic).ok_or_else(|| translate_error("connexion introuvable"))?;
+        let prepared = match dapp_requests::prepare(&request.method, &request.params, &request.chain, &session.account()) {
+            Ok(p) => p,
+            Err(e) => {
+                let message = format!("{e:#}");
+                let _ = client.respond(request_id, Err((5000, message.clone())));
+                return Err(translate_error(&message));
+            }
+        };
+        let dir = data_dir(&app)?;
+        let label = api::list_profiles(&dir).into_iter().find(|p| p.index == session.profile_index).map(|p| p.label).unwrap_or_default();
+        let account = if request.chain.starts_with("solana:") { session.solana_address.clone() } else { session.evm_address.clone() };
+        let (text, danger) = describe_prepared(&prepared, &session.peer, &label, &account);
+        app.state::<WcState>().prepared.lock().unwrap_or_else(|p| p.into_inner()).insert(request_id, (request.topic.clone(), prepared));
+        Ok(PreparedRequestDto { text, danger })
+    })
+    .await
 }
 
 /// Signe une demande préparée, après mot de passe ET boîte native. Refus dans
 /// la boîte = refus transmis à la dApp. Échec de signature (mauvais mot de
 /// passe…) : la demande reste en attente, l'utilisateur peut réessayer.
 #[tauri::command]
-fn wc_approve_request(request_id: u64, password: String, app: tauri::AppHandle) -> Result<bool, String> {
-    let password = Zeroizing::new(password);
-    let client = wc_client(&app)?;
-    let state = app.state::<WcState>();
-    let (prepared_topic, prepared) = state
-        .prepared
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .remove(&request_id)
-        .ok_or_else(|| translate_error("demande introuvable ou expirée"))?;
-    let request = client.pending_request(request_id).ok_or_else(|| translate_error("demande introuvable ou expirée"))?;
-    // La réponse part vers la connexion de la demande EN ATTENTE : elle doit
-    // être celle de la demande préparée et affichée (défense en profondeur,
-    // voir le refus des identifiants en double dans `engine`).
-    if request.topic != prepared_topic {
-        return Err(translate_error("la demande a changé depuis son affichage — refusée"));
-    }
-    let session = client.session(&request.topic).ok_or_else(|| translate_error("connexion introuvable"))?;
-    let dir = data_dir(&app)?;
-    let label = api::list_profiles(&dir).into_iter().find(|p| p.index == session.profile_index).map(|p| p.label).unwrap_or_default();
-    let account = if request.chain.starts_with("solana:") { session.solana_address.clone() } else { session.evm_address.clone() };
-    let (text, danger) = describe_prepared(&prepared, &session.peer, &label, &account);
-    if !confirm_dapp_request_native(&app, &text, danger) {
-        let _ = client.respond(request_id, Err((5000, "User rejected.".to_string())));
-        return Ok(false);
-    }
-    match api::sign_dapp_request(&dir, &password, session.profile_index, &session.account(), &prepared) {
-        Ok(result) => client.respond(request_id, Ok(result)).t_err().map(|_| true),
-        Err(e) => {
-            state.prepared.lock().unwrap_or_else(|p| p.into_inner()).insert(request_id, (prepared_topic, prepared));
-            Err(translate_error(&e.to_string()))
+async fn wc_approve_request(request_id: u64, password: String, app: tauri::AppHandle) -> Result<bool, String> {
+    run_blocking(move || {
+        let password = Zeroizing::new(password);
+        let client = wc_client(&app)?;
+        let state = app.state::<WcState>();
+        let (prepared_topic, prepared) = state
+            .prepared
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(&request_id)
+            .ok_or_else(|| translate_error("demande introuvable ou expirée"))?;
+        let request = client.pending_request(request_id).ok_or_else(|| translate_error("demande introuvable ou expirée"))?;
+        // La réponse part vers la connexion de la demande EN ATTENTE : elle doit
+        // être celle de la demande préparée et affichée (défense en profondeur,
+        // voir le refus des identifiants en double dans `engine`).
+        if request.topic != prepared_topic {
+            return Err(translate_error("la demande a changé depuis son affichage — refusée"));
         }
-    }
+        let session = client.session(&request.topic).ok_or_else(|| translate_error("connexion introuvable"))?;
+        let dir = data_dir(&app)?;
+        let label = api::list_profiles(&dir).into_iter().find(|p| p.index == session.profile_index).map(|p| p.label).unwrap_or_default();
+        let account = if request.chain.starts_with("solana:") { session.solana_address.clone() } else { session.evm_address.clone() };
+        let (text, danger) = describe_prepared(&prepared, &session.peer, &label, &account);
+        if !confirm_dapp_request_native(&app, &text, danger) {
+            let _ = client.respond(request_id, Err((5000, "User rejected.".to_string())));
+            return Ok(false);
+        }
+        match api::sign_dapp_request(&dir, &password, session.profile_index, &session.account(), &prepared) {
+            Ok(result) => client.respond(request_id, Ok(result)).t_err().map(|_| true),
+            Err(e) => {
+                state.prepared.lock().unwrap_or_else(|p| p.into_inner()).insert(request_id, (prepared_topic, prepared));
+                Err(translate_error(&e.to_string()))
+            }
+        }
+    })
+    .await
 }
 
 #[tauri::command]
