@@ -4,7 +4,8 @@
 //!
 //! Source : l'API publique de données de marché de Binance
 //! (`data-api.binance.vision`, sans clé), bougies horaires (≈ 41 derniers
-//! jours) et journalières (≈ 2 ans et demi), paires en USDT (≈ 1 $).
+//! jours) et journalières (depuis la cotation de l'actif : août 2017 pour
+//! BTC et ETH), paires en USDT (≈ 1 $).
 //! CoinGecko, déjà utilisé pour le prix courant, a été écarté ici : sa limite
 //! gratuite a refusé le 3ᵉ appel consécutif lors des essais, alors qu'il en
 //! faut plusieurs pour l'historique.
@@ -58,6 +59,11 @@ struct Candle {
 pub struct PriceSeries {
     hourly: Vec<Candle>,
     daily: Vec<Candle>,
+    /// Stablecoin (USDC) : 1 $ là où la série n'a pas de prix. Binance a
+    /// retiré la paire USDC/USDT du 26/09/2022 au 11/03/2023 (constaté sur
+    /// l'API) ; sans cela, toute valeur de portefeuille contenant de l'USDC
+    /// disparaissait de la courbe sur cette période.
+    stable: bool,
 }
 
 impl PriceSeries {
@@ -69,7 +75,7 @@ impl PriceSeries {
         let Some(t) = timestamp else {
             return self.hourly.last().or(self.daily.last()).map(|c| c.close);
         };
-        price_in(&self.hourly, HOUR, t).or_else(|| price_in(&self.daily, DAY, t))
+        price_in(&self.hourly, HOUR, t).or_else(|| price_in(&self.daily, DAY, t)).or(self.stable.then_some(1.0))
     }
 }
 
@@ -124,18 +130,44 @@ fn shared_client() -> &'static reqwest::blocking::Client {
     })
 }
 
-fn fetch_klines(asset: Asset, interval: &str, limit: &str) -> Result<Vec<Candle>> {
+/// Bougies `interval` de `asset` : les `limit` dernières, ou les `limit`
+/// premières à partir de `start` (secondes Unix). Au plus 1000 par requête.
+fn fetch_klines(asset: Asset, interval: &str, limit: usize, start: Option<i64>) -> Result<Vec<Candle>> {
+    let mut query = vec![("symbol", asset.symbol().to_string()), ("interval", interval.to_string()), ("limit", limit.to_string())];
+    if let Some(start) = start {
+        query.push(("startTime", (start * 1000).to_string()));
+    }
     let response = shared_client()
         .get(KLINES_URL)
-        .query(&[("symbol", asset.symbol()), ("interval", interval), ("limit", limit)])
+        .query(&query)
         .send()
         .context("appel du service de prix impossible")?;
     ensure!(response.status().is_success(), "le service de prix a répondu {}", response.status());
     parse_klines(&response.text().context("réponse de prix illisible")?)
 }
 
-/// Séries de prix de `asset` (cache de 10 minutes, deux requêtes en parallèle
-/// au premier appel). Un échec n'est pas mis en cache : réessayé au suivant.
+/// Toutes les bougies journalières depuis la cotation de `asset` : pages de
+/// 1000 à partir de l'origine (≈ 4 requêtes pour Bitcoin).
+fn fetch_daily_history(asset: Asset) -> Result<Vec<Candle>> {
+    const PAGE: usize = 1000;
+    let mut candles: Vec<Candle> = Vec::new();
+    loop {
+        let start = candles.last().map_or(0, |c| c.open_time + DAY);
+        let page = fetch_klines(asset, "1d", PAGE, Some(start))?;
+        let full = page.len() == PAGE;
+        candles.extend(page);
+        // 30 pages : plus de 80 ans de bougies, garde-fou contre une boucle sans fin.
+        if !full || candles.len() >= 30 * PAGE {
+            break;
+        }
+    }
+    ensure!(candles.windows(2).all(|w| w[0].open_time < w[1].open_time), "série de prix non ordonnée");
+    Ok(candles)
+}
+
+/// Séries de prix de `asset` (cache de 10 minutes ; horaire et journalier lus
+/// en parallèle au premier appel). Un échec n'est pas mis en cache : réessayé
+/// au suivant.
 pub fn series(asset: Asset) -> Result<Arc<PriceSeries>> {
     /// Séries par actif, avec l'instant où elles ont été lues.
     type Cache = Mutex<HashMap<Asset, (Instant, Arc<PriceSeries>)>>;
@@ -147,14 +179,14 @@ pub fn series(asset: Asset) -> Result<Arc<PriceSeries>> {
         }
     }
     let (hourly, daily) = std::thread::scope(|scope| {
-        let hourly = scope.spawn(|| fetch_klines(asset, "1h", "1000"));
-        let daily = scope.spawn(|| fetch_klines(asset, "1d", "1000"));
+        let hourly = scope.spawn(|| fetch_klines(asset, "1h", 1000, None));
+        let daily = scope.spawn(|| fetch_daily_history(asset));
         (
             hourly.join().expect("le fil des prix horaires ne doit pas paniquer"),
             daily.join().expect("le fil des prix journaliers ne doit pas paniquer"),
         )
     });
-    let series = Arc::new(PriceSeries { hourly: hourly?, daily: daily? });
+    let series = Arc::new(PriceSeries { hourly: hourly?, daily: daily?, stable: asset == Asset::Usdc });
     cache.lock().unwrap_or_else(|p| p.into_inner()).insert(asset, (Instant::now(), series.clone()));
     Ok(series)
 }
@@ -166,37 +198,43 @@ pub enum ChartRange {
     Week,
     Month,
     Year,
+    /// Tout l'historique disponible.
+    All,
 }
 
 impl ChartRange {
-    /// "1d", "7d", "30d", "1y".
+    /// "1d", "7d", "30d", "1y", "all".
     pub fn parse(range: &str) -> Option<Self> {
         Some(match range {
             "1d" => ChartRange::Day,
             "7d" => ChartRange::Week,
             "30d" => ChartRange::Month,
             "1y" => ChartRange::Year,
+            "all" => ChartRange::All,
             _ => return None,
         })
     }
 
-    /// Durée couverte, en secondes.
-    pub fn span(self) -> i64 {
+    /// Durée couverte, en secondes ; `None` pour tout l'historique.
+    pub fn span(self) -> Option<i64> {
         match self {
-            ChartRange::Day => DAY,
-            ChartRange::Week => 7 * DAY,
-            ChartRange::Month => 30 * DAY,
-            ChartRange::Year => 365 * DAY,
+            ChartRange::Day => Some(DAY),
+            ChartRange::Week => Some(7 * DAY),
+            ChartRange::Month => Some(30 * DAY),
+            ChartRange::Year => Some(365 * DAY),
+            ChartRange::All => None,
         }
     }
 
-    /// Pas entre deux points (bougies, ou échantillons d'une valeur de portefeuille).
+    /// Pas entre deux points (bougies, ou échantillons d'une valeur de
+    /// portefeuille) ; pour tout l'historique d'un portefeuille, voir
+    /// `step_for_span`.
     pub fn step(self) -> i64 {
         match self {
             ChartRange::Day => 15 * 60,
             ChartRange::Week => HOUR,
             ChartRange::Month => 4 * HOUR,
-            ChartRange::Year => DAY,
+            ChartRange::Year | ChartRange::All => DAY,
         }
     }
 
@@ -206,9 +244,15 @@ impl ChartRange {
             ChartRange::Day => "15m",
             ChartRange::Week => "1h",
             ChartRange::Month => "4h",
-            ChartRange::Year => "1d",
+            ChartRange::Year | ChartRange::All => "1d",
         }
     }
+}
+
+/// Pas d'échantillonnage d'une durée quelconque (période « tout ») : le plus
+/// fin des pas des autres périodes qui donne au plus 800 points, un jour au-delà.
+pub fn step_for_span(span: i64) -> i64 {
+    [15 * 60, HOUR, 4 * HOUR].into_iter().find(|step| span / step <= 800).unwrap_or(DAY)
 }
 
 pub fn unix_now() -> i64 {
@@ -226,8 +270,12 @@ fn chart_points(candles: &[Candle], now: i64) -> Vec<(i64, f64)> {
 }
 
 /// Courbe de prix de `asset` sur la période (série identique pour tout le
-/// monde, voir l'en-tête). Cache : 2 minutes sur 24 h, 10 minutes sinon.
+/// monde, voir l'en-tête) ; « tout » : les bougies journalières depuis la
+/// cotation. Cache : 2 minutes sur 24 h, 10 minutes sinon.
 pub fn chart(asset: Asset, range: ChartRange) -> Result<Arc<Vec<(i64, f64)>>> {
+    if range == ChartRange::All {
+        return Ok(Arc::new(chart_points(&series(asset)?.daily, unix_now())));
+    }
     type ChartCache = Mutex<HashMap<(Asset, ChartRange), (Instant, Arc<Vec<(i64, f64)>>)>>;
     static CACHE: OnceLock<ChartCache> = OnceLock::new();
     let ttl = if range == ChartRange::Day { Duration::from_secs(120) } else { CACHE_TTL };
@@ -237,8 +285,8 @@ pub fn chart(asset: Asset, range: ChartRange) -> Result<Arc<Vec<(i64, f64)>>> {
             return Ok(points.clone());
         }
     }
-    let limit = (range.span() / range.step()).to_string();
-    let points = Arc::new(chart_points(&fetch_klines(asset, range.interval(), &limit)?, unix_now()));
+    let limit = (range.span().unwrap_or(DAY) / range.step()) as usize;
+    let points = Arc::new(chart_points(&fetch_klines(asset, range.interval(), limit, None)?, unix_now()));
     cache.lock().unwrap_or_else(|p| p.into_inner()).insert((asset, range), (Instant::now(), points.clone()));
     Ok(points)
 }
@@ -266,6 +314,7 @@ mod tests {
         let series = PriceSeries {
             hourly: vec![candle(10 * DAY, 100.0, 110.0), candle(10 * DAY + HOUR, 110.0, 90.0)],
             daily: vec![candle(8 * DAY, 50.0, 60.0), candle(9 * DAY, 60.0, 100.0), candle(10 * DAY, 100.0, 90.0)],
+            stable: false,
         };
         assert_eq!(series.usd_at(Some(10 * DAY)), Some(100.0));
         assert_eq!(series.usd_at(Some(10 * DAY + HOUR / 2)), Some(105.0));
@@ -278,12 +327,30 @@ mod tests {
         assert!((amount - 150.0).abs() < 1e-9, "valeur absolue : {amount}");
     }
 
-    /// Un trou dans la série ne donne pas un prix inventé.
+    /// Un trou dans la série ne donne pas un prix inventé — sauf pour un
+    /// stablecoin, compté à 1 $.
     #[test]
     fn gaps_in_a_series_give_no_price() {
         let candles = [candle(0, 1.0, 2.0), candle(3 * HOUR, 3.0, 4.0)];
         assert_eq!(price_in(&candles, HOUR, HOUR + 1), None);
         assert_eq!(price_in(&candles, HOUR, 3 * HOUR), Some(3.0));
+        let usdc = |stable| PriceSeries { hourly: vec![], daily: vec![candle(0, 0.99, 1.0), candle(10 * DAY, 1.0, 1.01)], stable };
+        assert_eq!(usdc(true).usd_at(Some(DAY / 2)), Some(0.995), "prix réel quand il existe");
+        assert_eq!(usdc(true).usd_at(Some(5 * DAY)), Some(1.0), "trou : 1 $");
+        assert_eq!(usdc(false).usd_at(Some(5 * DAY)), None);
+    }
+
+    /// « Tout » : pas le plus fin possible sous 800 points, un jour au-delà.
+    #[test]
+    fn all_history_range_is_parsed_and_sampled() {
+        assert_eq!(ChartRange::parse("all"), Some(ChartRange::All));
+        assert_eq!(ChartRange::All.span(), None);
+        assert_eq!(ChartRange::parse("1y").and_then(ChartRange::span), Some(365 * DAY));
+        assert_eq!(ChartRange::parse("5y"), None);
+        assert_eq!(step_for_span(2 * DAY), 15 * 60);
+        assert_eq!(step_for_span(21 * DAY), HOUR);
+        assert_eq!(step_for_span(120 * DAY), 4 * HOUR);
+        assert_eq!(step_for_span(3000 * DAY), DAY);
     }
 
     /// Format réel de Binance ; séries incohérentes refusées.
@@ -300,16 +367,25 @@ mod tests {
     }
 
     /// Service réel : les 4 actifs, séries horaires (~41 j) et journalières
-    /// (~2,7 ans), prix cohérents avec le prix courant de CoinGecko (autre
+    /// (depuis la cotation, sans trou ni doublon entre les pages, jusqu'à
+    /// aujourd'hui), prix cohérents avec le prix courant de CoinGecko (autre
     /// source) à quelques % près ; USDC ≈ 1 $.
     #[test]
     #[ignore]
     fn real_price_series_match_an_independent_source() {
         let current = crate::price_rpc::PriceRpc::new().get_prices().unwrap();
+        let listed = [(Asset::Btc, 1_502_928_000), (Asset::Eth, 1_502_928_000), (Asset::Sol, 1_597_104_000), (Asset::Usdc, 1_544_832_000)];
         for (asset, reference) in [(Asset::Btc, current.btc_usd), (Asset::Eth, current.eth_usd), (Asset::Sol, current.sol_usd), (Asset::Usdc, 1.0)] {
             let s = series(asset).unwrap();
             assert_eq!(s.hourly.len(), 1000);
-            assert_eq!(s.daily.len(), 1000);
+            let first_day = listed.iter().find(|(a, _)| *a == asset).unwrap().1;
+            assert_eq!(s.daily[0].open_time, first_day, "{asset:?} : première bougie = cotation");
+            assert!(unix_now() - s.daily.last().unwrap().open_time < DAY, "{asset:?} : jusqu'à aujourd'hui");
+            let gaps: Vec<_> = s.daily.windows(2).filter(|w| w[1].open_time - w[0].open_time != DAY).map(|w| (w[0].open_time, w[1].open_time)).collect();
+            let expected_gaps = if asset == Asset::Usdc { vec![(1_664_150_400, 1_678_492_800)] } else { vec![] };
+            assert_eq!(gaps, expected_gaps, "{asset:?} : bougies consécutives");
+            let chart = chart(asset, ChartRange::All).unwrap();
+            assert_eq!(chart.len(), s.daily.len() + 1);
             let now = s.usd_at(None).unwrap();
             println!("{asset:?} : {now} $ (CoinGecko {reference} $), horaire depuis {}, journalier depuis {}", s.hourly[0].open_time, s.daily[0].open_time);
             assert!((now / reference - 1.0).abs() < 0.03, "{asset:?} {now} vs {reference}");

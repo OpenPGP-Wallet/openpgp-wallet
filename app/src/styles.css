@@ -378,6 +378,22 @@ button:disabled {
   cursor: not-allowed;
 }
 
+/* Actualisation en cours (voir withThrottledButton) : pas un refus. */
+button[aria-busy="true"] {
+  cursor: progress;
+}
+
+/* Chiffres à chasse fixe : un solde ou un prix qui change garde sa largeur,
+   rien ne bouge autour à chaque actualisation. */
+.balance,
+.fiat-value,
+.market-price,
+.market-change,
+.market-cap,
+[data-field="external-balance"] {
+  font-variant-numeric: tabular-nums;
+}
+
 button.primary {
   background: var(--accent);
   color: white;
@@ -515,13 +531,24 @@ legend {
   margin-top: 0;
 }
 
-/* Historique déplacé dans son propre onglet (voir nav.history) : il ne reste
-   plus que 2 boutons par carte (Actualiser/Envoyer), qui se partagent la ligne
-   à parts égales. */
+/* 3 boutons par carte (Actualiser/Échanger/Envoyer) : sur une seule ligne quand
+   ils y tiennent, sinon Envoyer passe seul sur toute la largeur en dessous. Une
+   carte peut descendre à 260px (3 cartes par rangée dès ~1000px de large) :
+   sans retour à la ligne, Envoyer débordait de la carte sur la voisine. Aucun
+   bouton plus étroit que son texte. */
 .wallet-card .row-buttons {
   /* Marge par défaut de `.row-buttons` (20px, pensée pour les modales) trop
      large ici, juste sous l'adresse/QR d'une carte déjà compacte. */
   margin-top: 8px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.wallet-card .row-buttons button {
+  flex: 1 1 0;
+  min-width: max-content;
+  padding: 10px 12px;
+  white-space: nowrap;
 }
 
 .view-shell {
@@ -917,7 +944,12 @@ textarea:focus {
 
 .wallet-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  /* 315px minimum : 2 cartes par rangée, de la largeur minimale de la fenêtre
+     à celle, plafonnée, du panneau. À 260px, 3 cartes tenaient par rangée dès
+     ~1000px de large (la 4ᵉ seule en dessous), trop étroites pour l'en-tête
+     Ethereum (réseau renvoyé à la ligne, toute la carte décalée) et pour les
+     3 boutons. */
+  grid-template-columns: repeat(auto-fit, minmax(315px, 1fr));
   gap: 20px;
   margin-top: 20px;
   /* Sans ça, la grille étire par défaut chaque carte à la hauteur de la plus
@@ -1167,6 +1199,24 @@ textarea:focus {
   width: auto;
   padding: 6px 12px;
   font-size: 0.8rem;
+}
+
+/* En dessous de ~1120px, nom + réseau, solde, adresse et les 3 boutons ne
+   tiennent plus sur une ligne sans réduire l'adresse à quelques caractères —
+   et sous ~1030px la ligne dépassait de la fenêtre (Envoyer coupé, adresse
+   réduite à « 0xE… »). Les boutons passent alors sous la ligne, alignés à
+   droite. */
+@media (max-width: 1120px) {
+  :root[data-wallet-list-view="true"] .wallet-grid {
+    grid-template-columns: minmax(170px, auto) minmax(120px, auto) minmax(120px, 1fr);
+  }
+
+  :root[data-wallet-list-view="true"] .wallet-card .row-buttons {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    justify-content: flex-end;
+    margin-top: 6px;
+  }
 }
 
 .modal.narrow-modal {

@@ -93,6 +93,8 @@ pub struct AddressStats {
     pub tx_count: u64,
     /// Solde confirmé + mempool, en satoshis.
     pub balance_sat: i128,
+    /// Solde confirmé seul, en satoshis.
+    pub confirmed_sat: i128,
 }
 
 pub struct AddressTx {
@@ -183,10 +185,29 @@ impl EsploraClient {
     /// Historique des transactions (confirmées ou non) touchant `address`, du plus
     /// récent au plus ancien (ordre déjà garanti par Esplora).
     pub fn address_history(&self, address: &str) -> Result<Vec<AddressTx>> {
-        let url = format!("{}/address/{address}/txs", self.base_url);
+        self.address_history_after(address, None)
+    }
+
+    /// Page d'historique : sans `after`, la première (mempool puis 25
+    /// transactions confirmées) ; avec, les 25 transactions confirmées
+    /// suivantes, plus anciennes que `after` (`/txs/chain/:dernier_txid_vu`).
+    pub fn address_history_after(&self, address: &str, after: Option<&str>) -> Result<Vec<AddressTx>> {
+        let url = match after {
+            None => format!("{}/address/{address}/txs", self.base_url),
+            Some(txid) => format!("{}/address/{address}/txs/chain/{txid}", self.base_url),
+        };
+        self.transactions_at(&url, address)
+    }
+
+    /// Transactions non confirmées (mempool) touchant `address`.
+    pub fn mempool_history(&self, address: &str) -> Result<Vec<AddressTx>> {
+        self.transactions_at(&format!("{}/address/{address}/txs/mempool", self.base_url), address)
+    }
+
+    fn transactions_at(&self, url: &str, address: &str) -> Result<Vec<AddressTx>> {
         let raw: Vec<AddressTxJson> = self
             .client
-            .get(&url)
+            .get(url)
             .send()
             .context("appel esplora /txs impossible")?
             .json()
@@ -238,6 +259,7 @@ impl EsploraClient {
         Ok(AddressStats {
             tx_count: raw.chain_stats.tx_count.saturating_add(raw.mempool_stats.tx_count),
             balance_sat: balance(&raw.chain_stats) + balance(&raw.mempool_stats),
+            confirmed_sat: balance(&raw.chain_stats),
         })
     }
 

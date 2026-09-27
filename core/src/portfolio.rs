@@ -4,16 +4,19 @@
 //! réelle du solde, frais compris), multiplié par le prix de l'actif à chaque
 //! instant (voir `price_history`). Purement informatif, lecture seule.
 //!
-//! Limite assumée : l'historique lu est borné (dernières transactions de
-//! chaque adresse). Avant la plus ancienne transaction lue d'une adresse dont
-//! l'historique est tronqué, son solde est inconnu : la courbe commence alors
-//! à cet instant (`since`) au lieu d'inventer une valeur.
+//! L'historique de chaque adresse est lu page par page, aussi loin que la
+//! période l'exige (« tout » : jusqu'à la première transaction), dans une
+//! limite par adresse. Avant la plus ancienne transaction lue d'une adresse
+//! dont l'historique n'a pas été lu jusqu'au bout, son solde est inconnu : la
+//! courbe commence alors à cet instant (`since`) au lieu d'inventer une valeur.
 
+use crate::blockscout::PageParams;
+use crate::history::{self, TxEntry, TxStatus};
 use crate::price_history::{self, Asset, ChartRange, PriceSeries};
-use crate::{api, btc_rpc, external_wallets, history, wallet_flow};
-use anyhow::{ensure, Result};
+use crate::{api, external_wallets, wallet_flow};
+use anyhow::{anyhow, bail, ensure, Result};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 
 /// Une adresse et son réseau (identifiants de l'app : "evm_mainnet",
@@ -35,17 +38,49 @@ pub struct PortfolioHistory {
     /// solde reconstruit négatif : mouvement absent de l'historique, comme un
     /// transfert interne de contrat Ethereum) : courbe seulement indicative.
     pub approximate: bool,
+    /// Historique encore en cours de lecture : redemander pour la suite.
+    pub loading: bool,
+    /// Transactions lues jusqu'ici, toutes adresses confondues.
+    pub transactions_read: usize,
 }
 
-/// Une page Blockscout.
-const EVM_LIMIT: usize = 50;
-/// Une page Esplora de transactions confirmées.
+/// Transactions lues au plus par adresse : 20 pages Blockscout, 40 pages
+/// Esplora.
+const EVM_MAX: usize = 1000;
+const BTC_MAX: usize = 1000;
+/// Transactions confirmées par page Esplora.
 const BTC_PAGE: usize = 25;
-/// Chaque transaction Solana demande une requête de détail.
-const SOL_LIMIT: u32 = 30;
+/// Chaque transaction Solana demande une requête de détail, que le nœud
+/// public limite à 35 par 10 s (voir `sol_rpc`) : 300 ≈ 1 min 30 au pire,
+/// beaucoup moins ensuite (détails des transactions finalisées gardés).
+const SOL_MAX: usize = 300;
+/// Première page courte (≈ 10 s de lecture) pour qu'une courbe apparaisse
+/// vite, puis des pages plus longues.
+const SOL_FIRST_PAGE: u32 = 10;
+const SOL_PAGE: u32 = 25;
 const MAX_HOLDINGS: usize = 60;
 const CACHE_TTL: Duration = Duration::from_secs(300);
+/// Attente maximale d'un appel avant de rendre une courbe partielle.
+const WAIT: Duration = Duration::from_secs(6);
+/// Période affichée pour « tout » quand aucune transaction n'est connue.
+const DEFAULT_ALL_SPAN: i64 = 365 * 86_400;
 
+/// Suite d'un historique : curseur propre à chaque source.
+#[derive(Clone)]
+enum Cursor {
+    Evm(PageParams),
+    /// Dernier txid confirmé vu.
+    Btc(String),
+    /// Dernière signature vue.
+    Sol(String),
+}
+
+struct Page {
+    entries: Vec<TxEntry>,
+    next: Option<Cursor>,
+}
+
+#[derive(Clone)]
 struct HoldingData {
     asset: Asset,
     decimals: i32,
@@ -53,69 +88,252 @@ struct HoldingData {
     balance: i128,
     /// (instant, variation du solde), du plus récent au plus ancien.
     changes: Vec<(i64, i128)>,
-    /// Plus ancienne transaction lue, si l'historique est tronqué.
-    known_since: Option<i64>,
+    /// Plus ancienne transaction lue.
+    oldest: Option<i64>,
+    /// Suite de l'historique ; `None` quand il a été lu jusqu'au bout.
+    next: Option<Cursor>,
+    /// Transactions lues.
+    read: usize,
     approximate: bool,
 }
 
-/// Solde et variations d'une adresse ; `None` pour un réseau sans valeur.
-fn fetch_holding(network: &str, address: &str) -> Result<Option<HoldingData>> {
-    let solana = &wallet_flow::SOLANA_MAINNET;
-    let (asset, decimals, balance, entries, truncated) = match network {
-        "evm_mainnet" => {
-            let entries = history::evm_history(wallet_flow::ETHEREUM_MAINNET.chain_id, address, EVM_LIMIT)?;
-            let truncated = entries.len() >= EVM_LIMIT;
-            let balance = api::get_evm_balance(address, &wallet_flow::ETHEREUM_MAINNET)? as i128;
-            (Asset::Eth, 18, balance, entries, truncated)
+impl HoldingData {
+    fn absorb(&mut self, page: Page, now: i64) {
+        self.read += page.entries.len();
+        // Page vide : fin de l'historique, même si la source donne un curseur.
+        self.next = if page.entries.is_empty() { None } else { page.next };
+        for entry in &page.entries {
+            if let Some(t) = entry.timestamp_unix {
+                self.oldest = Some(self.oldest.map_or(t, |o| o.min(t)));
+            }
+            match entry.balance_change() {
+                // En attente : pas encore d'horodatage, compté à l'instant présent.
+                Some(change) => self.changes.push((entry.timestamp_unix.unwrap_or(now), change)),
+                None => self.approximate = true,
+            }
         }
-        "btc_mainnet" => {
-            let entries = history::btc_history(&wallet_flow::BTC_MAINNET, address)?;
-            let truncated = entries.iter().filter(|e| e.timestamp_unix.is_some()).count() >= BTC_PAGE;
-            // Confirmé + mempool, comme l'historique.
-            let balance = btc_rpc::EsploraClient::new(wallet_flow::BTC_MAINNET.esplora_base).address_stats(address)?.balance_sat;
-            (Asset::Btc, 8, balance, entries, truncated)
-        }
-        "sol_mainnet" => {
-            let entries = history::sol_history(solana.rpc, address, SOL_LIMIT)?;
-            let truncated = entries.len() >= SOL_LIMIT as usize;
-            (Asset::Sol, 9, api::get_sol_balance(address, solana)?.into(), entries, truncated)
-        }
-        "usdc_solana" => {
-            let entries = api::get_usdc_tx_history(address, solana, SOL_LIMIT)?;
-            let truncated = entries.len() >= SOL_LIMIT as usize;
-            (Asset::Usdc, 6, api::get_usdc_balance(address, solana)?.into(), entries, truncated)
-        }
-        _ => return Ok(None),
-    };
-    let now = price_history::unix_now();
-    let mut approximate = false;
-    let mut changes = Vec::with_capacity(entries.len());
-    for entry in &entries {
-        match entry.balance_change() {
-            // En attente : pas encore d'horodatage, compté à l'instant présent.
-            Some(change) => changes.push((entry.timestamp_unix.unwrap_or(now), change)),
-            None => approximate = true,
-        }
+        self.changes.sort_by_key(|change| std::cmp::Reverse(change.0));
     }
-    changes.sort_by_key(|change| std::cmp::Reverse(change.0));
-    let known_since = if truncated { entries.iter().filter_map(|e| e.timestamp_unix).min() } else { None };
-    Ok(Some(HoldingData { asset, decimals, balance, changes, known_since, approximate }))
+
+    /// Historique suffisant : lu jusqu'au bout, jusqu'à `until`, ou limite atteinte.
+    fn covers(&self, until: Option<i64>, max_read: usize) -> bool {
+        self.next.is_none() || self.read >= max_read || matches!((until, self.oldest), (Some(u), Some(o)) if o <= u)
+    }
+
+    /// Début des données exactes si l'historique n'a pas été lu jusqu'au bout.
+    fn known_since(&self) -> Option<i64> {
+        self.next.as_ref().and(self.oldest)
+    }
 }
 
-/// `fetch_holding` avec un cache de 5 minutes (changer de période ne relit rien).
-fn holding(network: &str, address: &str) -> Result<Option<Arc<HoldingData>>> {
-    type Cache = Mutex<HashMap<(String, String), (Instant, Option<Arc<HoldingData>>)>>;
-    static CACHE: OnceLock<Cache> = OnceLock::new();
-    let cache = CACHE.get_or_init(Default::default);
-    let key = (network.to_string(), address.to_string());
-    if let Some((fetched, data)) = cache.lock().unwrap_or_else(|p| p.into_inner()).get(&key) {
-        if fetched.elapsed() < CACHE_TTL {
-            return Ok(data.clone());
+/// Actif, décimales et limite de lecture d'un réseau ; `None` sans valeur.
+fn network_asset(network: &str) -> Option<(Asset, i32, usize)> {
+    Some(match network {
+        "evm_mainnet" => (Asset::Eth, 18, EVM_MAX),
+        "btc_mainnet" => (Asset::Btc, 8, BTC_MAX),
+        "sol_mainnet" => (Asset::Sol, 9, SOL_MAX),
+        "usdc_solana" => (Asset::Usdc, 6, SOL_MAX),
+        _ => return None,
+    })
+}
+
+fn fetch_balance(network: &str, address: &str) -> Result<i128> {
+    let solana = &wallet_flow::SOLANA_MAINNET;
+    Ok(match network {
+        "evm_mainnet" => api::get_evm_balance(address, &wallet_flow::ETHEREUM_MAINNET)? as i128,
+        // Comme la carte : confirmé moins les envois en attente, SANS les
+        // réceptions non confirmées (annulables par leur émetteur, voir
+        // `api::BtcBalanceView`) — retirées aussi de l'historique (`fetch_page`).
+        "btc_mainnet" => api::get_btc_balance_view(address, &wallet_flow::BTC_MAINNET)?.settled_sat.into(),
+        "sol_mainnet" => api::get_sol_balance(address, solana)?.into(),
+        "usdc_solana" => api::get_usdc_balance(address, solana)?.into(),
+        other => bail!("réseau sans valeur : {other}"),
+    })
+}
+
+/// Une page d'historique : la première sans `cursor`, sinon la suivante.
+fn fetch_page(network: &str, address: &str, cursor: Option<&Cursor>) -> Result<Page> {
+    let solana = &wallet_flow::SOLANA_MAINNET;
+    match network {
+        "evm_mainnet" => {
+            let page = match cursor {
+                Some(Cursor::Evm(params)) => Some(params),
+                _ => None,
+            };
+            let (entries, next) = history::evm_history_page(wallet_flow::ETHEREUM_MAINNET.chain_id, address, page)?;
+            Ok(Page { entries, next: next.map(Cursor::Evm) })
+        }
+        "btc_mainnet" => {
+            let after = match cursor {
+                Some(Cursor::Btc(txid)) => Some(txid.as_str()),
+                _ => None,
+            };
+            let mut entries = history::btc_history_after(&wallet_flow::BTC_MAINNET, address, after)?;
+            let confirmed: Vec<&TxEntry> = entries.iter().filter(|e| matches!(e.status, TxStatus::Confirmed)).collect();
+            // Page de confirmées incomplète : fin de l'historique.
+            let next = if confirmed.len() >= BTC_PAGE { confirmed.last().map(|e| Cursor::Btc(e.id.clone())) } else { None };
+            // Réceptions non confirmées : hors du solde (`fetch_balance`), donc hors de l'historique.
+            entries.retain(|e| !(matches!(e.status, TxStatus::Pending) && e.net_amount_minor.is_some_and(|net| net > 0)));
+            Ok(Page { entries, next })
+        }
+        "sol_mainnet" | "usdc_solana" => {
+            let before = match cursor {
+                Some(Cursor::Sol(signature)) => Some(signature.as_str()),
+                _ => None,
+            };
+            let size = if before.is_some() { SOL_PAGE } else { SOL_FIRST_PAGE };
+            let entries = if network == "sol_mainnet" {
+                history::sol_history_before(solana.rpc, address, size, before)?
+            } else {
+                history::usdc_history_before(solana.rpc, &api::usdc_token_account(address)?, size, before)?
+            };
+            let next = if entries.len() >= size as usize { entries.last().map(|e| Cursor::Sol(e.id.clone())) } else { None };
+            Ok(Page { entries, next })
+        }
+        other => bail!("réseau sans valeur : {other}"),
+    }
+}
+
+/// Solde, puis première page d'historique.
+fn fetch_first(network: &str, address: &str) -> Result<HoldingData> {
+    let (asset, decimals, _) = network_asset(network).ok_or_else(|| anyhow!("réseau sans valeur : {network}"))?;
+    let (balance, first) = std::thread::scope(|scope| {
+        let balance = scope.spawn(|| fetch_balance(network, address));
+        let first = fetch_page(network, address, None);
+        (balance.join().expect("le fil du solde ne doit pas paniquer"), first)
+    });
+    let mut data = HoldingData { asset, decimals, balance: balance?, changes: Vec::new(), oldest: None, next: None, read: 0, approximate: false };
+    data.absorb(first?, price_history::unix_now());
+    Ok(data)
+}
+
+/// Réseau et adresse.
+type Key = (String, String);
+
+/// Lecture d'une adresse : dernières données publiées, lecture en cours.
+#[derive(Default)]
+struct Slot {
+    /// Données, et instant où leur solde a été lu.
+    data: Option<(Instant, Arc<HoldingData>)>,
+    /// Profondeur voulue par la lecture en cours (`None` : tout l'historique).
+    target: Option<i64>,
+    running: bool,
+    /// Échec de la dernière lecture, quand elle n'a rien pu lire.
+    error: Option<String>,
+}
+
+type Slots = (Mutex<HashMap<Key, Slot>>, Condvar);
+
+fn slots() -> &'static Slots {
+    static SLOTS: OnceLock<Slots> = OnceLock::new();
+    SLOTS.get_or_init(Default::default)
+}
+
+fn lock_slots() -> MutexGuard<'static, HashMap<Key, Slot>> {
+    slots().0.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+/// La plus profonde de deux limites (`None` : tout l'historique).
+fn deepest(a: Option<i64>, b: Option<i64>) -> Option<i64> {
+    Some(a?.min(b?))
+}
+
+/// Demande l'historique de `key` jusqu'à `until` : rien à faire si les
+/// données en cache (5 minutes) le couvrent ; sinon une lecture en
+/// arrière-plan démarre, ou celle en cours est approfondie. Asynchrone : le
+/// nœud Solana public n'accorde qu'environ un détail de transaction par
+/// seconde, un long historique demande des minutes la première fois.
+fn request(key: &Key, until: Option<i64>, max_read: usize) {
+    let mut map = lock_slots();
+    let slot = map.entry(key.clone()).or_default();
+    let fresh = slot.data.as_ref().filter(|(fetched, _)| fetched.elapsed() < CACHE_TTL).map(|(fetched, data)| (*fetched, data.clone()));
+    if fresh.as_ref().is_some_and(|(_, data)| data.covers(until, max_read)) {
+        return;
+    }
+    if slot.running {
+        slot.target = deepest(slot.target, until);
+        return;
+    }
+    // Suite des données fraîches ; sinon relecture complète (solde compris),
+    // publiée à la fin seulement quand une courbe est déjà affichée, pour ne
+    // pas la raccourcir entre-temps.
+    let base = fresh.map(|(fetched, data)| (fetched, HoldingData::clone(&data)));
+    let publish_each_page = base.is_some() || slot.data.is_none();
+    slot.target = until;
+    slot.running = true;
+    slot.error = None;
+    drop(map);
+    let key = key.clone();
+    std::thread::spawn(move || {
+        let (network, address) = (key.0.clone(), key.1.clone());
+        load(&key, max_read, base, publish_each_page, || fetch_first(&network, &address), |cursor| fetch_page(&network, &address, Some(cursor)));
+    });
+}
+
+/// Lecture en arrière-plan de `key` : solde et première page (sauf suite de
+/// `base`), puis pages plus anciennes jusqu'à la profondeur voulue, relue à
+/// chaque page — une demande plus profonde arrivée entre-temps prolonge la
+/// lecture. Une page ancienne en échec arrête la remontée (la courbe
+/// commence alors à la plus ancienne transaction lue) au lieu de tout faire
+/// échouer ; elle sera redemandée plus tard.
+fn load(
+    key: &Key,
+    max_read: usize,
+    base: Option<(Instant, HoldingData)>,
+    publish_each_page: bool,
+    first: impl FnOnce() -> Result<HoldingData>,
+    next: impl Fn(&Cursor) -> Result<Page>,
+) {
+    let publish = |fetched: Instant, data: &HoldingData| {
+        if let Some(slot) = lock_slots().get_mut(key) {
+            slot.data = Some((fetched, Arc::new(data.clone())));
+        }
+        slots().1.notify_all();
+    };
+    let (fetched, mut data) = match base {
+        Some(base) => base,
+        None => match first() {
+            Ok(data) => (Instant::now(), data),
+            Err(e) => {
+                if let Some(slot) = lock_slots().get_mut(key) {
+                    slot.running = false;
+                    slot.error = Some(e.to_string());
+                }
+                slots().1.notify_all();
+                return;
+            }
+        },
+    };
+    if publish_each_page {
+        publish(fetched, &data);
+    }
+    let now = price_history::unix_now();
+    let mut stopped = false;
+    loop {
+        let cursor = {
+            let mut map = lock_slots();
+            let Some(slot) = map.get_mut(key) else { return };
+            match data.next.clone() {
+                Some(cursor) if !stopped && !data.covers(slot.target, max_read) => cursor,
+                _ => {
+                    slot.data = Some((fetched, Arc::new(data)));
+                    slot.running = false;
+                    drop(map);
+                    slots().1.notify_all();
+                    return;
+                }
+            }
+        };
+        match next(&cursor) {
+            Ok(page) => {
+                data.absorb(page, now);
+                if publish_each_page {
+                    publish(fetched, &data);
+                }
+            }
+            Err(_) => stopped = true,
         }
     }
-    let data = fetch_holding(network, address)?.map(Arc::new);
-    cache.lock().unwrap_or_else(|p| p.into_inner()).insert(key, (Instant::now(), data.clone()));
-    Ok(data)
 }
 
 /// Instants échantillonnés : multiples de `step` depuis `start`, puis `now`.
@@ -160,17 +378,63 @@ fn values_over_time(holdings: &[&HoldingData], times: &[i64], price: impl Fn(Ass
     (points, negative)
 }
 
-/// Valeur de `holdings` sur la période `range`.
+/// Début de la courbe : `range_start` pour une période fixe ; pour « tout »,
+/// la première transaction connue (à défaut, un an) ; plus tard si
+/// l'historique d'une adresse est tronqué (`since`).
+fn chart_start(data: &[&HoldingData], range_start: Option<i64>, now: i64) -> (i64, Option<i64>) {
+    let since = data.iter().filter_map(|d| d.known_since()).max().filter(|s| range_start.is_none_or(|start| *s > start));
+    let first_change = data.iter().filter_map(|d| d.changes.last().map(|c| c.0)).min();
+    let start = since.or(range_start).unwrap_or_else(|| first_change.unwrap_or(now - DEFAULT_ALL_SPAN));
+    (start, since)
+}
+
+/// Valeur de `holdings` sur la période `range`. Attend au plus `WAIT` que
+/// les historiques nécessaires soient lus ; au-delà, la courbe est calculée
+/// avec ce qui l'est déjà (`loading`) et la lecture continue en arrière-plan
+/// — un nouvel appel donne la suite. Tant qu'une adresse n'a encore rien
+/// donné, aucun point (une courbe sans elle serait fausse).
 pub fn portfolio_history(holdings: &[Holding], range: ChartRange) -> Result<PortfolioHistory> {
     ensure!(holdings.len() <= MAX_HOLDINGS, "trop d'adresses pour un graphique");
     for h in holdings {
         external_wallets::validate_address(&h.network, &h.address)?;
     }
-    let fetched: Vec<Option<Arc<HoldingData>>> = std::thread::scope(|scope| {
-        let handles: Vec<_> = holdings.iter().map(|h| scope.spawn(move || holding(&h.network, h.address.trim()))).collect();
-        handles.into_iter().map(|h| h.join().expect("le fil d'une adresse ne doit pas paniquer")).collect::<Result<_>>()
-    })?;
-    let data: Vec<Arc<HoldingData>> = fetched.into_iter().flatten().collect();
+    let now = price_history::unix_now();
+    let range_start = range.span().map(|span| now - span);
+    let keys: Vec<(Key, usize)> = holdings
+        .iter()
+        .filter_map(|h| network_asset(&h.network).map(|(_, _, max_read)| ((h.network.clone(), h.address.trim().to_string()), max_read)))
+        .collect();
+    for (key, max_read) in &keys {
+        request(key, range_start, *max_read);
+    }
+
+    let deadline = Instant::now() + WAIT;
+    let mut map = lock_slots();
+    while keys.iter().any(|(key, _)| map.get(key).is_some_and(|slot| slot.running)) {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            break;
+        }
+        map = slots().1.wait_timeout(map, left).unwrap_or_else(|p| p.into_inner()).0;
+    }
+    let loading = keys.iter().any(|(key, _)| map.get(key).is_some_and(|slot| slot.running));
+    let mut data = Vec::with_capacity(keys.len());
+    let mut missing = false;
+    for (key, _) in &keys {
+        let slot = map.get(key);
+        match slot.and_then(|slot| slot.data.as_ref()) {
+            Some((_, holding)) => data.push(holding.clone()),
+            None => match slot.and_then(|slot| slot.error.clone()) {
+                Some(error) => return Err(anyhow!(error)),
+                None => missing = true,
+            },
+        }
+    }
+    drop(map);
+    let transactions_read = data.iter().map(|d| d.read).sum();
+    if missing {
+        return Ok(PortfolioHistory { points: Vec::new(), since: None, approximate: false, loading: true, transactions_read });
+    }
 
     let mut assets: Vec<Asset> = Vec::new();
     for d in &data {
@@ -183,13 +447,12 @@ pub fn portfolio_history(holdings: &[Holding], range: ChartRange) -> Result<Port
         handles.into_iter().map(|(a, h)| h.join().expect("le fil des prix ne doit pas paniquer").map(|s| (a, s))).collect::<Result<_>>()
     })?;
 
-    let now = price_history::unix_now();
-    let range_start = now - range.span();
-    let since = data.iter().filter_map(|d| d.known_since).max().filter(|s| *s > range_start);
-    let times = sample_times(since.unwrap_or(range_start), now, range.step());
     let refs: Vec<&HoldingData> = data.iter().map(Arc::as_ref).collect();
+    let (start, since) = chart_start(&refs, range_start, now);
+    let step = if range == ChartRange::All { price_history::step_for_span(now - start) } else { range.step() };
+    let times = sample_times(start, now, step);
     let (points, negative) = values_over_time(&refs, &times, |asset, t| series.get(&asset).and_then(|s| s.usd_at(Some(t))));
-    Ok(PortfolioHistory { points, since, approximate: negative || data.iter().any(|d| d.approximate) })
+    Ok(PortfolioHistory { points, since, approximate: negative || data.iter().any(|d| d.approximate), loading, transactions_read })
 }
 
 #[cfg(test)]
@@ -197,7 +460,7 @@ mod tests {
     use super::*;
 
     fn holding_data(asset: Asset, decimals: i32, balance: i128, changes: &[(i64, i128)]) -> HoldingData {
-        HoldingData { asset, decimals, balance, changes: changes.to_vec(), known_since: None, approximate: false }
+        HoldingData { asset, decimals, balance, changes: changes.to_vec(), oldest: changes.last().map(|c| c.0), next: None, read: changes.len(), approximate: false }
     }
 
     #[test]
@@ -234,6 +497,112 @@ mod tests {
         assert_eq!(points.len(), 1, "point sans prix omis");
     }
 
+    fn entry(id: &str, timestamp: Option<i64>, net: Option<i128>) -> TxEntry {
+        TxEntry {
+            id: id.into(),
+            timestamp_unix: timestamp,
+            status: if timestamp.is_some() { TxStatus::Confirmed } else { TxStatus::Pending },
+            net_amount_minor: net,
+            fee_minor: 0,
+            kind: history::TxKind::Other,
+        }
+    }
+
+    /// Pages absorbées dans l'ordre : variations triées du plus récent au plus
+    /// ancien, transaction en attente comptée maintenant, montant inconnu
+    /// signalé ; l'historique « couvre » une période quand il remonte assez
+    /// loin, qu'il est lu jusqu'au bout ou que la limite est atteinte ; page
+    /// vide = fin, même avec un curseur.
+    #[test]
+    fn pages_are_absorbed_until_the_period_is_covered() {
+        let mut data = holding_data(Asset::Sol, 9, 100, &[]);
+        data.absorb(Page { entries: vec![entry("p", None, Some(5)), entry("a", Some(900), Some(10))], next: Some(Cursor::Sol("a".into())) }, 1000);
+        assert_eq!(data.changes, vec![(1000, 5), (900, 10)]);
+        assert_eq!((data.oldest, data.read, data.known_since()), (Some(900), 2, Some(900)));
+        assert!(!data.covers(Some(500), 10), "pas assez loin");
+        assert!(data.covers(Some(950), 10), "assez loin");
+        assert!(!data.covers(None, 10), "« tout » : pas encore au bout");
+        assert!(data.covers(None, 2), "limite de lecture atteinte");
+
+        data.absorb(Page { entries: vec![entry("b", Some(400), None), entry("c", Some(300), Some(-7))], next: Some(Cursor::Sol("c".into())) }, 1000);
+        assert_eq!(data.changes, vec![(1000, 5), (900, 10), (300, -7)]);
+        assert!(data.approximate, "montant inconnu");
+        assert!(data.covers(Some(500), 10));
+
+        data.absorb(Page { entries: vec![], next: Some(Cursor::Sol("c".into())) }, 1000);
+        assert!(data.next.is_none() && data.covers(None, 10), "page vide : fin de l'historique");
+        assert_eq!(data.known_since(), None, "lu jusqu'au bout : rien d'inventé ni de tronqué");
+    }
+
+    /// Lecture en arrière-plan : chaque page publiée au fur et à mesure ; une
+    /// demande plus profonde arrivée pendant la lecture la prolonge ; fin de
+    /// lecture signalée ; échec de la première page conservé pour l'appelant,
+    /// échec d'une page ancienne : lecture arrêtée, données gardées.
+    #[test]
+    fn background_reads_follow_the_deepest_request() {
+        let key: Key = ("test".into(), "adresse-a".into());
+        lock_slots().insert(key.clone(), Slot { target: Some(850), running: true, ..Default::default() });
+        let first = || {
+            let mut data = holding_data(Asset::Sol, 9, 100, &[]);
+            data.absorb(Page { entries: vec![entry("a", Some(900), Some(10))], next: Some(Cursor::Sol("a".into())) }, 1000);
+            Ok(data)
+        };
+        let calls = std::cell::Cell::new(0);
+        let next = |cursor: &Cursor| {
+            calls.set(calls.get() + 1);
+            let published = lock_slots().get(&key).and_then(|s| s.data.as_ref().map(|(_, d)| d.read));
+            assert_eq!(published, Some(calls.get()), "page précédente publiée avant la suivante");
+            let Cursor::Sol(before) = cursor else { unreachable!() };
+            if before == "a" {
+                // Pendant la lecture : on demande tout l'historique.
+                request(&key, None, 100);
+                return Ok(Page { entries: vec![entry("b", Some(800), Some(5))], next: Some(Cursor::Sol("b".into())) });
+            }
+            Ok(Page { entries: vec![entry("c", Some(700), Some(1))], next: None })
+        };
+        load(&key, 100, None, true, first, next);
+        assert_eq!(calls.get(), 2, "prolongée jusqu'au bout après la demande « tout »");
+        let map = lock_slots();
+        let slot = map.get(&key).unwrap();
+        assert!(!slot.running);
+        let data = &slot.data.as_ref().unwrap().1;
+        assert_eq!((data.read, data.oldest, data.known_since()), (3, Some(700), None));
+        drop(map);
+
+        let failing: Key = ("test".into(), "adresse-b".into());
+        lock_slots().insert(failing.clone(), Slot { running: true, ..Default::default() });
+        load(&failing, 100, None, true, || Err(anyhow!("nœud injoignable")), |_| unreachable!());
+        let map = lock_slots();
+        let slot = map.get(&failing).unwrap();
+        assert_eq!((slot.running, slot.error.as_deref(), slot.data.is_none()), (false, Some("nœud injoignable"), true));
+        drop(map);
+
+        let partial: Key = ("test".into(), "adresse-c".into());
+        lock_slots().insert(partial.clone(), Slot { target: None, running: true, ..Default::default() });
+        load(&partial, 100, None, true, first, |_| Err(anyhow!("page refusée")));
+        let map = lock_slots();
+        let slot = map.get(&partial).unwrap();
+        assert!(!slot.running && slot.error.is_none());
+        assert_eq!(slot.data.as_ref().unwrap().1.known_since(), Some(900), "tronqué à la dernière page lue");
+    }
+
+    /// Début de la courbe : période fixe, ou première transaction pour
+    /// « tout », repoussé au début des données exactes si un historique est
+    /// tronqué ; sans aucune transaction, un an.
+    #[test]
+    fn chart_starts_at_the_first_known_data() {
+        let a = holding_data(Asset::Btc, 8, 1, &[(800, 1), (300, 2)]);
+        let b = holding_data(Asset::Eth, 18, 1, &[(500, 1)]);
+        assert_eq!(chart_start(&[&a, &b], Some(100), 1000), (100, None));
+        assert_eq!(chart_start(&[&a, &b], None, 1000), (300, None), "tout : première transaction");
+        let mut truncated = holding_data(Asset::Sol, 9, 1, &[(600, 1)]);
+        truncated.next = Some(Cursor::Sol("x".into()));
+        assert_eq!(chart_start(&[&a, &truncated], None, 1000), (600, Some(600)));
+        assert_eq!(chart_start(&[&a, &truncated], Some(700), 1000), (700, None), "tronqué avant la période : sans effet");
+        let quiet = holding_data(Asset::Sol, 9, 1, &[]);
+        assert_eq!(chart_start(&[&quiet], None, 1000 + DEFAULT_ALL_SPAN), (1000, None));
+    }
+
     /// Adresses RÉELLES (réseau principal) : la valeur finale reconstruite
     /// égale solde actuel × prix actuel ; courbe cohérente sur 30 jours.
     /// `cargo test -- --ignored real_portfolio_history_is_consistent --nocapture`
@@ -246,22 +615,36 @@ mod tests {
             Holding { network: "sol_mainnet".into(), address: "3iUShJYbFX6it5ArcR31Pm6SqqowccAe5NwQrfaG1yvG".into() },
             Holding { network: "btc_testnet".into(), address: "tb1qzdr7s2sr0dwmkwx033r4nujzk86u0cy6fmzfjk".into() },
         ];
+        // Appels répétés tant que la lecture continue en arrière-plan, comme l'app.
+        let complete = |range| loop {
+            let history = portfolio_history(&holdings, range).unwrap();
+            println!("{range:?} : {} transactions lues, en cours {}", history.transactions_read, history.loading);
+            if !history.loading {
+                break history;
+            }
+        };
         let started = Instant::now();
-        let history = portfolio_history(&holdings, ChartRange::Month).unwrap();
+        let history = complete(ChartRange::Month);
         println!("{} points en {:?}, depuis {:?}, approximatif {}", history.points.len(), started.elapsed(), history.since, history.approximate);
         for (t, v) in history.points.iter().step_by(30) {
             println!("{t} : {v:.2} $");
         }
         let (_, last) = *history.points.last().unwrap();
-        let btc = btc_rpc::EsploraClient::new(wallet_flow::BTC_MAINNET.esplora_base).address_stats(&holdings[0].address).unwrap().balance_sat as f64 / 1e8;
+        let btc = api::get_btc_balance_view(&holdings[0].address, &wallet_flow::BTC_MAINNET).unwrap().settled_sat as f64 / 1e8;
         let eth = api::get_evm_balance(&holdings[1].address, &wallet_flow::ETHEREUM_MAINNET).unwrap() as f64 / 1e18;
         let sol = api::get_sol_balance(&holdings[2].address, &wallet_flow::SOLANA_MAINNET).unwrap() as f64 / 1e9;
         let price = |a| price_history::series(a).unwrap().usd_at(None).unwrap();
         let expected = btc * price(Asset::Btc) + eth * price(Asset::Eth) + sol * price(Asset::Sol);
         println!("valeur actuelle : {last:.2} $, attendu {expected:.2} $");
         assert!((last - expected).abs() <= expected * 0.01 + 0.01, "{last} vs {expected}");
+
+        let deeper = Instant::now();
+        let all = complete(ChartRange::All);
+        println!("tout : {} points en {:?}, depuis {:?}, approximatif {}", all.points.len(), deeper.elapsed(), all.since, all.approximate);
+        assert!(all.points.first().unwrap().0 <= history.points.first().unwrap().0, "« tout » remonte au moins aussi loin");
+        assert!((all.points.last().unwrap().1 - last).abs() <= last * 0.01 + 0.01, "même valeur actuelle");
         let again = Instant::now();
-        portfolio_history(&holdings, ChartRange::Year).unwrap();
+        assert!(!portfolio_history(&holdings, ChartRange::Month).unwrap().loading);
         assert!(again.elapsed() < Duration::from_secs(2), "changement de période servi par le cache");
     }
 }

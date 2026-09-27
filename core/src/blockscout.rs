@@ -32,7 +32,14 @@ pub struct BlockscoutClient {
 #[derive(Deserialize)]
 struct TxListResponse {
     items: Vec<TxJson>,
+    /// Curseur de la page suivante (`null` sur la dernière).
+    #[serde(default)]
+    next_page_params: Option<serde_json::Map<String, serde_json::Value>>,
 }
+
+/// Paramètres de requête de la page suivante d'un historique, tels que
+/// Blockscout les donne (`next_page_params`).
+pub type PageParams = Vec<(String, String)>;
 
 #[derive(Deserialize)]
 struct TxJson {
@@ -84,19 +91,40 @@ impl BlockscoutClient {
     }
 
     pub fn tx_history(&self, address: &str, limit: usize) -> Result<Vec<EvmTx>> {
+        let (mut txs, _) = self.tx_history_page(address, None)?;
+        txs.truncate(limit);
+        Ok(txs)
+    }
+
+    /// Une page d'historique (50 transactions, de la plus récente à la plus
+    /// ancienne) et le curseur de la suivante, `None` après la dernière.
+    pub fn tx_history_page(&self, address: &str, page: Option<&PageParams>) -> Result<(Vec<EvmTx>, Option<PageParams>)> {
         let url = format!("{}/api/v2/addresses/{address}/transactions", self.base_url);
         let resp: TxListResponse = self
             .client
             .get(&url)
+            .query(page.map(Vec::as_slice).unwrap_or_default())
             .send()
             .context("appel Blockscout impossible")?
             .json()
             .context("réponse Blockscout illisible")?;
 
+        let next = resp.next_page_params.map(|params| {
+            params
+                .into_iter()
+                .map(|(key, value)| {
+                    let value = match value {
+                        serde_json::Value::String(s) => s,
+                        other => other.to_string(),
+                    };
+                    (key, value)
+                })
+                .collect()
+        });
         let address_lower = address.to_lowercase();
-        resp.items
+        let txs = resp
+            .items
             .into_iter()
-            .take(limit)
             .map(|tx| {
                 let value: i128 = tx.value.parse().context("montant de transaction Blockscout invalide")?;
                 let sender = tx.from.hash.to_lowercase() == address_lower;
@@ -119,7 +147,8 @@ impl BlockscoutClient {
                     swap: tx.method.as_deref().is_some_and(is_swap_method),
                 })
             })
-            .collect()
+            .collect::<Result<Vec<_>>>()?;
+        Ok((txs, next))
     }
 }
 

@@ -6,7 +6,9 @@
 //! pour l'UI. Purement informatif : ne joue aucun rôle dans la construction ou la
 //! signature d'une transaction, et ne lit ni ne dérive jamais de clé privée.
 
-use crate::{blockscout::BlockscoutClient, btc_rpc::EsploraClient, sol_rpc::SolRpc, wallet_flow};
+use crate::blockscout::{BlockscoutClient, PageParams};
+use crate::sol_rpc::{SolRpc, SolTx};
+use crate::{btc_rpc::EsploraClient, wallet_flow};
 use anyhow::Result;
 
 pub enum TxStatus {
@@ -76,7 +78,13 @@ pub(crate) fn is_swap_memo(memo: &str) -> bool {
 }
 
 pub fn btc_history(network: &wallet_flow::BtcNetwork, address: &str) -> Result<Vec<TxEntry>> {
-    let txs = EsploraClient::new(network.esplora_base).address_history(address)?;
+    btc_history_after(network, address, None)
+}
+
+/// Page d'historique Bitcoin : sans `after`, mempool puis 25 transactions
+/// confirmées ; avec, les 25 confirmées plus anciennes que le txid `after`.
+pub fn btc_history_after(network: &wallet_flow::BtcNetwork, address: &str, after: Option<&str>) -> Result<Vec<TxEntry>> {
+    let txs = EsploraClient::new(network.esplora_base).address_history_after(address, after)?;
     Ok(txs
         .into_iter()
         .map(|tx| TxEntry {
@@ -90,10 +98,8 @@ pub fn btc_history(network: &wallet_flow::BtcNetwork, address: &str) -> Result<V
         .collect())
 }
 
-pub fn sol_history(rpc_url: &str, pubkey_b58: &str, limit: u32) -> Result<Vec<TxEntry>> {
-    let txs = SolRpc::new(rpc_url).signature_history(pubkey_b58, limit)?;
-    Ok(txs
-        .into_iter()
+fn sol_entries(txs: Vec<SolTx>) -> Vec<TxEntry> {
+    txs.into_iter()
         .map(|tx| TxEntry {
             kind: classify(tx.net_lamports, tx.swap),
             id: tx.signature,
@@ -108,7 +114,16 @@ pub fn sol_history(rpc_url: &str, pubkey_b58: &str, limit: u32) -> Result<Vec<Tx
             net_amount_minor: tx.net_lamports,
             fee_minor: 0,
         })
-        .collect())
+        .collect()
+}
+
+pub fn sol_history(rpc_url: &str, pubkey_b58: &str, limit: u32) -> Result<Vec<TxEntry>> {
+    sol_history_before(rpc_url, pubkey_b58, limit, None)
+}
+
+/// Page d'historique Solana : `limit` signatures plus anciennes que `before`.
+pub fn sol_history_before(rpc_url: &str, pubkey_b58: &str, limit: u32, before: Option<&str>) -> Result<Vec<TxEntry>> {
+    Ok(sol_entries(SolRpc::new(rpc_url).signature_history_before(pubkey_b58, limit, before)?))
 }
 
 /// Historique d'un jeton SPL (USDC) : `ata_b58` est le compte de jetons associé
@@ -117,37 +132,33 @@ pub fn sol_history(rpc_url: &str, pubkey_b58: &str, limit: u32) -> Result<Vec<Tx
 /// dériver. `net_amount_minor` est alors en plus petite unité du jeton
 /// (micro-USDC), pas en lamports.
 pub fn usdc_history(rpc_url: &str, ata_b58: &str, limit: u32) -> Result<Vec<TxEntry>> {
-    let txs = SolRpc::new(rpc_url).token_signature_history(ata_b58, limit)?;
-    Ok(txs
-        .into_iter()
-        .map(|tx| TxEntry {
-            kind: classify(tx.net_lamports, tx.swap),
-            id: tx.signature,
-            timestamp_unix: tx.block_time,
-            status: if tx.failed {
-                TxStatus::Failed
-            } else if tx.confirmed {
-                TxStatus::Confirmed
-            } else {
-                TxStatus::Pending
-            },
-            net_amount_minor: tx.net_lamports,
-            fee_minor: 0,
-        })
-        .collect())
+    usdc_history_before(rpc_url, ata_b58, limit, None)
+}
+
+/// Page d'historique d'un jeton SPL : `limit` signatures plus anciennes que `before`.
+pub fn usdc_history_before(rpc_url: &str, ata_b58: &str, limit: u32, before: Option<&str>) -> Result<Vec<TxEntry>> {
+    Ok(sol_entries(SolRpc::new(rpc_url).token_signature_history_before(ata_b58, limit, before)?))
 }
 
 /// `chain_id` : 1 pour Ethereum mainnet, 11155111 pour Sepolia (voir
 /// wallet_flow::ETHEREUM_MAINNET / SEPOLIA) — détermine quelle instance publique
 /// Blockscout interroger.
 pub fn evm_history(chain_id: u64, address: &str, limit: usize) -> Result<Vec<TxEntry>> {
+    let (mut entries, _) = evm_history_page(chain_id, address, None)?;
+    entries.truncate(limit);
+    Ok(entries)
+}
+
+/// Page d'historique Ethereum (50 transactions) et curseur de la suivante,
+/// `None` après la dernière.
+pub fn evm_history_page(chain_id: u64, address: &str, page: Option<&PageParams>) -> Result<(Vec<TxEntry>, Option<PageParams>)> {
     let base_url = match chain_id {
         1 => "https://eth.blockscout.com",
         11155111 => "https://eth-sepolia.blockscout.com",
         other => anyhow::bail!("historique EVM non pris en charge pour chain_id={other}"),
     };
-    let txs = BlockscoutClient::new(base_url).tx_history(address, limit)?;
-    Ok(txs
+    let (txs, next) = BlockscoutClient::new(base_url).tx_history_page(address, page)?;
+    let entries = txs
         .into_iter()
         .map(|tx| TxEntry {
             kind: classify(Some(tx.net_wei), tx.swap),
@@ -157,7 +168,8 @@ pub fn evm_history(chain_id: u64, address: &str, limit: usize) -> Result<Vec<TxE
             net_amount_minor: Some(tx.net_wei),
             fee_minor: tx.fee_wei,
         })
-        .collect())
+        .collect();
+    Ok((entries, next))
 }
 
 #[cfg(test)]

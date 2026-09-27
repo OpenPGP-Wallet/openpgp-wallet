@@ -1223,6 +1223,44 @@ pub fn get_btc_balance(address: &str, network: &wallet_flow::BtcNetwork) -> Resu
     Ok(utxos.iter().map(|u| u.value_sat).sum())
 }
 
+/// Solde de la carte Bitcoin.
+pub struct BtcBalanceView {
+    /// Confirmé, moins ce qui part dans des transactions en attente : un envoi
+    /// se voit dès sa diffusion (il ne peut que partir).
+    pub settled_sat: u64,
+    /// Réceptions non confirmées, montrées À PART et non comptées : une
+    /// réception en attente peut encore être annulée par son émetteur (double
+    /// dépense, remplacement RBF) — l'arnaque classique du « paiement reçu »
+    /// qui disparaît. Trouvé au 23ᵉ passage : la carte les comptait.
+    pub incoming_pending_sat: u64,
+}
+
+/// Transaction en attente classée d'après sa variation nette pour l'adresse :
+/// négative = envoi (monnaie rendue déduite), positive = réception.
+pub fn get_btc_balance_view(address: &str, network: &wallet_flow::BtcNetwork) -> Result<BtcBalanceView> {
+    let esplora = btc_rpc::EsploraClient::new(network.esplora_base);
+    let (stats, mempool) = std::thread::scope(|scope| {
+        let stats = scope.spawn(|| esplora.address_stats(address));
+        let mempool = esplora.mempool_history(address);
+        (stats.join().expect("le fil des statistiques ne doit pas paniquer"), mempool)
+    });
+    let (stats, mempool) = (stats?, mempool?);
+    Ok(btc_balance_view(stats.confirmed_sat, mempool.iter().map(|tx| tx.net_sat)))
+}
+
+fn btc_balance_view(confirmed_sat: i128, pending_nets: impl Iterator<Item = i128>) -> BtcBalanceView {
+    let (mut settled, mut incoming) = (confirmed_sat, 0i128);
+    for net in pending_nets {
+        if net < 0 {
+            settled += net;
+        } else {
+            incoming += net;
+        }
+    }
+    let to_u64 = |v: i128| u64::try_from(v.max(0)).unwrap_or(u64::MAX);
+    BtcBalanceView { settled_sat: to_u64(settled), incoming_pending_sat: to_u64(incoming) }
+}
+
 pub fn get_sol_balance(address: &str, network: &wallet_flow::SolNetwork) -> Result<u64> {
     sol_rpc::SolRpc::new(network.rpc).balance_lamports(address)
 }
@@ -1244,11 +1282,15 @@ pub fn get_usdc_balance(owner_address: &str, network: &wallet_flow::SolNetwork) 
 /// n'existe pas encore (jamais reçu d'USDC), `getSignaturesForAddress` renvoie
 /// simplement une liste vide, sans erreur.
 pub fn get_usdc_tx_history(owner_address: &str, network: &wallet_flow::SolNetwork, limit: u32) -> Result<Vec<history::TxEntry>> {
+    history::usdc_history(network.rpc, &usdc_token_account(owner_address)?, limit)
+}
+
+/// Compte de jetons USDC associé (ATA, base58) de l'adresse Solana `owner_address`.
+pub fn usdc_token_account(owner_address: &str) -> Result<String> {
     let owner_bytes = bs58::decode(owner_address.trim()).into_vec().context("adresse Solana invalide (base58 attendu)")?;
     let owner: [u8; 32] = owner_bytes.try_into().map_err(|_| anyhow::anyhow!("une adresse Solana fait 32 octets"))?;
     let ata = sol_spl::find_associated_token_address(&owner, &sol_spl::usdc_mint_mainnet());
-    let ata_b58 = bs58::encode(ata).into_string();
-    history::usdc_history(network.rpc, &ata_b58, limit)
+    Ok(bs58::encode(ata).into_string())
 }
 
 /// `Some(lamports de rent)` si l'Associated Token Account USDC de `to_address`
@@ -1559,7 +1601,7 @@ pub(crate) fn btc_change(total_sat: u64, amount_sat: u64, fee_sat: u64) -> Resul
         .context("montant + frais dépasse la capacité représentable")?;
     anyhow::ensure!(
         total_needed <= total_sat,
-        "fonds insuffisants : {total_sat} sat disponibles, {amount_sat} sat + {fee_sat} sat de frais requis"
+        "fonds insuffisants : {total_sat} sat confirmés disponibles, {amount_sat} sat + {fee_sat} sat de frais requis"
     );
     let remaining = total_sat - total_needed;
     Ok(if remaining > DUST_THRESHOLD_SAT { remaining } else { 0 })
@@ -1716,7 +1758,7 @@ pub fn send_swap_btc(
         .context("montant + frais dépasse la capacité représentable")?;
     anyhow::ensure!(
         total_needed <= total_sat,
-        "fonds insuffisants : {total_sat} sat disponibles, {amount_sat} sat + {fee_sat} sat de frais requis"
+        "fonds insuffisants : {total_sat} sat confirmés disponibles, {amount_sat} sat + {fee_sat} sat de frais requis"
     );
     let remaining = total_sat - total_needed;
     let change_sat = if remaining > DUST_THRESHOLD_SAT { remaining } else { 0 };
@@ -2762,6 +2804,19 @@ pub fn sign_dapp_request(
 mod tests {
     use super::*;
 
+    /// 23ᵉ passage : un envoi en attente (variation nette négative, monnaie
+    /// rendue déduite) compte tout de suite ; une réception non confirmée est
+    /// montrée à part, JAMAIS dans le solde (elle peut encore être annulée).
+    #[test]
+    fn unconfirmed_receptions_are_never_counted_in_the_btc_balance() {
+        let view = btc_balance_view(100_000, [-30_000, 5_000].into_iter());
+        assert_eq!((view.settled_sat, view.incoming_pending_sat), (70_000, 5_000));
+        let view = btc_balance_view(0, [2_500_000].into_iter());
+        assert_eq!((view.settled_sat, view.incoming_pending_sat), (0, 2_500_000), "rien de confirmé : 0, réception à part");
+        let view = btc_balance_view(10_000, [-20_000].into_iter());
+        assert_eq!(view.settled_sat, 0, "jamais négatif");
+    }
+
     /// Vérification de bout en bout contre le RPC mainnet réel (lecture seule,
     /// aucun risque) : même portefeuille public utilisé pour valider
     /// `find_associated_token_address` (voir sol_spl.rs) — solde connu non
@@ -3628,7 +3683,7 @@ mod tests {
         assert_eq!(classify_evm_activity(0, 1), Funded, "reçu de l'ETH sans jamais en envoyer");
         assert_eq!(classify_evm_activity(7, 10), Funded);
 
-        let btc = |tx_count, balance_sat| btc_rpc::AddressStats { tx_count, balance_sat };
+        let btc = |tx_count, balance_sat| btc_rpc::AddressStats { tx_count, balance_sat, confirmed_sat: balance_sat };
         assert_eq!(classify_btc_activity(&btc(0, 0)), Unused);
         assert_eq!(classify_btc_activity(&btc(2, 0)), Empty);
         assert_eq!(classify_btc_activity(&btc(1, 1_000)), Funded, "réception en mempool comprise");

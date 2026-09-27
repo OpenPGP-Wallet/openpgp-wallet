@@ -237,7 +237,7 @@ const I18N = {
     "addressBook.remove": "Supprimer",
     "addressBook.empty": "Aucune adresse enregistrée pour l'instant — ajoutez-en une avec le bouton ci-dessus.",
     "addressBook.pickPlaceholder": "— Choisir depuis le carnet d'adresses —",
-    "nav.walletconnect": "Applications",
+    "nav.walletconnect": "WalletConnect",
     "wc.title": "Applications connectées (WalletConnect)",
     "wc.subtitle": "Connectez ce portefeuille à un site (dApp) : sur le site, choisissez WalletConnect, copiez le lien de connexion (« wc:… ») et collez-le ici. Chaque signature demandée par un site exigera votre mot de passe et une confirmation de Windows.",
     "wc.uriLabel": "Lien de connexion",
@@ -278,6 +278,7 @@ const I18N = {
     "wallet.send": "Envoyer",
     "wallet.swap": "Échanger",
     "wallet.pendingBadge": "⏳ Transaction en attente détectée",
+    "wallet.pendingIncoming": "⏳ Réception en attente : +{amount} BTC (comptée une fois confirmée)",
     "wallet.marketsTitle": "Prix des cryptomonnaies en direct",
     "wallet.showQr": "Afficher en QR code",
     "wallet.copyAddress": "Copier l'adresse",
@@ -504,10 +505,15 @@ const I18N = {
     "charts.portfolioEmpty": "Aucun fonds réel sur ce profil pour le moment.",
     "charts.externalEmpty": "Aucun fonds réel sur ces wallets externes.",
     "charts.since": "Valeur reconstruite à partir des dernières transactions de chaque adresse : connue depuis le {date}.",
+    "charts.loadingHistoryStart":
+      "Lecture de l'historique en cours — le nœud Solana public n'accorde qu'environ une transaction par seconde ; les chargements suivants seront presque immédiats.",
+    "charts.loadingHistory":
+      "Lecture de l'historique en cours ({count} transactions lues) — la courbe se complète au fur et à mesure. Le nœud Solana public n'accorde qu'environ une transaction par seconde ; les suivantes s'afficheront ensuite presque aussitôt.",
     "charts.approximate":
       "Valeur indicative : certains mouvements n'apparaissent pas dans l'historique lu (transferts internes de contrats, par exemple).",
     "charts.priceSource": "Prix Binance (paires en USDT, ≈ 1 dollar).",
     "charts.delta": "{arrow} {pct} % {period}",
+    "charts.deltaUsd": "{arrow} {amount} {period}",
     "charts.period.1d": "sur 24 h",
     "charts.period.7d": "sur 7 jours",
     "charts.period.30d": "sur 30 jours",
@@ -517,6 +523,7 @@ const I18N = {
     "charts.range.7d": "7 j",
     "charts.range.30d": "30 j",
     "charts.range.1y": "1 an",
+    "charts.range.all": "Tout",
     "charts.openPrice": "Voir la courbe de {name}",
     "charts.tableDate": "Date",
     "charts.tableValue": "Valeur",
@@ -626,7 +633,7 @@ const I18N = {
     "addressBook.remove": "Remove",
     "addressBook.empty": "No saved address yet — add one with the button above.",
     "addressBook.pickPlaceholder": "— Choose from the address book —",
-    "nav.walletconnect": "Apps",
+    "nav.walletconnect": "WalletConnect",
     "wc.title": "Connected apps (WalletConnect)",
     "wc.subtitle": "Connect this wallet to a site (dApp): on the site, choose WalletConnect, copy the connection link (\"wc:…\") and paste it here. Every signature a site asks for will require your password and a Windows confirmation.",
     "wc.uriLabel": "Connection link",
@@ -667,6 +674,7 @@ const I18N = {
     "wallet.send": "Send",
     "wallet.swap": "Swap",
     "wallet.pendingBadge": "⏳ Pending transaction detected",
+    "wallet.pendingIncoming": "⏳ Incoming, unconfirmed: +{amount} BTC (counted once confirmed)",
     "wallet.marketsTitle": "Live cryptocurrency prices",
     "wallet.showQr": "Show as QR code",
     "wallet.copyAddress": "Copy address",
@@ -891,9 +899,14 @@ const I18N = {
     "charts.portfolioEmpty": "No real funds on this profile yet.",
     "charts.externalEmpty": "No real funds on these external wallets.",
     "charts.since": "Value rebuilt from each address's latest transactions: known since {date}.",
+    "charts.loadingHistoryStart":
+      "Reading the history — the public Solana node only allows about one transaction per second; later loads will be almost instant.",
+    "charts.loadingHistory":
+      "Reading the history ({count} transactions so far) — the chart fills in as it goes. The public Solana node only allows about one transaction per second; later loads will be almost instant.",
     "charts.approximate": "Indicative value: some movements are missing from the history read (internal contract transfers, for example).",
     "charts.priceSource": "Binance prices (USDT pairs, ≈ 1 dollar).",
     "charts.delta": "{arrow} {pct}% {period}",
+    "charts.deltaUsd": "{arrow} {amount} {period}",
     "charts.period.1d": "over 24h",
     "charts.period.7d": "over 7 days",
     "charts.period.30d": "over 30 days",
@@ -903,6 +916,7 @@ const I18N = {
     "charts.range.7d": "7d",
     "charts.range.30d": "30d",
     "charts.range.1y": "1y",
+    "charts.range.all": "All",
     "charts.openPrice": "See the {name} chart",
     "charts.tableDate": "Date",
     "charts.tableValue": "Value",
@@ -1128,13 +1142,16 @@ function withBusyButton(button, action) {
 // (solde/historique) à peu près à la fréquence du réseau. Réservé aux boutons
 // "Actualiser", qui sont justement ceux qu'on peut spammer sans rien taper
 // entre deux clics (contrairement à "Envoyer"/"Ajouter", qui demandent de
-// remplir un formulaire à chaque fois).
-function withThrottledButton(button, cooldownMs, action) {
+// remplir un formulaire à chaque fois). `keepLabel` : le libellé reste (le
+// bouton grisé suffit), pour les boutons voisins d'autres boutons —
+// « Patientez… », plus long, élargissait le bouton et décalait ses voisins.
+function withThrottledButton(button, cooldownMs, action, { keepLabel = false } = {}) {
   return async (...args) => {
     if (button.disabled) return;
     const originalText = button.textContent;
     button.disabled = true;
-    button.textContent = t("common.busy");
+    button.setAttribute("aria-busy", "true");
+    if (!keepLabel) button.textContent = t("common.busy");
     const start = Date.now();
     try {
       await action(...args);
@@ -1144,7 +1161,8 @@ function withThrottledButton(button, cooldownMs, action) {
         await new Promise((resolve) => setTimeout(resolve, remaining));
       }
       button.disabled = false;
-      button.textContent = originalText;
+      button.removeAttribute("aria-busy");
+      if (!keepLabel) button.textContent = originalText;
     }
   };
 }
@@ -1439,6 +1457,7 @@ document.getElementById("reset-wallet-dashboard").addEventListener("click", asyn
     profilesCache = [];
     currentProfileIndex = 0;
     stopBalanceAutoRefresh();
+    stopBalanceWatch();
     showView("onboarding");
   } catch (e) {
     alert(t("common.error", { err: e }));
@@ -1618,6 +1637,7 @@ function lockWallet() {
   profilesCache = [];
   currentProfileIndex = 0;
   stopBalanceAutoRefresh();
+  stopBalanceWatch();
   document.getElementById("unlock-password").value = "";
   showUnlockView();
 }
@@ -1778,6 +1798,13 @@ function stopBalanceAutoRefresh() {
   }
 }
 
+// Portefeuille quitté (verrouillage, réinitialisation) : plus aucune adresse
+// surveillée. Pas dans stopBalanceAutoRefresh, que startBalanceAutoRefresh
+// appelle juste après que les adresses affichées ont lancé la surveillance.
+function stopBalanceWatch() {
+  invoke("watch_balances", { targets: [] }).catch((e) => console.error(e));
+}
+
 // --- Prix indicatifs (USD) --------------------------------------------------
 // Purement informatif (voir core/src/price_rpc.rs) : aucune donnée sur l'adresse
 // ou le solde de l'utilisateur n'est envoyée à ce service, juste "quel est le prix
@@ -1809,7 +1836,8 @@ function updateFiatValue(card) {
     return;
   }
   const value = (balance * price).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  fiatEl.textContent = `≈ ${value} $`;
+  const text = `≈ ${value} $`;
+  if (fiatEl.textContent !== text) fiatEl.textContent = text;
 }
 
 async function refreshPrices() {
@@ -1845,82 +1873,80 @@ function formatMarketCap(value) {
 
 // Déjà triée par capitalisation décroissante côté Rust (voir
 // core/src/price_rpc.rs::get_market_data) : le frontend affiche l'ordre reçu tel
-// quel, sans re-trier.
+// quel, sans re-trier. Mise à jour SUR PLACE toutes les 30 s (lignes gardées,
+// textes changés seulement s'ils diffèrent, mini-courbe remplacée quand la
+// nouvelle arrive) : reconstruire la liste faisait disparaître puis réapparaître
+// toutes les mini-courbes et perdre le focus clavier d'une ligne.
+function createMarketRow(coin) {
+  const row = document.createElement("div");
+  row.className = "market-row clickable";
+  row.dataset.symbol = coin.symbol;
+  row.innerHTML = `<div class="market-name"><span class="market-symbol"></span></div><div class="market-spark"></div>
+    <div class="market-figures"><div class="market-change"></div><div class="market-price"></div><div class="market-cap"></div></div>`;
+  row.querySelector(".market-name").prepend(document.createTextNode(coin.name));
+  row.querySelector(".market-symbol").textContent = coin.symbol;
+  // Un clic (ou Entrée) ouvre la courbe en grand, période au choix.
+  const openChart = () =>
+    openChartModal({
+      title: `${coin.name} (${coin.symbol})`,
+      ranges: CHART_RANGES,
+      range: "7d",
+      load: (range) => loadPriceChart(coin.symbol, range),
+      emptyKey: "charts.noData",
+    });
+  row.tabIndex = 0;
+  row.setAttribute("role", "button");
+  row.setAttribute("aria-label", t("charts.openPrice", { name: coin.name }));
+  row.addEventListener("click", openChart);
+  row.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      openChart();
+    }
+  });
+  return row;
+}
+
+function setText(el, text) {
+  if (el.textContent !== text) el.textContent = text;
+}
+
+function fillMarketRow(row, coin) {
+  setText(row.querySelector(".market-price"), coin.price_usd.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " $");
+  setText(row.querySelector(".market-cap"), formatMarketCap(coin.market_cap_usd));
+  const changeDiv = row.querySelector(".market-change");
+  changeDiv.classList.remove("up", "down");
+  if (coin.change_24h_percent == null) {
+    setText(changeDiv, "—");
+  } else {
+    const isUp = coin.change_24h_percent >= 0;
+    changeDiv.classList.add(isUp ? "up" : "down");
+    setText(changeDiv, `${isUp ? "▲" : "▼"} ${Math.abs(coin.change_24h_percent).toFixed(2)} %`);
+  }
+  // Courbe des dernières 24 h (comme la variation affichée) ; l'ancienne reste
+  // affichée jusqu'à l'arrivée de la nouvelle.
+  const spark = row.querySelector(".market-spark");
+  invoke("get_price_chart", { symbol: coin.symbol, range: "1d" })
+    .then((points) => renderSparkline(spark, points))
+    .catch((e) => console.error(e));
+}
+
 async function loadMarkets() {
   const container = document.getElementById("markets-list");
   try {
     const coins = await invoke("get_market_prices");
-    container.innerHTML = "";
-    coins.forEach((coin) => {
-      const row = document.createElement("div");
-      row.className = "market-row";
-
-      const nameDiv = document.createElement("div");
-      nameDiv.className = "market-name";
-      nameDiv.textContent = coin.name;
-      const symbolSpan = document.createElement("span");
-      symbolSpan.className = "market-symbol";
-      symbolSpan.textContent = coin.symbol;
-      nameDiv.appendChild(symbolSpan);
-
-      const figures = document.createElement("div");
-      figures.className = "market-figures";
-      const priceDiv = document.createElement("div");
-      priceDiv.className = "market-price";
-      priceDiv.textContent = coin.price_usd.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " $";
-      const capDiv = document.createElement("div");
-      capDiv.className = "market-cap";
-      capDiv.textContent = formatMarketCap(coin.market_cap_usd);
-
-      const changeDiv = document.createElement("div");
-      changeDiv.className = "market-change";
-      if (coin.change_24h_percent == null) {
-        changeDiv.textContent = "—";
-      } else {
-        const isUp = coin.change_24h_percent >= 0;
-        changeDiv.classList.add(isUp ? "up" : "down");
-        const arrow = isUp ? "▲" : "▼";
-        changeDiv.textContent = `${arrow} ${Math.abs(coin.change_24h_percent).toFixed(2)} %`;
-      }
-
-      figures.appendChild(changeDiv);
-      figures.appendChild(priceDiv);
-      figures.appendChild(capDiv);
-
-      // Courbe des dernières 24 h (comme la variation affichée) ; un clic
-      // (ou Entrée) ouvre la courbe en grand, période au choix.
-      const spark = document.createElement("div");
-      spark.className = "market-spark";
-      invoke("get_price_chart", { symbol: coin.symbol, range: "1d" })
-        .then((points) => renderSparkline(spark, points))
-        .catch((e) => console.error(e));
-      const openChart = () =>
-        openChartModal({
-          title: `${coin.name} (${coin.symbol})`,
-          ranges: CHART_RANGES,
-          range: "7d",
-          load: (range) => loadPriceChart(coin.symbol, range),
-          emptyKey: "charts.noData",
-        });
-      row.classList.add("clickable");
-      row.tabIndex = 0;
-      row.setAttribute("role", "button");
-      row.setAttribute("aria-label", t("charts.openPrice", { name: coin.name }));
-      row.addEventListener("click", openChart);
-      row.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          openChart();
-        }
-      });
-
-      row.appendChild(nameDiv);
-      row.appendChild(spark);
-      row.appendChild(figures);
-      container.appendChild(row);
+    const existing = new Map([...container.querySelectorAll(".market-row")].map((row) => [row.dataset.symbol, row]));
+    const rows = coins.map((coin) => {
+      const row = existing.get(coin.symbol) || createMarketRow(coin);
+      fillMarketRow(row, coin);
+      return row;
     });
+    const sameOrder = rows.length === container.children.length && rows.every((row, i) => container.children[i] === row);
+    if (!sameOrder) container.replaceChildren(...rows);
   } catch (e) {
-    container.innerHTML = `<p class="muted">${t("wallet.marketsLoadError")}</p>`;
+    // Échec passager : les derniers prix affichés restent plutôt qu'un message
+    // à la place de toute la liste.
+    if (!container.querySelector(".market-row")) container.innerHTML = `<p class="muted">${t("wallet.marketsLoadError")}</p>`;
     console.error(e);
   }
 }
@@ -2003,6 +2029,7 @@ function renderCardAddress(card) {
 
 function renderCardAddresses() {
   document.querySelectorAll(".wallet-card").forEach(renderCardAddress);
+  updateBalanceWatch();
   // Adresses du profil changées (déverrouillage, changement de profil) : la
   // courbe d'évolution suit.
   loadPortfolioChart();
@@ -2205,20 +2232,39 @@ function networkForCard(card) {
   return coinConfig[card.dataset.coin].defaultNetwork;
 }
 
+// Réseau et adresse d'une carte : ce à quoi correspond le solde affiché.
+function balanceKey(card) {
+  const network = networkForCard(card);
+  return `${network}|${addressForCoin(card.dataset.coin, network)}`;
+}
+
 async function refreshBalance(card) {
   // Verrou par carte, partagé entre le clic manuel (bouton "Actualiser") et le
   // rafraîchissement automatique (setInterval, toutes les 15s) : sans lui, un appel
   // réseau qui dépasse 15s (fréquent sur des endpoints publics gratuits) se ferait
   // recouvrir par le tick suivant, empilant des requêtes concurrentes pour la même
   // carte — même symptôme de lag qu'un double-clic, mais déclenché par le minuteur.
-  if (card.dataset.refreshing === "1") return;
+  // Demande arrivée pendant une lecture (changement signalé en direct juste
+  // après l'envoi de la requête) : relue à la fin, pas perdue.
+  if (card.dataset.refreshing === "1") {
+    card.dataset.refreshAgain = "1";
+    return;
+  }
   card.dataset.refreshing = "1";
+  card.dataset.refreshAgain = "";
+  const key = balanceKey(card);
   try {
     const coin = card.dataset.coin;
     const network = networkForCard(card);
     const address = addressForCoin(coin, network);
     const balanceEl = card.querySelector('[data-field="balance"]');
-    balanceEl.textContent = "…";
+    // Solde déjà affiché pour ce réseau et cette adresse : il reste pendant la
+    // lecture, et après un échec passager. Le remplacer par « … » à chaque
+    // actualisation (toutes les 15 s) faisait clignoter tous les soldes et, en
+    // vue liste, bouger toutes les lignes (colonne ajustée à « … »). Autre
+    // réseau ou autre profil : l'ancien solde ne vaut plus rien.
+    const shown = card.dataset.balanceKey === key;
+    if (!shown) balanceEl.textContent = "…";
     // Le solde et l'indicateur "transaction en attente" sont deux appels
     // indépendants (l'un ne dépend pas du résultat de l'autre) : les lancer en
     // parallèle plutôt que l'un après l'autre coupe la latence perçue du
@@ -2229,11 +2275,14 @@ async function refreshBalance(card) {
     const balanceCommand = coin === "usdc" ? "get_usdc_balance" : "get_balance";
     const balancePromise = invoke(balanceCommand, { network, address })
       .then((balance) => {
-        balanceEl.textContent = balance;
+        if (balanceKey(card) !== key) return; // réseau ou profil changé entre-temps
+        if (balanceEl.textContent !== balance) balanceEl.textContent = balance;
+        card.dataset.balanceKey = key;
       })
       .catch((e) => {
-        balanceEl.textContent = t("wallet.balanceError");
         console.error(e);
+        if (balanceKey(card) !== key || shown) return;
+        balanceEl.textContent = t("wallet.balanceError");
       });
     const pendingPromise = checkPendingTx(card, address, network);
     await Promise.all([balancePromise, pendingPromise]);
@@ -2241,7 +2290,31 @@ async function refreshBalance(card) {
   } finally {
     card.dataset.refreshing = "";
   }
+  // Réseau ou profil changé pendant la lecture (ignorée), ou changement
+  // signalé entre-temps : relire.
+  if (balanceKey(card) !== key || card.dataset.refreshAgain === "1") refreshBalance(card);
 }
+
+// Surveillance en direct (voir core/src/balance_watch.rs) : dès qu'un envoi ou
+// une réception change le solde d'une carte affichée, Rust le signale
+// ("balance-changed") et la carte est relue aussitôt — Solana/USDC poussés par
+// le nœud (~1 s), Ethereum relu toutes les 6 s, Bitcoin toutes les 10 s (mempool
+// compris). Le rafraîchissement toutes les 15 s reste en filet de sécurité.
+function updateBalanceWatch() {
+  const targets = [...document.querySelectorAll(".wallet-card")]
+    .map((card) => {
+      const coin = card.dataset.coin;
+      const network = networkForCard(card);
+      return { id: coin, network: coin === "usdc" ? "usdc_solana" : network, address: addressForCoin(coin, network) };
+    })
+    .filter((target) => target.address);
+  invoke("watch_balances", { targets }).catch((e) => console.error(e));
+}
+
+window.__TAURI__.event.listen("balance-changed", (event) => {
+  const card = document.querySelector(`.wallet-card[data-coin="${event.payload}"]`);
+  if (card) refreshBalance(card);
+});
 
 // Signale une transaction détectée mais pas encore finalisée (mempool Bitcoin,
 // signature Solana pas encore "finalized") — utile pour voir des fonds entrants
@@ -2254,6 +2327,11 @@ async function checkPendingTx(card, address, network) {
   if (!badge || !address) return;
   try {
     const pending = await invoke("has_pending_tx", { network, address });
+    // Bitcoin : une réception non confirmée n'est PAS comptée dans le solde
+    // (son émetteur peut encore l'annuler) — son montant est montré ici.
+    const incoming = pending && network.startsWith("btc") ? await invoke("get_btc_pending_incoming", { network, address }) : null;
+    const text = incoming ? t("wallet.pendingIncoming", { amount: incoming }) : t("wallet.pendingBadge");
+    if (badge.textContent !== text) badge.textContent = text;
     badge.classList.toggle("visible", pending);
   } catch (e) {
     console.error(e);
@@ -2266,7 +2344,7 @@ function refreshAllBalances() {
 
 document.querySelectorAll(".wallet-card").forEach((card) => {
   const refreshBtn = card.querySelector('[data-action="refresh"]');
-  refreshBtn.addEventListener("click", withThrottledButton(refreshBtn, REFRESH_COOLDOWN_MS, () => refreshBalance(card)));
+  refreshBtn.addEventListener("click", withThrottledButton(refreshBtn, REFRESH_COOLDOWN_MS, () => refreshBalance(card), { keepLabel: true }));
   card.querySelector('[data-action="send"]').addEventListener("click", () => openSendModal(card));
   card.querySelector('[data-action="qr"]').addEventListener("click", () => openQrModal(card));
   // Cliquer l'adresse elle-même l'affiche en entier (même modale que le bouton QR,
@@ -2293,6 +2371,7 @@ document.querySelectorAll(".wallet-card").forEach((card) => {
     select.addEventListener("change", () => {
       renderCardAddress(card);
       refreshBalance(card);
+      updateBalanceWatch();
     });
   }
 });
@@ -3472,10 +3551,9 @@ async function refreshExternalWalletBalances() {
 const refreshExternalWalletsBtn = document.getElementById("refresh-external-wallets-btn");
 refreshExternalWalletsBtn.addEventListener(
   "click",
-  withThrottledButton(refreshExternalWalletsBtn, REFRESH_COOLDOWN_MS, async () => {
-    renderExternalWallets();
-    await refreshExternalWalletBalances();
-  })
+  // Sur place : reconstruire la liste remettait tous les soldes à « — » avant
+  // de les relire (tout clignotait et bougeait).
+  withThrottledButton(refreshExternalWalletsBtn, REFRESH_COOLDOWN_MS, refreshExternalWalletBalances, { keepLabel: true })
 );
 
 // --- Modale ajout d'un wallet externe ---------------------------------------
@@ -4237,7 +4315,7 @@ ledgerSendConfirmBtn.addEventListener(
 // (boutons de période au-dessus, résumé, note), rechargée en gardant l'ancienne
 // courbe estompée plutôt qu'un écran vide.
 
-const CHART_RANGES = ["1d", "7d", "30d", "1y"];
+const CHART_RANGES = ["1d", "7d", "30d", "1y", "all"];
 
 function chartLocale() {
   return currentLang === "en" ? "en-US" : "fr-FR";
@@ -4288,26 +4366,31 @@ function chartSpan(points) {
 }
 
 // Valeur actuelle, puis variation sur la période (couleur selon le sens) — ou
-// depuis le début des données connues, quand elles ne couvrent pas toute la période.
-function renderChartSummary(el, points, range, since) {
+// depuis le début des données connues, quand elles ne couvrent pas toute la
+// période ; « Tout » : depuis le premier point. En % pour un prix ; en dollars
+// (`deltaMode` "usd") pour la valeur d'un portefeuille, que dépôts et retraits
+// font varier sans rapport avec une performance (un % depuis un premier dépôt
+// de 1 $ affichait « +338 270 % »).
+function renderChartSummary(el, points, range, since, deltaMode = "pct") {
   el.replaceChildren();
   if (points.length === 0) return;
+  if (!since && range === "all") since = points[0][0];
   const first = points[0][1];
   const last = points[points.length - 1][1];
   el.appendChild(document.createTextNode(formatUsdValue(last)));
-  if (first > 0) {
-    const pct = ((last - first) / first) * 100;
-    const delta = document.createElement("span");
-    delta.className = `chart-delta ${pct >= 0 ? "up" : "down"}`;
-    delta.textContent = t("charts.delta", {
-      arrow: pct >= 0 ? "▲" : "▼",
-      pct: Math.abs(pct).toLocaleString(chartLocale(), { maximumFractionDigits: 2 }),
-      period: since
-        ? t("charts.periodSince", { date: new Date(since * 1000).toLocaleDateString(chartLocale()) })
-        : t(`charts.period.${range}`),
-    });
-    el.appendChild(delta);
-  }
+  if (deltaMode === "pct" && !(first > 0)) return;
+  const change = deltaMode === "usd" ? last - first : ((last - first) / first) * 100;
+  const delta = document.createElement("span");
+  delta.className = `chart-delta ${change >= 0 ? "up" : "down"}`;
+  const period = since
+    ? t("charts.periodSince", { date: new Date(since * 1000).toLocaleDateString(chartLocale()) })
+    : t(`charts.period.${range}`);
+  const arrow = change >= 0 ? "▲" : "▼";
+  delta.textContent =
+    deltaMode === "usd"
+      ? t("charts.deltaUsd", { arrow, amount: formatUsdValue(Math.abs(change)), period })
+      : t("charts.delta", { arrow, pct: Math.abs(change).toLocaleString(chartLocale(), { maximumFractionDigits: 2 }), period });
+  el.appendChild(delta);
 }
 
 function mountChart(view) {
@@ -4327,28 +4410,40 @@ function mountChart(view) {
   return refreshChart(view);
 }
 
-async function refreshChart(view) {
+// Historique encore en cours de lecture côté Rust (`loading`) : nouvel appel
+// peu après, sans estomper la courbe — elle se complète au fur et à mesure.
+// Changer de période ou fermer la fenêtre (jeton changé) arrête la suite.
+const CHART_POLL_MS = 1500;
+
+async function refreshChart(view, { poll = false } = {}) {
   const token = (view.token = (view.token || 0) + 1);
   view.rangesEl.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.range === view.range)));
-  if (!view.chartEl.firstChild) view.chartEl.replaceChildren(mutedParagraph(t("charts.loading")));
-  view.chartEl.classList.add("chart-loading");
+  if (!poll) {
+    if (!view.chartEl.firstChild) view.chartEl.replaceChildren(mutedParagraph(t("charts.loading")));
+    view.chartEl.classList.add("chart-loading");
+  }
   try {
     const data = await view.load(view.range);
     if (token !== view.token) return; // une demande plus récente l'emporte
     const points = data.points.every((p) => p[1] === 0) ? [] : data.points;
     view.points = points;
-    renderChartSummary(view.summaryEl, points, view.range, data.since);
+    renderChartSummary(view.summaryEl, points, view.range, data.since, view.deltaMode);
     renderLineChart(view.chartEl, points, {
       height: view.height,
       formatValue: formatUsdValue,
       formatAxis: formatAxisValue,
       formatTime: formatChartTime,
       formatTooltipTime: formatChartTooltipTime,
-      emptyText: t(view.emptyKey),
+      emptyText: data.loading ? t("charts.loading") : t(view.emptyKey),
       ariaLabel: view.title(),
     });
     view.noteEl.textContent = data.note || "";
     if (view.onRender) view.onRender();
+    if (data.loading) {
+      setTimeout(() => {
+        if (token === view.token) refreshChart(view, { poll: true });
+      }, CHART_POLL_MS);
+    }
   } catch (e) {
     if (token !== view.token) return;
     view.points = [];
@@ -4364,9 +4459,13 @@ async function loadHoldingsHistory(holdings, range) {
   if (holdings.length === 0) return { points: [] };
   const result = await invoke("get_portfolio_history", { holdings, range });
   const notes = [];
-  if (result.since) notes.push(t("charts.since", { date: new Date(result.since * 1000).toLocaleDateString(chartLocale()) }));
-  if (result.approximate) notes.push(t("charts.approximate"));
-  return { points: result.points, since: result.since, note: notes.join(" ") };
+  if (result.loading) {
+    const count = result.transactions_read;
+    notes.push(count ? t("charts.loadingHistory", { count: count.toLocaleString(chartLocale()) }) : t("charts.loadingHistoryStart"));
+  }
+  else if (result.since) notes.push(t("charts.since", { date: new Date(result.since * 1000).toLocaleDateString(chartLocale()) }));
+  if (result.approximate && !result.loading) notes.push(t("charts.approximate"));
+  return { points: result.points, since: result.since, note: notes.join(" "), loading: result.loading };
 }
 
 async function loadPriceChart(symbol, range) {
@@ -4407,9 +4506,9 @@ function renderChartTable() {
   chartModalTable.replaceChildren(table);
 }
 
-function openChartModal({ title, ranges, range, load, emptyKey }) {
+function openChartModal({ title, ranges, range, load, emptyKey, deltaMode = "pct" }) {
   document.getElementById("chart-modal-title").textContent = title;
-  Object.assign(chartModalView, { title: () => title, ranges, range, load, emptyKey, points: [] });
+  Object.assign(chartModalView, { title: () => title, ranges, range, load, emptyKey, deltaMode, points: [] });
   chartModalView.chartEl.replaceChildren();
   chartModalView.summaryEl.replaceChildren();
   chartModalView.noteEl.textContent = "";
@@ -4459,7 +4558,8 @@ function sectionView(section, extra) {
     rangesEl: section.querySelector(".chart-ranges"),
     height: 220,
     range: "30d",
-    ranges: ["7d", "30d", "1y"],
+    ranges: ["7d", "30d", "1y", "all"],
+    deltaMode: "usd",
     ...extra,
   };
 }
@@ -4477,7 +4577,14 @@ function loadPortfolioChart() {
 }
 
 portfolioSection.querySelector(".chart-expand").addEventListener("click", () =>
-  openChartModal({ title: t("charts.portfolioTitle"), ranges: portfolioView.ranges, range: portfolioView.range, load: portfolioView.load, emptyKey: portfolioView.emptyKey })
+  openChartModal({
+    title: t("charts.portfolioTitle"),
+    ranges: portfolioView.ranges,
+    range: portfolioView.range,
+    load: portfolioView.load,
+    emptyKey: portfolioView.emptyKey,
+    deltaMode: portfolioView.deltaMode,
+  })
 );
 
 // --- Évolution des wallets externes (tous, ou un groupe) -------------------------
@@ -4528,5 +4635,6 @@ externalChartSection.querySelector(".chart-expand").addEventListener("click", ()
     range: externalChartView.range,
     load: externalChartView.load,
     emptyKey: externalChartView.emptyKey,
+    deltaMode: externalChartView.deltaMode,
   })
 );

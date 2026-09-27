@@ -39,6 +39,19 @@ const FIVE_MINUTES: u64 = 300;
 const ONE_DAY: u64 = 86_400;
 const SEVEN_DAYS: u64 = 7 * ONE_DAY;
 const THIRTY_DAYS: u64 = 30 * ONE_DAY;
+/// Durée de vie maximale d'une demande ou d'une proposition en attente, quelle
+/// que soit celle annoncée par la dApp (`expiryTimestamp`, qu'elle choisit).
+const MAX_PENDING_LIFETIME: u64 = 3 * FIVE_MINUTES;
+/// Au-delà, les nouvelles demandes/propositions sont refusées : une dApp ne peut
+/// ni saturer la mémoire ni noyer l'utilisateur sous les fenêtres.
+const MAX_PENDING_REQUESTS: usize = 20;
+/// Par connexion : une dApp ne peut pas occuper toute la file des autres.
+const MAX_PENDING_PER_SESSION: usize = 8;
+const MAX_PENDING_PROPOSALS: usize = 10;
+/// Messages déjà reçus gardés en mémoire (et sur disque) une journée, au plus
+/// `MAX_SEEN` : au-delà de la durée de vie des messages du relais.
+const SEEN_LIFETIME: u64 = ONE_DAY;
+const MAX_SEEN: usize = 500;
 
 // Codes d'erreur du SDK officiel (`utils/src/errors.ts`).
 pub const USER_REJECTED: (i64, &str) = (5000, "User rejected.");
@@ -46,6 +59,8 @@ pub const UNSUPPORTED_CHAINS: (i64, &str) = (5100, "Unsupported chains.");
 pub const UNSUPPORTED_METHODS: (i64, &str) = (5101, "Unsupported methods.");
 pub const USER_DISCONNECTED: (i64, &str) = (6000, "User disconnected.");
 pub const UNSUPPORTED_WC_METHOD: (i64, &str) = (10001, "Unsupported wc_ method.");
+pub const DUPLICATE_REQUEST: (i64, &str) = (-32600, "Request id already pending.");
+pub const TOO_MANY_REQUESTS: (i64, &str) = (-32005, "Too many pending requests.");
 
 pub fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
@@ -125,6 +140,14 @@ impl Session {
     }
 }
 
+/// Demande ou proposition déjà reçue (canal, identifiant JSON-RPC).
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SeenMessage {
+    pub topic: String,
+    pub id: u64,
+    pub expiry: u64,
+}
+
 /// État persisté (`walletconnect.json`) : identité de ce client auprès du
 /// relais, appairages et sessions. Aucun secret du PORTEFEUILLE ici : les clés
 /// de session ne donnent accès qu'au contenu des échanges avec la dApp, pas
@@ -137,6 +160,14 @@ pub struct PersistedState {
     pub pairings: Vec<Pairing>,
     #[serde(default)]
     pub sessions: Vec<Session>,
+    /// Messages déjà reçus : le relais garantit une livraison « au moins
+    /// une fois » et peut redélivrer un message (reconnexion, accusé perdu).
+    /// Sans cet historique, une demande DÉJÀ SIGNÉE réapparaissait comme
+    /// nouvelle — un `eth_sendTransaction` confirmé une seconde fois aurait
+    /// payé deux fois. Gardé sur disque : une redélivrance peut suivre un
+    /// redémarrage. Trouvé au 24ᵉ passage (comme l'historique du SDK officiel).
+    #[serde(default)]
+    pub seen: Vec<SeenMessage>,
 }
 
 pub struct PendingProposal {
@@ -336,6 +367,7 @@ impl Engine {
         self.state.pairings.retain(|p| p.expiry > t);
         self.proposals.retain(|_, p| p.expiry > t);
         self.requests.retain(|_, r| r.expiry > t);
+        self.state.seen.retain(|m| m.expiry > t);
         if self.state.sessions.len() + self.state.pairings.len() != before {
             actions.push(Action::Persist);
             actions.push(Action::Emit(WcEvent::SessionsChanged));
@@ -358,6 +390,21 @@ impl Engine {
             active: false,
         });
         Ok(vec![Action::Persist, Action::Subscribe(parsed.topic.clone()), Action::FetchMessages(parsed.topic)])
+    }
+
+    /// (`topic`, `id`) déjà accepté (montré à l'utilisateur).
+    fn already_seen(&self, topic: &str, id: u64) -> bool {
+        self.state.seen.iter().any(|m| m.id == id && m.topic == topic)
+    }
+
+    /// Retient (`topic`, `id`) une fois la demande ou la proposition ACCEPTÉE :
+    /// une demande refusée (file pleine…) peut revenir sans risque, elle n'a
+    /// jamais été montrée.
+    fn remember(&mut self, topic: &str, id: u64) {
+        if self.state.seen.len() >= MAX_SEEN {
+            self.state.seen.remove(0);
+        }
+        self.state.seen.push(SeenMessage { topic: topic.to_string(), id, expiry: now() + SEEN_LIFETIME });
     }
 
     fn sym_key_for(&self, topic: &str) -> Option<[u8; 32]> {
@@ -409,6 +456,12 @@ impl Engine {
     fn on_pairing_request(&mut self, topic: &str, id: u64, method: &str, params: Value) -> Vec<Action> {
         match method {
             "wc_sessionPropose" => {
+                // Déjà reçue (redélivrance), identifiant repris par un autre
+                // appairage, ou trop de propositions : ignorée. Voir `on_session_request`.
+                if self.already_seen(topic, id) || self.proposals.contains_key(&id) || self.proposals.len() >= MAX_PENDING_PROPOSALS {
+                    return Vec::new();
+                }
+                self.remember(topic, id);
                 let proposer_public = params
                     .pointer("/proposer/publicKey")
                     .and_then(Value::as_str)
@@ -428,7 +481,7 @@ impl Engine {
                     ),
                     Err(_) => (Vec::new(), Vec::new()),
                 };
-                let expiry = params.get("expiryTimestamp").and_then(Value::as_u64).unwrap_or(now() + FIVE_MINUTES);
+                let expiry = params.get("expiryTimestamp").and_then(Value::as_u64).unwrap_or(now() + FIVE_MINUTES).min(now() + MAX_PENDING_LIFETIME);
                 let incompatible = namespaces.as_ref().err().cloned();
                 self.proposals.insert(
                     id,
@@ -465,12 +518,35 @@ impl Engine {
                     let result = json!([{"pubkey": session.solana_address}]);
                     return self.publish(topic, &rpc_result(id, result), 3 * FIVE_MINUTES, TAG_SESSION_REQUEST_RES).into_iter().collect();
                 }
-                let expiry = params.pointer("/request/expiryTimestamp").and_then(Value::as_u64).unwrap_or(now() + 3 * FIVE_MINUTES);
+                // Déjà reçue sur ce canal : redélivrance du relais, ignorée sans
+                // réponse (en attente, elle garde sa fenêtre ; déjà traitée,
+                // elle ne revient pas comme une nouvelle demande).
+                if self.already_seen(topic, id) {
+                    return Vec::new();
+                }
+                // L'identifiant JSON-RPC est choisi par la dApp et n'est unique
+                // que pour ELLE : une autre dApp connectée pouvait reprendre
+                // l'identifiant d'une demande en cours de confirmation, la
+                // remplacer, et recevoir la signature destinée à la première.
+                // Identifiant déjà en attente : refusé, la première demande reste.
+                if self.requests.contains_key(&id) {
+                    return self.publish(topic, &rpc_error(id, DUPLICATE_REQUEST), 3 * FIVE_MINUTES, TAG_SESSION_REQUEST_RES).into_iter().collect();
+                }
+                let from_session = self.requests.values().filter(|r| r.topic == topic).count();
+                if self.requests.len() >= MAX_PENDING_REQUESTS || from_session >= MAX_PENDING_PER_SESSION {
+                    return self.publish(topic, &rpc_error(id, TOO_MANY_REQUESTS), 3 * FIVE_MINUTES, TAG_SESSION_REQUEST_RES).into_iter().collect();
+                }
+                let expiry = params
+                    .pointer("/request/expiryTimestamp")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(now() + 3 * FIVE_MINUTES)
+                    .min(now() + MAX_PENDING_LIFETIME);
+                self.remember(topic, id);
                 self.requests.insert(
                     id,
                     PendingRequest { id, topic: topic.to_string(), method: request_method.clone(), params: request_params, chain: chain.clone(), expiry },
                 );
-                vec![Action::Emit(WcEvent::Request { id, topic: topic.to_string(), peer: session.peer, method: request_method, chain })]
+                vec![Action::Persist, Action::Emit(WcEvent::Request { id, topic: topic.to_string(), peer: session.peer, method: request_method, chain })]
             }
             "wc_sessionPing" => self.publish(topic, &rpc_result(id, json!(true)), ONE_DAY, TAG_SESSION_PING_RES).into_iter().collect(),
             "wc_sessionDelete" => {
@@ -671,7 +747,7 @@ mod tests {
         let request = json!({"id": 99, "jsonrpc": "2.0", "method": "wc_sessionRequest", "params": {
             "request": {"method": "personal_sign", "params": ["0x48656c6c6f", account().evm]}, "chainId": "eip155:1"}});
         let actions = engine.handle_incoming(&session_topic, &crypto::encrypt_type0(&session_key, &request.to_string()).unwrap());
-        assert!(matches!(&actions[..], [Action::Emit(WcEvent::Request { id: 99, method, .. })] if method == "personal_sign"));
+        assert!(matches!(&actions[..], [Action::Persist, Action::Emit(WcEvent::Request { id: 99, method, .. })] if method == "personal_sign"));
         assert_eq!(engine.pending_request(99).unwrap().params[0], "0x48656c6c6f");
         let actions = engine.respond(99, Ok(json!("0xsignature"))).unwrap();
         let (_, message, tag) = &published(&actions)[0];
@@ -730,5 +806,119 @@ mod tests {
         assert!(engine.handle_incoming(&dapp.pairing_topic.clone(), &other_key).is_empty());
         let expired = format!("wc:{}@2?relay-protocol=irn&symKey={}&expiryTimestamp=1000", "ab".repeat(32), "cd".repeat(32));
         assert!(engine.pair(&expired).is_err());
+    }
+
+    /// dApp connectée (appairage, proposition, approbation) : canal et clé de session.
+    fn connect(engine: &mut Engine, pairing_key: [u8; 32], proposal_id: u64) -> (FakeDapp, String, [u8; 32]) {
+        let dapp = FakeDapp { pairing_topic: crypto::topic_for_key(&pairing_key), pairing_key, keys: crypto::KeyPair::generate().unwrap(), session_key: None };
+        engine.pair(&dapp.uri()).unwrap();
+        let required = json!({"eip155": {"chains": ["eip155:1"], "methods": ["personal_sign"], "events": []}});
+        engine.handle_incoming(&dapp.pairing_topic.clone(), &dapp.propose(proposal_id, required, json!({})));
+        let pubs = published(&engine.approve(proposal_id, 0, &account()).unwrap());
+        let response = dapp.open(&dapp.pairing_key, &pubs[0].1);
+        let wallet_public = key_from_hex(response["result"]["responderPublicKey"].as_str().unwrap()).unwrap();
+        let key = *crypto::derive_sym_key(&dapp.keys.private, &wallet_public).unwrap();
+        (dapp, crypto::topic_for_key(&key), key)
+    }
+
+    fn sign_request(key: &[u8; 32], id: u64, expiry: Option<u64>) -> String {
+        let mut request = json!({"id": id, "jsonrpc": "2.0", "method": "wc_sessionRequest", "params": {
+            "request": {"method": "personal_sign", "params": ["0x48656c6c6f", account().evm]}, "chainId": "eip155:1"}});
+        if let Some(expiry) = expiry {
+            request["params"]["request"]["expiryTimestamp"] = json!(expiry);
+        }
+        crypto::encrypt_type0(key, &request.to_string()).unwrap()
+    }
+
+    /// 24ᵉ passage : le relais peut redélivrer un message. Une demande reçue
+    /// deux fois n'ouvre pas une seconde fenêtre et ne reçoit pas d'erreur ;
+    /// une demande DÉJÀ traitée ne revient pas comme nouvelle (un paiement
+    /// confirmé deux fois) — y compris après un redémarrage (historique
+    /// enregistré avec l'état).
+    #[test]
+    fn redelivered_messages_are_ignored_even_after_a_restart() {
+        let mut engine = Engine::new(PersistedState::default()).unwrap();
+        let (_, topic, key) = connect(&mut engine, [0x42; 32], 1);
+        let message = sign_request(&key, 42, None);
+        assert!(!engine.handle_incoming(&topic, &message).is_empty());
+        assert!(engine.handle_incoming(&topic, &message).is_empty(), "redélivrée en attente : rien, pas d'erreur");
+        assert!(engine.pending_request(42).is_some());
+        engine.respond(42, Ok(json!("0xsignature"))).unwrap();
+        assert!(engine.handle_incoming(&topic, &message).is_empty(), "redélivrée après la réponse : ignorée");
+        assert!(engine.pending_request(42).is_none(), "ne redevient pas une demande en attente");
+
+        let saved = serde_json::to_string(&engine.state).unwrap();
+        let mut restarted = Engine::new(serde_json::from_str(&saved).unwrap()).unwrap();
+        assert!(restarted.handle_incoming(&topic, &message).is_empty(), "après redémarrage : toujours ignorée");
+        assert!(restarted.pending_request(42).is_none());
+        let fresh = restarted.handle_incoming(&topic, &sign_request(&key, 43, None));
+        assert!(matches!(&fresh[..], [Action::Persist, Action::Emit(WcEvent::Request { id: 43, .. })]), "une vraie nouvelle demande passe");
+
+        // Proposition redélivrée : une seule fenêtre.
+        let required = json!({"eip155": {"chains": ["eip155:1"], "methods": ["personal_sign"], "events": []}});
+        let other = FakeDapp { pairing_topic: crypto::topic_for_key(&[0x45; 32]), pairing_key: [0x45; 32], keys: crypto::KeyPair::generate().unwrap(), session_key: None };
+        restarted.pair(&other.uri()).unwrap();
+        let proposal = other.propose(77, required, json!({}));
+        assert!(!restarted.handle_incoming(&other.pairing_topic.clone(), &proposal).is_empty());
+        assert!(restarted.handle_incoming(&other.pairing_topic.clone(), &proposal).is_empty());
+    }
+
+    /// 23ᵉ passage : l'identifiant d'une demande est choisi par la dApp. Une
+    /// AUTRE dApp reprenant l'identifiant d'une demande en attente ne la
+    /// remplace pas (sinon elle recevait la signature destinée à la première) ;
+    /// la durée de vie annoncée par la dApp est plafonnée, le nombre de
+    /// demandes et de propositions en attente borné.
+    #[test]
+    fn a_dapp_cannot_take_over_or_flood_pending_requests() {
+        let mut engine = Engine::new(PersistedState::default()).unwrap();
+        let (_, topic_a, key_a) = connect(&mut engine, [0x42; 32], 1);
+        let (dapp_b, topic_b, key_b) = connect(&mut engine, [0x43; 32], 2);
+
+        engine.handle_incoming(&topic_a, &sign_request(&key_a, 500, None));
+        let actions = engine.handle_incoming(&topic_b, &sign_request(&key_b, 500, None));
+        let (topic, message, _) = &published(&actions)[0];
+        assert_eq!(topic, &topic_b);
+        assert_eq!(dapp_b.open(&key_b, message)["error"]["code"], DUPLICATE_REQUEST.0);
+        assert_eq!(engine.pending_request(500).unwrap().topic, topic_a, "la demande de la 1re dApp reste");
+
+        engine.handle_incoming(&topic_a, &sign_request(&key_a, 501, Some(u64::MAX)));
+        assert!(engine.pending_request(501).unwrap().expiry <= now() + MAX_PENDING_LIFETIME);
+
+        // Une dApp : au plus 8 demandes en attente, sans bloquer les autres.
+        for id in 600..620 {
+            engine.handle_incoming(&topic_b, &sign_request(&key_b, id, None));
+        }
+        let actions = engine.handle_incoming(&topic_b, &sign_request(&key_b, 700, None));
+        assert_eq!(dapp_b.open(&key_b, &published(&actions)[0].1)["error"]["code"], TOO_MANY_REQUESTS.0);
+        assert!(engine.pending_request(700).is_none());
+        assert_eq!(engine.requests.values().filter(|r| r.topic == topic_b).count(), MAX_PENDING_PER_SESSION);
+        // Refusée faute de place, elle n'a jamais été montrée : redélivrée une fois
+        // de la place libérée, elle est acceptée (pas ignorée comme « déjà vue »).
+        engine.respond(600, Err((5000, "User rejected.".into()))).unwrap();
+        engine.handle_incoming(&topic_b, &sign_request(&key_b, 700, None));
+        assert!(engine.pending_request(700).is_some());
+        engine.handle_incoming(&topic_a, &sign_request(&key_a, 502, None));
+        assert!(engine.pending_request(502).is_some(), "la 1re dApp n'est pas bloquée par la 2de");
+        // Toutes connexions confondues : au plus 20.
+        let mut next_id = 800;
+        for key in 0x50..0x54u8 {
+            let (_, topic, session_key) = connect(&mut engine, [key; 32], u64::from(key));
+            for _ in 0..MAX_PENDING_PER_SESSION {
+                engine.handle_incoming(&topic, &sign_request(&session_key, next_id, None));
+                next_id += 1;
+            }
+        }
+        assert_eq!(engine.requests.len(), MAX_PENDING_REQUESTS);
+
+        // Propositions : même identifiant sur un autre appairage ignoré ; nombre borné.
+        let other = FakeDapp { pairing_topic: crypto::topic_for_key(&[0x44; 32]), pairing_key: [0x44; 32], keys: crypto::KeyPair::generate().unwrap(), session_key: None };
+        engine.pair(&other.uri()).unwrap();
+        let required = json!({"eip155": {"chains": ["eip155:1"], "methods": ["personal_sign"], "events": []}});
+        engine.handle_incoming(&other.pairing_topic.clone(), &other.propose(900, required.clone(), json!({})));
+        assert!(engine.handle_incoming(&other.pairing_topic.clone(), &other.propose(900, required.clone(), json!({}))).is_empty());
+        for id in 901..920 {
+            engine.handle_incoming(&other.pairing_topic.clone(), &other.propose(id, required.clone(), json!({})));
+        }
+        assert_eq!(engine.proposals.len(), MAX_PENDING_PROPOSALS);
     }
 }

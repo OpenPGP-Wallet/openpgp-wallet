@@ -35,6 +35,11 @@ fn set_ui_language(lang: String) {
 /// Messages sans valeur interpolée : correspondance exacte avec le texte français
 /// tel qu'écrit dans `core/` et dans ce fichier.
 const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
+    // core/src/sol_rpc.rs
+    (
+        "le nœud Solana public limite le nombre de requêtes : réessayez dans un instant",
+        "the public Solana node is limiting requests: try again in a moment",
+    ),
     // core/src/api.rs
     ("sérialisation des profils", "profile serialization"),
     ("écriture des profils", "writing profiles"),
@@ -126,6 +131,7 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ),
     ("proposition de connexion introuvable ou expirée", "connection proposal not found or expired"),
     ("demande introuvable ou expirée", "request not found or expired"),
+    ("la demande a changé depuis son affichage — refusée", "the request changed since it was displayed — refused"),
     ("connexion introuvable", "connection not found"),
     ("WalletConnect indisponible (démarrage impossible)", "WalletConnect unavailable (failed to start)"),
     (
@@ -430,6 +436,7 @@ fn translate_dynamic_error(msg: &str) -> Option<String> {
     }
     if let Some(rest) = msg.strip_prefix("fonds insuffisants : ") {
         let translated = rest
+            .replace("sat confirmés disponibles", "confirmed sat available")
             .replace("disponibles", "available")
             .replace("de frais de gas requis", "gas fee required")
             .replace("de frais requis", "fee required");
@@ -1131,7 +1138,9 @@ fn get_balance(network: String, address: String) -> Result<String, String> {
         }
         "btc_testnet" | "btc_mainnet" => {
             let net = btc_network(&network)?;
-            let sat = api::get_btc_balance(&address, net).t_err()?;
+            // Confirmé moins les envois en attente ; les réceptions non
+            // confirmées sont montrées à part (`get_btc_pending_incoming`).
+            let sat = api::get_btc_balance_view(&address, net).t_err()?.settled_sat;
             Ok(format!("{:.8}", sat as f64 / 1e8))
         }
         "sol_devnet" | "sol_mainnet" => {
@@ -1141,6 +1150,20 @@ fn get_balance(network: String, address: String) -> Result<String, String> {
         }
         other => Err(translate_error(&format!("réseau inconnu : {other}"))),
     }
+}
+
+/// Réceptions Bitcoin non confirmées de `address` (montant BTC), `None` s'il n'y
+/// en a pas : affichées à part sur la carte, jamais comptées dans le solde —
+/// elles peuvent encore être annulées par leur émetteur (voir
+/// `api::BtcBalanceView`).
+#[tauri::command]
+async fn get_btc_pending_incoming(network: String, address: String) -> Result<Option<String>, String> {
+    run_blocking(move || {
+        let net = btc_network(&network)?;
+        let sat = api::get_btc_balance_view(&address, net).t_err()?.incoming_pending_sat;
+        Ok((sat > 0).then(|| format!("{:.8}", sat as f64 / 1e8)))
+    })
+    .await
 }
 
 /// Solde USDC — mainnet uniquement (voir sol_spl.rs : pas de mint devnet
@@ -1153,6 +1176,40 @@ fn get_usdc_balance(network: String, address: String) -> Result<String, String> 
     let net = sol_network(&network)?;
     let micros = api::get_usdc_balance(&address, net).t_err()?;
     Ok(format!("{:.6}", micros as f64 / 1e6))
+}
+
+#[derive(serde::Deserialize)]
+struct WatchTargetDto {
+    /// Carte à relire ("evm", "btc", "sol", "usdc"), rendue telle quelle.
+    id: String,
+    network: String,
+    address: String,
+}
+
+/// Surveillance en direct des soldes des cartes affichées.
+#[derive(Default)]
+struct BalanceWatchState(std::sync::Mutex<Option<pgp_wallet_poc::balance_watch::BalanceWatch>>);
+
+/// Remplace la surveillance en direct des soldes (voir
+/// `core/src/balance_watch.rs`) : à chaque changement, l'événement
+/// "balance-changed" donne l'id de la carte à relire. Liste vide : arrêt
+/// (verrouillage). Adresses publiques seulement.
+#[tauri::command]
+fn watch_balances(targets: Vec<WatchTargetDto>, app: tauri::AppHandle, state: tauri::State<BalanceWatchState>) -> Result<(), String> {
+    let mut current = state.0.lock().unwrap_or_else(|p| p.into_inner());
+    *current = None; // arrête la surveillance précédente
+    if targets.is_empty() {
+        return Ok(());
+    }
+    let notify: pgp_wallet_poc::balance_watch::Notify = std::sync::Arc::new(move |id: &str| {
+        let _ = app.emit("balance-changed", id);
+    });
+    let targets = targets
+        .into_iter()
+        .map(|t| pgp_wallet_poc::balance_watch::Target { id: t.id, network: t.network, address: t.address })
+        .collect();
+    *current = Some(pgp_wallet_poc::balance_watch::start(targets, notify).t_err()?);
+    Ok(())
 }
 
 #[derive(Serialize)]
@@ -1335,7 +1392,7 @@ fn chart_range(range: &str) -> Result<price_history::ChartRange, String> {
 }
 
 /// Courbe de prix (instant, prix en dollars) d'une crypto sur la période
-/// ("1d", "7d", "30d", "1y") ; `symbol` : "BTC", "ETH", "SOL" ou "USDC".
+/// ("1d", "7d", "30d", "1y", "all") ; `symbol` : "BTC", "ETH", "SOL" ou "USDC".
 #[tauri::command]
 async fn get_price_chart(symbol: String, range: String) -> Result<Vec<(i64, f64)>, String> {
     run_blocking(move || {
@@ -1362,6 +1419,8 @@ struct PortfolioHistoryDto {
     points: Vec<(i64, f64)>,
     since: Option<i64>,
     approximate: bool,
+    loading: bool,
+    transactions_read: usize,
 }
 
 /// Valeur en dollars d'un ensemble d'adresses publiques au fil de la période
@@ -1372,7 +1431,13 @@ async fn get_portfolio_history(holdings: Vec<HoldingDto>, range: String) -> Resu
         let holdings: Vec<pgp_wallet_poc::portfolio::Holding> =
             holdings.into_iter().map(|h| pgp_wallet_poc::portfolio::Holding { network: h.network, address: h.address }).collect();
         let history = pgp_wallet_poc::portfolio::portfolio_history(&holdings, chart_range(&range)?).t_err()?;
-        Ok(PortfolioHistoryDto { points: history.points, since: history.since, approximate: history.approximate })
+        Ok(PortfolioHistoryDto {
+            points: history.points,
+            since: history.since,
+            approximate: history.approximate,
+            loading: history.loading,
+            transactions_read: history.transactions_read,
+        })
     })
     .await
 }
@@ -2490,8 +2555,9 @@ struct ProfileAddressCache(std::sync::Mutex<std::collections::HashMap<u32, (Stri
 #[derive(Default)]
 struct WcState {
     client: std::sync::OnceLock<std::sync::Arc<pgp_wallet_poc::walletconnect::WalletConnect>>,
-    /// Demandes préparées (ce qui sera signé ET affiché), par identifiant.
-    prepared: std::sync::Mutex<std::collections::HashMap<u64, dapp_requests::Prepared>>,
+    /// Demandes préparées (ce qui sera signé ET affiché), par identifiant,
+    /// avec la connexion (topic) dont elles viennent.
+    prepared: std::sync::Mutex<std::collections::HashMap<u64, (String, dapp_requests::Prepared)>>,
 }
 
 fn remember_addresses(app: &tauri::AppHandle, index: u32, evm: &str, solana: &str) {
@@ -2852,7 +2918,7 @@ fn wc_prepare_request(request_id: u64, app: tauri::AppHandle) -> Result<Prepared
     let label = api::list_profiles(&dir).into_iter().find(|p| p.index == session.profile_index).map(|p| p.label).unwrap_or_default();
     let account = if request.chain.starts_with("solana:") { session.solana_address.clone() } else { session.evm_address.clone() };
     let (text, danger) = describe_prepared(&prepared, &session.peer, &label, &account);
-    app.state::<WcState>().prepared.lock().unwrap_or_else(|p| p.into_inner()).insert(request_id, prepared);
+    app.state::<WcState>().prepared.lock().unwrap_or_else(|p| p.into_inner()).insert(request_id, (request.topic.clone(), prepared));
     Ok(PreparedRequestDto { text, danger })
 }
 
@@ -2864,13 +2930,19 @@ fn wc_approve_request(request_id: u64, password: String, app: tauri::AppHandle) 
     let password = Zeroizing::new(password);
     let client = wc_client(&app)?;
     let state = app.state::<WcState>();
-    let prepared = state
+    let (prepared_topic, prepared) = state
         .prepared
         .lock()
         .unwrap_or_else(|p| p.into_inner())
         .remove(&request_id)
         .ok_or_else(|| translate_error("demande introuvable ou expirée"))?;
     let request = client.pending_request(request_id).ok_or_else(|| translate_error("demande introuvable ou expirée"))?;
+    // La réponse part vers la connexion de la demande EN ATTENTE : elle doit
+    // être celle de la demande préparée et affichée (défense en profondeur,
+    // voir le refus des identifiants en double dans `engine`).
+    if request.topic != prepared_topic {
+        return Err(translate_error("la demande a changé depuis son affichage — refusée"));
+    }
     let session = client.session(&request.topic).ok_or_else(|| translate_error("connexion introuvable"))?;
     let dir = data_dir(&app)?;
     let label = api::list_profiles(&dir).into_iter().find(|p| p.index == session.profile_index).map(|p| p.label).unwrap_or_default();
@@ -2883,7 +2955,7 @@ fn wc_approve_request(request_id: u64, password: String, app: tauri::AppHandle) 
     match api::sign_dapp_request(&dir, &password, session.profile_index, &session.account(), &prepared) {
         Ok(result) => client.respond(request_id, Ok(result)).t_err().map(|_| true),
         Err(e) => {
-            state.prepared.lock().unwrap_or_else(|p| p.into_inner()).insert(request_id, prepared);
+            state.prepared.lock().unwrap_or_else(|p| p.into_inner()).insert(request_id, (prepared_topic, prepared));
             Err(translate_error(&e.to_string()))
         }
     }
@@ -2944,10 +3016,14 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(ProfileAddressCache::default())
         .manage(WcState::default())
+        .manage(BalanceWatchState::default())
         .setup(|app| {
             if let Ok(dir) = app.path().app_data_dir() {
                 let _ = std::fs::create_dir_all(&dir);
                 install_panic_hook(dir.clone());
+                // Détails des transactions Solana finalisées déjà lus (données publiques) :
+                // le nœud public n'en accorde qu'environ un par seconde.
+                pgp_wallet_poc::sol_rpc::use_details_cache_file(dir.join("solana_tx_cache.jsonl"));
                 // Événements WalletConnect (proposition, demande, état du relais)
                 // relayés au frontend ; le contenu des demandes, lui, n'est
                 // jamais relu depuis le frontend (voir `wc_prepare_request`).
@@ -2988,6 +3064,8 @@ pub fn run() {
             restore_wallet,
             get_balance,
             get_usdc_balance,
+            get_btc_pending_incoming,
+            watch_balances,
             has_pending_tx,
             get_tx_history,
             get_usdc_tx_history,
