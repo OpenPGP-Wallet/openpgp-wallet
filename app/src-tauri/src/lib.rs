@@ -1549,6 +1549,25 @@ fn dialog_label(label: &str) -> String {
     }
 }
 
+/// Adresse Ethereum venue d'une dApp (contrat, bénéficiaire d'une autorisation
+/// de dépense) : montrée EN ENTIER, sous sa forme EIP-55. `dialog_label` la
+/// tronquait à 40 caractères sur 42 — les derniers, justement ceux où une
+/// adresse sosie diffère (vu lors du premier test réel avec une dApp). Autre
+/// chose qu'une adresse : traité comme un libellé.
+fn dialog_address(value: &str) -> String {
+    let value = value.trim();
+    let hex_part = value.strip_prefix("0x").or_else(|| value.strip_prefix("0X")).unwrap_or("");
+    if hex_part.len() != 40 || !hex_part.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return dialog_label(value);
+    }
+    let mut bytes = [0u8; 20];
+    for (i, byte) in bytes.iter_mut().enumerate() {
+        // 40 chiffres hexadécimaux ASCII vérifiés : découpage et lecture sûrs.
+        *byte = u8::from_str_radix(&hex_part[2 * i..2 * i + 2], 16).unwrap_or_default();
+    }
+    pgp_wallet_poc::derivation::format_address(&bytes)
+}
+
 /// Adresse saisie : espaces de bord retirés, puis REFUS de tout caractère
 /// invisible ou espace restant — aucune adresse valide n'en contient. La
 /// valeur renvoyée est celle affichée ET transmise à la signature.
@@ -2727,7 +2746,7 @@ fn describe_prepared(prepared: &dapp_requests::Prepared, peer: &pgp_wallet_poc::
         }
         Prepared::EvmTypedData { view, .. } => {
             let primary = dialog_label(&view.primary_type);
-            let contract = view.verifying_contract.as_deref().map(dialog_label).unwrap_or_else(|| "—".into());
+            let contract = view.verifying_contract.as_deref().map(dialog_address).unwrap_or_else(|| "—".into());
             let app = view.domain_name.as_deref().map(dialog_label).unwrap_or_else(|| "—".into());
             lines.push(if en {
                 format!("Signing STRUCTURED DATA (EIP-712) \"{primary}\"\nApplication: {app}\nContract: {contract}")
@@ -2737,7 +2756,7 @@ fn describe_prepared(prepared: &dapp_requests::Prepared, peer: &pgp_wallet_poc::
             match &view.risk {
                 TypedRisk::Permit { spender, amount, unlimited } => {
                     danger = true;
-                    let spender = spender.as_deref().map(dialog_label).unwrap_or_else(|| "?".into());
+                    let spender = spender.as_deref().map(dialog_address).unwrap_or_else(|| "?".into());
                     let amount = if *unlimited {
                         lang("un montant ILLIMITÉ", "an UNLIMITED amount").to_string()
                     } else {
@@ -3201,6 +3220,13 @@ mod tests {
         }
         assert_eq!(dialog_label("  Épargne   perso "), "Épargne perso");
         assert_eq!(dialog_label(&"x".repeat(100)).chars().count(), 41, "tronqué à 40 + « … »");
+        // Adresse de dApp : jamais tronquée, forme EIP-55 ; sinon, libellé.
+        let spender = "0x5555555555555555555555555555555555555abc";
+        assert_eq!(dialog_address(spender).len(), 42);
+        assert_eq!(dialog_address(spender).to_lowercase(), spender);
+        assert_eq!(dialog_address("0xCcCCccccCCCCcCCCCCCcCcCccCcCCCcCcccccccC"), "0xCcCCccccCCCCcCCCCCCcCcCccCcCCCcCcccccccC");
+        assert_eq!(dialog_address(&format!("0x{}
+{}", "1".repeat(40), "x".repeat(60))).chars().count(), 41, "pas une adresse : libellé");
         assert_eq!(canonical_address_input("  0xabc\n").unwrap(), "0xabc");
         assert!(canonical_address_input("bc1q abc").is_err());
         assert!(canonical_address_input("  ").is_err());

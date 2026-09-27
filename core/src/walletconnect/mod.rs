@@ -27,8 +27,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 /// Identifiant du projet chez Reown (dashboard.reown.com), exigé par le relais
 /// pour toute connexion. Public par nature (inclus dans l'app, comme dans
-/// toute dApp) : ce n'est pas un secret. Vide tant qu'il n'a pas été créé.
-pub const PROJECT_ID: &str = "";
+/// toute dApp) : ce n'est pas un secret. Projet de type « WalletKit ».
+pub const PROJECT_ID: &str = "b40fbfec04c3137a8f14a25edd9905e6";
 
 const STATE_FILE: &str = "walletconnect.json";
 
