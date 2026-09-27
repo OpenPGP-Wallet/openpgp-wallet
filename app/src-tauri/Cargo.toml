@@ -1,6 +1,6 @@
 [package]
 name = "wallet"
-version = "2.3.0"
+version = "2.4.0"
 description = "Portefeuille crypto non-custodial (Bitcoin, EVM, Solana) protégé par PGP au lieu d'une seed phrase en clair"
 authors = ["Khadim"]
 edition = "2021"
