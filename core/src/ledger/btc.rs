@@ -124,7 +124,7 @@ fn sha256(data: &[u8]) -> [u8; 32] {
     Sha256::digest(data).into()
 }
 
-fn hash160(pubkey: &[u8]) -> [u8; 20] {
+pub(crate) fn hash160(pubkey: &[u8]) -> [u8; 20] {
     Ripemd160::digest(Sha256::digest(pubkey)).into()
 }
 
@@ -463,16 +463,28 @@ pub fn wallet_address(transport: &mut dyn Transport, account: &Account, change: 
 
 // --- Transactions -------------------------------------------------------------
 
-/// Transaction précédente (celle qui a créé un UTXO) analysée.
-struct PrevTx {
-    txid: [u8; 32],
+/// Transaction précédente (celle qui a créé un UTXO) analysée. Partagée avec
+/// le Trezor, qui en demande aussi la version, les entrées et le verrouillage.
+pub(crate) struct PrevTx {
+    pub(crate) txid: [u8; 32],
     /// Sérialisation sans témoins (celle que couvre le txid).
-    stripped: Vec<u8>,
-    outputs: Vec<(u64, Vec<u8>)>,
+    pub(crate) stripped: Vec<u8>,
+    pub(crate) version: u32,
+    pub(crate) inputs: Vec<PrevTxIn>,
+    pub(crate) outputs: Vec<(u64, Vec<u8>)>,
+    pub(crate) locktime: u32,
+}
+
+pub(crate) struct PrevTxIn {
+    /// Txid dépensé, dans l'ordre de sérialisation.
+    pub(crate) prevout: [u8; 32],
+    pub(crate) vout: u32,
+    pub(crate) script_sig: Vec<u8>,
+    pub(crate) sequence: u32,
 }
 
 /// Analyse une transaction brute, avec ou sans témoins (format BIP 144).
-fn parse_transaction(raw: &[u8]) -> Result<PrevTx> {
+pub(crate) fn parse_transaction(raw: &[u8]) -> Result<PrevTx> {
     let mut r = Reader::new(raw);
     let version = r.take(4)?;
     let segwit = raw.get(4..6) == Some(&[0x00, 0x01][..]);
@@ -480,13 +492,16 @@ fn parse_transaction(raw: &[u8]) -> Result<PrevTx> {
         r.take(2)?;
     }
     let body_start = r.pos;
-    let inputs = r.varint()?;
-    ensure!(inputs > 0, "transaction sans entrée");
-    for _ in 0..inputs {
-        r.take(36)?;
+    let input_count = r.varint()?;
+    ensure!(input_count > 0, "transaction sans entrée");
+    let mut inputs = Vec::new();
+    for _ in 0..input_count {
+        let prevout: [u8; 32] = r.array()?;
+        let vout = u32::from_le_bytes(r.array()?);
         let script = r.length()?;
-        r.take(script)?;
-        r.take(4)?;
+        let script_sig = r.take(script)?.to_vec();
+        let sequence = u32::from_le_bytes(r.array()?);
+        inputs.push(PrevTxIn { prevout, vout, script_sig, sequence });
     }
     let mut outputs = Vec::new();
     for _ in 0..r.varint()? {
@@ -496,7 +511,7 @@ fn parse_transaction(raw: &[u8]) -> Result<PrevTx> {
     }
     let body_end = r.pos;
     if segwit {
-        for _ in 0..inputs {
+        for _ in 0..input_count {
             for _ in 0..r.varint()? {
                 let item = r.length()?;
                 r.take(item)?;
@@ -510,26 +525,33 @@ fn parse_transaction(raw: &[u8]) -> Result<PrevTx> {
     stripped.extend_from_slice(locktime);
     let mut txid = dsha256(&stripped);
     txid.reverse();
-    Ok(PrevTx { txid, stripped, outputs })
+    Ok(PrevTx {
+        txid,
+        stripped,
+        version: u32::from_le_bytes(version.try_into().expect("4 octets")),
+        inputs,
+        outputs,
+        locktime: u32::from_le_bytes(locktime.try_into().expect("4 octets")),
+    })
 }
 
-struct TxIn {
+pub(crate) struct TxIn {
     /// Txid dans l'ordre de sérialisation (inverse de l'ordre affiché).
-    prevout: [u8; 32],
-    vout: u32,
-    sequence: u32,
+    pub(crate) prevout: [u8; 32],
+    pub(crate) vout: u32,
+    pub(crate) sequence: u32,
 }
 
-struct TxOut {
-    value: u64,
-    script: Vec<u8>,
+pub(crate) struct TxOut {
+    pub(crate) value: u64,
+    pub(crate) script: Vec<u8>,
 }
 
-struct UnsignedTx {
-    version: u32,
-    inputs: Vec<TxIn>,
-    outputs: Vec<TxOut>,
-    locktime: u32,
+pub(crate) struct UnsignedTx {
+    pub(crate) version: u32,
+    pub(crate) inputs: Vec<TxIn>,
+    pub(crate) outputs: Vec<TxOut>,
+    pub(crate) locktime: u32,
 }
 
 impl UnsignedTx {
@@ -545,7 +567,7 @@ impl UnsignedTx {
 
     /// Condensat BIP 143 (SIGHASH_ALL) de l'entrée `index`, qui dépense une
     /// sortie P2WPKH `hash160` de montant `value`.
-    fn sighash(&self, index: usize, hash160: &[u8; 20], value: u64) -> [u8; 32] {
+    pub(crate) fn sighash(&self, index: usize, hash160: &[u8; 20], value: u64) -> [u8; 32] {
         let prevouts: Vec<u8> = self.inputs.iter().flat_map(|i| [&i.prevout[..], &i.vout.to_le_bytes()].concat()).collect();
         let sequences: Vec<u8> = self.inputs.iter().flat_map(|i| i.sequence.to_le_bytes()).collect();
         let input = &self.inputs[index];
@@ -566,7 +588,7 @@ impl UnsignedTx {
     }
 
     /// Transaction finale : chaque entrée P2WPKH a pour témoin (signature, clé publique).
-    fn serialize_signed(&self, witnesses: &[(Vec<u8>, [u8; 33])]) -> Vec<u8> {
+    pub(crate) fn serialize_signed(&self, witnesses: &[(Vec<u8>, [u8; 33])]) -> Vec<u8> {
         let mut out = self.version.to_le_bytes().to_vec();
         out.extend([0x00, 0x01]); // marqueur et drapeau SegWit
         out.extend(varint(self.inputs.len()));

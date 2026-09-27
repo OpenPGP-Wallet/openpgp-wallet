@@ -89,18 +89,18 @@ fn parity_from_device_v(v: u8, chain_id: u64) -> Result<u8> {
 }
 
 /// r, s (s normalisé "bas", EIP-2) et parité effective.
-fn normalized(r: &[u8], s: &[u8], parity: u8) -> Result<(Signature, u8)> {
+pub(crate) fn normalized(r: &[u8], s: &[u8], parity: u8) -> Result<(Signature, u8)> {
     let signature = Signature::from_scalars(<[u8; 32]>::try_from(r)?, <[u8; 32]>::try_from(s)?)
-        .map_err(|_| anyhow!("signature Ledger invalide"))?;
+        .map_err(|_| anyhow!("signature de l'appareil invalide"))?;
     Ok(match signature.normalize_s() {
         Some(low) => (low, parity ^ 1),
         None => (signature, parity),
     })
 }
 
-fn recover_address(digest: &[u8; 32], signature: &Signature, parity: u8) -> Result<[u8; 20]> {
+pub(crate) fn recover_address(digest: &[u8; 32], signature: &Signature, parity: u8) -> Result<[u8; 20]> {
     let recid = RecoveryId::from_byte(parity).ok_or_else(|| anyhow!("parité de signature invalide"))?;
-    let key = VerifyingKey::recover_from_prehash(digest, signature, recid).map_err(|_| anyhow!("signature Ledger non recouvrable"))?;
+    let key = VerifyingKey::recover_from_prehash(digest, signature, recid).map_err(|_| anyhow!("signature de l'appareil non recouvrable"))?;
     address_of(key.to_encoded_point(false).as_bytes())
 }
 

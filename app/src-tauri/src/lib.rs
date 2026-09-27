@@ -276,12 +276,46 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     // core/src/address_book.rs
     ("sérialisation du carnet d'adresses", "address book serialization"),
     ("écriture du carnet d'adresses", "writing the address book"),
-    // core/src/hardware.rs, core/src/ledger/
-    ("compte Ledger introuvable", "Ledger account not found"),
-    ("ce compte Ledger est déjà ajouté", "this Ledger account has already been added"),
-    ("nom du compte Ledger invalide (1 à 60 caractères)", "invalid Ledger account name (1 to 60 characters)"),
-    ("nombre maximal de comptes Ledger atteint", "maximum number of Ledger accounts reached"),
-    ("l'adresse affichée par le Ledger diffère de celle enregistrée", "the address shown by the Ledger differs from the saved one"),
+    // core/src/hardware.rs, core/src/ledger/, core/src/trezor/
+    ("compte matériel introuvable", "hardware wallet account not found"),
+    ("ce compte est déjà ajouté", "this account has already been added"),
+    ("nom du compte invalide (1 à 60 caractères)", "invalid account name (1 to 60 characters)"),
+    ("nombre maximal de comptes matériels atteint", "maximum number of hardware wallet accounts reached"),
+    ("l'adresse affichée par l'appareil diffère de celle enregistrée", "the address shown by the device differs from the saved one"),
+    ("compte Bitcoin matériel incomplet", "incomplete hardware Bitcoin account"),
+    ("aucun Trezor détecté : branchez-le et déverrouillez-le", "no Trezor detected: plug it in and unlock it"),
+    (
+        "ouverture du Trezor impossible (déjà utilisé par Trezor Suite ou une autre application ?)",
+        "cannot open the Trezor (already used by Trezor Suite or another application?)",
+    ),
+    (
+        "Trezor déjà utilisé par une autre application : fermez Trezor Suite puis réessayez",
+        "Trezor already used by another application: close Trezor Suite and try again",
+    ),
+    (
+        "Trezor Model One détecté : ce modèle n'est pas pris en charge (saisie du PIN depuis l'ordinateur)",
+        "Trezor Model One detected: this model is not supported (PIN entered from the computer)",
+    ),
+    (
+        "ce Trezor demande la saisie du PIN depuis l'ordinateur (Model One) : non pris en charge",
+        "this Trezor asks for the PIN to be entered from the computer (Model One): not supported",
+    ),
+    ("opération refusée sur le Trezor", "operation refused on the Trezor"),
+    ("saisie du PIN annulée sur le Trezor", "PIN entry cancelled on the Trezor"),
+    ("PIN incorrect sur le Trezor", "wrong PIN on the Trezor"),
+    ("Trezor non initialisé : configurez-le d'abord avec Trezor Suite", "Trezor not initialized: set it up with Trezor Suite first"),
+    ("accès USB impossible", "USB access unavailable"),
+    ("écriture USB vers le Trezor impossible", "USB write to the Trezor failed"),
+    (
+        "la signature du Trezor ne correspond pas à la transaction attendue — transaction non diffusée",
+        "the Trezor signature does not match the expected transaction — transaction not broadcast",
+    ),
+    (
+        "la signature du Trezor ne correspond pas au compte attendu — transaction non diffusée",
+        "the Trezor signature does not match the expected account — transaction not broadcast",
+    ),
+    ("le Trezor n'a pas signé toutes les entrées", "the Trezor did not sign every input"),
+    ("l'adresse calculée par le Trezor ne correspond pas à celle du compte", "the address computed by the Trezor does not match the account's"),
     (
         "aucun Ledger détecté : branchez-le, déverrouillez-le et ouvrez l'application du réseau",
         "no Ledger detected: plug it in, unlock it and open the network's app",
@@ -328,6 +362,9 @@ const LEDGER_PREFIX_TRANSLATIONS: &[(&str, &str)] = &[
     ("Ledger : mémoire insuffisante pour cette opération", "Ledger: not enough memory for this operation"),
     ("Ledger : paramètre de commande refusé (version d'application trop ancienne ?)", "Ledger: command parameter refused (app version too old?)"),
     ("le Ledger a renvoyé l'erreur", "the Ledger returned error"),
+    ("données refusées par le Trezor : ", "data refused by the Trezor: "),
+    ("le Trezor a renvoyé une erreur : ", "the Trezor returned an error: "),
+    ("lecture USB depuis le Trezor impossible : ", "USB read from the Trezor failed: "),
 ];
 
 /// Messages avec une valeur interpolée (index, méthode RPC, montant...) : la
@@ -337,14 +374,16 @@ fn translate_dynamic_error(msg: &str) -> Option<String> {
     if let Some((en, rest)) = LEDGER_PREFIX_TRANSLATIONS.iter().find_map(|(fr, en)| msg.strip_prefix(fr).map(|rest| (en, rest))) {
         return Some(format!("{en}{rest}"));
     }
-    if let Some(label) = msg
-        .strip_prefix("ce Ledger ne correspond pas au compte « ")
-        .and_then(|rest| rest.strip_suffix(" » (autre appareil ou autre phrase de récupération)"))
-    {
-        return Some(format!("this Ledger does not match the account \"{label}\" (another device or another recovery phrase)"));
+    for device in ["Ledger", "Trezor"] {
+        if let Some(label) = msg
+            .strip_prefix(&format!("ce {device} ne correspond pas au compte « "))
+            .and_then(|rest| rest.strip_suffix(" » (autre appareil ou autre phrase de récupération)"))
+        {
+            return Some(format!("this {device} does not match the account \"{label}\" (another device or another recovery phrase)"));
+        }
     }
-    if let Some(label) = msg.strip_prefix("le compte Ledger « ").and_then(|rest| rest.strip_suffix(" » n'est pas sur ce réseau")) {
-        return Some(format!("the Ledger account \"{label}\" is not on this network"));
+    if let Some(label) = msg.strip_prefix("le compte « ").and_then(|rest| rest.strip_suffix(" » n'est pas sur ce réseau")) {
+        return Some(format!("the account \"{label}\" is not on this network"));
     }
     if let Some(rest) = msg.strip_prefix("profil actif introuvable (index ") {
         return Some(format!("active profile not found (index {rest}"));
@@ -1666,7 +1705,7 @@ struct ConfirmedSend {
 }
 
 /// Validation, avertissements et boîte de confirmation native, communs aux
-/// envois du portefeuille et des comptes Ledger (`device_note` : consigne
+/// envois du portefeuille et des comptes matériels (`device_note` : consigne
 /// ajoutée à la boîte pour la confirmation sur l'appareil). `Err` si refusé.
 #[allow(clippy::too_many_arguments)]
 fn confirm_send(
@@ -1742,17 +1781,19 @@ fn confirm_send(
     Ok(ConfirmedSend { to, amount, evm_gas_price, fee_sat })
 }
 
-// --- Comptes Ledger (core/src/hardware.rs) -------------------------------------
+// --- Comptes Ledger / Trezor (core/src/hardware.rs) ----------------------------
 // Commandes qui parlent à l'appareil ou au réseau exécutées via `run_blocking` :
 // l'appareil attend la confirmation physique de l'utilisateur, parfois
 // longtemps, et la fenêtre ne doit pas se figer pendant ce temps.
 
-/// Compte Ledger tel qu'affiché : l'empreinte et la clé publique étendue
+/// Compte matériel tel qu'affiché : l'empreinte et la clé publique étendue
 /// Bitcoin restent côté Rust (inutiles à l'affichage).
 #[derive(Serialize)]
 struct HardwareAccountDto {
     id: u32,
     label: String,
+    /// "ledger" ou "trezor".
+    device: String,
     network: String,
     address: String,
     path: String,
@@ -1760,12 +1801,12 @@ struct HardwareAccountDto {
 
 impl From<hardware::HardwareAccount> for HardwareAccountDto {
     fn from(a: hardware::HardwareAccount) -> Self {
-        Self { id: a.id, label: a.label, network: a.network, address: a.address, path: a.path }
+        Self { id: a.id, label: a.label, device: a.device, network: a.network, address: a.address, path: a.path }
     }
 }
 
 fn hardware_account(dir: &std::path::Path, id: u32) -> Result<hardware::HardwareAccount, String> {
-    hardware::list_accounts(dir).into_iter().find(|a| a.id == id).ok_or_else(|| translate_error("compte Ledger introuvable"))
+    hardware::list_accounts(dir).into_iter().find(|a| a.id == id).ok_or_else(|| translate_error("compte matériel introuvable"))
 }
 
 #[tauri::command]
@@ -1784,8 +1825,8 @@ async fn run_blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T, String
 }
 
 #[tauri::command]
-async fn hardware_connect(network: String, label: String, app: tauri::AppHandle) -> Result<HardwareAccountDto, String> {
-    run_blocking(move || hardware::connect_ledger(&data_dir(&app)?, &network, &label).map(Into::into).t_err()).await
+async fn hardware_connect(device: String, network: String, label: String, app: tauri::AppHandle) -> Result<HardwareAccountDto, String> {
+    run_blocking(move || hardware::connect_device(&data_dir(&app)?, &device, &network, &label).map(Into::into).t_err()).await
 }
 
 #[tauri::command]
@@ -1823,7 +1864,7 @@ async fn hardware_estimate_btc_fees(id: u32, app: tauri::AppHandle) -> Result<Bt
     .await
 }
 
-/// Envoi depuis un compte Ledger : mêmes validations, avertissements et boîte
+/// Envoi depuis un compte matériel : mêmes validations, avertissements et boîte
 /// native qu'un envoi du portefeuille (aucun mot de passe : rien à
 /// déverrouiller ici), puis revue et confirmation sur l'écran de l'appareil.
 #[tauri::command]
@@ -1832,11 +1873,13 @@ async fn hardware_send(id: u32, to: String, amount: String, fee_sat: Option<u64>
         let dir = data_dir(&app)?;
         let account = hardware_account(&dir, id)?;
         let network = account.network.clone();
-        let note = lang(
-            "Signature sur le Ledger : vérifiez sur SON écran que le destinataire et le montant sont identiques, puis confirmez-y.",
-            "Signed on the Ledger: check on ITS screen that the recipient and amount are identical, then confirm there.",
-        );
-        let send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &format!("Ledger — {}", account.label), Some(note))?;
+        let device = if account.device == "trezor" { "Trezor" } else { "Ledger" };
+        let note = if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
+            format!("Signed on the {device}: check on ITS screen that the recipient and amount are identical, then confirm there.")
+        } else {
+            format!("Signature sur le {device} : vérifiez sur SON écran que le destinataire et le montant sont identiques, puis confirmez-y.")
+        };
+        let send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &format!("{device} — {}", account.label), Some(&note))?;
         let result = match network.as_str() {
             "evm_sepolia" | "evm_mainnet" => {
                 let gas_price = send.evm_gas_price.ok_or_else(|| "prix du gas manquant".to_string())?;
@@ -3114,8 +3157,41 @@ mod tests {
             translate_dynamic_error("ce Ledger ne correspond pas au compte « Épargne » (autre appareil ou autre phrase de récupération)").unwrap(),
             "this Ledger does not match the account \"Épargne\" (another device or another recovery phrase)"
         );
-        assert_eq!(translate_dynamic_error("le compte Ledger « A » n'est pas sur ce réseau").unwrap(), "the Ledger account \"A\" is not on this network");
-        assert!(EXACT_ERROR_TRANSLATIONS.iter().any(|(fr, _)| *fr == "compte Ledger introuvable"));
+        assert_eq!(
+            translate_dynamic_error("ce Trezor ne correspond pas au compte « B » (autre appareil ou autre phrase de récupération)").unwrap(),
+            "this Trezor does not match the account \"B\" (another device or another recovery phrase)"
+        );
+        assert_eq!(translate_dynamic_error("le compte « A » n'est pas sur ce réseau").unwrap(), "the account \"A\" is not on this network");
+        assert_eq!(translate_dynamic_error("données refusées par le Trezor : Invalid path").unwrap(), "data refused by the Trezor: Invalid path");
+        assert!(EXACT_ERROR_TRANSLATIONS.iter().any(|(fr, _)| *fr == "compte matériel introuvable"));
+    }
+
+    /// Chaque message d'erreur des modules matériels a sa traduction : les
+    /// textes exacts du code sont relus ici, pour qu'un message renommé côté
+    /// Rust ne perde pas silencieusement sa version anglaise.
+    #[test]
+    fn hardware_error_messages_all_have_a_translation() {
+        let sources = [
+            include_str!("../../../core/src/hardware.rs"),
+            include_str!("../../../core/src/trezor/mod.rs"),
+            include_str!("../../../core/src/trezor/bitcoin.rs"),
+            include_str!("../../../core/src/trezor/ethereum.rs"),
+            include_str!("../../../core/src/trezor/solana.rs"),
+        ];
+        for message in [
+            "compte matériel introuvable",
+            "ce compte est déjà ajouté",
+            "nom du compte invalide (1 à 60 caractères)",
+            "nombre maximal de comptes matériels atteint",
+            "l'adresse affichée par l'appareil diffère de celle enregistrée",
+            "aucun Trezor détecté : branchez-le et déverrouillez-le",
+            "opération refusée sur le Trezor",
+            "la signature du Trezor ne correspond pas au compte attendu — transaction non diffusée",
+            "la signature du Trezor ne correspond pas à la transaction attendue — transaction non diffusée",
+        ] {
+            assert!(sources.iter().any(|s| s.contains(message)), "message absent du code : {message}");
+            assert!(EXACT_ERROR_TRANSLATIONS.iter().any(|(fr, _)| *fr == message), "sans traduction : {message}");
+        }
     }
 
     /// Consigne Ledger toujours séparée du montant ou des frais par une ligne

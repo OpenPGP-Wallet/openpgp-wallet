@@ -458,24 +458,25 @@ const I18N = {
     "regenBackup.resultSubtitle":
       "<strong>2 des 3 suffisent</strong> à tout récupérer. Téléchargez les 3 et notez les 3 mots de passe quelque part de sûr, séparément.",
     "regenBackup.resultClose": "J'ai téléchargé mes 3 nouvelles parts",
-    "nav.ledger": "Ledger",
-    "ledger.title": "Portefeuille matériel Ledger",
+    "nav.ledger": "Ledger / Trezor",
+    "ledger.title": "Portefeuille matériel (Ledger, Trezor)",
     "ledger.subtitle":
-      "Les clés d'un Ledger ne quittent jamais l'appareil : chaque envoi s'affiche sur son écran et doit y être confirmé. Avant chaque opération, branchez-le, déverrouillez-le et ouvrez l'application du réseau (Ethereum, Bitcoin ou Solana).",
-    "ledger.add": "+ Ajouter un compte Ledger",
+      "Les clés d'un portefeuille matériel ne quittent jamais l'appareil : chaque envoi s'affiche sur son écran et doit y être confirmé. Avant chaque opération, branchez-le et déverrouillez-le ; sur un Ledger, ouvrez aussi l'application du réseau (Ethereum, Bitcoin ou Solana) ; sur un Trezor, fermez Trezor Suite.",
+    "ledger.add": "+ Ajouter un compte",
     "ledger.refresh": "Actualiser",
     "ledger.btcNote":
-      "Bitcoin : compte natif SegWit (m/84'), première adresse de réception et première adresse de monnaie. Des fonds reçus sur d'autres adresses (par exemple avec Ledger Live) n'apparaissent pas ici.",
-    "ledger.empty": "Aucun compte Ledger pour l'instant — ajoutez-en un avec le bouton ci-dessus.",
-    "ledger.addTitle": "Ajouter un compte Ledger",
-    "ledger.addHint": "Branchez et déverrouillez le Ledger, puis ouvrez-y l'application du réseau choisi.",
+      "Bitcoin : compte natif SegWit (m/84'), première adresse de réception et première adresse de monnaie. Des fonds reçus sur d'autres adresses (par exemple avec Ledger Live ou Trezor Suite) n'apparaissent pas ici.",
+    "ledger.empty": "Aucun compte matériel pour l'instant — ajoutez-en un avec le bouton ci-dessus.",
+    "ledger.addTitle": "Ajouter un compte matériel",
+    "ledger.addHint": "Branchez et déverrouillez l'appareil. Ledger : ouvrez-y l'application du réseau choisi. Trezor : fermez Trezor Suite.",
+    "ledger.device": "Appareil",
     "ledger.label": "Nom (pour vous y retrouver)",
     "ledger.network": "Réseau",
-    "ledger.read": "Lire le compte sur le Ledger",
+    "ledger.read": "Lire le compte sur l'appareil",
     "ledger.labelRequired": "Le nom est requis.",
-    "ledger.verify": "Vérifier sur le Ledger",
-    "ledger.verifyPrompt": "Comparez l'adresse affichée par le Ledger avec celle-ci, puis confirmez-la sur l'appareil :\n{address}",
-    "ledger.verified": "Adresse confirmée sur le Ledger.",
+    "ledger.verify": "Vérifier sur l'appareil",
+    "ledger.verifyPrompt": "Comparez l'adresse affichée par l'appareil avec celle-ci, puis confirmez-la sur l'appareil :\n{address}",
+    "ledger.verified": "Adresse confirmée sur l'appareil.",
     "ledger.send": "Envoyer",
     "ledger.remove": "Retirer",
     "ledger.sendTitle": "Envoyer depuis « {label} »",
@@ -486,8 +487,8 @@ const I18N = {
     "ledger.feeMedium": "Moyen (~30 min) : {sat} sat",
     "ledger.feeSlow": "Lent (~1 h) : {sat} sat",
     "ledger.feeLoading": "Estimation des frais…",
-    "ledger.sendHint": "Après la confirmation de Windows, vérifiez le destinataire et le montant sur l'écran du Ledger, puis confirmez-y.",
-    "ledger.waitDevice": "Confirmez sur le Ledger…",
+    "ledger.sendHint": "Après la confirmation de Windows, vérifiez le destinataire et le montant sur l'écran de l'appareil, puis confirmez-y.",
+    "ledger.waitDevice": "Confirmez sur l'appareil…",
     "ledger.sent": "Transaction envoyée : {txid}",
     "ledger.fieldsRequired": "Le destinataire et le montant sont requis.",
     "charts.portfolioTitle": "Évolution du portefeuille",
@@ -844,24 +845,25 @@ const I18N = {
     "regenBackup.resultSubtitle":
       "<strong>2 out of 3 are enough</strong> to recover everything. Download all 3 and write down the 3 passwords somewhere safe, separately.",
     "regenBackup.resultClose": "I have downloaded my 3 new shares",
-    "nav.ledger": "Ledger",
-    "ledger.title": "Ledger hardware wallet",
+    "nav.ledger": "Ledger / Trezor",
+    "ledger.title": "Hardware wallet (Ledger, Trezor)",
     "ledger.subtitle":
-      "A Ledger's keys never leave the device: every transfer is shown on its screen and must be confirmed there. Before each operation, plug it in, unlock it and open the network's app (Ethereum, Bitcoin or Solana).",
-    "ledger.add": "+ Add a Ledger account",
+      "A hardware wallet's keys never leave the device: every transfer is shown on its screen and must be confirmed there. Before each operation, plug it in and unlock it; on a Ledger, also open the network's app (Ethereum, Bitcoin or Solana); on a Trezor, close Trezor Suite.",
+    "ledger.add": "+ Add an account",
     "ledger.refresh": "Refresh",
     "ledger.btcNote":
-      "Bitcoin: native SegWit account (m/84'), first receive address and first change address. Funds received on other addresses (for example with Ledger Live) do not show up here.",
-    "ledger.empty": "No Ledger account yet — add one with the button above.",
-    "ledger.addTitle": "Add a Ledger account",
-    "ledger.addHint": "Plug in and unlock the Ledger, then open the chosen network's app on it.",
+      "Bitcoin: native SegWit account (m/84'), first receive address and first change address. Funds received on other addresses (for example with Ledger Live or Trezor Suite) do not show up here.",
+    "ledger.empty": "No hardware wallet account yet — add one with the button above.",
+    "ledger.addTitle": "Add a hardware wallet account",
+    "ledger.addHint": "Plug in and unlock the device. Ledger: open the chosen network's app on it. Trezor: close Trezor Suite.",
+    "ledger.device": "Device",
     "ledger.label": "Name (for your own reference)",
     "ledger.network": "Network",
-    "ledger.read": "Read the account from the Ledger",
+    "ledger.read": "Read the account from the device",
     "ledger.labelRequired": "The name is required.",
-    "ledger.verify": "Verify on the Ledger",
-    "ledger.verifyPrompt": "Compare the address shown by the Ledger with this one, then confirm it on the device:\n{address}",
-    "ledger.verified": "Address confirmed on the Ledger.",
+    "ledger.verify": "Verify on the device",
+    "ledger.verifyPrompt": "Compare the address shown by the device with this one, then confirm it on the device:\n{address}",
+    "ledger.verified": "Address confirmed on the device.",
     "ledger.send": "Send",
     "ledger.remove": "Remove",
     "ledger.sendTitle": "Send from \"{label}\"",
@@ -872,8 +874,8 @@ const I18N = {
     "ledger.feeMedium": "Medium (~30 min): {sat} sat",
     "ledger.feeSlow": "Slow (~1 h): {sat} sat",
     "ledger.feeLoading": "Estimating fees…",
-    "ledger.sendHint": "After the Windows confirmation, check the recipient and amount on the Ledger's screen, then confirm there.",
-    "ledger.waitDevice": "Confirm on the Ledger…",
+    "ledger.sendHint": "After the Windows confirmation, check the recipient and amount on the device's screen, then confirm there.",
+    "ledger.waitDevice": "Confirm on the device…",
     "ledger.sent": "Transaction sent: {txid}",
     "ledger.fieldsRequired": "Recipient and amount are required.",
     "charts.portfolioTitle": "Wallet value over time",
@@ -4050,7 +4052,8 @@ function renderLedgerAccounts() {
     labelEl.textContent = account.label;
     const meta = document.createElement("span");
     meta.className = "recipient-fp";
-    meta.textContent = `${externalNetworkLabel(account.network)} · ${account.address} · m/${account.path}`;
+    const deviceName = account.device === "trezor" ? "Trezor" : "Ledger";
+    meta.textContent = `${deviceName} · ${externalNetworkLabel(account.network)} · ${account.address} · m/${account.path}`;
     info.append(labelEl, meta);
 
     const actions = document.createElement("div");
@@ -4131,12 +4134,13 @@ ledgerAddConfirmBtn.addEventListener(
     hideError(errorEl);
     const label = document.getElementById("ledger-add-label").value.trim();
     const network = document.getElementById("ledger-add-network").value;
+    const device = document.getElementById("ledger-add-device").value;
     if (!label) {
       showError(errorEl, t("ledger.labelRequired"));
       return;
     }
     try {
-      await invoke("hardware_connect", { network, label });
+      await invoke("hardware_connect", { device, network, label });
       document.getElementById("ledger-add-modal").classList.add("hidden");
       loadLedgerAccounts();
     } catch (e) {

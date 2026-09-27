@@ -124,7 +124,7 @@
           <button class="nav-tab" data-tab="external" data-i18n="nav.external">Wallets externes</button>
           <button class="nav-tab" data-tab="addressbook" data-i18n="nav.addressBook">Carnet d'adresses</button>
           <button class="nav-tab" data-tab="walletconnect" data-i18n="nav.walletconnect">Applications</button>
-          <button class="nav-tab" data-tab="ledger" data-i18n="nav.ledger">Ledger</button>
+          <button class="nav-tab" data-tab="ledger" data-i18n="nav.ledger">Ledger / Trezor</button>
           <button class="nav-tab" data-tab="settings" data-i18n="nav.settings">Paramètres</button>
         </div>
         <div class="navbar-right">
@@ -601,7 +601,7 @@
 
       <section class="tab-panel hidden" data-panel="ledger">
         <div class="card wide">
-          <h1 data-i18n="ledger.title">Portefeuille matériel Ledger</h1>
+          <h1 data-i18n="ledger.title">Portefeuille matériel (Ledger, Trezor)</h1>
           <p class="muted" data-i18n="ledger.subtitle">
             Les clés d'un Ledger ne quittent jamais l'appareil : chaque envoi s'affiche sur son écran et
             doit y être confirmé.
@@ -1139,6 +1139,18 @@
       <div class="modal">
         <h2 data-i18n="ledger.addTitle">Ajouter un compte Ledger</h2>
         <p class="muted" data-i18n="ledger.addHint"></p>
+        <label data-i18n="ledger.device">Appareil</label>
+        <div class="custom-select dropdown">
+          <select id="ledger-add-device">
+            <option value="ledger">Ledger</option>
+            <option value="trezor">Trezor (modèle T, Safe 3, Safe 5)</option>
+          </select>
+          <button type="button" class="custom-select-trigger">
+            <span class="custom-select-label"></span>
+            <span class="select-arrow"></span>
+          </button>
+          <ul class="custom-select-options"></ul>
+        </div>
         <label data-i18n="ledger.label">Nom (pour vous y retrouver)</label>
         <input id="ledger-add-label" type="text" maxlength="60" />
         <label data-i18n="ledger.network">Réseau</label>

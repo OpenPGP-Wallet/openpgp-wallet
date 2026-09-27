@@ -118,6 +118,11 @@ keyring = { version = "3", features = ["windows-native", "apple-native", "linux-
 # core/src/ledger/). Bibliothèque de référence multiplateforme (API HID native de
 # Windows, IOKit, hidraw) ; le protocole Ledger au-dessus est implémenté ici.
 hidapi = "2"
+# rusb : accès USB direct (libusb, compilée depuis ses sources) à un Trezor
+# (modèle T, Safe 3, Safe 5 : interface WebUSB, pilote WinUSB installé
+# automatiquement par Windows). Le protocole Trezor au-dessus est implémenté
+# ici (voir core/src/trezor/).
+rusb = { version = "0.9", features = ["vendored"] }
 
 # --- Backend crypto de sequoia-openpgp : un par famille d'OS, jamais "crypto-rust" ---
 # (marqué "non production ready"/"non constant-time" par sequoia lui-même). Les deux backends
