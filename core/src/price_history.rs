@@ -33,6 +33,9 @@ pub enum Asset {
     Eth,
     Sol,
     Usdc,
+    /// Taux de change : dollars pour 1 euro (paire EUR/USDT, cotée depuis le
+    /// 03/01/2020), pour afficher les montants en euros au taux de chaque date.
+    Eur,
 }
 
 impl Asset {
@@ -42,6 +45,7 @@ impl Asset {
             Asset::Eth => "ETHUSDT",
             Asset::Sol => "SOLUSDT",
             Asset::Usdc => "USDCUSDT",
+            Asset::Eur => "EURUSDT",
         }
     }
 }

@@ -327,6 +327,12 @@ const I18N = {
     "wallet.showAddress": "Afficher l'adresse",
     "wallet.hideAddress": "Masquer l'adresse",
     "wallet.addressCopied": "Adresse copiée !",
+    "settings.currency": "Devise d'affichage",
+    "settings.usd": "Dollar ($)",
+    "settings.eur": "Euro (€)",
+    "charts.eurNote": "Montants en euros au taux EUR/USD de chaque date (Binance).",
+    "charts.eurNoteBefore2020": "Avant le 3 janvier 2020 (début de la cotation) : taux de ce jour-là.",
+    "send.quickUnavailable": "Montants rapides indisponibles (prix non chargé).",
     "qr.amountLabel": "Montant à demander (facultatif)",
     "qr.amountHint": "Le QR code contient aussi ce montant : l'application de la personne qui paie le pré-remplit (si elle le prend en charge).",
     "qr.amountInvalid": "Montant invalide : un nombre positif, {decimals} décimales au plus.",
@@ -769,6 +775,12 @@ const I18N = {
     "wallet.showAddress": "Show address",
     "wallet.hideAddress": "Hide address",
     "wallet.addressCopied": "Address copied!",
+    "settings.currency": "Display currency",
+    "settings.usd": "US dollar ($)",
+    "settings.eur": "Euro (€)",
+    "charts.eurNote": "Amounts in euros at each date's EUR/USD rate (Binance).",
+    "charts.eurNoteBefore2020": "Before 3 January 2020 (start of trading): that day's rate.",
+    "send.quickUnavailable": "Quick amounts unavailable (price not loaded).",
     "qr.amountLabel": "Amount to request (optional)",
     "qr.amountHint": "The QR code also holds this amount: the payer's app fills it in (if it supports it).",
     "qr.amountInvalid": "Invalid amount: a positive number, at most {decimals} decimals.",
@@ -2322,6 +2334,121 @@ function stopBalanceWatch() {
 // actuel de l'ETH/BTC/SOL" — identique pour tout le monde.
 
 let latestPrices = null;
+
+// --- Devise d'affichage -----------------------------------------------------
+// Tout est calculé en dollars (prix, historiques, portefeuilles) ; en euros,
+// chaque montant est converti à l'affichage : taux du moment pour les valeurs
+// actuelles, taux de CHAQUE DATE pour les courbes et les transactions passées
+// (paire EUR/USDT de Binance, cotée depuis le 03/01/2020 ; avant, le premier
+// taux connu). Préférence d'affichage, par appareil : stockage local.
+const CURRENCY_STORAGE_KEY = "pgp-wallet-currency";
+let displayCurrency = "usd";
+try {
+  if (localStorage.getItem(CURRENCY_STORAGE_KEY) === "eur") displayCurrency = "eur";
+} catch (e) {
+  // localStorage indisponible : dollars.
+}
+// Dollars pour 1 euro, au moment présent (`null` tant qu'il n'est pas lu).
+let usdPerEur = null;
+// Séries du taux par période de courbe : { points, loadedAt }.
+const eurSeriesCache = new Map();
+const EUR_SERIES_TTL_MS = 10 * 60 * 1000;
+
+async function eurSeries(range) {
+  const cached = eurSeriesCache.get(range);
+  if (cached && Date.now() - cached.loadedAt < EUR_SERIES_TTL_MS) return cached.points;
+  const points = await invoke("get_price_chart", { symbol: "EUR", range });
+  if (points.length === 0) throw new Error("taux EUR/USD indisponible");
+  eurSeriesCache.set(range, { points, loadedAt: Date.now() });
+  return points;
+}
+
+// Taux à l'instant `t` (secondes) : dernier point connu à cette date ; avant
+// le premier point, le premier (voir plus haut).
+function rateAt(points, t) {
+  let lo = 0;
+  let hi = points.length - 1;
+  if (t <= points[0][0]) return points[0][1];
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (points[mid][0] <= t) lo = mid;
+    else hi = mid - 1;
+  }
+  return points[lo][1];
+}
+
+async function refreshEurRate() {
+  try {
+    const points = await eurSeries("1d");
+    usdPerEur = points[points.length - 1][1];
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+// Montant en dollars → devise affichée, au taux actuel ; `null` si le taux
+// n'est pas encore connu (affiché « — »).
+function usdToFiat(usd) {
+  if (displayCurrency !== "eur") return usd;
+  return usdPerEur ? usd / usdPerEur : null;
+}
+
+// Même chose au taux d'une date passée (transactions) : série journalière
+// complète si elle est déjà chargée, sinon taux actuel.
+function usdToFiatAt(usd, timestamp) {
+  if (displayCurrency !== "eur") return usd;
+  const all = eurSeriesCache.get("all");
+  if (all && timestamp) return usd / rateAt(all.points, timestamp);
+  return usdToFiat(usd);
+}
+
+// Premier taux EUR/USD connu (03/01/2020) : avant, celui-ci est utilisé.
+const EUR_SERIES_START = 1578009600;
+
+// Note sous une courbe en euros ; la précision « avant 2020 » seulement si la
+// courbe commence avant.
+function eurChartNote(points) {
+  if (displayCurrency !== "eur" || points.length === 0) return "";
+  return points[0][0] < EUR_SERIES_START ? `${t("charts.eurNote")} ${t("charts.eurNoteBefore2020")}` : t("charts.eurNote");
+}
+
+// Points [instant, dollars] d'une courbe → devise affichée, au taux de chaque
+// instant.
+async function toDisplayCurrency(points, range) {
+  if (displayCurrency !== "eur" || points.length === 0) return points;
+  const rates = await eurSeries(range);
+  return points.map(([time, usd]) => [time, usd / rateAt(rates, time)]);
+}
+
+// Réglage « Devise d'affichage » : tout ce qui est déjà affiché est converti
+// tout de suite (taux et séries chargés au besoin).
+const currencySelect = document.getElementById("currency-select");
+currencySelect.value = displayCurrency;
+// Menu déjà construit plus haut (initCustomSelect) : étiquette resynchronisée.
+syncCustomSelect(currencySelect);
+currencySelect.addEventListener("change", async () => {
+  displayCurrency = currencySelect.value === "eur" ? "eur" : "usd";
+  try {
+    localStorage.setItem(CURRENCY_STORAGE_KEY, displayCurrency);
+  } catch (e) {
+    // Best-effort : la devise reste active pour cette session.
+  }
+  if (displayCurrency === "eur") {
+    await refreshEurRate();
+    eurSeries("all").catch((e) => console.error(e)); // valeur des transactions passées
+  }
+  refreshCurrencyDisplays();
+});
+
+function refreshCurrencyDisplays() {
+  document.querySelectorAll(".wallet-card").forEach(updateFiatValue);
+  if (lastMarketCoins) renderMarkets(lastMarketCoins);
+  updateAllExternalGroupTotals();
+  if (portfolioView.rangesEl.childElementCount) refreshChart(portfolioView);
+  if (externalChartView.rangesEl.childElementCount) refreshChart(externalChartView);
+  if (!document.querySelector('.tab-panel[data-panel="history"]').classList.contains("hidden")) loadAllHistory();
+  if (!sendModal.classList.contains("hidden")) renderQuickAmounts();
+}
 let priceRefreshTimer = null;
 let pricesRefreshing = false;
 
@@ -2352,6 +2479,10 @@ function updateFiatValue(card) {
   if (fiatEl.textContent !== text) fiatEl.textContent = text;
 }
 
+// Dernière liste des marchés reçue : réaffichée telle quelle au changement de
+// devise, sans nouvel appel.
+let lastMarketCoins = null;
+
 async function refreshPrices() {
   // Même logique de verrou que refreshBalance : évite qu'un cycle lent (CoinGecko
   // limite le débit gratuit) ne se fasse recouvrir par le tick suivant du minuteur.
@@ -2363,8 +2494,14 @@ async function refreshPrices() {
     // consommation de la limite gratuite). Échec passager : les derniers prix
     // restent, au lieu de faire passer toutes les valeurs en dollars à « — ».
     let coins = null;
+    if (displayCurrency === "eur") {
+      await refreshEurRate();
+      // Taux de chaque jour, pour la valeur des transactions passées.
+      if (!eurSeriesCache.has("all")) eurSeries("all").catch((e) => console.error(e));
+    }
     try {
       coins = await invoke("get_market_prices");
+      lastMarketCoins = coins;
       const price = (symbol) => coins.find((c) => c.symbol === symbol)?.price_usd;
       const next = { eth_usd: price("ETH"), btc_usd: price("BTC"), sol_usd: price("SOL") };
       if (Object.values(next).every((v) => Number.isFinite(v) && v > 0)) latestPrices = next;
@@ -2383,18 +2520,21 @@ async function refreshPrices() {
   }
 }
 
-// Capitalisation abrégée, dans la langue choisie : « 1,67 T$ », « 325,43 Md$ » /
-// « $1.67T », « $325.43B ».
-function formatMarketCap(value) {
+// Capitalisation abrégée, dans la langue et la devise choisies : « 1,67 T$ »,
+// « 325,43 Md€ » / « $1.67T », « €325.43B ».
+function formatMarketCap(usd) {
+  const value = usdToFiat(usd);
+  if (value == null) return "—";
   const en = currentLang === "en";
+  const symbol = displayCurrency === "eur" ? "€" : "$";
   const scaled = (n, frUnit, enUnit) => {
     const shown = n.toLocaleString(chartLocale(), { maximumFractionDigits: 2 });
-    return en ? `$${shown}${enUnit}` : `${shown} ${frUnit}$`;
+    return en ? `${symbol}${shown}${enUnit}` : `${shown} ${frUnit}${symbol}`;
   };
   if (value >= 1e12) return scaled(value / 1e12, "T", "T");
   if (value >= 1e9) return scaled(value / 1e9, "Md", "B");
   if (value >= 1e6) return scaled(value / 1e6, "M", "M");
-  return withDollar(value.toLocaleString(chartLocale()));
+  return withCurrency(value.toLocaleString(chartLocale()));
 }
 
 // Déjà triée par capitalisation décroissante côté Rust (voir
@@ -2449,7 +2589,8 @@ function setText(el, text) {
 
 function fillMarketRow(row, coin) {
   const decimals = { minimumFractionDigits: 2, maximumFractionDigits: 2 };
-  setText(row.querySelector(".market-price"), withDollar(coin.price_usd.toLocaleString(chartLocale(), decimals)));
+  const price = usdToFiat(coin.price_usd);
+  setText(row.querySelector(".market-price"), price == null ? "—" : withCurrency(price.toLocaleString(chartLocale(), decimals)));
   setText(row.querySelector(".market-cap"), formatMarketCap(coin.market_cap_usd));
   const changeDiv = row.querySelector(".market-change");
   changeDiv.classList.remove("up", "down");
@@ -3102,12 +3243,13 @@ function historyStatusLabel(status) {
   return status;
 }
 
-// "≈ 1 234,56 $" / "≈ $1,234.56" ; sous le centime : "< 0,01 $".
-function formatUsdApprox(usd) {
-  const english = currentLang === "en";
-  if (usd > 0 && usd < 0.01) return english ? "< $0.01" : "< 0,01 $";
-  const number = usd.toLocaleString(english ? "en-US" : "fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  return english ? `≈ $${number}` : `≈ ${number} $`;
+// Montant en dollars affiché dans la devise choisie : « ≈ 1 234,56 $ » /
+// « ≈ $1,234.56 » / « ≈ 1 085,20 € » ; sous le centime : « < 0,01 $ ».
+// `fiat` : montant déjà converti (sinon, conversion au taux actuel).
+function formatUsdApprox(usd, fiat = usdToFiat(usd)) {
+  if (fiat == null) return "—";
+  if (fiat > 0 && fiat < 0.01) return `< ${withCurrency((0.01).toLocaleString(chartLocale()))}`;
+  return `≈ ${withCurrency(fiat.toLocaleString(chartLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 }))}`;
 }
 
 function buildHistoryRow(tx) {
@@ -3159,7 +3301,7 @@ function buildHistoryRow(tx) {
   if (tx.usd_value != null) {
     const usdDiv = document.createElement("div");
     usdDiv.className = "history-usd";
-    usdDiv.textContent = formatUsdApprox(tx.usd_value);
+    usdDiv.textContent = formatUsdApprox(tx.usd_value, usdToFiatAt(tx.usd_value, tx.timestamp_unix));
     usdDiv.title = t("history.usdAtTime");
     amountBox.appendChild(usdDiv);
   }
@@ -3276,7 +3418,8 @@ sendAmountInput.addEventListener("input", () => {
 // jour. Mêmes décimales que le formatage des soldes côté Rust
 // (app/src-tauri/src/lib.rs::get_balance), pour que le montant rempli soit celui
 // réellement envoyé, pas une valeur arrondie différente.
-const QUICK_AMOUNTS_USD = [5, 10, 50];
+// Montants rapides, dans la devise affichée (5 $ ou 5 €…).
+const QUICK_AMOUNTS = [5, 10, 50];
 const COIN_DECIMALS = { evm: 6, btc: 8, sol: 9, usdc: 6 };
 const COIN_SYMBOL = { evm: "ETH", btc: "BTC", sol: "SOL", usdc: "USDC" };
 
@@ -3289,19 +3432,21 @@ function renderQuickAmounts() {
   const decimals = COIN_DECIMALS[coin];
   const symbol = COIN_SYMBOL[coin];
 
-  if (price == null) {
-    container.innerHTML = '<p class="muted quick-amounts-hint">Montants rapides indisponibles (prix non chargé).</p>';
+  // Dollars pour 1 unité de la devise affichée (1 pour le dollar).
+  const usdPerUnit = displayCurrency === "eur" ? usdPerEur : 1;
+  if (price == null || !usdPerUnit) {
+    container.replaceChildren(Object.assign(document.createElement("p"), { className: "muted quick-amounts-hint", textContent: t("send.quickUnavailable") }));
     return;
   }
 
-  QUICK_AMOUNTS_USD.forEach((usd) => {
-    const cryptoAmount = (usd / price).toFixed(decimals);
+  QUICK_AMOUNTS.forEach((amount) => {
+    const cryptoAmount = ((amount * usdPerUnit) / price).toFixed(decimals);
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "quick-amount-btn";
     const usdSpan = document.createElement("span");
     usdSpan.className = "quick-amount-usd";
-    usdSpan.textContent = `${usd} $`;
+    usdSpan.textContent = withCurrency(String(amount));
     const cryptoSpan = document.createElement("span");
     cryptoSpan.className = "quick-amount-crypto";
     cryptoSpan.textContent = `≈ ${cryptoAmount} ${symbol}`;
@@ -4211,9 +4356,8 @@ function updateAllExternalGroupTotals() {
         any = true;
       }
     });
-    totalEl.textContent = any
-      ? `${sum.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} $`
-      : "—";
+    const fiat = any ? usdToFiat(sum) : null;
+    totalEl.textContent = fiat != null ? withCurrency(fiat.toLocaleString(chartLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })) : "—";
   });
 }
 
@@ -5019,21 +5163,25 @@ function chartLocale() {
   return currentLang === "en" ? "en-US" : "fr-FR";
 }
 
-function withDollar(number) {
-  return currentLang === "en" ? `$${number}` : `${number} $`;
+// Symbole de la devise affichée, placé selon la langue : « 12 $ » / « $12 »,
+// « 12 € » / « €12 ».
+function withCurrency(number) {
+  const symbol = displayCurrency === "eur" ? "€" : "$";
+  return currentLang === "en" ? `${symbol}${number}` : `${number} ${symbol}`;
 }
 
-function formatUsdValue(value) {
+// Valeur DÉJÀ dans la devise affichée (points de courbe convertis).
+function formatFiatValue(value) {
   const maxDigits = Math.abs(value) < 10 ? 4 : 2;
-  return withDollar(value.toLocaleString(chartLocale(), { minimumFractionDigits: 2, maximumFractionDigits: maxDigits }));
+  return withCurrency(value.toLocaleString(chartLocale(), { minimumFractionDigits: 2, maximumFractionDigits: maxDigits }));
 }
 
 function formatAxisValue(value, step) {
   if (Math.abs(value) >= 10000) {
-    return withDollar(new Intl.NumberFormat(chartLocale(), { notation: "compact", maximumFractionDigits: 1 }).format(value));
+    return withCurrency(new Intl.NumberFormat(chartLocale(), { notation: "compact", maximumFractionDigits: 1 }).format(value));
   }
   const digits = step >= 1 ? 0 : Math.min(6, Math.ceil(-Math.log10(step)));
-  return withDollar(value.toLocaleString(chartLocale(), { minimumFractionDigits: digits, maximumFractionDigits: digits }));
+  return withCurrency(value.toLocaleString(chartLocale(), { minimumFractionDigits: digits, maximumFractionDigits: digits }));
 }
 
 // Précision des dates selon la durée RÉELLEMENT couverte par les points (une
@@ -5092,7 +5240,7 @@ function renderChartSummary(el, points, range, since, deltaMode = "pct") {
   el.replaceChildren();
   if (points.length === 0) return;
   if (!since && range === "all") since = points[0][0];
-  el.appendChild(document.createTextNode(formatUsdValue(points[points.length - 1][1])));
+  el.appendChild(document.createTextNode(formatFiatValue(points[points.length - 1][1])));
   const change = chartChange(points, deltaMode);
   if (change == null) return;
   const trend = trendOf(change);
@@ -5104,7 +5252,7 @@ function renderChartSummary(el, points, range, since, deltaMode = "pct") {
   const arrow = trend === "up" ? "▲" : trend === "down" ? "▼" : "";
   delta.textContent = (
     deltaMode === "usd"
-      ? t("charts.deltaUsd", { arrow, amount: formatUsdValue(Math.abs(change)), period })
+      ? t("charts.deltaUsd", { arrow, amount: formatFiatValue(Math.abs(change)), period })
       : t("charts.delta", { arrow, pct: Math.abs(change).toLocaleString(chartLocale(), { maximumFractionDigits: 2 }), period })
   ).trim();
   el.appendChild(delta);
@@ -5142,12 +5290,14 @@ async function refreshChart(view, { poll = false } = {}) {
   try {
     const data = await view.load(view.range);
     if (token !== view.token) return; // une demande plus récente l'emporte
-    const points = data.points.every((p) => p[1] === 0) ? [] : data.points;
+    // En euros : chaque point converti au taux de sa date.
+    const points = await toDisplayCurrency(data.points.every((p) => p[1] === 0) ? [] : data.points, view.range);
+    if (token !== view.token) return;
     view.points = points;
     renderChartSummary(view.summaryEl, points, view.range, data.since, view.deltaMode);
     renderLineChart(view.chartEl, points, {
       height: view.height,
-      formatValue: formatUsdValue,
+      formatValue: formatFiatValue,
       formatAxis: formatAxisValue,
       formatTime: formatChartTime,
       formatTooltipTime: formatChartTooltipTime,
@@ -5155,7 +5305,7 @@ async function refreshChart(view, { poll = false } = {}) {
       ariaLabel: view.title(),
       trend: trendOf(chartChange(points, view.deltaMode)),
     });
-    view.noteEl.textContent = data.note || "";
+    view.noteEl.textContent = [data.note, eurChartNote(points)].filter(Boolean).join(" ");
     if (view.onRender) view.onRender();
     if (data.loading) {
       setTimeout(() => {
@@ -5219,7 +5369,7 @@ function renderChartTable() {
   for (const [time, value] of chartModalView.points || []) {
     const row = body.insertRow();
     row.insertCell().textContent = formatChartTooltipTime(time, chartSpan(chartModalView.points));
-    row.insertCell().textContent = formatUsdValue(value);
+    row.insertCell().textContent = formatFiatValue(value);
   }
   chartModalTable.replaceChildren(table);
 }

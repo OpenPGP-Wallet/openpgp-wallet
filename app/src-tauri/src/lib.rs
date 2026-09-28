@@ -1637,6 +1637,8 @@ async fn get_price_chart(symbol: String, range: String) -> Result<Vec<(i64, f64)
             "ETH" => price_history::Asset::Eth,
             "SOL" => price_history::Asset::Sol,
             "USDC" => price_history::Asset::Usdc,
+            // Dollars pour 1 euro : affichage en euros (conversion côté interface).
+            "EUR" => price_history::Asset::Eur,
             other => return Err(translate_error(&format!("crypto inconnue : {other}"))),
         };
         price_history::chart(asset, chart_range(&range)?).map(|points| points.as_ref().clone()).t_err()
