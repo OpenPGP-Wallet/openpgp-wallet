@@ -323,6 +323,8 @@ const I18N = {
     "wallet.marketsTitle": "Prix des cryptomonnaies en direct",
     "wallet.showQr": "Afficher en QR code",
     "wallet.copyAddress": "Copier l'adresse",
+    "wallet.showAddress": "Afficher l'adresse",
+    "wallet.hideAddress": "Masquer l'adresse",
     "wallet.addressCopied": "Adresse copiée !",
     "wallet.marketsLoadError": "Impossible de charger les données de marché.",
     "wallet.qrError": "Impossible de générer le QR code : {err}",
@@ -757,6 +759,8 @@ const I18N = {
     "wallet.marketsTitle": "Live cryptocurrency prices",
     "wallet.showQr": "Show as QR code",
     "wallet.copyAddress": "Copy address",
+    "wallet.showAddress": "Show address",
+    "wallet.hideAddress": "Hide address",
     "wallet.addressCopied": "Address copied!",
     "wallet.marketsLoadError": "Unable to load market data.",
     "wallet.qrError": "Unable to generate the QR code: {err}",
@@ -2430,24 +2434,21 @@ function fillMarketRow(row, coin) {
   setText(row.querySelector(".market-cap"), formatMarketCap(coin.market_cap_usd));
   const changeDiv = row.querySelector(".market-change");
   changeDiv.classList.remove("up", "down");
+  // Variation arrondie à 0,00 % : ni hausse ni baisse (USDC, typiquement).
+  const trend = trendOf(coin.change_24h_percent);
   if (coin.change_24h_percent == null) {
     setText(changeDiv, "—");
   } else {
-    const change = coin.change_24h_percent;
-    const shown = Math.abs(change).toLocaleString(chartLocale(), decimals) + (currentLang === "en" ? "%" : "\u00a0%");
-    if (Math.abs(change) < 0.005) {
-      // Arrondie à 0,00 % : ni hausse ni baisse (USDC, typiquement).
-      setText(changeDiv, shown);
-    } else {
-      changeDiv.classList.add(change > 0 ? "up" : "down");
-      setText(changeDiv, `${change > 0 ? "▲" : "▼"} ${shown}`);
-    }
+    const shown = Math.abs(coin.change_24h_percent).toLocaleString(chartLocale(), decimals) + (currentLang === "en" ? "%" : "\u00a0%");
+    if (trend) changeDiv.classList.add(trend);
+    setText(changeDiv, trend ? `${trend === "up" ? "▲" : "▼"} ${shown}` : shown);
   }
-  // Courbe des dernières 24 h (comme la variation affichée) ; l'ancienne reste
-  // affichée jusqu'à l'arrivée de la nouvelle.
+  // Courbe des dernières 24 h (comme la variation affichée), de la même couleur
+  // que cette variation ; l'ancienne reste affichée jusqu'à l'arrivée de la
+  // nouvelle.
   const spark = row.querySelector(".market-spark");
   invoke("get_price_chart", { symbol: coin.symbol, range: "1d" })
-    .then((points) => renderSparkline(spark, points))
+    .then((points) => renderSparkline(spark, points, trend))
     .catch((e) => console.error(e));
 }
 
@@ -2545,7 +2546,10 @@ function renderProfileSelect() {
 
 function renderCardAddress(card) {
   const coin = card.dataset.coin;
-  card.querySelector('[data-field="address"]').textContent = addressForCoin(coin, networkForCard(card));
+  const address = addressForCoin(coin, networkForCard(card));
+  card.querySelector('[data-field="address"]').textContent = address;
+  // Copie affichée par le bouton « adresse » d'une carte repliée.
+  card.querySelector('[data-field="collapsed-address"]').textContent = address;
 }
 
 function renderCardAddresses() {
@@ -2872,19 +2876,30 @@ document.querySelectorAll(".wallet-card").forEach((card) => {
   const refreshBtn = card.querySelector('[data-action="refresh"]');
   refreshBtn.addEventListener("click", withThrottledButton(refreshBtn, REFRESH_COOLDOWN_MS, () => refreshBalance(card), { keepLabel: true }));
   card.querySelector('[data-action="send"]').addEventListener("click", () => openSendModal(card));
-  card.querySelector('[data-action="qr"]').addEventListener("click", () => openQrModal(card));
+  // Boutons QR et copie : ceux de la ligne d'adresse ET ceux de la carte repliée.
+  card.querySelectorAll('[data-action="qr"]').forEach((button) => button.addEventListener("click", () => openQrModal(card)));
   // Cliquer l'adresse elle-même l'affiche en entier (même modale que le bouton QR,
   // qui montre déjà le texte complet à côté du code QR) — utile surtout en vue
   // liste (voir styles.css : `.address` y est tronquée avec "…" pour la
   // compacité), mais garde le même geste en vue cartes aussi, par cohérence.
-  card.querySelector('[data-field="address"]').addEventListener("click", () => openQrModal(card));
-  card.querySelector('[data-action="copy-address"]').addEventListener("click", () => {
-    const address = card.querySelector('[data-field="address"]').textContent;
-    if (!address) {
-      alert(t("wallet.historyAddressUnavailable"));
-      return;
-    }
-    copyText(address, t("wallet.addressCopied"));
+  card.querySelectorAll('[data-field="address"], [data-field="collapsed-address"]').forEach((el) => el.addEventListener("click", () => openQrModal(card)));
+  card.querySelectorAll('[data-action="copy-address"]').forEach((button) =>
+    button.addEventListener("click", () => {
+      const address = card.querySelector('[data-field="address"]').textContent;
+      if (!address) {
+        alert(t("wallet.historyAddressUnavailable"));
+        return;
+      }
+      copyText(address, t("wallet.addressCopied"));
+    })
+  );
+  // Carte repliée : afficher / masquer l'adresse sans déplier la carte.
+  const toggleAddress = card.querySelector('[data-action="toggle-address"]');
+  toggleAddress.addEventListener("click", () => {
+    const shown = card.querySelector('[data-field="collapsed-address"]').classList.toggle("hidden") === false;
+    toggleAddress.setAttribute("aria-pressed", String(shown));
+    toggleAddress.dataset.i18nTitle = shown ? "wallet.hideAddress" : "wallet.showAddress";
+    toggleAddress.title = t(toggleAddress.dataset.i18nTitle);
   });
   const swapBtn = card.querySelector('[data-action="swap"]');
   if (swapBtn) swapBtn.addEventListener("click", () => openSwapModal(card));
@@ -4900,25 +4915,44 @@ function chartSpan(points) {
 // (`deltaMode` "usd") pour la valeur d'un portefeuille, que dépôts et retraits
 // font varier sans rapport avec une performance (un % depuis un premier dépôt
 // de 1 $ affichait « +338 270 % »).
+// Variation entre le premier et le dernier point affichés : en % pour un prix,
+// en dollars pour un portefeuille ; `null` si elle n'a pas de sens (prix de
+// départ nul, moins de deux points).
+function chartChange(points, deltaMode) {
+  if (points.length < 2) return null;
+  const first = points[0][1];
+  const last = points[points.length - 1][1];
+  if (deltaMode === "usd") return last - first;
+  return first > 0 ? ((last - first) / first) * 100 : null;
+}
+
+// Sens de la variation : UNE règle pour la flèche et la couleur du résumé ET
+// pour la couleur de la courbe (verte en hausse, rouge en baisse). Variation
+// qui s'affiche 0 (moins de 0,005 % ou 0,005 $) : ni hausse ni baisse.
+function trendOf(change) {
+  if (change == null || Math.abs(change) < 0.005) return null;
+  return change > 0 ? "up" : "down";
+}
+
 function renderChartSummary(el, points, range, since, deltaMode = "pct") {
   el.replaceChildren();
   if (points.length === 0) return;
   if (!since && range === "all") since = points[0][0];
-  const first = points[0][1];
-  const last = points[points.length - 1][1];
-  el.appendChild(document.createTextNode(formatUsdValue(last)));
-  if (deltaMode === "pct" && !(first > 0)) return;
-  const change = deltaMode === "usd" ? last - first : ((last - first) / first) * 100;
+  el.appendChild(document.createTextNode(formatUsdValue(points[points.length - 1][1])));
+  const change = chartChange(points, deltaMode);
+  if (change == null) return;
+  const trend = trendOf(change);
   const delta = document.createElement("span");
-  delta.className = `chart-delta ${change >= 0 ? "up" : "down"}`;
+  delta.className = `chart-delta ${trend || ""}`.trim();
   const period = since
     ? t("charts.periodSince", { date: new Date(since * 1000).toLocaleDateString(chartLocale()) })
     : t(`charts.period.${range}`);
-  const arrow = change >= 0 ? "▲" : "▼";
-  delta.textContent =
+  const arrow = trend === "up" ? "▲" : trend === "down" ? "▼" : "";
+  delta.textContent = (
     deltaMode === "usd"
       ? t("charts.deltaUsd", { arrow, amount: formatUsdValue(Math.abs(change)), period })
-      : t("charts.delta", { arrow, pct: Math.abs(change).toLocaleString(chartLocale(), { maximumFractionDigits: 2 }), period });
+      : t("charts.delta", { arrow, pct: Math.abs(change).toLocaleString(chartLocale(), { maximumFractionDigits: 2 }), period })
+  ).trim();
   el.appendChild(delta);
 }
 
@@ -4965,6 +4999,7 @@ async function refreshChart(view, { poll = false } = {}) {
       formatTooltipTime: formatChartTooltipTime,
       emptyText: data.loading ? t("charts.loading") : t(view.emptyKey),
       ariaLabel: view.title(),
+      trend: trendOf(chartChange(points, view.deltaMode)),
     });
     view.noteEl.textContent = data.note || "";
     if (view.onRender) view.onRender();

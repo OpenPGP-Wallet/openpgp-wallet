@@ -192,8 +192,41 @@
                 <ul class="custom-select-options"></ul>
               </div>
             </header>
-            <p class="balance"><span data-field="balance">—</span> ETH</p>
+            <div class="balance-row">
+              <p class="balance"><span data-field="balance">—</span> ETH</p>
+              <!-- Carte repliée seulement (voir styles.css, « Panneaux repliables ») :
+                   l'adresse, sa copie et son QR code sans déplier la carte. -->
+              <div class="collapsed-actions">
+                <button type="button" class="qr-btn" data-action="toggle-address" aria-pressed="false" data-i18n-title="wallet.showAddress" title="Afficher l'adresse">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                    <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" />
+                    <circle cx="12" cy="12" r="3" />
+                  </svg>
+                </button>
+                <button type="button" class="qr-btn" data-action="copy-address" data-i18n-title="wallet.copyAddress" title="Copier l'adresse">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                    <rect x="8" y="8" width="12" height="12" rx="2" />
+                    <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
+                  </svg>
+                </button>
+                <button type="button" class="qr-btn" data-action="qr" data-i18n-title="wallet.showQr" title="Afficher en QR code">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+                    <path d="M3 3h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                    <rect x="5.2" y="5.2" width="1.6" height="1.6" />
+                    <path d="M15 3h6v6h-6z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                    <rect x="17.2" y="5.2" width="1.6" height="1.6" />
+                    <path d="M3 15h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                    <rect x="5.2" y="17.2" width="1.6" height="1.6" />
+                    <rect x="15" y="15" width="2.5" height="2.5" />
+                    <rect x="18.5" y="15" width="2.5" height="2.5" />
+                    <rect x="15" y="18.5" width="2.5" height="2.5" />
+                    <rect x="18.5" y="18.5" width="2.5" height="2.5" />
+                  </svg>
+                </button>
+              </div>
+            </div>
             <p class="fiat-value" data-field="fiat">—</p>
+            <p class="address collapsed-address hidden" data-field="collapsed-address"></p>
             <div class="collapsible-body" id="wallet-body-evm">
               <div class="collapsible-inner">
                 <div class="address-row">
@@ -255,11 +288,44 @@
                 <ul class="custom-select-options"></ul>
               </div>
             </header>
-            <p class="balance"><span data-field="balance">—</span> BTC</p>
+            <div class="balance-row">
+              <p class="balance"><span data-field="balance">—</span> BTC</p>
+              <!-- Carte repliée seulement (voir styles.css, « Panneaux repliables ») :
+                   l'adresse, sa copie et son QR code sans déplier la carte. -->
+              <div class="collapsed-actions">
+                <button type="button" class="qr-btn" data-action="toggle-address" aria-pressed="false" data-i18n-title="wallet.showAddress" title="Afficher l'adresse">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                    <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" />
+                    <circle cx="12" cy="12" r="3" />
+                  </svg>
+                </button>
+                <button type="button" class="qr-btn" data-action="copy-address" data-i18n-title="wallet.copyAddress" title="Copier l'adresse">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                    <rect x="8" y="8" width="12" height="12" rx="2" />
+                    <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
+                  </svg>
+                </button>
+                <button type="button" class="qr-btn" data-action="qr" data-i18n-title="wallet.showQr" title="Afficher en QR code">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+                    <path d="M3 3h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                    <rect x="5.2" y="5.2" width="1.6" height="1.6" />
+                    <path d="M15 3h6v6h-6z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                    <rect x="17.2" y="5.2" width="1.6" height="1.6" />
+                    <path d="M3 15h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                    <rect x="5.2" y="17.2" width="1.6" height="1.6" />
+                    <rect x="15" y="15" width="2.5" height="2.5" />
+                    <rect x="18.5" y="15" width="2.5" height="2.5" />
+                    <rect x="15" y="18.5" width="2.5" height="2.5" />
+                    <rect x="18.5" y="18.5" width="2.5" height="2.5" />
+                  </svg>
+                </button>
+              </div>
+            </div>
             <div class="fiat-pending-row">
               <p class="fiat-value" data-field="fiat">—</p>
               <p class="pending-badge" data-field="pending" data-i18n="wallet.pendingBadge"> Transaction en attente détectée</p>
             </div>
+            <p class="address collapsed-address hidden" data-field="collapsed-address"></p>
             <div class="collapsible-body" id="wallet-body-btc">
               <div class="collapsible-inner">
                 <div class="address-row">
@@ -314,11 +380,44 @@
                 <ul class="custom-select-options"></ul>
               </div>
             </header>
-            <p class="balance"><span data-field="balance">—</span> SOL</p>
+            <div class="balance-row">
+              <p class="balance"><span data-field="balance">—</span> SOL</p>
+              <!-- Carte repliée seulement (voir styles.css, « Panneaux repliables ») :
+                   l'adresse, sa copie et son QR code sans déplier la carte. -->
+              <div class="collapsed-actions">
+                <button type="button" class="qr-btn" data-action="toggle-address" aria-pressed="false" data-i18n-title="wallet.showAddress" title="Afficher l'adresse">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                    <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" />
+                    <circle cx="12" cy="12" r="3" />
+                  </svg>
+                </button>
+                <button type="button" class="qr-btn" data-action="copy-address" data-i18n-title="wallet.copyAddress" title="Copier l'adresse">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                    <rect x="8" y="8" width="12" height="12" rx="2" />
+                    <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
+                  </svg>
+                </button>
+                <button type="button" class="qr-btn" data-action="qr" data-i18n-title="wallet.showQr" title="Afficher en QR code">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+                    <path d="M3 3h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                    <rect x="5.2" y="5.2" width="1.6" height="1.6" />
+                    <path d="M15 3h6v6h-6z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                    <rect x="17.2" y="5.2" width="1.6" height="1.6" />
+                    <path d="M3 15h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                    <rect x="5.2" y="17.2" width="1.6" height="1.6" />
+                    <rect x="15" y="15" width="2.5" height="2.5" />
+                    <rect x="18.5" y="15" width="2.5" height="2.5" />
+                    <rect x="15" y="18.5" width="2.5" height="2.5" />
+                    <rect x="18.5" y="18.5" width="2.5" height="2.5" />
+                  </svg>
+                </button>
+              </div>
+            </div>
             <div class="fiat-pending-row">
               <p class="fiat-value" data-field="fiat">—</p>
               <p class="pending-badge" data-field="pending" data-i18n="wallet.pendingBadge"> Transaction en attente détectée</p>
             </div>
+            <p class="address collapsed-address hidden" data-field="collapsed-address"></p>
             <div class="collapsible-body" id="wallet-body-sol">
               <div class="collapsible-inner">
                 <div class="address-row">
@@ -378,8 +477,41 @@
                    garder ici que le texte identique aux autres cartes. -->
               <span class="network-fixed-label muted" data-i18n="wallet.mainnet">Mainnet — Fonds réels</span>
             </header>
-            <p class="balance"><span data-field="balance">—</span> USDC</p>
+            <div class="balance-row">
+              <p class="balance"><span data-field="balance">—</span> USDC</p>
+              <!-- Carte repliée seulement (voir styles.css, « Panneaux repliables ») :
+                   l'adresse, sa copie et son QR code sans déplier la carte. -->
+              <div class="collapsed-actions">
+                <button type="button" class="qr-btn" data-action="toggle-address" aria-pressed="false" data-i18n-title="wallet.showAddress" title="Afficher l'adresse">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                    <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" />
+                    <circle cx="12" cy="12" r="3" />
+                  </svg>
+                </button>
+                <button type="button" class="qr-btn" data-action="copy-address" data-i18n-title="wallet.copyAddress" title="Copier l'adresse">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                    <rect x="8" y="8" width="12" height="12" rx="2" />
+                    <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
+                  </svg>
+                </button>
+                <button type="button" class="qr-btn" data-action="qr" data-i18n-title="wallet.showQr" title="Afficher en QR code">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+                    <path d="M3 3h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                    <rect x="5.2" y="5.2" width="1.6" height="1.6" />
+                    <path d="M15 3h6v6h-6z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                    <rect x="17.2" y="5.2" width="1.6" height="1.6" />
+                    <path d="M3 15h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                    <rect x="5.2" y="17.2" width="1.6" height="1.6" />
+                    <rect x="15" y="15" width="2.5" height="2.5" />
+                    <rect x="18.5" y="15" width="2.5" height="2.5" />
+                    <rect x="15" y="18.5" width="2.5" height="2.5" />
+                    <rect x="18.5" y="18.5" width="2.5" height="2.5" />
+                  </svg>
+                </button>
+              </div>
+            </div>
             <p class="fiat-value" data-field="fiat">—</p>
+            <p class="address collapsed-address hidden" data-field="collapsed-address"></p>
             <div class="collapsible-body" id="wallet-body-usdc">
               <div class="collapsible-inner">
                 <div class="address-row">

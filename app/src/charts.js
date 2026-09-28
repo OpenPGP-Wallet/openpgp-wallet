@@ -3,7 +3,9 @@
 // avec un léger voile, point final cerclé de la couleur du fond, grille en
 // traits fins, graduations arrondies ; au survol ou au clavier (flèches), un
 // réticule suit l'instant le plus proche et une bulle donne valeur et date.
-// Les couleurs viennent des variables CSS du thème (--chart-line…).
+// Les couleurs viennent des variables CSS du thème (--chart-line…) ; `trend`
+// ("up" | "down") passe la courbe en vert ou en rouge (classes trend-up /
+// trend-down sur le conteneur, voir styles.css).
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -45,8 +47,9 @@ function nearestIndex(xs, x) {
 /**
  * Trace `points` ([[instant en secondes, valeur], …], triés) dans `container`.
  * options : height, formatValue(v), formatAxis(v, step), formatTime(t, span),
- * formatTooltipTime(t, span), emptyText, ariaLabel — `span` : durée réellement
- * couverte par les points (secondes), qui décide de la précision des dates.
+ * formatTooltipTime(t, span), emptyText, ariaLabel, trend — `span` : durée
+ * réellement couverte par les points (secondes), qui décide de la précision des
+ * dates.
  */
 export function renderLineChart(container, points, options) {
   container._chart = { points, options };
@@ -63,11 +66,18 @@ export function renderLineChart(container, points, options) {
   draw(container, points, options);
 }
 
+// Couleur de la courbe selon le sens de la variation (`null` : couleur du thème).
+function applyTrend(container, trend) {
+  container.classList.toggle("trend-up", trend === "up");
+  container.classList.toggle("trend-down", trend === "down");
+}
+
 function draw(container, points, options) {
   const height = options.height ?? 220;
   container.replaceChildren();
   container.classList.remove("chart-loading");
   container.classList.add("chart");
+  applyTrend(container, points.length < 2 ? null : options.trend);
   if (points.length < 2) {
     const empty = document.createElement("p");
     empty.className = "muted chart-empty";
@@ -179,8 +189,9 @@ function draw(container, points, options) {
 }
 
 /** Petite courbe sans axe ni interaction (la ligne porte déjà ses chiffres). */
-export function renderSparkline(container, points) {
+export function renderSparkline(container, points, trend = null) {
   container.replaceChildren();
+  applyTrend(container, points.length < 2 ? null : trend);
   if (points.length < 2) return;
   const width = 96;
   const height = 30;

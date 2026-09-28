@@ -1397,9 +1397,69 @@ textarea:focus {
   display: none;
 }
 
+/* Carte repliée : adresse, copie et QR code accessibles sans la déplier. Rien
+   de tout cela sur une carte dépliée (la ligne d'adresse est là) ni en vue
+   liste. */
+/* Solde et boutons de la carte repliée sur une même ligne (les boutons à
+   droite de la quantité : pas de ligne de plus par carte repliée). */
+.balance-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+}
+
+.wallet-card .balance-row {
+  margin-top: auto;
+  padding-top: 12px;
+  margin-bottom: 12px;
+}
+
+.wallet-card .balance-row > .balance {
+  margin: 0;
+  padding-top: 0;
+}
+
+.collapsed-actions {
+  display: none;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.wallet-card.collapsed .collapsed-actions {
+  display: flex;
+}
+
+.collapsed-actions .qr-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  margin: 0;
+}
+
+.collapsed-actions .qr-btn[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.collapsed-address {
+  margin-top: 8px;
+}
+
+.wallet-card:not(.collapsed) .collapsed-address,
+:root[data-wallet-list-view="true"] .collapsed-actions,
+:root[data-wallet-list-view="true"] .collapsed-address {
+  display: none;
+}
+
 /* Vue liste : pas de repli, le contenu reprend sa place dans la ligne. */
 :root[data-wallet-list-view="true"] .wallet-card .collapsible-body,
-:root[data-wallet-list-view="true"] .wallet-card .collapsible-inner {
+:root[data-wallet-list-view="true"] .wallet-card .collapsible-inner,
+:root[data-wallet-list-view="true"] .wallet-card .balance-row {
   display: contents;
 }
 
@@ -2062,6 +2122,17 @@ textarea:focus {
   stroke-width: 2;
 }
 
+/* Courbe verte si la valeur a monté sur la période affichée, rouge si elle a
+   baissé — même sens que la variation écrite au-dessus (flèche ▲/▼, qui dit
+   aussi le sens sans la couleur). Variation nulle : couleur du thème. */
+.trend-up {
+  --chart-line: var(--success);
+}
+
+.trend-down {
+  --chart-line: var(--danger);
+}
+
 .chart-crosshair {
   stroke: var(--muted);
   stroke-width: 1;
@@ -2213,9 +2284,15 @@ textarea:focus {
   border-radius: 8px;
 }
 
+/* Libellé long (« Contient déjà des parts de ce kit — tout réécrire ») : le
+   bouton passe sous le nom de la clé et son texte revient à la ligne, au lieu
+   de dépasser du cadre (vu avec une vraie clé). */
 .usb-drive button {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  max-width: 100%;
   margin-top: 0;
+  white-space: normal;
+  text-align: center;
 }
 
 .usb-list .success {
