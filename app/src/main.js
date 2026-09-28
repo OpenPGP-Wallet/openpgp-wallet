@@ -327,6 +327,8 @@ const I18N = {
     "wallet.showAddress": "Afficher l'adresse",
     "wallet.hideAddress": "Masquer l'adresse",
     "wallet.addressCopied": "Adresse copiée !",
+    "wallet.received": "Reçu : +{amount} {symbol}{fiat}",
+    "wallet.receivedPending": "Réception en attente : +{amount} BTC (comptée une fois confirmée)",
     "wallet.marketsLoadError": "Impossible de charger les données de marché.",
     "wallet.qrError": "Impossible de générer le QR code : {err}",
     "wallet.linkError": "Impossible d'ouvrir le lien : {err}",
@@ -764,6 +766,8 @@ const I18N = {
     "wallet.showAddress": "Show address",
     "wallet.hideAddress": "Hide address",
     "wallet.addressCopied": "Address copied!",
+    "wallet.received": "Received: +{amount} {symbol}{fiat}",
+    "wallet.receivedPending": "Incoming, unconfirmed: +{amount} BTC (counted once confirmed)",
     "wallet.marketsLoadError": "Unable to load market data.",
     "wallet.qrError": "Unable to generate the QR code: {err}",
     "wallet.linkError": "Unable to open the link: {err}",
@@ -1074,6 +1078,9 @@ document.querySelectorAll(".lang-btn").forEach((btn) => {
     // langue. Les autres listes dynamiques (historique, frais, kit de sauvegarde...)
     // adopteront la nouvelle langue à leur prochain affichage.
     renderRecipientList();
+    // Valeur en dollars des cartes (« ≈ 1 234,56 $ » / « ≈ $1,234.56 ») :
+    // recalculée sur place, sans appel réseau.
+    document.querySelectorAll(".wallet-card").forEach(updateFiatValue);
     try {
       localStorage.setItem(LANG_STORAGE_KEY, currentLang);
     } catch (e) {
@@ -1341,7 +1348,7 @@ function hideError(el) {
 let copyToastHideTimeout = null;
 let copyToastCleanupTimeout = null;
 
-function showCopyToast(message) {
+function showCopyToast(message, durationMs = 1800) {
   const toast = document.getElementById("copy-toast");
   document.getElementById("copy-toast-text").textContent = message;
   clearTimeout(copyToastHideTimeout);
@@ -1355,7 +1362,7 @@ function showCopyToast(message) {
   copyToastHideTimeout = setTimeout(() => {
     toast.classList.remove("visible");
     copyToastCleanupTimeout = setTimeout(() => toast.classList.add("hidden"), 200);
-  }, 1800);
+  }, durationMs);
 }
 
 async function copyText(text, successMessage) {
@@ -1921,6 +1928,9 @@ function fitNavbar() {
   const tabs = navbar.querySelector(".nav-tabs");
   const overflows = navbar.scrollWidth > navbar.clientWidth + 1 || tabs.scrollWidth > tabs.clientWidth + 1;
   navbar.classList.toggle("stacked", overflows);
+  // Messages (« Adresse copiée ! », fonds reçus) placés juste sous la barre,
+  // plus haute sur deux rangées.
+  document.documentElement.style.setProperty("--navbar-height", `${navbar.offsetHeight}px`);
 }
 
 {
@@ -2330,8 +2340,9 @@ function updateFiatValue(card) {
     fiatEl.textContent = "—";
     return;
   }
-  const value = (balance * price).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const text = `≈ ${value} $`;
+  // Dans la langue choisie (« ≈ 1 234,56 $ » / « ≈ $1,234.56 ») ; restait au
+  // format français en anglais.
+  const text = formatUsdApprox(balance * price);
   if (fiatEl.textContent !== text) fiatEl.textContent = text;
 }
 
@@ -2803,8 +2814,13 @@ async function refreshBalance(card) {
     const balancePromise = invoke(balanceCommand, { network, address })
       .then((balance) => {
         if (balanceKey(card) !== key) return; // réseau ou profil changé entre-temps
+        // Solde précédent de CETTE adresse sur CE réseau (pas au premier
+        // affichage, ni après un changement de profil ou de réseau).
+        const previous = card.dataset.balanceKey === key ? balanceEl.textContent : null;
         if (balanceEl.textContent !== balance) balanceEl.textContent = balance;
         card.dataset.balanceKey = key;
+        const received = previous == null ? null : balanceIncrease(previous, balance);
+        if (received) announceReceived(card, network, received);
       })
       .catch((e) => {
         console.error(e);
@@ -2820,6 +2836,41 @@ async function refreshBalance(card) {
   // Réseau ou profil changé pendant la lecture (ignorée), ou changement
   // signalé entre-temps : relire.
   if (balanceKey(card) !== key || card.dataset.refreshAgain === "1") refreshBalance(card);
+}
+
+// Hausse exacte entre deux soldes affichés (« 0.12345678 ») — calcul sur des
+// entiers à l'échelle des décimales, jamais en flottants —, sans zéros
+// inutiles (« 0.01 ») ; `null` si le solde n'a pas monté ou n'est pas un nombre.
+function balanceIncrease(before, after) {
+  const number = /^\d+(\.\d+)?$/;
+  if (!number.test(before) || !number.test(after)) return null;
+  const decimals = Math.max((before.split(".")[1] || "").length, (after.split(".")[1] || "").length);
+  const scaled = (s) => {
+    const [whole, fraction = ""] = s.split(".");
+    return BigInt(whole + fraction.padEnd(decimals, "0"));
+  };
+  const diff = scaled(after) - scaled(before);
+  if (diff <= 0n) return null;
+  const digits = diff.toString().padStart(decimals + 1, "0");
+  const whole = digits.slice(0, digits.length - decimals);
+  const fraction = digits.slice(digits.length - decimals).replace(/0+$/, "");
+  return fraction ? `${whole}.${fraction}` : whole;
+}
+
+// Fonds arrivés sur une carte affichée : message (5 s) et solde brièvement
+// éclairé. Valeur en dollars seulement sur le réseau principal (des jetons de
+// test ne valent rien).
+function announceReceived(card, network, amount) {
+  const coin = card.dataset.coin;
+  const symbol = card.querySelector(".balance").textContent.trim().split(/\s+/).pop();
+  const price = priceForCoin(coin);
+  const mainnet = network.endsWith("_mainnet");
+  const fiat = mainnet && price != null ? ` (${formatUsdApprox(Number(amount) * price)})` : "";
+  showCopyToast(t("wallet.received", { amount, symbol, fiat }), 5000);
+  const balance = card.querySelector(".balance");
+  balance.classList.remove("balance-received");
+  void balance.offsetWidth; // relance l'animation si une autre réception suit
+  balance.classList.add("balance-received");
 }
 
 // Surveillance en direct (voir core/src/balance_watch.rs) : dès qu'un envoi ou
@@ -2860,6 +2911,15 @@ async function checkPendingTx(card, address, network) {
     const text = incoming ? t("wallet.pendingIncoming", { amount: incoming }) : t("wallet.pendingBadge");
     if (badge.textContent !== text) badge.textContent = text;
     badge.classList.toggle("visible", pending);
+    // Nouvelle réception Bitcoin en attente (pas encore comptée dans le
+    // solde) : signalée dès qu'elle apparaît — pas au premier affichage, ni
+    // après un changement de profil ou de réseau.
+    const key = balanceKey(card);
+    const seen = card._pendingIncoming;
+    if (seen && seen.key === key && incoming && incoming !== seen.amount) {
+      showCopyToast(t("wallet.receivedPending", { amount: incoming }), 5000);
+    }
+    card._pendingIncoming = { key, amount: incoming };
     // Transaction pas encore finalisée : revérifiée dans 15 s, la surveillance
     // en direct ne signalant pas la finalisation (le solde ne bouge plus). Un
     // seul minuteur par carte : chaque actualisation le remplace.

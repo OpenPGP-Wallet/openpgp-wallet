@@ -951,9 +951,10 @@ textarea:focus {
    s'efface en même temps, dans les deux sens (apparition/disparition). */
 .copy-toast {
   position: fixed;
-  /* Sous la navbar (sticky, ~68px de haut) plutôt que par-dessus — tous les
-     boutons "copier" de l'app sont sur des écrans où elle est visible. */
-  top: 76px;
+  /* Sous la navbar (sticky) plutôt que par-dessus — tous les boutons "copier"
+     de l'app sont sur des écrans où elle est visible. Sa hauteur varie (une ou
+     deux rangées, voir fitNavbar) : mesurée, `--navbar-height`. */
+  top: calc(var(--navbar-height, 68px) + 8px);
   left: 50%;
   z-index: 999;
   display: flex;
@@ -993,6 +994,28 @@ textarea:focus {
 .copy-toast svg {
   color: var(--success);
   flex-shrink: 0;
+}
+
+/* Fonds reçus : le solde de la carte s'éclaire brièvement en vert. */
+.balance.balance-received {
+  animation: balance-received 2.4s ease-out;
+}
+
+@keyframes balance-received {
+  0%,
+  35% {
+    color: var(--success);
+    text-shadow: 0 0 14px color-mix(in srgb, var(--success) 45%, transparent);
+  }
+  100% {
+    text-shadow: 0 0 14px transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .balance.balance-received {
+    animation: none;
+  }
 }
 
 #add-recipient-form,
