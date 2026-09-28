@@ -151,9 +151,11 @@ body {
   padding: 24px;
 }
 
-/* Écran de déverrouillage seulement (id, pas .view) : empile la marque au-dessus
-   de la carte plutôt que le centrage en ligne par défaut des autres écrans. */
-#view-unlock {
+/* Écrans de déverrouillage et de premier lancement (id, pas .view) : empilent la
+   marque au-dessus de la carte plutôt que le centrage en ligne par défaut des
+   autres écrans. */
+#view-unlock,
+#view-onboarding {
   flex-direction: column;
   gap: 20px;
 }
@@ -513,6 +515,18 @@ button.link:hover {
   margin: 8px 0;
   word-break: break-all;
   font-size: 0.85rem;
+}
+
+/* Boutons d'une part : « Enregistrer sur une clé USB » (le geste conseillé) seul
+   sur sa ligne, les deux téléchargements côte à côte en dessous — à trois sur
+   une ligne, chaque libellé passait sur deux lignes. */
+.backup-item .row-buttons {
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.backup-item .row-buttons [data-kind="usb"] {
+  flex-basis: 100%;
 }
 
 .restore-grid {
