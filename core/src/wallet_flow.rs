@@ -24,27 +24,184 @@ pub fn prompt(message: &str) -> Result<String> {
 
 /// Paramètres réseau EVM : les fonctions de ce module sont agnostiques du réseau,
 /// pour ne jamais coder en dur "mainnet" dans un chemin de test — le choix
-/// mainnet/testnet est fait explicitement par l'appelant.
+/// mainnet/testnet est fait explicitement par l'appelant. Tous ces réseaux
+/// partagent la MÊME adresse (même clé, même format) ; chacun a son identifiant
+/// de chaîne (EIP-155 : une signature ne vaut que pour lui) et sa monnaie de frais.
 pub struct EvmNetwork {
+    /// Identifiant utilisé par l'interface et dans les fichiers ("evm_mainnet",
+    /// "bsc_mainnet"…) — "evm_mainnet"/"evm_sepolia" gardés pour Ethereum
+    /// (carnet d'adresses, wallets externes déjà enregistrés).
+    pub id: &'static str,
+    /// Nom court affiché (boîtes de confirmation, menus) : « Arbitrum One »…
+    pub name: &'static str,
     pub rpc: &'static str,
     pub chain_id: u64,
     pub label: &'static str,
     pub explorer_tx_prefix: &'static str,
+    /// Monnaie native, qui paie les frais (ETH, BNB, AVAX…), 18 décimales.
+    pub native_symbol: &'static str,
+    /// Fonds réels (`false` : réseau de test).
+    pub mainnet: bool,
+    /// Plafond de sécurité du prix du gas annoncé par le nœud : au-delà,
+    /// l'envoi est refusé plutôt que de lui faire confiance (`None` : réseau
+    /// de test). Très au-dessus des prix usuels de chaque réseau.
+    pub max_gas_price_wei: Option<u128>,
+    /// Gas d'un virement natif simple : 21 000 sur la plupart des réseaux ;
+    /// `None` (Arbitrum) : estimé par le nœud, le coût de publication sur
+    /// Ethereum y étant compté en gas.
+    pub transfer_gas: Option<u64>,
+    /// Frais de publication sur Ethereum facturés EN PLUS du gas (réseaux OP
+    /// Stack, comme Base), lus auprès du contrat oracle du réseau.
+    pub op_stack_l1_fee: bool,
+    /// Instance Blockscout (historique des transactions) ; `None` : historique
+    /// pas encore disponible sur ce réseau.
+    pub blockscout: Option<&'static str>,
 }
 
+const GWEI: u128 = 1_000_000_000;
+
 pub const SEPOLIA: EvmNetwork = EvmNetwork {
+    id: "evm_sepolia",
+    name: "Ethereum Sepolia",
     rpc: "https://ethereum-sepolia-rpc.publicnode.com",
     chain_id: 11155111,
     label: "Sepolia (testnet — aucune valeur réelle)",
     explorer_tx_prefix: "https://sepolia.etherscan.io/tx/",
+    native_symbol: "ETH",
+    mainnet: false,
+    max_gas_price_wei: None,
+    transfer_gas: Some(21_000),
+    op_stack_l1_fee: false,
+    blockscout: Some("https://eth-sepolia.blockscout.com"),
 };
 
 pub const ETHEREUM_MAINNET: EvmNetwork = EvmNetwork {
+    id: "evm_mainnet",
+    name: "Ethereum",
     rpc: "https://ethereum-rpc.publicnode.com",
     chain_id: 1,
     label: "Ethereum MAINNET — FONDS RÉELS",
     explorer_tx_prefix: "https://etherscan.io/tx/",
+    native_symbol: "ETH",
+    mainnet: true,
+    // Trouvé lors de l'audit « failles connues des hot wallets » (manipulation
+    // des frais par un nœud RPC) : le prix du gas était lu auprès du nœud APRÈS
+    // la confirmation, jamais affiché, jamais plafonné — un nœud compromis
+    // annonçant 100 000 gwei aurait fait payer 2,1 ETH de frais pour un simple
+    // virement. 200 gwei laisse une marge énorme sur les prix réels.
+    max_gas_price_wei: Some(200 * GWEI),
+    transfer_gas: Some(21_000),
+    op_stack_l1_fee: false,
+    blockscout: Some("https://eth.blockscout.com"),
 };
+
+pub const ARBITRUM_MAINNET: EvmNetwork = EvmNetwork {
+    id: "arbitrum_mainnet",
+    name: "Arbitrum One",
+    rpc: "https://arbitrum-one-rpc.publicnode.com",
+    chain_id: 42161,
+    label: "Arbitrum One — FONDS RÉELS",
+    explorer_tx_prefix: "https://arbiscan.io/tx/",
+    native_symbol: "ETH",
+    mainnet: true,
+    max_gas_price_wei: Some(10 * GWEI),
+    transfer_gas: None,
+    op_stack_l1_fee: false,
+    blockscout: Some("https://arbitrum.blockscout.com"),
+};
+
+pub const BASE_MAINNET: EvmNetwork = EvmNetwork {
+    id: "base_mainnet",
+    name: "Base",
+    rpc: "https://base-rpc.publicnode.com",
+    chain_id: 8453,
+    label: "Base — FONDS RÉELS",
+    explorer_tx_prefix: "https://basescan.org/tx/",
+    native_symbol: "ETH",
+    mainnet: true,
+    max_gas_price_wei: Some(10 * GWEI),
+    transfer_gas: Some(21_000),
+    op_stack_l1_fee: true,
+    blockscout: Some("https://base.blockscout.com"),
+};
+
+pub const BSC_MAINNET: EvmNetwork = EvmNetwork {
+    id: "bsc_mainnet",
+    name: "BNB Smart Chain",
+    rpc: "https://bsc-rpc.publicnode.com",
+    chain_id: 56,
+    label: "BNB Smart Chain — FONDS RÉELS",
+    explorer_tx_prefix: "https://bscscan.com/tx/",
+    native_symbol: "BNB",
+    mainnet: true,
+    max_gas_price_wei: Some(100 * GWEI),
+    transfer_gas: Some(21_000),
+    op_stack_l1_fee: false,
+    blockscout: None,
+};
+
+pub const AVALANCHE_MAINNET: EvmNetwork = EvmNetwork {
+    id: "avax_mainnet",
+    name: "Avalanche C-Chain",
+    rpc: "https://avalanche-c-chain-rpc.publicnode.com",
+    chain_id: 43114,
+    label: "Avalanche C-Chain — FONDS RÉELS",
+    explorer_tx_prefix: "https://snowtrace.io/tx/",
+    native_symbol: "AVAX",
+    mainnet: true,
+    max_gas_price_wei: Some(1_000 * GWEI),
+    transfer_gas: Some(21_000),
+    op_stack_l1_fee: false,
+    blockscout: None,
+};
+
+pub const POLYGON_MAINNET: EvmNetwork = EvmNetwork {
+    id: "polygon_mainnet",
+    name: "Polygon PoS",
+    rpc: "https://polygon-bor-rpc.publicnode.com",
+    chain_id: 137,
+    label: "Polygon PoS — FONDS RÉELS",
+    explorer_tx_prefix: "https://polygonscan.com/tx/",
+    native_symbol: "POL",
+    mainnet: true,
+    // Pics mesurés à plusieurs milliers de gwei lors de congestions.
+    max_gas_price_wei: Some(10_000 * GWEI),
+    transfer_gas: Some(21_000),
+    op_stack_l1_fee: false,
+    blockscout: Some("https://polygon.blockscout.com"),
+};
+
+pub const HYPEREVM_MAINNET: EvmNetwork = EvmNetwork {
+    id: "hyperevm_mainnet",
+    name: "HyperEVM",
+    rpc: "https://rpc.hyperliquid.xyz/evm",
+    chain_id: 999,
+    label: "HyperEVM — FONDS RÉELS",
+    explorer_tx_prefix: "https://hyperevmscan.io/tx/",
+    native_symbol: "HYPE",
+    mainnet: true,
+    max_gas_price_wei: Some(100 * GWEI),
+    transfer_gas: Some(21_000),
+    op_stack_l1_fee: false,
+    blockscout: None,
+};
+
+/// Tous les réseaux EVM connus de l'app.
+pub const EVM_NETWORKS: &[&EvmNetwork] = &[
+    &ETHEREUM_MAINNET,
+    &SEPOLIA,
+    &ARBITRUM_MAINNET,
+    &BASE_MAINNET,
+    &BSC_MAINNET,
+    &AVALANCHE_MAINNET,
+    &POLYGON_MAINNET,
+    &HYPEREVM_MAINNET,
+];
+
+/// Réseau EVM par son identifiant ("evm_mainnet", "bsc_mainnet"…).
+pub fn evm_network(id: &str) -> Option<&'static EvmNetwork> {
+    EVM_NETWORKS.iter().copied().find(|n| n.id == id)
+}
 
 /// Paramètres réseau Bitcoin, même logique que EvmNetwork/SolNetwork — sauf que
 /// mainnet et testnet Bitcoin utilisent des ADRESSES DIFFÉRENTES pour un même index

@@ -152,11 +152,12 @@ pub fn evm_history(chain_id: u64, address: &str, limit: usize) -> Result<Vec<TxE
 /// Page d'historique Ethereum (50 transactions) et curseur de la suivante,
 /// `None` après la dernière.
 pub fn evm_history_page(chain_id: u64, address: &str, page: Option<&PageParams>) -> Result<(Vec<TxEntry>, Option<PageParams>)> {
-    let base_url = match chain_id {
-        1 => "https://eth.blockscout.com",
-        11155111 => "https://eth-sepolia.blockscout.com",
-        other => anyhow::bail!("historique EVM non pris en charge pour chain_id={other}"),
-    };
+    // Instance Blockscout du réseau (voir `wallet_flow::EvmNetwork::blockscout`).
+    let base_url = crate::wallet_flow::EVM_NETWORKS
+        .iter()
+        .find(|n| n.chain_id == chain_id)
+        .and_then(|n| n.blockscout)
+        .ok_or_else(|| anyhow::anyhow!("historique pas encore disponible sur ce réseau"))?;
     let (txs, next) = BlockscoutClient::new(base_url).tx_history_page(address, page)?;
     let entries = txs
         .into_iter()

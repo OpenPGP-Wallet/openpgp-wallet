@@ -332,13 +332,13 @@ fn account_for(data_dir: &Path, id: u32, network: &str) -> Result<HardwareAccoun
     Ok(account)
 }
 
-/// Virement ETH signé par l'appareil. `gas_price` : celui affiché dans la
-/// boîte de confirmation, utilisé tel quel (voir `api::evm_gas_price_for_confirmation`).
-pub fn send_evm(data_dir: &Path, id: u32, network: &str, to: &str, amount_eth: &str, gas_price: u128) -> Result<String> {
+/// Virement ETH signé par l'appareil. `fee` : les frais affichés dans la
+/// boîte de confirmation, utilisés tels quels (voir `api::evm_fee_for_confirmation`).
+pub fn send_evm(data_dir: &Path, id: u32, network: &str, to: &str, amount_eth: &str, fee: api::EvmFee) -> Result<String> {
     let account = account_for(data_dir, id, network)?;
     let Chain::Evm(net) = chain(network)? else { bail!("réseau EVM attendu") };
     let from = wallet_flow::parse_evm_address(&account.address)?;
-    let tx = api::prepare_evm_transfer(net, &from, to, amount_eth, gas_price)?;
+    let tx = api::prepare_evm_transfer(net, &from, to, amount_eth, fee)?;
     let path = ledger::parse_path(&account.path)?;
     let raw_tx = match open_for(&account)? {
         Session::Ledger(mut t) => ledger::eth::sign_transaction(t.as_mut(), &path, &tx, &from)?,

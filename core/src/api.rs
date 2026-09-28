@@ -1352,16 +1352,6 @@ pub fn has_pending_sol(address: &str, network: &wallet_flow::SolNetwork) -> Resu
     sol_rpc::SolRpc::new(network.rpc).has_unfinalized_tx(address)
 }
 
-/// Plafond de sécurité du prix du gas sur Ethereum MAINNET (200 gwei) — trouvé
-/// lors de l'audit "failles connues des hot wallets" (manipulation des frais
-/// par un nœud RPC) : le prix du gas était lu auprès du nœud APRÈS la
-/// confirmation, jamais affiché, jamais plafonné. Un nœud compromis annonçant
-/// 100 000 gwei aurait fait payer 2,1 ETH de frais pour un simple virement,
-/// le seul contrôle étant que le solde les couvre. 200 gwei laisse une marge
-/// énorme sur les prix réels de mainnet ; au-delà, l'envoi est refusé plutôt
-/// que de faire confiance au nœud. Pas de plafond sur les testnets (fonds sans
-/// valeur, prix du gas parfois erratiques).
-const MAINNET_MAX_GAS_PRICE_WEI: u128 = 200_000_000_000;
 /// Plafond du tarif de frais d'un swap Bitcoin (frais choisis automatiquement,
 /// voir `send_swap_btc`) — largement au-dessus des tarifs usuels, seuls des
 /// pics extrêmes et brefs l'ont dépassé.
@@ -1384,15 +1374,113 @@ pub fn evm_gas_price_for_confirmation(network: &wallet_flow::EvmNetwork) -> Resu
 }
 
 fn check_evm_gas_price(network: &wallet_flow::EvmNetwork, gas_price: u128) -> Result<()> {
-    if network.chain_id == wallet_flow::ETHEREUM_MAINNET.chain_id {
+    // Plafond propre à chaque réseau (`EvmNetwork::max_gas_price_wei`) ; aucun
+    // sur un réseau de test.
+    if let Some(cap) = network.max_gas_price_wei {
         anyhow::ensure!(
-            gas_price <= MAINNET_MAX_GAS_PRICE_WEI,
+            gas_price <= cap,
             "prix du gas annoncé par le nœud anormalement élevé ({} gwei, plafond de sécurité {} gwei) — envoi refusé",
             gas_price / 1_000_000_000,
-            MAINNET_MAX_GAS_PRICE_WEI / 1_000_000_000
+            cap / 1_000_000_000
         );
     }
     Ok(())
+}
+
+/// Plafond d'une limite de gas ESTIMÉE par le nœud (Arbitrum, où le coût de
+/// publication sur Ethereum est compté en gas) : au-delà, refus plutôt que de
+/// lui faire confiance. Un virement y consomme d'ordinaire moins de 1 million.
+pub const EVM_MAX_ESTIMATED_GAS: u64 = 5_000_000;
+/// Oracle des frais des réseaux OP Stack (même adresse sur tous : Base…).
+const OP_GAS_PRICE_ORACLE: &str = "0x420000000000000000000000000000000000000F";
+
+/// Frais d'un envoi EVM, montrés dans la boîte de confirmation PUIS utilisés
+/// tels quels pour signer ("on signe ce qu'on voit") — jamais relus après.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EvmFee {
+    pub gas_price: u128,
+    pub gas_limit: u64,
+    /// Réseaux OP Stack (Base) : frais de publication sur Ethereum, facturés
+    /// en plus du gas par le réseau lui-même (estimation avec marge) ; 0
+    /// ailleurs. Compris dans le contrôle du solde.
+    pub l1_fee: u128,
+}
+
+impl EvmFee {
+    /// Frais maximum : gas × prix (borne réelle : jamais plus que la limite)
+    /// + frais de publication estimés.
+    pub fn max_total(&self) -> Result<u128> {
+        self.gas_price
+            .checked_mul(u128::from(self.gas_limit))
+            .and_then(|gas| gas.checked_add(self.l1_fee))
+            .context("frais de gas dépassant la capacité représentable")
+    }
+}
+
+/// Frais d'un virement natif de `value` wei (`data` : appel de contrat, vide
+/// pour un simple virement) depuis `from` : prix du gas du nœud (plafonné),
+/// limite de gas fixe ou estimée (+20 %, bornée), frais de publication OP
+/// Stack le cas échéant (+25 %).
+pub fn evm_fee_for_confirmation(network: &wallet_flow::EvmNetwork, from: &[u8; 20], to: &[u8; 20], value: u128, data: &[u8]) -> Result<EvmFee> {
+    let rpc = eth_rpc::EthRpc::new(network.rpc);
+    let gas_price = rpc.gas_price()?;
+    check_evm_gas_price(network, gas_price)?;
+    let gas_limit = match (network.transfer_gas, data.is_empty()) {
+        (Some(fixed), true) => fixed,
+        _ => {
+            let estimated = rpc.estimate_gas(&derivation::format_address(from), &derivation::format_address(to), value, data)?;
+            let with_margin = estimated.saturating_add(estimated / 5).max(eth_tx::intrinsic_gas(data));
+            anyhow::ensure!(
+                with_margin <= EVM_MAX_ESTIMATED_GAS,
+                "gas estimé anormalement élevé ({with_margin}, maximum {EVM_MAX_ESTIMATED_GAS}) — envoi refusé"
+            );
+            with_margin
+        }
+    };
+    let l1_fee = if network.op_stack_l1_fee {
+        let draft = eth_tx::EthTx { nonce: 0, gas_price, gas_limit, to: *to, value, chain_id: network.chain_id, data: data.to_vec() };
+        let fee = op_stack_l1_fee(&rpc, &draft.unsigned_rlp())?;
+        fee.saturating_add(fee / 4)
+    } else {
+        0
+    };
+    Ok(EvmFee { gas_price, gas_limit, l1_fee })
+}
+
+/// Frais d'un virement natif de `amount` (texte, 18 décimales) vers `to` : voir
+/// `evm_fee_for_confirmation`. `from` : adresse d'envoi, nécessaire seulement
+/// là où la limite de gas est estimée (Arbitrum).
+pub fn evm_transfer_fee_for_confirmation(network: &wallet_flow::EvmNetwork, from: Option<&str>, to: &str, amount: &str) -> Result<EvmFee> {
+    let to = wallet_flow::parse_evm_address(to)?;
+    let value = wallet_flow::parse_eth_to_wei(amount)?;
+    let from = match (from, network.transfer_gas) {
+        (Some(address), _) => wallet_flow::parse_evm_address(address)?,
+        // Limite de gas fixe : l'adresse d'envoi n'intervient pas.
+        (None, Some(_)) => [0u8; 20],
+        (None, None) => anyhow::bail!("adresse d'envoi inconnue : déverrouillez le portefeuille"),
+    };
+    evm_fee_for_confirmation(network, &from, &to, value, &[])
+}
+
+/// Frais de publication sur Ethereum d'une transaction (encodage non signé)
+/// sur un réseau OP Stack : `getL1Fee(bytes)` de l'oracle du réseau.
+fn op_stack_l1_fee(rpc: &eth_rpc::EthRpc, unsigned_tx: &[u8]) -> Result<u128> {
+    // Sélecteur de getL1Fee(bytes), puis l'argument `bytes` en ABI : position
+    // (0x20), longueur, données complétées à un multiple de 32 octets.
+    let mut calldata = vec![0x49, 0x94, 0x8e, 0x0e];
+    let mut word = [0u8; 32];
+    word[31] = 0x20;
+    calldata.extend_from_slice(&word);
+    let mut length = [0u8; 32];
+    length[24..].copy_from_slice(&(unsigned_tx.len() as u64).to_be_bytes());
+    calldata.extend_from_slice(&length);
+    calldata.extend_from_slice(unsigned_tx);
+    let padded = 4 + (calldata.len() - 4).div_ceil(32) * 32;
+    calldata.resize(padded, 0);
+    let answer = rpc.call_contract(&derivation::format_address(&[0u8; 20]), OP_GAS_PRICE_ORACLE, 0, &calldata)?;
+    anyhow::ensure!(answer.len() == 32, "réponse de l'oracle de frais inattendue");
+    anyhow::ensure!(answer[..16].iter().all(|&b| b == 0), "frais de publication annoncés anormalement élevés");
+    Ok(u128::from_be_bytes(answer[16..].try_into().expect("16 octets")))
 }
 
 /// Déverrouille le coffre (mot de passe requis : c'est la barrière d'authentification
@@ -1405,14 +1493,14 @@ pub fn send_evm(
     network: &wallet_flow::EvmNetwork,
     to: &str,
     amount_eth: &str,
-    gas_price: u128,
+    fee: EvmFee,
     profile_index: u32,
 ) -> Result<String> {
-    check_evm_gas_price(network, gas_price)?;
+    check_evm_gas_price(network, fee.gas_price)?;
     let seed = unlock_seed(data_dir, device_password)?;
     let _seed_lock = memory_guard::lock(&seed);
     let (signing_key, address) = derivation::derive_evm_key(&seed, profile_index)?;
-    let tx = prepare_evm_transfer(network, &address, to, amount_eth, gas_price)?;
+    let tx = prepare_evm_transfer(network, &address, to, amount_eth, fee)?;
     let raw_tx = tx.sign(&signing_key)?;
     eth_rpc::EthRpc::new(network.rpc).send_raw_transaction(&raw_tx)
 }
@@ -1425,9 +1513,10 @@ pub(crate) fn prepare_evm_transfer(
     address: &[u8; 20],
     to: &str,
     amount_eth: &str,
-    gas_price: u128,
+    fee: EvmFee,
 ) -> Result<eth_tx::EthTx> {
-    check_evm_gas_price(network, gas_price)?;
+    check_evm_gas_price(network, fee.gas_price)?;
+    anyhow::ensure!(fee.gas_limit >= eth_tx::intrinsic_gas(&[]), "limite de gas trop basse pour un virement");
     let to_bytes = wallet_flow::parse_evm_address(to)?;
     let value = wallet_flow::parse_eth_to_wei(amount_eth)?;
 
@@ -1462,9 +1551,7 @@ pub(crate) fn prepare_evm_transfer(
     // ce contrôle, l'erreur ne remonte que via le rejet du nœud RPC après signature,
     // ce qui masque la vraie cause côté utilisateur ("fonds insuffisants") derrière un
     // message d'erreur RPC générique.
-    let gas_cost = gas_price
-        .checked_mul(u128::from(EVM_TRANSFER_GAS_LIMIT))
-        .context("gas_price * gas_limit dépasse la capacité représentable")?;
+    let gas_cost = fee.max_total()?;
     let total_needed = value
         .checked_add(gas_cost)
         .context("montant + frais de gas dépasse la capacité représentable")?;
@@ -1475,8 +1562,8 @@ pub(crate) fn prepare_evm_transfer(
 
     Ok(eth_tx::EthTx {
         nonce,
-        gas_price,
-        gas_limit: EVM_TRANSFER_GAS_LIMIT,
+        gas_price: fee.gas_price,
+        gas_limit: fee.gas_limit,
         to: to_bytes,
         value,
         chain_id,
@@ -1770,7 +1857,7 @@ pub fn send_swap_btc(
     // Tarif lu auprès d'Esplora sans intervention de l'utilisateur (contrairement
     // à `send_btc`, où il choisit un palier affiché en sats) : plafonné pour qu'un
     // serveur compromis ne puisse pas gonfler les frais à volonté — même famille
-    // que le plafond du prix du gas EVM (`MAINNET_MAX_GAS_PRICE_WEI`). Plafond
+    // que le plafond du prix du gas EVM (`EvmNetwork::max_gas_price_wei`). Plafond
     // affiché dans la boîte de confirmation du swap.
     anyhow::ensure!(
         fee_rate.is_finite() && fee_rate <= BTC_SWAP_MAX_FEE_RATE_SAT_VB as f64,
@@ -3411,7 +3498,7 @@ mod tests {
 
     #[test]
     fn evm_gas_price_is_capped_on_mainnet_only() {
-        let cap = MAINNET_MAX_GAS_PRICE_WEI;
+        let cap = wallet_flow::ETHEREUM_MAINNET.max_gas_price_wei.expect("plafond sur mainnet");
         assert!(check_evm_gas_price(&wallet_flow::ETHEREUM_MAINNET, cap).is_ok());
         let err = check_evm_gas_price(&wallet_flow::ETHEREUM_MAINNET, 100_000 * 1_000_000_000).unwrap_err();
         assert!(err.to_string().contains("anormalement élevé"), "{err}");
@@ -3625,6 +3712,47 @@ mod tests {
     /// Vérifie contre le réseau réel combien de gas coûte VRAIMENT un
     /// `depositWithExpiry` sur le routeur THORChain (simulation `eth_estimateGas`
     /// depuis une adresse publique approvisionnée, lecture seule), comparé au
+    /// Réseaux EVM : identifiants et chaînes uniques, plafond de prix du gas sur
+    /// chaque réseau à fonds réels, frais de publication OP Stack seulement là
+    /// où ils existent.
+    #[test]
+    fn evm_networks_are_consistent() {
+        let networks = wallet_flow::EVM_NETWORKS;
+        for (i, a) in networks.iter().enumerate() {
+            for b in &networks[i + 1..] {
+                assert_ne!(a.id, b.id);
+                assert_ne!(a.chain_id, b.chain_id);
+            }
+            assert_eq!(wallet_flow::evm_network(a.id).map(|n| n.chain_id), Some(a.chain_id));
+            assert_eq!(a.mainnet, a.max_gas_price_wei.is_some(), "{} : plafond sur fonds réels uniquement", a.id);
+            assert!(a.rpc.starts_with("https://") && a.explorer_tx_prefix.starts_with("https://"), "{}", a.id);
+        }
+        assert!(wallet_flow::evm_network("inconnu").is_none());
+        let op_stack: Vec<&str> = networks.iter().filter(|n| n.op_stack_l1_fee).map(|n| n.id).collect();
+        assert_eq!(op_stack, ["base_mainnet"], "frais L1 OP Stack : Base seulement");
+        let fee = EvmFee { gas_price: 2, gas_limit: 21_000, l1_fee: 5 };
+        assert_eq!(fee.max_total().unwrap(), 42_005);
+        assert!(EvmFee { gas_price: u128::MAX, gas_limit: 2, l1_fee: 0 }.max_total().is_err());
+    }
+
+    /// Frais lus sur CHAQUE réseau EVM réel pour un virement : prix sous le
+    /// plafond, limite fixe (21 000) ou estimée (Arbitrum), frais de
+    /// publication sur Base. Lecture seule.
+    /// `cargo test -- --ignored evm_fees_are_read_on_every --nocapture`
+    #[test]
+    #[ignore]
+    fn evm_fees_are_read_on_every_real_network() {
+        let from = "0x28C6c06298d514Db089934071355E5743bf21d60"; // hot wallet public (lecture seule)
+        let to = "0x000000000000000000000000000000000000dEaD";
+        for net in wallet_flow::EVM_NETWORKS.iter().filter(|n| n.mainnet) {
+            let fee = evm_transfer_fee_for_confirmation(net, Some(from), to, "0").unwrap_or_else(|e| panic!("{} : {e:#}", net.id));
+            println!("{:>18} : {:.4} gwei, gas {}, L1 {} wei, total {} wei", net.id, fee.gas_price as f64 / 1e9, fee.gas_limit, fee.l1_fee, fee.max_total().unwrap());
+            assert!(fee.gas_price > 0, "{}", net.id);
+            assert!(fee.gas_limit >= 21_000, "{}", net.id);
+            assert_eq!(fee.l1_fee > 0, net.op_stack_l1_fee, "{} : frais L1", net.id);
+        }
+    }
+
     /// gas intrinsèque. `cargo test -- --ignored thorchain_router_deposit_gas --nocapture`
     #[test]
     #[ignore]

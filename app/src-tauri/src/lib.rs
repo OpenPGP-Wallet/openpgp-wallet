@@ -35,6 +35,13 @@ fn set_ui_language(lang: String) {
 /// Messages sans valeur interpolée : correspondance exacte avec le texte français
 /// tel qu'écrit dans `core/` et dans ce fichier.
 const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
+    // Réseaux EVM (core/src/api.rs, history.rs)
+    ("adresse d'envoi inconnue : déverrouillez le portefeuille", "sending address unknown: unlock the wallet"),
+    ("historique pas encore disponible sur ce réseau", "history not available on this network yet"),
+    ("limite de gas trop basse pour un virement", "gas limit too low for a transfer"),
+    ("réponse de l'oracle de frais inattendue", "unexpected answer from the fee oracle"),
+    ("frais de publication annoncés anormalement élevés", "abnormally high posting fee announced"),
+    ("frais de gas dépassant la capacité représentable", "gas fee beyond the representable range"),
     // core/src/usb_backup.rs, sauvegarde sur clé USB
     ("clé USB introuvable : branchez-la puis réessayez", "USB drive not found: plug it in and try again"),
     ("écriture sur la clé USB impossible", "cannot write to the USB drive"),
@@ -393,6 +400,9 @@ const LEDGER_PREFIX_TRANSLATIONS: &[(&str, &str)] = &[
 /// correspondance exacte ne peut pas fonctionner, donc reconstruction par
 /// découpage autour de la partie fixe du message.
 fn translate_dynamic_error(msg: &str) -> Option<String> {
+    if let Some(rest) = msg.strip_prefix("gas estimé anormalement élevé (").and_then(|rest| rest.strip_suffix(") — envoi refusé")) {
+        return Some(format!("abnormally high estimated gas ({rest}) — transfer refused"));
+    }
     if let Some(part) = msg
         .strip_prefix("cette clé USB contient déjà la part n°")
         .and_then(|rest| rest.strip_suffix(" de ce kit : deux parts sur une même clé suffiraient à tout récupérer — utilisez une autre clé"))
@@ -1329,11 +1339,13 @@ fn forget_wallet_connections(app: &tauri::AppHandle) {
 }
 
 fn evm_network(network: &str) -> Result<&'static wallet_flow::EvmNetwork, String> {
-    match network {
-        "evm_sepolia" => Ok(&wallet_flow::SEPOLIA),
-        "evm_mainnet" => Ok(&wallet_flow::ETHEREUM_MAINNET),
-        other => Err(translate_error(&format!("réseau EVM inconnu : {other}"))),
-    }
+    wallet_flow::evm_network(network).ok_or_else(|| translate_error(&format!("réseau EVM inconnu : {network}")))
+}
+
+/// Réseau EVM (Ethereum, ses L2, BNB Chain, Avalanche, Polygon…) : même
+/// adresse, même code d'envoi, voir `wallet_flow::EVM_NETWORKS`.
+fn is_evm(network: &str) -> bool {
+    wallet_flow::evm_network(network).is_some()
 }
 
 fn sol_network(network: &str) -> Result<&'static wallet_flow::SolNetwork, String> {
@@ -1356,7 +1368,7 @@ fn btc_network(network: &str) -> Result<&'static wallet_flow::BtcNetwork, String
 async fn get_balance(network: String, address: String) -> Result<String, String> {
     run_blocking(move || {
         match network.as_str() {
-            "evm_sepolia" | "evm_mainnet" => {
+            n if is_evm(n) => {
                 let net = evm_network(&network)?;
                 let wei = api::get_evm_balance(&address, net).t_err()?;
                 Ok(format!("{:.6}", wei as f64 / 1e18))
@@ -1475,7 +1487,7 @@ async fn estimate_btc_fees(network: String, address: String) -> Result<BtcFeeEst
 async fn has_pending_tx(network: String, address: String) -> Result<bool, String> {
     run_blocking(move || {
         match network.as_str() {
-            "evm_sepolia" | "evm_mainnet" => Ok(false),
+            n if is_evm(n) => Ok(false),
             "btc_testnet" | "btc_mainnet" => {
                 let net = btc_network(&network)?;
                 api::has_pending_btc(&address, net).t_err()
@@ -1572,9 +1584,10 @@ fn history_dtos<E: std::fmt::Display>(
 #[tauri::command]
 async fn get_tx_history(network: String, address: String) -> Result<Vec<TxEntryDto>, String> {
     run_blocking(move || match network.as_str() {
-        "evm_sepolia" | "evm_mainnet" => {
+        n if is_evm(n) => {
             let net = evm_network(&network)?;
-            let asset = (network == "evm_mainnet").then_some(price_history::Asset::Eth);
+            // Valeur en dollars : ETH (Ethereum et ses L2) pour l'instant.
+            let asset = (net.mainnet && net.native_symbol == "ETH").then_some(price_history::Asset::Eth);
             history_dtos(
                 || history::evm_history(net.chain_id, &address, HISTORY_LIMIT as usize),
                 asset,
@@ -1806,15 +1819,29 @@ fn canonical_address_input(value: &str) -> Result<String, String> {
 }
 
 /// Libellé humain du réseau pour la boîte de dialogue de confirmation.
-fn network_label(network: &str) -> &str {
+fn network_label(network: &str) -> String {
     match network {
-        "evm_sepolia" => "Ethereum Sepolia (testnet)",
-        "evm_mainnet" => lang("Ethereum MAINNET — fonds réels", "Ethereum MAINNET — real funds"),
-        "btc_testnet" => lang("Bitcoin testnet", "Bitcoin testnet"),
-        "btc_mainnet" => lang("Bitcoin MAINNET — fonds réels", "Bitcoin MAINNET — real funds"),
-        "sol_devnet" => lang("Solana devnet", "Solana devnet"),
-        "sol_mainnet" => lang("Solana MAINNET — fonds réels", "Solana MAINNET — real funds"),
-        other => other,
+        "evm_sepolia" => "Ethereum Sepolia (testnet)".to_string(),
+        "evm_mainnet" => lang("Ethereum MAINNET — fonds réels", "Ethereum MAINNET — real funds").to_string(),
+        "btc_testnet" => lang("Bitcoin testnet", "Bitcoin testnet").to_string(),
+        "btc_mainnet" => lang("Bitcoin MAINNET — fonds réels", "Bitcoin MAINNET — real funds").to_string(),
+        "sol_devnet" => lang("Solana devnet", "Solana devnet").to_string(),
+        "sol_mainnet" => lang("Solana MAINNET — fonds réels", "Solana MAINNET — real funds").to_string(),
+        other => match wallet_flow::evm_network(other) {
+            Some(net) if net.mainnet => format!("{} — {}", net.name, lang("fonds réels", "real funds")),
+            Some(net) => format!("{} (testnet)", net.name),
+            None => other.to_string(),
+        },
+    }
+}
+
+/// Unité du montant d'un virement natif sur `network` (affichée à côté du
+/// montant dans la boîte de confirmation).
+fn network_unit(network: &str) -> &'static str {
+    match network {
+        "btc_testnet" | "btc_mainnet" => "BTC",
+        "sol_devnet" | "sol_mainnet" => "SOL",
+        other => wallet_flow::evm_network(other).map(|n| n.native_symbol).unwrap_or(""),
     }
 }
 
@@ -1859,13 +1886,15 @@ fn transaction_confirmation_text(
     let from_label = dialog_label(from_label);
     if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
         format!(
-            "{warning}Network: {}\nFrom profile: {from_label}\nRecipient: {to}\nAmount: {amount}{fee_line}\n\nConfirm this transfer? It is irreversible.",
-            network_label(network)
+            "{warning}Network: {}\nFrom profile: {from_label}\nRecipient: {to}\nAmount: {amount} {}{fee_line}\n\nConfirm this transfer? It is irreversible.",
+            network_label(network),
+            network_unit(network)
         )
     } else {
         format!(
-            "{warning}Réseau : {}\nDepuis le profil : {from_label}\nDestinataire : {to}\nMontant : {amount}{fee_line}\n\nConfirmer cet envoi ? C'est irréversible.",
-            network_label(network)
+            "{warning}Réseau : {}\nDepuis le profil : {from_label}\nDestinataire : {to}\nMontant : {amount} {}{fee_line}\n\nConfirmer cet envoi ? C'est irréversible.",
+            network_label(network),
+            network_unit(network)
         )
     }
 }
@@ -1960,13 +1989,29 @@ fn send_warnings(dir: &std::path::Path, network: &str, coin: &str, to: &str, act
 /// paie `gas consommé × prix`, jamais plus que la limite — c'est donc une
 /// borne réelle, pas une estimation qui pourrait être dépassée.
 fn evm_fee_line(gas_price: u128, gas_limit: u64) -> String {
-    let max_fee_eth = (gas_price.saturating_mul(u128::from(gas_limit))) as f64 / 1e18;
-    let gwei = gas_price as f64 / 1e9;
-    lang(
-        &format!("Frais réseau maximum : {max_fee_eth:.6} ETH ({gwei:.2} gwei)"),
-        &format!("Maximum network fee: {max_fee_eth:.6} ETH ({gwei:.2} gwei)"),
+    evm_fee_line_for(api::EvmFee { gas_price, gas_limit, l1_fee: 0 }, "ETH")
+}
+
+/// Ligne de frais d'un envoi EVM, dans la monnaie de frais du réseau (`symbol`) :
+/// maximum = gas × prix, plus les frais de publication sur Ethereum (réseaux
+/// OP Stack, estimés) le cas échéant.
+fn evm_fee_line_for(fee: api::EvmFee, symbol: &str) -> String {
+    let gas_fee = fee.gas_price.saturating_mul(u128::from(fee.gas_limit)) as f64 / 1e18;
+    let max_fee = gas_fee + fee.l1_fee as f64 / 1e18;
+    let gwei = fee.gas_price as f64 / 1e9;
+    let mut line = lang(
+        &format!("Frais réseau maximum : {max_fee:.8} {symbol} ({gwei:.4} gwei)"),
+        &format!("Maximum network fee: {max_fee:.8} {symbol} ({gwei:.4} gwei)"),
     )
-    .to_string()
+    .to_string();
+    if fee.l1_fee > 0 {
+        let l1 = fee.l1_fee as f64 / 1e18;
+        line.push_str(lang(
+            &format!(", dont ≈ {l1:.8} {symbol} de publication sur Ethereum"),
+            &format!(", incl. ≈ {l1:.8} {symbol} for posting to Ethereum"),
+        ));
+    }
+    line
 }
 
 #[tauri::command]
@@ -1987,13 +2032,22 @@ async fn send_transaction(
             .find(|p| p.index == profile_index)
             .map(|p| p.label)
             .unwrap_or_else(|| format!("profil #{profile_index}"));
-        let send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &from_label, None)?;
+        // Adresse EVM du profil (mémorisée au déverrouillage) : estimation du
+        // gas là où elle est nécessaire (Arbitrum).
+        let from_evm = app
+            .state::<ProfileAddressCache>()
+            .0
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(&profile_index)
+            .map(|(evm, _)| evm.clone());
+        let send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &from_label, None, from_evm.as_deref())?;
 
         let result = match network.as_str() {
-            "evm_sepolia" | "evm_mainnet" => {
+            n if is_evm(n) => {
                 let net = evm_network(&network)?;
-                let gas_price = send.evm_gas_price.ok_or_else(|| "prix du gas manquant".to_string())?;
-                api::send_evm(&dir, &password, net, &send.to, &send.amount, gas_price, profile_index).t_err()
+                let fee = send.evm_fee.ok_or_else(|| "frais EVM manquants".to_string())?;
+                api::send_evm(&dir, &password, net, &send.to, &send.amount, fee, profile_index).t_err()
             }
             "btc_testnet" | "btc_mainnet" => {
                 let net = btc_network(&network)?;
@@ -2031,7 +2085,7 @@ fn fee_and_device_note(fee_line: Option<String>, device_note: Option<&str>) -> O
 struct ConfirmedSend {
     to: String,
     amount: String,
-    evm_gas_price: Option<u128>,
+    evm_fee: Option<api::EvmFee>,
     fee_sat: Option<u64>,
 }
 
@@ -2048,6 +2102,7 @@ fn confirm_send(
     fee_sat: Option<u64>,
     from_label: &str,
     device_note: Option<&str>,
+    from_evm: Option<&str>,
 ) -> Result<ConfirmedSend, String> {
     // Réseau validé AVANT la boîte de confirmation (22ᵉ passage) : un réseau
     // inconnu était jusqu'ici affiché tel quel (texte libre du frontend) dans
@@ -2055,7 +2110,7 @@ fn confirm_send(
     // leur forme canonique, utilisée pour l'affichage ET la signature (voir
     // `canonical_address_input`/`api::canonical_amount`).
     let coin = match network {
-        "evm_sepolia" | "evm_mainnet" => "evm",
+        n if is_evm(n) => "evm",
         "btc_testnet" | "btc_mainnet" => "btc",
         "sol_devnet" | "sol_mainnet" => "sol",
         other => return Err(translate_error(&format!("réseau inconnu : {other}"))),
@@ -2068,8 +2123,10 @@ fn confirm_send(
     // Bitcoin ; pour EVM, prix du gas lu MAINTENANT et utilisé tel quel pour
     // signer — avant, il était lu auprès du nœud APRÈS la confirmation, jamais
     // affiché (voir `api::evm_gas_price_for_confirmation`).
-    let evm_gas_price = match coin {
-        "evm" => Some(api::evm_gas_price_for_confirmation(evm_network(network)?).t_err()?),
+    // Frais EVM complets (prix, limite de gas — estimée là où elle n'est pas
+    // fixe —, frais de publication OP Stack), affichés puis signés tels quels.
+    let evm_fee = match coin {
+        "evm" => Some(api::evm_transfer_fee_for_confirmation(evm_network(network)?, from_evm, &to, &amount).t_err()?),
         _ => None,
     };
     // Adresse refusée AVANT la confirmation si elle est mal formée (EVM/BTC :
@@ -2101,7 +2158,7 @@ fn confirm_send(
             let fee_sat = fee_sat.ok_or_else(|| "frais Bitcoin manquants (choisis une vitesse d'envoi)".to_string())?;
             Some(format!("{} : {fee_sat} sat", lang("Frais", "Fee")))
         }
-        _ => evm_gas_price.map(|gas_price| evm_fee_line(gas_price, api::EVM_TRANSFER_GAS_LIMIT)),
+        _ => evm_fee.map(|fee| evm_fee_line_for(fee, network_unit(network))),
     };
     let fee_line = fee_and_device_note(fee_line, device_note);
 
@@ -2109,7 +2166,7 @@ fn confirm_send(
     if !confirm_transaction_native(app, network, &to, &amount, from_label, fee_line.as_deref(), warning.as_deref()) {
         return Err(translate_error("Virement annulé (confirmation refusée)."));
     }
-    Ok(ConfirmedSend { to, amount, evm_gas_price, fee_sat })
+    Ok(ConfirmedSend { to, amount, evm_fee, fee_sat })
 }
 
 // --- Comptes Ledger / Trezor (core/src/hardware.rs) ----------------------------
@@ -2178,7 +2235,7 @@ async fn hardware_balance(id: u32, app: tauri::AppHandle) -> Result<String, Stri
         let network = hardware_account(&dir, id)?.network;
         let amount = hardware::balance(&dir, id).t_err()? as f64;
         Ok(match network.as_str() {
-            "evm_sepolia" | "evm_mainnet" => format!("{:.6}", amount / 1e18),
+            n if is_evm(n) => format!("{:.6}", amount / 1e18),
             "btc_testnet" | "btc_mainnet" => format!("{:.8}", amount / 1e8),
             _ => format!("{:.9}", amount / 1e9),
         })
@@ -2210,11 +2267,11 @@ async fn hardware_send(id: u32, to: String, amount: String, fee_sat: Option<u64>
         } else {
             format!("Signature sur le {device} : vérifiez sur SON écran que le destinataire et le montant sont identiques, puis confirmez-y.")
         };
-        let send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &format!("{device} — {}", account.label), Some(&note))?;
+        let send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &format!("{device} — {}", account.label), Some(&note), Some(&account.address))?;
         let result = match network.as_str() {
-            "evm_sepolia" | "evm_mainnet" => {
-                let gas_price = send.evm_gas_price.ok_or_else(|| "prix du gas manquant".to_string())?;
-                hardware::send_evm(&dir, id, &network, &send.to, &send.amount, gas_price).t_err()
+            n if is_evm(n) => {
+                let fee = send.evm_fee.ok_or_else(|| "frais EVM manquants".to_string())?;
+                hardware::send_evm(&dir, id, &network, &send.to, &send.amount, fee).t_err()
             }
             "btc_testnet" | "btc_mainnet" => {
                 let fee_sat = send.fee_sat.ok_or_else(|| "frais Bitcoin manquants (choisis une vitesse d'envoi)".to_string())?;
@@ -3442,7 +3499,7 @@ mod tests {
         // qu'aucune AUTRE ligne ne se présente comme destinataire ou montant.
         assert_eq!(text.lines().filter(|l| l.starts_with("Destinataire")).count(), 1, "{text}");
         assert_eq!(text.lines().filter(|l| l.starts_with("Montant")).count(), 1, "{text}");
-        assert!(text.contains("Destinataire : bc1qattacker\nMontant : 2.5\n"), "{text}");
+        assert!(text.contains("Destinataire : bc1qattacker\nMontant : 2.5 BTC\n"), "{text}");
         let clean = transaction_confirmation_text("btc_mainnet", "bc1qx", "1", "Principal", Some("Frais : 1 sat"), None);
         assert_eq!(text.lines().count(), clean.lines().count(), "le libellé ne doit ajouter aucune ligne");
 
@@ -3619,8 +3676,8 @@ mod tests {
     #[test]
     fn device_note_is_set_apart_in_the_confirmation() {
         let text = |fee: Option<&str>| transaction_confirmation_text("sol_devnet", "Dest", "0.01", "Ledger — A", fee_and_device_note(fee.map(str::to_string), Some("NOTE")).as_deref(), None);
-        assert!(text(None).contains("0.01\n\nNOTE\n\n"), "{}", text(None));
-        assert!(text(Some("Frais : 212 sat")).contains("0.01\nFrais : 212 sat\n\nNOTE\n\n"));
+        assert!(text(None).contains("0.01 SOL\n\nNOTE\n\n"), "{}", text(None));
+        assert!(text(Some("Frais : 212 sat")).contains("0.01 SOL\nFrais : 212 sat\n\nNOTE\n\n"));
         assert_eq!(fee_and_device_note(Some("F".into()), None).as_deref(), Some("F"));
         assert_eq!(fee_and_device_note(None, None), None);
     }

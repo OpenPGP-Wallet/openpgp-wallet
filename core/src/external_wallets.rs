@@ -61,7 +61,8 @@ fn save(data_dir: &Path, data: &ExternalWalletsData) -> Result<()> {
 /// de validation d'adresse).
 pub(crate) fn validate_address(network: &str, address: &str) -> Result<()> {
     match network {
-        "evm_mainnet" | "evm_sepolia" => {
+        // Tous les réseaux EVM (Ethereum, L2, BNB Chain…) : même format d'adresse.
+        n if wallet_flow::evm_network(n).is_some() => {
             wallet_flow::parse_evm_address(address)?;
         }
         "btc_mainnet" => {

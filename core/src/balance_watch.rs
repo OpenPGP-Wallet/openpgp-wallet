@@ -50,7 +50,7 @@ impl Drop for BalanceWatch {
     }
 }
 
-const MAX_TARGETS: usize = 16;
+const MAX_TARGETS: usize = 64;
 const EVM_INTERVAL: Duration = Duration::from_secs(6);
 const BTC_INTERVAL: Duration = Duration::from_secs(10);
 const HEARTBEAT: Duration = Duration::from_secs(30);
@@ -78,11 +78,13 @@ pub fn start(targets: Vec<Target>, notify: Notify) -> Result<BalanceWatch> {
                 let token_account = api::usdc_token_account(&address)?;
                 solana.entry(wallet_flow::SOLANA_MAINNET.rpc).or_default().push((target.id, token_account));
             }
-            "evm_mainnet" => polled.push((target.id, Polled::Evm(&wallet_flow::ETHEREUM_MAINNET, address))),
-            "evm_sepolia" => polled.push((target.id, Polled::Evm(&wallet_flow::SEPOLIA, address))),
             "btc_mainnet" => polled.push((target.id, Polled::Btc(&wallet_flow::BTC_MAINNET, address))),
             "btc_testnet" => polled.push((target.id, Polled::Btc(&wallet_flow::BTC_TESTNET, address))),
-            other => bail!("réseau inconnu : {other}"),
+            other => match wallet_flow::evm_network(other) {
+                // Tous les réseaux EVM (Ethereum, L2, BNB Chain…) : solde relu.
+                Some(net) => polled.push((target.id, Polled::Evm(net, address))),
+                None => bail!("réseau inconnu : {other}"),
+            },
         }
     }
     for (rpc, accounts) in solana {
