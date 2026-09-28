@@ -123,6 +123,12 @@
   box-sizing: border-box;
 }
 
+/* Place de la barre de défilement toujours réservée : passer d'un onglet court
+   (sans barre) à un onglet long décalait toute la page de sa largeur. */
+html {
+  scrollbar-gutter: stable;
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -739,7 +745,10 @@ textarea:focus {
   grid-template-columns: 1fr 1fr;
   gap: 40px;
   align-items: start;
-  margin-top: 8px;
+  /* Même écart qu'avant un titre de section (`.section-title`) : les titres des
+     colonnes ont leur marge haute retirée, 8 px collaient « Message » au bouton
+     « Ajouter un destinataire » juste au-dessus. */
+  margin-top: 28px;
 }
 
 .message-col .section-title:first-child {
@@ -1725,15 +1734,21 @@ textarea:focus {
   color: var(--text);
 }
 
+/* Fenêtre plus haute que l'écran (envoi à 600 px de haut, taille par défaut) :
+   avec un simple centrage vertical, son titre et ses boutons étaient coupés en
+   haut et en bas, sans défilement possible. Le fond défile, et `margin: auto`
+   centre la fenêtre quand elle tient, la colle en haut sinon. */
 .modal-overlay {
   position: fixed;
   inset: 0;
   z-index: 50;
   background: rgba(0, 0, 0, 0.6);
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
   padding: 24px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .modal {
@@ -1743,6 +1758,7 @@ textarea:focus {
   padding: 28px;
   width: 100%;
   max-width: 420px;
+  margin: auto;
 }
 
 .modal h2 {
@@ -2129,10 +2145,26 @@ textarea:focus {
 }
 
 .external-chart-scope {
+  display: inline-block;
   width: auto;
   margin-top: 4px;
-  padding: 4px 8px;
+}
+
+.external-chart-scope .custom-select-trigger {
+  padding: 4px 10px;
   font-size: 0.85rem;
+}
+
+/* Boutons côte à côte dans un onglet (« + Ajouter un wallet externe »,
+   « + Nouveau groupe », « Actualiser »…) : un libellé ne se coupe jamais sur
+   deux lignes ; faute de place, un bouton passe à la ligne suivante. */
+.tab-panel .row-buttons {
+  flex-wrap: wrap;
+}
+
+.tab-panel .row-buttons button {
+  min-width: max-content;
+  white-space: nowrap;
 }
 
 /* Sauvegarde et restauration par clé USB : clés détectées, une par ligne. */

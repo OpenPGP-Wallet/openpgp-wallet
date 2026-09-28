@@ -613,7 +613,14 @@
             <div class="chart-section-header">
               <div>
                 <h2 class="section-title" data-i18n="charts.externalTitle">Évolution des wallets externes</h2>
-                <select id="external-chart-scope" class="external-chart-scope"></select>
+                <div class="custom-select dropdown external-chart-scope">
+                  <select id="external-chart-scope"></select>
+                  <button type="button" class="custom-select-trigger">
+                    <span class="custom-select-label"></span>
+                    <span class="select-arrow"></span>
+                  </button>
+                  <ul class="custom-select-options"></ul>
+                </div>
               </div>
               <button type="button" class="link chart-expand" data-i18n="charts.expand">Agrandir</button>
             </div>
@@ -776,7 +783,7 @@
         <h2 id="send-modal-title" data-i18n="send.title">Envoyer</h2>
         <p class="muted" data-i18n-html="send.fromProfile">Depuis le profil : <strong id="send-from-profile"></strong></p>
         <p id="send-mainnet-warning" class="error hidden" data-i18n="send.mainnetWarning">
-          /!\ Réseau MAINNET — ceci dépense de vrais fonds, irréversible.
+          ⚠ Réseau MAINNET — ceci dépense de vrais fonds, irréversible.
         </p>
         <label data-i18n="send.toAddress">Adresse destinataire</label>
         <input id="send-to" type="text" />

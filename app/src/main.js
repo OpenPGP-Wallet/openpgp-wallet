@@ -437,7 +437,7 @@ const I18N = {
     "settings.biometricEnabledStatus": "Windows Hello est activé sur cet appareil.",
     "send.title": "Envoyer",
     "send.fromProfile": "Depuis le profil : <strong id=\"send-from-profile\"></strong>",
-    "send.mainnetWarning": "/!\\ Réseau MAINNET — ceci dépense de vrais fonds, irréversible.",
+    "send.mainnetWarning": "⚠ Réseau MAINNET — ceci dépense de vrais fonds, irréversible.",
     "send.toAddress": "Adresse destinataire",
     "send.amount": "Montant",
     "send.percentMax": "Max",
@@ -871,7 +871,7 @@ const I18N = {
     "settings.biometricEnabledStatus": "Windows Hello is enabled on this device.",
     "send.title": "Send",
     "send.fromProfile": "From profile: <strong id=\"send-from-profile\"></strong>",
-    "send.mainnetWarning": "/!\\ MAINNET network — this spends real funds, irreversible.",
+    "send.mainnetWarning": "⚠ MAINNET network — this spends real funds, irreversible.",
     "send.toAddress": "Recipient address",
     "send.amount": "Amount",
     "send.percentMax": "Max",
@@ -3173,7 +3173,10 @@ function openSendModal(card) {
   const profile = currentProfile();
   sendContext = { coin: card.dataset.coin, card, profileIndex: profile ? profile.index : currentProfileIndex };
   const network = networkForCard(card);
-  document.getElementById("send-modal-title").textContent = `Envoyer (${card.querySelector("h2").textContent})`;
+  // Nom lu sur la carte, sans l'indentation du HTML (le titre contient le
+  // bouton de repli) : « Bitcoin », « USDC Solana ».
+  const coinName = card.querySelector("h2").textContent.trim().replace(/\s+/g, " ");
+  document.getElementById("send-modal-title").textContent = `${t("send.title")} (${coinName})`;
   document.getElementById("send-from-profile").textContent = profile ? profile.label : "—";
   document.getElementById("send-mainnet-warning").classList.toggle("hidden", !network.endsWith("mainnet"));
   document.getElementById("send-to").value = "";
@@ -5121,6 +5124,7 @@ function renderExternalChartScope() {
     externalChartScope.appendChild(option);
   });
   externalChartScope.value = [...externalChartScope.options].some((o) => o.value === previous) ? previous : "all";
+  syncCustomSelect(externalChartScope);
 }
 
 function loadExternalChart() {
