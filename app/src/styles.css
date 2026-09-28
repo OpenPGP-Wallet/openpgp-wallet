@@ -129,6 +129,13 @@ html {
   scrollbar-gutter: stable;
 }
 
+/* Fenêtre ouverte : la page derrière ne défile plus — une seule barre, celle de
+   la fenêtre, au lieu de deux côte à côte ; la place de la barre de la page
+   reste réservée, rien ne bouge. */
+html:has(.modal-overlay:not(.hidden)) {
+  overflow: hidden;
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -2086,10 +2093,10 @@ textarea:focus {
   margin: 6px 0 0;
 }
 
+/* Pas de hauteur maximale ni de défilement propre : le fond de la fenêtre défile
+   déjà (`.modal-overlay`), une seconde barre ne ferait que doubler la première. */
 .chart-modal {
   max-width: 760px;
-  max-height: calc(100vh - 48px);
-  overflow-y: auto;
 }
 
 .chart-section-header > :first-child {
