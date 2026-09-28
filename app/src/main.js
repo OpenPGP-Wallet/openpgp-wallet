@@ -508,8 +508,8 @@ const I18N = {
     "regenBackup.confirm": "Régénérer",
     "regenBackup.resultTitle": "Nouveau kit de sauvegarde",
     "regenBackup.resultSubtitle":
-      "<strong>2 des 3 suffisent</strong> à tout récupérer. Téléchargez les 3 et notez les 3 mots de passe quelque part de sûr, séparément.",
-    "regenBackup.resultClose": "J'ai téléchargé mes 3 nouvelles parts",
+      "<strong>2 des 3 suffisent</strong> à tout récupérer. Le plus simple : chaque part sur sa propre clé USB (rien à noter), rangées à des endroits différents. Sinon, téléchargez les fichiers et notez les mots de passe, séparément.",
+    "regenBackup.resultClose": "J'ai sauvegardé mes 3 nouvelles parts",
     "nav.ledger": "Ledger / Trezor",
     "ledger.title": "Portefeuille matériel (Ledger, Trezor)",
     "ledger.subtitle":
@@ -948,8 +948,8 @@ const I18N = {
     "regenBackup.confirm": "Regenerate",
     "regenBackup.resultTitle": "New backup kit",
     "regenBackup.resultSubtitle":
-      "<strong>2 out of 3 are enough</strong> to recover everything. Download all 3 and write down the 3 passwords somewhere safe, separately.",
-    "regenBackup.resultClose": "I have downloaded my 3 new shares",
+      "<strong>2 out of 3 are enough</strong> to recover everything. Simplest: each share on its own USB drive (nothing to write down), kept in different places. Otherwise, download the files and write down the passwords, separately.",
+    "regenBackup.resultClose": "I have saved my 3 new shares",
     "nav.ledger": "Ledger / Trezor",
     "ledger.title": "Hardware wallet (Ledger, Trezor)",
     "ledger.subtitle":
@@ -2918,13 +2918,14 @@ async function checkPendingTx(card, address, network) {
     if (badge.textContent !== text) badge.textContent = text;
     badge.classList.toggle("visible", pending);
     // Nouvelle réception Bitcoin en attente (pas encore comptée dans le
-    // solde) : signalée dès qu'elle apparaît — pas au premier affichage, ni
-    // après un changement de profil ou de réseau.
+    // solde) : signalée dès qu'elle apparaît, par la HAUSSE du total en
+    // attente — une baisse (réception confirmée, passée dans le solde) n'est
+    // pas une nouvelle réception. Rien au premier affichage, ni après un
+    // changement de profil ou de réseau.
     const key = balanceKey(card);
     const seen = card._pendingIncoming;
-    if (seen && seen.key === key && incoming && incoming !== seen.amount) {
-      showCopyToast(t("wallet.receivedPending", { amount: incoming }), 5000);
-    }
+    const increase = incoming && seen && seen.key === key ? balanceIncrease(seen.amount || "0", incoming) : null;
+    if (increase) showCopyToast(t("wallet.receivedPending", { amount: increase }), 5000);
     card._pendingIncoming = { key, amount: incoming };
     // Transaction pas encore finalisée : revérifiée dans 15 s, la surveillance
     // en direct ne signalant pas la finalisation (le solde ne bouge plus). Un
