@@ -87,9 +87,13 @@ impl PriceRpc {
     /// par capitalisation ici, sans se fier uniquement au paramètre `order` de
     /// l'API (verrouille la garantie plutôt que d'espérer qu'elle tienne).
     pub fn get_market_data(&self) -> Result<Vec<MarketCoin>> {
+        let url = format!(
+            "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids={}&order=market_cap_desc&price_change_percentage=24h",
+            MARKET_IDS.join(",")
+        );
         let response = self
             .client
-            .get(MARKETS_URL)
+            .get(url)
             .send()
             .context("appel CoinGecko (marchés) impossible")?;
         anyhow::ensure!(
@@ -100,11 +104,19 @@ impl PriceRpc {
         let raw: Vec<MarketCoinRaw> = response.json().context("réponse CoinGecko (marchés) illisible")?;
         let mut coins: Vec<MarketCoin> = raw
             .into_iter()
-            .map(|c| MarketCoin {
+            // Seulement les identifiants demandés, avec un prix : CoinGecko met
+            // `null` pour un actif momentanément sans cotation.
+            .filter(|c| MARKET_IDS.contains(&c.id.as_str()))
+            .filter_map(|c| {
+                let price = c.current_price.filter(|p| p.is_finite() && *p > 0.0)?;
+                Some((c, price))
+            })
+            .map(|(c, price)| MarketCoin {
+                id: c.id,
                 symbol: c.symbol.to_uppercase(),
                 name: c.name,
-                price_usd: c.current_price,
-                market_cap_usd: c.market_cap,
+                price_usd: price,
+                market_cap_usd: c.market_cap.unwrap_or(0.0),
                 // CoinGecko omet ce champ (au lieu de le mettre à 0) pour un actif
                 // trop récent/illiquide pour avoir une variation calculable sur 24h ;
                 // `Option` plutôt qu'un `0.0` par défaut qui laisserait croire à une
@@ -121,9 +133,13 @@ impl PriceRpc {
     }
 }
 
-const MARKETS_URL: &str = "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin,ethereum,solana,usd-coin&order=market_cap_desc&price_change_percentage=24h";
+/// Cryptos dont l'app affiche le cours (identifiants CoinGecko) : un seul
+/// appel pour toutes, trié par capitalisation.
+pub const MARKET_IDS: &[&str] = &["bitcoin", "ethereum", "solana", "usd-coin", "binancecoin", "avalanche-2", "polygon-ecosystem-token", "hyperliquid"];
 
 pub struct MarketCoin {
+    /// Identifiant CoinGecko (voir `MARKET_IDS`).
+    pub id: String,
     pub symbol: String,
     pub name: String,
     pub price_usd: f64,
@@ -133,10 +149,11 @@ pub struct MarketCoin {
 
 #[derive(Deserialize)]
 struct MarketCoinRaw {
+    id: String,
     symbol: String,
     name: String,
-    current_price: f64,
-    market_cap: f64,
+    current_price: Option<f64>,
+    market_cap: Option<f64>,
     price_change_percentage_24h: Option<f64>,
 }
 
@@ -160,7 +177,7 @@ mod tests {
     #[ignore]
     fn real_coingecko_markets_call_is_sorted_by_market_cap_desc() {
         let coins = PriceRpc::new().get_market_data().expect("l'appel CoinGecko (marchés) doit réussir");
-        assert_eq!(coins.len(), 4, "attendu : bitcoin, ethereum, solana, usd-coin");
+        assert_eq!(coins.len(), MARKET_IDS.len(), "une entrée par identifiant demandé");
         for pair in coins.windows(2) {
             assert!(
                 pair[0].market_cap_usd >= pair[1].market_cap_usd,

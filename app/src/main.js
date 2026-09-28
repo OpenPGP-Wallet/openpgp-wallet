@@ -1,5 +1,156 @@
 import { renderLineChart, renderSparkline } from "./charts.js";
 
+// --- Cryptos du portefeuille --------------------------------------------------
+// Une carte par crypto, un ou plusieurs réseaux par carte (menu réseau).
+// `family` : format d'adresse et chemin d'envoi — « evm » : même adresse sur
+// tous les réseaux EVM, virement natif par `send_transaction` (le backend
+// valide le réseau et affiche la confirmation). Les 4 premières ont leur carte
+// dans index.html ; les autres sont générées ci-dessous, avec exactement la
+// même structure (tout le reste du code les traite de la même façon).
+// `decimals` : décimales affichées pour les montants rapides de l'envoi.
+const ASSETS = [
+  { coin: "evm", name: "Ethereum", symbol: "ETH", family: "evm", icon: "/assets/eth.svg", gecko: "ethereum", decimals: 6, networks: ["evm_mainnet", "arbitrum_mainnet", "base_mainnet", "evm_sepolia"] },
+  { coin: "btc", name: "Bitcoin", symbol: "BTC", family: "btc", icon: "/assets/btc.webp", gecko: "bitcoin", decimals: 8, networks: ["btc_mainnet", "btc_testnet"] },
+  { coin: "sol", name: "Solana", symbol: "SOL", family: "sol", icon: "/assets/sol.png", gecko: "solana", decimals: 9, networks: ["sol_mainnet", "sol_devnet"] },
+  // USDC : jeton SPL sur Solana, mainnet uniquement (voir core/src/sol_spl.rs).
+  { coin: "usdc", name: "USDC", symbol: "USDC", family: "sol", icon: "/assets/usdc.png", gecko: "usd-coin", decimals: 6, networks: ["sol_mainnet"] },
+  { coin: "bnb", name: "BNB", symbol: "BNB", family: "evm", icon: "/assets/bnb.png", gecko: "binancecoin", decimals: 6, networks: ["bsc_mainnet"] },
+  { coin: "avax", name: "Avalanche", symbol: "AVAX", family: "evm", icon: "/assets/avax.png", gecko: "avalanche-2", decimals: 6, networks: ["avax_mainnet"] },
+  { coin: "pol", name: "Polygon", symbol: "POL", family: "evm", icon: "/assets/pol.png", gecko: "polygon-ecosystem-token", decimals: 6, networks: ["polygon_mainnet"] },
+  { coin: "hype", name: "Hyperliquid", symbol: "HYPE", family: "evm", icon: "/assets/hype.jpg", iconRound: true, gecko: "hyperliquid", decimals: 6, networks: ["hyperevm_mainnet"] },
+];
+const ASSET_BY_COIN = Object.fromEntries(ASSETS.map((asset) => [asset.coin, asset]));
+const ASSET_BY_GECKO = Object.fromEntries(ASSETS.map((asset) => [asset.gecko, asset]));
+
+// Réseaux EVM : identifiant de chaîne (demande de paiement EIP-681). Mêmes
+// valeurs que core/src/wallet_flow.rs::EVM_NETWORKS.
+const EVM_CHAIN_IDS = {
+  evm_mainnet: 1,
+  evm_sepolia: 11155111,
+  arbitrum_mainnet: 42161,
+  base_mainnet: 8453,
+  bsc_mainnet: 56,
+  avax_mainnet: 43114,
+  polygon_mainnet: 137,
+  hyperevm_mainnet: 999,
+};
+
+const ICON_COPY = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" /></svg>`;
+const ICON_QR = `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M3 3h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" /><rect x="5.2" y="5.2" width="1.6" height="1.6" /><path d="M15 3h6v6h-6z" fill="none" stroke="currentColor" stroke-width="1.6" /><rect x="17.2" y="5.2" width="1.6" height="1.6" /><path d="M3 15h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" /><rect x="5.2" y="17.2" width="1.6" height="1.6" /><rect x="15" y="15" width="2.5" height="2.5" /><rect x="18.5" y="15" width="2.5" height="2.5" /><rect x="15" y="18.5" width="2.5" height="2.5" /><rect x="18.5" y="18.5" width="2.5" height="2.5" /></svg>`;
+const ICON_EYE = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" /><circle cx="12" cy="12" r="3" /></svg>`;
+
+// Carte d'une crypto à un seul réseau (même structure que celles d'index.html).
+// Textes via data-i18n (traduits par applyLanguage) ; nom et symbole fixes.
+function buildAssetCard(asset) {
+  const card = document.createElement("section");
+  card.className = "wallet-card";
+  card.dataset.coin = asset.coin;
+  card.dataset.collapseKey = `wallet-${asset.coin}`;
+  const iconClass = asset.iconRound ? "coin-icon coin-icon-round" : "coin-icon";
+  card.innerHTML = `
+    <header>
+      <h2>
+        <button type="button" class="collapse-toggle" aria-expanded="true" aria-controls="wallet-body-${asset.coin}">
+          <span class="collapse-chevron" aria-hidden="true"></span>
+          <img class="${iconClass}" src="${asset.icon}" alt="" /><span class="coin-name"></span>
+        </button>
+      </h2>
+      <span class="network-fixed-label muted" data-i18n="net.${asset.networks[0]}"></span>
+    </header>
+    <div class="balance-row">
+      <p class="balance"><span data-field="balance">—</span> <span class="coin-symbol"></span></p>
+      <div class="collapsed-actions">
+        <button type="button" class="qr-btn" data-action="toggle-address" aria-pressed="false" data-i18n-title="wallet.showAddress">${ICON_EYE}</button>
+        <button type="button" class="qr-btn" data-action="copy-address" data-i18n-title="wallet.copyAddress">${ICON_COPY}</button>
+        <button type="button" class="qr-btn" data-action="qr" data-i18n-title="wallet.showQr">${ICON_QR}</button>
+      </div>
+    </div>
+    <p class="fiat-value" data-field="fiat">—</p>
+    <p class="address collapsed-address hidden" data-field="collapsed-address"></p>
+    <div class="collapsible-body" id="wallet-body-${asset.coin}">
+      <div class="collapsible-inner">
+        <div class="address-row">
+          <p class="address" data-field="address"></p>
+          <button class="qr-btn" data-action="copy-address" data-i18n-title="wallet.copyAddress">${ICON_COPY}</button>
+          <button class="qr-btn" data-action="qr" data-i18n-title="wallet.showQr">${ICON_QR}</button>
+        </div>
+        <div class="row-buttons">
+          <button class="secondary" data-action="refresh" data-i18n="wallet.refresh">Actualiser</button>
+          <button class="secondary" data-action="history" data-i18n="wallet.history">Historique</button>
+          <button class="primary" data-action="send" data-i18n="wallet.send">Envoyer</button>
+        </div>
+      </div>
+    </div>`;
+  card.querySelector(".coin-name").textContent = asset.name;
+  card.querySelector(".coin-symbol").textContent = asset.symbol;
+  return card;
+}
+
+// Section de l'onglet Historique d'une crypto générée.
+function buildHistorySection(asset) {
+  const section = document.createElement("div");
+  section.className = "history-section";
+  section.id = `history-section-${asset.coin}`;
+  section.innerHTML = `
+    <div class="history-section-header">
+      <h2 class="section-title"></h2>
+      <span id="history-network-${asset.coin}" class="muted"></span>
+    </div>
+    <div id="history-list-${asset.coin}" class="history-list"></div>`;
+  section.querySelector("h2").textContent = asset.name;
+  return section;
+}
+
+{
+  const grid = document.querySelector(".wallet-grid");
+  const historyCard = document.querySelector('.tab-panel[data-panel="history"] .card');
+  for (const asset of ASSETS) {
+    if (document.querySelector(`.wallet-card[data-coin="${asset.coin}"]`)) continue; // carte d'index.html
+    grid.appendChild(buildAssetCard(asset));
+    historyCard.appendChild(buildHistorySection(asset));
+  }
+}
+
+// --- Mes cryptos : cartes affichées -------------------------------------------
+// Choix explicites { coin: true|false }, retenus sur l'appareil ; sans choix :
+// les cryptos par défaut, et toute crypto sur laquelle des fonds sont
+// détectés (voir refreshBalance) s'affiche d'elle-même.
+const ASSETS_STORAGE_KEY = "pgp-wallet-assets";
+const DEFAULT_ASSETS = ["evm", "btc", "sol", "usdc"];
+let assetChoices = {};
+try {
+  const saved = JSON.parse(localStorage.getItem(ASSETS_STORAGE_KEY) || "{}");
+  if (saved && typeof saved === "object") {
+    for (const [coin, shown] of Object.entries(saved)) if (ASSET_BY_COIN[coin] && typeof shown === "boolean") assetChoices[coin] = shown;
+  }
+} catch (e) {
+  // localStorage indisponible : cryptos par défaut.
+}
+
+function isAssetVisible(coin) {
+  return coin in assetChoices ? assetChoices[coin] : DEFAULT_ASSETS.includes(coin);
+}
+
+function saveAssetChoices() {
+  try {
+    localStorage.setItem(ASSETS_STORAGE_KEY, JSON.stringify(assetChoices));
+  } catch (e) {
+    // Best-effort : le choix reste appliqué pour cette session.
+  }
+}
+
+// Cartes et sections d'historique masquées selon les choix. Le menu
+// « Recevoir » est reconstruit ailleurs (renderReceiveMenu, qui a besoin des
+// traductions).
+function applyAssetVisibility() {
+  for (const asset of ASSETS) {
+    const visible = isAssetVisible(asset.coin);
+    document.querySelector(`.wallet-card[data-coin="${asset.coin}"]`)?.classList.toggle("asset-hidden", !visible);
+    document.getElementById(`history-section-${asset.coin}`)?.classList.toggle("asset-hidden", !visible);
+  }
+}
+applyAssetVisibility();
+
 const { invoke } = window.__TAURI__.core;
 
 // --- Thème -----------------------------------------------------------------
@@ -327,6 +478,20 @@ const I18N = {
     "wallet.showAddress": "Afficher l'adresse",
     "wallet.hideAddress": "Masquer l'adresse",
     "wallet.addressCopied": "Adresse copiée !",
+    "wallet.ethereumMainnet": "Ethereum — Fonds réels",
+    "wallet.arbitrum": "Arbitrum — Fonds réels",
+    "wallet.base": "Base — Fonds réels",
+    "net.bsc_mainnet": "BNB Chain — Fonds réels",
+    "net.avax_mainnet": "Avalanche — Fonds réels",
+    "net.polygon_mainnet": "Polygon — Fonds réels",
+    "net.hyperevm_mainnet": "HyperEVM — Fonds réels",
+    "wallet.receiveAsset": "Recevoir {symbol}",
+    "assets.manage": "Gérer mes cryptos",
+    "assets.title": "Mes cryptos",
+    "assets.hint": "Cochez les cryptos à afficher. Une crypto sur laquelle des fonds arrivent s'affiche d'elle-même.",
+    "assets.done": "Terminé",
+    "assets.autoShown": "{symbol} affiché : des fonds ont été détectés.",
+    "charts.portfolioPartial": "Pas encore comptés dans cette courbe : {list}.",
     "settings.currency": "Devise d'affichage",
     "settings.usd": "Dollar ($)",
     "settings.eur": "Euro (€)",
@@ -775,6 +940,20 @@ const I18N = {
     "wallet.showAddress": "Show address",
     "wallet.hideAddress": "Hide address",
     "wallet.addressCopied": "Address copied!",
+    "wallet.ethereumMainnet": "Ethereum — Real funds",
+    "wallet.arbitrum": "Arbitrum — Real funds",
+    "wallet.base": "Base — Real funds",
+    "net.bsc_mainnet": "BNB Chain — Real funds",
+    "net.avax_mainnet": "Avalanche — Real funds",
+    "net.polygon_mainnet": "Polygon — Real funds",
+    "net.hyperevm_mainnet": "HyperEVM — Real funds",
+    "wallet.receiveAsset": "Receive {symbol}",
+    "assets.manage": "Manage my cryptos",
+    "assets.title": "My cryptos",
+    "assets.hint": "Tick the cryptos to show. A crypto that receives funds shows up by itself.",
+    "assets.done": "Done",
+    "assets.autoShown": "{symbol} shown: funds detected.",
+    "charts.portfolioPartial": "Not yet included in this chart: {list}.",
     "settings.currency": "Display currency",
     "settings.usd": "US dollar ($)",
     "settings.eur": "Euro (€)",
@@ -1099,6 +1278,7 @@ document.querySelectorAll(".lang-btn").forEach((btn) => {
     // Valeur en dollars des cartes (« ≈ 1 234,56 $ » / « ≈ $1,234.56 ») :
     // recalculée sur place, sans appel réseau.
     document.querySelectorAll(".wallet-card").forEach(updateFiatValue);
+    renderReceiveMenu();
     try {
       localStorage.setItem(LANG_STORAGE_KEY, currentLang);
     } catch (e) {
@@ -2457,11 +2637,9 @@ function priceForCoin(coin) {
   // nécessaire, toujours ~1 $ — évite un cas particulier dans
   // updateFiatValue/renderQuickAmounts pour ce seul actif.
   if (coin === "usdc") return 1;
-  if (!latestPrices) return null;
-  if (coin === "evm") return latestPrices.eth_usd;
-  if (coin === "btc") return latestPrices.btc_usd;
-  if (coin === "sol") return latestPrices.sol_usd;
-  return null;
+  const asset = ASSET_BY_COIN[coin];
+  if (!latestPrices || !asset) return null;
+  return latestPrices[asset.gecko] ?? null;
 }
 
 function updateFiatValue(card) {
@@ -2502,9 +2680,9 @@ async function refreshPrices() {
     try {
       coins = await invoke("get_market_prices");
       lastMarketCoins = coins;
-      const price = (symbol) => coins.find((c) => c.symbol === symbol)?.price_usd;
-      const next = { eth_usd: price("ETH"), btc_usd: price("BTC"), sol_usd: price("SOL") };
-      if (Object.values(next).every((v) => Number.isFinite(v) && v > 0)) latestPrices = next;
+      // Cours par identifiant CoinGecko (voir ASSETS[].gecko).
+      const next = Object.fromEntries(coins.filter((c) => Number.isFinite(c.price_usd) && c.price_usd > 0).map((c) => [c.id, c.price_usd]));
+      if (Object.keys(next).length > 0) latestPrices = next;
     } catch (e) {
       console.error(e);
     }
@@ -2544,7 +2722,7 @@ function formatMarketCap(usd) {
 // nouvelle arrive) : reconstruire la liste faisait disparaître puis réapparaître
 // toutes les mini-courbes et perdre le focus clavier d'une ligne.
 // Logo des cryptos suivies : mêmes fichiers que les cartes du portefeuille.
-const MARKET_ICONS = { BTC: "/assets/btc.webp", ETH: "/assets/eth.svg", SOL: "/assets/sol.png", USDC: "/assets/usdc.png" };
+// Logos : ceux des cartes (ASSETS), retrouvés par identifiant CoinGecko.
 
 function createMarketRow(coin) {
   const row = document.createElement("div");
@@ -2554,10 +2732,11 @@ function createMarketRow(coin) {
     <div class="market-figures"><div class="market-change"></div><div class="market-price"></div><div class="market-cap"></div></div>`;
   row.querySelector(".market-label").prepend(document.createTextNode(coin.name));
   row.querySelector(".market-symbol").textContent = coin.symbol;
-  if (MARKET_ICONS[coin.symbol]) {
+  const asset = ASSET_BY_GECKO[coin.id];
+  if (asset) {
     const icon = document.createElement("img");
-    icon.className = coin.symbol === "SOL" ? "coin-icon coin-icon-sol" : "coin-icon";
-    icon.src = MARKET_ICONS[coin.symbol];
+    icon.className = asset.coin === "sol" ? "coin-icon coin-icon-sol" : asset.iconRound ? "coin-icon coin-icon-round" : "coin-icon";
+    icon.src = asset.icon;
     icon.alt = "";
     row.querySelector(".market-name").prepend(icon);
   }
@@ -2618,7 +2797,8 @@ function renderMarkets(coins) {
   try {
     if (!coins) throw new Error("marchés indisponibles");
     const existing = new Map([...container.querySelectorAll(".market-row")].map((row) => [row.dataset.symbol, row]));
-    const rows = coins.map((coin) => {
+    // Seulement les cryptos affichées sur le tableau de bord.
+    const rows = coins.filter((coin) => ASSET_BY_GECKO[coin.id] && isAssetVisible(ASSET_BY_GECKO[coin.id].coin)).map((coin) => {
       const row = existing.get(coin.symbol) || createMarketRow(coin);
       fillMarketRow(row, coin);
       return row;
@@ -2646,14 +2826,8 @@ function stopPriceAutoRefresh() {
   }
 }
 
-const coinConfig = {
-  evm: { defaultNetwork: "evm_mainnet" },
-  btc: { defaultNetwork: "btc_mainnet" },
-  sol: { defaultNetwork: "sol_mainnet" },
-  // USDC (jeton SPL sur Solana, pas un réseau à part) : mainnet uniquement en
-  // v1 (voir core/src/sol_spl.rs), jamais devnet.
-  usdc: { defaultNetwork: "sol_mainnet" },
-};
+// Réseau d'une carte sans menu réseau : le premier de sa crypto (ASSETS).
+const coinConfig = Object.fromEntries(ASSETS.map((asset) => [asset.coin, { defaultNetwork: asset.networks[0] }]));
 
 // Un "profil" = un index de dérivation supplémentaire sur la même clé maîtresse
 // (voir core/src/api.rs) : plusieurs adresses par réseau, toujours protégées par
@@ -2682,7 +2856,8 @@ function addressForCoin(coin, network) {
   // add-profile-confirm) : l'adresse n'est pas encore dérivée, elle apparaîtra
   // au prochain déverrouillage complet (voir core/src/api.rs::create_profile).
   if (!profile || !profile.addresses) return "";
-  if (coin === "evm") return profile.addresses.evm;
+  // Même adresse sur tous les réseaux EVM (Ethereum, L2, BNB Chain…).
+  if (ASSET_BY_COIN[coin]?.family === "evm") return profile.addresses.evm;
   if (coin === "btc") return network === "btc_mainnet" ? profile.addresses.btc_mainnet : profile.addresses.btc_testnet;
   // USDC utilise la même adresse propriétaire que Solana (le compte de jetons
   // associé qui détient réellement l'USDC est un détail invisible pour
@@ -2968,6 +3143,7 @@ async function refreshBalance(card) {
         card.dataset.balanceKey = key;
         const received = previous == null ? null : balanceIncrease(previous, balance);
         if (received) announceReceived(card, network, received);
+        revealIfFunded(card, balance);
       })
       .catch((e) => {
         console.error(e);
@@ -2983,6 +3159,17 @@ async function refreshBalance(card) {
   // Réseau ou profil changé pendant la lecture (ignorée), ou changement
   // signalé entre-temps : relire.
   if (balanceKey(card) !== key || card.dataset.refreshAgain === "1") refreshBalance(card);
+}
+
+// Crypto masquée SANS choix explicite de l'utilisateur, avec des fonds :
+// affichée (et retenue comme telle). Une crypto masquée volontairement le reste.
+function revealIfFunded(card, balance) {
+  const coin = card.dataset.coin;
+  if (isAssetVisible(coin) || coin in assetChoices || !(Number.parseFloat(balance) > 0)) return;
+  assetChoices[coin] = true;
+  saveAssetChoices();
+  refreshAssetDisplays();
+  showCopyToast(t("assets.autoShown", { symbol: ASSET_BY_COIN[coin].symbol }), 5000);
 }
 
 // Hausse exacte entre deux soldes affichés (« 0.12345678 ») — calcul sur des
@@ -3026,7 +3213,7 @@ function announceReceived(card, network, amount) {
 // le nœud (~1 s), Ethereum relu toutes les 6 s, Bitcoin toutes les 10 s (mempool
 // compris). Le rafraîchissement toutes les 15 s reste en filet de sécurité.
 function updateBalanceWatch() {
-  const targets = [...document.querySelectorAll(".wallet-card")]
+  const targets = [...document.querySelectorAll(".wallet-card:not(.asset-hidden)")]
     .map((card) => {
       const coin = card.dataset.coin;
       const network = networkForCard(card);
@@ -3139,7 +3326,8 @@ const qrModal = document.getElementById("qr-modal");
 // BIP21 pour Bitcoin, Solana Pay pour SOL (et USDC, désigné par son mint),
 // EIP-681 pour Ethereum (montant en wei, réseau par son chain id). Sans
 // montant : l'adresse seule, lisible par toutes les applications.
-const QR_DECIMALS = { evm: 18, btc: 8, sol: 9, usdc: 6 };
+// Décimales maximales d'un montant demandé : 18 pour toute monnaie EVM.
+const QR_DECIMALS = new Proxy({ btc: 8, sol: 9, usdc: 6 }, { get: (known, coin) => known[coin] ?? 18 });
 // Même mint que core/src/sol_spl.rs::usdc_mint_mainnet.
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 let qrCard = null;
@@ -3164,8 +3352,8 @@ function paymentUri(coin, network, address, amount) {
   if (coin === "btc") return `bitcoin:${address}?amount=${amount}`;
   if (coin === "sol") return `solana:${address}?amount=${amount}`;
   if (coin === "usdc") return `solana:${address}?amount=${amount}&spl-token=${USDC_MINT}`;
-  if (coin === "evm") {
-    const chainId = network === "evm_sepolia" ? 11155111 : 1;
+  if (ASSET_BY_COIN[coin]?.family === "evm") {
+    const chainId = EVM_CHAIN_IDS[network] ?? 1;
     const [whole, fraction = ""] = amount.split(".");
     const wei = BigInt(whole + fraction.padEnd(18, "0")).toString();
     return `ethereum:${address}@${chainId}?value=${wei}`;
@@ -3229,7 +3417,7 @@ document.getElementById("qr-close").addEventListener("click", () => {
 // testnet, choisi via son sélecteur), l'onglet ne fait que relire cet état,
 // jamais son propre choix de réseau séparé.
 
-const HISTORY_COINS = ["evm", "btc", "sol", "usdc"];
+const HISTORY_COINS = ASSETS.map((asset) => asset.coin);
 
 function formatTxTimestamp(unixSeconds) {
   if (unixSeconds == null) return "en attente";
@@ -3372,10 +3560,62 @@ function mutedParagraph(text) {
 }
 
 function loadAllHistory() {
-  HISTORY_COINS.forEach(loadHistorySection);
+  HISTORY_COINS.filter(isAssetVisible).forEach(loadHistorySection);
 }
 
 document.getElementById("refresh-history-btn").addEventListener("click", loadAllHistory);
+
+// Menu « Recevoir » : une entrée par crypto affichée (ETH, BTC, SOL gardent
+// leur libellé d'origine ; USDC reçoit à l'adresse Solana).
+function renderReceiveMenu() {
+  const list = document.querySelector(".action-menu .custom-select-options");
+  const items = ASSETS.filter((asset) => asset.coin !== "usdc" && isAssetVisible(asset.coin)).map((asset) => {
+    const li = document.createElement("li");
+    li.dataset.coin = asset.coin;
+    li.textContent = t("wallet.receiveAsset", { symbol: asset.symbol });
+    return li;
+  });
+  list.replaceChildren(...items);
+}
+renderReceiveMenu();
+
+// Après un changement des cryptos affichées : cartes, menu, surveillance,
+// prix en direct, courbe du portefeuille.
+function refreshAssetDisplays() {
+  applyAssetVisibility();
+  renderReceiveMenu();
+  updateBalanceWatch();
+  if (lastMarketCoins) renderMarkets(lastMarketCoins);
+  if (portfolioView.rangesEl.childElementCount) refreshChart(portfolioView);
+}
+
+// Fenêtre « Gérer mes cryptos ».
+const assetsModal = document.getElementById("assets-modal");
+document.getElementById("manage-assets-btn").addEventListener("click", () => {
+  const list = document.getElementById("assets-list");
+  list.replaceChildren(
+    ...ASSETS.map((asset) => {
+      const li = document.createElement("li");
+      const label = document.createElement("label");
+      label.className = "asset-choice";
+      const icon = Object.assign(document.createElement("img"), { src: asset.icon, alt: "", className: asset.iconRound ? "coin-icon coin-icon-round" : asset.coin === "sol" ? "coin-icon coin-icon-sol" : "coin-icon" });
+      const name = Object.assign(document.createElement("span"), { className: "asset-choice-name", textContent: asset.name });
+      const symbol = Object.assign(document.createElement("span"), { className: "muted", textContent: asset.symbol });
+      const box = Object.assign(document.createElement("input"), { type: "checkbox", checked: isAssetVisible(asset.coin) });
+      box.addEventListener("change", () => {
+        assetChoices[asset.coin] = box.checked;
+        saveAssetChoices();
+        refreshAssetDisplays();
+        if (box.checked) refreshBalance(document.querySelector(`.wallet-card[data-coin="${asset.coin}"]`));
+      });
+      label.append(icon, name, symbol, box);
+      li.appendChild(label);
+      return li;
+    })
+  );
+  assetsModal.classList.remove("hidden");
+});
+document.getElementById("assets-done").addEventListener("click", () => assetsModal.classList.add("hidden"));
 
 // Onglet Historique, défilé jusqu'à la section de `coin` (sous la barre de
 // navigation, qui reste en haut) et brièvement mise en évidence.
@@ -3420,8 +3660,8 @@ sendAmountInput.addEventListener("input", () => {
 // réellement envoyé, pas une valeur arrondie différente.
 // Montants rapides, dans la devise affichée (5 $ ou 5 €…).
 const QUICK_AMOUNTS = [5, 10, 50];
-const COIN_DECIMALS = { evm: 6, btc: 8, sol: 9, usdc: 6 };
-const COIN_SYMBOL = { evm: "ETH", btc: "BTC", sol: "SOL", usdc: "USDC" };
+const COIN_DECIMALS = Object.fromEntries(ASSETS.map((asset) => [asset.coin, asset.decimals]));
+const COIN_SYMBOL = Object.fromEntries(ASSETS.map((asset) => [asset.coin, asset.symbol]));
 
 function renderQuickAmounts() {
   const container = document.getElementById("send-quick-amounts");
@@ -5432,11 +5672,21 @@ function sectionView(section, extra) {
   };
 }
 
+// Cryptos affichées que la courbe du portefeuille ne compte pas encore
+// (historique de valeur calculé côté Rust pour ETH, BTC, SOL et USDC).
+function portfolioPartialNote() {
+  const missing = ASSETS.filter((asset) => !DEFAULT_ASSETS.includes(asset.coin) && isAssetVisible(asset.coin)).map((asset) => asset.symbol);
+  return missing.length ? t("charts.portfolioPartial", { list: missing.join(", ") }) : "";
+}
+
 const portfolioSection = document.getElementById("portfolio-chart-section");
 const portfolioView = sectionView(portfolioSection, {
   title: () => t("charts.portfolioTitle"),
   emptyKey: "charts.portfolioEmpty",
-  load: (range) => loadHoldingsHistory(currentProfileHoldings(), range),
+  load: async (range) => {
+    const data = await loadHoldingsHistory(currentProfileHoldings(), range);
+    return { ...data, note: [data.note, portfolioPartialNote()].filter(Boolean).join(" ") };
+  },
 });
 
 function loadPortfolioChart() {

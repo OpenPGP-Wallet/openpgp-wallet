@@ -1122,6 +1122,66 @@ textarea:focus {
 /* Ce PNG a beaucoup de marge transparente autour du symbole (contrairement aux
    logos ETH/BTC qui remplissent tout leur cercle) : agrandi pour compenser et
    paraître à la même taille visuelle que les deux autres. */
+/* Logo carré (jpg) : arrondi comme les autres. */
+.coin-icon-round {
+  border-radius: 50%;
+}
+
+/* « Gérer mes cryptos », sous la liste des cartes. */
+.manage-assets-row {
+  display: flex;
+  justify-content: center;
+  margin-top: 16px;
+}
+
+.manage-assets-row button {
+  width: auto;
+  margin-top: 0;
+}
+
+/* Crypto non choisie dans « Gérer mes cryptos ». */
+.asset-hidden {
+  display: none !important;
+}
+
+/* « Gérer mes cryptos » : une ligne par crypto, case à droite. */
+.assets-list {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.asset-choice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+  cursor: pointer;
+}
+
+.asset-choice-name {
+  font-weight: 600;
+}
+
+.asset-choice input {
+  margin-left: auto;
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+
+/* Boutons d'une carte sans « Échanger » (3 boutons) : le dernier (Envoyer)
+   occupe toute la dernière ligne de la grille 2 × 2. */
+.wallet-card .row-buttons button:last-child:nth-child(odd) {
+  grid-column: 1 / -1;
+}
+
 .coin-icon-sol {
   width: 56px;
   height: 56px;

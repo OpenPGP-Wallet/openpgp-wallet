@@ -36,6 +36,25 @@ pub enum Asset {
     /// Taux de change : dollars pour 1 euro (paire EUR/USDT, cotée depuis le
     /// 03/01/2020), pour afficher les montants en euros au taux de chaque date.
     Eur,
+    /// Autre crypto : paire USDT de Binance (liste blanche, voir `binance_pair`).
+    Pair(&'static str),
+}
+
+/// Paire USDT de Binance d'une crypto de l'app, par son symbole (`None` : pas
+/// de cotation Binance).
+pub fn binance_pair(symbol: &str) -> Option<Asset> {
+    Some(match symbol {
+        "BTC" => Asset::Btc,
+        "ETH" => Asset::Eth,
+        "SOL" => Asset::Sol,
+        "USDC" => Asset::Usdc,
+        "EUR" => Asset::Eur,
+        "BNB" => Asset::Pair("BNBUSDT"),
+        "AVAX" => Asset::Pair("AVAXUSDT"),
+        "POL" => Asset::Pair("POLUSDT"),
+        "HYPE" => Asset::Pair("HYPEUSDT"),
+        _ => return None,
+    })
 }
 
 impl Asset {
@@ -46,6 +65,7 @@ impl Asset {
             Asset::Sol => "SOLUSDT",
             Asset::Usdc => "USDCUSDT",
             Asset::Eur => "EURUSDT",
+            Asset::Pair(pair) => pair,
         }
     }
 }

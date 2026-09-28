@@ -38,6 +38,7 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     // Réseaux EVM (core/src/api.rs, history.rs)
     ("adresse d'envoi inconnue : déverrouillez le portefeuille", "sending address unknown: unlock the wallet"),
     ("historique pas encore disponible sur ce réseau", "history not available on this network yet"),
+    ("fonds insuffisants pour ce montant et les frais du réseau", "insufficient funds for this amount and the network fee"),
     ("limite de gas trop basse pour un virement", "gas limit too low for a transfer"),
     ("réponse de l'oracle de frais inattendue", "unexpected answer from the fee oracle"),
     ("frais de publication annoncés anormalement élevés", "abnormally high posting fee announced"),
@@ -1645,15 +1646,10 @@ fn chart_range(range: &str) -> Result<price_history::ChartRange, String> {
 #[tauri::command]
 async fn get_price_chart(symbol: String, range: String) -> Result<Vec<(i64, f64)>, String> {
     run_blocking(move || {
-        let asset = match symbol.to_ascii_uppercase().as_str() {
-            "BTC" => price_history::Asset::Btc,
-            "ETH" => price_history::Asset::Eth,
-            "SOL" => price_history::Asset::Sol,
-            "USDC" => price_history::Asset::Usdc,
-            // Dollars pour 1 euro : affichage en euros (conversion côté interface).
-            "EUR" => price_history::Asset::Eur,
-            other => return Err(translate_error(&format!("crypto inconnue : {other}"))),
-        };
+        // Liste blanche des paires Binance ("EUR" : dollars pour 1 euro, pour
+        // l'affichage en euros).
+        let upper = symbol.to_ascii_uppercase();
+        let asset = price_history::binance_pair(&upper).ok_or_else(|| translate_error(&format!("crypto inconnue : {upper}")))?;
         price_history::chart(asset, chart_range(&range)?).map(|points| points.as_ref().clone()).t_err()
     })
     .await
@@ -1715,6 +1711,8 @@ async fn get_crypto_prices() -> Result<PricesDto, String> {
 
 #[derive(Serialize)]
 struct MarketCoinDto {
+    /// Identifiant CoinGecko : l'interface retrouve la crypto par lui.
+    id: String,
     symbol: String,
     name: String,
     price_usd: f64,
@@ -1736,6 +1734,7 @@ async fn get_market_prices() -> Result<Vec<MarketCoinDto>, String> {
                 coins
                     .into_iter()
                     .map(|c| MarketCoinDto {
+                        id: c.id,
                         symbol: c.symbol,
                         name: c.name,
                         price_usd: c.price_usd,

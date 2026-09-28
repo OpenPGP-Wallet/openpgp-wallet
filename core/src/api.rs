@@ -1428,7 +1428,15 @@ pub fn evm_fee_for_confirmation(network: &wallet_flow::EvmNetwork, from: &[u8; 2
     let gas_limit = match (network.transfer_gas, data.is_empty()) {
         (Some(fixed), true) => fixed,
         _ => {
-            let estimated = rpc.estimate_gas(&derivation::format_address(from), &derivation::format_address(to), value, data)?;
+            // Estimation refusée faute de fonds : message clair plutôt que l'erreur
+            // brute du nœud (constaté sur Arbitrum avec un solde nul).
+            let estimated = rpc.estimate_gas(&derivation::format_address(from), &derivation::format_address(to), value, data).map_err(|e| {
+                if format!("{e:#}").contains("insufficient funds") {
+                    anyhow::anyhow!("fonds insuffisants pour ce montant et les frais du réseau")
+                } else {
+                    e
+                }
+            })?;
             let with_margin = estimated.saturating_add(estimated / 5).max(eth_tx::intrinsic_gas(data));
             anyhow::ensure!(
                 with_margin <= EVM_MAX_ESTIMATED_GAS,
