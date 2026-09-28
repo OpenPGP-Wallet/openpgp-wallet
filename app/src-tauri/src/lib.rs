@@ -38,6 +38,16 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     // Réseaux EVM (core/src/api.rs, history.rs)
     ("adresse d'envoi inconnue : déverrouillez le portefeuille", "sending address unknown: unlock the wallet"),
     ("historique pas encore disponible sur ce réseau", "history not available on this network yet"),
+    ("jeton non pris en charge sur ce réseau", "token not supported on this network"),
+    ("destinataire refusé : c'est le contrat d'un jeton, les fonds y seraient perdus à jamais", "recipient refused: it is a token contract, the funds would be lost forever"),
+    ("solde de jeton insuffisant, ou transfert refusé par le contrat du jeton", "insufficient token balance, or transfer refused by the token contract"),
+    ("réponse du contrat de jeton inattendue", "unexpected answer from the token contract"),
+    ("solde de jeton hors limites", "token balance out of range"),
+    ("limite de gas trop basse pour ce transfert", "gas limit too low for this transfer"),
+    ("le montant doit être supérieur à zéro", "the amount must be greater than zero"),
+    ("montant invalide", "invalid amount"),
+    ("montant trop grand", "amount too large"),
+    ("mint invalide", "invalid mint"),
     ("fonds insuffisants pour ce montant et les frais du réseau", "insufficient funds for this amount and the network fee"),
     ("limite de gas trop basse pour un virement", "gas limit too low for a transfer"),
     ("réponse de l'oracle de frais inattendue", "unexpected answer from the fee oracle"),
@@ -401,6 +411,9 @@ const LEDGER_PREFIX_TRANSLATIONS: &[(&str, &str)] = &[
 /// correspondance exacte ne peut pas fonctionner, donc reconstruction par
 /// découpage autour de la partie fixe du message.
 fn translate_dynamic_error(msg: &str) -> Option<String> {
+    if let Some(n) = msg.strip_prefix("trop de décimales (").and_then(|rest| rest.strip_suffix(" au plus pour ce jeton)")) {
+        return Some(format!("too many decimals (at most {n} for this token)"));
+    }
     if let Some(rest) = msg.strip_prefix("gas estimé anormalement élevé (").and_then(|rest| rest.strip_suffix(") — envoi refusé")) {
         return Some(format!("abnormally high estimated gas ({rest}) — transfer refused"));
     }
@@ -1852,6 +1865,7 @@ fn network_unit(network: &str) -> &'static str {
 /// "exactement" ce qui va être signé : le profil source détermine maintenant
 /// l'adresse d'où partent les fonds, tout autant que le réseau/destinataire/montant)
 /// juste avant de signer — protection spécifique contre un détournement discret.
+#[allow(clippy::too_many_arguments)]
 fn confirm_transaction_native(
     app: &tauri::AppHandle,
     network: &str,
@@ -1860,9 +1874,10 @@ fn confirm_transaction_native(
     from_label: &str,
     fee_line: Option<&str>,
     warning: Option<&str>,
+    token_line: Option<&str>,
 ) -> bool {
     app.dialog()
-        .message(transaction_confirmation_text(network, to, amount, from_label, fee_line, warning))
+        .message(transaction_confirmation_text(network, to, amount, from_label, fee_line, warning, token_line))
         .title(lang("Confirmer le virement", "Confirm the transfer"))
         .kind(MessageDialogKind::Warning)
         .buttons(MessageDialogButtons::OkCancel)
@@ -1878,22 +1893,23 @@ fn transaction_confirmation_text(
     from_label: &str,
     fee_line: Option<&str>,
     warning: Option<&str>,
+    token_line: Option<&str>,
 ) -> String {
     let fee_line = fee_line.map(|f| format!("\n{f}")).unwrap_or_default();
+    // Jeton (virement de jetons) : nom et contrat, venus du registre Rust.
+    let token_line = token_line.map(|l| format!("\n{l}")).unwrap_or_default();
     // En TÊTE du message : c'est la première chose lue, avant l'adresse.
     let warning = warning.map(|w| format!("{w}\n\n")).unwrap_or_default();
     let from_label = dialog_label(from_label);
     if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
         format!(
-            "{warning}Network: {}\nFrom profile: {from_label}\nRecipient: {to}\nAmount: {amount} {}{fee_line}\n\nConfirm this transfer? It is irreversible.",
-            network_label(network),
-            network_unit(network)
+            "{warning}Network: {}\nFrom profile: {from_label}{token_line}\nRecipient: {to}\nAmount: {amount}{fee_line}\n\nConfirm this transfer? It is irreversible.",
+            network_label(network)
         )
     } else {
         format!(
-            "{warning}Réseau : {}\nDepuis le profil : {from_label}\nDestinataire : {to}\nMontant : {amount} {}{fee_line}\n\nConfirmer cet envoi ? C'est irréversible.",
-            network_label(network),
-            network_unit(network)
+            "{warning}Réseau : {}\nDepuis le profil : {from_label}{token_line}\nDestinataire : {to}\nMontant : {amount}{fee_line}\n\nConfirmer cet envoi ? C'est irréversible.",
+            network_label(network)
         )
     }
 }
@@ -2162,7 +2178,8 @@ fn confirm_send(
     let fee_line = fee_and_device_note(fee_line, device_note);
 
     let warning = send_warnings(dir, network, coin, &to, activity);
-    if !confirm_transaction_native(app, network, &to, &amount, from_label, fee_line.as_deref(), warning.as_deref()) {
+    let amount_line = format!("{amount} {}", network_unit(network));
+    if !confirm_transaction_native(app, network, &to, &amount_line, from_label, fee_line.as_deref(), warning.as_deref(), None) {
         return Err(translate_error("Virement annulé (confirmation refusée)."));
     }
     Ok(ConfirmedSend { to, amount, evm_fee, fee_sat })
@@ -2640,13 +2657,110 @@ async fn send_usdc_transaction(password: String, to: String, amount: String, pro
         // Même journal que les envois SOL (même réseau, même portefeuille
         // destinataire) : avoir déjà payé cette adresse en SOL compte.
         let warning = send_warnings(&dir, network, "usdc", &to, api::usdc_recipient_activity(&to, net).ok());
-        if !confirm_transaction_native(&app, network, &to, &amount_line, &from_label, rent_line.as_deref(), warning.as_deref()) {
+        if !confirm_transaction_native(&app, network, &to, &amount_line, &from_label, rent_line.as_deref(), warning.as_deref(), None) {
             return Err(translate_error("Virement annulé (confirmation refusée)."));
         }
 
         let result = api::send_usdc(&dir, &password, net, &to, &amount, profile_index).t_err();
         if result.is_ok() {
             let _ = sent_recipients::record_sent(&dir, network, &to);
+        }
+        result
+    })
+    .await
+}
+
+/// Solde d'un jeton du registre (`core/src/tokens.rs`) sur `network`, au
+/// plus 6 décimales affichées (tronqué, jamais arrondi au supérieur).
+#[tauri::command]
+async fn get_token_balance(token: String, network: String, address: String) -> Result<String, String> {
+    run_blocking(move || {
+        let (units, decimals) = api::get_token_balance(&token, &network, &address).t_err()?;
+        Ok(pgp_wallet_poc::tokens::format_balance(units, decimals, 6))
+    })
+    .await
+}
+
+/// Virement d'un jeton du registre : l'interface ne donne que l'identifiant du
+/// jeton et le réseau — contrat/mint et décimales viennent du registre Rust,
+/// et la boîte native les affiche (nom, contrat, montant, frais).
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn send_token_transaction(
+    token: String,
+    network: String,
+    password: String,
+    to: String,
+    amount: String,
+    profile_index: u32,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    run_blocking(move || {
+        let password = Zeroizing::new(password);
+        let dir = data_dir(&app)?;
+        let (info, deployment) = pgp_wallet_poc::tokens::find(&token, &network).ok_or_else(|| translate_error("jeton non pris en charge sur ce réseau"))?;
+        let to = canonical_address_input(&to)?;
+        let amount = api::canonical_token_amount(&token, &network, &amount).t_err()?;
+        let from_label = api::list_profiles(&dir)
+            .into_iter()
+            .find(|p| p.index == profile_index)
+            .map(|p| p.label)
+            .unwrap_or_else(|| format!("profil #{profile_index}"));
+        let amount_line = format!("{amount} {}", info.symbol);
+        let result = match deployment.kind {
+            pgp_wallet_poc::tokens::TokenKind::Erc20 { contract } => {
+                let net = evm_network(&network)?;
+                api::validate_evm_recipient(&to).t_err()?;
+                let from_evm = app
+                    .state::<ProfileAddressCache>()
+                    .0
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .get(&profile_index)
+                    .map(|(evm, _)| evm.clone())
+                    .ok_or_else(|| translate_error("adresse d'envoi inconnue : déverrouillez le portefeuille"))?;
+                let fee = api::erc20_fee_for_confirmation(&token, &network, &from_evm, &to, &amount).t_err()?;
+                let token_line = lang(
+                    &format!("Jeton : {} ({}) — contrat {}", info.name, info.symbol, dialog_address(contract)),
+                    &format!("Token: {} ({}) — contract {}", info.name, info.symbol, dialog_address(contract)),
+                )
+                .to_string();
+                let warning = send_warnings(&dir, &network, "evm", &to, api::evm_recipient_activity(&to, net).ok());
+                let fee_line = evm_fee_line_for(fee, net.native_symbol);
+                if !confirm_transaction_native(&app, &network, &to, &amount_line, &from_label, Some(&fee_line), warning.as_deref(), Some(&token_line)) {
+                    return Err(translate_error("Virement annulé (confirmation refusée)."));
+                }
+                api::send_erc20(&dir, &password, &token, &network, &to, &amount, fee, profile_index).t_err()
+            }
+            pgp_wallet_poc::tokens::TokenKind::Spl { mint } => {
+                let net = sol_network(&network)?;
+                api::check_solana_recipient(&to, net).t_err()?;
+                let token_line = lang(
+                    &format!("Jeton : {} ({}) — mint {mint}", info.name, info.symbol),
+                    &format!("Token: {} ({}) — mint {mint}", info.name, info.symbol),
+                )
+                .to_string();
+                let warning = send_warnings(&dir, &network, "sol", &to, api::sol_recipient_activity(&to, net).ok());
+                // Compte de jetons du destinataire à créer : coût annoncé avant.
+                let rent_line = api::registered_spl_mint(&token)
+                    .ok()
+                    .and_then(|mint| api::spl_ata_rent_lamports_if_missing(&to, &mint, net).ok().flatten())
+                    .map(|lamports| {
+                        let sol = lamports as f64 / 1e9;
+                        lang(
+                            &format!("Le destinataire n'a pas encore de compte {} : sa création coûtera environ {sol:.6} SOL de rent supplémentaire (payé par vous, une seule fois), en plus des frais réseau habituels.", info.symbol),
+                            &format!("The recipient doesn't have a {} account yet: creating it will cost about {sol:.6} extra SOL in rent (paid by you, once), on top of the usual network fee.", info.symbol),
+                        )
+                        .to_string()
+                    });
+                if !confirm_transaction_native(&app, &network, &to, &amount_line, &from_label, rent_line.as_deref(), warning.as_deref(), Some(&token_line)) {
+                    return Err(translate_error("Virement annulé (confirmation refusée)."));
+                }
+                api::send_registered_spl(&dir, &password, &token, &to, &amount, profile_index).t_err()
+            }
+        };
+        if result.is_ok() {
+            let _ = sent_recipients::record_sent(&dir, &network, &to);
         }
         result
     })
@@ -3420,6 +3534,8 @@ pub fn run() {
             save_kit_to_usb,
             usb_restore_load,
             usb_restore_clear,
+            get_token_balance,
+            send_token_transaction,
             restore_wallet_from_usb,
             watch_balances,
             has_pending_tx,
@@ -3492,14 +3608,14 @@ mod tests {
             "\n".repeat(80)
         );
         let real_to = canonical_address_input(&format!("{}bc1qattacker", "\n".repeat(80))).unwrap();
-        let text = transaction_confirmation_text("btc_mainnet", &real_to, "2.5", &injected_label, Some("Frais : 1200 sat"), None);
+        let text = transaction_confirmation_text("btc_mainnet", &real_to, "2.5 BTC", &injected_label, Some("Frais : 1200 sat"), None, None);
         // Le mot peut subsister DANS le libellé (aplati sur la ligne "Depuis le
         // profil", tronqué avant toute adresse complète) : ce qui compte est
         // qu'aucune AUTRE ligne ne se présente comme destinataire ou montant.
         assert_eq!(text.lines().filter(|l| l.starts_with("Destinataire")).count(), 1, "{text}");
         assert_eq!(text.lines().filter(|l| l.starts_with("Montant")).count(), 1, "{text}");
         assert!(text.contains("Destinataire : bc1qattacker\nMontant : 2.5 BTC\n"), "{text}");
-        let clean = transaction_confirmation_text("btc_mainnet", "bc1qx", "1", "Principal", Some("Frais : 1 sat"), None);
+        let clean = transaction_confirmation_text("btc_mainnet", "bc1qx", "1 BTC", "Principal", Some("Frais : 1 sat"), None, None);
         assert_eq!(text.lines().count(), clean.lines().count(), "le libellé ne doit ajouter aucune ligne");
 
         // Chaque caractère dangereux, isolément.
@@ -3635,6 +3751,42 @@ mod tests {
         }
     }
 
+    /// Contrats et mints des jetons écrits dans l'interface (demandes de
+    /// paiement seulement : un envoi ne passe que l'identifiant du jeton)
+    /// identiques au registre Rust, dans les deux sens, réseaux compris — un QR
+    /// ne peut pas désigner un autre contrat que celui des envois.
+    #[test]
+    fn frontend_token_contracts_match_the_registry() {
+        use pgp_wallet_poc::tokens::{TokenKind, TOKENS};
+        let main_js = include_str!("../../src/main.js");
+        let address_of = |kind: TokenKind| match kind {
+            TokenKind::Erc20 { contract } => contract,
+            TokenKind::Spl { mint } => mint,
+        };
+        for token in TOKENS {
+            let marker = format!("coin: \"{}\"", token.id);
+            let line = main_js
+                .lines()
+                .find(|l| l.contains(&marker) && l.contains("contracts:"))
+                .unwrap_or_else(|| panic!("{} absent du registre de l'interface", token.id));
+            let networks = line.split("networks: [").nth(1).and_then(|r| r.split(']').next()).expect("networks");
+            assert_eq!(networks.split(',').count(), token.deployments.len(), "{} : réseaux de l'interface", token.id);
+            let contracts = line.split("contracts: {").nth(1).and_then(|r| r.split('}').next()).expect("contracts");
+            let entries: Vec<(&str, &str)> = contracts
+                .split(',')
+                .map(|entry| {
+                    let (network, address) = entry.split_once(':').expect("réseau: adresse");
+                    (network.trim(), address.trim().trim_matches('"'))
+                })
+                .collect();
+            assert_eq!(entries.len(), token.deployments.len(), "{} : contrats de l'interface", token.id);
+            for d in token.deployments {
+                assert!(networks.contains(&format!("\"{}\"", d.network)), "{} : réseau {} absent de l'interface", token.id, d.network);
+                assert!(entries.contains(&(d.network, address_of(d.kind))), "{} sur {} : contrat différent dans l'interface", token.id, d.network);
+            }
+        }
+    }
+
     /// Chaque message de la sauvegarde sur clé USB existe dans le code et a sa
     /// traduction anglaise (messages à numéro de part ou nom de fichier :
     /// traduits par `translate_dynamic_error`).
@@ -3674,7 +3826,7 @@ mod tests {
     /// vide (constaté sans ligne vide pour Solana, qui n'a pas de ligne de frais).
     #[test]
     fn device_note_is_set_apart_in_the_confirmation() {
-        let text = |fee: Option<&str>| transaction_confirmation_text("sol_devnet", "Dest", "0.01", "Ledger — A", fee_and_device_note(fee.map(str::to_string), Some("NOTE")).as_deref(), None);
+        let text = |fee: Option<&str>| transaction_confirmation_text("sol_devnet", "Dest", "0.01 SOL", "Ledger — A", fee_and_device_note(fee.map(str::to_string), Some("NOTE")).as_deref(), None, None);
         assert!(text(None).contains("0.01 SOL\n\nNOTE\n\n"), "{}", text(None));
         assert!(text(Some("Frais : 212 sat")).contains("0.01 SOL\nFrais : 212 sat\n\nNOTE\n\n"));
         assert_eq!(fee_and_device_note(Some("F".into()), None).as_deref(), Some("F"));

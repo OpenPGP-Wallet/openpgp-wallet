@@ -459,28 +459,29 @@
 
           <!-- USDC : jeton SPL sur Solana, pas un réseau à part — même adresse
                que la carte Solana ci-dessus (owner), le compte de jetons associé
-               (ATA) reste un détail invisible pour l'utilisateur. Mainnet
-               uniquement (v1, voir core/src/sol_spl.rs) : pas de sélecteur de
-               réseau. -->
+               (ATA) reste un détail invisible pour l'utilisateur. Aussi sur
+               Ethereum, Base et Arbitrum (jeton ERC-20, voir core/src/tokens.rs). -->
           <section class="wallet-card" data-coin="usdc" data-collapse-key="wallet-usdc">
             <header>
               <h2>
                 <button type="button" class="collapse-toggle" aria-expanded="true" aria-controls="wallet-body-usdc">
                   <span class="collapse-chevron" aria-hidden="true"></span>
-                  <img class="coin-icon" src="/assets/usdc.png" alt="" />
-                  <span class="coin-name-stack">
-                  <span>USDC</span>
-                  <span class="coin-network-tag">Solana</span>
-                  </span>
+                  <img class="coin-icon" src="/assets/usdc.png" alt="" />USDC
                 </button>
               </h2>
-              <!-- Même texte/même clé i18n que le "Mainnet — Fonds réels" des options
-                   réseau d'ETH/BTC/SOL (voir plus haut) : avant, "Solana — Mainnet —
-                   Fonds réels" était plus long que ce texte, donc la colonne d'en-tête
-                   de la carte USDC était plus large que les autres et décalait tout ce
-                   qui suit. "Solana" est remonté sous le nom "USDC" (ci-dessus) pour ne
-                   garder ici que le texte identique aux autres cartes. -->
-              <span class="network-fixed-label muted" data-i18n="wallet.mainnet">Mainnet — Fonds réels</span>
+              <div class="custom-select dropdown">
+                <select class="network-select" data-coin="usdc">
+                  <option value="sol_mainnet" selected data-i18n="net.sol_mainnet">Solana — Fonds réels</option>
+                  <option value="evm_mainnet" data-i18n="net.evm_mainnet">Ethereum — Fonds réels</option>
+                  <option value="base_mainnet" data-i18n="net.base_mainnet">Base — Fonds réels</option>
+                  <option value="arbitrum_mainnet" data-i18n="net.arbitrum_mainnet">Arbitrum — Fonds réels</option>
+                </select>
+                <button type="button" class="custom-select-trigger">
+                  <span class="custom-select-label"></span>
+                  <span class="select-arrow"></span>
+                </button>
+                <ul class="custom-select-options"></ul>
+              </div>
             </header>
             <div class="balance-row">
               <p class="balance"><span data-field="balance">—</span> USDC</p>

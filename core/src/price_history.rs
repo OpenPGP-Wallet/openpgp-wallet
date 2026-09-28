@@ -53,6 +53,19 @@ pub fn binance_pair(symbol: &str) -> Option<Asset> {
         "AVAX" => Asset::Pair("AVAXUSDT"),
         "POL" => Asset::Pair("POLUSDT"),
         "HYPE" => Asset::Pair("HYPEUSDT"),
+        "LINK" => Asset::Pair("LINKUSDT"),
+        "DAI" => Asset::Pair("DAIUSDT"),
+        "USDE" => Asset::Pair("USDEUSDT"),
+        "UNI" => Asset::Pair("UNIUSDT"),
+        "XAUT" => Asset::Pair("XAUTUSDT"),
+        "ONDO" => Asset::Pair("ONDOUSDT"),
+        "FET" => Asset::Pair("FETUSDT"),
+        "GNO" => Asset::Pair("GNOUSDT"),
+        "ARB" => Asset::Pair("ARBUSDT"),
+        "ASTER" => Asset::Pair("ASTERUSDT"),
+        "RENDER" => Asset::Pair("RENDERUSDT"),
+        // EURC suit l'euro : sa courbe est celle d'EUR/USDT.
+        "EURC" => Asset::Eur,
         _ => return None,
     })
 }

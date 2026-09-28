@@ -135,7 +135,32 @@ impl PriceRpc {
 
 /// Cryptos dont l'app affiche le cours (identifiants CoinGecko) : un seul
 /// appel pour toutes, trié par capitalisation.
-pub const MARKET_IDS: &[&str] = &["bitcoin", "ethereum", "solana", "usd-coin", "binancecoin", "avalanche-2", "polygon-ecosystem-token", "hyperliquid"];
+pub const MARKET_IDS: &[&str] = &[
+    "bitcoin",
+    "ethereum",
+    "solana",
+    "usd-coin",
+    "binancecoin",
+    "avalanche-2",
+    "polygon-ecosystem-token",
+    "hyperliquid",
+    // Jetons (core/src/tokens.rs).
+    "tether",
+    "chainlink",
+    "dai",
+    "ethena-usde",
+    "uniswap",
+    "global-dollar",
+    "tether-gold",
+    "ondo-finance",
+    "fetch-ai",
+    "euro-coin",
+    "gnosis",
+    "arbitrum",
+    "aster-2",
+    "venice-token",
+    "render-token",
+];
 
 pub struct MarketCoin {
     /// Identifiant CoinGecko (voir `MARKET_IDS`).

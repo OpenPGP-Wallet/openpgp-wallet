@@ -15,7 +15,7 @@
 
 use crate::{
     btc_rpc, dapp_requests, derivation, entropy, eth_rpc, eth_tx, history, jupiter_rpc, memory_guard, pgp_engine, secure_storage, shamir,
-    sol_rpc, sol_spl, sol_tx, thorchain_rpc, wallet_flow,
+    sol_rpc, sol_spl, sol_tx, thorchain_rpc, tokens, wallet_flow,
 };
 use anyhow::{Context, Result};
 use openpgp::armor;
@@ -1295,9 +1295,15 @@ pub fn get_sol_balance(address: &str, network: &wallet_flow::SolNetwork) -> Resu
 /// plus petite unité (6 décimales) — 0 si l'Associated Token Account n'existe
 /// pas encore (jamais reçu d'USDC), pas une erreur.
 pub fn get_usdc_balance(owner_address: &str, network: &wallet_flow::SolNetwork) -> Result<u64> {
+    get_spl_balance(owner_address, &sol_spl::usdc_mint_mainnet(), network)
+}
+
+/// Solde d'un jeton SPL `mint` de `owner_address` (compte de jetons associé ;
+/// absent : 0).
+pub fn get_spl_balance(owner_address: &str, mint: &[u8; 32], network: &wallet_flow::SolNetwork) -> Result<u64> {
     let owner_bytes = bs58::decode(owner_address.trim()).into_vec().context("adresse Solana invalide (base58 attendu)")?;
     let owner: [u8; 32] = owner_bytes.try_into().map_err(|_| anyhow::anyhow!("une adresse Solana fait 32 octets"))?;
-    let ata = sol_spl::find_associated_token_address(&owner, &sol_spl::usdc_mint_mainnet());
+    let ata = sol_spl::find_associated_token_address(&owner, mint);
     let ata_b58 = bs58::encode(ata).into_string();
     Ok(sol_rpc::SolRpc::new(network.rpc).token_account_balance(&ata_b58)?.unwrap_or(0))
 }
@@ -1326,9 +1332,15 @@ pub fn usdc_token_account(owner_address: &str) -> Result<String> {
 /// présenter un coût caché après coup (voir `describe_possible_ata_rent` côté
 /// app-tauri, qui met ce chiffre en forme pour la boîte de dialogue).
 pub fn usdc_ata_rent_lamports_if_missing(to_address: &str, network: &wallet_flow::SolNetwork) -> Result<Option<u64>> {
+    spl_ata_rent_lamports_if_missing(to_address, &sol_spl::usdc_mint_mainnet(), network)
+}
+
+/// Rent du compte de jetons `mint` du destinataire s'il n'existe pas encore
+/// (créé et payé par l'expéditeur) ; `None` s'il existe.
+pub fn spl_ata_rent_lamports_if_missing(to_address: &str, mint: &[u8; 32], network: &wallet_flow::SolNetwork) -> Result<Option<u64>> {
     let to_bytes = bs58::decode(to_address.trim()).into_vec().context("adresse Solana invalide (base58 attendu)")?;
     let to_owner: [u8; 32] = to_bytes.try_into().map_err(|_| anyhow::anyhow!("une adresse Solana fait 32 octets"))?;
-    let dest_ata = sol_spl::find_associated_token_address(&to_owner, &sol_spl::usdc_mint_mainnet());
+    let dest_ata = sol_spl::find_associated_token_address(&to_owner, mint);
     let dest_ata_b58 = bs58::encode(dest_ata).into_string();
     let rpc = sol_rpc::SolRpc::new(network.rpc);
     if rpc.account_exists(&dest_ata_b58)? {
@@ -2754,6 +2766,25 @@ pub fn send_usdc(
     amount_usdc: &str,
     profile_index: u32,
 ) -> Result<String> {
+    let amount = wallet_flow::parse_usdc_to_micros(amount_usdc)?;
+    send_spl(data_dir, device_password, network, &sol_spl::usdc_mint_mainnet(), sol_spl::USDC_DECIMALS, "USDC", to, amount, profile_index)
+}
+
+/// Virement d'un jeton SPL `mint` (`amount` en unités, `decimals` du mint) —
+/// voir `send_usdc` : compte de jetons du destinataire créé si besoin, soldes
+/// du jeton et SOL (frais + rent) vérifiés avant de signer.
+#[allow(clippy::too_many_arguments)]
+pub fn send_spl(
+    data_dir: &Path,
+    device_password: &str,
+    network: &wallet_flow::SolNetwork,
+    mint: &[u8; 32],
+    decimals: u8,
+    symbol: &str,
+    to: &str,
+    amount: u64,
+    profile_index: u32,
+) -> Result<String> {
     check_solana_recipient(to, network)?;
     let seed = unlock_seed(data_dir, device_password)?;
     let _seed_lock = memory_guard::lock(&seed);
@@ -2762,9 +2793,7 @@ pub fn send_usdc(
 
     let to_bytes = bs58::decode(to.trim()).into_vec().context("adresse Solana invalide (base58 attendu)")?;
     let to_owner: [u8; 32] = to_bytes.try_into().map_err(|_| anyhow::anyhow!("une adresse Solana fait 32 octets"))?;
-    let amount = wallet_flow::parse_usdc_to_micros(amount_usdc)?;
-
-    let mint = sol_spl::usdc_mint_mainnet();
+    let mint = *mint;
     let source_ata = sol_spl::find_associated_token_address(&owner, &mint);
     let dest_ata = sol_spl::find_associated_token_address(&to_owner, &mint);
     let source_ata_b58 = bs58::encode(source_ata).into_string();
@@ -2794,10 +2823,10 @@ pub fn send_usdc(
     // ATA source absente == solde USDC forcément nul (jamais reçu d'USDC) :
     // échouer clairement plutôt que de construire une transaction qui
     // échouerait de toute façon on-chain.
-    let usdc_balance = usdc_balance?.ok_or_else(|| anyhow::anyhow!("aucun compte USDC trouvé pour cette adresse (solde 0)"))?;
+    let usdc_balance = usdc_balance?.ok_or_else(|| anyhow::anyhow!("aucun compte {symbol} trouvé pour cette adresse (solde 0)"))?;
     anyhow::ensure!(
         amount <= usdc_balance,
-        "fonds USDC insuffisants : {usdc_balance} disponibles (unité 10^-6 USDC), {amount} requis"
+        "fonds {symbol} insuffisants : {usdc_balance} disponibles (unité 10^-{decimals} {symbol}), {amount} requis"
     );
 
     const SOL_FEE_LAMPORTS: u64 = 5_000;
@@ -2819,9 +2848,177 @@ pub fn send_usdc(
     );
 
     let create_ata_ix = sol_spl::create_ata_idempotent_instruction(&owner, &to_owner, &mint, &dest_ata);
-    let transfer_ix = sol_spl::transfer_checked_instruction(&source_ata, &mint, &dest_ata, &owner, amount, sol_spl::USDC_DECIMALS);
+    let transfer_ix = sol_spl::transfer_checked_instruction(&source_ata, &mint, &dest_ata, &owner, amount, decimals);
     let raw_tx = sol_tx::build_and_sign_transaction(&signing_key, &owner, &[create_ata_ix, transfer_ix], &recent_blockhash);
     rpc.send_transaction(&raw_tx)
+}
+
+// --- Jetons du registre (voir tokens.rs) ---------------------------------------
+// L'interface ne donne que l'identifiant du jeton et le réseau : contrat, mint
+// et décimales viennent TOUJOURS du registre.
+
+fn abi_word_address(address: &[u8; 20]) -> [u8; 32] {
+    let mut word = [0u8; 32];
+    word[12..].copy_from_slice(address);
+    word
+}
+
+fn abi_word_u128(value: u128) -> [u8; 32] {
+    let mut word = [0u8; 32];
+    word[16..].copy_from_slice(&value.to_be_bytes());
+    word
+}
+
+/// Données d'un appel ERC-20 `transfer(to, amount)`.
+pub fn erc20_transfer_data(to: &[u8; 20], amount: u128) -> Vec<u8> {
+    let mut data = vec![0xa9, 0x05, 0x9c, 0xbb];
+    data.extend_from_slice(&abi_word_address(to));
+    data.extend_from_slice(&abi_word_u128(amount));
+    data
+}
+
+/// Solde ERC-20 de `owner` (unités du jeton) : `balanceOf(owner)`.
+pub fn get_erc20_balance(network: &wallet_flow::EvmNetwork, contract: &str, owner: &str) -> Result<u128> {
+    let owner_bytes = wallet_flow::parse_evm_address(owner)?;
+    let mut data = vec![0x70, 0xa0, 0x82, 0x31];
+    data.extend_from_slice(&abi_word_address(&owner_bytes));
+    let answer = eth_rpc::EthRpc::new(network.rpc).call_contract(owner, contract, 0, &data)?;
+    anyhow::ensure!(answer.len() == 32, "réponse du contrat de jeton inattendue");
+    anyhow::ensure!(answer[..16].iter().all(|&b| b == 0), "solde de jeton hors limites");
+    Ok(u128::from_be_bytes(answer[16..].try_into().expect("16 octets")))
+}
+
+fn registered_token(token_id: &str, network: &str) -> Result<(&'static tokens::Token, &'static tokens::Deployment)> {
+    tokens::find(token_id, network).ok_or_else(|| anyhow::anyhow!("jeton non pris en charge sur ce réseau"))
+}
+
+fn token_evm_network(network: &str) -> Result<&'static wallet_flow::EvmNetwork> {
+    wallet_flow::evm_network(network).ok_or_else(|| anyhow::anyhow!("réseau EVM inconnu : {network}"))
+}
+
+/// Solde d'un jeton du registre sur `network` : (unités, décimales).
+pub fn get_token_balance(token_id: &str, network: &str, owner: &str) -> Result<(u128, u8)> {
+    let (_, deployment) = registered_token(token_id, network)?;
+    let units = match deployment.kind {
+        tokens::TokenKind::Erc20 { contract } => get_erc20_balance(token_evm_network(network)?, contract, owner)?,
+        tokens::TokenKind::Spl { mint } => {
+            let mint = sol_spl_mint(mint)?;
+            u128::from(get_spl_balance(owner, &mint, &wallet_flow::SOLANA_MAINNET)?)
+        }
+    };
+    Ok((units, deployment.decimals))
+}
+
+/// Mint (32 octets) d'un jeton SPL du registre.
+pub fn registered_spl_mint(token_id: &str) -> Result<[u8; 32]> {
+    let (_, deployment) = registered_token(token_id, "sol_mainnet")?;
+    let tokens::TokenKind::Spl { mint } = deployment.kind else { anyhow::bail!("jeton SPL attendu") };
+    sol_spl_mint(mint)
+}
+
+fn sol_spl_mint(mint: &str) -> Result<[u8; 32]> {
+    bs58::decode(mint).into_vec().ok().and_then(|b| b.try_into().ok()).ok_or_else(|| anyhow::anyhow!("mint invalide"))
+}
+
+/// Montant canonique d'un jeton (forme affichée ET signée).
+pub fn canonical_token_amount(token_id: &str, network: &str, amount: &str) -> Result<String> {
+    let (_, deployment) = registered_token(token_id, network)?;
+    Ok(tokens::format_amount(tokens::parse_amount(amount, deployment.decimals)?, deployment.decimals))
+}
+
+/// Frais d'un virement ERC-20, montrés dans la boîte de confirmation puis
+/// signés tels quels (gas de l'appel estimé par le nœud, voir
+/// `evm_fee_for_confirmation`). Refus d'un virement VERS un contrat de jeton
+/// (fonds perdus à jamais).
+pub fn erc20_fee_for_confirmation(token_id: &str, network: &str, from: &str, to: &str, amount: &str) -> Result<EvmFee> {
+    let (_, deployment) = registered_token(token_id, network)?;
+    let tokens::TokenKind::Erc20 { contract } = deployment.kind else { anyhow::bail!("jeton ERC-20 attendu") };
+    anyhow::ensure!(!tokens::is_known_contract(to), "destinataire refusé : c'est le contrat d'un jeton, les fonds y seraient perdus à jamais");
+    let units = tokens::parse_amount(amount, deployment.decimals)?;
+    let data = erc20_transfer_data(&wallet_flow::parse_evm_address(to)?, units);
+    evm_fee_for_confirmation(token_evm_network(network)?, &wallet_flow::parse_evm_address(from)?, &wallet_flow::parse_evm_address(contract)?, 0, &data).map_err(|e| {
+        // Appel refusé par le contrat lors de l'estimation : le cas courant est
+        // un solde de jeton insuffisant.
+        // Refus classique (« revert ») ou ancien contrat qui s'arrête sur un
+        // opcode invalide (USDT, constaté avec un solde nul).
+        let message = format!("{e:#}");
+        if message.contains("revert") || message.contains("invalid opcode") {
+            anyhow::anyhow!("solde de jeton insuffisant, ou transfert refusé par le contrat du jeton")
+        } else {
+            e
+        }
+    })
+}
+
+/// Déverrouille le coffre, signe et diffuse un virement ERC-20 du registre.
+/// `fee` : celui affiché dans la boîte de confirmation, utilisé tel quel.
+/// Vérifie avant de signer : réseau du nœud, solde du jeton, solde natif pour
+/// les frais.
+#[allow(clippy::too_many_arguments)]
+pub fn send_erc20(
+    data_dir: &Path,
+    device_password: &str,
+    token_id: &str,
+    network: &str,
+    to: &str,
+    amount: &str,
+    fee: EvmFee,
+    profile_index: u32,
+) -> Result<String> {
+    let (token, deployment) = registered_token(token_id, network)?;
+    let tokens::TokenKind::Erc20 { contract } = deployment.kind else { anyhow::bail!("jeton ERC-20 attendu") };
+    let net = token_evm_network(network)?;
+    check_evm_gas_price(net, fee.gas_price)?;
+    anyhow::ensure!(!tokens::is_known_contract(to), "destinataire refusé : c'est le contrat d'un jeton, les fonds y seraient perdus à jamais");
+    let to_bytes = wallet_flow::parse_evm_address(to)?;
+    let contract_bytes = wallet_flow::parse_evm_address(contract)?;
+    let units = tokens::parse_amount(amount, deployment.decimals)?;
+    let data = erc20_transfer_data(&to_bytes, units);
+    anyhow::ensure!(fee.gas_limit >= eth_tx::intrinsic_gas(&data), "limite de gas trop basse pour ce transfert");
+
+    let seed = unlock_seed(data_dir, device_password)?;
+    let _seed_lock = memory_guard::lock(&seed);
+    let (signing_key, address) = derivation::derive_evm_key(&seed, profile_index)?;
+    let address_str = derivation::format_address(&address);
+    let rpc = eth_rpc::EthRpc::new(net.rpc);
+    let (nonce, chain_id, native, token_balance) = std::thread::scope(|scope| {
+        let nonce = scope.spawn(|| rpc.nonce(&address_str));
+        let chain_id = scope.spawn(|| rpc.chain_id());
+        let native = scope.spawn(|| rpc.balance(&address_str));
+        let token_balance = scope.spawn(|| get_erc20_balance(net, contract, &address_str));
+        (
+            nonce.join().expect("le thread nonce ne doit pas paniquer"),
+            chain_id.join().expect("le thread chain_id ne doit pas paniquer"),
+            native.join().expect("le thread solde ne doit pas paniquer"),
+            token_balance.join().expect("le thread solde de jeton ne doit pas paniquer"),
+        )
+    });
+    let (nonce, chain_id, native, token_balance) = (nonce?, chain_id?, native?, token_balance?);
+    anyhow::ensure!(chain_id == net.chain_id, "le nœud RPC répond pour le réseau {chain_id}, pas {} — envoi refusé", net.chain_id);
+    anyhow::ensure!(
+        units <= token_balance,
+        "fonds {} insuffisants : {} disponibles, {} requis",
+        token.symbol,
+        tokens::format_amount(token_balance, deployment.decimals),
+        tokens::format_amount(units, deployment.decimals)
+    );
+    let gas_cost = fee.max_total()?;
+    anyhow::ensure!(
+        gas_cost <= native,
+        "{} insuffisant pour les frais : {} wei disponibles, {gas_cost} wei requis",
+        net.native_symbol,
+        native
+    );
+    let tx = eth_tx::EthTx { nonce, gas_price: fee.gas_price, gas_limit: fee.gas_limit, to: contract_bytes, value: 0, chain_id, data };
+    rpc.send_raw_transaction(&tx.sign(&signing_key)?)
+}
+
+/// Virement d'un jeton SPL du registre (Solana).
+pub fn send_registered_spl(data_dir: &Path, device_password: &str, token_id: &str, to: &str, amount: &str, profile_index: u32) -> Result<String> {
+    let (token, deployment) = registered_token(token_id, "sol_mainnet")?;
+    let tokens::TokenKind::Spl { mint } = deployment.kind else { anyhow::bail!("jeton SPL attendu") };
+    let units = u64::try_from(tokens::parse_amount(amount, deployment.decimals)?).context("montant trop grand")?;
+    send_spl(data_dir, device_password, &wallet_flow::SOLANA_MAINNET, &sol_spl_mint(mint)?, deployment.decimals, token.symbol, to, units, profile_index)
 }
 
 // --- Signatures demandées par des dApps (WalletConnect) ---------------------
@@ -3759,6 +3956,65 @@ mod tests {
             assert!(fee.gas_limit >= 21_000, "{}", net.id);
             assert_eq!(fee.l1_fee > 0, net.op_stack_l1_fee, "{} : frais L1", net.id);
         }
+    }
+
+    /// Chaque contrat du registre des jetons, relu sur SA blockchain : symbole et
+    /// décimales du contrat ERC-20 ; programme SPL Token et décimales du mint
+    /// Solana. Puis un solde réel lu par le chemin de l'app (USDT d'un
+    /// portefeuille public connu). Lecture seule.
+    /// `cargo test -- --ignored token_contracts_match --nocapture`
+    #[test]
+    #[ignore]
+    fn token_contracts_match_the_real_networks() {
+        fn abi_string(answer: &[u8]) -> String {
+            if answer.len() == 32 {
+                return String::from_utf8_lossy(answer).trim_end_matches('\0').to_string();
+            }
+            let len = u128::from_be_bytes(answer[48..64].try_into().unwrap()) as usize;
+            String::from_utf8_lossy(&answer[64..64 + len]).into_owned()
+        }
+        let caller = "0x000000000000000000000000000000000000dEaD";
+        let mut mints = Vec::new();
+        for token in tokens::TOKENS {
+            for d in token.deployments {
+                match d.kind {
+                    tokens::TokenKind::Erc20 { contract } => {
+                        let rpc = eth_rpc::EthRpc::new(wallet_flow::evm_network(d.network).unwrap().rpc);
+                        let symbol = abi_string(&rpc.call_contract(caller, contract, 0, &[0x95, 0xd8, 0x9b, 0x41]).unwrap());
+                        let decimals = rpc.call_contract(caller, contract, 0, &[0x31, 0x3c, 0xe5, 0x67]).unwrap();
+                        println!("{:>7} {:>17} « {symbol} » {}", token.symbol, d.network, decimals[31]);
+                        assert!(symbol.eq_ignore_ascii_case(token.symbol), "{} sur {} : symbole « {symbol} »", token.id, d.network);
+                        assert_eq!(decimals[31], d.decimals, "{} sur {}", token.id, d.network);
+                    }
+                    tokens::TokenKind::Spl { mint } => mints.push((token, d, mint.to_string())),
+                }
+            }
+        }
+        let addresses: Vec<String> = mints.iter().map(|(_, _, mint)| mint.clone()).collect();
+        let states = sol_rpc::SolRpc::new(wallet_flow::SOLANA_MAINNET.rpc).multiple_accounts(&addresses).unwrap();
+        for ((token, d, mint), state) in mints.iter().zip(states) {
+            let state = state.unwrap_or_else(|| panic!("mint {mint} introuvable"));
+            println!("{:>7} {:>17} {} décimales {}", token.symbol, d.network, state.owner, state.data[44]);
+            assert_eq!(state.owner, "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "{} : programme SPL Token attendu", token.id);
+            assert_eq!(state.data[44], d.decimals, "{} : décimales du mint", token.id);
+        }
+        let (usdt, decimals) = get_token_balance("usdt", "evm_mainnet", "0x28C6c06298d514Db089934071355E5743bf21d60").unwrap();
+        assert_eq!(decimals, 6);
+        assert!(usdt > 0, "portefeuille public avec de l'USDT");
+    }
+
+    /// Données d'un `transfer` ERC-20 : sélecteur, destinataire et montant en
+    /// mots de 32 octets.
+    #[test]
+    fn erc20_transfer_data_is_abi_encoded() {
+        let to = [0x11u8; 20];
+        let data = erc20_transfer_data(&to, 1_000_000);
+        assert_eq!(data.len(), 4 + 32 + 32);
+        assert_eq!(&data[..4], &[0xa9, 0x05, 0x9c, 0xbb]);
+        assert_eq!(&data[4..16], &[0u8; 12]);
+        assert_eq!(&data[16..36], &to);
+        assert_eq!(u128::from_be_bytes(data[52..68].try_into().unwrap()), 1_000_000);
+        assert!(data[36..52].iter().all(|&b| b == 0));
     }
 
     /// gas intrinsèque. `cargo test -- --ignored thorchain_router_deposit_gas --nocapture`

@@ -9,18 +9,50 @@ import { renderLineChart, renderSparkline } from "./charts.js";
 // même structure (tout le reste du code les traite de la même façon).
 // `decimals` : décimales affichées pour les montants rapides de l'envoi.
 const ASSETS = [
-  { coin: "evm", name: "Ethereum", symbol: "ETH", family: "evm", icon: "/assets/eth.svg", gecko: "ethereum", decimals: 6, networks: ["evm_mainnet", "arbitrum_mainnet", "base_mainnet", "evm_sepolia"] },
-  { coin: "btc", name: "Bitcoin", symbol: "BTC", family: "btc", icon: "/assets/btc.webp", gecko: "bitcoin", decimals: 8, networks: ["btc_mainnet", "btc_testnet"] },
-  { coin: "sol", name: "Solana", symbol: "SOL", family: "sol", icon: "/assets/sol.png", gecko: "solana", decimals: 9, networks: ["sol_mainnet", "sol_devnet"] },
-  // USDC : jeton SPL sur Solana, mainnet uniquement (voir core/src/sol_spl.rs).
-  { coin: "usdc", name: "USDC", symbol: "USDC", family: "sol", icon: "/assets/usdc.png", gecko: "usd-coin", decimals: 6, networks: ["sol_mainnet"] },
-  { coin: "bnb", name: "BNB", symbol: "BNB", family: "evm", icon: "/assets/bnb.png", gecko: "binancecoin", decimals: 6, networks: ["bsc_mainnet"] },
-  { coin: "avax", name: "Avalanche", symbol: "AVAX", family: "evm", icon: "/assets/avax.png", gecko: "avalanche-2", decimals: 6, networks: ["avax_mainnet"] },
-  { coin: "pol", name: "Polygon", symbol: "POL", family: "evm", icon: "/assets/pol.png", gecko: "polygon-ecosystem-token", decimals: 6, networks: ["polygon_mainnet"] },
-  { coin: "hype", name: "Hyperliquid", symbol: "HYPE", family: "evm", icon: "/assets/hype.jpg", iconRound: true, gecko: "hyperliquid", decimals: 6, networks: ["hyperevm_mainnet"] },
+  { coin: "evm", name: "Ethereum", symbol: "ETH", family: "evm", icon: "/assets/eth.svg", gecko: "ethereum", decimals: 6, chart: "ETH", networks: ["evm_mainnet", "arbitrum_mainnet", "base_mainnet", "evm_sepolia"] },
+  { coin: "btc", name: "Bitcoin", symbol: "BTC", family: "btc", icon: "/assets/btc.webp", gecko: "bitcoin", decimals: 8, chart: "BTC", networks: ["btc_mainnet", "btc_testnet"] },
+  { coin: "sol", name: "Solana", symbol: "SOL", family: "sol", icon: "/assets/sol.png", gecko: "solana", decimals: 9, chart: "SOL", networks: ["sol_mainnet", "sol_devnet"] },
+  // USDC : jeton SPL sur Solana (chemin USDC historique, core/src/sol_spl.rs) et
+  // ERC-20 sur Ethereum, Base et Arbitrum (registre des jetons).
+  { coin: "usdc", name: "USDC", symbol: "USDC", token: true, icon: "/assets/usdc.png", gecko: "usd-coin", decimals: 6, unitDecimals: 6, chart: "USDC", networks: ["sol_mainnet", "evm_mainnet", "base_mainnet", "arbitrum_mainnet"], contracts: { sol_mainnet: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", evm_mainnet: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", base_mainnet: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", arbitrum_mainnet: "0xaf88d065e77c8cc2239327c5edb3a432268e5831" } },
+  { coin: "bnb", name: "BNB", symbol: "BNB", family: "evm", icon: "/assets/bnb.png", gecko: "binancecoin", decimals: 6, chart: "BNB", networks: ["bsc_mainnet"] },
+  { coin: "avax", name: "Avalanche", symbol: "AVAX", family: "evm", icon: "/assets/avax.png", gecko: "avalanche-2", decimals: 6, chart: "AVAX", networks: ["avax_mainnet"] },
+  { coin: "pol", name: "Polygon", symbol: "POL", family: "evm", icon: "/assets/pol.png", gecko: "polygon-ecosystem-token", decimals: 6, chart: "POL", networks: ["polygon_mainnet"] },
+  { coin: "hype", name: "Hyperliquid", symbol: "HYPE", family: "evm", icon: "/assets/hype.jpg", iconRound: true, gecko: "hyperliquid", decimals: 6, chart: "HYPE", networks: ["hyperevm_mainnet"] },
+  // Jetons (`token: true`) : contrats et mints relevés dans core/src/tokens.rs —
+  // SEUL le registre Rust fait foi pour un envoi (l'interface n'envoie que
+  // l'identifiant et le réseau) ; ceux-ci ne servent qu'aux demandes de
+  // paiement (QR). Test `frontend_token_contracts_match_the_registry` (lib.rs).
+  { coin: "usdt", name: "Tether", symbol: "USDT", token: true, icon: "/assets/usdt.png", gecko: "tether", decimals: 6, unitDecimals: 6, chart: null, networks: ["evm_mainnet", "sol_mainnet"], contracts: { evm_mainnet: "0xdac17f958d2ee523a2206206994597c13d831ec7", sol_mainnet: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB" } },
+  { coin: "link", name: "Chainlink", symbol: "LINK", token: true, icon: "/assets/link.png", gecko: "chainlink", decimals: 6, unitDecimals: 18, chart: "LINK", networks: ["evm_mainnet", "arbitrum_mainnet", "base_mainnet"], contracts: { evm_mainnet: "0x514910771af9ca656af840dff83e8264ecf986ca", arbitrum_mainnet: "0xf97f4df75117a78c1a5a0dbb814af92458539fb4", base_mainnet: "0x88fb150bdc53a65fe94dea0c9ba0a6daf8c6e196" } },
+  { coin: "dai", name: "Dai", symbol: "DAI", token: true, icon: "/assets/dai.png", gecko: "dai", decimals: 6, unitDecimals: 18, chart: "DAI", networks: ["evm_mainnet"], contracts: { evm_mainnet: "0x6b175474e89094c44da98b954eedeac495271d0f" } },
+  { coin: "usde", name: "Ethena USDe", symbol: "USDe", token: true, icon: "/assets/usde.png", gecko: "ethena-usde", decimals: 6, unitDecimals: 18, chart: "USDE", networks: ["evm_mainnet"], contracts: { evm_mainnet: "0x4c9edd5852cd905f086c759e8383e09bff1e68b3" } },
+  { coin: "uni", name: "Uniswap", symbol: "UNI", token: true, icon: "/assets/uni.png", gecko: "uniswap", decimals: 6, unitDecimals: 18, chart: "UNI", networks: ["evm_mainnet", "arbitrum_mainnet"], contracts: { evm_mainnet: "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984", arbitrum_mainnet: "0xfa7f8980b0f1e64a2062791cc3b0871572f1f7f0" } },
+  { coin: "usdg", name: "Global Dollar", symbol: "USDG", token: true, icon: "/assets/usdg.png", gecko: "global-dollar", decimals: 6, unitDecimals: 6, chart: null, networks: ["evm_mainnet", "arbitrum_mainnet"], contracts: { evm_mainnet: "0xe343167631d89b6ffc58b88d6b7fb0228795491d", arbitrum_mainnet: "0x004b506865409877c9fa29bfb1eba929984b9bbc" } },
+  { coin: "xaut", name: "Tether Gold", symbol: "XAUt", token: true, icon: "/assets/xaut.png", gecko: "tether-gold", decimals: 6, unitDecimals: 6, chart: "XAUT", networks: ["evm_mainnet"], contracts: { evm_mainnet: "0x68749665ff8d2d112fa859aa293f07a622782f38" } },
+  { coin: "ondo", name: "Ondo", symbol: "ONDO", token: true, icon: "/assets/ondo.png", gecko: "ondo-finance", decimals: 6, unitDecimals: 18, chart: "ONDO", networks: ["evm_mainnet"], contracts: { evm_mainnet: "0xfaba6f8e4a5e8ab82f62fe7c39859fa577269be3" } },
+  { coin: "fet", name: "Fetch.ai (ASI)", symbol: "FET", token: true, icon: "/assets/fet.png", gecko: "fetch-ai", decimals: 6, unitDecimals: 18, chart: "FET", networks: ["evm_mainnet"], contracts: { evm_mainnet: "0xaea46a60368a7bd060eec7df8cba43b7ef41ad85" } },
+  { coin: "eurc", name: "EURC", symbol: "EURC", token: true, icon: "/assets/eurc.png", gecko: "euro-coin", decimals: 6, unitDecimals: 6, chart: "EURC", networks: ["evm_mainnet", "base_mainnet", "sol_mainnet"], contracts: { evm_mainnet: "0x1abaea1f7c830bd89acc67ec4af516284b1bc33c", base_mainnet: "0x60a3e35cc302bfa44cb288bc5a4f316fdb1adb42", sol_mainnet: "HzwqbKZw8HxMN6bF2yFZNrht3c2iXXzpKcFu7uBEDKtr" } },
+  { coin: "gno", name: "Gnosis", symbol: "GNO", token: true, icon: "/assets/gno.png", gecko: "gnosis", decimals: 6, unitDecimals: 18, chart: "GNO", networks: ["evm_mainnet"], contracts: { evm_mainnet: "0x6810e776880c02933d47db1b9fc05908e5386b96" } },
+  { coin: "arb", name: "Arbitrum", symbol: "ARB", token: true, icon: "/assets/arb.jpg", iconRound: true, gecko: "arbitrum", decimals: 6, unitDecimals: 18, chart: "ARB", networks: ["arbitrum_mainnet", "evm_mainnet"], contracts: { arbitrum_mainnet: "0x912ce59144191c1204e64559fe8253a0e49e6548", evm_mainnet: "0xb50721bcf8d664c30412cfbc6cf7a15145234ad1" } },
+  { coin: "aster", name: "Aster", symbol: "ASTER", token: true, icon: "/assets/aster.png", gecko: "aster-2", decimals: 6, unitDecimals: 18, chart: "ASTER", networks: ["bsc_mainnet"], contracts: { bsc_mainnet: "0x000ae314e2a2172a039b26378814c252734f556a" } },
+  { coin: "vvv", name: "Venice", symbol: "VVV", token: true, icon: "/assets/vvv.png", gecko: "venice-token", decimals: 6, unitDecimals: 18, chart: null, networks: ["base_mainnet"], contracts: { base_mainnet: "0xacfe6019ed1a7dc6f7b508c02d1b04ec88cc21bf" } },
+  { coin: "render", name: "Render", symbol: "RENDER", token: true, icon: "/assets/render.png", gecko: "render-token", decimals: 6, unitDecimals: 8, chart: "RENDER", networks: ["sol_mainnet"], contracts: { sol_mainnet: "rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof" } },
 ];
 const ASSET_BY_COIN = Object.fromEntries(ASSETS.map((asset) => [asset.coin, asset]));
 const ASSET_BY_GECKO = Object.fromEntries(ASSETS.map((asset) => [asset.gecko, asset]));
+
+// Réseau → format d'adresse : même adresse sur tous les réseaux EVM, une
+// adresse Solana (SOL et jetons SPL), Bitcoin à part.
+function isEvmNetwork(network) {
+  return network in EVM_CHAIN_IDS;
+}
+
+// Jeton passant par le registre Rust (get_token_balance/send_token_transaction) :
+// tout jeton, sauf l'USDC sur Solana qui garde son chemin historique.
+function usesTokenRegistry(coin, network) {
+  return ASSET_BY_COIN[coin]?.token === true && !(coin === "usdc" && network === "sol_mainnet");
+}
 
 // Réseaux EVM : identifiant de chaîne (demande de paiement EIP-681). Mêmes
 // valeurs que core/src/wallet_flow.rs::EVM_NETWORKS.
@@ -55,7 +87,15 @@ function buildAssetCard(asset) {
           <img class="${iconClass}" src="${asset.icon}" alt="" /><span class="coin-name"></span>
         </button>
       </h2>
-      <span class="network-fixed-label muted" data-i18n="net.${asset.networks[0]}"></span>
+      ${
+        asset.networks.length > 1
+          ? `<div class="custom-select dropdown">
+        <select class="network-select" data-coin="${asset.coin}">${asset.networks.map((n) => `<option value="${n}" data-i18n="net.${n}"></option>`).join("")}</select>
+        <button type="button" class="custom-select-trigger"><span class="custom-select-label"></span><span class="select-arrow"></span></button>
+        <ul class="custom-select-options"></ul>
+      </div>`
+          : `<span class="network-fixed-label muted" data-i18n="net.${asset.networks[0]}"></span>`
+      }
     </header>
     <div class="balance-row">
       <p class="balance"><span data-field="balance">—</span> <span class="coin-symbol"></span></p>
@@ -150,6 +190,12 @@ function applyAssetVisibility() {
   }
 }
 applyAssetVisibility();
+
+// Cartes masquées (« Gérer mes cryptos ») : relues une seule fois par
+// déverrouillage ou changement de profil — assez pour détecter des fonds et
+// les afficher (revealIfFunded), sans relire une vingtaine de soldes chaque
+// minute.
+let hiddenBalancesChecked = false;
 
 const { invoke } = window.__TAURI__.core;
 
@@ -482,6 +528,11 @@ const I18N = {
     "wallet.arbitrum": "Arbitrum — Fonds réels",
     "wallet.base": "Base — Fonds réels",
     "net.bsc_mainnet": "BNB Chain — Fonds réels",
+    "net.evm_mainnet": "Ethereum — Fonds réels",
+    "net.arbitrum_mainnet": "Arbitrum — Fonds réels",
+    "net.base_mainnet": "Base — Fonds réels",
+    "net.sol_mainnet": "Solana — Fonds réels",
+    "wallet.tokenHistoryUnavailable": "Historique des jetons pas encore disponible sur ce réseau.",
     "net.avax_mainnet": "Avalanche — Fonds réels",
     "net.polygon_mainnet": "Polygon — Fonds réels",
     "net.hyperevm_mainnet": "HyperEVM — Fonds réels",
@@ -944,6 +995,11 @@ const I18N = {
     "wallet.arbitrum": "Arbitrum — Real funds",
     "wallet.base": "Base — Real funds",
     "net.bsc_mainnet": "BNB Chain — Real funds",
+    "net.evm_mainnet": "Ethereum — Real funds",
+    "net.arbitrum_mainnet": "Arbitrum — Real funds",
+    "net.base_mainnet": "Base — Real funds",
+    "net.sol_mainnet": "Solana — Real funds",
+    "wallet.tokenHistoryUnavailable": "Token history not available on this network yet.",
     "net.avax_mainnet": "Avalanche — Real funds",
     "net.polygon_mainnet": "Polygon — Real funds",
     "net.hyperevm_mainnet": "HyperEVM — Real funds",
@@ -2726,8 +2782,10 @@ function formatMarketCap(usd) {
 
 function createMarketRow(coin) {
   const row = document.createElement("div");
-  row.className = "market-row clickable";
+  row.className = "market-row";
   row.dataset.symbol = coin.symbol;
+  const chartSymbol = ASSET_BY_GECKO[coin.id]?.chart ?? null;
+  row.dataset.chart = chartSymbol ?? "";
   row.innerHTML = `<div class="market-name"><span class="market-label"><span class="market-symbol"></span></span></div><div class="market-spark"></div>
     <div class="market-figures"><div class="market-change"></div><div class="market-price"></div><div class="market-cap"></div></div>`;
   row.querySelector(".market-label").prepend(document.createTextNode(coin.name));
@@ -2746,9 +2804,13 @@ function createMarketRow(coin) {
       title: `${coin.name} (${coin.symbol})`,
       ranges: CHART_RANGES,
       range: "7d",
-      load: (range) => loadPriceChart(coin.symbol, range),
+      load: (range) => loadPriceChart(chartSymbol, range),
       emptyKey: "charts.noData",
     });
+  // Pas de courbe (stablecoin sans cotation, jeton non coté sur Binance) :
+  // ligne non cliquable.
+  if (!chartSymbol) return row;
+  row.classList.add("clickable");
   row.tabIndex = 0;
   row.setAttribute("role", "button");
   row.setAttribute("aria-label", t("charts.openPrice", { name: coin.name }));
@@ -2786,7 +2848,8 @@ function fillMarketRow(row, coin) {
   // que cette variation ; l'ancienne reste affichée jusqu'à l'arrivée de la
   // nouvelle.
   const spark = row.querySelector(".market-spark");
-  invoke("get_price_chart", { symbol: coin.symbol, range: "1d" })
+  if (!row.dataset.chart) return;
+  invoke("get_price_chart", { symbol: row.dataset.chart, range: "1d" })
     .then((points) => renderSparkline(spark, points, trend))
     .catch((e) => console.error(e));
 }
@@ -2856,13 +2919,14 @@ function addressForCoin(coin, network) {
   // add-profile-confirm) : l'adresse n'est pas encore dérivée, elle apparaîtra
   // au prochain déverrouillage complet (voir core/src/api.rs::create_profile).
   if (!profile || !profile.addresses) return "";
-  // Même adresse sur tous les réseaux EVM (Ethereum, L2, BNB Chain…).
-  if (ASSET_BY_COIN[coin]?.family === "evm") return profile.addresses.evm;
+  // Même adresse sur tous les réseaux EVM (Ethereum, L2, BNB Chain…), jetons
+  // compris.
+  if (isEvmNetwork(network)) return profile.addresses.evm;
   if (coin === "btc") return network === "btc_mainnet" ? profile.addresses.btc_mainnet : profile.addresses.btc_testnet;
-  // USDC utilise la même adresse propriétaire que Solana (le compte de jetons
-  // associé qui détient réellement l'USDC est un détail invisible pour
+  // Jetons Solana (USDC, USDT…) : même adresse propriétaire que SOL (le compte
+  // de jetons associé qui les détient réellement est un détail invisible pour
   // l'utilisateur, dérivé côté Rust — voir core/src/sol_spl.rs).
-  if (coin === "sol" || coin === "usdc") return profile.addresses.solana;
+  if (coin === "sol" || network === "sol_mainnet" || network === "sol_devnet") return profile.addresses.solana;
   return "";
 }
 
@@ -2889,6 +2953,7 @@ function renderCardAddress(card) {
 
 function renderCardAddresses() {
   document.querySelectorAll(".wallet-card").forEach(renderCardAddress);
+  hiddenBalancesChecked = false; // nouvelles adresses : cartes masquées relues
   updateBalanceWatch();
   // Adresses du profil changées (déverrouillage, changement de profil) : la
   // courbe d'évolution suit.
@@ -3132,8 +3197,11 @@ async function refreshBalance(card) {
     // USDC est un jeton SPL, pas un "réseau" au sens où get_balance l'entend
     // (pas de notion de décimales/mint par actif dans cette commande) : une
     // commande dédiée, voir core/src/api.rs::get_usdc_balance.
-    const balanceCommand = coin === "usdc" ? "get_usdc_balance" : "get_balance";
-    const balancePromise = invoke(balanceCommand, { network, address })
+    const balancePromise = (
+      usesTokenRegistry(coin, network)
+        ? invoke("get_token_balance", { token: coin, network, address })
+        : invoke(coin === "usdc" ? "get_usdc_balance" : "get_balance", { network, address })
+    )
       .then((balance) => {
         if (balanceKey(card) !== key) return; // réseau ou profil changé entre-temps
         // Solde précédent de CETTE adresse sur CE réseau (pas au premier
@@ -3217,6 +3285,9 @@ function updateBalanceWatch() {
     .map((card) => {
       const coin = card.dataset.coin;
       const network = networkForCard(card);
+      // Jetons du registre : pas de surveillance en direct (solde relu avec
+      // les autres toutes les 60 s) — la surveillance lit un solde natif.
+      if (usesTokenRegistry(coin, network)) return { address: "" };
       return { id: coin, network: coin === "usdc" ? "usdc_solana" : network, address: addressForCoin(coin, network) };
     })
     .filter((target) => target.address);
@@ -3266,7 +3337,10 @@ async function checkPendingTx(card, address, network) {
 }
 
 function refreshAllBalances() {
-  document.querySelectorAll(".wallet-card").forEach(refreshBalance);
+  document.querySelectorAll(".wallet-card").forEach((card) => {
+    if (!card.classList.contains("asset-hidden") || !hiddenBalancesChecked) refreshBalance(card);
+  });
+  hiddenBalancesChecked = true;
 }
 
 document.querySelectorAll(".wallet-card").forEach((card) => {
@@ -3327,7 +3401,7 @@ const qrModal = document.getElementById("qr-modal");
 // EIP-681 pour Ethereum (montant en wei, réseau par son chain id). Sans
 // montant : l'adresse seule, lisible par toutes les applications.
 // Décimales maximales d'un montant demandé : 18 pour toute monnaie EVM.
-const QR_DECIMALS = new Proxy({ btc: 8, sol: 9, usdc: 6 }, { get: (known, coin) => known[coin] ?? 18 });
+const QR_DECIMALS = new Proxy({ btc: 8, sol: 9 }, { get: (known, coin) => ASSET_BY_COIN[coin]?.unitDecimals ?? known[coin] ?? 18 });
 // Même mint que core/src/sol_spl.rs::usdc_mint_mainnet.
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 let qrCard = null;
@@ -3349,6 +3423,14 @@ function parseRequestAmount(raw, decimals) {
 
 function paymentUri(coin, network, address, amount) {
   if (amount == null) return address;
+  const asset = ASSET_BY_COIN[coin];
+  if (asset?.token && isEvmNetwork(network)) {
+    // EIP-681, appel transfer du contrat du jeton (montant en unités exactes).
+    const [whole, fraction = ""] = amount.split(".");
+    const units = BigInt(whole + fraction.padEnd(asset.unitDecimals, "0")).toString();
+    return `ethereum:${asset.contracts[network]}@${EVM_CHAIN_IDS[network]}/transfer?address=${address}&uint256=${units}`;
+  }
+  if (asset?.token && network === "sol_mainnet") return `solana:${address}?amount=${amount}&spl-token=${asset.contracts.sol_mainnet}`;
   if (coin === "btc") return `bitcoin:${address}?amount=${amount}`;
   if (coin === "sol") return `solana:${address}?amount=${amount}`;
   if (coin === "usdc") return `solana:${address}?amount=${amount}&spl-token=${USDC_MINT}`;
@@ -3525,6 +3607,10 @@ async function loadHistorySection(coin) {
 
   if (!address) {
     container.innerHTML = `<p class="muted">${t("wallet.historyAddressUnavailable")}</p>`;
+    return;
+  }
+  if (usesTokenRegistry(coin, network)) {
+    container.replaceChildren(mutedParagraph(t("wallet.tokenHistoryUnavailable")));
     return;
   }
 
@@ -3928,7 +4014,11 @@ sendPreviewConfirmBtn.addEventListener("click", withBusyButton(sendPreviewConfir
     // pas de "network" à transmettre (mainnet uniquement, voir sol_spl.rs) ni
     // de frais Bitcoin-style, et la construction de la transaction elle-même
     // est entièrement différente côté Rust (deux instructions au lieu d'une).
-    const txResult = sendContext.coin === "usdc"
+    // Jetons du registre : identifiant et réseau seulement (contrat, décimales
+    // et boîte de confirmation côté Rust).
+    const txResult = usesTokenRegistry(sendContext.coin, network)
+      ? await invoke("send_token_transaction", { token: sendContext.coin, network, password, to, amount, profileIndex: sendContext.profileIndex })
+      : sendContext.coin === "usdc"
       ? await invoke("send_usdc_transaction", { password, to, amount, profileIndex: sendContext.profileIndex })
       : await invoke("send_transaction", {
           network,

@@ -15,6 +15,7 @@ pub mod price_history;
 pub mod portfolio;
 pub mod balance_watch;
 pub mod usb_backup;
+pub mod tokens;
 pub mod blockscout;
 pub mod history;
 pub mod wallet_flow;
