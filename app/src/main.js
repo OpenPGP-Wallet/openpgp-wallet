@@ -327,6 +327,9 @@ const I18N = {
     "wallet.showAddress": "Afficher l'adresse",
     "wallet.hideAddress": "Masquer l'adresse",
     "wallet.addressCopied": "Adresse copiée !",
+    "qr.amountLabel": "Montant à demander (facultatif)",
+    "qr.amountHint": "Le QR code contient aussi ce montant : l'application de la personne qui paie le pré-remplit (si elle le prend en charge).",
+    "qr.amountInvalid": "Montant invalide : un nombre positif, {decimals} décimales au plus.",
     "wallet.received": "Reçu : +{amount} {symbol}{fiat}",
     "wallet.receivedPending": "Réception en attente : +{amount} BTC (comptée une fois confirmée)",
     "wallet.marketsLoadError": "Impossible de charger les données de marché.",
@@ -766,6 +769,9 @@ const I18N = {
     "wallet.showAddress": "Show address",
     "wallet.hideAddress": "Hide address",
     "wallet.addressCopied": "Address copied!",
+    "qr.amountLabel": "Amount to request (optional)",
+    "qr.amountHint": "The QR code also holds this amount: the payer's app fills it in (if it supports it).",
+    "qr.amountInvalid": "Invalid amount: a positive number, at most {decimals} decimals.",
     "wallet.received": "Received: +{amount} {symbol}{fiat}",
     "wallet.receivedPending": "Incoming, unconfirmed: +{amount} BTC (counted once confirmed)",
     "wallet.marketsLoadError": "Unable to load market data.",
@@ -2986,15 +2992,79 @@ document.querySelectorAll(".wallet-card").forEach((card) => {
 
 const qrModal = document.getElementById("qr-modal");
 
+// Demande de paiement : montant facultatif inscrit dans le QR code, au format
+// standard de chaque réseau — celui qui scanne voit l'adresse ET le montant :
+// BIP21 pour Bitcoin, Solana Pay pour SOL (et USDC, désigné par son mint),
+// EIP-681 pour Ethereum (montant en wei, réseau par son chain id). Sans
+// montant : l'adresse seule, lisible par toutes les applications.
+const QR_DECIMALS = { evm: 18, btc: 8, sol: 9, usdc: 6 };
+// Même mint que core/src/sol_spl.rs::usdc_mint_mainnet.
+const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+let qrCard = null;
+let qrRenderToken = 0;
+
+// Montant saisi (« 0,01 » accepté) → décimal normalisé (« 0.01 »), `null` si
+// vide ou nul ; lève une erreur s'il est invalide.
+function parseRequestAmount(raw, decimals) {
+  const text = raw.trim().replace(",", ".");
+  if (!text) return null;
+  if (!/^\d+(\.\d+)?$/.test(text)) throw new Error("invalid");
+  const [whole, fraction = ""] = text.split(".");
+  if (fraction.length > decimals) throw new Error("invalid");
+  const trimmedWhole = whole.replace(/^0+(?=\d)/, "");
+  const trimmedFraction = fraction.replace(/0+$/, "");
+  if (/^0*$/.test(trimmedWhole + trimmedFraction)) return null;
+  return trimmedFraction ? `${trimmedWhole}.${trimmedFraction}` : trimmedWhole;
+}
+
+function paymentUri(coin, network, address, amount) {
+  if (amount == null) return address;
+  if (coin === "btc") return `bitcoin:${address}?amount=${amount}`;
+  if (coin === "sol") return `solana:${address}?amount=${amount}`;
+  if (coin === "usdc") return `solana:${address}?amount=${amount}&spl-token=${USDC_MINT}`;
+  if (coin === "evm") {
+    const chainId = network === "evm_sepolia" ? 11155111 : 1;
+    const [whole, fraction = ""] = amount.split(".");
+    const wei = BigInt(whole + fraction.padEnd(18, "0")).toString();
+    return `ethereum:${address}@${chainId}?value=${wei}`;
+  }
+  return address;
+}
+
+// QR code de la carte ouverte, avec le montant saisi s'il est valide (sinon
+// l'adresse seule, et l'erreur sous le champ).
+async function renderQr() {
+  const card = qrCard;
+  if (!card) return;
+  const coin = card.dataset.coin;
+  const network = networkForCard(card);
+  const address = addressForCoin(coin, network);
+  const errorEl = document.getElementById("qr-amount-error");
+  let amount = null;
+  try {
+    amount = parseRequestAmount(document.getElementById("qr-amount").value, QR_DECIMALS[coin]);
+    hideError(errorEl);
+  } catch (e) {
+    showError(errorEl, t("qr.amountInvalid", { decimals: QR_DECIMALS[coin] }));
+  }
+  document.getElementById("qr-amount-hint").classList.toggle("hidden", amount == null);
+  const token = ++qrRenderToken;
+  const svg = await invoke("generate_qr_svg", { text: paymentUri(coin, network, address, amount) });
+  if (token !== qrRenderToken || qrCard !== card) return; // saisie plus récente
+  document.getElementById("qr-container").innerHTML = svg;
+}
+
 async function openQrModal(card) {
   const address = addressForCoin(card.dataset.coin, networkForCard(card));
   if (!address) {
     alert(t("wallet.historyAddressUnavailable"));
     return;
   }
+  qrCard = card;
+  document.getElementById("qr-amount").value = "";
+  document.getElementById("qr-amount-unit").textContent = card.querySelector(".balance").textContent.trim().split(/\s+/).pop();
   try {
-    const svg = await invoke("generate_qr_svg", { text: address });
-    document.getElementById("qr-container").innerHTML = svg;
+    await renderQr();
     document.getElementById("qr-address-text").textContent = address;
     qrModal.classList.remove("hidden");
   } catch (e) {
@@ -3002,8 +3072,13 @@ async function openQrModal(card) {
   }
 }
 
+document.getElementById("qr-amount").addEventListener("input", () => {
+  renderQr().catch((e) => console.error(e));
+});
+
 document.getElementById("qr-close").addEventListener("click", () => {
   qrModal.classList.add("hidden");
+  qrCard = null;
 });
 
 // --- Historique de transactions (onglet dédié, trié par réseau) -------------

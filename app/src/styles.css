@@ -1508,6 +1508,31 @@ textarea:focus {
   text-align: center;
 }
 
+/* Recevoir : montant facultatif à inscrire dans le QR code. */
+.qr-amount-label {
+  display: block;
+  margin-top: 14px;
+}
+
+.qr-amount-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.qr-amount-row input {
+  width: 160px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.qr-amount-hint {
+  font-size: 0.8rem;
+  margin: 8px 0 0;
+}
+
 .modal.wide-modal {
   max-width: 640px;
 }

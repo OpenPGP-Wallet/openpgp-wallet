@@ -1121,6 +1121,15 @@
         <h2 data-i18n="wallet.receive">Recevoir</h2>
         <div id="qr-container" class="qr-container"></div>
         <p class="address" id="qr-address-text"></p>
+        <label for="qr-amount" class="qr-amount-label" data-i18n="qr.amountLabel">Montant à demander (facultatif)</label>
+        <div class="qr-amount-row">
+          <input id="qr-amount" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="0.00" />
+          <span id="qr-amount-unit" class="muted"></span>
+        </div>
+        <p id="qr-amount-hint" class="muted qr-amount-hint hidden" data-i18n="qr.amountHint">
+          Le QR code contient aussi ce montant : l'application de la personne qui paie le pré-remplit (si elle le prend en charge).
+        </p>
+        <p id="qr-amount-error" class="error hidden"></p>
         <button id="qr-close" class="link" data-i18n="common.close">Fermer</button>
       </div>
     </div>
