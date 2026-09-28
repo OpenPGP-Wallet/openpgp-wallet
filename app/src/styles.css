@@ -606,6 +606,9 @@ legend {
   padding: 8px 14px;
   border-radius: 8px;
   font-weight: 600;
+  /* Un libellé ne se coupe jamais en deux (« Wallets / externes ») : s'il
+     manque de la place, c'est la barre qui passe sur deux rangées. */
+  white-space: nowrap;
 }
 
 .nav-tab:hover {
@@ -620,6 +623,45 @@ legend {
 
 .navbar button#lock-wallet {
   width: auto;
+}
+
+/* Barre trop étroite pour une ligne (voir fitNavbar dans main.js) : logo et
+   boutons en haut, onglets centrés en dessous, plus serrés, sur autant de
+   rangées que nécessaire. */
+.navbar.stacked {
+  grid-template-columns: 1fr auto;
+  grid-template-areas:
+    "brand right"
+    "tabs tabs";
+  row-gap: 8px;
+  padding: 10px 20px 8px;
+}
+
+.navbar.stacked .nav-brand {
+  grid-area: brand;
+}
+
+.navbar.stacked .navbar-right {
+  grid-area: right;
+  gap: 12px;
+}
+
+.navbar.stacked .nav-tabs {
+  grid-area: tabs;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 2px 4px;
+  min-width: 0;
+}
+
+.navbar.stacked .nav-tab {
+  padding: 6px 11px;
+  font-size: 0.9rem;
+}
+
+.navbar.stacked button#lock-wallet {
+  padding: 6px 12px;
+  font-size: 0.85rem;
 }
 
 .tab-panel {
@@ -1217,6 +1259,131 @@ textarea:focus {
     justify-content: flex-end;
     margin-top: 6px;
   }
+}
+
+/* --- Panneaux repliables ----------------------------------------------------
+   Le titre du panneau est le bouton (motif « accordéon ») : pas de bouton de
+   plus dans l'en-tête des cartes, déjà plein à la largeur minimale de la
+   fenêtre (nom + réseau). Chevron devant le titre, comme une arborescence,
+   pour ne pas ressembler à la flèche d'un menu déroulant. La hauteur s'anime
+   par `grid-template-rows` (1fr → 0fr) : rien à mesurer en JS. */
+.collapse-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  transition: none;
+}
+
+.collapse-toggle:active:not(:disabled) {
+  transform: none;
+}
+
+.collapse-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.collapse-chevron {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  margin: 0 2px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  opacity: 0.4;
+  /* Pointe vers le bas : déplié. */
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform 220ms ease, opacity 150ms ease;
+}
+
+.collapse-toggle:hover .collapse-chevron,
+.collapse-toggle:focus-visible .collapse-chevron {
+  opacity: 0.9;
+}
+
+/* Pointe vers la droite : replié. */
+.collapsed .collapse-chevron {
+  transform: translateX(-1px) rotate(-45deg);
+}
+
+.collapsible-body {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 220ms ease;
+}
+
+.collapsed .collapsible-body {
+  grid-template-rows: 0fr;
+}
+
+/* Caché au clavier une fois replié (après l'animation), visible tout de suite
+   au dépliage. */
+.collapsible-inner {
+  min-height: 0;
+  visibility: visible;
+  transition: visibility 0s;
+}
+
+.collapsed .collapsible-inner {
+  visibility: hidden;
+  transition: visibility 0s linear 220ms;
+}
+
+.collapsed .collapsible-inner,
+.collapse-animating .collapsible-inner {
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .collapse-chevron,
+  .collapsible-body,
+  .collapsed .collapsible-inner {
+    transition: none;
+  }
+}
+
+/* Carte : l'écart sous le solde passe dans le corps repliable, pour qu'une
+   carte repliée ne garde pas un vide en bas. */
+.wallet-card > .fiat-value,
+.wallet-card > .fiat-pending-row {
+  margin-bottom: 0;
+}
+
+.wallet-card .collapsible-inner {
+  padding-top: 12px;
+}
+
+/* Courbe repliée : la ligne du total, vide (aucun fonds), ne laisse pas de vide. */
+.chart-section.collapsed .chart-summary:empty {
+  display: none;
+}
+
+/* Vue liste : pas de repli, le contenu reprend sa place dans la ligne. */
+:root[data-wallet-list-view="true"] .wallet-card .collapsible-body,
+:root[data-wallet-list-view="true"] .wallet-card .collapsible-inner {
+  display: contents;
+}
+
+:root[data-wallet-list-view="true"] .wallet-card .collapsible-inner {
+  visibility: visible;
+}
+
+:root[data-wallet-list-view="true"] .wallet-card .collapse-toggle {
+  cursor: default;
+  pointer-events: none;
+}
+
+:root[data-wallet-list-view="true"] .wallet-card .collapse-chevron {
+  display: none;
 }
 
 .modal.narrow-modal {

@@ -171,9 +171,14 @@
           <button id="archive-profile-btn" class="secondary" data-i18n="wallet.archiveProfile">Archiver ce profil</button>
         </div>
         <div class="wallet-grid">
-          <section class="wallet-card" data-coin="evm">
+          <section class="wallet-card" data-coin="evm" data-collapse-key="wallet-evm">
             <header>
-              <h2><img class="coin-icon" src="/assets/eth.svg" alt="" />Ethereum</h2>
+              <h2>
+                <button type="button" class="collapse-toggle" aria-expanded="true" aria-controls="wallet-body-evm">
+                  <span class="collapse-chevron" aria-hidden="true"></span>
+                  <img class="coin-icon" src="/assets/eth.svg" alt="" />Ethereum
+                </button>
+              </h2>
               <div class="custom-select dropdown">
                 <select class="network-select" data-coin="evm">
                   <option value="evm_mainnet" selected data-i18n="wallet.mainnet">Mainnet — Fonds réels</option>
@@ -188,46 +193,55 @@
             </header>
             <p class="balance"><span data-field="balance">—</span> ETH</p>
             <p class="fiat-value" data-field="fiat">—</p>
-            <div class="address-row">
-              <p class="address" data-field="address"></p>
-              <button class="qr-btn" data-action="copy-address" data-i18n-title="wallet.copyAddress" title="Copier l'adresse">
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
-                  <rect x="8" y="8" width="12" height="12" rx="2" />
-                  <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
-                </svg>
-              </button>
-              <button class="qr-btn" data-action="qr" data-i18n-title="wallet.showQr" title="Afficher en QR code">
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
-                  <path d="M3 3h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
-                  <rect x="5.2" y="5.2" width="1.6" height="1.6" />
-                  <path d="M15 3h6v6h-6z" fill="none" stroke="currentColor" stroke-width="1.6" />
-                  <rect x="17.2" y="5.2" width="1.6" height="1.6" />
-                  <path d="M3 15h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
-                  <rect x="5.2" y="17.2" width="1.6" height="1.6" />
-                  <rect x="15" y="15" width="2.5" height="2.5" />
-                  <rect x="18.5" y="15" width="2.5" height="2.5" />
-                  <rect x="15" y="18.5" width="2.5" height="2.5" />
-                  <rect x="18.5" y="18.5" width="2.5" height="2.5" />
-                </svg>
-              </button>
-            </div>
-            <!-- Pas de badge "transaction en attente" ici : aucun nœud EVM public
-                 n'expose les transactions en attente pour une adresse (voir
-                 core/src/api.rs::has_pending_btc/has_pending_sol, toujours faux
-                 pour EVM) — cet emplacement ne pourrait de toute façon jamais
-                 s'allumer, réserver son espace n'aurait fait qu'agrandir la
-                 carte pour rien, contrairement à BTC/SOL qui en ont réellement
-                 besoin. -->
-            <div class="row-buttons">
-              <button class="secondary" data-action="refresh" data-i18n="wallet.refresh">Actualiser</button>
-              <button class="secondary" data-action="swap" data-i18n="wallet.swap">Échanger</button>
-              <button class="primary" data-action="send" data-i18n="wallet.send">Envoyer</button>
+            <div class="collapsible-body" id="wallet-body-evm">
+              <div class="collapsible-inner">
+                <div class="address-row">
+                  <p class="address" data-field="address"></p>
+                  <button class="qr-btn" data-action="copy-address" data-i18n-title="wallet.copyAddress" title="Copier l'adresse">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                      <rect x="8" y="8" width="12" height="12" rx="2" />
+                      <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
+                    </svg>
+                  </button>
+                  <button class="qr-btn" data-action="qr" data-i18n-title="wallet.showQr" title="Afficher en QR code">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+                      <path d="M3 3h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                      <rect x="5.2" y="5.2" width="1.6" height="1.6" />
+                      <path d="M15 3h6v6h-6z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                      <rect x="17.2" y="5.2" width="1.6" height="1.6" />
+                      <path d="M3 15h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                      <rect x="5.2" y="17.2" width="1.6" height="1.6" />
+                      <rect x="15" y="15" width="2.5" height="2.5" />
+                      <rect x="18.5" y="15" width="2.5" height="2.5" />
+                      <rect x="15" y="18.5" width="2.5" height="2.5" />
+                      <rect x="18.5" y="18.5" width="2.5" height="2.5" />
+                    </svg>
+                  </button>
+                </div>
+                <!-- Pas de badge "transaction en attente" ici : aucun nœud EVM public
+                     n'expose les transactions en attente pour une adresse (voir
+                     core/src/api.rs::has_pending_btc/has_pending_sol, toujours faux
+                     pour EVM) — cet emplacement ne pourrait de toute façon jamais
+                     s'allumer, réserver son espace n'aurait fait qu'agrandir la
+                     carte pour rien, contrairement à BTC/SOL qui en ont réellement
+                     besoin. -->
+                <div class="row-buttons">
+                  <button class="secondary" data-action="refresh" data-i18n="wallet.refresh">Actualiser</button>
+                  <button class="secondary" data-action="swap" data-i18n="wallet.swap">Échanger</button>
+                  <button class="primary" data-action="send" data-i18n="wallet.send">Envoyer</button>
+                </div>
+              </div>
             </div>
           </section>
 
-          <section class="wallet-card" data-coin="btc">
+          <section class="wallet-card" data-coin="btc" data-collapse-key="wallet-btc">
             <header>
-              <h2><img class="coin-icon" src="/assets/btc.webp" alt="" />Bitcoin</h2>
+              <h2>
+                <button type="button" class="collapse-toggle" aria-expanded="true" aria-controls="wallet-body-btc">
+                  <span class="collapse-chevron" aria-hidden="true"></span>
+                  <img class="coin-icon" src="/assets/btc.webp" alt="" />Bitcoin
+                </button>
+              </h2>
               <div class="custom-select dropdown">
                 <select class="network-select" data-coin="btc">
                   <option value="btc_mainnet" selected data-i18n="wallet.mainnet">Mainnet — Fonds réels</option>
@@ -245,39 +259,48 @@
               <p class="fiat-value" data-field="fiat">—</p>
               <p class="pending-badge" data-field="pending" data-i18n="wallet.pendingBadge"> Transaction en attente détectée</p>
             </div>
-            <div class="address-row">
-              <p class="address" data-field="address"></p>
-              <button class="qr-btn" data-action="copy-address" data-i18n-title="wallet.copyAddress" title="Copier l'adresse">
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
-                  <rect x="8" y="8" width="12" height="12" rx="2" />
-                  <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
-                </svg>
-              </button>
-              <button class="qr-btn" data-action="qr" data-i18n-title="wallet.showQr" title="Afficher en QR code">
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
-                  <path d="M3 3h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
-                  <rect x="5.2" y="5.2" width="1.6" height="1.6" />
-                  <path d="M15 3h6v6h-6z" fill="none" stroke="currentColor" stroke-width="1.6" />
-                  <rect x="17.2" y="5.2" width="1.6" height="1.6" />
-                  <path d="M3 15h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
-                  <rect x="5.2" y="17.2" width="1.6" height="1.6" />
-                  <rect x="15" y="15" width="2.5" height="2.5" />
-                  <rect x="18.5" y="15" width="2.5" height="2.5" />
-                  <rect x="15" y="18.5" width="2.5" height="2.5" />
-                  <rect x="18.5" y="18.5" width="2.5" height="2.5" />
-                </svg>
-              </button>
-            </div>
-            <div class="row-buttons">
-              <button class="secondary" data-action="refresh" data-i18n="wallet.refresh">Actualiser</button>
-              <button class="secondary" data-action="swap" data-i18n="wallet.swap">Échanger</button>
-              <button class="primary" data-action="send" data-i18n="wallet.send">Envoyer</button>
+            <div class="collapsible-body" id="wallet-body-btc">
+              <div class="collapsible-inner">
+                <div class="address-row">
+                  <p class="address" data-field="address"></p>
+                  <button class="qr-btn" data-action="copy-address" data-i18n-title="wallet.copyAddress" title="Copier l'adresse">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                      <rect x="8" y="8" width="12" height="12" rx="2" />
+                      <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
+                    </svg>
+                  </button>
+                  <button class="qr-btn" data-action="qr" data-i18n-title="wallet.showQr" title="Afficher en QR code">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+                      <path d="M3 3h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                      <rect x="5.2" y="5.2" width="1.6" height="1.6" />
+                      <path d="M15 3h6v6h-6z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                      <rect x="17.2" y="5.2" width="1.6" height="1.6" />
+                      <path d="M3 15h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                      <rect x="5.2" y="17.2" width="1.6" height="1.6" />
+                      <rect x="15" y="15" width="2.5" height="2.5" />
+                      <rect x="18.5" y="15" width="2.5" height="2.5" />
+                      <rect x="15" y="18.5" width="2.5" height="2.5" />
+                      <rect x="18.5" y="18.5" width="2.5" height="2.5" />
+                    </svg>
+                  </button>
+                </div>
+                <div class="row-buttons">
+                  <button class="secondary" data-action="refresh" data-i18n="wallet.refresh">Actualiser</button>
+                  <button class="secondary" data-action="swap" data-i18n="wallet.swap">Échanger</button>
+                  <button class="primary" data-action="send" data-i18n="wallet.send">Envoyer</button>
+                </div>
+              </div>
             </div>
           </section>
 
-          <section class="wallet-card" data-coin="sol">
+          <section class="wallet-card" data-coin="sol" data-collapse-key="wallet-sol">
             <header>
-              <h2><img class="coin-icon coin-icon-sol" src="/assets/sol.png" alt="" />Solana</h2>
+              <h2>
+                <button type="button" class="collapse-toggle" aria-expanded="true" aria-controls="wallet-body-sol">
+                  <span class="collapse-chevron" aria-hidden="true"></span>
+                  <img class="coin-icon coin-icon-sol" src="/assets/sol.png" alt="" />Solana
+                </button>
+              </h2>
               <div class="custom-select dropdown">
                 <select class="network-select" data-coin="sol">
                   <option value="sol_mainnet" selected data-i18n="wallet.mainnet">Mainnet — Fonds réels</option>
@@ -295,33 +318,37 @@
               <p class="fiat-value" data-field="fiat">—</p>
               <p class="pending-badge" data-field="pending" data-i18n="wallet.pendingBadge"> Transaction en attente détectée</p>
             </div>
-            <div class="address-row">
-              <p class="address" data-field="address"></p>
-              <button class="qr-btn" data-action="copy-address" data-i18n-title="wallet.copyAddress" title="Copier l'adresse">
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
-                  <rect x="8" y="8" width="12" height="12" rx="2" />
-                  <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
-                </svg>
-              </button>
-              <button class="qr-btn" data-action="qr" data-i18n-title="wallet.showQr" title="Afficher en QR code">
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
-                  <path d="M3 3h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
-                  <rect x="5.2" y="5.2" width="1.6" height="1.6" />
-                  <path d="M15 3h6v6h-6z" fill="none" stroke="currentColor" stroke-width="1.6" />
-                  <rect x="17.2" y="5.2" width="1.6" height="1.6" />
-                  <path d="M3 15h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
-                  <rect x="5.2" y="17.2" width="1.6" height="1.6" />
-                  <rect x="15" y="15" width="2.5" height="2.5" />
-                  <rect x="18.5" y="15" width="2.5" height="2.5" />
-                  <rect x="15" y="18.5" width="2.5" height="2.5" />
-                  <rect x="18.5" y="18.5" width="2.5" height="2.5" />
-                </svg>
-              </button>
-            </div>
-            <div class="row-buttons">
-              <button class="secondary" data-action="refresh" data-i18n="wallet.refresh">Actualiser</button>
-              <button class="secondary" data-action="swap" data-i18n="wallet.swap">Échanger</button>
-              <button class="primary" data-action="send" data-i18n="wallet.send">Envoyer</button>
+            <div class="collapsible-body" id="wallet-body-sol">
+              <div class="collapsible-inner">
+                <div class="address-row">
+                  <p class="address" data-field="address"></p>
+                  <button class="qr-btn" data-action="copy-address" data-i18n-title="wallet.copyAddress" title="Copier l'adresse">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                      <rect x="8" y="8" width="12" height="12" rx="2" />
+                      <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
+                    </svg>
+                  </button>
+                  <button class="qr-btn" data-action="qr" data-i18n-title="wallet.showQr" title="Afficher en QR code">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+                      <path d="M3 3h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                      <rect x="5.2" y="5.2" width="1.6" height="1.6" />
+                      <path d="M15 3h6v6h-6z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                      <rect x="17.2" y="5.2" width="1.6" height="1.6" />
+                      <path d="M3 15h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                      <rect x="5.2" y="17.2" width="1.6" height="1.6" />
+                      <rect x="15" y="15" width="2.5" height="2.5" />
+                      <rect x="18.5" y="15" width="2.5" height="2.5" />
+                      <rect x="15" y="18.5" width="2.5" height="2.5" />
+                      <rect x="18.5" y="18.5" width="2.5" height="2.5" />
+                    </svg>
+                  </button>
+                </div>
+                <div class="row-buttons">
+                  <button class="secondary" data-action="refresh" data-i18n="wallet.refresh">Actualiser</button>
+                  <button class="secondary" data-action="swap" data-i18n="wallet.swap">Échanger</button>
+                  <button class="primary" data-action="send" data-i18n="wallet.send">Envoyer</button>
+                </div>
+              </div>
             </div>
           </section>
 
@@ -330,14 +357,17 @@
                (ATA) reste un détail invisible pour l'utilisateur. Mainnet
                uniquement (v1, voir core/src/sol_spl.rs) : pas de sélecteur de
                réseau. -->
-          <section class="wallet-card" data-coin="usdc">
+          <section class="wallet-card" data-coin="usdc" data-collapse-key="wallet-usdc">
             <header>
               <h2>
-                <img class="coin-icon" src="/assets/usdc.png" alt="" />
-                <span class="coin-name-stack">
+                <button type="button" class="collapse-toggle" aria-expanded="true" aria-controls="wallet-body-usdc">
+                  <span class="collapse-chevron" aria-hidden="true"></span>
+                  <img class="coin-icon" src="/assets/usdc.png" alt="" />
+                  <span class="coin-name-stack">
                   <span>USDC</span>
                   <span class="coin-network-tag">Solana</span>
-                </span>
+                  </span>
+                </button>
               </h2>
               <!-- Même texte/même clé i18n que le "Mainnet — Fonds réels" des options
                    réseau d'ETH/BTC/SOL (voir plus haut) : avant, "Solana — Mainnet —
@@ -349,54 +379,78 @@
             </header>
             <p class="balance"><span data-field="balance">—</span> USDC</p>
             <p class="fiat-value" data-field="fiat">—</p>
-            <div class="address-row">
-              <p class="address" data-field="address"></p>
-              <button class="qr-btn" data-action="copy-address" data-i18n-title="wallet.copyAddress" title="Copier l'adresse">
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
-                  <rect x="8" y="8" width="12" height="12" rx="2" />
-                  <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
-                </svg>
-              </button>
-              <button class="qr-btn" data-action="qr" data-i18n-title="wallet.showQr" title="Afficher en QR code">
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
-                  <path d="M3 3h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
-                  <rect x="5.2" y="5.2" width="1.6" height="1.6" />
-                  <path d="M15 3h6v6h-6z" fill="none" stroke="currentColor" stroke-width="1.6" />
-                  <rect x="17.2" y="5.2" width="1.6" height="1.6" />
-                  <path d="M3 15h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
-                  <rect x="5.2" y="17.2" width="1.6" height="1.6" />
-                  <rect x="15" y="15" width="2.5" height="2.5" />
-                  <rect x="18.5" y="15" width="2.5" height="2.5" />
-                  <rect x="15" y="18.5" width="2.5" height="2.5" />
-                  <rect x="18.5" y="18.5" width="2.5" height="2.5" />
-                </svg>
-              </button>
-            </div>
-            <div class="row-buttons">
-              <button class="secondary" data-action="refresh" data-i18n="wallet.refresh">Actualiser</button>
-              <button class="secondary" data-action="swap" data-i18n="wallet.swap">Échanger</button>
-              <button class="primary" data-action="send" data-i18n="wallet.send">Envoyer</button>
+            <div class="collapsible-body" id="wallet-body-usdc">
+              <div class="collapsible-inner">
+                <div class="address-row">
+                  <p class="address" data-field="address"></p>
+                  <button class="qr-btn" data-action="copy-address" data-i18n-title="wallet.copyAddress" title="Copier l'adresse">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                      <rect x="8" y="8" width="12" height="12" rx="2" />
+                      <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
+                    </svg>
+                  </button>
+                  <button class="qr-btn" data-action="qr" data-i18n-title="wallet.showQr" title="Afficher en QR code">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+                      <path d="M3 3h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                      <rect x="5.2" y="5.2" width="1.6" height="1.6" />
+                      <path d="M15 3h6v6h-6z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                      <rect x="17.2" y="5.2" width="1.6" height="1.6" />
+                      <path d="M3 15h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                      <rect x="5.2" y="17.2" width="1.6" height="1.6" />
+                      <rect x="15" y="15" width="2.5" height="2.5" />
+                      <rect x="18.5" y="15" width="2.5" height="2.5" />
+                      <rect x="15" y="18.5" width="2.5" height="2.5" />
+                      <rect x="18.5" y="18.5" width="2.5" height="2.5" />
+                    </svg>
+                  </button>
+                </div>
+                <div class="row-buttons">
+                  <button class="secondary" data-action="refresh" data-i18n="wallet.refresh">Actualiser</button>
+                  <button class="secondary" data-action="swap" data-i18n="wallet.swap">Échanger</button>
+                  <button class="primary" data-action="send" data-i18n="wallet.send">Envoyer</button>
+                </div>
+              </div>
             </div>
           </section>
         </div>
 
-        <section class="chart-section" id="portfolio-chart-section">
+        <section class="chart-section" id="portfolio-chart-section" data-collapse-key="portfolio-chart">
           <div class="chart-section-header">
             <div>
-              <h2 class="section-title" data-i18n="charts.portfolioTitle">Évolution du portefeuille</h2>
+              <h2 class="section-title">
+                <button type="button" class="collapse-toggle" aria-expanded="true" aria-controls="portfolio-chart-body">
+                  <span class="collapse-chevron" aria-hidden="true"></span>
+                  <span data-i18n="charts.portfolioTitle">Évolution du portefeuille</span>
+                </button>
+              </h2>
               <p class="muted chart-scope" data-i18n="charts.portfolioScope">Profil affiché, fonds réels (mainnet)</p>
             </div>
             <button type="button" class="link chart-expand" data-i18n="charts.expand">Agrandir</button>
           </div>
           <p class="chart-summary" data-field="summary"></p>
-          <div class="chart-ranges" role="group"></div>
-          <div class="chart-area" data-field="chart"></div>
-          <p class="muted chart-note" data-field="note"></p>
+          <div class="collapsible-body" id="portfolio-chart-body">
+            <div class="collapsible-inner">
+              <div class="chart-ranges" role="group"></div>
+              <div class="chart-area" data-field="chart"></div>
+              <p class="muted chart-note" data-field="note"></p>
+            </div>
+          </div>
         </section>
 
-        <h2 class="section-title" data-i18n="wallet.marketsTitle">Prix des cryptomonnaies en direct</h2>
-        <p class="muted chart-scope" data-i18n="charts.marketsHint">Cliquez sur une crypto pour voir sa courbe en grand.</p>
-        <div id="markets-list" class="markets-list"></div>
+        <section class="markets-section" data-collapse-key="markets">
+          <h2 class="section-title">
+            <button type="button" class="collapse-toggle" aria-expanded="true" aria-controls="markets-body">
+              <span class="collapse-chevron" aria-hidden="true"></span>
+              <span data-i18n="wallet.marketsTitle">Prix des cryptomonnaies en direct</span>
+            </button>
+          </h2>
+          <div class="collapsible-body" id="markets-body">
+            <div class="collapsible-inner">
+              <p class="muted chart-scope" data-i18n="charts.marketsHint">Cliquez sur une crypto pour voir sa courbe en grand.</p>
+              <div id="markets-list" class="markets-list"></div>
+            </div>
+          </div>
+        </section>
       </section>
 
       <section class="tab-panel hidden" data-panel="history">

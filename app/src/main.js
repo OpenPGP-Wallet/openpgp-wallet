@@ -99,6 +99,11 @@ function applyWalletListView(enabled) {
   } else {
     delete document.documentElement.dataset.walletListView;
   }
+  // En vue liste, les cartes sont déjà des lignes compactes : leur repli n'y a
+  // pas cours (voir « Panneaux repliables ») — titre retiré du parcours clavier.
+  document.querySelectorAll(".wallet-card .collapse-toggle").forEach((toggle) => {
+    toggle.tabIndex = enabled ? -1 : 0;
+  });
 }
 
 let walletListViewEnabled = false;
@@ -402,6 +407,8 @@ const I18N = {
     "settings.dark": "Sombre",
     "settings.roundedButtons": "Boutons arrondis",
     "settings.walletListView": "Affichage compact (liste) du portefeuille",
+    "collapse.collapse": "Replier",
+    "collapse.expand": "Déplier",
     "settings.archivedProfiles": "Profils archivés",
     "settings.archivedProfilesHint":
       "Un profil archivé disparaît du sélecteur principal mais reste entièrement récupérable — rien n'est perdu tant qu'il apparaît ici.",
@@ -834,6 +841,8 @@ const I18N = {
     "settings.dark": "Dark",
     "settings.roundedButtons": "Rounded buttons",
     "settings.walletListView": "Compact (list) wallet display",
+    "collapse.collapse": "Collapse",
+    "collapse.expand": "Expand",
     "settings.archivedProfiles": "Archived profiles",
     "settings.archivedProfilesHint":
       "An archived profile disappears from the main selector but stays fully recoverable — nothing is lost as long as it appears here.",
@@ -1028,6 +1037,9 @@ function applyLanguage(lang) {
   document.querySelectorAll("[data-i18n-title]").forEach((el) => {
     el.title = t(el.dataset.i18nTitle);
   });
+  document.querySelectorAll(".collapse-toggle").forEach(syncCollapseToggle);
+  // Libellés d'une autre longueur : la barre tient-elle encore sur une ligne ?
+  fitNavbar();
   // Les <option> viennent d'être retraduits ci-dessus, mais l'étiquette visible
   // du menu déroulant personnalisé (.custom-select-label) et sa liste (<li>) sont
   // de simples copies figées, synchronisées seulement à l'ouverture ou à un choix
@@ -1060,6 +1072,61 @@ document.querySelectorAll(".lang-btn").forEach((btn) => {
       localStorage.setItem(LANG_STORAGE_KEY, currentLang);
     } catch (e) {
       // Best-effort : la langue reste active pour cette session même si la sauvegarde échoue.
+    }
+  });
+});
+
+// --- Panneaux repliables -------------------------------------------------------
+// Un clic sur le titre d'un panneau (carte d'une crypto, courbe du portefeuille,
+// prix en direct) le replie ou le déplie : une carte repliée garde son nom et
+// son solde. Pas de repli des cartes en vue liste (déjà compacte). Préférence
+// purement visuelle, par appareil, comme le thème : stockage local.
+const COLLAPSED_STORAGE_KEY = "pgp-wallet-collapsed";
+// Durée de l'animation de repli (styles.css, `.collapsible-body`).
+const COLLAPSE_MS = 220;
+
+const collapsedPanels = (() => {
+  try {
+    const list = JSON.parse(localStorage.getItem(COLLAPSED_STORAGE_KEY) || "[]");
+    return new Set(Array.isArray(list) ? list.filter((key) => typeof key === "string") : []);
+  } catch (e) {
+    return new Set();
+  }
+})();
+
+// État lu dans le DOM (pas dans `collapsedPanels`) : aussi appelée par
+// `applyLanguage`, qui peut tourner avant l'initialisation ci-dessous.
+function syncCollapseToggle(toggle) {
+  const collapsed = toggle.closest("[data-collapse-key]").classList.contains("collapsed");
+  toggle.setAttribute("aria-expanded", String(!collapsed));
+  toggle.title = t(collapsed ? "collapse.expand" : "collapse.collapse");
+}
+
+function setPanelCollapsed(panel, collapsed, animate) {
+  if (animate) {
+    // Contenu rogné pendant l'animation seulement : déplié, rien n'est coupé
+    // (anneau de focus, ombres des boutons).
+    panel.classList.add("collapse-animating");
+    clearTimeout(panel._collapseTimer);
+    panel._collapseTimer = setTimeout(() => panel.classList.remove("collapse-animating"), COLLAPSE_MS + 40);
+  }
+  panel.classList.toggle("collapsed", collapsed);
+  syncCollapseToggle(panel.querySelector(".collapse-toggle"));
+}
+
+document.querySelectorAll("[data-collapse-key]").forEach((panel) => {
+  const key = panel.dataset.collapseKey;
+  setPanelCollapsed(panel, collapsedPanels.has(key), false);
+  panel.querySelector(".collapse-toggle").addEventListener("click", () => {
+    if (panel.classList.contains("wallet-card") && document.documentElement.dataset.walletListView === "true") return;
+    const collapsed = !panel.classList.contains("collapsed");
+    setPanelCollapsed(panel, collapsed, true);
+    if (collapsed) collapsedPanels.add(key);
+    else collapsedPanels.delete(key);
+    try {
+      localStorage.setItem(COLLAPSED_STORAGE_KEY, JSON.stringify([...collapsedPanels]));
+    } catch (e) {
+      // Best-effort : l'état reste appliqué pour cette session.
     }
   });
 });
@@ -1835,6 +1902,33 @@ function resetAutoLockTimer() {
 resetAutoLockTimer();
 
 // --- Onglets de navigation ---------------------------------------------
+
+// Barre sur une ligne (onglets centrés) quand tout y tient ; sinon, logo et
+// boutons sur une rangée, onglets en dessous (renvoyés à la ligne au besoin) :
+// la page ne défile jamais horizontalement. Mesuré, pas deviné par une largeur
+// fixe : la place prise dépend de la langue et de la police. Élément relu à
+// chaque appel : aussi appelée par `applyLanguage`, qui tourne plus haut.
+function fitNavbar() {
+  const navbar = document.querySelector(".navbar");
+  if (!navbar || navbar.clientWidth === 0) return; // tableau de bord caché
+  navbar.classList.remove("stacked");
+  const tabs = navbar.querySelector(".nav-tabs");
+  const overflows = navbar.scrollWidth > navbar.clientWidth + 1 || tabs.scrollWidth > tabs.clientWidth + 1;
+  navbar.classList.toggle("stacked", overflows);
+}
+
+{
+  // Largeur seulement : le passage sur deux rangées change la hauteur de la
+  // barre, qui ne doit pas relancer la mesure.
+  let lastWidth = 0;
+  new ResizeObserver(([entry]) => {
+    const width = Math.round(entry.contentRect.width);
+    if (width === lastWidth) return;
+    lastWidth = width;
+    fitNavbar();
+  }).observe(document.querySelector(".navbar"));
+  if (document.fonts) document.fonts.ready.then(fitNavbar);
+}
 
 document.querySelectorAll(".nav-tab").forEach((tab) => {
   tab.addEventListener("click", () => {
