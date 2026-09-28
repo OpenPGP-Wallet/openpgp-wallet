@@ -261,6 +261,7 @@
                      besoin. -->
                 <div class="row-buttons">
                   <button class="secondary" data-action="refresh" data-i18n="wallet.refresh">Actualiser</button>
+                  <button class="secondary" data-action="history" data-i18n="wallet.history">Historique</button>
                   <button class="secondary" data-action="swap" data-i18n="wallet.swap">Échanger</button>
                   <button class="primary" data-action="send" data-i18n="wallet.send">Envoyer</button>
                 </div>
@@ -353,6 +354,7 @@
                 </div>
                 <div class="row-buttons">
                   <button class="secondary" data-action="refresh" data-i18n="wallet.refresh">Actualiser</button>
+                  <button class="secondary" data-action="history" data-i18n="wallet.history">Historique</button>
                   <button class="secondary" data-action="swap" data-i18n="wallet.swap">Échanger</button>
                   <button class="primary" data-action="send" data-i18n="wallet.send">Envoyer</button>
                 </div>
@@ -445,6 +447,7 @@
                 </div>
                 <div class="row-buttons">
                   <button class="secondary" data-action="refresh" data-i18n="wallet.refresh">Actualiser</button>
+                  <button class="secondary" data-action="history" data-i18n="wallet.history">Historique</button>
                   <button class="secondary" data-action="swap" data-i18n="wallet.swap">Échanger</button>
                   <button class="primary" data-action="send" data-i18n="wallet.send">Envoyer</button>
                 </div>
@@ -539,6 +542,7 @@
                 </div>
                 <div class="row-buttons">
                   <button class="secondary" data-action="refresh" data-i18n="wallet.refresh">Actualiser</button>
+                  <button class="secondary" data-action="history" data-i18n="wallet.history">Historique</button>
                   <button class="secondary" data-action="swap" data-i18n="wallet.swap">Échanger</button>
                   <button class="primary" data-action="send" data-i18n="wallet.send">Envoyer</button>
                 </div>
@@ -597,7 +601,7 @@
             <button id="refresh-history-btn" class="secondary" data-i18n="wallet.refresh">Actualiser</button>
           </div>
 
-          <div class="history-section">
+          <div class="history-section" id="history-section-evm">
             <div class="history-section-header">
               <h2 class="section-title" data-i18n="history.ethereum">Ethereum</h2>
               <span id="history-network-evm" class="muted"></span>
@@ -605,7 +609,7 @@
             <div id="history-list-evm" class="history-list"></div>
           </div>
 
-          <div class="history-section">
+          <div class="history-section" id="history-section-btc">
             <div class="history-section-header">
               <h2 class="section-title" data-i18n="history.bitcoin">Bitcoin</h2>
               <span id="history-network-btc" class="muted"></span>
@@ -613,7 +617,7 @@
             <div id="history-list-btc" class="history-list"></div>
           </div>
 
-          <div class="history-section">
+          <div class="history-section" id="history-section-sol">
             <div class="history-section-header">
               <h2 class="section-title" data-i18n="history.solana">Solana</h2>
               <span id="history-network-sol" class="muted"></span>
@@ -621,7 +625,7 @@
             <div id="history-list-sol" class="history-list"></div>
           </div>
 
-          <div class="history-section">
+          <div class="history-section" id="history-section-usdc">
             <div class="history-section-header">
               <h2 class="section-title">USDC</h2>
               <span id="history-network-usdc" class="muted"></span>

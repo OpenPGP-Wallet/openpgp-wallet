@@ -231,6 +231,7 @@ const I18N = {
     "restore.filesRequired": "Les 4 fichiers (2 parts + 2 clés privées) sont requis.",
     "nav.wallet": "Portefeuille",
     "nav.history": "Historique",
+    "wallet.history": "Historique",
     "nav.message": "Message",
     "nav.certificate": "Certificat",
     "nav.external": "Wallets externes",
@@ -667,6 +668,7 @@ const I18N = {
     "restore.filesRequired": "All 4 files (2 shares + 2 private keys) are required.",
     "nav.wallet": "Wallet",
     "nav.history": "History",
+    "wallet.history": "History",
     "nav.message": "Message",
     "nav.certificate": "Certificate",
     "nav.external": "External wallets",
@@ -2903,6 +2905,9 @@ document.querySelectorAll(".wallet-card").forEach((card) => {
   });
   const swapBtn = card.querySelector('[data-action="swap"]');
   if (swapBtn) swapBtn.addEventListener("click", () => openSwapModal(card));
+  // Même historique que l'onglet « Historique », ouvert directement sur cette
+  // crypto : plus facile à trouver depuis la carte que l'onglet seul.
+  card.querySelector('[data-action="history"]').addEventListener("click", () => openHistoryFor(card.dataset.coin));
   const select = card.querySelector(".network-select");
   if (select) {
     // Contrairement à EVM/Solana, changer de réseau Bitcoin change aussi l'adresse
@@ -3093,6 +3098,19 @@ function loadAllHistory() {
 }
 
 document.getElementById("refresh-history-btn").addEventListener("click", loadAllHistory);
+
+// Onglet Historique, défilé jusqu'à la section de `coin` (sous la barre de
+// navigation, qui reste en haut) et brièvement mise en évidence.
+function openHistoryFor(coin) {
+  document.querySelector('.nav-tab[data-tab="history"]').click();
+  const section = document.getElementById(`history-section-${coin}`);
+  if (!section) return;
+  const navbar = document.querySelector(".navbar");
+  window.scrollTo({ top: section.getBoundingClientRect().top + window.scrollY - navbar.offsetHeight - 16 });
+  section.classList.remove("history-section-flash");
+  void section.offsetWidth; // relance l'animation si on reclique aussitôt
+  section.classList.add("history-section-flash");
+}
 
 // --- Send modal ----------------------------------------------------------
 

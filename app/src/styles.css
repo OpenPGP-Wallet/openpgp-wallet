@@ -567,7 +567,10 @@ legend {
   /* Marge par défaut de `.row-buttons` (20px, pensée pour les modales) trop
      large ici, juste sous l'adresse/QR d'une carte déjà compacte. */
   margin-top: 8px;
-  flex-wrap: wrap;
+  /* 4 boutons (Actualiser, Historique, Échanger, Envoyer) : 2 × 2, de même
+     largeur — sur une seule ligne, ils ne tenaient pas dans une carte. */
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 8px;
 }
 
@@ -1259,6 +1262,7 @@ textarea:focus {
 }
 
 :root[data-wallet-list-view="true"] .wallet-card .row-buttons {
+  display: flex;
   grid-column: 4;
   grid-row: 1 / span 2;
   flex-wrap: nowrap;
@@ -1621,6 +1625,30 @@ textarea:focus {
 
 .market-row .market-change.down {
   color: var(--danger);
+}
+
+/* Section ouverte depuis le bouton « Historique » d'une carte : repérée d'un
+   bref halo. */
+.history-section-flash {
+  animation: history-section-flash 1.6s ease-out;
+  border-radius: 10px;
+}
+
+@keyframes history-section-flash {
+  from {
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+    box-shadow: 0 0 0 8px color-mix(in srgb, var(--accent) 16%, transparent);
+  }
+  to {
+    background: transparent;
+    box-shadow: 0 0 0 8px transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .history-section-flash {
+    animation: none;
+  }
 }
 
 .history-list {
