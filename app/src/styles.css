@@ -2262,6 +2262,13 @@ textarea:focus {
   white-space: nowrap;
 }
 
+/* Fenêtre « clé USB » : ouverte par-dessus une autre (kit régénéré, fenêtre
+   placée plus bas dans la page) — sans priorité propre, elle s'affichait
+   derrière et restait invisible. */
+#usb-modal {
+  z-index: 60;
+}
+
 /* Sauvegarde et restauration par clé USB : clés détectées, une par ligne. */
 .usb-list {
   list-style: none;
