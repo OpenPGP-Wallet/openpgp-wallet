@@ -35,6 +35,22 @@ fn set_ui_language(lang: String) {
 /// Messages sans valeur interpolée : correspondance exacte avec le texte français
 /// tel qu'écrit dans `core/` et dans ce fichier.
 const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
+    // core/src/usb_backup.rs, sauvegarde sur clé USB
+    ("clé USB introuvable : branchez-la puis réessayez", "USB drive not found: plug it in and try again"),
+    ("écriture sur la clé USB impossible", "cannot write to the USB drive"),
+    ("relecture de la clé USB impossible", "cannot read back the USB drive"),
+    ("la relecture de la clé USB ne correspond pas à ce qui a été écrit : clé défectueuse ?", "reading the USB drive back does not match what was written: faulty drive?"),
+    ("la relecture de la clé USB ne correspond pas à ce qui a été écrit", "reading the USB drive back does not match what was written"),
+    ("numéro de part invalide", "invalid share number"),
+    ("identifiant de kit invalide", "invalid kit identifier"),
+    ("cette clé USB contient déjà une part d'une autre sauvegarde (ancienne, ou d'un autre portefeuille) : utilisez une clé vide, ou supprimez vous-même son dossier PGP-Wallet-Sauvegarde si vous n'en avez plus besoin", "this USB drive already holds a share of another backup (an older one, or another wallet's): use an empty drive, or delete its PGP-Wallet-Sauvegarde folder yourself if you no longer need it"),
+    ("espace insuffisant sur la clé USB", "not enough space on the USB drive"),
+    ("la part écrite sur la clé USB ne se déchiffre pas : sauvegarde inutilisable", "the share written to the USB drive cannot be decrypted: backup unusable"),
+    ("aucune sauvegarde PGP Wallet sur cette clé USB", "no PGP Wallet backup on this USB drive"),
+    ("lecture de la clé USB impossible", "cannot read the USB drive"),
+    ("mot de passe de la part illisible sur la clé USB", "the share's password on the USB drive is unreadable"),
+    ("part de sauvegarde vide", "empty backup share"),
+    ("branchez deux clés USB portant deux parts différentes d'une même sauvegarde", "plug in two USB drives holding two different shares of the same backup"),
     // core/src/sol_rpc.rs
     (
         "le nœud Solana public limite le nombre de requêtes : réessayez dans un instant",
@@ -377,6 +393,18 @@ const LEDGER_PREFIX_TRANSLATIONS: &[(&str, &str)] = &[
 /// correspondance exacte ne peut pas fonctionner, donc reconstruction par
 /// découpage autour de la partie fixe du message.
 fn translate_dynamic_error(msg: &str) -> Option<String> {
+    if let Some(part) = msg
+        .strip_prefix("cette clé USB contient déjà la part n°")
+        .and_then(|rest| rest.strip_suffix(" de ce kit : deux parts sur une même clé suffiraient à tout récupérer — utilisez une autre clé"))
+    {
+        return Some(format!("this USB drive already holds share {part} of this kit: two shares on one drive would be enough to recover everything — use another drive"));
+    }
+    if let Some(name) = msg.strip_prefix("sauvegarde incomplète sur la clé USB (").and_then(|rest| rest.strip_suffix(" absent)")) {
+        return Some(format!("incomplete backup on the USB drive ({name} missing)"));
+    }
+    if let Some(name) = msg.strip_prefix("fichier de sauvegarde anormalement gros sur la clé USB (").and_then(|rest| rest.strip_suffix(')')) {
+        return Some(format!("abnormally large backup file on the USB drive ({name})"));
+    }
     if let Some((en, rest)) = LEDGER_PREFIX_TRANSLATIONS.iter().find_map(|(fr, en)| msg.strip_prefix(fr).map(|rest| (en, rest))) {
         return Some(format!("{en}{rest}"));
     }
@@ -666,17 +694,27 @@ struct BackupShareDto {
     encrypted_share_b64: String,
     /// PGP déjà en ASCII-armor, mais base64 pour rester cohérent côté frontend.
     privkey_armored_b64: String,
+    /// Identifiant du kit (commun aux 3 parts, voir `api::backup_kit_id`) et
+    /// numéro de la part : pour la sauvegarde sur clé USB.
+    kit_id: String,
+    part: u8,
 }
 
-impl From<api::BackupShare> for BackupShareDto {
-    fn from(b: api::BackupShare) -> Self {
-        Self {
+/// Parts d'un kit, avec leur identifiant de kit commun et leur numéro.
+fn backup_dtos(backups: Vec<api::BackupShare>) -> Vec<BackupShareDto> {
+    let kit_id = api::backup_kit_id(&backups);
+    backups
+        .into_iter()
+        .enumerate()
+        .map(|(i, b)| BackupShareDto {
             label: b.label,
             passphrase: b.passphrase,
             encrypted_share_b64: base64::engine::general_purpose::STANDARD.encode(&b.encrypted_share),
             privkey_armored_b64: base64::engine::general_purpose::STANDARD.encode(&b.privkey_armored),
-        }
-    }
+            kit_id: kit_id.clone(),
+            part: (i + 1) as u8,
+        })
+        .collect()
 }
 
 #[derive(Serialize)]
@@ -804,7 +842,7 @@ fn create_wallet(password: String, app: tauri::AppHandle) -> Result<CreateWallet
     let result = api::create_wallet(&dir, &password).t_err()?;
     remember_addresses(&app, 0, &result.addresses.evm, &result.addresses.solana);
 
-    let backups = result.backups.into_iter().map(Into::into).collect();
+    let backups = backup_dtos(result.backups);
 
     Ok(CreateWalletDto {
         addresses: result.addresses.into(),
@@ -853,9 +891,7 @@ fn regenerate_backup_kit(password: String, app: tauri::AppHandle) -> Result<Vec<
         return Err(translate_error("Régénération annulée (confirmation refusée)."));
     }
 
-    api::regenerate_backup_kit(&dir, &password)
-        .map(|backups| backups.into_iter().map(Into::into).collect())
-        .t_err()
+    api::regenerate_backup_kit(&dir, &password).map(backup_dtos).t_err()
 }
 
 /// Adresse THORChain (RUNE) dérivée de la même entropie maître (voir
@@ -1049,6 +1085,194 @@ fn confirm_restore_native(app: &tauri::AppHandle) -> bool {
         .kind(MessageDialogKind::Warning)
         .buttons(MessageDialogButtons::OkCancel)
         .blocking_show()
+}
+
+#[derive(Serialize)]
+struct BackupDriveDto {
+    /// Racine (`E:\`), à renvoyer telle quelle aux commandes suivantes.
+    root: String,
+    label: String,
+    free_bytes: u64,
+    /// Parts déjà présentes (kit, numéro).
+    shares: Vec<pgp_wallet_poc::usb_backup::ShareInfo>,
+}
+
+/// Clés USB branchées, et la part de sauvegarde que chacune contient (aucun
+/// secret : kit et numéro de part seulement). Appelée à intervalles réguliers
+/// par l'interface pour détecter une clé dès qu'elle est branchée.
+#[tauri::command]
+async fn list_backup_drives() -> Result<Vec<BackupDriveDto>, String> {
+    run_blocking(|| {
+        Ok(pgp_wallet_poc::usb_backup::removable_drives()
+            .into_iter()
+            .map(|d| BackupDriveDto { root: d.root.to_string_lossy().into_owned(), label: d.label, free_bytes: d.free_bytes, shares: d.shares })
+            .collect())
+    })
+    .await
+}
+
+/// Écrit une part COMPLÈTE du kit (fichier de part, clé privée, mot de passe)
+/// sur la clé USB `root` — seule une clé USB détectée est acceptée, jamais un
+/// chemin quelconque — puis la relit et vérifie qu'elle se déchiffre. Voir
+/// `core/src/usb_backup.rs` (une part par clé).
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn save_backup_to_usb(
+    root: String,
+    kit_id: String,
+    part: u8,
+    encrypted_share_b64: String,
+    privkey_armored_b64: String,
+    passphrase: String,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    run_blocking(move || {
+        let dir = data_dir(&app)?;
+        let decode = |s: &str| base64::engine::general_purpose::STANDARD.decode(s).t_err();
+        let files = pgp_wallet_poc::usb_backup::ShareFiles {
+            encrypted_share: decode(&encrypted_share_b64)?,
+            privkey_armored: decode(&privkey_armored_b64)?,
+            passphrase: Zeroizing::new(passphrase),
+        };
+        let drive = pgp_wallet_poc::usb_backup::write_share(&root, &kit_id, part, &files, |written| {
+            api::verify_backup_share(&dir, &written.encrypted_share, &written.privkey_armored, &written.passphrase)
+        })
+        .t_err()?;
+        Ok(drive.label)
+    })
+    .await
+}
+
+#[derive(serde::Deserialize)]
+struct KitShareDto {
+    part: u8,
+    encrypted_share_b64: String,
+    privkey_armored_b64: String,
+    passphrase: String,
+}
+
+/// Boîte native avant d'écrire TOUT le kit sur une seule clé : cette clé
+/// suffira à elle seule à tout récupérer, sans mot de passe.
+fn confirm_kit_on_one_drive_native(app: &tauri::AppHandle, drive: &str) -> bool {
+    let drive = dialog_label(drive);
+    let message = if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
+        format!("Save the 3 shares on the single USB drive \"{drive}\"?\n\nThis drive will then be enough ON ITS OWN to recover the whole wallet and its funds, with no password: whoever finds or steals it gets everything. Keep it somewhere safe (a safe), never with the computer.\n\nSafer: save each share on its own drive, in different places.")
+    } else {
+        format!("Enregistrer les 3 parts sur la seule clé USB « {drive} » ?\n\nCette clé suffira alors À ELLE SEULE à récupérer tout le portefeuille et ses fonds, sans aucun mot de passe : qui la trouve ou la vole a accès à tout. Rangez-la en lieu sûr (coffre), jamais avec l'ordinateur.\n\nPlus sûr : enregistrer chaque part sur sa propre clé, à des endroits différents.")
+    };
+    app.dialog()
+        .message(message)
+        .title(lang("Tout le kit sur une clé USB", "Whole kit on one USB drive"))
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancel)
+        .blocking_show()
+}
+
+/// Écrit TOUT le kit (les 3 parts complètes) sur la clé USB `root`, après la
+/// boîte native qui en dit la conséquence, puis vérifie chaque part relue.
+/// Renvoie le nom de la clé ; `None` si l'utilisateur a refusé dans la boîte.
+#[tauri::command]
+async fn save_kit_to_usb(root: String, kit_id: String, shares: Vec<KitShareDto>, app: tauri::AppHandle) -> Result<Option<String>, String> {
+    run_blocking(move || {
+        let dir = data_dir(&app)?;
+        let decode = |s: &str| base64::engine::general_purpose::STANDARD.decode(s).t_err();
+        let mut parts = Vec::with_capacity(shares.len());
+        for share in shares {
+            let files = pgp_wallet_poc::usb_backup::ShareFiles {
+                encrypted_share: decode(&share.encrypted_share_b64)?,
+                privkey_armored: decode(&share.privkey_armored_b64)?,
+                passphrase: Zeroizing::new(share.passphrase),
+            };
+            parts.push((share.part, files));
+        }
+        let name = pgp_wallet_poc::usb_backup::removable_drives()
+            .into_iter()
+            .find(|d| d.root.to_string_lossy().eq_ignore_ascii_case(root.trim()))
+            .map(|d| if d.label.is_empty() { d.root.to_string_lossy().into_owned() } else { format!("{} ({})", d.label, d.root.to_string_lossy().trim_end_matches('\\')) })
+            .ok_or_else(|| translate_error("clé USB introuvable : branchez-la puis réessayez"))?;
+        if !confirm_kit_on_one_drive_native(&app, &name) {
+            return Ok(None);
+        }
+        let drive = pgp_wallet_poc::usb_backup::write_kit(&root, &kit_id, &parts, |written| {
+            api::verify_backup_share(&dir, &written.encrypted_share, &written.privkey_armored, &written.passphrase)
+        })
+        .t_err()?;
+        Ok(Some(drive.label))
+    })
+    .await
+}
+
+/// Parts lues sur des clés USB pour une restauration (gardées ici, jamais
+/// envoyées à l'interface) : les clés peuvent être branchées l'une après l'autre.
+#[derive(Default)]
+struct UsbRestoreState(std::sync::Mutex<Vec<(pgp_wallet_poc::usb_backup::ShareInfo, pgp_wallet_poc::usb_backup::ShareFiles)>>);
+
+/// Lit toutes les parts de la clé USB `root` pour une restauration à venir ;
+/// renvoie celles lues (kit, numéro — aucun secret).
+#[tauri::command]
+async fn usb_restore_load(root: String, app: tauri::AppHandle) -> Result<Vec<pgp_wallet_poc::usb_backup::ShareInfo>, String> {
+    run_blocking(move || {
+        let drive_shares = pgp_wallet_poc::usb_backup::removable_drives()
+            .into_iter()
+            .find(|d| d.root.to_string_lossy().eq_ignore_ascii_case(root.trim()))
+            .map(|d| d.shares)
+            .ok_or_else(|| translate_error("clé USB introuvable : branchez-la puis réessayez"))?;
+        let mut read = Vec::with_capacity(drive_shares.len());
+        for info in drive_shares {
+            read.push(pgp_wallet_poc::usb_backup::read_share(&root, info.part).t_err()?);
+        }
+        let state = app.state::<UsbRestoreState>();
+        let mut loaded = state.0.lock().unwrap_or_else(|p| p.into_inner());
+        let mut infos = Vec::with_capacity(read.len());
+        for (info, files) in read {
+            loaded.retain(|(i, _)| *i != info);
+            infos.push(info.clone());
+            loaded.push((info, files));
+        }
+        Ok(infos)
+    })
+    .await
+}
+
+/// Oublie les parts lues (restauration abandonnée).
+#[tauri::command]
+fn usb_restore_clear(app: tauri::AppHandle) {
+    app.state::<UsbRestoreState>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
+}
+
+/// Restauration à partir de deux parts d'un même kit lues sur des clés USB
+/// (`usb_restore_load`) — même chemin que `restore_wallet` ensuite.
+#[tauri::command]
+fn restore_wallet_from_usb(new_password: String, app: tauri::AppHandle) -> Result<AddressesDto, String> {
+    let new_password = Zeroizing::new(new_password);
+    let dir = data_dir(&app)?;
+    let state = app.state::<UsbRestoreState>();
+    let (first, second) = {
+        let loaded = state.0.lock().unwrap_or_else(|p| p.into_inner());
+        let pair = loaded.iter().enumerate().find_map(|(i, (a, _))| {
+            loaded.iter().enumerate().skip(i + 1).find(|(_, (b, _))| b.kit == a.kit && b.part != a.part).map(|(j, _)| (i, j))
+        });
+        let (i, j) = pair.ok_or_else(|| translate_error("branchez deux clés USB portant deux parts différentes d'une même sauvegarde"))?;
+        let copy = |k: usize| {
+            let (_, f) = &loaded[k];
+            (f.encrypted_share.clone(), f.privkey_armored.clone(), Zeroizing::new(f.passphrase.to_string()))
+        };
+        (copy(i), copy(j))
+    };
+    if !confirm_restore_native(&app) {
+        return Err(translate_error("Restauration annulée (confirmation refusée)."));
+    }
+    let addresses = api::restore_wallet(
+        &dir,
+        &new_password,
+        (&first.0, &first.1, &first.2),
+        (&second.0, &second.1, &second.2),
+    )
+    .t_err()?;
+    state.0.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    forget_wallet_connections(&app);
+    remember_addresses(&app, 0, &addresses.evm, &addresses.solana);
+    Ok(addresses.into())
 }
 
 #[tauri::command]
@@ -3084,6 +3308,7 @@ pub fn run() {
         .manage(ProfileAddressCache::default())
         .manage(WcState::default())
         .manage(BalanceWatchState::default())
+        .manage(UsbRestoreState::default())
         .setup(|app| {
             if let Ok(dir) = app.path().app_data_dir() {
                 let _ = std::fs::create_dir_all(&dir);
@@ -3132,6 +3357,12 @@ pub fn run() {
             get_balance,
             get_usdc_balance,
             get_btc_pending_incoming,
+            list_backup_drives,
+            save_backup_to_usb,
+            save_kit_to_usb,
+            usb_restore_load,
+            usb_restore_clear,
+            restore_wallet_from_usb,
             watch_balances,
             has_pending_tx,
             get_tx_history,
@@ -3343,6 +3574,41 @@ mod tests {
         ] {
             assert!(sources.iter().any(|s| s.contains(message)), "message absent du code : {message}");
             assert!(EXACT_ERROR_TRANSLATIONS.iter().any(|(fr, _)| *fr == message), "sans traduction : {message}");
+        }
+    }
+
+    /// Chaque message de la sauvegarde sur clé USB existe dans le code et a sa
+    /// traduction anglaise (messages à numéro de part ou nom de fichier :
+    /// traduits par `translate_dynamic_error`).
+    #[test]
+    fn usb_backup_messages_all_have_a_translation() {
+        let sources = [include_str!("../../../core/src/usb_backup.rs"), include_str!("../../../core/src/api.rs"), include_str!("lib.rs")];
+        for message in [
+            "clé USB introuvable : branchez-la puis réessayez",
+            "écriture sur la clé USB impossible",
+            "relecture de la clé USB impossible",
+            "la relecture de la clé USB ne correspond pas à ce qui a été écrit : clé défectueuse ?",
+            "la relecture de la clé USB ne correspond pas à ce qui a été écrit",
+            "numéro de part invalide",
+            "identifiant de kit invalide",
+            "espace insuffisant sur la clé USB",
+            "la part écrite sur la clé USB ne se déchiffre pas : sauvegarde inutilisable",
+            "aucune sauvegarde PGP Wallet sur cette clé USB",
+            "lecture de la clé USB impossible",
+            "mot de passe de la part illisible sur la clé USB",
+            "part de sauvegarde vide",
+            "branchez deux clés USB portant deux parts différentes d'une même sauvegarde",
+        ] {
+            assert!(sources.iter().any(|s| s.contains(message)), "message absent du code : {message}");
+            assert!(EXACT_ERROR_TRANSLATIONS.iter().any(|(fr, _)| *fr == message), "sans traduction : {message}");
+        }
+        assert!(EXACT_ERROR_TRANSLATIONS.iter().any(|(fr, _)| fr.starts_with("cette clé USB contient déjà une part d'une autre sauvegarde")));
+        for (message, english) in [
+            ("cette clé USB contient déjà la part n°2 de ce kit : deux parts sur une même clé suffiraient à tout récupérer — utilisez une autre clé", "share 2 of this kit"),
+            ("sauvegarde incomplète sur la clé USB (part.asc absent)", "(part.asc missing)"),
+            ("fichier de sauvegarde anormalement gros sur la clé USB (part.asc)", "(part.asc)"),
+        ] {
+            assert!(translate_dynamic_error(message).is_some_and(|en| en.contains(english)), "{message}");
         }
     }
 

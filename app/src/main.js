@@ -140,6 +140,7 @@ const I18N = {
     "onboarding.confirmLabel": "Confirmation",
     "onboarding.confirmPlaceholder": "Retapez le mot de passe",
     "onboarding.submit": "Créer mon portefeuille",
+    "onboarding.haveWallet": "J'ai déjà un portefeuille",
     "common.minChars": "Au moins 12 caractères",
     "common.cancel": "Annuler",
     "common.add": "Ajouter",
@@ -163,8 +164,43 @@ const I18N = {
     "common.copied": "Copié !",
     "backup.title": "Sauvegardez votre kit de récupération",
     "backup.subtitle":
-      "Ces 3 fichiers protègent votre portefeuille en cas de perte de cet appareil. <strong>2 des 3 suffisent</strong> à tout récupérer, mais aucun des 3 seul ne sert à rien — c'est voulu, personne (y compris vous) ne peut voler votre wallet avec une seule part. Téléchargez les 3 et notez les 3 mots de passe quelque part de sûr, séparément.",
-    "backup.confirmCheckbox": "J'ai téléchargé et sauvegardé mes 3 parts et leurs mots de passe",
+      "Ces 3 parts protègent votre portefeuille en cas de perte de cet appareil. <strong>2 des 3 suffisent</strong> à tout récupérer, mais aucune seule ne sert à rien — c'est voulu, personne (y compris vous) ne peut voler votre wallet avec une seule part. Le plus simple : enregistrez chaque part sur sa propre clé USB (rien à noter) et rangez les clés à des endroits différents. Sinon, téléchargez les fichiers et notez les mots de passe, séparément.",
+    "backup.confirmCheckbox": "J'ai sauvegardé mes 3 parts (sur clés USB, ou fichiers et mots de passe)",
+    "backup.saveUsb": "Enregistrer sur une clé USB",
+    "backup.savedUsb": "✓ Enregistrée et vérifiée sur la clé « {label} »",
+    "usb.title": "Part n°{n} sur une clé USB",
+    "usb.hint": "Branchez une clé USB : elle est détectée automatiquement. Une clé = une part : deux parts réunies donnent accès à tout, gardez chaque clé à un endroit différent.",
+    "usb.waiting": "En attente d'une clé USB…",
+    "usb.write": "Écrire la part n°{n} ici",
+    "usb.rewrite": "Contient déjà cette part — la réécrire",
+    "usb.otherPart": "Contient déjà la part n°{part} de ce kit : une seule part par clé",
+    "usb.otherKit": "Contient déjà une autre sauvegarde",
+    "usb.writing": "Écriture et vérification…",
+    "usb.done": "Part n°{n} enregistrée et vérifiée sur « {label} ». Retirez la clé et rangez-la à part, loin des autres parts.",
+    "usb.free": "{mb} Mo libres",
+    "backup.disclaimerTitle": "⚠ Une part par appareil, à des endroits différents",
+    "backup.disclaimerText":
+      "Mettez chaque part sur un appareil différent, rangé ailleurs. Deux parts réunies donnent accès à tout le portefeuille.",
+    "backup.statusTodo": "À sauvegarder",
+    "backup.statusDone": "✓ Sauvegardée",
+    "backup.shareDownloaded": "✓ Fichier de part téléchargé",
+    "backup.privkeyDownloaded": "✓ Clé privée téléchargée",
+    "backup.progress": "Parts sauvegardées : {n}/{total} — sauvegardez-les toutes pour continuer.",
+    "backup.progressDone": "✓ Les {total} parts sont sauvegardées.",
+    "backup.saveAllUsb": "Tout enregistrer sur une seule clé USB",
+    "backup.saveAllHint": "Plus simple, mais cette clé suffira seule à tout récupérer : rangez-la en lieu sûr.",
+    "usb.titleAll": "Les 3 parts sur une clé USB",
+    "usb.hintAll": "Branchez une clé USB : elle est détectée automatiquement. Les 3 parts y seront enregistrées : cette clé suffira à elle seule à tout récupérer.",
+    "usb.writeAll": "Tout écrire ici",
+    "usb.rewriteAll": "Contient déjà des parts de ce kit — tout réécrire",
+    "usb.doneAll": "Les 3 parts enregistrées et vérifiées sur « {label} ». Cette clé suffit à tout récupérer : rangez-la en lieu sûr, jamais avec l'ordinateur.",
+    "restore.usbTitle": "Avec mes clés USB de sauvegarde",
+    "restore.usbHint": "Branchez vos clés de sauvegarde, l'une après l'autre si besoin : l'app les lit toute seule. Deux parts différentes suffisent.",
+    "restore.usbWaiting": "Aucune clé de sauvegarde détectée pour l'instant.",
+    "restore.usbPart": "✓ Part n°{n} lue (clé « {label} »)",
+    "restore.usbReady": "Deux parts lues : choisissez un nouveau mot de passe puis restaurez. Vous pouvez retirer les clés.",
+    "restore.usbSubmit": "Restaurer depuis les clés USB",
+    "restore.orFiles": "ou avec les fichiers",
     "backup.continue": "Continuer vers mon portefeuille",
     "backup.partTitle": "Part {n} — {label}",
     "backup.partPassword": "Mot de passe de cette part :",
@@ -179,7 +215,7 @@ const I18N = {
     "unlock.resetWallet": "Réinitialiser cet appareil (supprime le coffre local)",
     "restore.title": "Restaurer depuis une sauvegarde",
     "restore.subtitle":
-      "Fournissez 2 des 3 fichiers de part + leur mot de passe, et choisissez un nouveau mot de passe pour cet appareil.",
+      "Branchez 2 de vos 3 clés USB de sauvegarde, ou fournissez 2 fichiers de part avec leur mot de passe, puis choisissez un nouveau mot de passe pour cet appareil.",
     "restore.share1": "Part n°1",
     "restore.share2": "Part n°2",
     "restore.shareFile": "Fichier de part (.asc)",
@@ -537,6 +573,7 @@ const I18N = {
     "onboarding.confirmLabel": "Confirmation",
     "onboarding.confirmPlaceholder": "Retype the password",
     "onboarding.submit": "Create my wallet",
+    "onboarding.haveWallet": "I already have a wallet",
     "common.minChars": "At least 12 characters",
     "common.cancel": "Cancel",
     "common.add": "Add",
@@ -559,8 +596,43 @@ const I18N = {
     "common.copied": "Copied!",
     "backup.title": "Save your recovery kit",
     "backup.subtitle":
-      "These 3 files protect your wallet if you lose this device. <strong>2 out of 3 are enough</strong> to recover everything, but none of the 3 alone is of any use — that's intentional, nobody (including you) can steal your wallet with a single share. Download all 3 and write down the 3 passwords somewhere safe, separately.",
-    "backup.confirmCheckbox": "I have downloaded and saved my 3 shares and their passwords",
+      "These 3 shares protect your wallet if you lose this device. <strong>2 out of 3 are enough</strong> to recover everything, but none alone is of any use — that's intentional, nobody (including you) can steal your wallet with a single share. Simplest: save each share on its own USB drive (nothing to write down) and keep the drives in different places. Otherwise, download the files and write down the passwords, separately.",
+    "backup.confirmCheckbox": "I have saved my 3 shares (on USB drives, or files and passwords)",
+    "backup.saveUsb": "Save to a USB drive",
+    "backup.savedUsb": "✓ Saved and verified on drive \"{label}\"",
+    "usb.title": "Share {n} on a USB drive",
+    "usb.hint": "Plug in a USB drive: it is detected automatically. One drive = one share: two shares together give access to everything, keep each drive in a different place.",
+    "usb.waiting": "Waiting for a USB drive…",
+    "usb.write": "Write share {n} here",
+    "usb.rewrite": "Already holds this share — write it again",
+    "usb.otherPart": "Already holds share {part} of this kit: one share per drive",
+    "usb.otherKit": "Already holds another backup",
+    "usb.writing": "Writing and verifying…",
+    "usb.done": "Share {n} saved and verified on \"{label}\". Unplug the drive and store it apart, away from the other shares.",
+    "usb.free": "{mb} MB free",
+    "backup.disclaimerTitle": "⚠ One share per device, in different places",
+    "backup.disclaimerText":
+      "Put each share on a different device, kept somewhere else. Two shares together give access to the whole wallet.",
+    "backup.statusTodo": "Not saved yet",
+    "backup.statusDone": "✓ Saved",
+    "backup.shareDownloaded": "✓ Share file downloaded",
+    "backup.privkeyDownloaded": "✓ Private key downloaded",
+    "backup.progress": "Shares saved: {n}/{total} — save them all to continue.",
+    "backup.progressDone": "✓ All {total} shares are saved.",
+    "backup.saveAllUsb": "Save everything on a single USB drive",
+    "backup.saveAllHint": "Simpler, but that drive alone will be enough to recover everything: keep it somewhere safe.",
+    "usb.titleAll": "The 3 shares on a USB drive",
+    "usb.hintAll": "Plug in a USB drive: it is detected automatically. The 3 shares will be saved on it: that drive will be enough on its own to recover everything.",
+    "usb.writeAll": "Write everything here",
+    "usb.rewriteAll": "Already holds shares of this kit — write everything again",
+    "usb.doneAll": "The 3 shares saved and verified on \"{label}\". This drive is enough to recover everything: keep it somewhere safe, never with the computer.",
+    "restore.usbTitle": "With my backup USB drives",
+    "restore.usbHint": "Plug in your backup drives, one after the other if needed: the app reads them on its own. Two different shares are enough.",
+    "restore.usbWaiting": "No backup drive detected yet.",
+    "restore.usbPart": "✓ Share {n} read (drive \"{label}\")",
+    "restore.usbReady": "Two shares read: choose a new password, then restore. You can unplug the drives.",
+    "restore.usbSubmit": "Restore from the USB drives",
+    "restore.orFiles": "or with the files",
     "backup.continue": "Continue to my wallet",
     "backup.partTitle": "Share {n} — {label}",
     "backup.partPassword": "Password for this share:",
@@ -575,7 +647,7 @@ const I18N = {
     "unlock.resetWallet": "Reset this device (deletes the local vault)",
     "restore.title": "Restore from a backup",
     "restore.subtitle":
-      "Provide 2 of the 3 share files + their password, and choose a new password for this device.",
+      "Plug in 2 of your 3 backup USB drives, or provide 2 share files with their password, then choose a new password for this device.",
     "restore.share1": "Share #1",
     "restore.share2": "Share #2",
     "restore.shareFile": "Share file (.asc)",
@@ -1303,7 +1375,9 @@ onboardingSubmitBtn.addEventListener("click", withBusyButton(onboardingSubmitBtn
   try {
     const result = await invoke("create_wallet", { password });
     pendingCreateResult = result;
+    document.getElementById("backup-confirm").checked = false;
     renderBackupList(result.backups);
+    updateBackupContinue();
     showView("backup");
   } catch (e) {
     showError(errorEl, String(e));
@@ -1330,39 +1404,110 @@ async function saveBase64ToFile(base64Content, suggestedName) {
 function renderBackupList(backups, containerId = "backup-list") {
   const container = document.getElementById(containerId);
   container.innerHTML = "";
+  // Avertissement bien visible AVANT les parts : la sécurité du kit tient à la
+  // séparation des parts (deux réunies = accès complet).
+  const disclaimer = document.createElement("div");
+  disclaimer.className = "backup-disclaimer";
+  disclaimer.setAttribute("role", "note");
+  const disclaimerTitle = document.createElement("strong");
+  disclaimerTitle.textContent = t("backup.disclaimerTitle");
+  const disclaimerText = document.createElement("p");
+  disclaimerText.textContent = t("backup.disclaimerText");
+  disclaimer.append(disclaimerTitle, disclaimerText);
+  container.appendChild(disclaimer);
   backups.forEach((backup, i) => {
     const item = document.createElement("div");
     item.className = "backup-item";
     item.innerHTML = `
-      <h3>${t("backup.partTitle", { n: i + 1, label: backup.label })}</h3>
+      <div class="backup-item-header">
+        <h3>${t("backup.partTitle", { n: i + 1, label: backup.label })}</h3>
+        <span class="backup-status" data-field="status"></span>
+      </div>
       <p class="muted">${t("backup.partPassword")}</p>
       <div class="passphrase">${backup.passphrase}</div>
       <div class="row-buttons">
+        <button class="primary" data-kind="usb">${t("backup.saveUsb")}</button>
         <button class="secondary" data-kind="share">${t("backup.downloadShare")}</button>
         <button class="secondary" data-kind="privkey">${t("backup.downloadPrivkey")}</button>
       </div>
+      <p class="success hidden" data-field="usb-saved"></p>
     `;
+    // Part sauvegardée : écrite sur une clé USB, ou ses DEUX fichiers
+    // téléchargés (une part ne sert qu'avec sa clé privée). Chaque changement
+    // met à jour la coche et prévient l'écran (bouton « Continuer »).
+    const saved = { usb: false, share: false, privkey: false };
+    const statusEl = item.querySelector('[data-field="status"]');
+    const refreshStatus = () => {
+      const done = saved.usb || (saved.share && saved.privkey);
+      item.dataset.saved = done ? "1" : "";
+      statusEl.textContent = done ? t("backup.statusDone") : t("backup.statusTodo");
+      statusEl.classList.toggle("done", done);
+      container.dispatchEvent(new Event("backup-progress"));
+    };
+    item._markSaved = (kind) => {
+      saved[kind] = true;
+      refreshStatus();
+    };
+    const markDownloaded = (button, kind) => {
+      button.textContent = t(kind === "share" ? "backup.shareDownloaded" : "backup.privkeyDownloaded");
+      item._markSaved(kind);
+    };
+    item.querySelector('[data-kind="usb"]').addEventListener("click", () => openUsbModal({ mode: "one", backup, item }));
+    // Bouton gardé AVANT l'attente : après un `await`, `e.currentTarget` est vide.
     item.querySelector('[data-kind="share"]').addEventListener("click", async (e) => {
+      const button = e.currentTarget;
       try {
-        await saveBase64ToFile(backup.encrypted_share_b64, `${backup.label}_share.asc`);
+        // `false` : boîte « Enregistrer sous » annulée, rien d'enregistré.
+        if (await saveBase64ToFile(backup.encrypted_share_b64, `${backup.label}_share.asc`)) markDownloaded(button, "share");
       } catch (err) {
         alert(t("common.saveFailed", { err }));
       }
     });
     item.querySelector('[data-kind="privkey"]').addEventListener("click", async (e) => {
+      const button = e.currentTarget;
       try {
-        await saveBase64ToFile(backup.privkey_armored_b64, `${backup.label}_privkey.asc`);
+        if (await saveBase64ToFile(backup.privkey_armored_b64, `${backup.label}_privkey.asc`)) markDownloaded(button, "privkey");
       } catch (err) {
         alert(t("common.saveFailed", { err }));
       }
     });
     container.appendChild(item);
+    refreshStatus();
   });
+  // Tout le kit sur une seule clé : plus simple, mais cette clé suffit alors à
+  // tout récupérer (confirmé par une boîte native côté Rust).
+  const all = document.createElement("div");
+  all.className = "backup-all";
+  const allButton = document.createElement("button");
+  allButton.className = "primary";
+  allButton.textContent = t("backup.saveAllUsb");
+  const allHint = document.createElement("p");
+  allHint.className = "backup-all-warning";
+  allHint.textContent = t("backup.saveAllHint");
+  const allSaved = document.createElement("p");
+  allSaved.className = "success hidden";
+  allButton.addEventListener("click", () => openUsbModal({ mode: "all", backups, container, saved: allSaved }));
+  all.append(allButton, allHint, allSaved);
+  container.appendChild(all);
 }
 
-document.getElementById("backup-confirm").addEventListener("change", (e) => {
-  document.getElementById("backup-continue").disabled = !e.target.checked;
-});
+// « Continuer » : seulement une fois les 3 parts sauvegardées (coches) ET la
+// confirmation cochée — elle-même activable seulement à ce moment-là.
+function updateBackupContinue() {
+  const items = [...document.querySelectorAll("#backup-list .backup-item")];
+  const saved = items.filter((item) => item.dataset.saved === "1").length;
+  const all = items.length > 0 && saved === items.length;
+  const progress = document.getElementById("backup-progress");
+  progress.textContent = all ? t("backup.progressDone", { total: items.length }) : t("backup.progress", { n: saved, total: items.length });
+  progress.classList.toggle("done", all);
+  const confirm = document.getElementById("backup-confirm");
+  confirm.disabled = !all;
+  if (!all) confirm.checked = false;
+  document.getElementById("backup-continue").disabled = !(all && confirm.checked);
+}
+
+document.getElementById("backup-list").addEventListener("backup-progress", updateBackupContinue);
+document.getElementById("backup-confirm").addEventListener("change", updateBackupContinue);
 
 document.getElementById("backup-continue").addEventListener("click", () => {
   if (pendingCreateResult) {
@@ -1435,8 +1580,23 @@ async function showUnlockView() {
   divider.classList.toggle("hidden", !enrolled);
 }
 
-document.getElementById("goto-restore").addEventListener("click", () => showView("restore"));
-document.getElementById("goto-unlock").addEventListener("click", () => showUnlockView());
+// Restauration ouverte depuis le déverrouillage ou depuis le premier lancement
+// (« J'ai déjà un portefeuille ») : Annuler ramène à l'écran d'origine.
+let restoreOrigin = "unlock";
+
+function openRestore(origin) {
+  restoreOrigin = origin;
+  showView("restore");
+  startUsbRestore();
+}
+
+document.getElementById("goto-restore").addEventListener("click", () => openRestore("unlock"));
+document.getElementById("onboarding-goto-restore").addEventListener("click", () => openRestore("onboarding"));
+document.getElementById("goto-unlock").addEventListener("click", () => {
+  stopUsbRestore(true);
+  if (restoreOrigin === "onboarding") showView("onboarding");
+  else showUnlockView();
+});
 
 // Pas de confirm() JavaScript : la confirmation est une boîte NATIVE côté Rust
 // (`confirm_reset_native`), la seule qu'un frontend compromis ne peut pas sauter.
@@ -1760,6 +1920,7 @@ restoreSubmitBtn.addEventListener("click", withBusyButton(restoreSubmitBtn, asyn
       passphrase2,
     });
 
+    stopUsbRestore(true);
     renderDashboardAddresses(singleProfileList(addresses));
     showView("dashboard");
     refreshAllBalances();
@@ -1770,6 +1931,239 @@ restoreSubmitBtn.addEventListener("click", withBusyButton(restoreSubmitBtn, asyn
     document.getElementById("restore-new-password").value = "";
     document.getElementById("restore-passphrase-1").value = "";
     document.getElementById("restore-passphrase-2").value = "";
+  }
+}));
+
+// --- Sauvegarde et restauration par clé USB (core/src/usb_backup.rs) -------
+// Les clés sont détectées en interrogeant la liste des lecteurs amovibles à
+// intervalle court tant que la fenêtre concernée est ouverte : brancher la clé
+// suffit. Les secrets ne font que transiter vers Rust (écriture) ; à la
+// restauration, les parts lues restent côté Rust, l'interface ne voit que le
+// numéro de part et le kit.
+const USB_POLL_MS = 1500;
+
+function usbDriveName(drive) {
+  const letter = drive.root.replace(/\\$/, "");
+  return drive.label ? `${drive.label} (${letter})` : letter;
+}
+
+let usbModalTimer = null;
+const usbModal = document.getElementById("usb-modal");
+
+// `target` : { mode: "one", backup, item } (une part, sur sa propre clé) ou
+// { mode: "all", backups, container, saved } (tout le kit sur une clé).
+function openUsbModal(target) {
+  const all = target.mode === "all";
+  document.getElementById("usb-modal-title").textContent = all ? t("usb.titleAll") : t("usb.title", { n: target.backup.part });
+  document.getElementById("usb-modal-hint").textContent = all ? t("usb.hintAll") : t("usb.hint");
+  hideError(document.getElementById("usb-error"));
+  document.getElementById("usb-success").classList.add("hidden");
+  document.getElementById("usb-drive-list").replaceChildren();
+  usbModal.classList.remove("hidden");
+  const refresh = () => refreshUsbDrives(target);
+  refresh();
+  clearInterval(usbModalTimer);
+  usbModalTimer = setInterval(refresh, USB_POLL_MS);
+}
+
+function closeUsbModal() {
+  clearInterval(usbModalTimer);
+  usbModalTimer = null;
+  usbModal.classList.add("hidden");
+}
+
+document.getElementById("usb-close").addEventListener("click", closeUsbModal);
+
+let usbWriting = false;
+
+async function refreshUsbDrives(target) {
+  if (usbWriting) return;
+  const all = target.mode === "all";
+  const kit = all ? target.backups[0].kit_id : target.backup.kit_id;
+  let drives;
+  try {
+    drives = await invoke("list_backup_drives");
+  } catch (e) {
+    console.error(e);
+    return;
+  }
+  const list = document.getElementById("usb-drive-list");
+  if (drives.length === 0) {
+    list.replaceChildren(Object.assign(document.createElement("li"), { className: "muted", textContent: t("usb.waiting") }));
+    return;
+  }
+  list.replaceChildren(
+    ...drives.map((drive) => {
+      const li = document.createElement("li");
+      li.className = "usb-drive";
+      const name = document.createElement("span");
+      name.textContent = `${usbDriveName(drive)} — ${t("usb.free", { mb: Math.floor(drive.free_bytes / 1048576).toLocaleString(chartLocale()) })}`;
+      const button = document.createElement("button");
+      button.className = "secondary";
+      const shares = drive.shares || [];
+      const otherKit = shares.some((s) => s.kit !== kit);
+      const otherPart = all ? null : shares.find((s) => s.kit === kit && s.part !== target.backup.part);
+      if (otherKit) {
+        button.disabled = true;
+        button.textContent = t("usb.otherKit");
+      } else if (otherPart) {
+        button.disabled = true;
+        button.textContent = t("usb.otherPart", { part: otherPart.part });
+      } else {
+        if (all) button.textContent = shares.length ? t("usb.rewriteAll") : t("usb.writeAll");
+        else button.textContent = shares.length ? t("usb.rewrite") : t("usb.write", { n: target.backup.part });
+        button.addEventListener("click", () => writeToUsb(target, drive, button));
+      }
+      li.append(name, button);
+      return li;
+    })
+  );
+}
+
+async function writeToUsb(target, drive, button) {
+  const errorEl = document.getElementById("usb-error");
+  const successEl = document.getElementById("usb-success");
+  hideError(errorEl);
+  successEl.classList.add("hidden");
+  usbWriting = true;
+  button.disabled = true;
+  button.textContent = t("usb.writing");
+  try {
+    if (target.mode === "all") {
+      // Champs en snake_case : structure imbriquée, désérialisée telle quelle.
+      const shares = target.backups.map((b) => ({
+        part: b.part,
+        encrypted_share_b64: b.encrypted_share_b64,
+        privkey_armored_b64: b.privkey_armored_b64,
+        passphrase: b.passphrase,
+      }));
+      const label = await invoke("save_kit_to_usb", { root: drive.root, kitId: target.backups[0].kit_id, shares });
+      if (label === null) return; // refusé dans la boîte de confirmation
+      const name = label || drive.root;
+      successEl.textContent = t("usb.doneAll", { label: name });
+      successEl.classList.remove("hidden");
+      target.saved.textContent = t("backup.savedUsb", { label: name });
+      target.saved.classList.remove("hidden");
+      target.container.querySelectorAll('[data-field="usb-saved"]').forEach((el) => {
+        el.textContent = t("backup.savedUsb", { label: name });
+        el.classList.remove("hidden");
+      });
+      target.container.querySelectorAll(".backup-item").forEach((el) => el._markSaved("usb"));
+    } else {
+      const backup = target.backup;
+      const label = await invoke("save_backup_to_usb", {
+        root: drive.root,
+        kitId: backup.kit_id,
+        part: backup.part,
+        encryptedShareB64: backup.encrypted_share_b64,
+        privkeyArmoredB64: backup.privkey_armored_b64,
+        passphrase: backup.passphrase,
+      });
+      const name = label || drive.root;
+      successEl.textContent = t("usb.done", { n: backup.part, label: name });
+      successEl.classList.remove("hidden");
+      const saved = target.item.querySelector('[data-field="usb-saved"]');
+      saved.textContent = t("backup.savedUsb", { label: name });
+      saved.classList.remove("hidden");
+      target.item._markSaved("usb");
+    }
+  } catch (e) {
+    showError(errorEl, String(e));
+  } finally {
+    usbWriting = false;
+    refreshUsbDrives(target);
+  }
+}
+
+let usbRestoreTimer = null;
+// Parts déjà lues : "kit:part" -> nom de la clé.
+const usbRestoreLoaded = new Map();
+
+function startUsbRestore() {
+  usbRestoreLoaded.clear();
+  invoke("usb_restore_clear").catch((e) => console.error(e));
+  renderUsbRestore();
+  pollUsbRestore();
+  clearInterval(usbRestoreTimer);
+  usbRestoreTimer = setInterval(pollUsbRestore, USB_POLL_MS);
+}
+
+function stopUsbRestore(forget) {
+  clearInterval(usbRestoreTimer);
+  usbRestoreTimer = null;
+  if (forget) {
+    usbRestoreLoaded.clear();
+    invoke("usb_restore_clear").catch((e) => console.error(e));
+  }
+}
+
+async function pollUsbRestore() {
+  let drives;
+  try {
+    drives = await invoke("list_backup_drives");
+  } catch (e) {
+    console.error(e);
+    return;
+  }
+  for (const drive of drives) {
+    const shares = drive.shares || [];
+    if (shares.every((s) => usbRestoreLoaded.has(`${s.kit}:${s.part}`))) continue;
+    try {
+      const read = await invoke("usb_restore_load", { root: drive.root });
+      read.forEach((s) => usbRestoreLoaded.set(`${s.kit}:${s.part}`, usbDriveName(drive)));
+    } catch (e) {
+      showError(document.getElementById("restore-error"), String(e));
+    }
+  }
+  renderUsbRestore();
+}
+
+// Deux parts différentes d'un même kit lues : restauration possible.
+function usbRestoreReady() {
+  const byKit = new Map();
+  for (const key of usbRestoreLoaded.keys()) {
+    const kit = key.split(":")[0];
+    byKit.set(kit, (byKit.get(kit) || 0) + 1);
+  }
+  return [...byKit.values()].some((count) => count >= 2);
+}
+
+function renderUsbRestore() {
+  const list = document.getElementById("restore-usb-status");
+  const items = [...usbRestoreLoaded.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, name]) => Object.assign(document.createElement("li"), { textContent: t("restore.usbPart", { n: key.split(":")[1], label: name }) }));
+  if (items.length === 0) items.push(Object.assign(document.createElement("li"), { className: "muted", textContent: t("restore.usbWaiting") }));
+  const ready = usbRestoreReady();
+  if (ready) items.push(Object.assign(document.createElement("li"), { className: "success", textContent: t("restore.usbReady") }));
+  list.replaceChildren(...items);
+  document.getElementById("restore-usb-submit").classList.toggle("hidden", !ready);
+}
+
+const restoreUsbSubmitBtn = document.getElementById("restore-usb-submit");
+restoreUsbSubmitBtn.addEventListener("click", withBusyButton(restoreUsbSubmitBtn, async () => {
+  const errorEl = document.getElementById("restore-error");
+  hideError(errorEl);
+  const newPassword = document.getElementById("restore-new-password").value;
+  if (newPassword.length < MIN_PASSWORD_LENGTH) {
+    showError(errorEl, t("common.passwordMinLength", { min: MIN_PASSWORD_LENGTH }));
+    return;
+  }
+  if (estimatePasswordStrength(newPassword) === "faible") {
+    showError(errorEl, t("common.passwordTooWeak"));
+    return;
+  }
+  try {
+    const addresses = await invoke("restore_wallet_from_usb", { newPassword });
+    stopUsbRestore(true);
+    renderDashboardAddresses(singleProfileList(addresses));
+    showView("dashboard");
+    refreshAllBalances();
+    startBalanceAutoRefresh();
+  } catch (e) {
+    showError(errorEl, String(e));
+  } finally {
+    document.getElementById("restore-new-password").value = "";
   }
 }));
 

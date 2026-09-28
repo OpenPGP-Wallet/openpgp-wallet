@@ -31,6 +31,7 @@
         <input id="onboarding-password-confirm" type="password" data-i18n-placeholder="onboarding.confirmPlaceholder" placeholder="Retapez le mot de passe" />
         <p id="onboarding-error" class="error hidden"></p>
         <button id="onboarding-submit" class="primary" data-i18n="onboarding.submit">Créer mon portefeuille</button>
+        <button id="onboarding-goto-restore" class="link" data-i18n="onboarding.haveWallet">J'ai déjà un portefeuille</button>
       </div>
     </main>
 
@@ -46,8 +47,9 @@
           quelque part de sûr, séparément.
         </p>
         <div id="backup-list" class="backup-list"></div>
+        <p id="backup-progress" class="backup-progress"></p>
         <label class="checkbox-row">
-          <input type="checkbox" id="backup-confirm" />
+          <input type="checkbox" id="backup-confirm" disabled />
           <span data-i18n="backup.confirmCheckbox">J'ai téléchargé et sauvegardé mes 3 parts et leurs mots de passe</span>
         </label>
         <button id="backup-continue" class="primary" disabled data-i18n="backup.continue">Continuer vers mon portefeuille</button>
@@ -78,9 +80,15 @@
       <div class="card wide">
         <h1 data-i18n="restore.title">Restaurer depuis une sauvegarde</h1>
         <p class="muted" data-i18n="restore.subtitle">
-          Fournissez 2 des 3 fichiers de part + leur mot de passe, et choisissez un nouveau
-          mot de passe pour cet appareil.
+          Branchez 2 de vos 3 clés USB de sauvegarde, ou fournissez 2 fichiers de part avec leur
+          mot de passe, puis choisissez un nouveau mot de passe pour cet appareil.
         </p>
+        <fieldset class="usb-restore">
+          <legend data-i18n="restore.usbTitle">Avec mes clés USB de sauvegarde</legend>
+          <p class="muted" data-i18n="restore.usbHint">Branchez vos clés de sauvegarde, l'une après l'autre si besoin : l'app les lit toute seule. Deux parts différentes suffisent.</p>
+          <ul id="restore-usb-status" class="usb-list"></ul>
+        </fieldset>
+        <p class="divider-text" data-i18n="restore.orFiles">ou avec les fichiers</p>
         <div class="restore-grid">
           <fieldset>
             <legend data-i18n="restore.share1">Part n°1</legend>
@@ -106,6 +114,7 @@
         <p id="restore-strength" class="muted strength-hint"></p>
         <p id="restore-error" class="error hidden"></p>
         <div class="row-buttons">
+          <button id="restore-usb-submit" class="primary hidden" data-i18n="restore.usbSubmit">Restaurer depuis les clés USB</button>
           <button id="restore-submit" class="primary" data-i18n="restore.submit">Restaurer</button>
           <button id="goto-unlock" class="link" data-i18n="common.cancel">Annuler</button>
         </div>
@@ -897,6 +906,18 @@
     </div>
 
     <!-- Modale QR code -->
+    <!-- Sauvegarde d'une part sur clé USB : clés détectées automatiquement -->
+    <div id="usb-modal" class="modal-overlay hidden">
+      <div class="modal">
+        <h2 id="usb-modal-title"></h2>
+        <p id="usb-modal-hint" class="muted"></p>
+        <ul id="usb-drive-list" class="usb-list"></ul>
+        <p id="usb-error" class="error hidden"></p>
+        <p id="usb-success" class="success hidden"></p>
+        <button id="usb-close" class="link" data-i18n="common.close">Fermer</button>
+      </div>
+    </div>
+
     <div id="qr-modal" class="modal-overlay hidden">
       <div class="modal narrow-modal">
         <h2 data-i18n="wallet.receive">Recevoir</h2>

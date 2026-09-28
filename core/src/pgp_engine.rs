@@ -127,7 +127,7 @@ impl DecryptionHelper for DecryptionKeyHelper {
                 return Ok(None);
             }
         }
-        Err(anyhow!("aucune part PKESK n'a pu être déchiffrée avec cette clé").into())
+        Err(anyhow!("aucune part PKESK n'a pu être déchiffrée avec cette clé"))
     }
 }
 
@@ -141,8 +141,8 @@ pub fn decrypt_share(encrypted: &[u8], privkey_path: &str, passphrase: &str) -> 
 
     let password = Password::from(passphrase);
 
-    let mut keypair = None;
-    for key_amalgamation in cert
+    // Première sous-clé de chiffrement utilisable.
+    let key_amalgamation = cert
         .keys()
         .with_policy(&policy, None)
         .supported()
@@ -150,19 +150,16 @@ pub fn decrypt_share(encrypted: &[u8], privkey_path: &str, passphrase: &str) -> 
         .revoked(false)
         .for_transport_encryption()
         .secret()
-    {
-        let key = key_amalgamation.key().clone();
-        let key = if key.secret().is_encrypted() {
-            key.decrypt_secret(&password)
-                .context("passphrase incorrecte ou clé privée corrompue")?
-        } else {
-            key
-        };
-        keypair = Some(key.into_keypair().context("clé privée inutilisable pour le déchiffrement")?);
-        break;
-    }
-
-    let keypair = keypair.ok_or_else(|| anyhow!("aucune clé de déchiffrement trouvée dans {privkey_path}"))?;
+        .next()
+        .ok_or_else(|| anyhow!("aucune clé de déchiffrement trouvée dans {privkey_path}"))?;
+    let key = key_amalgamation.key().clone();
+    let key = if key.secret().is_encrypted() {
+        key.decrypt_secret(&password)
+            .context("passphrase incorrecte ou clé privée corrompue")?
+    } else {
+        key
+    };
+    let keypair = key.into_keypair().context("clé privée inutilisable pour le déchiffrement")?;
 
     let helper = DecryptionKeyHelper { keypair };
     let mut decryptor = DecryptorBuilder::from_bytes(encrypted)

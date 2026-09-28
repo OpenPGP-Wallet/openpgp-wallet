@@ -516,6 +516,32 @@ fn encrypt_with_armored_pubkey(data: &[u8], tmp_path: &Path, pubkey_armored: &[u
     pgp_engine::encrypt_share(data, &tmp_path.to_string_lossy())
 }
 
+/// Identifiant d'un kit de sauvegarde : empreinte de ses parts CHIFFRÉES (rien
+/// du portefeuille ne s'en déduit). Même valeur pour les 3 parts d'un kit ;
+/// sert à refuser deux parts d'un même kit sur une même clé USB.
+pub fn backup_kit_id(backups: &[BackupShare]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    for backup in backups {
+        hasher.update((backup.encrypted_share.len() as u64).to_be_bytes());
+        hasher.update(&backup.encrypted_share);
+    }
+    hex::encode(&hasher.finalize()[..12])
+}
+
+/// Vérifie qu'une part de sauvegarde se déchiffre avec sa clé privée et son mot
+/// de passe (après son écriture sur une clé USB, relue depuis la clé) ; la part
+/// déchiffrée est effacée de la mémoire aussitôt.
+pub fn verify_backup_share(data_dir: &Path, encrypted: &[u8], privkey_armored: &[u8], passphrase: &str) -> Result<()> {
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    std::fs::create_dir_all(data_dir)?;
+    let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = data_dir.join(format!("tmp_verify_backup_{}_{n}.asc", std::process::id()));
+    let share = Zeroizing::new(decrypt_with_armored_privkey(encrypted, &tmp, privkey_armored, passphrase)?);
+    anyhow::ensure!(!share.is_empty(), "part de sauvegarde vide");
+    Ok(())
+}
+
 fn decrypt_with_armored_privkey(data: &[u8], tmp_path: &Path, privkey_armored: &[u8], passphrase: &str) -> Result<Vec<u8>> {
     std::fs::write(tmp_path, privkey_armored)?;
     let _guard = TempFileGuard(tmp_path);
