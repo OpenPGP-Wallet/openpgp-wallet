@@ -2360,11 +2360,18 @@ async function refreshPrices() {
   }
 }
 
+// Capitalisation abrégée, dans la langue choisie : « 1,67 T$ », « 325,43 Md$ » /
+// « $1.67T », « $325.43B ».
 function formatMarketCap(value) {
-  if (value >= 1e12) return `${(value / 1e12).toLocaleString("fr-FR", { maximumFractionDigits: 2 })} T$`;
-  if (value >= 1e9) return `${(value / 1e9).toLocaleString("fr-FR", { maximumFractionDigits: 2 })} Md$`;
-  if (value >= 1e6) return `${(value / 1e6).toLocaleString("fr-FR", { maximumFractionDigits: 2 })} M$`;
-  return `${value.toLocaleString("fr-FR")} $`;
+  const en = currentLang === "en";
+  const scaled = (n, frUnit, enUnit) => {
+    const shown = n.toLocaleString(chartLocale(), { maximumFractionDigits: 2 });
+    return en ? `$${shown}${enUnit}` : `${shown} ${frUnit}$`;
+  };
+  if (value >= 1e12) return scaled(value / 1e12, "T", "T");
+  if (value >= 1e9) return scaled(value / 1e9, "Md", "B");
+  if (value >= 1e6) return scaled(value / 1e6, "M", "M");
+  return withDollar(value.toLocaleString(chartLocale()));
 }
 
 // Déjà triée par capitalisation décroissante côté Rust (voir
@@ -2373,14 +2380,24 @@ function formatMarketCap(value) {
 // textes changés seulement s'ils diffèrent, mini-courbe remplacée quand la
 // nouvelle arrive) : reconstruire la liste faisait disparaître puis réapparaître
 // toutes les mini-courbes et perdre le focus clavier d'une ligne.
+// Logo des cryptos suivies : mêmes fichiers que les cartes du portefeuille.
+const MARKET_ICONS = { BTC: "/assets/btc.webp", ETH: "/assets/eth.svg", SOL: "/assets/sol.png", USDC: "/assets/usdc.png" };
+
 function createMarketRow(coin) {
   const row = document.createElement("div");
   row.className = "market-row clickable";
   row.dataset.symbol = coin.symbol;
-  row.innerHTML = `<div class="market-name"><span class="market-symbol"></span></div><div class="market-spark"></div>
+  row.innerHTML = `<div class="market-name"><span class="market-label"><span class="market-symbol"></span></span></div><div class="market-spark"></div>
     <div class="market-figures"><div class="market-change"></div><div class="market-price"></div><div class="market-cap"></div></div>`;
-  row.querySelector(".market-name").prepend(document.createTextNode(coin.name));
+  row.querySelector(".market-label").prepend(document.createTextNode(coin.name));
   row.querySelector(".market-symbol").textContent = coin.symbol;
+  if (MARKET_ICONS[coin.symbol]) {
+    const icon = document.createElement("img");
+    icon.className = coin.symbol === "SOL" ? "coin-icon coin-icon-sol" : "coin-icon";
+    icon.src = MARKET_ICONS[coin.symbol];
+    icon.alt = "";
+    row.querySelector(".market-name").prepend(icon);
+  }
   // Un clic (ou Entrée) ouvre la courbe en grand, période au choix.
   const openChart = () =>
     openChartModal({
@@ -2408,16 +2425,23 @@ function setText(el, text) {
 }
 
 function fillMarketRow(row, coin) {
-  setText(row.querySelector(".market-price"), coin.price_usd.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " $");
+  const decimals = { minimumFractionDigits: 2, maximumFractionDigits: 2 };
+  setText(row.querySelector(".market-price"), withDollar(coin.price_usd.toLocaleString(chartLocale(), decimals)));
   setText(row.querySelector(".market-cap"), formatMarketCap(coin.market_cap_usd));
   const changeDiv = row.querySelector(".market-change");
   changeDiv.classList.remove("up", "down");
   if (coin.change_24h_percent == null) {
     setText(changeDiv, "—");
   } else {
-    const isUp = coin.change_24h_percent >= 0;
-    changeDiv.classList.add(isUp ? "up" : "down");
-    setText(changeDiv, `${isUp ? "▲" : "▼"} ${Math.abs(coin.change_24h_percent).toFixed(2)} %`);
+    const change = coin.change_24h_percent;
+    const shown = Math.abs(change).toLocaleString(chartLocale(), decimals) + (currentLang === "en" ? "%" : "\u00a0%");
+    if (Math.abs(change) < 0.005) {
+      // Arrondie à 0,00 % : ni hausse ni baisse (USDC, typiquement).
+      setText(changeDiv, shown);
+    } else {
+      changeDiv.classList.add(change > 0 ? "up" : "down");
+      setText(changeDiv, `${change > 0 ? "▲" : "▼"} ${shown}`);
+    }
   }
   // Courbe des dernières 24 h (comme la variation affichée) ; l'ancienne reste
   // affichée jusqu'à l'arrivée de la nouvelle.
