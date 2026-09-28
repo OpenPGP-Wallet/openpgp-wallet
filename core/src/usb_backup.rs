@@ -72,9 +72,25 @@ pub struct ShareFiles {
 pub fn removable_drives() -> Vec<RemovableDrive> {
     use windows::core::HSTRING;
     use windows::Win32::Storage::FileSystem::{GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW};
+    use windows::Win32::System::Diagnostics::Debug::{SetThreadErrorMode, SEM_FAILCRITICALERRORS, SEM_NOOPENFILEERRORBOX, THREAD_ERROR_MODE};
     /// `DRIVE_REMOVABLE` : clé USB, carte mémoire (un disque dur externe USB
     /// se déclare « fixe » et n'est pas proposé).
     const DRIVE_REMOVABLE: u32 = 2;
+    /// Rétablit le mode d'erreur précédent du fil en fin de détection.
+    struct ErrorModeGuard(THREAD_ERROR_MODE);
+    impl Drop for ErrorModeGuard {
+        fn drop(&mut self) {
+            let _ = unsafe { SetThreadErrorMode(self.0, None) };
+        }
+    }
+    // Lecteur sans support (lecteur de cartes vide) : sans ce mode, Windows
+    // peut afficher sa boîte « Aucun disque dans le lecteur » à chaque
+    // détection — toutes les 1,5 s tant que la fenêtre USB est ouverte. Mode
+    // du seul fil courant, rétabli à la fin.
+    let mut previous = THREAD_ERROR_MODE(0);
+    let _guard = unsafe { SetThreadErrorMode(SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX, Some(&mut previous)) }
+        .ok()
+        .map(|()| ErrorModeGuard(previous));
     let mask = unsafe { GetLogicalDrives() };
     let mut drives = Vec::new();
     for index in 0..26u8 {

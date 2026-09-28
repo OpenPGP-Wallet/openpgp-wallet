@@ -140,12 +140,14 @@ sequoia-openpgp = { version = "2.1", default-features = false, features = ["cryp
 # *transitivement* (v0.61.3, via Tauri/WebView2/tao pour le fenêtrage) mais sans ces
 # feature flags : ceci en fait une dépendance directe.
 # "Win32_Storage_FileSystem" : détection des clés USB (lecteurs amovibles) pour la
-# sauvegarde du kit de récupération, voir usb_backup.rs.
+# sauvegarde du kit de récupération, voir usb_backup.rs ("Win32_System_Diagnostics_Debug" :
+# SetThreadErrorMode, pas de boîte système pour un lecteur vide).
 windows = { version = "0.61", features = [
     "Win32_Security_Cryptography",
     "Win32_Foundation",
     "Security_Credentials_UI",
     "Win32_Storage_FileSystem",
+    "Win32_System_Diagnostics_Debug",
 ] }
 
 # macOS/Linux/iOS/Android : "crypto-cng" n'existe pas hors Windows (API Windows
