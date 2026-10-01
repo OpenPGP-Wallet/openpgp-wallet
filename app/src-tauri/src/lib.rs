@@ -2071,13 +2071,6 @@ fn send_warnings(dir: &std::path::Path, network: &str, coin: &str, to: &str, act
     (!lines.is_empty()).then(|| lines.join("\n\n"))
 }
 
-/// Frais EVM MAXIMUM (prix du gas × limite de gas) : une transaction legacy
-/// paie `gas consommé × prix`, jamais plus que la limite — c'est donc une
-/// borne réelle, pas une estimation qui pourrait être dépassée.
-fn evm_fee_line(gas_price: u128, gas_limit: u64) -> String {
-    evm_fee_line_for(api::EvmFee { gas_price, gas_limit, l1_fee: 0 }, "ETH")
-}
-
 /// Ligne de frais d'un envoi EVM, dans la monnaie de frais du réseau (`symbol`) :
 /// maximum = gas × prix, plus les frais de publication sur Ethereum (réseaux
 /// OP Stack, estimés) le cas échéant.
@@ -2421,9 +2414,17 @@ fn format_1e8(amount: u64) -> String {
 }
 
 #[tauri::command]
-async fn get_swap_quote(from_coin: String, to_coin: String, amount: String, destination: String) -> Result<SwapQuoteDto, String> {
+async fn get_swap_quote(
+    from_coin: String,
+    from_network: String,
+    to_coin: String,
+    to_network: String,
+    amount: String,
+    destination: String,
+) -> Result<SwapQuoteDto, String> {
     run_blocking(move || {
-        let quote = api::get_swap_quote(&from_coin, &to_coin, &amount, &destination).t_err()?;
+        let (from, to) = thorchain_pair(&from_coin, &from_network, &to_coin, &to_network)?;
+        let quote = api::get_swap_quote(from, to, &amount, &destination).t_err()?;
         Ok(SwapQuoteDto {
             inbound_address: quote.inbound_address,
             memo: quote.memo,
@@ -2432,6 +2433,61 @@ async fn get_swap_quote(from_coin: String, to_coin: String, amount: String, dest
         })
     })
     .await
+}
+
+/// Paire d'échange THORChain désignée par l'interface : refusée si aucune route
+/// THORChain directe ne la relie (voir `swap_routes::direct`).
+fn thorchain_pair(
+    from_coin: &str,
+    from_network: &str,
+    to_coin: &str,
+    to_network: &str,
+) -> Result<(&'static pgp_wallet_poc::thorchain_rpc::ThorAsset, &'static pgp_wallet_poc::thorchain_rpc::ThorAsset), String> {
+    use pgp_wallet_poc::swap_routes;
+    let route = swap_routes::find(from_coin, from_network).zip(swap_routes::find(to_coin, to_network)).and_then(|(f, t)| swap_routes::direct(f, t));
+    if route != Some(swap_routes::Protocol::Thorchain) {
+        return Err(translate_error("échange non disponible entre ces deux cryptos"));
+    }
+    Ok((api::thorchain_asset(from_coin, from_network).t_err()?, api::thorchain_asset(to_coin, to_network).t_err()?))
+}
+
+/// Frais réseau maximum d'un échange depuis un réseau EVM : dépôt, plus les
+/// autorisations préalables, plus les frais de publication sur Ethereum (Base).
+fn evm_swap_fee_line(fees: &api::EvmSwapFees, symbol: &str) -> Result<String, String> {
+    let total = fees.max_total().t_err()? as f64 / 1e18;
+    let gwei = fees.deposit.gas_price as f64 / 1e9;
+    let l1 = (fees.deposit.l1_fee + fees.approve.l1_fee * fees.approvals as u128) as f64 / 1e18;
+    let mut line = lang(
+        &format!("Frais réseau maximum : {total:.8} {symbol} ({gwei:.4} gwei)"),
+        &format!("Maximum network fee: {total:.8} {symbol} ({gwei:.4} gwei)"),
+    )
+    .to_string();
+    if fees.approvals > 0 {
+        line.push_str(lang(", autorisation comprise", ", approval included"));
+    }
+    if l1 > 0.0 {
+        line.push_str(lang(&format!(", dont ≈ {l1:.8} {symbol} de publication sur Ethereum"), &format!(", incl. ≈ {l1:.8} {symbol} for posting to Ethereum")));
+    }
+    Ok(line)
+}
+
+#[derive(Serialize)]
+struct SwapPairDto {
+    from_coin: &'static str,
+    from_network: &'static str,
+    to_coin: &'static str,
+    to_network: &'static str,
+    protocol: pgp_wallet_poc::swap_routes::Protocol,
+}
+
+/// Paires d'échange possibles (voir `core/src/swap_routes.rs`) : ce que la
+/// fenêtre « Convertir » propose, et ce que les commandes d'échange acceptent.
+#[tauri::command]
+fn swap_pairs() -> Vec<SwapPairDto> {
+    pgp_wallet_poc::swap_routes::pairs()
+        .into_iter()
+        .map(|(from, to, protocol)| SwapPairDto { from_coin: from.coin, from_network: from.network, to_coin: to.coin, to_network: to.network, protocol })
+        .collect()
 }
 
 /// Confirmation native spécifique au swap : contrairement à un envoi normal,
@@ -2460,18 +2516,21 @@ async fn get_swap_quote(from_coin: String, to_coin: String, amount: String, dest
 /// détournement d'adresse (presse-papier, frontend compromis) chercherait à
 /// altérer, et que l'utilisateur PEUT vérifier lui-même contre l'adresse déjà
 /// affichée ailleurs dans l'app pour ce réseau.
+#[allow(clippy::too_many_arguments)]
 fn confirm_swap_native(
     app: &tauri::AppHandle,
     from_label: &str,
     amount: &str,
     expected_out: &str,
-    to_coin: &str,
+    to_symbol: &str,
     pay_to: &str,
     router: Option<&str>,
     final_destination: &str,
     network_fee_line: Option<&str>,
+    approval_line: Option<&str>,
 ) -> bool {
     let network_fee_line = network_fee_line.map(|f| format!("{f}\n")).unwrap_or_default();
+    let approval_line = approval_line.map(|a| format!("{a}\n")).unwrap_or_default();
     let from_label = dialog_label(from_label);
     let english = UI_LANG_IS_ENGLISH.load(Ordering::Relaxed);
     let vault_line = match (router, english) {
@@ -2489,13 +2548,11 @@ fn confirm_swap_native(
     };
     let message = if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
         format!(
-            "Swap via THORChain (external protocol, not audited by this app)\n\nFrom profile: {from_label}\nSending: {amount}\nExpected to receive: ~{expected_out} {}\n{vault_line}{arrival_line}{network_fee_line}\nIncludes THORChain's own network/liquidity fees, plus a 0.80% affiliate fee.\nThis is irreversible, and once sent this app can no longer track or reverse it.\n\nConfirm this swap?",
-            to_coin.to_uppercase()
+            "Swap via THORChain (external protocol, not audited by this app)\n\nFrom profile: {from_label}\nSending: {amount}\nExpected to receive: ~{expected_out} {to_symbol}\n{vault_line}{arrival_line}{approval_line}{network_fee_line}\nIncludes THORChain's own network/liquidity fees, plus a 0.80% affiliate fee.\nThis is irreversible, and once sent this app can no longer track or reverse it.\n\nConfirm this swap?"
         )
     } else {
         format!(
-            "Échange via THORChain (protocole externe, non audité par cette app)\n\nDepuis le profil : {from_label}\nEnvoi : {amount}\nRéception attendue : ~{expected_out} {}\n{vault_line}{arrival_line}{network_fee_line}\nInclut les frais propres à THORChain (réseau/liquidité), plus 0,80% de frais d'affiliation.\nC'est irréversible, et une fois envoyé cette app ne peut plus ni suivre ni annuler l'opération.\n\nConfirmer cet échange ?",
-            to_coin.to_uppercase()
+            "Échange via THORChain (protocole externe, non audité par cette app)\n\nDepuis le profil : {from_label}\nEnvoi : {amount}\nRéception attendue : ~{expected_out} {to_symbol}\n{vault_line}{arrival_line}{approval_line}{network_fee_line}\nInclut les frais propres à THORChain (réseau/liquidité), plus 0,80% de frais d'affiliation.\nC'est irréversible, et une fois envoyé cette app ne peut plus ni suivre ni annuler l'opération.\n\nConfirmer cet échange ?"
         )
     };
     app.dialog()
@@ -2507,10 +2564,13 @@ fn confirm_swap_native(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 async fn swap_transaction(
     password: String,
     from_coin: String,
+    from_network: String,
     to_coin: String,
+    to_network: String,
     amount: String,
     destination: String,
     profile_index: u32,
@@ -2519,15 +2579,11 @@ async fn swap_transaction(
     run_blocking(move || {
         let password = Zeroizing::new(password);
         let dir = data_dir(&app)?;
+        let (from, to) = thorchain_pair(&from_coin, &from_network, &to_coin, &to_network)?;
 
-        if !matches!(from_coin.as_str(), "sol" | "btc" | "evm") {
-            return Err(translate_error(&format!(
-                "envoi de swap non pris en charge pour cet actif : {from_coin}"
-            )));
-        }
         // Formes canoniques, affichées ET utilisées pour le devis et la signature
         // (voir `send_transaction`).
-        let amount = api::canonical_amount(&from_coin, &amount).t_err()?;
+        let amount = api::canonical_swap_amount(from, &amount).t_err()?;
         let destination = canonical_address_input(&destination)?;
 
         let from_label = api::list_profiles(&dir)
@@ -2538,21 +2594,33 @@ async fn swap_transaction(
 
         // Devis obtenu ICI, juste avant la confirmation, jamais mis en cache
         // (adresse de vault THORChain vivante, voir thorchain_rpc::SwapQuote).
-        let quote = api::get_swap_quote(&from_coin, &to_coin, &amount, &destination).t_err()?;
-        let amount_line = format!("{amount} {}", from_coin.to_uppercase());
+        let quote = api::get_swap_quote(from, to, &amount, &destination).t_err()?;
+        let amount_line = format!("{amount} {}", from.symbol);
 
-        // Frais réseau affichés AVANT confirmation (et, pour EVM, prix du gas
-        // réutilisé tel quel pour signer — voir `api::evm_gas_price_for_confirmation`).
-        // Swap mainnet uniquement dans tous les cas : les pools THORChain n'ont
-        // aucune existence sur les réseaux de test.
-        let evm_gas_price = if from_coin == "evm" {
-            Some(api::evm_gas_price_for_confirmation(evm_network("evm_mainnet")?).t_err()?)
-        } else {
-            None
+        // Frais réseau affichés AVANT confirmation (et, pour un réseau EVM, prix
+        // du gas réutilisé tel quel pour signer — voir
+        // `api::evm_gas_price_for_confirmation`). Réseaux principaux seulement :
+        // les pools THORChain n'existent pas sur les réseaux de test.
+        let evm_net = wallet_flow::evm_network(from.network);
+        let evm_gas_price = match evm_net {
+            Some(net) => Some(api::evm_gas_price_for_confirmation(net).t_err()?),
+            None => None,
         };
-        let network_fee_line = match from_coin.as_str() {
-            "evm" => evm_gas_price.map(|gp| evm_fee_line(gp, api::EVM_SWAP_MAX_GAS_LIMIT)),
-            "sol" => Some(lang("Frais réseau : 0,000005 SOL", "Network fee: 0.000005 SOL").to_string()),
+        let mut approval_line = None;
+        let network_fee_line = match (evm_net, evm_gas_price) {
+            (Some(net), Some(gas_price)) => {
+                let owner = app.state::<ProfileAddressCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).map(|(evm, _)| evm.clone());
+                let fees = api::evm_swap_fees(net, from, &quote, &amount, gas_price, owner.as_deref()).t_err()?;
+                if fees.approvals > 0 {
+                    let router = quote.router.as_deref().unwrap_or("?");
+                    approval_line = Some(lang(
+                        &format!("Autorisation préalable (transaction séparée) : le routeur {router} pourra prélever exactement {amount_line}, une seule fois."),
+                        &format!("Prior approval (separate transaction): router {router} will be allowed to take exactly {amount_line}, once."),
+                    ).to_string());
+                }
+                Some(evm_swap_fee_line(&fees, net.native_symbol)?)
+            }
+            _ if from.network == "sol_mainnet" => Some(lang("Frais réseau : 0,000005 SOL", "Network fee: 0.000005 SOL").to_string()),
             _ => Some(
                 lang(
                     &format!("Frais réseau : vitesse moyenne, au plus {} sat/vB", api::BTC_SWAP_MAX_FEE_RATE_SAT_VB),
@@ -2562,17 +2630,18 @@ async fn swap_transaction(
             ),
         };
 
-        let router_for_from_coin = if from_coin == "evm" { quote.router.as_deref() } else { None };
+        let router_for_source = if evm_net.is_some() { quote.router.as_deref() } else { None };
         if !confirm_swap_native(
             &app,
             &from_label,
             &amount_line,
             &format_1e8(quote.expected_amount_out),
-            &to_coin,
+            to.symbol,
             &quote.inbound_address,
-            router_for_from_coin,
+            router_for_source,
             &destination,
             network_fee_line.as_deref(),
+            approval_line.as_deref(),
         ) {
             return Err(translate_error("Échange annulé (confirmation refusée)."));
         }
@@ -2581,23 +2650,16 @@ async fn swap_transaction(
         // arbitraire, pendant lequel le vault peut tourner), mais refusé s'il ne
         // correspond plus à ce qui a été AFFICHÉ — voir
         // `api::refresh_swap_quote_matching`.
-        let quote = api::refresh_swap_quote_matching(&from_coin, &to_coin, &amount, &destination, &quote).t_err()?;
+        let quote = api::refresh_swap_quote_matching(from, to, &amount, &destination, &quote).t_err()?;
 
-        match from_coin.as_str() {
-            "sol" => {
-                let network = sol_network("sol_mainnet")?;
-                api::send_swap_sol(&dir, &password, network, &quote, &amount, profile_index).t_err()
+        match (from.network, evm_net, evm_gas_price) {
+            ("sol_mainnet", _, _) => api::send_swap_sol(&dir, &password, sol_network("sol_mainnet")?, &quote, &amount, profile_index).t_err(),
+            ("btc_mainnet", _, _) => api::send_swap_btc(&dir, &password, btc_network("btc_mainnet")?, &quote, &amount, profile_index).t_err(),
+            (_, Some(net), Some(gas_price)) if from.contract.is_some() => {
+                api::send_swap_erc20(&dir, &password, net, from, &quote, &amount, gas_price, profile_index).t_err()
             }
-            "btc" => {
-                let network = btc_network("btc_mainnet")?;
-                api::send_swap_btc(&dir, &password, network, &quote, &amount, profile_index).t_err()
-            }
-            "evm" => {
-                let network = evm_network("evm_mainnet")?;
-                let gas_price = evm_gas_price.ok_or_else(|| "prix du gas manquant".to_string())?;
-                api::send_swap_evm(&dir, &password, network, &quote, &amount, gas_price, profile_index).t_err()
-            }
-            other => Err(translate_error(&format!("envoi de swap non pris en charge pour cet actif : {other}"))),
+            (_, Some(net), Some(gas_price)) => api::send_swap_evm(&dir, &password, net, &quote, &amount, gas_price, profile_index).t_err(),
+            _ => Err(translate_error(&format!("envoi de swap non pris en charge pour cet actif : {from_coin}"))),
         }
     })
     .await
@@ -3621,6 +3683,7 @@ pub fn run() {
             send_usdc_transaction,
             get_swap_quote,
             swap_transaction,
+            swap_pairs,
             get_jupiter_quote,
             jupiter_swap_transaction,
             get_own_certificate,

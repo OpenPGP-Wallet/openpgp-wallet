@@ -67,10 +67,12 @@ function setWithCoinIcon(el, coin, text) {
   el.replaceChildren(...(icon ? [icon] : []), document.createTextNode(text));
 }
 
-// Échange (« Convertir ») : réseau sur lequel chaque crypto peut être
-// échangée (THORChain / Jupiter, voir SWAP_TO_OPTIONS) ; ailleurs, pas de
-// bouton.
-const SWAP_NETWORK = { evm: "evm_mainnet", btc: "btc_mainnet", sol: "sol_mainnet", usdc: "sol_mainnet" };
+// Échange (« Convertir ») : paires possibles, lues auprès de Rust au démarrage
+// (`swap_pairs`, core/src/swap_routes.rs) —
+// [{ from_coin, from_network, to_coin, to_network, protocol }].
+let swapPairs = [];
+
+const ICON_CONVERT = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h13l-3-3M20 16H7l3 3" /></svg>`;
 
 // Champ de montant : chiffres et un seul séparateur décimal (point ou virgule),
 // filtrés à la frappe plutôt que refusés après coup — un montant ne peut rien
@@ -163,6 +165,7 @@ function buildAssetCard(asset) {
           <p class="address" data-field="address"></p>
           <button class="qr-btn" data-action="copy-address" data-i18n-title="wallet.copyAddress">${ICON_COPY}</button>
           <button class="qr-btn" data-action="qr" data-i18n-title="wallet.showQr">${ICON_QR}</button>
+          <button class="convert-btn hidden" data-action="swap" data-i18n-title="wallet.convertHint">${ICON_CONVERT}<span data-i18n="wallet.convert">Convertir</span></button>
         </div>
         <div class="row-buttons">
           <button class="secondary" data-action="refresh" data-i18n="wallet.refresh">Actualiser</button>
@@ -740,16 +743,9 @@ const I18N = {
     "swap.subtitle":
       "Passe par un protocole externe non audité par cette app — voir \"Comment ça marche\" pour le détail. Chaque échange (cross-chain via THORChain ou SOL/USDC via Jupiter) inclut 0,80% de frais d'affiliation.",
     "swap.fromAsset": "Depuis",
-    "swap.fromSol": "Solana (SOL)",
-    "swap.fromUsdc": "USDC",
-    "swap.fromBtc": "Bitcoin (BTC)",
-    "swap.fromEth": "Ethereum (ETH)",
     "swap.toAsset": "Vers",
-    "swap.toBtc": "Bitcoin (BTC)",
-    "swap.toEth": "Ethereum (ETH)",
-    "swap.toUsdc": "USDC (via Jupiter, même portefeuille)",
-    "swap.toSol": "Solana (SOL, via Jupiter, même portefeuille)",
-    "swap.toSolCrossChain": "Solana (SOL)",
+    "swap.viaJupiter": "via Jupiter, même portefeuille",
+    "swap.unavailable": "Échange non disponible entre ces deux cryptos.",
     "swap.amount": "Montant",
     "swap.destination": "Adresse de destination",
     "swap.destinationHint":
@@ -1212,16 +1208,9 @@ const I18N = {
     "swap.subtitle":
       "Goes through an external protocol not audited by this app — see \"How it works\" for details. Every swap (cross-chain via THORChain or SOL/USDC via Jupiter) includes a 0.80% affiliate fee.",
     "swap.fromAsset": "From",
-    "swap.fromSol": "Solana (SOL)",
-    "swap.fromUsdc": "USDC",
-    "swap.fromBtc": "Bitcoin (BTC)",
-    "swap.fromEth": "Ethereum (ETH)",
     "swap.toAsset": "To",
-    "swap.toBtc": "Bitcoin (BTC)",
-    "swap.toEth": "Ethereum (ETH)",
-    "swap.toUsdc": "USDC (via Jupiter, same wallet)",
-    "swap.toSol": "Solana (SOL, via Jupiter, same wallet)",
-    "swap.toSolCrossChain": "Solana (SOL)",
+    "swap.viaJupiter": "via Jupiter, same wallet",
+    "swap.unavailable": "No swap available between these two cryptos.",
     "swap.amount": "Amount",
     "swap.destination": "Destination address",
     "swap.destinationHint": "Pre-filled with your own address on the chosen network — editable if you want to swap to a different address.",
@@ -3025,11 +3014,19 @@ function renderCardAddress(card) {
   card.querySelector('[data-field="address"]').textContent = address;
   // Copie affichée par le bouton « adresse » d'une carte repliée.
   card.querySelector('[data-field="collapsed-address"]').textContent = address;
-  // « Convertir » seulement là où l'échange existe (voir SWAP_NETWORK) : pas
-  // sur un réseau de test ni sur Arbitrum/Base, où il échangerait les fonds
-  // d'un autre réseau que celui affiché.
+  updateConvertButton(card);
+}
+
+// « Convertir » seulement là où un échange existe pour la crypto ET le réseau
+// affichés (voir `swapPairs`) : pas sur un réseau de test, ni là où il
+// échangerait les fonds d'un autre réseau que celui affiché.
+function updateConvertButton(card) {
   const convert = card.querySelector('[data-action="swap"]');
-  if (convert) convert.classList.toggle("hidden", !address || SWAP_NETWORK[coin] !== networkForCard(card));
+  if (!convert) return;
+  const coin = card.dataset.coin;
+  const network = networkForCard(card);
+  const available = swapPairs.some((p) => p.from_coin === coin && p.from_network === network);
+  convert.classList.toggle("hidden", !addressForCoin(coin, network) || !available);
 }
 
 function renderCardAddresses() {
@@ -4178,59 +4175,86 @@ sendPreviewConfirmBtn.addEventListener("click", withBusyButton(sendPreviewConfir
   }
 }));
 
-// --- Swap (THORChain cross-chain + Jupiter même-chaîne) ---------------------
-// Passe par un protocole externe non audité par cette app — THORChain pour
-// un swap cross-chain (vers BTC/ETH, voir core/src/thorchain_rpc.rs), Jupiter
-// pour SOL<->USDC dans le même portefeuille (voir core/src/jupiter_rpc.rs).
-// Actifs source limités à SOL/USDC (le moins de nouveau code, voir le plan
-// swap). Même principe en deux étapes que l'envoi normal (devis -> aperçu
-// stylé -> confirmation native), sauf que le devis lui-même est déjà une
-// étape réseau (donc pas juste une relecture du formulaire comme pour
-// l'envoi).
+// --- Échange (« Convertir ») -------------------------------------------------
+// Passe par un protocole externe non audité par cette app : THORChain pour un
+// échange entre réseaux (core/src/thorchain_rpc.rs), Jupiter dans le même
+// portefeuille Solana (core/src/jupiter_rpc.rs). Les paires proposées viennent
+// de Rust (`swapPairs`, core/src/swap_routes.rs) : l'interface ne propose que
+// ce que les commandes d'échange acceptent. Même principe en deux étapes que
+// l'envoi (devis -> aperçu -> confirmation native de Windows).
 
 const swapModal = document.getElementById("swap-modal");
 const swapPreviewModal = document.getElementById("swap-preview-modal");
 let swapContext = null;
 
-// Options "Vers" possibles selon l'actif "Depuis" : depuis SOL, on peut viser
-// BTC/ETH (cross-chain, via THORChain) ou USDC (même portefeuille, via
-// Jupiter) ; depuis USDC, seul SOL a du sens (Jupiter uniquement — THORChain
-// ne prend pas en charge un jeton SPL comme actif source dans cette v1) ;
-// depuis BTC/ETH, uniquement cross-chain via THORChain vers les deux autres
-// actifs natifs (pas de jeton SPL comme destination directe depuis une
-// chaîne non-Solana).
-const SWAP_TO_OPTIONS = {
-  sol: [
-    { value: "btc", key: "swap.toBtc", fallback: "Bitcoin (BTC)" },
-    { value: "evm", key: "swap.toEth", fallback: "Ethereum (ETH)" },
-    { value: "usdc", key: "swap.toUsdc", fallback: "USDC (via Jupiter, même portefeuille)" },
-  ],
-  usdc: [{ value: "sol", key: "swap.toSol", fallback: "Solana (SOL, via Jupiter, même portefeuille)" }],
-  btc: [
-    { value: "evm", key: "swap.toEth", fallback: "Ethereum (ETH)" },
-    { value: "sol", key: "swap.toSolCrossChain", fallback: "Solana (SOL)" },
-  ],
-  evm: [
-    { value: "btc", key: "swap.toBtc", fallback: "Bitcoin (BTC)" },
-    { value: "sol", key: "swap.toSolCrossChain", fallback: "Solana (SOL)" },
-  ],
-};
+invoke("swap_pairs")
+  .then((pairs) => {
+    swapPairs = pairs;
+    document.querySelectorAll(".wallet-card").forEach(updateConvertButton);
+  })
+  .catch((e) => console.error(e));
+
+const swapKey = (coin, network) => `${coin}@${network}`;
+
+function parseSwapKey(key) {
+  const [coin, network] = key.split("@");
+  return { coin, network };
+}
+
+// « USDC (USDC) — Base » ; réseau omis pour une crypto qui n'en a qu'un.
+function swapAssetLabel(coin, network) {
+  const asset = ASSET_BY_COIN[coin];
+  if (!asset) return coin;
+  const mainnets = asset.networks.filter((n) => !TEST_NETWORKS.includes(n));
+  const label = asset.name === asset.symbol ? asset.name : `${asset.name} (${asset.symbol})`;
+  return mainnets.length > 1 ? `${label} — ${t(`net.${network}`).split(" — ")[0]}` : label;
+}
+
+// Cryptos de départ : celles qu'un échange sait vendre, affichées dans le
+// portefeuille (plus celle de la carte d'où la fenêtre s'ouvre).
+function fillSwapFromOptions(selectedKey) {
+  const select = document.getElementById("swap-from-coin");
+  const keys = [...new Set(swapPairs.map((p) => swapKey(p.from_coin, p.from_network)))].filter(
+    (key) => key === selectedKey || isAssetVisible(parseSwapKey(key).coin)
+  );
+  select.replaceChildren(
+    ...keys.map((key) => {
+      const { coin, network } = parseSwapKey(key);
+      const option = document.createElement("option");
+      option.value = key;
+      option.dataset.coin = coin;
+      option.textContent = swapAssetLabel(coin, network);
+      return option;
+    })
+  );
+  select.value = keys.includes(selectedKey) ? selectedKey : (keys[0] ?? "");
+  syncCustomSelect(select);
+}
+
+// Paire choisie dans la fenêtre, telle que Rust l'a déclarée (`null` sinon).
+function selectedSwapPair() {
+  const from = parseSwapKey(document.getElementById("swap-from-coin").value);
+  const to = parseSwapKey(document.getElementById("swap-to-coin").value);
+  const pair = swapPairs.find((p) => p.from_coin === from.coin && p.from_network === from.network && p.to_coin === to.coin && p.to_network === to.network);
+  return pair ? { from, to, protocol: pair.protocol } : null;
+}
 
 function updateSwapToOptions() {
-  const fromCoin = document.getElementById("swap-from-coin").value;
+  const from = parseSwapKey(document.getElementById("swap-from-coin").value);
   const toSelect = document.getElementById("swap-to-coin");
-  toSelect.innerHTML = "";
-  SWAP_TO_OPTIONS[fromCoin].forEach((opt) => {
-    const optionEl = document.createElement("option");
-    optionEl.value = opt.value;
-    optionEl.dataset.coin = opt.value;
-    optionEl.dataset.i18n = opt.key;
-    optionEl.textContent = t(opt.key) || opt.fallback;
-    toSelect.appendChild(optionEl);
-  });
+  toSelect.replaceChildren(
+    ...swapPairs
+      .filter((p) => p.from_coin === from.coin && p.from_network === from.network)
+      .map((p) => {
+        const option = document.createElement("option");
+        option.value = swapKey(p.to_coin, p.to_network);
+        option.dataset.coin = p.to_coin;
+        option.textContent = swapAssetLabel(p.to_coin, p.to_network) + (p.protocol === "jupiter" ? ` · ${t("swap.viaJupiter")}` : "");
+        return option;
+      })
+  );
   syncCustomSelect(toSelect);
-
-  setWithCoinIcon(document.getElementById("swap-amount-label"), fromCoin, `${t("swap.amount")} (${COIN_SYMBOL[fromCoin]})`);
+  setWithCoinIcon(document.getElementById("swap-amount-label"), from.coin, `${t("swap.amount")} (${COIN_SYMBOL[from.coin] ?? ""})`);
   updateSwapDestination();
 }
 
@@ -4244,33 +4268,20 @@ function openSwapModal(card) {
   swapContext = { card, profileIndex: profile ? profile.index : currentProfileIndex };
   document.getElementById("swap-amount").value = "";
   hideError(document.getElementById("swap-error"));
-  const fromSelect = document.getElementById("swap-from-coin");
-  fromSelect.value = SWAP_TO_OPTIONS[card.dataset.coin] ? card.dataset.coin : "sol";
-  syncCustomSelect(fromSelect);
+  fillSwapFromOptions(swapKey(card.dataset.coin, networkForCard(card)));
   updateSwapToOptions();
   swapModal.classList.remove("hidden");
 }
 
-// USDC<->SOL (via Jupiter) reste dans le même portefeuille Solana : pas
-// d'adresse de destination séparée à saisir, contrairement à un swap
-// cross-chain (via THORChain, quels que soient les deux actifs impliqués)
-// qui en a réellement besoin. Seule la paire {sol, usdc} passe par Jupiter —
-// btc/evm impliqués d'un côté ou de l'autre sont TOUJOURS cross-chain.
-function isJupiterSwap(fromCoin, toCoin) {
-  const jupiterCoins = new Set(["sol", "usdc"]);
-  return jupiterCoins.has(fromCoin) && jupiterCoins.has(toCoin);
-}
-
+// Jupiter reste dans le même portefeuille Solana : pas d'adresse de
+// destination à saisir, contrairement à un échange entre réseaux (THORChain),
+// où elle est pré-remplie avec l'adresse du profil sur le réseau d'arrivée.
 function updateSwapDestination() {
-  const fromCoin = document.getElementById("swap-from-coin").value;
-  const toCoin = document.getElementById("swap-to-coin").value;
-  const jupiter = isJupiterSwap(fromCoin, toCoin);
+  const pair = selectedSwapPair();
+  const jupiter = pair?.protocol === "jupiter";
   document.getElementById("swap-destination-block").classList.toggle("hidden", jupiter);
   document.getElementById("swap-jupiter-hint").classList.toggle("hidden", !jupiter);
-  if (!jupiter) {
-    const network = toCoin === "btc" ? "btc_mainnet" : toCoin === "evm" ? "evm_mainnet" : "sol_mainnet";
-    document.getElementById("swap-destination").value = addressForCoin(toCoin, network);
-  }
+  if (pair && !jupiter) document.getElementById("swap-destination").value = addressForCoin(pair.to.coin, pair.to.network);
 }
 
 document.getElementById("swap-to-coin").addEventListener("change", updateSwapDestination);
@@ -4293,10 +4304,15 @@ swapQuoteBtn.addEventListener("click", withBusyButton(swapQuoteBtn, async () => 
   const errorEl = document.getElementById("swap-error");
   hideError(errorEl);
 
-  const fromCoin = document.getElementById("swap-from-coin").value;
-  const toCoin = document.getElementById("swap-to-coin").value;
+  const pair = selectedSwapPair();
+  if (!pair) {
+    showError(errorEl, t("swap.unavailable"));
+    return;
+  }
+  const { coin: fromCoin, network: fromNetwork } = pair.from;
+  const { coin: toCoin, network: toNetwork } = pair.to;
   const amount = document.getElementById("swap-amount").value.trim().replace(",", ".");
-  const jupiter = isJupiterSwap(fromCoin, toCoin);
+  const jupiter = pair.protocol === "jupiter";
   const destination = jupiter ? "" : document.getElementById("swap-destination").value.trim();
 
   if (!amount || (!jupiter && !destination)) {
@@ -4314,9 +4330,10 @@ swapQuoteBtn.addEventListener("click", withBusyButton(swapQuoteBtn, async () => 
       destRow.classList.add("hidden");
       feeRow.classList.add("hidden");
     } else {
-      const quote = await invoke("get_swap_quote", { fromCoin, toCoin, amount, destination });
+      const quote = await invoke("get_swap_quote", { fromCoin, fromNetwork, toCoin, toNetwork, amount, destination });
       receivingText = `≈ ${quote.expected_amount_out} ${COIN_SYMBOL[toCoin] || toCoin.toUpperCase()}`;
-      document.getElementById("swap-preview-fees").textContent = quote.total_fees != null ? quote.total_fees : "—";
+      // Frais THORChain, dans la crypto reçue (déjà déduits de la réception).
+      document.getElementById("swap-preview-fees").textContent = quote.total_fees != null ? `${quote.total_fees} ${COIN_SYMBOL[toCoin] ?? ""}` : "—";
       document.getElementById("swap-preview-destination").textContent = destination;
       destRow.classList.remove("hidden");
       feeRow.classList.remove("hidden");
@@ -4353,10 +4370,15 @@ swapPreviewConfirmBtn.addEventListener("click", withBusyButton(swapPreviewConfir
   hideError(errorEl);
   successEl.classList.add("hidden");
 
-  const fromCoin = document.getElementById("swap-from-coin").value;
-  const toCoin = document.getElementById("swap-to-coin").value;
+  const pair = selectedSwapPair();
+  if (!pair) {
+    showError(errorEl, t("swap.unavailable"));
+    return;
+  }
+  const { coin: fromCoin, network: fromNetwork } = pair.from;
+  const { coin: toCoin, network: toNetwork } = pair.to;
   const amount = document.getElementById("swap-amount").value.trim().replace(",", ".");
-  const jupiter = isJupiterSwap(fromCoin, toCoin);
+  const jupiter = pair.protocol === "jupiter";
   const destination = jupiter ? "" : document.getElementById("swap-destination").value.trim();
   const password = document.getElementById("swap-preview-password").value;
 
@@ -4371,7 +4393,9 @@ swapPreviewConfirmBtn.addEventListener("click", withBusyButton(swapPreviewConfir
       : await invoke("swap_transaction", {
           password,
           fromCoin,
+          fromNetwork,
           toCoin,
+          toNetwork,
           amount,
           destination,
           profileIndex: swapContext.profileIndex,

@@ -136,6 +136,17 @@ impl EthRpc {
             .with_context(|| format!("réponse eth_getBalance non hexadécimale : {hex_str}"))
     }
 
+    /// Statut d'une transaction : `Some(true)` minée et réussie, `Some(false)`
+    /// minée mais annulée (revert), `None` pas encore minée.
+    pub fn receipt_status(&self, tx_hash: &str) -> Result<Option<bool>> {
+        let result = self.call("eth_getTransactionReceipt", json!([tx_hash]))?;
+        if result.is_null() {
+            return Ok(None);
+        }
+        let status = result.get("status").and_then(Value::as_str).ok_or_else(|| anyhow!("reçu de transaction sans statut"))?;
+        Ok(Some(status == "0x1"))
+    }
+
     /// Diffuse une transaction déjà signée (RLP brute) et renvoie son hash.
     pub fn send_raw_transaction(&self, raw_tx: &[u8]) -> Result<String> {
         let raw_hex = format!("0x{}", hex::encode(raw_tx));

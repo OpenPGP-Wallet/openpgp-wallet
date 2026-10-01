@@ -38,8 +38,112 @@ const THORNODE_BASE: &str = "https://gateway.liquify.com/chain/thorchain_api";
 /// l'utilisateur lui-même avant d'être figée ici.
 pub const AFFILIATE_ADDRESS: &str = "thor12j5rrcflhffxmq0ekwvk0h7g0mdy8gn4fg0w3e";
 
+/// THORName (alias court) de `AFFILIATE_ADDRESS`, une fois enregistré par le
+/// développeur. Indispensable aux échanges DEPUIS Bitcoin : son memo tient en
+/// 80 octets (OP_RETURN), et l'adresse `thor1…` complète (43 caractères) l'en
+/// faisait déborder — constaté le 01/10/2026, THORChain refusait alors tout
+/// devis depuis BTC (« generated memo too long for source chain »). Avant
+/// usage, le nom est revérifié auprès de THORChain : son alias THOR doit être
+/// `AFFILIATE_ADDRESS` (voir `verified_affiliate`).
+pub const AFFILIATE_NAME: Option<&str> = None;
+
 /// 80 points de base = 0,80 %.
 pub const AFFILIATE_FEE_BPS: u32 = 80;
+
+/// Crypto de l'app échangeable via THORChain : identifiant de carte, réseau, et
+/// notation THORChain (pools disponibles relevés en direct le 01/10/2026).
+pub struct ThorAsset {
+    pub coin: &'static str,
+    pub network: &'static str,
+    pub symbol: &'static str,
+    /// `CHAIN.TICKER`, ou `CHAIN.TICKER-0XCONTRAT` pour un jeton.
+    pub asset: &'static str,
+    /// Code court qu'un memo emploie pour un actif natif (relevé sur de vrais
+    /// devis : « s » désigne BNB, pas SOL).
+    pub short_code: Option<&'static str>,
+    /// Décimales natives de l'actif (THORChain compte toujours en 1e8, voir
+    /// `to_thorchain_amount`).
+    pub decimals: u32,
+    /// Jeton ERC-20 : contrat (dépôt par `approve` puis `depositWithExpiry`).
+    pub contract: Option<&'static str>,
+}
+
+const fn native(coin: &'static str, network: &'static str, symbol: &'static str, asset: &'static str, short: &'static str, decimals: u32) -> ThorAsset {
+    ThorAsset { coin, network, symbol, asset, short_code: Some(short), decimals, contract: None }
+}
+
+const fn erc20(coin: &'static str, network: &'static str, symbol: &'static str, asset: &'static str, decimals: u32, contract: &'static str) -> ThorAsset {
+    ThorAsset { coin, network, symbol, asset, short_code: None, decimals, contract: Some(contract) }
+}
+
+pub const ASSETS: [ThorAsset; 11] = [
+    native("btc", "btc_mainnet", "BTC", "BTC.BTC", "b", 8),
+    native("evm", "evm_mainnet", "ETH", "ETH.ETH", "e", 18),
+    native("evm", "base_mainnet", "ETH", "BASE.ETH", "f", 18),
+    native("sol", "sol_mainnet", "SOL", "SOL.SOL", "o", 9),
+    native("bnb", "bsc_mainnet", "BNB", "BSC.BNB", "s", 18),
+    native("avax", "avax_mainnet", "AVAX", "AVAX.AVAX", "a", 18),
+    erc20("usdc", "evm_mainnet", "USDC", "ETH.USDC-0XA0B86991C6218B36C1D19D4A2E9EB0CE3606EB48", 6, "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"),
+    erc20("usdt", "evm_mainnet", "USDT", "ETH.USDT-0XDAC17F958D2EE523A2206206994597C13D831EC7", 6, "0xdac17f958d2ee523a2206206994597c13d831ec7"),
+    erc20("dai", "evm_mainnet", "DAI", "ETH.DAI-0X6B175474E89094C44DA98B954EEDEAC495271D0F", 18, "0x6b175474e89094c44da98b954eedeac495271d0f"),
+    erc20("usdc", "base_mainnet", "USDC", "BASE.USDC-0X833589FCD6EDB6E08F4C7C32D4F71B54BDA02913", 6, "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"),
+    erc20("vvv", "base_mainnet", "VVV", "BASE.VVV-0XACFE6019ED1A7DC6F7B508C02D1B04EC88CC21BF", 18, "0xacfe6019ed1a7dc6f7b508c02d1b04ec88cc21bf"),
+];
+
+/// Actif THORChain d'une crypto de l'app sur un réseau.
+pub fn asset(coin: &str, network: &str) -> Option<&'static ThorAsset> {
+    ASSETS.iter().find(|a| a.coin == coin && a.network == network)
+}
+
+/// Affilié à inscrire dans les devis : le THORName s'il est enregistré (et
+/// revérifié), sinon l'adresse complète.
+fn affiliate() -> Result<&'static str> {
+    match AFFILIATE_NAME {
+        Some(name) => verified_affiliate(name),
+        None => Ok(AFFILIATE_ADDRESS),
+    }
+}
+
+#[derive(Deserialize)]
+struct ThorNameJson {
+    #[serde(default)]
+    aliases: Vec<ThorNameAlias>,
+    expire_block_height: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct ThorNameAlias {
+    chain: String,
+    address: String,
+}
+
+/// THORName `name` relu auprès de THORChain (une fois par session) : il doit
+/// exister, ne pas être expiré, et pointer (alias THOR) vers
+/// `AFFILIATE_ADDRESS` — sinon les frais iraient à quelqu'un d'autre.
+fn verified_affiliate(name: &'static str) -> Result<&'static str> {
+    static CHECKED: OnceLock<std::result::Result<(), String>> = OnceLock::new();
+    let outcome = CHECKED.get_or_init(|| {
+        let check = || -> Result<()> {
+            let body = shared_client().get(format!("{THORNODE_BASE}/thorchain/thorname/{name}")).send()?.text()?;
+            let height: Vec<serde_json::Value> = shared_client().get(format!("{THORNODE_BASE}/thorchain/lastblock")).send()?.json()?;
+            let current = height.first().and_then(|b| b.get("thorchain")).and_then(serde_json::Value::as_i64).unwrap_or(0);
+            check_thorname(&body, current)
+        };
+        check().map_err(|e| format!("{e:#}"))
+    });
+    outcome.as_ref().map(|_| name).map_err(|e| anyhow!("THORName d'affiliation « {name} » refusé : {e}"))
+}
+
+/// Réponse `/thorchain/thorname/{nom}` : alias THOR = `AFFILIATE_ADDRESS`, non expiré.
+fn check_thorname(body: &str, current_height: i64) -> Result<()> {
+    let parsed: ThorNameJson = serde_json::from_str(body).context("THORName introuvable")?;
+    anyhow::ensure!(
+        parsed.aliases.iter().any(|a| a.chain == "THOR" && a.address == AFFILIATE_ADDRESS),
+        "il ne pointe pas vers l'adresse d'affiliation de l'app"
+    );
+    anyhow::ensure!(parsed.expire_block_height.unwrap_or(0) > current_height, "il a expiré");
+    Ok(())
+}
 
 /// Sortie minimale exigée, en points de base SOUS le montant de sortie attendu
 /// (1 % ici). Transmise via `liquidity_tolerance_bps`, PAS `tolerance_bps` —
@@ -124,8 +228,9 @@ pub fn to_thorchain_amount(native_amount: u128, native_decimals: u32) -> Result<
 /// sur la chaîne de destination (une de ses propres adresses, jamais celle du
 /// développeur).
 pub fn quote_swap(from_asset: &str, to_asset: &str, amount: u64, destination: &str) -> Result<SwapQuote> {
+    let affiliate = affiliate()?;
     let url = format!(
-        "{THORNODE_BASE}/thorchain/quote/swap?from_asset={from_asset}&to_asset={to_asset}&amount={amount}&destination={destination}&affiliate={AFFILIATE_ADDRESS}&affiliate_bps={AFFILIATE_FEE_BPS}&liquidity_tolerance_bps={SWAP_TOLERANCE_BPS}"
+        "{THORNODE_BASE}/thorchain/quote/swap?from_asset={from_asset}&to_asset={to_asset}&amount={amount}&destination={destination}&affiliate={affiliate}&affiliate_bps={AFFILIATE_FEE_BPS}&liquidity_tolerance_bps={SWAP_TOLERANCE_BPS}"
     );
     let response: QuoteResponseJson = shared_client()
         .get(&url)
@@ -162,17 +267,19 @@ pub fn quote_swap(from_asset: &str, to_asset: &str, amount: u64, destination: &s
     })
 }
 
-/// Code court THORChain d'un actif dans un memo — copié du code source de
-/// THORNode (`common/asset.go`, `Asset::ShortCode`), pas deviné : "s" y
-/// désigne BSC.BNB, PAS SOL (SOL.SOL = "o"), une supposition aurait été
-/// fausse. Limité aux 3 actifs natifs que cette app sait swapper.
-fn memo_short_code(asset: &str) -> Option<&'static str> {
-    match asset {
-        "BTC.BTC" => Some("b"),
-        "ETH.ETH" => Some("e"),
-        "SOL.SOL" => Some("o"),
-        _ => None,
+/// L'actif d'un memo désigne-t-il `to_asset` ? Formes relevées sur de vrais
+/// devis : notation complète, code court d'un actif natif (« e », « b »,
+/// « s » = BNB, « a », « f » = ETH sur Base ; « o » = SOL, code source de
+/// THORNode), ou `CHAIN.TICKER` sans le contrat pour un jeton (« ETH.USDC »,
+/// « BASE.VVV » : THORChain le résout vers son pool de ce jeton).
+fn memo_asset_matches(field: &str, to_asset: &str) -> bool {
+    if field.eq_ignore_ascii_case(to_asset) {
+        return true;
     }
+    if ASSETS.iter().any(|a| a.asset.eq_ignore_ascii_case(to_asset) && a.short_code == Some(field)) {
+        return true;
+    }
+    to_asset.split_once('-').is_some_and(|(ticker, _)| field.eq_ignore_ascii_case(ticker))
 }
 
 /// Vérifie que le memo renvoyé par la passerelle THORChain fait EXACTEMENT ce
@@ -201,8 +308,11 @@ pub fn verify_swap_memo(memo: &str, to_asset: &str, destination: &str, expected_
         "memo THORChain qui n'est pas un swap : {memo}"
     );
 
-    let asset_ok = fields[1].eq_ignore_ascii_case(to_asset) || memo_short_code(to_asset) == Some(fields[1]);
-    anyhow::ensure!(asset_ok, "le memo THORChain vise un autre actif ({}) que celui demandé ({to_asset})", fields[1]);
+    anyhow::ensure!(
+        memo_asset_matches(fields[1], to_asset),
+        "le memo THORChain vise un autre actif ({}) que celui demandé ({to_asset})",
+        fields[1]
+    );
 
     // Adresses EVM (hex) insensibles à la casse ; base58 (Solana) SENSIBLE à la
     // casse, et bech32 (Bitcoin) comparé tel quel (toujours en minuscules ici).
@@ -231,8 +341,9 @@ pub fn verify_swap_memo(memo: &str, to_asset: &str, destination: &str, expected_
         "sortie minimale du memo THORChain ({limit}) trop basse par rapport à la sortie attendue ({expected_amount_out}) — swap refusé"
     );
 
+    let affiliate_ok = fields[4] == AFFILIATE_ADDRESS || AFFILIATE_NAME == Some(fields[4]);
     anyhow::ensure!(
-        fields[4] == AFFILIATE_ADDRESS && fields[5] == AFFILIATE_FEE_BPS.to_string(),
+        affiliate_ok && fields[5] == AFFILIATE_FEE_BPS.to_string(),
         "frais d'affiliation du memo THORChain inattendus ({}:{}) — swap refusé",
         fields[4],
         fields[5]
@@ -346,6 +457,79 @@ mod tests {
         assert!(quote.expected_amount_out > 0);
         let router = quote.router.expect("un devis source ETH doit renvoyer un routeur");
         assert!(router.starts_with("0x") && router.len() == 42, "adresse de routeur EVM attendue : {router}");
+    }
+
+    /// Memos RÉELS des nouveaux actifs (devis du 01/10/2026) : jetons en
+    /// `CHAIN.TICKER` sans contrat, codes courts « s » (BNB), « a » (AVAX),
+    /// « f » (ETH sur Base) ; un jeton ne se confond pas avec un autre.
+    #[test]
+    fn verify_swap_memo_accepts_the_real_shapes_of_the_new_assets() {
+        let evm = "0x8894E0a0c962CB723c1976a4421c95949bE2D4E3";
+        let cases = [
+            ("=:ETH.USDC:{evm}:262548630151:{aff}:80", "ETH.USDC-0XA0B86991C6218B36C1D19D4A2E9EB0CE3606EB48", 265_200_000_000u64),
+            ("=:ETH.USDT:{evm}:262897955671/0/2:{aff}:80", "ETH.USDT-0XDAC17F958D2EE523A2206206994597C13D831EC7", 265_550_000_000),
+            ("=:BASE.VVV:{evm}:9695825781/0/174:{aff}:80", "BASE.VVV-0XACFE6019ED1A7DC6F7B508C02D1B04EC88CC21BF", 9_793_000_000),
+            ("=:s:{evm}:342440142:{aff}:80", "BSC.BNB", 345_900_000),
+            ("=:a:{evm}:24145106811/0/2:{aff}:80", "AVAX.AVAX", 24_389_000_000),
+            ("=:f:{evm}:98138595/0/98:{aff}:80", "BASE.ETH", 99_130_000),
+        ];
+        for (memo, asset, expected) in cases {
+            let memo = memo.replace("{evm}", evm).replace("{aff}", AFFILIATE_ADDRESS);
+            verify_swap_memo(&memo, asset, evm, expected).unwrap_or_else(|e| panic!("{memo} : {e}"));
+        }
+        let usdt_for_usdc = format!("=:ETH.USDT:{evm}:262548630151:{AFFILIATE_ADDRESS}:80");
+        assert!(verify_swap_memo(&usdt_for_usdc, "ETH.USDC-0XA0B86991C6218B36C1D19D4A2E9EB0CE3606EB48", evm, 265_200_000_000).is_err());
+        let eth_for_base_eth = format!("=:e:{evm}:98138595:{AFFILIATE_ADDRESS}:80");
+        assert!(verify_swap_memo(&eth_for_base_eth, "BASE.ETH", evm, 99_130_000).is_err(), "ETH d'Ethereum n'est pas ETH sur Base");
+    }
+
+    /// Jetons de la table = contrats et décimales du registre des jetons de
+    /// l'app (core/src/tokens.rs) ; notation THORChain = contrat en majuscules.
+    #[test]
+    fn thorchain_tokens_match_the_token_registry() {
+        for a in ASSETS.iter().filter(|a| a.contract.is_some()) {
+            let (token, deployment) = crate::tokens::find(a.coin, a.network).unwrap_or_else(|| panic!("{} absent du registre", a.asset));
+            let crate::tokens::TokenKind::Erc20 { contract } = deployment.kind else { panic!("{} n'est pas ERC-20", a.asset) };
+            assert_eq!(Some(contract), a.contract, "{}", a.asset);
+            assert_eq!(u32::from(deployment.decimals), a.decimals, "{}", a.asset);
+            assert_eq!(token.symbol.to_ascii_uppercase(), a.symbol, "{}", a.asset);
+            assert!(a.asset.ends_with(&format!("-{}", contract.to_ascii_uppercase())), "{}", a.asset);
+        }
+        assert!(asset("bnb", "bsc_mainnet").is_some() && asset("bnb", "evm_mainnet").is_none());
+    }
+
+    /// THORName : alias THOR = adresse d'affiliation, non expiré (format réel
+    /// de `/thorchain/thorname/{nom}`).
+    #[test]
+    fn thornames_must_point_to_the_affiliate_address() {
+        let name = |alias: &str, expire: i64| {
+            format!(r#"{{"name":"x","expire_block_height":{expire},"owner":"thor1u7ent5406np9t9u35ls0vxnv8rcmlzudf9zpq0","aliases":[{{"chain":"THOR","address":"{alias}"}},{{"chain":"ETH","address":"0x335fd459eadf098f8b2f26692936ee3d5bb425a2"}}]}}"#)
+        };
+        check_thorname(&name(AFFILIATE_ADDRESS, 1000), 999).expect("bon alias, valide");
+        assert!(check_thorname(&name("thor1xnkml34dfmhtmx3hfxte4jxrxn2j3604mtx5h0", 1000), 999).is_err(), "autre adresse");
+        assert!(check_thorname(&name(AFFILIATE_ADDRESS, 1000), 1000).is_err(), "expiré");
+        assert!(check_thorname(r#"{"code":3,"message":"THORName doesn't exist"}"#, 0).is_err(), "inexistant");
+    }
+
+    /// Devis RÉELS pour les nouvelles paires (lecture seule) : jeton ERC-20 en
+    /// source (routeur renvoyé), monnaies natives de BNB Chain, Avalanche et
+    /// Base, jeton de Base en destination ; memo vérifié par `quote_swap`.
+    /// `cargo test -- --ignored quote_swap_covers_the_new_assets --nocapture`
+    #[test]
+    #[ignore]
+    fn quote_swap_covers_the_new_assets() {
+        let evm = "0x8894E0a0c962CB723c1976a4421c95949bE2D4E3";
+        for (from, to, amount) in [
+            ("ETH.USDC-0XA0B86991C6218B36C1D19D4A2E9EB0CE3606EB48", "BSC.BNB", 10_000_000_000u64),
+            ("BSC.BNB", "ETH.USDT-0XDAC17F958D2EE523A2206206994597C13D831EC7", 100_000_000),
+            ("AVAX.AVAX", "BASE.ETH", 1_000_000_000),
+            ("BASE.USDC-0X833589FCD6EDB6E08F4C7C32D4F71B54BDA02913", "ETH.DAI-0X6B175474E89094C44DA98B954EEDEAC495271D0F", 10_000_000_000),
+            ("ETH.ETH", "BASE.VVV-0XACFE6019ED1A7DC6F7B508C02D1B04EC88CC21BF", 100_000_000),
+        ] {
+            let quote = quote_swap(from, to, amount, evm).unwrap_or_else(|e| panic!("{from} -> {to} : {e:#}"));
+            println!("{from} -> {to} : {} (routeur {:?})", quote.memo, quote.router);
+            assert!(quote.router.is_some(), "source EVM : routeur attendu");
+        }
     }
 
     #[test]
