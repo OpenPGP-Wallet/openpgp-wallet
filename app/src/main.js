@@ -47,6 +47,51 @@ const NATIVE_ASSET_BY_NETWORK = Object.fromEntries(
   ASSETS.filter((asset) => !asset.token).flatMap((asset) => asset.networks.map((network) => [network, asset]))
 );
 
+// Logo d'une crypto, devant son nom partout où il apparaît (titres, menus,
+// listes, aperçus) ; `null` pour un identifiant inconnu.
+function coinIconEl(coin) {
+  const asset = ASSET_BY_COIN[coin];
+  if (!asset) return null;
+  const img = document.createElement("img");
+  img.src = asset.icon;
+  img.alt = "";
+  img.className = "coin-icon-inline";
+  if (asset.iconRound) img.classList.add("coin-icon-round");
+  if (coin === "sol") img.classList.add("coin-icon-inline-sol");
+  return img;
+}
+
+// Remplace le contenu de `el` par le logo de `coin` suivi de `text`.
+function setWithCoinIcon(el, coin, text) {
+  const icon = coinIconEl(coin);
+  el.replaceChildren(...(icon ? [icon] : []), document.createTextNode(text));
+}
+
+// Échange (« Convertir ») : réseau sur lequel chaque crypto peut être
+// échangée (THORChain / Jupiter, voir SWAP_TO_OPTIONS) ; ailleurs, pas de
+// bouton.
+const SWAP_NETWORK = { evm: "evm_mainnet", btc: "btc_mainnet", sol: "sol_mainnet", usdc: "sol_mainnet" };
+
+// Champ de montant : chiffres et un seul séparateur décimal (point ou virgule),
+// filtrés à la frappe plutôt que refusés après coup — un montant ne peut rien
+// contenir d'autre. Écouteur en phase de capture : il passe avant ceux qui
+// lisent la valeur (QR, conversion).
+function restrictToAmount(input, onChange) {
+  input.addEventListener(
+    "input",
+    () => {
+      let value = input.value.replace(/[^0-9.,]/g, "");
+      const separatorIndex = value.search(/[.,]/);
+      if (separatorIndex !== -1) {
+        value = value.slice(0, separatorIndex + 1) + value.slice(separatorIndex + 1).replace(/[.,]/g, "");
+      }
+      if (value !== input.value) input.value = value;
+      if (onChange) onChange();
+    },
+    true
+  );
+}
+
 // Réseau → format d'adresse : même adresse sur tous les réseaux EVM, une
 // adresse Solana (SOL et jetons SPL), Bitcoin à part.
 function isEvmNetwork(network) {
@@ -142,7 +187,7 @@ function buildHistorySection(asset) {
       <span id="history-network-${asset.coin}" class="muted"></span>
     </div>
     <div id="history-list-${asset.coin}" class="history-list"></div>`;
-  section.querySelector("h2").textContent = asset.name;
+  setWithCoinIcon(section.querySelector("h2"), asset.coin, asset.name);
   return section;
 }
 
@@ -521,6 +566,8 @@ const I18N = {
     "wallet.refresh": "Actualiser",
     "wallet.send": "Envoyer",
     "wallet.swap": "Échanger",
+    "wallet.convert": "Convertir",
+    "wallet.convertHint": "Échanger contre une autre crypto",
     "wallet.pendingBadge": "⏳ Transaction en attente détectée",
     "wallet.pendingIncoming": "⏳ Réception en attente : +{amount} BTC (comptée une fois confirmée)",
     "wallet.marketsTitle": "Prix des cryptomonnaies en direct",
@@ -676,6 +723,7 @@ const I18N = {
     "send.mainnetWarning": "⚠ Réseau MAINNET — ceci dépense de vrais fonds, irréversible.",
     "send.toAddress": "Adresse destinataire",
     "send.amount": "Montant",
+    "send.amountFiat": "Montant dans la devise affichée",
     "send.percentMax": "Max",
     "send.percentUnavailable": "Pourcentages indisponibles (solde non chargé).",
     "send.feeSpeed": "Vitesse d'envoi (frais réseau)",
@@ -990,6 +1038,8 @@ const I18N = {
     "wallet.refresh": "Refresh",
     "wallet.send": "Send",
     "wallet.swap": "Swap",
+    "wallet.convert": "Convert",
+    "wallet.convertHint": "Swap for another crypto",
     "wallet.pendingBadge": "⏳ Pending transaction detected",
     "wallet.pendingIncoming": "⏳ Incoming, unconfirmed: +{amount} BTC (counted once confirmed)",
     "wallet.marketsTitle": "Live cryptocurrency prices",
@@ -1145,6 +1195,7 @@ const I18N = {
     "send.mainnetWarning": "⚠ MAINNET network — this spends real funds, irreversible.",
     "send.toAddress": "Recipient address",
     "send.amount": "Amount",
+    "send.amountFiat": "Amount in the display currency",
     "send.percentMax": "Max",
     "send.percentUnavailable": "Percentages unavailable (balance not loaded).",
     "send.feeSpeed": "Sending speed (network fee)",
@@ -1309,6 +1360,9 @@ function applyLanguage(lang) {
   document.querySelectorAll("[data-i18n-title]").forEach((el) => {
     el.title = t(el.dataset.i18nTitle);
   });
+  document.querySelectorAll("[data-i18n-aria-label]").forEach((el) => {
+    el.setAttribute("aria-label", t(el.dataset.i18nAriaLabel));
+  });
   document.querySelectorAll(".collapse-toggle").forEach(syncCollapseToggle);
   // Libellés d'une autre longueur : la barre tient-elle encore sur une ligne ?
   fitNavbar();
@@ -1425,11 +1479,14 @@ function syncCustomSelect(select) {
   list.innerHTML = "";
   Array.from(select.options).forEach((option) => {
     const li = document.createElement("li");
-    li.textContent = option.textContent;
+    // Option d'une crypto (`data-coin`) : son logo devant le nom.
+    if (option.dataset.coin) setWithCoinIcon(li, option.dataset.coin, option.textContent);
+    else li.textContent = option.textContent;
     li.dataset.value = option.value;
     if (option.selected) {
       li.classList.add("selected");
-      label.textContent = option.textContent;
+      if (option.dataset.coin) setWithCoinIcon(label, option.dataset.coin, option.textContent);
+      else label.textContent = option.textContent;
     }
     list.appendChild(li);
   });
@@ -1611,9 +1668,12 @@ function hideError(el) {
 let copyToastHideTimeout = null;
 let copyToastCleanupTimeout = null;
 
-function showCopyToast(message, durationMs = 1800) {
+// `coin` : logo de la crypto concernée devant le message (réception…).
+function showCopyToast(message, durationMs = 1800, coin = null) {
   const toast = document.getElementById("copy-toast");
-  document.getElementById("copy-toast-text").textContent = message;
+  const text = document.getElementById("copy-toast-text");
+  if (coin) setWithCoinIcon(text, coin, message);
+  else text.textContent = message;
   clearTimeout(copyToastHideTimeout);
   clearTimeout(copyToastCleanupTimeout);
   toast.classList.remove("hidden");
@@ -2692,7 +2752,10 @@ function refreshCurrencyDisplays() {
   if (portfolioView.rangesEl.childElementCount) refreshChart(portfolioView);
   if (externalChartView.rangesEl.childElementCount) refreshChart(externalChartView);
   if (!document.querySelector('.tab-panel[data-panel="history"]').classList.contains("hidden")) loadAllHistory();
-  if (!sendModal.classList.contains("hidden")) renderQuickAmounts();
+  if (!sendModal.classList.contains("hidden")) {
+    renderQuickAmounts();
+    renderSendAmountUnits();
+  }
 }
 let priceRefreshTimer = null;
 let pricesRefreshing = false;
@@ -2757,7 +2820,10 @@ async function refreshPrices() {
     // elle reste ouverte pendant un cycle de rafraîchissement (toutes les 60s, voir
     // startPriceAutoRefresh) — sans ça, un montant rapide cliqué plus tard dans une
     // session longue refléterait un prix périmé.
-    if (!sendModal.classList.contains("hidden")) renderQuickAmounts();
+    if (!sendModal.classList.contains("hidden")) {
+      renderQuickAmounts();
+      renderSendAmountUnits();
+    }
   } finally {
     pricesRefreshing = false;
   }
@@ -2811,6 +2877,7 @@ function createMarketRow(coin) {
   const openChart = () =>
     openChartModal({
       title: `${coin.name} (${coin.symbol})`,
+      coin: asset?.coin,
       ranges: CHART_RANGES,
       range: "7d",
       load: (range) => loadPriceChart(chartSymbol, range),
@@ -2958,6 +3025,11 @@ function renderCardAddress(card) {
   card.querySelector('[data-field="address"]').textContent = address;
   // Copie affichée par le bouton « adresse » d'une carte repliée.
   card.querySelector('[data-field="collapsed-address"]').textContent = address;
+  // « Convertir » seulement là où l'échange existe (voir SWAP_NETWORK) : pas
+  // sur un réseau de test ni sur Arbitrum/Base, où il échangerait les fonds
+  // d'un autre réseau que celui affiché.
+  const convert = card.querySelector('[data-action="swap"]');
+  if (convert) convert.classList.toggle("hidden", !address || SWAP_NETWORK[coin] !== networkForCard(card));
 }
 
 function renderCardAddresses() {
@@ -3277,7 +3349,7 @@ function announceReceived(card, network, amount) {
   const price = priceForCoin(coin);
   const mainnet = network.endsWith("_mainnet");
   const fiat = mainnet && price != null ? ` (${formatUsdApprox(Number(amount) * price)})` : "";
-  showCopyToast(t("wallet.received", { amount, symbol, fiat }), 5000);
+  showCopyToast(t("wallet.received", { amount, symbol, fiat }), 5000, coin);
   const balance = card.querySelector(".balance");
   balance.classList.remove("balance-received");
   void balance.offsetWidth; // relance l'animation si une autre réception suit
@@ -3482,6 +3554,7 @@ async function openQrModal(card) {
     return;
   }
   qrCard = card;
+  setWithCoinIcon(document.getElementById("qr-coin"), card.dataset.coin, ASSET_BY_COIN[card.dataset.coin]?.name ?? "");
   document.getElementById("qr-amount").value = "";
   document.getElementById("qr-amount-unit").textContent = card.querySelector(".balance").textContent.trim().split(/\s+/).pop();
   try {
@@ -3493,6 +3566,7 @@ async function openQrModal(card) {
   }
 }
 
+restrictToAmount(document.getElementById("qr-amount"));
 document.getElementById("qr-amount").addEventListener("input", () => {
   renderQr().catch((e) => console.error(e));
 });
@@ -3680,7 +3754,7 @@ function renderReceiveMenu() {
   const items = ASSETS.filter((asset) => asset.coin !== "usdc" && isAssetVisible(asset.coin)).map((asset) => {
     const li = document.createElement("li");
     li.dataset.coin = asset.coin;
-    li.textContent = t("wallet.receiveAsset", { symbol: asset.symbol });
+    setWithCoinIcon(li, asset.coin, t("wallet.receiveAsset", { symbol: asset.symbol }));
     return li;
   });
   list.replaceChildren(...items);
@@ -3743,22 +3817,62 @@ function openHistoryFor(coin) {
 const sendModal = document.getElementById("send-modal");
 let sendContext = null;
 
-// N'accepte que des chiffres et un séparateur décimal (point ou virgule) : un
-// montant à envoyer ne peut structurellement rien contenir d'autre, autant
-// l'empêcher à la frappe plutôt que de laisser taper "dqdz" et le rejeter
-// après coup. Un seul séparateur gardé (le premier), les suivants supprimés,
-// pour empêcher "1.2.3" ou "1,2,3".
+// Montant en crypto OU dans la devise affichée (€ ou $), les deux champs liés
+// au cours en direct. Le montant en crypto reste le seul envoyé, affiché dans
+// l'aperçu puis dans la boîte de confirmation de Windows ; le montant en
+// devise n'est qu'une aide à la saisie. Sur un réseau de test (fonds sans
+// valeur) ou sans cours connu, le champ en devise est désactivé.
 const sendAmountInput = document.getElementById("send-amount");
-sendAmountInput.addEventListener("input", () => {
-  let value = sendAmountInput.value.replace(/[^0-9.,]/g, "");
-  const separatorIndex = value.search(/[.,]/);
-  if (separatorIndex !== -1) {
-    value = value.slice(0, separatorIndex + 1) + value.slice(separatorIndex + 1).replace(/[.,]/g, "");
+const sendFiatInput = document.getElementById("send-amount-fiat");
+
+// Cours de la crypto envoyée : dollars pour 1 unité, dollars pour 1 unité de la
+// devise affichée ; `null` si inconnu ou réseau de test.
+function sendRate() {
+  if (!sendContext || !networkForCard(sendContext.card).endsWith("mainnet")) return null;
+  const price = priceForCoin(sendContext.coin);
+  const usdPerUnit = displayCurrency === "eur" ? usdPerEur : 1;
+  return price != null && price > 0 && usdPerUnit ? { price, usdPerUnit } : null;
+}
+
+function parseAmountInput(text) {
+  const value = Number.parseFloat(text.replace(",", "."));
+  return Number.isFinite(value) ? value : null;
+}
+
+function syncSendFiatFromCrypto() {
+  const rate = sendRate();
+  const crypto = parseAmountInput(sendAmountInput.value);
+  if (!rate || crypto == null) {
+    sendFiatInput.value = "";
+    return;
   }
-  if (value !== sendAmountInput.value) {
-    sendAmountInput.value = value;
-  }
-});
+  const fiat = ((crypto * rate.price) / rate.usdPerUnit).toFixed(2);
+  sendFiatInput.value = currentLang === "fr" ? fiat.replace(".", ",") : fiat;
+}
+
+function syncSendCryptoFromFiat() {
+  const rate = sendRate();
+  const fiat = parseAmountInput(sendFiatInput.value);
+  sendAmountInput.value = rate && fiat != null ? ((fiat * rate.usdPerUnit) / rate.price).toFixed(COIN_DECIMALS[sendContext.coin]) : "";
+}
+
+function setSendCryptoAmount(value) {
+  sendAmountInput.value = value;
+  syncSendFiatFromCrypto();
+}
+
+restrictToAmount(sendAmountInput, syncSendFiatFromCrypto);
+restrictToAmount(sendFiatInput, syncSendCryptoFromFiat);
+
+// Unités à droite des deux champs, champ en devise activé ou non.
+function renderSendAmountUnits() {
+  if (!sendContext) return;
+  setWithCoinIcon(document.getElementById("send-amount-unit"), sendContext.coin, COIN_SYMBOL[sendContext.coin]);
+  document.getElementById("send-amount-fiat-unit").textContent = displayCurrency === "eur" ? "€" : "$";
+  const rate = sendRate();
+  sendFiatInput.disabled = !rate;
+  sendFiatInput.placeholder = rate ? (currentLang === "fr" ? "0,00" : "0.00") : "—";
+}
 
 // Montants rapides en dollars : convertis en crypto au prix en direct (voir
 // `latestPrices`/`refreshPrices`), pas des montants fixes en ETH/BTC/SOL — ça n'a
@@ -3801,7 +3915,7 @@ function renderQuickAmounts() {
     btn.appendChild(usdSpan);
     btn.appendChild(cryptoSpan);
     btn.addEventListener("click", () => {
-      document.getElementById("send-amount").value = cryptoAmount;
+      setSendCryptoAmount(cryptoAmount);
     });
     container.appendChild(btn);
   });
@@ -3844,7 +3958,7 @@ function renderQuickPercentages() {
     btn.appendChild(percentSpan);
     btn.appendChild(cryptoSpan);
     btn.addEventListener("click", () => {
-      document.getElementById("send-amount").value = cryptoAmount;
+      setSendCryptoAmount(cryptoAmount);
     });
     container.appendChild(btn);
   });
@@ -3862,14 +3976,16 @@ function openSendModal(card) {
   // Nom lu sur la carte, sans l'indentation du HTML (le titre contient le
   // bouton de repli) : « Bitcoin », « USDC Solana ».
   const coinName = card.querySelector("h2").textContent.trim().replace(/\s+/g, " ");
-  document.getElementById("send-modal-title").textContent = `${t("send.title")} (${coinName})`;
+  setWithCoinIcon(document.getElementById("send-modal-title"), card.dataset.coin, `${t("send.title")} (${coinName})`);
   document.getElementById("send-from-profile").textContent = profile ? profile.label : "—";
   document.getElementById("send-mainnet-warning").classList.toggle("hidden", !network.endsWith("mainnet"));
   document.getElementById("send-to").value = "";
   document.getElementById("send-amount").value = "";
+  sendFiatInput.value = "";
   document.getElementById("send-password").value = "";
   hideError(document.getElementById("send-error"));
   document.getElementById("send-success").classList.add("hidden");
+  renderSendAmountUnits();
   renderQuickAmounts();
   renderQuickPercentages();
   loadBtcFeeOptions(card, network);
@@ -3985,7 +4101,9 @@ sendConfirmBtn.addEventListener("click", () => {
   document.getElementById("send-preview-network").textContent = networkLabelForCard(sendContext.card);
   document.getElementById("send-preview-from").textContent = document.getElementById("send-from-profile").textContent;
   document.getElementById("send-preview-to").textContent = to;
-  document.getElementById("send-preview-amount").textContent = `${amount} ${COIN_SYMBOL[sendContext.coin]}`;
+  const rate = sendRate();
+  const approx = rate ? ` (${formatUsdApprox(Number(amount) * rate.price)})` : "";
+  setWithCoinIcon(document.getElementById("send-preview-amount"), sendContext.coin, `${amount} ${COIN_SYMBOL[sendContext.coin]}${approx}`);
 
   const feeRow = document.getElementById("send-preview-fee-row");
   const selectedFeeBtn = document.querySelector("#send-fee-options .fee-option-btn.selected");
@@ -4105,15 +4223,19 @@ function updateSwapToOptions() {
   SWAP_TO_OPTIONS[fromCoin].forEach((opt) => {
     const optionEl = document.createElement("option");
     optionEl.value = opt.value;
+    optionEl.dataset.coin = opt.value;
     optionEl.dataset.i18n = opt.key;
     optionEl.textContent = t(opt.key) || opt.fallback;
     toSelect.appendChild(optionEl);
   });
   syncCustomSelect(toSelect);
 
-  document.getElementById("swap-amount-label").textContent = `${t("swap.amount")} (${COIN_SYMBOL[fromCoin]})`;
+  setWithCoinIcon(document.getElementById("swap-amount-label"), fromCoin, `${t("swap.amount")} (${COIN_SYMBOL[fromCoin]})`);
   updateSwapDestination();
 }
+
+// Montant à échanger : chiffres seulement (comme à l'envoi).
+restrictToAmount(document.getElementById("swap-amount"));
 
 document.getElementById("swap-from-coin").addEventListener("change", updateSwapToOptions);
 
@@ -4200,8 +4322,8 @@ swapQuoteBtn.addEventListener("click", withBusyButton(swapQuoteBtn, async () => 
       feeRow.classList.remove("hidden");
     }
 
-    document.getElementById("swap-preview-sending").textContent = `${amount} ${COIN_SYMBOL[fromCoin] || fromCoin.toUpperCase()}`;
-    document.getElementById("swap-preview-receiving").textContent = receivingText;
+    setWithCoinIcon(document.getElementById("swap-preview-sending"), fromCoin, `${amount} ${COIN_SYMBOL[fromCoin] || fromCoin.toUpperCase()}`);
+    setWithCoinIcon(document.getElementById("swap-preview-receiving"), toCoin, receivingText);
     document.getElementById("swap-preview-password").value = "";
     hideError(document.getElementById("swap-preview-error"));
     document.getElementById("swap-success").classList.add("hidden");
@@ -4571,7 +4693,7 @@ function renderExternalWalletRow(wallet) {
   info.className = "recipient-info";
   const labelEl = document.createElement("span");
   labelEl.className = "recipient-label";
-  labelEl.textContent = wallet.label;
+  setWithCoinIcon(labelEl, externalWalletPriceCoin(wallet.network), wallet.label);
   const meta = document.createElement("span");
   meta.className = "recipient-fp";
   meta.textContent = `${externalNetworkLabel(wallet.network)} · ${wallet.address}`;
@@ -4867,7 +4989,7 @@ function renderAddressBookRow(entry) {
   info.className = "recipient-info";
   const labelEl = document.createElement("span");
   labelEl.className = "recipient-label";
-  labelEl.textContent = entry.label;
+  setWithCoinIcon(labelEl, externalWalletPriceCoin(entry.network), entry.label);
   const meta = document.createElement("span");
   meta.className = "recipient-fp";
   meta.textContent = `${externalNetworkLabel(entry.network)} · ${entry.address}`;
@@ -5286,6 +5408,8 @@ async function loadWcSessions() {
 let ledgerAccountsCache = [];
 let ledgerSendAccount = null;
 
+restrictToAmount(document.getElementById("ledger-send-amount"));
+
 function ledgerCoin(network) {
   if (isEvmNetwork(network)) return "evm";
   if (network.startsWith("btc")) return "btc";
@@ -5333,7 +5457,7 @@ function renderLedgerAccounts() {
     info.className = "recipient-info";
     const labelEl = document.createElement("span");
     labelEl.className = "recipient-label";
-    labelEl.textContent = account.label;
+    setWithCoinIcon(labelEl, NATIVE_ASSET_BY_NETWORK[account.network]?.coin, account.label);
     const meta = document.createElement("span");
     meta.className = "recipient-fp";
     const deviceName = account.device === "trezor" ? "Trezor" : "Ledger";
@@ -5435,7 +5559,7 @@ ledgerAddConfirmBtn.addEventListener(
 
 async function openLedgerSend(account) {
   ledgerSendAccount = account;
-  document.getElementById("ledger-send-title").textContent = t("ledger.sendTitle", { label: account.label });
+  setWithCoinIcon(document.getElementById("ledger-send-title"), NATIVE_ASSET_BY_NETWORK[account.network]?.coin, t("ledger.sendTitle", { label: account.label }));
   document.getElementById("ledger-send-from").textContent = `${externalNetworkLabel(account.network)} · ${account.address}`;
   document.getElementById("ledger-send-amount-label").textContent = t("ledger.amount", { unit: ledgerUnit(account.network) });
   document.getElementById("ledger-send-to").value = "";
@@ -5745,8 +5869,10 @@ function renderChartTable() {
   chartModalTable.replaceChildren(table);
 }
 
-function openChartModal({ title, ranges, range, load, emptyKey, deltaMode = "pct" }) {
-  document.getElementById("chart-modal-title").textContent = title;
+function openChartModal({ title, coin = null, ranges, range, load, emptyKey, deltaMode = "pct" }) {
+  const titleEl = document.getElementById("chart-modal-title");
+  if (coin) setWithCoinIcon(titleEl, coin, title);
+  else titleEl.textContent = title;
   Object.assign(chartModalView, { title: () => title, ranges, range, load, emptyKey, deltaMode, points: [] });
   chartModalView.chartEl.replaceChildren();
   chartModalView.summaryEl.replaceChildren();

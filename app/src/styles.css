@@ -122,7 +122,8 @@
    qu'une pilule, dont les demi-cercles rognaient le début et la fin des
    lignes du haut et du bas. */
 :root[data-rounded-buttons="true"] button.primary,
-:root[data-rounded-buttons="true"] button.secondary {
+:root[data-rounded-buttons="true"] button.secondary,
+:root[data-rounded-buttons="true"] button.convert-btn {
   padding-left: 22px;
   padding-right: 22px;
 }
@@ -1281,6 +1282,131 @@ textarea:focus {
   display: flex;
   align-items: stretch;
   gap: 8px;
+}
+
+/* « Convertir » (échange vers une autre crypto) : bien visible, à droite de
+   l'adresse ; seulement là où l'échange existe (voir SWAP_NETWORK). */
+button.convert-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 0 14px;
+  background: var(--accent);
+  color: white;
+  font-weight: 700;
+}
+
+button.convert-btn:hover {
+  background: var(--accent-hover);
+}
+
+/* Avec « Convertir », l'adresse garde sa largeur (2 lignes) : à sa droite,
+   une colonne avec « Convertir » en haut, copier et QR en dessous — sinon
+   l'adresse, coincée entre trois boutons, passait sur 5 lignes. */
+.address-row:has(> .convert-btn:not(.hidden)) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 56px 56px;
+  grid-template-rows: auto minmax(32px, auto);
+  grid-template-areas:
+    "address convert convert"
+    "address copy qr";
+  gap: 6px;
+}
+
+.address-row:has(> .convert-btn:not(.hidden)) > .address {
+  grid-area: address;
+}
+
+.address-row:has(> .convert-btn:not(.hidden)) > .convert-btn {
+  grid-area: convert;
+  gap: 5px;
+  padding: 8px 6px;
+  font-size: 0.9rem;
+}
+
+button.convert-btn svg {
+  flex-shrink: 0;
+}
+
+.address-row:has(> .convert-btn:not(.hidden)) > [data-action="copy-address"] {
+  grid-area: copy;
+}
+
+.address-row:has(> .convert-btn:not(.hidden)) > [data-action="qr"] {
+  grid-area: qr;
+}
+
+/* Logo d'une crypto devant son nom (titres, menus, listes, aperçus). */
+.coin-icon-inline {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+  vertical-align: -4px;
+  margin-right: 7px;
+  flex-shrink: 0;
+}
+
+/* Même PNG à large marge transparente que sur les cartes (.coin-icon-sol). */
+.coin-icon-inline-sol {
+  transform: scale(2.15);
+}
+
+h2 .coin-icon-inline,
+.section-title .coin-icon-inline {
+  width: 22px;
+  height: 22px;
+  vertical-align: -4px;
+}
+
+.custom-select-options li .coin-icon-inline,
+.custom-select-label .coin-icon-inline {
+  width: 16px;
+  height: 16px;
+  vertical-align: -3px;
+}
+
+/* Montant d'un envoi : en crypto OU dans la devise affichée, les deux liés. */
+.amount-pair {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.amount-field {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.amount-field input[type="text"] {
+  padding-right: 64px;
+  font-variant-numeric: tabular-nums;
+}
+
+.amount-unit {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.amount-unit .coin-icon-inline {
+  width: 16px;
+  height: 16px;
+  margin-right: 5px;
+}
+
+.amount-pair-equals {
+  color: var(--muted);
+  flex-shrink: 0;
 }
 
 .qr-btn {
