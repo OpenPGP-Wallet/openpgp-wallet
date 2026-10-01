@@ -750,6 +750,9 @@ const I18N = {
     "swap.viaJupiter": "via Jupiter, même portefeuille",
     "swap.viaCow": "via CoW, même portefeuille",
     "swap.viaTwoSteps": "en 2 étapes, via {via}",
+    "swap.provider": "Fournisseur",
+    "swap.providerOption": "{name} — frais {fee}",
+    "swap.providerRecommended": "{name} — frais {fee} (recommandé)",
     "swap.twoStepHint":
       "Pas de route directe : l'échange se fait en 2 étapes. 1) {from} → {via} ({first}), reçu sur votre propre adresse. 2) Dès que {via} est arrivé, l'app vous propose {via} → {to} ({second}), avec une seconde confirmation.",
     "swap.previewRoute": "Étape 1 sur 2 : vers {via} ({first}). Ensuite, {via} → {to} ({second}) vous sera proposé dès l'arrivée de {via}.",
@@ -1239,6 +1242,9 @@ const I18N = {
     "swap.viaJupiter": "via Jupiter, same wallet",
     "swap.viaCow": "via CoW, same wallet",
     "swap.viaTwoSteps": "in 2 steps, via {via}",
+    "swap.provider": "Provider",
+    "swap.providerOption": "{name} — {fee} fee",
+    "swap.providerRecommended": "{name} — {fee} fee (recommended)",
     "swap.twoStepHint":
       "No direct route: the swap takes 2 steps. 1) {from} → {via} ({first}), received on your own address. 2) As soon as the {via} arrives, the app offers {via} → {to} ({second}), with a second confirmation.",
     "swap.previewRoute": "Step 1 of 2: to {via} ({first}). Then {via} → {to} ({second}) will be offered as soon as the {via} arrives.",
@@ -4288,7 +4294,43 @@ function selectedSwapPair() {
   const from = parseSwapKey(document.getElementById("swap-from-coin").value);
   const to = parseSwapKey(document.getElementById("swap-to-coin").value);
   const pair = swapPairs.find((p) => p.from_coin === from.coin && p.from_network === from.network && p.to_coin === to.coin && p.to_network === to.network);
-  return pair ? { from, to, protocol: pair.protocol, via: pair.via ?? null, thenProtocol: pair.then_protocol ?? null } : null;
+  if (!pair) return null;
+  // Fournisseurs de l'étape à faire maintenant (la paire elle-même, ou sa
+  // première étape vers l'intermédiaire), le préféré d'abord ; celui choisi
+  // dans le menu s'il en fait partie.
+  const stepTo = pair.via ?? to;
+  const direct = swapPairs.find((p) => p.from_coin === from.coin && p.from_network === from.network && p.to_coin === stepTo.coin && p.to_network === stepTo.network && !p.via);
+  const providers = direct?.protocols?.length ? direct.protocols : [pair.protocol];
+  const chosen = document.getElementById("swap-provider").value;
+  return { from, to, protocol: providers.includes(chosen) ? chosen : providers[0], providers, via: pair.via ?? null, thenProtocol: pair.then_protocol ?? null };
+}
+
+// Frais d'affiliation de chaque fournisseur, en % (voir core/src/cow.rs et
+// core/src/thorchain_rpc.rs).
+const SWAP_PROVIDER_FEE_PERCENT = { thorchain: 0.8, maya: 0.8, jupiter: 0.8, cow: 1 };
+
+// Menu « Fournisseur » : tous ceux qui savent faire l'étape, le recommandé
+// en premier et choisi par défaut à chaque changement de paire.
+function fillSwapProviderOptions() {
+  const select = document.getElementById("swap-provider");
+  const pair = selectedSwapPair();
+  const providers = pair ? pair.providers : [];
+  select.replaceChildren(
+    ...providers.map((protocol, index) => {
+      const option = document.createElement("option");
+      option.value = protocol;
+      const fee = `${SWAP_PROVIDER_FEE_PERCENT[protocol].toLocaleString(chartLocale(), { minimumFractionDigits: 2 })}\u00a0%`;
+      option.textContent = t(index === 0 ? "swap.providerRecommended" : "swap.providerOption", { name: SWAP_PROTOCOL_NAMES[protocol], fee });
+      return option;
+    })
+  );
+  select.value = providers[0] ?? "";
+  syncCustomSelect(select);
+}
+
+function onSwapTargetChange() {
+  fillSwapProviderOptions();
+  updateSwapDestination();
 }
 
 const SWAP_PROTOCOL_NAMES = { thorchain: "THORChain", maya: "Maya", jupiter: "Jupiter", cow: "CoW" };
@@ -4350,7 +4392,7 @@ function updateSwapToOptions() {
   );
   syncCustomSelect(toSelect);
   setWithCoinIcon(document.getElementById("swap-amount-label"), from.coin, `${t("swap.amount")} (${COIN_SYMBOL[from.coin] ?? ""})`);
-  updateSwapDestination();
+  onSwapTargetChange();
 }
 
 // Montant à échanger : chiffres seulement (comme à l'envoi).
@@ -4369,7 +4411,7 @@ function openSwapModal(card, preset = null) {
     const toSelect = document.getElementById("swap-to-coin");
     toSelect.value = swapKey(preset.to.coin, preset.to.network);
     syncCustomSelect(toSelect);
-    updateSwapDestination();
+    onSwapTargetChange();
   }
   swapModal.classList.remove("hidden");
 }
@@ -4392,7 +4434,8 @@ function updateSwapDestination() {
   if (pair && !sameWallet && !twoSteps) document.getElementById("swap-destination").value = addressForCoin(pair.to.coin, pair.to.network);
 }
 
-document.getElementById("swap-to-coin").addEventListener("change", updateSwapDestination);
+document.getElementById("swap-to-coin").addEventListener("change", onSwapTargetChange);
+document.getElementById("swap-provider").addEventListener("change", updateSwapDestination);
 
 function closeSwapModal() {
   swapModal.classList.add("hidden");
@@ -4456,7 +4499,7 @@ swapQuoteBtn.addEventListener("click", withBusyButton(swapQuoteBtn, async () => 
       destRow.classList.add("hidden");
       feeRow.classList.add("hidden");
     } else {
-      const quote = await invoke("get_swap_quote", { fromCoin, fromNetwork, toCoin, toNetwork, amount, destination });
+      const quote = await invoke("get_swap_quote", { fromCoin, fromNetwork, toCoin, toNetwork, amount, destination, protocol: step.protocol });
       receivingText = `≈ ${quote.expected_amount_out} ${COIN_SYMBOL[toCoin] || toCoin.toUpperCase()}`;
       receivedAmount = Number(quote.expected_amount_out);
       // Frais du protocole (THORChain ou Maya), dans la crypto reçue (déjà
@@ -4552,7 +4595,7 @@ swapPreviewConfirmBtn.addEventListener("click", withBusyButton(swapPreviewConfir
     } else {
       const txResult = step.protocol === "jupiter"
         ? await invoke("jupiter_swap_transaction", { password, fromCoin, toCoin, amount, profileIndex })
-        : await invoke("swap_transaction", { password, fromCoin, fromNetwork, toCoin, toNetwork, amount, destination, profileIndex });
+        : await invoke("swap_transaction", { password, fromCoin, fromNetwork, toCoin, toNetwork, amount, destination, protocol: step.protocol, profileIndex });
       successEl.textContent = t("send.txSent", { tx: txResult });
       successEl.classList.remove("hidden");
     }

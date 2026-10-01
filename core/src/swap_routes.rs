@@ -5,7 +5,7 @@
 //! d'échange acceptent (chaque étape est une paire directe).
 
 use crate::{cow, thorchain_rpc, tokens};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Une crypto de l'app sur un réseau (identifiant de carte, réseau).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize)]
@@ -14,7 +14,7 @@ pub struct SwapAsset {
     pub network: &'static str,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Protocol {
     /// Cross-chain : dépôt sur un coffre THORChain avec un memo vérifié.
@@ -72,24 +72,34 @@ fn cow_enabled() -> bool {
     cow::PARTNER_FEE_RECIPIENT.is_some()
 }
 
-/// Protocole qui relie directement `from` à `to`, s'il existe : Jupiter
-/// d'abord (même portefeuille Solana), CoW sur un même réseau EVM (ordre
-/// sans transaction d'échange, meilleurs prix), puis THORChain (pools les
-/// plus profonds), puis Maya (Arbitrum).
-pub fn direct(from: SwapAsset, to: SwapAsset) -> Option<Protocol> {
+/// Tous les protocoles qui relient directement `from` à `to`, du préféré au
+/// moins préféré : Jupiter (même portefeuille Solana), CoW sur un même réseau
+/// EVM (ordre sans transaction d'échange, meilleurs prix), THORChain (pools
+/// les plus profonds), Maya (Arbitrum). L'utilisateur peut choisir n'importe
+/// lequel ; les commandes d'échange refusent un protocole absent de la liste.
+pub fn direct_all(from: SwapAsset, to: SwapAsset) -> Vec<Protocol> {
+    let mut all = Vec::new();
     if from == to {
-        return None;
+        return all;
     }
     if JUPITER.contains(&from) && JUPITER.contains(&to) {
-        return Some(Protocol::Jupiter);
+        all.push(Protocol::Jupiter);
     }
     if cow_enabled() && cow_links(from, to) {
-        return Some(Protocol::Cow);
+        all.push(Protocol::Cow);
     }
     if links(&thorchain_rpc::THORCHAIN, from, to) {
-        return Some(Protocol::Thorchain);
+        all.push(Protocol::Thorchain);
     }
-    links(&thorchain_rpc::MAYA, from, to).then_some(Protocol::Maya)
+    if links(&thorchain_rpc::MAYA, from, to) {
+        all.push(Protocol::Maya);
+    }
+    all
+}
+
+/// Protocole préféré pour relier directement `from` à `to`, s'il en existe un.
+pub fn direct(from: SwapAsset, to: SwapAsset) -> Option<Protocol> {
+    direct_all(from, to).first().copied()
 }
 
 /// Toutes les cryptos qu'au moins un protocole sait échanger.
@@ -228,6 +238,20 @@ mod tests {
             assert!(from != to);
             assert!(from.coin != "btc" || thorchain_rpc::AFFILIATE_NAME.is_some(), "aucune route depuis Bitcoin sans THORName");
         }
+    }
+
+    /// Plusieurs fournisseurs possibles : tous listés, le préféré d'abord.
+    #[test]
+    fn every_provider_of_a_pair_is_listed() {
+        let eth = a("evm", "evm_mainnet");
+        let btc = a("btc", "btc_mainnet");
+        assert_eq!(direct_all(eth, btc), vec![Protocol::Thorchain, Protocol::Maya]);
+        let usdc = a("usdc", "evm_mainnet");
+        let expected = if cow_enabled() { vec![Protocol::Cow, Protocol::Thorchain, Protocol::Maya] } else { vec![Protocol::Thorchain, Protocol::Maya] };
+        assert_eq!(direct_all(eth, usdc), expected);
+        assert!(direct_all(eth, eth).is_empty());
+        assert_eq!(direct_all(a("sol", "sol_mainnet"), a("render", "sol_mainnet")), vec![Protocol::Jupiter]);
+        assert_eq!(serde_json::from_str::<Protocol>("\"maya\"").unwrap(), Protocol::Maya);
     }
 
     /// Deux étapes quand rien ne relie directement, par la monnaie d'un réseau

@@ -2438,9 +2438,10 @@ async fn get_swap_quote(
     to_network: String,
     amount: String,
     destination: String,
+    protocol: pgp_wallet_poc::swap_routes::Protocol,
 ) -> Result<SwapQuoteDto, String> {
     run_blocking(move || {
-        let (protocol, from, to) = cross_chain_pair(&from_coin, &from_network, &to_coin, &to_network)?;
+        let (protocol, from, to) = cross_chain_pair(&from_coin, &from_network, &to_coin, &to_network, protocol)?;
         let quote = api::get_swap_quote(protocol, from, to, &amount, &destination).t_err()?;
         Ok(SwapQuoteDto {
             inbound_address: quote.inbound_address,
@@ -2458,13 +2459,28 @@ type CrossChainPair = (
     &'static pgp_wallet_poc::thorchain_rpc::ThorAsset,
 );
 
-/// Paire d'échange entre réseaux désignée par l'interface, avec le protocole
-/// que la route lui attribue (THORChain ou Maya) : refusée si aucune route de
-/// cette famille ne la relie (voir `swap_routes::direct`).
-fn cross_chain_pair(from_coin: &str, from_network: &str, to_coin: &str, to_network: &str) -> Result<CrossChainPair, String> {
+/// Le fournisseur choisi dans l'interface relie-t-il directement ces deux
+/// cryptos (voir `swap_routes::direct_all`) ?
+fn provider_links(protocol: pgp_wallet_poc::swap_routes::Protocol, from_coin: &str, from_network: &str, to_coin: &str, to_network: &str) -> bool {
     use pgp_wallet_poc::swap_routes;
-    let route = swap_routes::find(from_coin, from_network).zip(swap_routes::find(to_coin, to_network)).and_then(|(f, t)| swap_routes::direct(f, t));
-    let protocol = route.and_then(swap_routes::Protocol::cross_chain).ok_or_else(|| translate_error("échange non disponible entre ces deux cryptos"))?;
+    swap_routes::find(from_coin, from_network)
+        .zip(swap_routes::find(to_coin, to_network))
+        .is_some_and(|(f, t)| swap_routes::direct_all(f, t).contains(&protocol))
+}
+
+/// Paire d'échange entre réseaux désignée par l'interface, avec le
+/// fournisseur choisi (THORChain ou Maya) : refusée s'il ne la relie pas.
+fn cross_chain_pair(
+    from_coin: &str,
+    from_network: &str,
+    to_coin: &str,
+    to_network: &str,
+    protocol: pgp_wallet_poc::swap_routes::Protocol,
+) -> Result<CrossChainPair, String> {
+    let protocol = protocol
+        .cross_chain()
+        .filter(|_| provider_links(protocol, from_coin, from_network, to_coin, to_network))
+        .ok_or_else(|| translate_error("échange non disponible entre ces deux cryptos"))?;
     Ok((
         protocol,
         api::cross_chain_asset(protocol, from_coin, from_network).t_err()?,
@@ -2500,6 +2516,9 @@ struct SwapPairDto {
     to_network: &'static str,
     /// Protocole de la (première) étape.
     protocol: pgp_wallet_poc::swap_routes::Protocol,
+    /// Paire directe : tous les fournisseurs possibles, le préféré d'abord
+    /// (vide pour un échange en deux étapes).
+    protocols: Vec<pgp_wallet_poc::swap_routes::Protocol>,
     /// Échange en deux étapes : crypto intermédiaire et protocole de la
     /// seconde étape (`None` pour un échange direct).
     via: Option<pgp_wallet_poc::swap_routes::SwapAsset>,
@@ -2519,6 +2538,7 @@ fn swap_pairs() -> Vec<SwapPairDto> {
             to_coin: to.coin,
             to_network: to.network,
             protocol: route.first,
+            protocols: if route.via.is_none() { pgp_wallet_poc::swap_routes::direct_all(from, to) } else { Vec::new() },
             via: route.via.map(|(via, _)| via),
             then_protocol: route.via.map(|(_, second)| second),
         })
@@ -2609,13 +2629,14 @@ async fn swap_transaction(
     to_network: String,
     amount: String,
     destination: String,
+    protocol: pgp_wallet_poc::swap_routes::Protocol,
     profile_index: u32,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
     run_blocking(move || {
         let password = Zeroizing::new(password);
         let dir = data_dir(&app)?;
-        let (protocol, from, to) = cross_chain_pair(&from_coin, &from_network, &to_coin, &to_network)?;
+        let (protocol, from, to) = cross_chain_pair(&from_coin, &from_network, &to_coin, &to_network, protocol)?;
 
         // Formes canoniques, affichées ET utilisées pour le devis et la signature
         // (voir `send_transaction`).
@@ -2710,12 +2731,10 @@ async fn swap_transaction(
 
 const JUPITER_DEFAULT_SLIPPAGE_BPS: u32 = 50; // 0,50 %
 
-/// Paire Jupiter désignée par l'interface (réseau Solana) : refusée si aucune
-/// route Jupiter ne la relie (voir `swap_routes::direct`).
+/// Paire Jupiter désignée par l'interface (réseau Solana) : refusée si Jupiter
+/// ne la relie pas (voir `swap_routes::direct_all`).
 fn jupiter_pair(from_coin: &str, to_coin: &str) -> Result<(), String> {
-    use pgp_wallet_poc::swap_routes;
-    let route = swap_routes::find(from_coin, "sol_mainnet").zip(swap_routes::find(to_coin, "sol_mainnet")).and_then(|(f, t)| swap_routes::direct(f, t));
-    if route == Some(swap_routes::Protocol::Jupiter) {
+    if provider_links(pgp_wallet_poc::swap_routes::Protocol::Jupiter, from_coin, "sol_mainnet", to_coin, "sol_mainnet") {
         Ok(())
     } else {
         Err(translate_error("échange non disponible entre ces deux cryptos"))
@@ -2818,12 +2837,10 @@ async fn jupiter_swap_transaction(
 // core/src/cow.rs), exécuté ensuite par CoW. Aucune transaction d'échange :
 // seule une éventuelle autorisation du jeton vendu part sur le réseau.
 
-/// Paire CoW désignée par l'interface : refusée si la route de cette paire
-/// ne passe pas par CoW (voir `swap_routes::direct`).
+/// Paire CoW désignée par l'interface : refusée si CoW ne la relie pas (voir
+/// `swap_routes::direct_all`).
 fn cow_pair(network: &str, from_coin: &str, to_coin: &str) -> Result<(cow::CowToken, cow::CowToken), String> {
-    use pgp_wallet_poc::swap_routes;
-    let route = swap_routes::find(from_coin, network).zip(swap_routes::find(to_coin, network)).and_then(|(f, t)| swap_routes::direct(f, t));
-    if route != Some(swap_routes::Protocol::Cow) {
+    if !provider_links(pgp_wallet_poc::swap_routes::Protocol::Cow, from_coin, network, to_coin, network) {
         return Err(translate_error("échange non disponible entre ces deux cryptos"));
     }
     api::cow_tokens(network, from_coin, to_coin).t_err()
