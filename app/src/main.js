@@ -36,7 +36,7 @@ const ASSETS = [
   { coin: "gno", name: "Gnosis", symbol: "GNO", token: true, icon: "/assets/gno.png", gecko: "gnosis", decimals: 6, unitDecimals: 18, chart: "GNO", networks: ["evm_mainnet"], contracts: { evm_mainnet: "0x6810e776880c02933d47db1b9fc05908e5386b96" } },
   { coin: "arb", name: "Arbitrum", symbol: "ARB", token: true, icon: "/assets/arb.jpg", iconRound: true, gecko: "arbitrum", decimals: 6, unitDecimals: 18, chart: "ARB", networks: ["arbitrum_mainnet", "evm_mainnet"], contracts: { arbitrum_mainnet: "0x912ce59144191c1204e64559fe8253a0e49e6548", evm_mainnet: "0xb50721bcf8d664c30412cfbc6cf7a15145234ad1" } },
   { coin: "aster", name: "Aster", symbol: "ASTER", token: true, icon: "/assets/aster.png", gecko: "aster-2", decimals: 6, unitDecimals: 18, chart: "ASTER", networks: ["bsc_mainnet"], contracts: { bsc_mainnet: "0x000ae314e2a2172a039b26378814c252734f556a" } },
-  { coin: "vvv", name: "Venice", symbol: "VVV", token: true, icon: "/assets/vvv.png", gecko: "venice-token", decimals: 6, unitDecimals: 18, chart: null, networks: ["base_mainnet"], contracts: { base_mainnet: "0xacfe6019ed1a7dc6f7b508c02d1b04ec88cc21bf" } },
+  { coin: "vvv", name: "Venice", symbol: "VVV", token: true, icon: "/assets/vvv.png", gecko: "venice-token", decimals: 6, unitDecimals: 18, chart: "VVV", networks: ["base_mainnet"], contracts: { base_mainnet: "0xacfe6019ed1a7dc6f7b508c02d1b04ec88cc21bf" } },
   { coin: "render", name: "Render", symbol: "RENDER", token: true, icon: "/assets/render.png", gecko: "render-token", decimals: 6, unitDecimals: 8, chart: "RENDER", networks: ["sol_mainnet"], contracts: { sol_mainnet: "rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof" } },
 ];
 const ASSET_BY_COIN = Object.fromEntries(ASSETS.map((asset) => [asset.coin, asset]));
@@ -785,6 +785,7 @@ const I18N = {
     "charts.approximate":
       "Valeur indicative : certains mouvements n'apparaissent pas dans l'historique lu (transferts internes de contrats, par exemple).",
     "charts.priceSource": "Prix Binance (paires en USDT, ≈ 1 dollar).",
+    "charts.priceSourceKraken": "Prix Kraken (en dollars).",
     "charts.delta": "{arrow} {pct} % {period}",
     "charts.deltaUsd": "{arrow} {amount} {period}",
     "charts.period.1d": "sur 24 h",
@@ -1249,6 +1250,7 @@ const I18N = {
       "Reading the history ({count} transactions so far) — the chart fills in as it goes. The public Solana node only allows about one transaction per second; later loads will be almost instant.",
     "charts.approximate": "Indicative value: some movements are missing from the history read (internal contract transfers, for example).",
     "charts.priceSource": "Binance prices (USDT pairs, ≈ 1 dollar).",
+    "charts.priceSourceKraken": "Kraken prices (in dollars).",
     "charts.delta": "{arrow} {pct}% {period}",
     "charts.deltaUsd": "{arrow} {amount} {period}",
     "charts.period.1d": "over 24h",
@@ -5666,8 +5668,12 @@ async function loadHoldingsHistory(holdings, range) {
   return { points: result.points, since: result.since, note: notes.join(" "), loading: result.loading };
 }
 
+// Courbes servies par Kraken (absentes de Binance, voir core/src/price_history.rs).
+const KRAKEN_CHARTS = ["VVV"];
+
 async function loadPriceChart(symbol, range) {
-  return { points: await invoke("get_price_chart", { symbol, range }), note: t("charts.priceSource") };
+  const note = t(KRAKEN_CHARTS.includes(symbol) ? "charts.priceSourceKraken" : "charts.priceSource");
+  return { points: await invoke("get_price_chart", { symbol, range }), note };
 }
 
 // --- Courbe en grand -------------------------------------------------------------

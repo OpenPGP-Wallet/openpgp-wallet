@@ -1662,7 +1662,7 @@ async fn get_price_chart(symbol: String, range: String) -> Result<Vec<(i64, f64)
         // Liste blanche des paires Binance ("EUR" : dollars pour 1 euro, pour
         // l'affichage en euros).
         let upper = symbol.to_ascii_uppercase();
-        let asset = price_history::binance_pair(&upper).ok_or_else(|| translate_error(&format!("crypto inconnue : {upper}")))?;
+        let asset = price_history::price_asset(&upper).ok_or_else(|| translate_error(&format!("crypto inconnue : {upper}")))?;
         price_history::chart(asset, chart_range(&range)?).map(|points| points.as_ref().clone()).t_err()
     })
     .await

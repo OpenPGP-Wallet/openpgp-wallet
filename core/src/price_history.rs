@@ -6,6 +6,9 @@
 //! (`data-api.binance.vision`, sans clé), bougies horaires (≈ 41 derniers
 //! jours) et journalières (depuis la cotation de l'actif : août 2017 pour
 //! BTC et ETH), paires en USDT (≈ 1 $).
+//! Crypto absente de Binance (VVV) : l'API publique OHLC de Kraken (sans clé,
+//! en dollars), 720 bougies au plus par intervalle (≈ 2 ans en journalier :
+//! tout l'historique de VVV, coté depuis février 2025).
 //! CoinGecko, déjà utilisé pour le prix courant, a été écarté ici : sa limite
 //! gratuite a refusé le 3ᵉ appel consécutif lors des essais, alors qu'il en
 //! faut plusieurs pour l'historique.
@@ -22,6 +25,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 const KLINES_URL: &str = "https://data-api.binance.vision/api/v3/klines";
+const KRAKEN_OHLC_URL: &str = "https://api.kraken.com/0/public/OHLC";
 const HOUR: i64 = 3600;
 const DAY: i64 = 86_400;
 /// Au-delà, les séries sont relues (la dernière bougie horaire avance).
@@ -36,13 +40,19 @@ pub enum Asset {
     /// Taux de change : dollars pour 1 euro (paire EUR/USDT, cotée depuis le
     /// 03/01/2020), pour afficher les montants en euros au taux de chaque date.
     Eur,
-    /// Autre crypto : paire USDT de Binance (liste blanche, voir `binance_pair`).
+    /// Autre crypto : paire USDT de Binance (liste blanche, voir `price_asset`).
     Pair(&'static str),
+    /// Crypto absente de Binance : paire en dollars de Kraken.
+    Kraken(&'static str),
+    /// Dollar stable sans paire de marché (USDT, monnaie de cotation des paires
+    /// Binance ; USDG) : 1 $, pour la valeur d'un solde ou d'une transaction.
+    /// Pas de courbe.
+    Usd,
 }
 
-/// Paire USDT de Binance d'une crypto de l'app, par son symbole (`None` : pas
-/// de cotation Binance).
-pub fn binance_pair(symbol: &str) -> Option<Asset> {
+/// Série de prix d'une crypto de l'app, par son symbole (`None` : aucune
+/// source de prix).
+pub fn price_asset(symbol: &str) -> Option<Asset> {
     Some(match symbol {
         "BTC" => Asset::Btc,
         "ETH" => Asset::Eth,
@@ -64,6 +74,8 @@ pub fn binance_pair(symbol: &str) -> Option<Asset> {
         "ARB" => Asset::Pair("ARBUSDT"),
         "ASTER" => Asset::Pair("ASTERUSDT"),
         "RENDER" => Asset::Pair("RENDERUSDT"),
+        "VVV" => Asset::Kraken("VVVUSD"),
+        "USDT" | "USDG" => Asset::Usd,
         // EURC suit l'euro : sa courbe est celle d'EUR/USDT.
         "EURC" => Asset::Eur,
         _ => return None,
@@ -71,15 +83,22 @@ pub fn binance_pair(symbol: &str) -> Option<Asset> {
 }
 
 impl Asset {
-    fn symbol(self) -> &'static str {
-        match self {
+    /// Paire Binance (`None` : autre source, ou aucune).
+    fn binance_symbol(self) -> Option<&'static str> {
+        Some(match self {
             Asset::Btc => "BTCUSDT",
             Asset::Eth => "ETHUSDT",
             Asset::Sol => "SOLUSDT",
             Asset::Usdc => "USDCUSDT",
             Asset::Eur => "EURUSDT",
             Asset::Pair(pair) => pair,
-        }
+            Asset::Kraken(_) | Asset::Usd => return None,
+        })
+    }
+
+    /// Compté à 1 $ là où sa série n'a pas de prix (voir `PriceSeries::stable`).
+    fn is_stable(self) -> bool {
+        matches!(self, Asset::Usdc | Asset::Usd)
     }
 }
 
@@ -110,7 +129,7 @@ impl PriceSeries {
     /// `None` en retour si l'instant précède toutes les bougies connues.
     pub fn usd_at(&self, timestamp: Option<i64>) -> Option<f64> {
         let Some(t) = timestamp else {
-            return self.hourly.last().or(self.daily.last()).map(|c| c.close);
+            return self.hourly.last().or(self.daily.last()).map(|c| c.close).or(self.stable.then_some(1.0));
         };
         price_in(&self.hourly, HOUR, t).or_else(|| price_in(&self.daily, DAY, t)).or(self.stable.then_some(1.0))
     }
@@ -157,6 +176,38 @@ fn parse_klines(body: &str) -> Result<Vec<Candle>> {
     Ok(candles)
 }
 
+/// Réponse OHLC de Kraken : `{"error": [], "result": {"<paire>": [[ouverture_s,
+/// "open", "high", "low", "close", "vwap", "volume", nombre], ...], "last": n}}`.
+/// Mêmes refus que `parse_klines`.
+fn parse_kraken_ohlc(body: &str) -> Result<Vec<Candle>> {
+    let value: serde_json::Value = serde_json::from_str(body).context("réponse de prix illisible")?;
+    if let Some(errors) = value.get("error").and_then(serde_json::Value::as_array) {
+        ensure!(errors.is_empty(), "le service de prix a refusé la demande : {}", serde_json::Value::Array(errors.clone()));
+    }
+    let rows = value
+        .get("result")
+        .and_then(serde_json::Value::as_object)
+        .and_then(|result| result.iter().find(|(key, _)| *key != "last"))
+        .and_then(|(_, rows)| rows.as_array())
+        .ok_or_else(|| anyhow!("réponse de prix illisible"))?;
+    let mut candles = Vec::with_capacity(rows.len());
+    for row in rows {
+        let open_time = row.get(0).and_then(serde_json::Value::as_i64).ok_or_else(|| anyhow!("bougie de prix mal formée"))?;
+        let price = |i: usize| -> Result<f64> {
+            let value: f64 = row
+                .get(i)
+                .and_then(serde_json::Value::as_str)
+                .and_then(|s| s.parse().ok())
+                .ok_or_else(|| anyhow!("bougie de prix mal formée"))?;
+            ensure!(value.is_finite() && value > 0.0, "prix invalide dans la série");
+            Ok(value)
+        };
+        candles.push(Candle { open_time, open: price(1)?, close: price(4)? });
+    }
+    ensure!(candles.windows(2).all(|w| w[0].open_time < w[1].open_time), "série de prix non ordonnée");
+    Ok(candles)
+}
+
 fn shared_client() -> &'static reqwest::blocking::Client {
     static CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
@@ -170,7 +221,12 @@ fn shared_client() -> &'static reqwest::blocking::Client {
 /// Bougies `interval` de `asset` : les `limit` dernières, ou les `limit`
 /// premières à partir de `start` (secondes Unix). Au plus 1000 par requête.
 fn fetch_klines(asset: Asset, interval: &str, limit: usize, start: Option<i64>) -> Result<Vec<Candle>> {
-    let mut query = vec![("symbol", asset.symbol().to_string()), ("interval", interval.to_string()), ("limit", limit.to_string())];
+    let symbol = match asset {
+        Asset::Kraken(pair) => return fetch_kraken(pair, interval, limit, start),
+        Asset::Usd => anyhow::bail!("pas de série de prix pour un dollar stable"),
+        other => other.binance_symbol().expect("paire Binance"),
+    };
+    let mut query = vec![("symbol", symbol.to_string()), ("interval", interval.to_string()), ("limit", limit.to_string())];
     if let Some(start) = start {
         query.push(("startTime", (start * 1000).to_string()));
     }
@@ -181,6 +237,30 @@ fn fetch_klines(asset: Asset, interval: &str, limit: usize, start: Option<i64>) 
         .context("appel du service de prix impossible")?;
     ensure!(response.status().is_success(), "le service de prix a répondu {}", response.status());
     parse_klines(&response.text().context("réponse de prix illisible")?)
+}
+
+/// Bougies Kraken de `pair`, mêmes paramètres que `fetch_klines` : Kraken
+/// donne toujours ses 720 dernières bougies (ou moins) ; les `limit`
+/// dernières sont gardées, ou les `limit` premières à partir de `start`.
+fn fetch_kraken(pair: &str, interval: &str, limit: usize, start: Option<i64>) -> Result<Vec<Candle>> {
+    let minutes = match interval {
+        "15m" => 15,
+        "1h" => 60,
+        "4h" => 240,
+        "1d" => 1440,
+        other => anyhow::bail!("intervalle non pris en charge : {other}"),
+    };
+    let response = shared_client()
+        .get(KRAKEN_OHLC_URL)
+        .query(&[("pair", pair.to_string()), ("interval", minutes.to_string())])
+        .send()
+        .context("appel du service de prix impossible")?;
+    ensure!(response.status().is_success(), "le service de prix a répondu {}", response.status());
+    let candles = parse_kraken_ohlc(&response.text().context("réponse de prix illisible")?)?;
+    Ok(match start {
+        Some(start) => candles.into_iter().filter(|c| c.open_time >= start).take(limit).collect(),
+        None => candles[candles.len().saturating_sub(limit)..].to_vec(),
+    })
 }
 
 /// Toutes les bougies journalières depuis la cotation de `asset` : pages de
@@ -210,6 +290,9 @@ pub fn series(asset: Asset) -> Result<Arc<PriceSeries>> {
     type Cache = Mutex<HashMap<Asset, (Instant, Arc<PriceSeries>)>>;
     static CACHE: OnceLock<Cache> = OnceLock::new();
     let cache = CACHE.get_or_init(Default::default);
+    if asset == Asset::Usd {
+        return Ok(Arc::new(PriceSeries { hourly: Vec::new(), daily: Vec::new(), stable: true }));
+    }
     if let Some((fetched, series)) = cache.lock().unwrap_or_else(|p| p.into_inner()).get(&asset) {
         if fetched.elapsed() < CACHE_TTL {
             return Ok(series.clone());
@@ -223,7 +306,7 @@ pub fn series(asset: Asset) -> Result<Arc<PriceSeries>> {
             daily.join().expect("le fil des prix journaliers ne doit pas paniquer"),
         )
     });
-    let series = Arc::new(PriceSeries { hourly: hourly?, daily: daily?, stable: asset == Asset::Usdc });
+    let series = Arc::new(PriceSeries { hourly: hourly?, daily: daily?, stable: asset.is_stable() });
     cache.lock().unwrap_or_else(|p| p.into_inner()).insert(asset, (Instant::now(), series.clone()));
     Ok(series)
 }
@@ -310,6 +393,7 @@ fn chart_points(candles: &[Candle], now: i64) -> Vec<(i64, f64)> {
 /// monde, voir l'en-tête) ; « tout » : les bougies journalières depuis la
 /// cotation. Cache : 2 minutes sur 24 h, 10 minutes sinon.
 pub fn chart(asset: Asset, range: ChartRange) -> Result<Arc<Vec<(i64, f64)>>> {
+    ensure!(asset != Asset::Usd, "pas de courbe pour un dollar stable");
     if range == ChartRange::All {
         return Ok(Arc::new(chart_points(&series(asset)?.daily, unix_now())));
     }
@@ -401,6 +485,53 @@ mod tests {
         assert!(parse_klines(r#"[[1000,"1","1","1","-3"]]"#).is_err(), "prix négatif");
         assert!(parse_klines(r#"[[1000,"1"]]"#).is_err(), "bougie incomplète");
         assert!(parse_klines(r#"{"code":-1121,"msg":"Invalid symbol."}"#).is_err());
+    }
+
+    /// Format réel de Kraken (réponse relevée sur l'API, tronquée) ; erreur
+    /// du service et séries incohérentes refusées.
+    #[test]
+    fn kraken_ohlc_is_parsed_and_checked() {
+        let body = r#"{"error":[],"result":{"VVVUSD":[[1740614400,"4.214","4.244","3.992","4.000","4.165","4296.32432",35],
+                       [1740700800,"3.894","4.079","3.664","4.068","3.899","5838.94705",66]],"last":1790726400}}"#;
+        assert_eq!(parse_kraken_ohlc(body).unwrap(), vec![candle(1_740_614_400, 4.214, 4.0), candle(1_740_700_800, 3.894, 4.068)]);
+        assert!(parse_kraken_ohlc(r#"{"error":["EQuery:Unknown asset pair"]}"#).is_err());
+        assert!(parse_kraken_ohlc(r#"{"error":[],"result":{"X":[[2,"1","1","1","1"],[1,"1","1","1","1"]],"last":0}}"#).is_err());
+        assert!(parse_kraken_ohlc(r#"{"error":[],"result":{"X":[[1,"1","1","1","0"]],"last":0}}"#).is_err());
+    }
+
+    /// Dollar stable sans paire : 1 $ à tout instant, aucune requête, pas de courbe.
+    #[test]
+    fn stable_dollar_is_worth_one_dollar() {
+        let usd = series(Asset::Usd).unwrap();
+        assert_eq!((usd.usd_at(Some(0)), usd.usd_at(None)), (Some(1.0), Some(1.0)));
+        assert_eq!(price_asset("USDT"), Some(Asset::Usd));
+        assert!(chart(Asset::Usd, ChartRange::Month).is_err());
+    }
+
+    /// Kraken réel (VVV) : journalier depuis la cotation (27/02/2025), horaire
+    /// récent, courbes de chaque période, prix cohérent avec CoinGecko.
+    /// `cargo test -- --ignored real_kraken_series --nocapture`
+    #[test]
+    #[ignore]
+    fn real_kraken_series() {
+        let vvv = price_asset("VVV").unwrap();
+        let s = series(vvv).unwrap();
+        assert_eq!(s.daily[0].open_time, 1_740_614_400, "première bougie = cotation");
+        assert!(unix_now() - s.daily.last().unwrap().open_time < DAY);
+        assert!(s.hourly.len() >= 700 && unix_now() - s.hourly.last().unwrap().open_time < HOUR);
+        for range in [ChartRange::Day, ChartRange::Week, ChartRange::Month, ChartRange::Year, ChartRange::All] {
+            let points = chart(vvv, range).unwrap();
+            let expected = (range.span().unwrap_or(DAY) / range.step()) as usize;
+            println!("{range:?} : {} points, de {} à {}", points.len(), points[0].0, points.last().unwrap().0);
+            if range != ChartRange::All {
+                assert_eq!(points.len(), expected + 1, "{range:?}");
+            }
+        }
+        let gecko = crate::price_rpc::PriceRpc::new().get_market_data().unwrap();
+        let reference = gecko.iter().find(|c| c.id == "venice-token").unwrap().price_usd;
+        let now = s.usd_at(None).unwrap();
+        println!("VVV : {now} $ (CoinGecko {reference} $)");
+        assert!((now / reference - 1.0).abs() < 0.05);
     }
 
     /// Service réel : les 4 actifs, séries horaires (~41 j) et journalières
