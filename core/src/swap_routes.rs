@@ -3,7 +3,7 @@
 //! source unique de ce que l'interface propose (« Convertir ») et de ce que
 //! les commandes d'échange acceptent.
 
-use crate::thorchain_rpc;
+use crate::{cow, thorchain_rpc};
 use serde::Serialize;
 
 /// Une crypto de l'app sur un réseau (identifiant de carte, réseau).
@@ -22,15 +22,18 @@ pub enum Protocol {
     Jupiter,
     /// Cross-chain, fork de THORChain (même mécanique) : Arbitrum.
     Maya,
+    /// Même réseau EVM : ordre signé (EIP-712) exécuté par CoW Protocol.
+    Cow,
 }
 
 impl Protocol {
-    /// Protocole de la famille THORChain correspondant (`None` pour Jupiter).
+    /// Protocole de la famille THORChain correspondant (`None` pour Jupiter
+    /// et CoW).
     pub fn cross_chain(self) -> Option<&'static thorchain_rpc::CrossChain> {
         match self {
             Protocol::Thorchain => Some(&thorchain_rpc::THORCHAIN),
             Protocol::Maya => Some(&thorchain_rpc::MAYA),
-            Protocol::Jupiter => None,
+            Protocol::Jupiter | Protocol::Cow => None,
         }
     }
 }
@@ -55,15 +58,30 @@ fn links(protocol: &thorchain_rpc::CrossChain, from: SwapAsset, to: SwapAsset) -
     protocol.asset(from.coin, from.network).is_some() && protocol.asset(to.coin, to.network).is_some()
 }
 
+/// CoW relie deux cryptos du MÊME réseau EVM qu'il connaît, sauf à vendre la
+/// monnaie du réseau (contrat EthFlow pas encore pris en charge).
+fn cow_links(from: SwapAsset, to: SwapAsset) -> bool {
+    from.network == to.network && matches!(cow::token(from.coin, from.network), Some(t) if !t.native) && cow::token(to.coin, to.network).is_some()
+}
+
+/// CoW n'est proposé qu'une fois l'adresse des frais partenaire renseignée.
+fn cow_enabled() -> bool {
+    cow::PARTNER_FEE_RECIPIENT.is_some()
+}
+
 /// Protocole qui relie directement `from` à `to`, s'il existe : Jupiter
-/// d'abord (même portefeuille, sans délai cross-chain), puis THORChain (pools
-/// les plus profonds), puis Maya (Arbitrum).
+/// d'abord (même portefeuille Solana), CoW sur un même réseau EVM (ordre
+/// sans transaction d'échange, meilleurs prix), puis THORChain (pools les
+/// plus profonds), puis Maya (Arbitrum).
 pub fn direct(from: SwapAsset, to: SwapAsset) -> Option<Protocol> {
     if from == to {
         return None;
     }
     if JUPITER.contains(&from) && JUPITER.contains(&to) {
         return Some(Protocol::Jupiter);
+    }
+    if cow_enabled() && cow_links(from, to) {
+        return Some(Protocol::Cow);
     }
     if links(&thorchain_rpc::THORCHAIN, from, to) {
         return Some(Protocol::Thorchain);
@@ -75,7 +93,8 @@ pub fn direct(from: SwapAsset, to: SwapAsset) -> Option<Protocol> {
 pub fn assets() -> Vec<SwapAsset> {
     let mut all: Vec<SwapAsset> = Vec::new();
     let cross_chain = thorchain_rpc::ASSETS.iter().chain(thorchain_rpc::MAYA_ASSETS.iter()).map(|a| SwapAsset { coin: a.coin, network: a.network });
-    for asset in cross_chain.chain(JUPITER) {
+    let cow_assets = cow::tradable().into_iter().filter(|_| cow_enabled()).map(|(coin, network)| SwapAsset { coin, network });
+    for asset in cross_chain.chain(JUPITER).chain(cow_assets) {
         if !all.contains(&asset) {
             all.push(asset);
         }
@@ -118,6 +137,27 @@ mod tests {
         assert_eq!(direct(a("evm", "arbitrum_mainnet"), a("bnb", "bsc_mainnet")), None, "aucun protocole ne relie les deux");
         assert_eq!(find("usdc", "base_mainnet"), Some(a("usdc", "base_mainnet")));
         assert_eq!(find("hype", "hyperevm_mainnet"), None);
+    }
+
+    /// CoW : même réseau EVM seulement, jamais en vendant la monnaie du réseau,
+    /// et seulement une fois l'adresse des frais renseignée.
+    #[test]
+    fn cow_links_same_network_tokens() {
+        assert!(cow_links(a("link", "evm_mainnet"), a("usdc", "evm_mainnet")));
+        assert!(cow_links(a("usdc", "arbitrum_mainnet"), a("evm", "arbitrum_mainnet")));
+        assert!(cow_links(a("aster", "bsc_mainnet"), a("bnb", "bsc_mainnet")));
+        assert!(!cow_links(a("evm", "evm_mainnet"), a("usdc", "evm_mainnet")), "vente native : EthFlow");
+        assert!(!cow_links(a("link", "evm_mainnet"), a("usdc", "base_mainnet")), "deux réseaux");
+        assert!(!cow_links(a("usdc", "sol_mainnet"), a("usdt", "sol_mainnet")));
+        let link_usdc = direct(a("link", "evm_mainnet"), a("usdc", "evm_mainnet"));
+        assert_eq!(link_usdc == Some(Protocol::Cow), cow_enabled());
+        if cow_enabled() {
+            assert_eq!(direct(a("usdc", "evm_mainnet"), a("evm", "evm_mainnet")), Some(Protocol::Cow), "CoW avant THORChain sur un même réseau");
+        } else {
+            assert!(link_usdc.is_none());
+            assert_eq!(find("link", "evm_mainnet"), None);
+        }
+        assert_eq!(direct(a("evm", "evm_mainnet"), a("usdc", "evm_mainnet")), Some(Protocol::Thorchain));
     }
 
     /// Depuis Bitcoin : aucune route tant que le THORName n'existe pas ; vers

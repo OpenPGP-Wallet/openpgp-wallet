@@ -1044,10 +1044,10 @@
     </div>
 
     <!-- Modale d'échange (swap) : passe par un protocole externe non audité
-         par cette app — THORChain pour un swap cross-chain (vers BTC/ETH,
-         voir core/src/thorchain_rpc.rs), Jupiter pour SOL<->USDC, même
-         portefeuille (voir core/src/jupiter_rpc.rs). Actifs source limités à
-         SOL/USDC (le moins de nouveau code). -->
+         par cette app — THORChain ou Maya entre réseaux (voir
+         core/src/thorchain_rpc.rs), Jupiter sur Solana (voir
+         core/src/jupiter_rpc.rs), CoW sur un même réseau EVM (voir
+         core/src/cow.rs). Paires fournies par core/src/swap_routes.rs. -->
     <div id="swap-modal" class="modal-overlay hidden">
       <div class="modal">
         <div class="modal-header-row">
@@ -1056,7 +1056,9 @@
         </div>
         <p class="muted" data-i18n="swap.subtitle">
           Passe par un protocole externe non audité par cette app — voir "Comment ça marche" pour
-          le détail. Un swap cross-chain (vers BTC/ETH) inclut 0,80% de frais d'affiliation.
+          le détail. Chaque échange inclut des frais d'affiliation : 0,80 % entre réseaux (THORChain,
+          Maya) et sur Solana (Jupiter), 1 % sur un même réseau EVM (CoW), sauf mention contraire dans
+          la confirmation.
         </p>
         <label data-i18n="swap.fromAsset">Depuis</label>
         <div class="custom-select dropdown">
@@ -1089,8 +1091,8 @@
           </p>
         </div>
         <p id="swap-jupiter-hint" class="muted hidden" data-i18n="swap.jupiterHint">
-          Même portefeuille : les USDC arrivent directement sur votre adresse Solana, pas besoin
-          d'adresse de destination séparée.
+          Même portefeuille : la crypto reçue arrive directement sur votre adresse de ce réseau, pas
+          besoin d'adresse de destination séparée.
         </p>
         <p id="swap-error" class="error hidden"></p>
         <div class="row-buttons">
@@ -1122,6 +1124,10 @@
           <div class="send-preview-row">
             <span class="send-preview-label" data-i18n="swap.previewReceiving">Réception estimée</span>
             <span id="swap-preview-receiving" class="send-preview-value"></span>
+          </div>
+          <div class="send-preview-row hidden">
+            <span class="send-preview-label" data-i18n="swap.previewMin">Minimum garanti</span>
+            <span id="swap-preview-min" class="send-preview-value"></span>
           </div>
           <div class="send-preview-row">
             <span id="swap-preview-fees-label" class="send-preview-label" data-i18n="swap.previewFees">Frais du protocole (inclus)</span>

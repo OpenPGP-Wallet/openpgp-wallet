@@ -5,7 +5,7 @@
 //! confirmations/erreurs le sont.
 
 use base64::Engine;
-use pgp_wallet_poc::{address_book, api, dapp_requests, external_wallets, hardware, history, messaging, price_history, price_rpc, sent_recipients, wallet_flow};
+use pgp_wallet_poc::{address_book, api, cow, dapp_requests, external_wallets, hardware, history, messaging, price_history, price_rpc, sent_recipients, wallet_flow};
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -150,6 +150,17 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ),
     ("Réinitialisation annulée (confirmation refusée).", "Reset cancelled (confirmation refused)."),
     ("Échange annulé (confirmation refusée).", "Swap cancelled (confirmation refused)."),
+    // CoW Protocol (core/src/cow.rs, core/src/api.rs)
+    ("échange via CoW pas encore activé", "swaps via CoW are not enabled yet"),
+    ("vendre la monnaie du réseau via CoW n'est pas encore pris en charge", "selling the network's own currency via CoW is not supported yet"),
+    ("ordre CoW incohérent — échange refusé", "inconsistent CoW order — swap refused"),
+    ("l'ordre CoW n'est pas au nom de ce profil — échange refusé", "the CoW order is not in this profile's name — swap refused"),
+    (
+        "le devis CoW a expiré pendant l'autorisation — relancez l'échange (l'autorisation reste acquise)",
+        "the CoW quote expired during the approval — start the swap again (the approval is kept)",
+    ),
+    ("adresse du profil inconnue — déverrouillez le portefeuille", "profile address unknown — unlock the wallet"),
+    ("identifiant d'ordre CoW invalide", "invalid CoW order identifier"),
     // WalletConnect (core/src/walletconnect/, core/src/dapp_requests.rs, lib.rs)
     ("lien WalletConnect invalide : il doit commencer par « wc: »", "invalid WalletConnect link: it must start with \"wc:\""),
     ("lien WalletConnect incomplet (paramètres absents)", "incomplete WalletConnect link (missing parameters)"),
@@ -443,6 +454,12 @@ fn translate_dynamic_error(msg: &str) -> Option<String> {
     }
     if let Some(label) = msg.strip_prefix("le compte « ").and_then(|rest| rest.strip_suffix(" » n'est pas sur ce réseau")) {
         return Some(format!("the account \"{label}\" is not on this network"));
+    }
+    if let Some(rest) = msg.strip_prefix("devis CoW refusé : ") {
+        return Some(format!("CoW quote refused: {rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("ordre CoW refusé : ") {
+        return Some(format!("CoW order refused: {rest}"));
     }
     if let Some(rest) = msg.strip_prefix("profil actif introuvable (index ") {
         return Some(format!("active profile not found (index {rest}"));
@@ -780,7 +797,7 @@ fn save_bytes_with_dialog(suggested_name: String, content_b64: String, app: taur
 /// aurait laissé un frontend compromis ouvrir n'importe quelle page — un vecteur
 /// de phishing simple, ouvert sans aucun bénéfice fonctionnel puisqu'aucun appel
 /// légitime de cette commande ne cible jamais autre chose que ces domaines.
-const ALLOWED_EXTERNAL_LINK_PREFIXES: [&str; 2] = ["https://explorer.solana.com/", "https://blockstream.info/"];
+const ALLOWED_EXTERNAL_LINK_PREFIXES: [&str; 3] = ["https://explorer.solana.com/", "https://blockstream.info/", "https://explorer.cow.fi/"];
 
 /// Lien vers un explorateur connu de l'app : Solana, Bitcoin, ou l'explorateur
 /// d'un réseau EVM (origine de `explorer_tx_prefix` : Etherscan, Arbiscan,
@@ -2782,6 +2799,183 @@ async fn jupiter_swap_transaction(
     .await
 }
 
+// --- Swap (CoW Protocol) -----------------------------------------------------
+// Même réseau EVM : ordre signé (EIP-712) construit et vérifié côté Rust (voir
+// core/src/cow.rs), exécuté ensuite par CoW. Aucune transaction d'échange :
+// seule une éventuelle autorisation du jeton vendu part sur le réseau.
+
+/// Paire CoW désignée par l'interface : refusée si la route de cette paire
+/// ne passe pas par CoW (voir `swap_routes::direct`).
+fn cow_pair(network: &str, from_coin: &str, to_coin: &str) -> Result<(cow::CowToken, cow::CowToken), String> {
+    use pgp_wallet_poc::swap_routes;
+    let route = swap_routes::find(from_coin, network).zip(swap_routes::find(to_coin, network)).and_then(|(f, t)| swap_routes::direct(f, t));
+    if route != Some(swap_routes::Protocol::Cow) {
+        return Err(translate_error("échange non disponible entre ces deux cryptos"));
+    }
+    api::cow_tokens(network, from_coin, to_coin).t_err()
+}
+
+/// Adresse EVM publique du profil (mémorisée au déverrouillage) : vendeur ET
+/// destinataire d'un ordre CoW. L'envoi revérifie qu'elle est bien celle de
+/// la clé qui signe (`api::send_cow_swap`).
+fn profile_evm_address(app: &tauri::AppHandle, profile_index: u32) -> Result<String, String> {
+    app.state::<ProfileAddressCache>()
+        .0
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .get(&profile_index)
+        .map(|(evm, _)| evm.clone())
+        .ok_or_else(|| translate_error("adresse du profil inconnue — déverrouillez le portefeuille"))
+}
+
+/// Montant affiché : 8 décimales au plus, TRONQUÉ (un minimum garanti n'est
+/// jamais affiché au-dessus de sa vraie valeur).
+fn cow_amount(units: u128, token: &cow::CowToken) -> String {
+    let cut = 10u128.pow(u32::from(token.decimals.saturating_sub(8)));
+    format!("{} {}", pgp_wallet_poc::tokens::format_amount(units / cut * cut, token.decimals), token.symbol)
+}
+
+#[derive(Serialize)]
+struct CowQuoteDto {
+    expected_out: String,
+    min_out: String,
+    partner_fee: String,
+    network_fee: String,
+}
+
+#[tauri::command]
+async fn get_cow_quote(network: String, from_coin: String, to_coin: String, amount: String, profile_index: u32, app: tauri::AppHandle) -> Result<CowQuoteDto, String> {
+    run_blocking(move || {
+        let (sell, buy) = cow_pair(&network, &from_coin, &to_coin)?;
+        let owner = profile_evm_address(&app, profile_index)?;
+        let order = api::get_cow_quote(evm_network(&network)?, &sell, &buy, &amount, &owner).t_err()?;
+        Ok(CowQuoteDto {
+            expected_out: cow_amount(order.expected_buy, &buy),
+            min_out: cow_amount(order.min_buy, &buy),
+            partner_fee: cow_amount(order.partner_fee_buy, &buy),
+            network_fee: cow_amount(order.network_fee_sell, &sell),
+        })
+    })
+    .await
+}
+
+/// Confirmation native d'un ordre CoW : tout ce qui sera signé (vente,
+/// minimum reçu, destinataire, validité, frais) et, s'il en faut, la
+/// transaction d'autorisation séparée — texte construit uniquement à partir
+/// de l'ordre préparé côté Rust.
+#[allow(clippy::too_many_arguments)]
+fn confirm_cow_swap_native(
+    app: &tauri::AppHandle,
+    from_label: &str,
+    network_name: &str,
+    sell_line: &str,
+    network_fee: &str,
+    expected_out: &str,
+    min_out: &str,
+    partner_fee: &str,
+    receiver: &str,
+    minutes: u64,
+    approval_lines: Option<&str>,
+) -> bool {
+    let from_label = dialog_label(from_label);
+    let approval_lines = approval_lines.map(|a| format!("{a}\n")).unwrap_or_default();
+    let message = if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
+        format!(
+            "Swap via CoW Protocol (external protocol, not audited by this app)\n\nFrom profile: {from_label}\nNetwork: {network_name}\nSelling: {sell_line} (incl. ≈ {network_fee} of CoW network costs)\nExpected to receive: ~{expected_out}\nGuaranteed minimum: {min_out} (otherwise the order is not executed)\nFunds will arrive at: {receiver}\n(verify this is really your own address)\nIncludes a 1% integration fee (≈ {partner_fee}).\nOrder valid for about {minutes} minutes; if not executed, it expires at no cost.\n{approval_lines}\nThis signs an order (no swap transaction): once executed, it is irreversible.\n\nConfirm this swap?"
+        )
+    } else {
+        format!(
+            "Échange via CoW Protocol (protocole externe, non audité par cette app)\n\nDepuis le profil : {from_label}\nRéseau : {network_name}\nVente : {sell_line} (dont ≈ {network_fee} de frais réseau de CoW)\nRéception attendue : ~{expected_out}\nMinimum garanti : {min_out} (sinon l'ordre n'est pas exécuté)\nLes fonds arriveront sur : {receiver}\n(vérifiez qu'il s'agit bien de votre propre adresse)\nInclut 1 % de frais d'intégration (≈ {partner_fee}).\nOrdre valable environ {minutes} minutes ; non exécuté, il expire sans rien coûter.\n{approval_lines}\nCeci signe un ordre (pas de transaction d'échange) : une fois exécuté, il est irréversible.\n\nConfirmer cet échange ?"
+        )
+    };
+    app.dialog()
+        .message(message)
+        .title(lang("Confirmer l'échange", "Confirm the swap"))
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancel)
+        .blocking_show()
+}
+
+#[derive(Serialize)]
+struct CowOrderDto {
+    uid: String,
+    explorer_url: Option<String>,
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn cow_swap_transaction(
+    password: String,
+    network: String,
+    from_coin: String,
+    to_coin: String,
+    amount: String,
+    profile_index: u32,
+    app: tauri::AppHandle,
+) -> Result<CowOrderDto, String> {
+    run_blocking(move || {
+        let password = Zeroizing::new(password);
+        let dir = data_dir(&app)?;
+        let (sell, buy) = cow_pair(&network, &from_coin, &to_coin)?;
+        let net = evm_network(&network)?;
+        // Forme canonique, affichée ET signée (voir `send_transaction`).
+        let amount = api::canonical_cow_amount(&sell, &amount).t_err()?;
+        let owner = profile_evm_address(&app, profile_index)?;
+        let from_label = api::list_profiles(&dir)
+            .into_iter()
+            .find(|p| p.index == profile_index)
+            .map(|p| p.label)
+            .unwrap_or_else(|| format!("profil #{profile_index}"));
+
+        // Devis obtenu ICI, juste avant la confirmation : l'ordre affiché est
+        // exactement celui qui sera signé (aucun nouveau devis ensuite).
+        let order = api::get_cow_quote(net, &sell, &buy, &amount, &owner).t_err()?;
+        let gas_price = api::evm_gas_price_for_confirmation(net).t_err()?;
+        let (approve_fee, approvals) = api::cow_approval_fees(net, &order, gas_price).t_err()?;
+        let sell_line = cow_amount(order.sell_amount, &sell);
+        let approval_lines = if approvals > 0 {
+            let total = approve_fee.max_total().t_err()?.saturating_mul(approvals as u128) as f64 / 1e18;
+            let gwei = gas_price as f64 / 1e9;
+            let symbol = net.native_symbol;
+            Some(lang(
+                &format!("Autorisation préalable (transaction séparée) : le contrat de CoW {} pourra prélever exactement {sell_line}, une seule fois.\nFrais réseau maximum de l'autorisation : {total:.8} {symbol} ({gwei:.4} gwei)", cow::VAULT_RELAYER),
+                &format!("Prior approval (separate transaction): CoW's contract {} will be allowed to take exactly {sell_line}, once.\nMaximum network fee for the approval: {total:.8} {symbol} ({gwei:.4} gwei)", cow::VAULT_RELAYER),
+            )
+            .to_string())
+        } else {
+            None
+        };
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let minutes = u64::from(order.valid_to).saturating_sub(now) / 60;
+        if !confirm_cow_swap_native(
+            &app,
+            &from_label,
+            &network_label(&network),
+            &sell_line,
+            &cow_amount(order.network_fee_sell, &sell),
+            &cow_amount(order.expected_buy, &buy),
+            &cow_amount(order.min_buy, &buy),
+            &cow_amount(order.partner_fee_buy, &buy),
+            &order.receiver,
+            minutes,
+            approval_lines.as_deref(),
+        ) {
+            return Err(translate_error("Échange annulé (confirmation refusée)."));
+        }
+
+        let uid = api::send_cow_swap(&dir, &password, net, &sell, &order, gas_price, profile_index).t_err()?;
+        Ok(CowOrderDto { explorer_url: cow::explorer_order_url(&network, &uid), uid })
+    })
+    .await
+}
+
+/// État d'un ordre CoW (« open », « fulfilled », « expired »…), suivi par
+/// l'interface après l'envoi.
+#[tauri::command]
+async fn cow_order_status(network: String, uid: String) -> Result<String, String> {
+    run_blocking(move || cow::order_status(&network, &uid).t_err()).await
+}
+
 #[tauri::command]
 async fn send_usdc_transaction(password: String, to: String, amount: String, profile_index: u32, app: tauri::AppHandle) -> Result<String, String> {
     run_blocking(move || {
@@ -3705,6 +3899,9 @@ pub fn run() {
             swap_pairs,
             get_jupiter_quote,
             jupiter_swap_transaction,
+            get_cow_quote,
+            cow_swap_transaction,
+            cow_order_status,
             get_own_certificate,
             list_recipients,
             add_recipient,

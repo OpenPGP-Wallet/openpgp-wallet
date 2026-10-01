@@ -741,23 +741,31 @@ const I18N = {
     "send.txSent": "Transaction envoyée : {tx}",
     "swap.title": "Échanger",
     "swap.subtitle":
-      "Passe par un protocole externe non audité par cette app — voir \"Comment ça marche\" pour le détail. Chaque échange (entre réseaux via THORChain ou Maya, sur Solana via Jupiter) inclut 0,80 % de frais d'affiliation, sauf mention contraire dans la confirmation.",
+      "Passe par un protocole externe non audité par cette app — voir \"Comment ça marche\" pour le détail. Chaque échange inclut des frais d'affiliation : 0,80 % entre réseaux (THORChain, Maya) et sur Solana (Jupiter), 1 % sur un même réseau EVM (CoW), sauf mention contraire dans la confirmation.",
     "swap.fromAsset": "Depuis",
     "swap.toAsset": "Vers",
     "swap.viaJupiter": "via Jupiter, même portefeuille",
+    "swap.viaCow": "via CoW, même portefeuille",
     "swap.unavailable": "Échange non disponible entre ces deux cryptos.",
     "swap.amount": "Montant",
     "swap.destination": "Adresse de destination",
     "swap.destinationHint":
       "Pré-remplie avec votre propre adresse sur le réseau choisi — modifiable si vous voulez échanger vers une autre adresse.",
     "swap.jupiterHint":
-      "Même portefeuille : les USDC arrivent directement sur votre adresse Solana, pas besoin d'adresse de destination séparée.",
+      "Même portefeuille : la crypto reçue arrive directement sur votre adresse de ce réseau, pas besoin d'adresse de destination séparée.",
     "swap.getQuote": "Obtenir un devis",
     "swap.previewTitle": "Vérifiez avant d'échanger",
     "swap.previewSending": "Envoi",
     "swap.previewReceiving": "Réception estimée",
     "swap.previewFees": "Frais du protocole (inclus)",
     "swap.previewFeesOf": "Frais {name} (inclus)",
+    "swap.previewMin": "Minimum garanti",
+    "swap.cowOrderSent": "Ordre envoyé à CoW — en attente d'exécution (au plus {minutes} min).",
+    "swap.cowOrderFilled": "Ordre exécuté : les fonds sont arrivés.",
+    "swap.cowOrderExpired": "Ordre expiré sans être exécuté : rien n'a été échangé.",
+    "swap.cowOrderCancelled": "Ordre annulé : rien n'a été échangé.",
+    "swap.cowOrderUnknown": "Suivi de l'ordre indisponible pour l'instant — voir CoW Explorer.",
+    "swap.cowViewOrder": "Voir l'ordre",
     "addProfile.title": "Nouveau profil",
     "addProfile.subtitle":
       "Un profil = une nouvelle adresse par réseau, dérivée de la même clé maîtresse déjà protégée par Shamir/PGP — aucune nouvelle sauvegarde à faire.",
@@ -1207,21 +1215,29 @@ const I18N = {
     "send.txSent": "Transaction sent: {tx}",
     "swap.title": "Swap",
     "swap.subtitle":
-      "Goes through an external protocol not audited by this app — see \"How it works\" for details. Every swap (across networks via THORChain or Maya, on Solana via Jupiter) includes a 0.80% affiliate fee, unless the confirmation says otherwise.",
+      "Goes through an external protocol not audited by this app — see \"How it works\" for details. Every swap includes an affiliate fee: 0.80% across networks (THORChain, Maya) and on Solana (Jupiter), 1% on a single EVM network (CoW), unless the confirmation says otherwise.",
     "swap.fromAsset": "From",
     "swap.toAsset": "To",
     "swap.viaJupiter": "via Jupiter, same wallet",
+    "swap.viaCow": "via CoW, same wallet",
     "swap.unavailable": "No swap available between these two cryptos.",
     "swap.amount": "Amount",
     "swap.destination": "Destination address",
     "swap.destinationHint": "Pre-filled with your own address on the chosen network — editable if you want to swap to a different address.",
-    "swap.jupiterHint": "Same wallet: the USDC lands directly on your Solana address, no separate destination address needed.",
+    "swap.jupiterHint": "Same wallet: the crypto you receive lands directly on your address on this network, no separate destination address needed.",
     "swap.getQuote": "Get a quote",
     "swap.previewTitle": "Review before swapping",
     "swap.previewSending": "Sending",
     "swap.previewReceiving": "Estimated receive",
     "swap.previewFees": "Protocol fees (included)",
     "swap.previewFeesOf": "{name} fees (included)",
+    "swap.previewMin": "Guaranteed minimum",
+    "swap.cowOrderSent": "Order sent to CoW — waiting for execution (at most {minutes} min).",
+    "swap.cowOrderFilled": "Order executed: the funds have arrived.",
+    "swap.cowOrderExpired": "Order expired without being executed: nothing was swapped.",
+    "swap.cowOrderCancelled": "Order cancelled: nothing was swapped.",
+    "swap.cowOrderUnknown": "Order tracking unavailable for now — see CoW Explorer.",
+    "swap.cowViewOrder": "View order",
     "addProfile.title": "New profile",
     "addProfile.subtitle":
       "A profile = a new address per network, derived from the same master key already protected by Shamir/PGP — no new backup needed.",
@@ -4178,9 +4194,10 @@ sendPreviewConfirmBtn.addEventListener("click", withBusyButton(sendPreviewConfir
 }));
 
 // --- Échange (« Convertir ») -------------------------------------------------
-// Passe par un protocole externe non audité par cette app : THORChain pour un
-// échange entre réseaux (core/src/thorchain_rpc.rs), Jupiter dans le même
-// portefeuille Solana (core/src/jupiter_rpc.rs). Les paires proposées viennent
+// Passe par un protocole externe non audité par cette app : THORChain ou Maya
+// pour un échange entre réseaux (core/src/thorchain_rpc.rs), Jupiter dans le
+// même portefeuille Solana (core/src/jupiter_rpc.rs), CoW sur un même réseau
+// EVM (ordre signé, core/src/cow.rs). Les paires proposées viennent
 // de Rust (`swapPairs`, core/src/swap_routes.rs) : l'interface ne propose que
 // ce que les commandes d'échange acceptent. Même principe en deux étapes que
 // l'envoi (devis -> aperçu -> confirmation native de Windows).
@@ -4251,7 +4268,8 @@ function updateSwapToOptions() {
         const option = document.createElement("option");
         option.value = swapKey(p.to_coin, p.to_network);
         option.dataset.coin = p.to_coin;
-        option.textContent = swapAssetLabel(p.to_coin, p.to_network) + (p.protocol === "jupiter" ? ` · ${t("swap.viaJupiter")}` : "");
+        const via = { jupiter: "swap.viaJupiter", cow: "swap.viaCow" }[p.protocol];
+        option.textContent = swapAssetLabel(p.to_coin, p.to_network) + (via ? ` · ${t(via)}` : "");
         return option;
       })
   );
@@ -4275,15 +4293,18 @@ function openSwapModal(card) {
   swapModal.classList.remove("hidden");
 }
 
-// Jupiter reste dans le même portefeuille Solana : pas d'adresse de
-// destination à saisir, contrairement à un échange entre réseaux (THORChain),
-// où elle est pré-remplie avec l'adresse du profil sur le réseau d'arrivée.
+// Jupiter (Solana) et CoW (un même réseau EVM) restent dans le même
+// portefeuille : pas d'adresse de destination à saisir, contrairement à un
+// échange entre réseaux (THORChain, Maya), où elle est pré-remplie avec
+// l'adresse du profil sur le réseau d'arrivée.
+const isSameWalletSwap = (pair) => pair?.protocol === "jupiter" || pair?.protocol === "cow";
+
 function updateSwapDestination() {
   const pair = selectedSwapPair();
-  const jupiter = pair?.protocol === "jupiter";
-  document.getElementById("swap-destination-block").classList.toggle("hidden", jupiter);
-  document.getElementById("swap-jupiter-hint").classList.toggle("hidden", !jupiter);
-  if (pair && !jupiter) document.getElementById("swap-destination").value = addressForCoin(pair.to.coin, pair.to.network);
+  const sameWallet = isSameWalletSwap(pair);
+  document.getElementById("swap-destination-block").classList.toggle("hidden", sameWallet);
+  document.getElementById("swap-jupiter-hint").classList.toggle("hidden", !sameWallet);
+  if (pair && !sameWallet) document.getElementById("swap-destination").value = addressForCoin(pair.to.coin, pair.to.network);
 }
 
 document.getElementById("swap-to-coin").addEventListener("change", updateSwapDestination);
@@ -4314,10 +4335,10 @@ swapQuoteBtn.addEventListener("click", withBusyButton(swapQuoteBtn, async () => 
   const { coin: fromCoin, network: fromNetwork } = pair.from;
   const { coin: toCoin, network: toNetwork } = pair.to;
   const amount = document.getElementById("swap-amount").value.trim().replace(",", ".");
-  const jupiter = pair.protocol === "jupiter";
-  const destination = jupiter ? "" : document.getElementById("swap-destination").value.trim();
+  const sameWallet = isSameWalletSwap(pair);
+  const destination = sameWallet ? "" : document.getElementById("swap-destination").value.trim();
 
-  if (!amount || (!jupiter && !destination)) {
+  if (!amount || (!sameWallet && !destination)) {
     showError(errorEl, t("wallet.allFieldsRequired"));
     return;
   }
@@ -4325,8 +4346,22 @@ swapQuoteBtn.addEventListener("click", withBusyButton(swapQuoteBtn, async () => 
   try {
     const destRow = document.getElementById("swap-preview-destination").closest(".send-preview-row");
     const feeRow = document.getElementById("swap-preview-fees").closest(".send-preview-row");
+    const minRow = document.getElementById("swap-preview-min").closest(".send-preview-row");
+    minRow.classList.add("hidden");
     let receivingText;
-    if (jupiter) {
+    if (pair.protocol === "cow") {
+      // Ordre CoW : réception attendue, minimum garanti signé, frais (1 %
+      // d'intégration dans la crypto reçue + frais réseau de CoW pris sur la
+      // crypto vendue), tous déjà comptés.
+      const quote = await invoke("get_cow_quote", { network: fromNetwork, fromCoin, toCoin, amount, profileIndex: swapContext.profileIndex });
+      receivingText = `≈ ${quote.expected_out}`;
+      document.getElementById("swap-preview-min").textContent = quote.min_out;
+      document.getElementById("swap-preview-fees-label").textContent = t("swap.previewFeesOf", { name: "CoW" });
+      document.getElementById("swap-preview-fees").textContent = `${quote.partner_fee} + ${quote.network_fee}`;
+      minRow.classList.remove("hidden");
+      destRow.classList.add("hidden");
+      feeRow.classList.remove("hidden");
+    } else if (pair.protocol === "jupiter") {
       const outAmount = await invoke("get_jupiter_quote", { fromCoin, toCoin, amount });
       receivingText = `≈ ${outAmount} ${COIN_SYMBOL[toCoin] || toCoin.toUpperCase()}`;
       destRow.classList.add("hidden");
@@ -4382,8 +4417,7 @@ swapPreviewConfirmBtn.addEventListener("click", withBusyButton(swapPreviewConfir
   const { coin: fromCoin, network: fromNetwork } = pair.from;
   const { coin: toCoin, network: toNetwork } = pair.to;
   const amount = document.getElementById("swap-amount").value.trim().replace(",", ".");
-  const jupiter = pair.protocol === "jupiter";
-  const destination = jupiter ? "" : document.getElementById("swap-destination").value.trim();
+  const destination = isSameWalletSwap(pair) ? "" : document.getElementById("swap-destination").value.trim();
   const password = document.getElementById("swap-preview-password").value;
 
   if (!password) {
@@ -4392,7 +4426,13 @@ swapPreviewConfirmBtn.addEventListener("click", withBusyButton(swapPreviewConfir
   }
 
   try {
-    const txResult = jupiter
+    if (pair.protocol === "cow") {
+      const order = await invoke("cow_swap_transaction", { password, network: fromNetwork, fromCoin, toCoin, amount, profileIndex: swapContext.profileIndex });
+      trackCowOrder(successEl, fromNetwork, order);
+      refreshAllBalances();
+      return;
+    }
+    const txResult = pair.protocol === "jupiter"
       ? await invoke("jupiter_swap_transaction", { password, fromCoin, toCoin, amount, profileIndex: swapContext.profileIndex })
       : await invoke("swap_transaction", {
           password,
@@ -4416,6 +4456,57 @@ swapPreviewConfirmBtn.addEventListener("click", withBusyButton(swapPreviewConfir
     document.getElementById("swap-preview-password").value = "";
   }
 }));
+
+// Suivi d'un ordre CoW après l'envoi : son état est relu toutes les 15 s
+// jusqu'à son exécution, son expiration (30 min au plus) ou son annulation ;
+// lien vers CoW Explorer.
+const COW_ORDER_POLL_MS = 15000;
+const COW_ORDER_MAX_WAIT_MS = 35 * 60 * 1000;
+
+function trackCowOrder(successEl, network, order) {
+  const text = document.createElement("span");
+  const setText = (key, vars) => {
+    text.textContent = t(key, vars);
+  };
+  setText("swap.cowOrderSent", { minutes: 30 });
+  successEl.replaceChildren(text);
+  if (order.explorer_url) {
+    const link = document.createElement("button");
+    link.type = "button";
+    link.className = "link";
+    link.textContent = t("swap.cowViewOrder");
+    link.addEventListener("click", () => {
+      invoke("open_external_link", { url: order.explorer_url }).catch((e) => alert(t("wallet.linkError", { err: e })));
+    });
+    successEl.append(" ", link);
+  }
+  successEl.classList.remove("hidden");
+
+  const started = Date.now();
+  const poll = async () => {
+    let status;
+    try {
+      status = await invoke("cow_order_status", { network, uid: order.uid });
+    } catch (e) {
+      console.error(e);
+    }
+    if (status === "fulfilled") {
+      setText("swap.cowOrderFilled");
+      refreshAllBalances();
+      return;
+    }
+    if (status === "expired" || status === "cancelled") {
+      setText(status === "expired" ? "swap.cowOrderExpired" : "swap.cowOrderCancelled");
+      return;
+    }
+    if (Date.now() - started > COW_ORDER_MAX_WAIT_MS) {
+      setText("swap.cowOrderUnknown");
+      return;
+    }
+    setTimeout(poll, COW_ORDER_POLL_MS);
+  };
+  setTimeout(poll, COW_ORDER_POLL_MS);
+}
 
 // --- Certificat ------------------------------------------------------------
 

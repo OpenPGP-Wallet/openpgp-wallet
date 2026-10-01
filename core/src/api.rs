@@ -14,8 +14,8 @@
 //!   perdu — jamais utilisé pour le déverrouillage quotidien.
 
 use crate::{
-    btc_rpc, dapp_requests, derivation, entropy, eth_rpc, eth_tx, history, jupiter_rpc, memory_guard, pgp_engine, secure_storage, shamir,
-    sol_rpc, sol_spl, sol_tx, thorchain_rpc, tokens, wallet_flow,
+    btc_rpc, cow, dapp_requests, derivation, entropy, eth_rpc, eth_tx, history, jupiter_rpc, memory_guard, pgp_engine, secure_storage, shamir,
+    evm_sign, sol_rpc, sol_spl, sol_tx, thorchain_rpc, tokens, wallet_flow,
 };
 use anyhow::{Context, Result};
 use openpgp::armor;
@@ -1823,50 +1823,17 @@ pub fn send_swap_erc20(
         tokens::format_amount(units, from.decimals as u8)
     );
 
-    let mut approvals: Vec<u128> = Vec::new();
-    if allowance < units {
-        if allowance > 0 {
-            approvals.push(0);
-        }
-        approvals.push(units);
-    }
+    let approvals = approval_amounts(allowance, units);
     // Monnaie du réseau pour TOUTES les transactions, au pire : autorisations
     // et dépôt à leur plafond de gas (+ frais L1 sur Base).
-    let (approve_cap, deposit_cap) = swap_gas_caps(network);
+    let (_, deposit_cap) = swap_gas_caps(network);
     let deposit_draft = eth_tx::thorchain_deposit_calldata(&vault_bytes, &contract_bytes, units, &quote.memo, u64::MAX);
-    let mut worst_case = gas_price
+    let deposit_fee = gas_price
         .checked_mul(u128::from(deposit_cap))
         .and_then(|g| g.checked_add(evm_l1_fee(network, &router_bytes, 0, &deposit_draft, gas_price, deposit_cap).ok()?))
         .context("frais de gas dépassant la capacité représentable")?;
-    for amount in &approvals {
-        let data = erc20_approve_data(&router_bytes, *amount);
-        let approve_fee = gas_price
-            .checked_mul(u128::from(approve_cap))
-            .and_then(|g| g.checked_add(evm_l1_fee(network, &contract_bytes, 0, &data, gas_price, approve_cap).ok()?))
-            .context("frais de gas dépassant la capacité représentable")?;
-        worst_case = worst_case.checked_add(approve_fee).context("frais de gas dépassant la capacité représentable")?;
-    }
-    anyhow::ensure!(
-        worst_case <= balance,
-        "{} insuffisant pour les frais du réseau : {} disponibles, jusqu'à {} nécessaires",
-        network.native_symbol,
-        tokens::format_amount(balance, 18),
-        tokens::format_amount(worst_case, 18)
-    );
-
-    for amount in approvals {
-        let data = erc20_approve_data(&router_bytes, amount);
-        let estimated = rpc.estimate_gas(&address_str, contract, 0, &data)?;
-        let gas_limit = estimated.saturating_mul(12).div_ceil(10).max(eth_tx::intrinsic_gas(&data));
-        anyhow::ensure!(
-            gas_limit <= approve_cap,
-            "gas estimé anormalement élevé pour l'autorisation ({gas_limit}, maximum {approve_cap}) — échange refusé"
-        );
-        let tx = eth_tx::EthTx { nonce, gas_price, gas_limit, to: contract_bytes, value: 0, chain_id, data };
-        let hash = rpc.send_raw_transaction(&tx.sign(&signing_key)?)?;
-        wait_for_success(&rpc, &hash)?;
-        nonce += 1;
-    }
+    ensure_fees_covered(network, &contract_bytes, &router_bytes, &approvals, gas_price, deposit_fee, balance)?;
+    nonce = send_approvals(&rpc, network, &signing_key, &address_str, chain_id, nonce, &contract_bytes, &router_bytes, &approvals, gas_price)?;
 
     let expiration = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).context("horloge système invalide")?.as_secs() + 3600;
     let calldata = eth_tx::thorchain_deposit_calldata(&vault_bytes, &contract_bytes, units, &quote.memo, expiration);
@@ -1878,6 +1845,82 @@ pub fn send_swap_erc20(
     );
     let tx = eth_tx::EthTx { nonce, gas_price, gas_limit, to: router_bytes, value: 0, chain_id, data: calldata };
     rpc.send_raw_transaction(&tx.sign(&signing_key)?)
+}
+
+/// Autorisations à envoyer pour qu'un contrat puisse prélever exactement
+/// `units` : aucune si l'autorisation actuelle suffit ; sinon le montant exact
+/// — jamais illimité —, précédé d'une remise à 0 si une autorisation partielle
+/// existe (exigé par USDT).
+fn approval_amounts(allowance: u128, units: u128) -> Vec<u128> {
+    match allowance {
+        a if a >= units => vec![],
+        0 => vec![units],
+        _ => vec![0, units],
+    }
+}
+
+/// Vérifie que la monnaie du réseau couvre, au pire, les autorisations à
+/// leur plafond de gas (+ frais L1 sur Base) plus `other_fees`.
+fn ensure_fees_covered(
+    network: &wallet_flow::EvmNetwork,
+    contract: &[u8; 20],
+    spender: &[u8; 20],
+    approvals: &[u128],
+    gas_price: u128,
+    other_fees: u128,
+    balance: u128,
+) -> Result<()> {
+    let (approve_cap, _) = swap_gas_caps(network);
+    let mut worst_case = other_fees;
+    for amount in approvals {
+        let data = erc20_approve_data(spender, *amount);
+        let approve_fee = gas_price
+            .checked_mul(u128::from(approve_cap))
+            .and_then(|g| g.checked_add(evm_l1_fee(network, contract, 0, &data, gas_price, approve_cap).ok()?))
+            .context("frais de gas dépassant la capacité représentable")?;
+        worst_case = worst_case.checked_add(approve_fee).context("frais de gas dépassant la capacité représentable")?;
+    }
+    anyhow::ensure!(
+        worst_case <= balance,
+        "{} insuffisant pour les frais du réseau : {} disponibles, jusqu'à {} nécessaires",
+        network.native_symbol,
+        tokens::format_amount(balance, 18),
+        tokens::format_amount(worst_case, 18)
+    );
+    Ok(())
+}
+
+/// Envoie les autorisations une à une, chacune attendue minée et réussie
+/// avant la suivante ; renvoie le nonce suivant.
+#[allow(clippy::too_many_arguments)]
+fn send_approvals(
+    rpc: &eth_rpc::EthRpc,
+    network: &wallet_flow::EvmNetwork,
+    signing_key: &k256::ecdsa::SigningKey,
+    owner: &str,
+    chain_id: u64,
+    mut nonce: u64,
+    contract: &[u8; 20],
+    spender: &[u8; 20],
+    approvals: &[u128],
+    gas_price: u128,
+) -> Result<u64> {
+    let (approve_cap, _) = swap_gas_caps(network);
+    let contract_str = derivation::format_address(contract);
+    for amount in approvals {
+        let data = erc20_approve_data(spender, *amount);
+        let estimated = rpc.estimate_gas(owner, &contract_str, 0, &data)?;
+        let gas_limit = estimated.saturating_mul(12).div_ceil(10).max(eth_tx::intrinsic_gas(&data));
+        anyhow::ensure!(
+            gas_limit <= approve_cap,
+            "gas estimé anormalement élevé pour l'autorisation ({gas_limit}, maximum {approve_cap}) — échange refusé"
+        );
+        let tx = eth_tx::EthTx { nonce, gas_price, gas_limit, to: *contract, value: 0, chain_id, data };
+        let hash = rpc.send_raw_transaction(&tx.sign(signing_key)?)?;
+        wait_for_success(rpc, &hash)?;
+        nonce += 1;
+    }
+    Ok(nonce)
 }
 
 /// Frais maximum d'un échange THORChain depuis un réseau EVM, montrés AVANT
@@ -1925,11 +1968,7 @@ pub fn evm_swap_fees(
     };
     let approvals = match (from.contract, owner) {
         (None, _) => 0,
-        (Some(contract), Some(owner)) => match get_erc20_allowance(network, contract, &wallet_flow::parse_evm_address(owner)?, &router)? {
-            allowance if allowance >= units => 0,
-            0 => 1,
-            _ => 2,
-        },
+        (Some(contract), Some(owner)) => approval_amounts(get_erc20_allowance(network, contract, &wallet_flow::parse_evm_address(owner)?, &router)?, units).len(),
         (Some(_), None) => 1,
     };
     Ok(EvmSwapFees { deposit, approve, approvals })
@@ -1942,13 +1981,115 @@ fn wait_for_success(rpc: &eth_rpc::EthRpc, hash: &str) -> Result<()> {
     loop {
         match rpc.receipt_status(hash) {
             Ok(Some(true)) => return Ok(()),
-            Ok(Some(false)) => anyhow::bail!("l'autorisation du jeton a échoué on-chain ({hash}) — échange interrompu, aucun dépôt envoyé"),
+            Ok(Some(false)) => anyhow::bail!("l'autorisation du jeton a échoué on-chain ({hash}) — échange interrompu, rien d'autre n'a été envoyé"),
             _ if started.elapsed() > APPROVE_WAIT => anyhow::bail!(
                 "autorisation envoyée ({hash}) mais pas encore confirmée par le réseau — relancez l'échange dans un instant (l'autorisation restera acquise)"
             ),
             _ => std::thread::sleep(std::time::Duration::from_secs(3)),
         }
     }
+}
+
+// --- Échange CoW Protocol (même réseau EVM) ----------------------------------
+
+/// Jetons CoW (vendu, acheté) d'une paire désignée par l'interface.
+pub fn cow_tokens(network: &str, from_coin: &str, to_coin: &str) -> Result<(cow::CowToken, cow::CowToken)> {
+    let sell = cow::token(from_coin, network).with_context(|| format!("{from_coin} n'est pas échangeable via CoW sur ce réseau"))?;
+    let buy = cow::token(to_coin, network).with_context(|| format!("{to_coin} n'est pas échangeable via CoW sur ce réseau"))?;
+    anyhow::ensure!(!sell.native, "vendre la monnaie du réseau via CoW n'est pas encore pris en charge");
+    Ok((sell, buy))
+}
+
+/// Forme canonique du montant vendu (décimales du jeton), affichée ET signée.
+pub fn canonical_cow_amount(sell: &cow::CowToken, amount: &str) -> Result<String> {
+    Ok(tokens::format_amount(tokens::parse_amount(amount, sell.decimals)?, sell.decimals))
+}
+
+/// Devis CoW pour vendre `amount` de `sell` contre `buy`, au profit de
+/// `owner` (vendeur ET destinataire). Refusé tant que l'adresse des frais
+/// partenaire n'est pas renseignée (voir `cow::PARTNER_FEE_RECIPIENT`).
+pub fn get_cow_quote(network: &wallet_flow::EvmNetwork, sell: &cow::CowToken, buy: &cow::CowToken, amount: &str, owner: &str) -> Result<cow::CowOrder> {
+    let recipient = cow::PARTNER_FEE_RECIPIENT.context("échange via CoW pas encore activé")?;
+    wallet_flow::parse_evm_address(owner)?;
+    cow::quote(network.id, sell, buy, tokens::parse_amount(amount, sell.decimals)?, owner, recipient)
+}
+
+/// Autorisations à envoyer au VaultRelayer de CoW avant l'ordre, et frais
+/// maximum de chacune (montrés avant la confirmation, au prix du gas signé).
+pub fn cow_approval_fees(network: &wallet_flow::EvmNetwork, order: &cow::CowOrder, gas_price: u128) -> Result<(EvmFee, usize)> {
+    let relayer = wallet_flow::parse_evm_address(cow::VAULT_RELAYER)?;
+    let contract = wallet_flow::parse_evm_address(&order.sell_token)?;
+    let owner = wallet_flow::parse_evm_address(&order.receiver)?;
+    let (approve_cap, _) = swap_gas_caps(network);
+    let data = erc20_approve_data(&relayer, order.sell_amount);
+    let fee = EvmFee { gas_price, gas_limit: approve_cap, l1_fee: evm_l1_fee(network, &contract, 0, &data, gas_price, approve_cap)? };
+    let approvals = approval_amounts(get_erc20_allowance(network, &order.sell_token, &owner, &relayer)?, order.sell_amount).len();
+    Ok((fee, approvals))
+}
+
+/// Marge minimale de validité au moment de signer : un ordre qui expire
+/// presque aussitôt n'aurait aucune chance d'être exécuté.
+const COW_MIN_REMAINING_VALIDITY_SECS: u64 = 120;
+
+/// Échange CoW : autorisation(s) au VaultRelayer au montant exact si
+/// nécessaire (mêmes règles que `send_swap_erc20`), puis signature de l'ordre
+/// AFFICHÉ dans la boîte de confirmation (`order`), sans nouveau devis : si le
+/// marché passe sous le minimum signé, l'ordre expire sans rien coûter. L'ordre
+/// doit être au nom du profil qui signe (destinataire = vendeur). Aucune
+/// transaction d'échange : les frais réseau de CoW sont pris sur le jeton
+/// vendu, déjà comptés dans l'ordre. Renvoie l'identifiant de l'ordre.
+pub fn send_cow_swap(
+    data_dir: &Path,
+    device_password: &str,
+    network: &wallet_flow::EvmNetwork,
+    sell: &cow::CowToken,
+    order: &cow::CowOrder,
+    gas_price: u128,
+    profile_index: u32,
+) -> Result<String> {
+    check_evm_gas_price(network, gas_price)?;
+    anyhow::ensure!(order.network == network.id && order.sell_token == sell.address && !sell.native, "ordre CoW incohérent — échange refusé");
+    let contract_bytes = wallet_flow::parse_evm_address(&sell.address)?;
+    let relayer = wallet_flow::parse_evm_address(cow::VAULT_RELAYER)?;
+
+    let seed = unlock_seed(data_dir, device_password)?;
+    let _seed_lock = memory_guard::lock(&seed);
+    let (signing_key, address) = derivation::derive_evm_key(&seed, profile_index)?;
+    let address_str = derivation::format_address(&address);
+    anyhow::ensure!(address_str.eq_ignore_ascii_case(&order.receiver), "l'ordre CoW n'est pas au nom de ce profil — échange refusé");
+    let rpc = eth_rpc::EthRpc::new(network.rpc);
+
+    let (nonce, chain_id, balance, token_balance, allowance) = std::thread::scope(|scope| {
+        let nonce = scope.spawn(|| rpc.nonce(&address_str));
+        let chain_id = scope.spawn(|| rpc.chain_id());
+        let balance = scope.spawn(|| rpc.balance(&address_str));
+        let token_balance = scope.spawn(|| get_erc20_balance(network, &sell.address, &address_str));
+        let allowance = scope.spawn(|| get_erc20_allowance(network, &sell.address, &address, &relayer));
+        let join = "un fil de lecture ne doit pas paniquer";
+        (nonce.join().expect(join), chain_id.join().expect(join), balance.join().expect(join), token_balance.join().expect(join), allowance.join().expect(join))
+    });
+    let (nonce, chain_id, balance, token_balance, allowance) = (nonce?, chain_id?, balance?, token_balance?, allowance?);
+    anyhow::ensure!(chain_id == network.chain_id, "le nœud RPC répond pour le réseau {chain_id}, pas {} — envoi refusé", network.chain_id);
+    anyhow::ensure!(
+        order.sell_amount <= token_balance,
+        "{} insuffisants : {} disponibles, {} demandés",
+        sell.symbol,
+        tokens::format_amount(token_balance, sell.decimals),
+        tokens::format_amount(order.sell_amount, sell.decimals)
+    );
+
+    let approvals = approval_amounts(allowance, order.sell_amount);
+    ensure_fees_covered(network, &contract_bytes, &relayer, &approvals, gas_price, 0, balance)?;
+    send_approvals(&rpc, network, &signing_key, &address_str, chain_id, nonce, &contract_bytes, &relayer, &approvals, gas_price)?;
+
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).context("horloge système invalide")?.as_secs();
+    anyhow::ensure!(
+        u64::from(order.valid_to) >= now + COW_MIN_REMAINING_VALIDITY_SECS,
+        "le devis CoW a expiré pendant l'autorisation — relancez l'échange (l'autorisation reste acquise)"
+    );
+    let digest = cow::digest(order, chain_id)?;
+    let signature = evm_sign::sign_digest(&signing_key, &digest)?;
+    cow::submit(order, &digest, &signature, &address_str)
 }
 
 pub struct BtcFeeEstimate {
