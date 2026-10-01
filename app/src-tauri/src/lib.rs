@@ -152,7 +152,7 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("Échange annulé (confirmation refusée).", "Swap cancelled (confirmation refused)."),
     // CoW Protocol (core/src/cow.rs, core/src/api.rs)
     ("échange via CoW pas encore activé", "swaps via CoW are not enabled yet"),
-    ("vendre la monnaie du réseau via CoW n'est pas encore pris en charge", "selling the network's own currency via CoW is not supported yet"),
+    ("le devis CoW a expiré — relancez l'échange", "the CoW quote expired — start the swap again"),
     ("ordre CoW incohérent — échange refusé", "inconsistent CoW order — swap refused"),
     ("l'ordre CoW n'est pas au nom de ce profil — échange refusé", "the CoW order is not in this profile's name — swap refused"),
     (
@@ -2874,9 +2874,10 @@ async fn get_cow_quote(network: String, from_coin: String, to_coin: String, amou
 }
 
 /// Confirmation native d'un ordre CoW : tout ce qui sera signé (vente,
-/// minimum reçu, destinataire, validité, frais) et, s'il en faut, la
-/// transaction d'autorisation séparée — texte construit uniquement à partir
-/// de l'ordre préparé côté Rust.
+/// minimum reçu, destinataire, validité, frais) et la transaction qui
+/// l'accompagne s'il y en a une (autorisation du jeton, ou dépôt EthFlow pour
+/// la monnaie du réseau) — texte construit uniquement à partir de l'ordre
+/// préparé côté Rust.
 #[allow(clippy::too_many_arguments)]
 fn confirm_cow_swap_native(
     app: &tauri::AppHandle,
@@ -2889,17 +2890,28 @@ fn confirm_cow_swap_native(
     partner_fee: &str,
     receiver: &str,
     minutes: u64,
-    approval_lines: Option<&str>,
+    transaction_lines: Option<&str>,
+    eth_flow: bool,
 ) -> bool {
     let from_label = dialog_label(from_label);
-    let approval_lines = approval_lines.map(|a| format!("{a}\n")).unwrap_or_default();
-    let message = if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
+    let transaction_lines = transaction_lines.map(|a| format!("{a}\n")).unwrap_or_default();
+    let english = UI_LANG_IS_ENGLISH.load(Ordering::Relaxed);
+    let (expiry, closing) = match (eth_flow, english) {
+        (true, true) => ("if not executed, it expires and CoW refunds you automatically.", "Once executed, the swap is irreversible."),
+        (true, false) => ("non exécuté, il expire et CoW vous rembourse automatiquement.", "Une fois exécuté, l'échange est irréversible."),
+        (false, true) => ("if not executed, it expires at no cost.", "This signs an order (no swap transaction): once executed, it is irreversible."),
+        (false, false) => (
+            "non exécuté, il expire sans rien coûter.",
+            "Ceci signe un ordre (pas de transaction d'échange) : une fois exécuté, il est irréversible.",
+        ),
+    };
+    let message = if english {
         format!(
-            "Swap via CoW Protocol (external protocol, not audited by this app)\n\nFrom profile: {from_label}\nNetwork: {network_name}\nSelling: {sell_line} (incl. ≈ {network_fee} of CoW network costs)\nExpected to receive: ~{expected_out}\nGuaranteed minimum: {min_out} (otherwise the order is not executed)\nFunds will arrive at: {receiver}\n(verify this is really your own address)\nIncludes a 1% integration fee (≈ {partner_fee}).\nOrder valid for about {minutes} minutes; if not executed, it expires at no cost.\n{approval_lines}\nThis signs an order (no swap transaction): once executed, it is irreversible.\n\nConfirm this swap?"
+            "Swap via CoW Protocol (external protocol, not audited by this app)\n\nFrom profile: {from_label}\nNetwork: {network_name}\nSelling: {sell_line} (incl. ≈ {network_fee} of CoW network costs)\nExpected to receive: ~{expected_out}\nGuaranteed minimum: {min_out} (otherwise the order is not executed)\nFunds will arrive at: {receiver}\n(verify this is really your own address)\nIncludes a 1% integration fee (≈ {partner_fee}).\nOrder valid for about {minutes} minutes; {expiry}\n{transaction_lines}\n{closing}\n\nConfirm this swap?"
         )
     } else {
         format!(
-            "Échange via CoW Protocol (protocole externe, non audité par cette app)\n\nDepuis le profil : {from_label}\nRéseau : {network_name}\nVente : {sell_line} (dont ≈ {network_fee} de frais réseau de CoW)\nRéception attendue : ~{expected_out}\nMinimum garanti : {min_out} (sinon l'ordre n'est pas exécuté)\nLes fonds arriveront sur : {receiver}\n(vérifiez qu'il s'agit bien de votre propre adresse)\nInclut 1 % de frais d'intégration (≈ {partner_fee}).\nOrdre valable environ {minutes} minutes ; non exécuté, il expire sans rien coûter.\n{approval_lines}\nCeci signe un ordre (pas de transaction d'échange) : une fois exécuté, il est irréversible.\n\nConfirmer cet échange ?"
+            "Échange via CoW Protocol (protocole externe, non audité par cette app)\n\nDepuis le profil : {from_label}\nRéseau : {network_name}\nVente : {sell_line} (dont ≈ {network_fee} de frais réseau de CoW)\nRéception attendue : ~{expected_out}\nMinimum garanti : {min_out} (sinon l'ordre n'est pas exécuté)\nLes fonds arriveront sur : {receiver}\n(vérifiez qu'il s'agit bien de votre propre adresse)\nInclut 1 % de frais d'intégration (≈ {partner_fee}).\nOrdre valable environ {minutes} minutes ; {expiry}\n{transaction_lines}\n{closing}\n\nConfirmer cet échange ?"
         )
     };
     app.dialog()
@@ -2908,6 +2920,36 @@ fn confirm_cow_swap_native(
         .kind(MessageDialogKind::Warning)
         .buttons(MessageDialogButtons::OkCancel)
         .blocking_show()
+}
+
+/// Lignes de la boîte native pour la transaction qui accompagne l'ordre :
+/// dépôt EthFlow (monnaie du réseau) ou autorisation préalable du jeton au
+/// VaultRelayer de CoW (aucune si celle déjà accordée suffit).
+fn cow_transaction_lines(net: &wallet_flow::EvmNetwork, sell: &cow::CowToken, order: &cow::CowOrder, gas_price: u128, sell_line: &str) -> Result<Option<String>, String> {
+    let gwei = gas_price as f64 / 1e9;
+    let symbol = net.native_symbol;
+    if sell.native {
+        let total = api::cow_eth_flow_fee(net, order, gas_price).t_err()?.max_total().t_err()? as f64 / 1e18;
+        return Ok(Some(
+            lang(
+                &format!("Transaction : {sell_line} confiés au contrat EthFlow de CoW {}, qui les garde jusqu'à l'exécution de l'ordre.\nFrais réseau maximum de cette transaction : {total:.8} {symbol} ({gwei:.4} gwei)", cow::ETH_FLOW),
+                &format!("Transaction: {sell_line} entrusted to CoW's EthFlow contract {}, which holds it until the order is executed.\nMaximum network fee for this transaction: {total:.8} {symbol} ({gwei:.4} gwei)", cow::ETH_FLOW),
+            )
+            .to_string(),
+        ));
+    }
+    let (approve_fee, approvals) = api::cow_approval_fees(net, order, gas_price).t_err()?;
+    if approvals == 0 {
+        return Ok(None);
+    }
+    let total = approve_fee.max_total().t_err()?.saturating_mul(approvals as u128) as f64 / 1e18;
+    Ok(Some(
+        lang(
+            &format!("Autorisation préalable (transaction séparée) : le contrat de CoW {} pourra prélever exactement {sell_line}, une seule fois.\nFrais réseau maximum de l'autorisation : {total:.8} {symbol} ({gwei:.4} gwei)", cow::VAULT_RELAYER),
+            &format!("Prior approval (separate transaction): CoW's contract {} will be allowed to take exactly {sell_line}, once.\nMaximum network fee for the approval: {total:.8} {symbol} ({gwei:.4} gwei)", cow::VAULT_RELAYER),
+        )
+        .to_string(),
+    ))
 }
 
 #[derive(Serialize)]
@@ -2945,20 +2987,8 @@ async fn cow_swap_transaction(
         // exactement celui qui sera signé (aucun nouveau devis ensuite).
         let order = api::get_cow_quote(net, &sell, &buy, &amount, &owner).t_err()?;
         let gas_price = api::evm_gas_price_for_confirmation(net).t_err()?;
-        let (approve_fee, approvals) = api::cow_approval_fees(net, &order, gas_price).t_err()?;
         let sell_line = cow_amount(order.sell_amount, &sell);
-        let approval_lines = if approvals > 0 {
-            let total = approve_fee.max_total().t_err()?.saturating_mul(approvals as u128) as f64 / 1e18;
-            let gwei = gas_price as f64 / 1e9;
-            let symbol = net.native_symbol;
-            Some(lang(
-                &format!("Autorisation préalable (transaction séparée) : le contrat de CoW {} pourra prélever exactement {sell_line}, une seule fois.\nFrais réseau maximum de l'autorisation : {total:.8} {symbol} ({gwei:.4} gwei)", cow::VAULT_RELAYER),
-                &format!("Prior approval (separate transaction): CoW's contract {} will be allowed to take exactly {sell_line}, once.\nMaximum network fee for the approval: {total:.8} {symbol} ({gwei:.4} gwei)", cow::VAULT_RELAYER),
-            )
-            .to_string())
-        } else {
-            None
-        };
+        let transaction_lines = cow_transaction_lines(net, &sell, &order, gas_price, &sell_line)?;
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
         let minutes = u64::from(order.valid_to).saturating_sub(now) / 60;
         if !confirm_cow_swap_native(
@@ -2972,12 +3002,18 @@ async fn cow_swap_transaction(
             &cow_amount(order.partner_fee_buy, &buy),
             &order.receiver,
             minutes,
-            approval_lines.as_deref(),
+            transaction_lines.as_deref(),
+            sell.native,
         ) {
             return Err(translate_error("Échange annulé (confirmation refusée)."));
         }
 
-        let uid = api::send_cow_swap(&dir, &password, net, &sell, &order, gas_price, profile_index).t_err()?;
+        // Monnaie du réseau : transaction EthFlow ; jeton : ordre signé.
+        let uid = if sell.native {
+            api::send_cow_eth_flow(&dir, &password, net, &order, gas_price, profile_index).t_err()?.1
+        } else {
+            api::send_cow_swap(&dir, &password, net, &sell, &order, gas_price, profile_index).t_err()?
+        };
         Ok(CowOrderDto { explorer_url: cow::explorer_order_url(&network, &uid), uid })
     })
     .await

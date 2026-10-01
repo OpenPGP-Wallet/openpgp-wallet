@@ -1996,7 +1996,6 @@ fn wait_for_success(rpc: &eth_rpc::EthRpc, hash: &str) -> Result<()> {
 pub fn cow_tokens(network: &str, from_coin: &str, to_coin: &str) -> Result<(cow::CowToken, cow::CowToken)> {
     let sell = cow::token(from_coin, network).with_context(|| format!("{from_coin} n'est pas échangeable via CoW sur ce réseau"))?;
     let buy = cow::token(to_coin, network).with_context(|| format!("{to_coin} n'est pas échangeable via CoW sur ce réseau"))?;
-    anyhow::ensure!(!sell.native, "vendre la monnaie du réseau via CoW n'est pas encore pris en charge");
     Ok((sell, buy))
 }
 
@@ -2090,6 +2089,83 @@ pub fn send_cow_swap(
     let digest = cow::digest(order, chain_id)?;
     let signature = evm_sign::sign_digest(&signing_key, &digest)?;
     cow::submit(order, &digest, &signature, &address_str)
+}
+
+/// Frais maximum de la transaction EthFlow (`createOrder`), montrés avant la
+/// confirmation au prix du gas signé (+ frais de publication sur Base).
+pub fn cow_eth_flow_fee(network: &wallet_flow::EvmNetwork, order: &cow::CowOrder, gas_price: u128) -> Result<EvmFee> {
+    let contract = wallet_flow::parse_evm_address(cow::ETH_FLOW)?;
+    let data = cow::eth_flow_calldata(order)?;
+    let (_, cap) = swap_gas_caps(network);
+    Ok(EvmFee { gas_price, gas_limit: cap, l1_fee: evm_l1_fee(network, &contract, order.sell_amount, &data, gas_price, cap)? })
+}
+
+/// Vente de la monnaie du réseau via le contrat EthFlow de CoW : la
+/// transaction `createOrder` — construite ici, au prix du gas affiché — lui
+/// confie le montant de l'ordre AFFICHÉ (`order`), au nom du profil qui
+/// signe. Avant l'envoi, l'appData est déposée chez CoW : l'ordre on-chain
+/// n'en porte que l'empreinte, et c'est elle qui déclare les frais partenaire.
+/// Non exécuté, l'ordre expire et CoW rembourse. Renvoie (transaction,
+/// identifiant de l'ordre).
+pub fn send_cow_eth_flow(
+    data_dir: &Path,
+    device_password: &str,
+    network: &wallet_flow::EvmNetwork,
+    order: &cow::CowOrder,
+    gas_price: u128,
+    profile_index: u32,
+) -> Result<(String, String)> {
+    check_evm_gas_price(network, gas_price)?;
+    anyhow::ensure!(
+        order.network == network.id && order.eth_flow_quote_id.is_some() && cow::wrapped_native(network.id) == Some(order.sell_token.as_str()),
+        "ordre CoW incohérent — échange refusé"
+    );
+    let contract = wallet_flow::parse_evm_address(cow::ETH_FLOW)?;
+    let data = cow::eth_flow_calldata(order)?;
+
+    let seed = unlock_seed(data_dir, device_password)?;
+    let _seed_lock = memory_guard::lock(&seed);
+    let (signing_key, address) = derivation::derive_evm_key(&seed, profile_index)?;
+    let address_str = derivation::format_address(&address);
+    anyhow::ensure!(address_str.eq_ignore_ascii_case(&order.receiver), "l'ordre CoW n'est pas au nom de ce profil — échange refusé");
+    let rpc = eth_rpc::EthRpc::new(network.rpc);
+
+    let (nonce, chain_id, balance) = std::thread::scope(|scope| {
+        let nonce = scope.spawn(|| rpc.nonce(&address_str));
+        let chain_id = scope.spawn(|| rpc.chain_id());
+        let balance = scope.spawn(|| rpc.balance(&address_str));
+        let join = "un fil de lecture ne doit pas paniquer";
+        (nonce.join().expect(join), chain_id.join().expect(join), balance.join().expect(join))
+    });
+    let (nonce, chain_id, balance) = (nonce?, chain_id?, balance?);
+    anyhow::ensure!(chain_id == network.chain_id, "le nœud RPC répond pour le réseau {chain_id}, pas {} — envoi refusé", network.chain_id);
+
+    // Montant + frais au pire (plafond de gas) couverts AVANT l'estimation, qui
+    // échouerait sinon avec une erreur brute du nœud.
+    let worst_case = cow_eth_flow_fee(network, order, gas_price)?
+        .max_total()?
+        .checked_add(order.sell_amount)
+        .context("montant + frais dépassant la capacité représentable")?;
+    anyhow::ensure!(
+        worst_case <= balance,
+        "fonds insuffisants : {} {sym} disponibles, jusqu'à {} {sym} nécessaires (montant + frais du réseau)",
+        tokens::format_amount(balance, 18),
+        tokens::format_amount(worst_case, 18),
+        sym = network.native_symbol
+    );
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).context("horloge système invalide")?.as_secs();
+    anyhow::ensure!(u64::from(order.valid_to) >= now + COW_MIN_REMAINING_VALIDITY_SECS, "le devis CoW a expiré — relancez l'échange");
+
+    let estimated = rpc.estimate_gas(&address_str, cow::ETH_FLOW, order.sell_amount, &data)?;
+    let gas_limit = estimated.saturating_mul(12).div_ceil(10).max(eth_tx::intrinsic_gas(&data));
+    let (_, cap) = swap_gas_caps(network);
+    anyhow::ensure!(gas_limit <= cap, "gas estimé anormalement élevé pour l'ordre EthFlow ({gas_limit}, maximum {cap}) — échange refusé");
+
+    let uid = cow::eth_flow_uid(order, chain_id)?;
+    cow::upload_app_data(order)?;
+    let tx = eth_tx::EthTx { nonce, gas_price, gas_limit, to: contract, value: order.sell_amount, chain_id, data };
+    let hash = rpc.send_raw_transaction(&tx.sign(&signing_key)?)?;
+    Ok((hash, uid))
 }
 
 pub struct BtcFeeEstimate {
