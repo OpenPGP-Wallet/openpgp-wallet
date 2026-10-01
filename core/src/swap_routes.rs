@@ -20,6 +20,19 @@ pub enum Protocol {
     Thorchain,
     /// Même portefeuille Solana : transaction Jupiter simulée et vérifiée.
     Jupiter,
+    /// Cross-chain, fork de THORChain (même mécanique) : Arbitrum.
+    Maya,
+}
+
+impl Protocol {
+    /// Protocole de la famille THORChain correspondant (`None` pour Jupiter).
+    pub fn cross_chain(self) -> Option<&'static thorchain_rpc::CrossChain> {
+        match self {
+            Protocol::Thorchain => Some(&thorchain_rpc::THORCHAIN),
+            Protocol::Maya => Some(&thorchain_rpc::MAYA),
+            Protocol::Jupiter => None,
+        }
+    }
 }
 
 /// Cryptos échangeables via Jupiter (voir `api::send_jupiter_swap`).
@@ -31,15 +44,20 @@ const JUPITER: [SwapAsset; 5] = [
     SwapAsset { coin: "render", network: "sol_mainnet" },
 ];
 
-fn on_thorchain(asset: SwapAsset) -> bool {
-    thorchain_rpc::asset(asset.coin, asset.network).is_some()
+/// `protocol` relie-t-il `from` à `to` ? Depuis Bitcoin, pas tant que son
+/// nom court d'affiliation n'est pas enregistré : le memo avec l'adresse
+/// complète dépasse les 80 octets d'un OP_RETURN (voir
+/// `thorchain_rpc::AFFILIATE_NAME`).
+fn links(protocol: &thorchain_rpc::CrossChain, from: SwapAsset, to: SwapAsset) -> bool {
+    if from.coin == "btc" && protocol.affiliate_name.is_none() {
+        return false;
+    }
+    protocol.asset(from.coin, from.network).is_some() && protocol.asset(to.coin, to.network).is_some()
 }
 
-/// Protocole qui relie directement `from` à `to`, s'il existe. Jupiter
-/// d'abord (même portefeuille, sans délai cross-chain). Depuis Bitcoin, pas
-/// de route tant que le THORName d'affiliation n'est pas enregistré : le memo
-/// avec l'adresse complète dépasse les 80 octets d'un OP_RETURN (voir
-/// `thorchain_rpc::AFFILIATE_NAME`).
+/// Protocole qui relie directement `from` à `to`, s'il existe : Jupiter
+/// d'abord (même portefeuille, sans délai cross-chain), puis THORChain (pools
+/// les plus profonds), puis Maya (Arbitrum).
 pub fn direct(from: SwapAsset, to: SwapAsset) -> Option<Protocol> {
     if from == to {
         return None;
@@ -47,16 +65,17 @@ pub fn direct(from: SwapAsset, to: SwapAsset) -> Option<Protocol> {
     if JUPITER.contains(&from) && JUPITER.contains(&to) {
         return Some(Protocol::Jupiter);
     }
-    if from.coin == "btc" && thorchain_rpc::AFFILIATE_NAME.is_none() {
-        return None;
+    if links(&thorchain_rpc::THORCHAIN, from, to) {
+        return Some(Protocol::Thorchain);
     }
-    (on_thorchain(from) && on_thorchain(to)).then_some(Protocol::Thorchain)
+    links(&thorchain_rpc::MAYA, from, to).then_some(Protocol::Maya)
 }
 
 /// Toutes les cryptos qu'au moins un protocole sait échanger.
 pub fn assets() -> Vec<SwapAsset> {
-    let mut all: Vec<SwapAsset> = thorchain_rpc::ASSETS.iter().map(|a| SwapAsset { coin: a.coin, network: a.network }).collect();
-    for asset in JUPITER {
+    let mut all: Vec<SwapAsset> = Vec::new();
+    let cross_chain = thorchain_rpc::ASSETS.iter().chain(thorchain_rpc::MAYA_ASSETS.iter()).map(|a| SwapAsset { coin: a.coin, network: a.network });
+    for asset in cross_chain.chain(JUPITER) {
         if !all.contains(&asset) {
             all.push(asset);
         }
@@ -93,7 +112,10 @@ mod tests {
         assert_eq!(direct(a("evm", "base_mainnet"), a("vvv", "base_mainnet")), Some(Protocol::Thorchain));
         assert_eq!(direct(a("usdc", "sol_mainnet"), a("evm", "evm_mainnet")), None, "pas de pool USDC Solana sur THORChain");
         assert_eq!(direct(a("evm", "evm_mainnet"), a("evm", "evm_mainnet")), None);
-        assert_eq!(direct(a("evm", "arbitrum_mainnet"), a("btc", "btc_mainnet")), None, "Arbitrum : pas encore");
+        assert_eq!(direct(a("evm", "arbitrum_mainnet"), a("btc", "btc_mainnet")), Some(Protocol::Maya), "Arbitrum : via Maya");
+        assert_eq!(direct(a("usdt", "evm_mainnet"), a("usdc", "arbitrum_mainnet")), Some(Protocol::Maya));
+        assert_eq!(direct(a("evm", "evm_mainnet"), a("btc", "btc_mainnet")), Some(Protocol::Thorchain), "THORChain avant Maya");
+        assert_eq!(direct(a("evm", "arbitrum_mainnet"), a("bnb", "bsc_mainnet")), None, "aucun protocole ne relie les deux");
         assert_eq!(find("usdc", "base_mainnet"), Some(a("usdc", "base_mainnet")));
         assert_eq!(find("hype", "hyperevm_mainnet"), None);
     }

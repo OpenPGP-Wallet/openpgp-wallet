@@ -2423,8 +2423,8 @@ async fn get_swap_quote(
     destination: String,
 ) -> Result<SwapQuoteDto, String> {
     run_blocking(move || {
-        let (from, to) = thorchain_pair(&from_coin, &from_network, &to_coin, &to_network)?;
-        let quote = api::get_swap_quote(from, to, &amount, &destination).t_err()?;
+        let (protocol, from, to) = cross_chain_pair(&from_coin, &from_network, &to_coin, &to_network)?;
+        let quote = api::get_swap_quote(protocol, from, to, &amount, &destination).t_err()?;
         Ok(SwapQuoteDto {
             inbound_address: quote.inbound_address,
             memo: quote.memo,
@@ -2435,20 +2435,24 @@ async fn get_swap_quote(
     .await
 }
 
-/// Paire d'échange THORChain désignée par l'interface : refusée si aucune route
-/// THORChain directe ne la relie (voir `swap_routes::direct`).
-fn thorchain_pair(
-    from_coin: &str,
-    from_network: &str,
-    to_coin: &str,
-    to_network: &str,
-) -> Result<(&'static pgp_wallet_poc::thorchain_rpc::ThorAsset, &'static pgp_wallet_poc::thorchain_rpc::ThorAsset), String> {
+type CrossChainPair = (
+    &'static pgp_wallet_poc::thorchain_rpc::CrossChain,
+    &'static pgp_wallet_poc::thorchain_rpc::ThorAsset,
+    &'static pgp_wallet_poc::thorchain_rpc::ThorAsset,
+);
+
+/// Paire d'échange entre réseaux désignée par l'interface, avec le protocole
+/// que la route lui attribue (THORChain ou Maya) : refusée si aucune route de
+/// cette famille ne la relie (voir `swap_routes::direct`).
+fn cross_chain_pair(from_coin: &str, from_network: &str, to_coin: &str, to_network: &str) -> Result<CrossChainPair, String> {
     use pgp_wallet_poc::swap_routes;
     let route = swap_routes::find(from_coin, from_network).zip(swap_routes::find(to_coin, to_network)).and_then(|(f, t)| swap_routes::direct(f, t));
-    if route != Some(swap_routes::Protocol::Thorchain) {
-        return Err(translate_error("échange non disponible entre ces deux cryptos"));
-    }
-    Ok((api::thorchain_asset(from_coin, from_network).t_err()?, api::thorchain_asset(to_coin, to_network).t_err()?))
+    let protocol = route.and_then(swap_routes::Protocol::cross_chain).ok_or_else(|| translate_error("échange non disponible entre ces deux cryptos"))?;
+    Ok((
+        protocol,
+        api::cross_chain_asset(protocol, from_coin, from_network).t_err()?,
+        api::cross_chain_asset(protocol, to_coin, to_network).t_err()?,
+    ))
 }
 
 /// Frais réseau maximum d'un échange depuis un réseau EVM : dépôt, plus les
@@ -2519,6 +2523,7 @@ fn swap_pairs() -> Vec<SwapPairDto> {
 #[allow(clippy::too_many_arguments)]
 fn confirm_swap_native(
     app: &tauri::AppHandle,
+    protocol: &str,
     from_label: &str,
     amount: &str,
     expected_out: &str,
@@ -2534,8 +2539,8 @@ fn confirm_swap_native(
     let from_label = dialog_label(from_label);
     let english = UI_LANG_IS_ENGLISH.load(Ordering::Relaxed);
     let vault_line = match (router, english) {
-        (Some(router), true) => format!("Actual destination: router contract {router}\n(THORChain vault targeted: {pay_to})\n"),
-        (Some(router), false) => format!("Destination réelle : contrat routeur {router}\n(coffre THORChain visé : {pay_to})\n"),
+        (Some(router), true) => format!("Actual destination: router contract {router}\n({protocol} vault targeted: {pay_to})\n"),
+        (Some(router), false) => format!("Destination réelle : contrat routeur {router}\n(coffre {protocol} visé : {pay_to})\n"),
         (None, true) => format!("Actual destination: {pay_to}\n"),
         (None, false) => format!("Destination réelle : {pay_to}\n"),
     };
@@ -2548,11 +2553,11 @@ fn confirm_swap_native(
     };
     let message = if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
         format!(
-            "Swap via THORChain (external protocol, not audited by this app)\n\nFrom profile: {from_label}\nSending: {amount}\nExpected to receive: ~{expected_out} {to_symbol}\n{vault_line}{arrival_line}{approval_line}{network_fee_line}\nIncludes THORChain's own network/liquidity fees, plus a 0.80% affiliate fee.\nThis is irreversible, and once sent this app can no longer track or reverse it.\n\nConfirm this swap?"
+            "Swap via {protocol} (external protocol, not audited by this app)\n\nFrom profile: {from_label}\nSending: {amount}\nExpected to receive: ~{expected_out} {to_symbol}\n{vault_line}{arrival_line}{approval_line}{network_fee_line}\nIncludes {protocol}'s own network/liquidity fees, plus a 0.80% affiliate fee.\nThis is irreversible, and once sent this app can no longer track or reverse it.\n\nConfirm this swap?"
         )
     } else {
         format!(
-            "Échange via THORChain (protocole externe, non audité par cette app)\n\nDepuis le profil : {from_label}\nEnvoi : {amount}\nRéception attendue : ~{expected_out} {to_symbol}\n{vault_line}{arrival_line}{approval_line}{network_fee_line}\nInclut les frais propres à THORChain (réseau/liquidité), plus 0,80% de frais d'affiliation.\nC'est irréversible, et une fois envoyé cette app ne peut plus ni suivre ni annuler l'opération.\n\nConfirmer cet échange ?"
+            "Échange via {protocol} (protocole externe, non audité par cette app)\n\nDepuis le profil : {from_label}\nEnvoi : {amount}\nRéception attendue : ~{expected_out} {to_symbol}\n{vault_line}{arrival_line}{approval_line}{network_fee_line}\nInclut les frais propres à {protocol} (réseau/liquidité), plus 0,80% de frais d'affiliation.\nC'est irréversible, et une fois envoyé cette app ne peut plus ni suivre ni annuler l'opération.\n\nConfirmer cet échange ?"
         )
     };
     app.dialog()
@@ -2579,7 +2584,7 @@ async fn swap_transaction(
     run_blocking(move || {
         let password = Zeroizing::new(password);
         let dir = data_dir(&app)?;
-        let (from, to) = thorchain_pair(&from_coin, &from_network, &to_coin, &to_network)?;
+        let (protocol, from, to) = cross_chain_pair(&from_coin, &from_network, &to_coin, &to_network)?;
 
         // Formes canoniques, affichées ET utilisées pour le devis et la signature
         // (voir `send_transaction`).
@@ -2594,7 +2599,7 @@ async fn swap_transaction(
 
         // Devis obtenu ICI, juste avant la confirmation, jamais mis en cache
         // (adresse de vault THORChain vivante, voir thorchain_rpc::SwapQuote).
-        let quote = api::get_swap_quote(from, to, &amount, &destination).t_err()?;
+        let quote = api::get_swap_quote(protocol, from, to, &amount, &destination).t_err()?;
         let amount_line = format!("{amount} {}", from.symbol);
 
         // Frais réseau affichés AVANT confirmation (et, pour un réseau EVM, prix
@@ -2633,6 +2638,7 @@ async fn swap_transaction(
         let router_for_source = if evm_net.is_some() { quote.router.as_deref() } else { None };
         if !confirm_swap_native(
             &app,
+            protocol.name,
             &from_label,
             &amount_line,
             &format_1e8(quote.expected_amount_out),
@@ -2650,7 +2656,7 @@ async fn swap_transaction(
         // arbitraire, pendant lequel le vault peut tourner), mais refusé s'il ne
         // correspond plus à ce qui a été AFFICHÉ — voir
         // `api::refresh_swap_quote_matching`.
-        let quote = api::refresh_swap_quote_matching(from, to, &amount, &destination, &quote).t_err()?;
+        let quote = api::refresh_swap_quote_matching(protocol, from, to, &amount, &destination, &quote).t_err()?;
 
         match (from.network, evm_net, evm_gas_price) {
             ("sol_mainnet", _, _) => api::send_swap_sol(&dir, &password, sol_network("sol_mainnet")?, &quote, &amount, profile_index).t_err(),

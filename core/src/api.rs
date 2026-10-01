@@ -1717,9 +1717,10 @@ pub fn send_swap_evm(
         .saturating_mul(12)
         .div_ceil(10)
         .max(eth_tx::intrinsic_gas(&calldata));
+    let (_, deposit_cap) = swap_gas_caps(network);
     anyhow::ensure!(
-        gas_limit <= EVM_SWAP_MAX_GAS_LIMIT,
-        "gas estimé anormalement élevé pour un dépôt THORChain ({gas_limit}, maximum {EVM_SWAP_MAX_GAS_LIMIT}) — swap refusé"
+        gas_limit <= deposit_cap,
+        "gas estimé anormalement élevé pour un dépôt THORChain ({gas_limit}, maximum {deposit_cap}) — swap refusé"
     );
 
     // Base (OP Stack) : frais de publication sur Ethereum en plus du gas.
@@ -1752,6 +1753,18 @@ pub fn send_swap_evm(
 /// Plafond du gas d'une autorisation ERC-20 (`approve`) : d'ordinaire
 /// 46 000 à 60 000.
 pub const EVM_APPROVE_MAX_GAS_LIMIT: u64 = 100_000;
+
+/// Plafonds de gas (autorisation, dépôt) d'un échange sur `network`. Là où
+/// la limite de gas compte aussi la publication sur Ethereum (Arbitrum,
+/// `transfer_gas` = `None`), elle monte avec le prix du gas d'Ethereum : même
+/// plafond large que pour un virement (`EVM_MAX_ESTIMATED_GAS`), sinon des
+/// échanges légitimes seraient refusés quand Ethereum est chargé.
+pub fn swap_gas_caps(network: &wallet_flow::EvmNetwork) -> (u64, u64) {
+    match network.transfer_gas {
+        None => (EVM_MAX_ESTIMATED_GAS, EVM_MAX_ESTIMATED_GAS),
+        Some(_) => (EVM_APPROVE_MAX_GAS_LIMIT, EVM_SWAP_MAX_GAS_LIMIT),
+    }
+}
 /// Attente maximale de la confirmation d'une autorisation avant le dépôt.
 const APPROVE_WAIT: std::time::Duration = std::time::Duration::from_secs(180);
 
@@ -1819,16 +1832,17 @@ pub fn send_swap_erc20(
     }
     // Monnaie du réseau pour TOUTES les transactions, au pire : autorisations
     // et dépôt à leur plafond de gas (+ frais L1 sur Base).
+    let (approve_cap, deposit_cap) = swap_gas_caps(network);
     let deposit_draft = eth_tx::thorchain_deposit_calldata(&vault_bytes, &contract_bytes, units, &quote.memo, u64::MAX);
     let mut worst_case = gas_price
-        .checked_mul(u128::from(EVM_SWAP_MAX_GAS_LIMIT))
-        .and_then(|g| g.checked_add(evm_l1_fee(network, &router_bytes, 0, &deposit_draft, gas_price, EVM_SWAP_MAX_GAS_LIMIT).ok()?))
+        .checked_mul(u128::from(deposit_cap))
+        .and_then(|g| g.checked_add(evm_l1_fee(network, &router_bytes, 0, &deposit_draft, gas_price, deposit_cap).ok()?))
         .context("frais de gas dépassant la capacité représentable")?;
     for amount in &approvals {
         let data = erc20_approve_data(&router_bytes, *amount);
         let approve_fee = gas_price
-            .checked_mul(u128::from(EVM_APPROVE_MAX_GAS_LIMIT))
-            .and_then(|g| g.checked_add(evm_l1_fee(network, &contract_bytes, 0, &data, gas_price, EVM_APPROVE_MAX_GAS_LIMIT).ok()?))
+            .checked_mul(u128::from(approve_cap))
+            .and_then(|g| g.checked_add(evm_l1_fee(network, &contract_bytes, 0, &data, gas_price, approve_cap).ok()?))
             .context("frais de gas dépassant la capacité représentable")?;
         worst_case = worst_case.checked_add(approve_fee).context("frais de gas dépassant la capacité représentable")?;
     }
@@ -1845,8 +1859,8 @@ pub fn send_swap_erc20(
         let estimated = rpc.estimate_gas(&address_str, contract, 0, &data)?;
         let gas_limit = estimated.saturating_mul(12).div_ceil(10).max(eth_tx::intrinsic_gas(&data));
         anyhow::ensure!(
-            gas_limit <= EVM_APPROVE_MAX_GAS_LIMIT,
-            "gas estimé anormalement élevé pour l'autorisation ({gas_limit}, maximum {EVM_APPROVE_MAX_GAS_LIMIT}) — échange refusé"
+            gas_limit <= approve_cap,
+            "gas estimé anormalement élevé pour l'autorisation ({gas_limit}, maximum {approve_cap}) — échange refusé"
         );
         let tx = eth_tx::EthTx { nonce, gas_price, gas_limit, to: contract_bytes, value: 0, chain_id, data };
         let hash = rpc.send_raw_transaction(&tx.sign(&signing_key)?)?;
@@ -1859,8 +1873,8 @@ pub fn send_swap_erc20(
     let estimated = rpc.estimate_gas(&address_str, router, 0, &calldata)?;
     let gas_limit = estimated.saturating_mul(12).div_ceil(10).max(eth_tx::intrinsic_gas(&calldata));
     anyhow::ensure!(
-        gas_limit <= EVM_SWAP_MAX_GAS_LIMIT,
-        "gas estimé anormalement élevé pour un dépôt THORChain ({gas_limit}, maximum {EVM_SWAP_MAX_GAS_LIMIT}) — swap refusé"
+        gas_limit <= deposit_cap,
+        "gas estimé anormalement élevé pour un dépôt THORChain ({gas_limit}, maximum {deposit_cap}) — swap refusé"
     );
     let tx = eth_tx::EthTx { nonce, gas_price, gas_limit, to: router_bytes, value: 0, chain_id, data: calldata };
     rpc.send_raw_transaction(&tx.sign(&signing_key)?)
@@ -1901,12 +1915,13 @@ pub fn evm_swap_fees(
         None => ([0u8; 20], units),
     };
     let draft = eth_tx::thorchain_deposit_calldata(&vault, &asset, units, &quote.memo, u64::MAX);
-    let deposit = EvmFee { gas_price, gas_limit: EVM_SWAP_MAX_GAS_LIMIT, l1_fee: evm_l1_fee(network, &router, value, &draft, gas_price, EVM_SWAP_MAX_GAS_LIMIT)? };
+    let (approve_cap, deposit_cap) = swap_gas_caps(network);
+    let deposit = EvmFee { gas_price, gas_limit: deposit_cap, l1_fee: evm_l1_fee(network, &router, value, &draft, gas_price, deposit_cap)? };
     let approve_data = erc20_approve_data(&router, units);
     let approve = EvmFee {
         gas_price,
-        gas_limit: EVM_APPROVE_MAX_GAS_LIMIT,
-        l1_fee: evm_l1_fee(network, &asset, 0, &approve_data, gas_price, EVM_APPROVE_MAX_GAS_LIMIT)?,
+        gas_limit: approve_cap,
+        l1_fee: evm_l1_fee(network, &asset, 0, &approve_data, gas_price, approve_cap)?,
     };
     let approvals = match (from.contract, owner) {
         (None, _) => 0,
@@ -2922,16 +2937,25 @@ pub(crate) fn resolve_writable_addresses(rpc: &sol_rpc::SolRpc, tx: &[u8]) -> Re
 /// chaîne DESTINATION (jamais celle du développeur — voir
 /// `thorchain_rpc::AFFILIATE_ADDRESS`, déjà injectée automatiquement par
 /// `thorchain_rpc::quote_swap`).
-pub fn get_swap_quote(from: &thorchain_rpc::ThorAsset, to: &thorchain_rpc::ThorAsset, amount: &str, destination: &str) -> Result<thorchain_rpc::SwapQuote> {
+pub fn get_swap_quote(
+    protocol: &thorchain_rpc::CrossChain,
+    from: &thorchain_rpc::ThorAsset,
+    to: &thorchain_rpc::ThorAsset,
+    amount: &str,
+    destination: &str,
+) -> Result<thorchain_rpc::SwapQuote> {
     anyhow::ensure!(!std::ptr::eq(from, to), "échange d'une crypto vers elle-même");
     let amount_native = tokens::parse_amount(amount, from.decimals as u8)?;
     let amount_thorchain = thorchain_rpc::to_thorchain_amount(amount_native, from.decimals)?;
-    thorchain_rpc::quote_swap(from.asset, to.asset, amount_thorchain, destination)
+    protocol.quote_swap(from.asset, to.asset, amount_thorchain, destination)
 }
 
-/// Actif THORChain d'une crypto de l'app (`coin`) sur `network`.
-pub fn thorchain_asset(coin: &str, network: &str) -> Result<&'static thorchain_rpc::ThorAsset> {
-    thorchain_rpc::asset(coin, network).ok_or_else(|| anyhow::anyhow!("échange THORChain non disponible pour cette crypto sur ce réseau"))
+/// Actif d'une crypto de l'app (`coin`) sur `network` pour `protocol`
+/// (THORChain ou Maya).
+pub fn cross_chain_asset(protocol: &thorchain_rpc::CrossChain, coin: &str, network: &str) -> Result<&'static thorchain_rpc::ThorAsset> {
+    protocol
+        .asset(coin, network)
+        .ok_or_else(|| anyhow::anyhow!("échange {} non disponible pour cette crypto sur ce réseau", protocol.name))
 }
 
 /// Montant d'un échange sous sa forme canonique (affichée ET signée, voir
@@ -2951,18 +2975,20 @@ pub fn canonical_swap_amount(from: &thorchain_rpc::ThorAsset, amount: &str) -> R
 /// confirmation pouvait faire payer un vault/routeur jamais affiché, ou livrer
 /// moins que la sortie annoncée si le cours avait bougé entre-temps.
 pub fn refresh_swap_quote_matching(
+    protocol: &thorchain_rpc::CrossChain,
     from: &thorchain_rpc::ThorAsset,
     to: &thorchain_rpc::ThorAsset,
     amount: &str,
     destination: &str,
     shown: &thorchain_rpc::SwapQuote,
 ) -> Result<thorchain_rpc::SwapQuote> {
-    let fresh = get_swap_quote(from, to, amount, destination)?;
-    ensure_quote_matches_shown(&fresh, shown, to.asset, destination)?;
+    let fresh = get_swap_quote(protocol, from, to, amount, destination)?;
+    ensure_quote_matches_shown(protocol, &fresh, shown, to.asset, destination)?;
     Ok(fresh)
 }
 
 fn ensure_quote_matches_shown(
+    protocol: &thorchain_rpc::CrossChain,
     fresh: &thorchain_rpc::SwapQuote,
     shown: &thorchain_rpc::SwapQuote,
     to_asset: &str,
@@ -2970,9 +2996,11 @@ fn ensure_quote_matches_shown(
 ) -> Result<()> {
     anyhow::ensure!(
         fresh.inbound_address == shown.inbound_address && fresh.router == shown.router,
-        "l'adresse de dépôt THORChain a changé pendant la confirmation — relancez l'échange pour voir la nouvelle"
+        "l'adresse de dépôt {} a changé pendant la confirmation — relancez l'échange pour voir la nouvelle",
+        protocol.name
     );
-    thorchain_rpc::verify_swap_memo(&fresh.memo, to_asset, destination, shown.expected_amount_out)
+    protocol
+        .verify_swap_memo(&fresh.memo, to_asset, destination, shown.expected_amount_out)
         .context("le cours a bougé pendant la confirmation (sortie minimale sous 99 % du montant affiché) — relancez l'échange")
 }
 
@@ -4028,20 +4056,20 @@ mod tests {
     #[test]
     fn refreshed_quote_must_match_what_was_shown() {
         let shown = shown_quote(990_000);
-        ensure_quote_matches_shown(&shown_quote(990_000), &shown, "BTC.BTC", "bc1qdest").expect("identique");
+        ensure_quote_matches_shown(&thorchain_rpc::THORCHAIN, &shown_quote(990_000), &shown, "BTC.BTC", "bc1qdest").expect("identique");
 
         let mut churned = shown_quote(990_000);
         churned.inbound_address = "bc1qautrevaultautrevaultautrevault00000".into();
-        assert!(ensure_quote_matches_shown(&churned, &shown, "BTC.BTC", "bc1qdest").is_err(), "vault changé");
+        assert!(ensure_quote_matches_shown(&thorchain_rpc::THORCHAIN, &churned, &shown, "BTC.BTC", "bc1qdest").is_err(), "vault changé");
 
         let mut rerouted = shown_quote(990_000);
         rerouted.router = Some("0xAutreRouteur".into());
-        assert!(ensure_quote_matches_shown(&rerouted, &shown, "BTC.BTC", "bc1qdest").is_err(), "routeur changé");
+        assert!(ensure_quote_matches_shown(&thorchain_rpc::THORCHAIN, &rerouted, &shown, "BTC.BTC", "bc1qdest").is_err(), "routeur changé");
 
         // Cours tombé à 950 000 : la nouvelle sortie minimale (99 % de 950 000)
         // est sous 99 % de ce qui a été AFFICHÉ (1 000 000) — refusé.
         let price_dropped = shown_quote(940_500);
-        let err = ensure_quote_matches_shown(&price_dropped, &shown, "BTC.BTC", "bc1qdest").unwrap_err();
+        let err = ensure_quote_matches_shown(&thorchain_rpc::THORCHAIN, &price_dropped, &shown, "BTC.BTC", "bc1qdest").unwrap_err();
         assert!(format!("{err:#}").contains("cours a bougé"), "{err:#}");
     }
 
@@ -4354,7 +4382,7 @@ mod tests {
         ] {
             let from = thorchain_rpc::asset(coin, network).unwrap();
             let net = wallet_flow::evm_network(network).unwrap();
-            let quote = get_swap_quote(from, btc, amount, "bc1qp0jus87dalh7xku22tx3uhyhlf8cjuc0vvkhjz").unwrap();
+            let quote = get_swap_quote(&thorchain_rpc::THORCHAIN, from, btc, amount, "bc1qp0jus87dalh7xku22tx3uhyhlf8cjuc0vvkhjz").unwrap();
             let router = quote.router.clone().unwrap();
             let vault = wallet_flow::parse_evm_address(&quote.inbound_address).unwrap();
             let expiration = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() + 3600;
@@ -4364,9 +4392,22 @@ mod tests {
             println!("{network} : dépôt {amount} {} vers BTC, routeur {router}, gas estimé {gas}", from.symbol);
             assert!(gas < EVM_SWAP_MAX_GAS_LIMIT);
         }
+        // Maya, Arbitrum : même routeur `depositWithExpiry`, accepté avec le montant envoyé.
+        let arb_eth = thorchain_rpc::MAYA.asset("evm", "arbitrum_mainnet").unwrap();
+        let maya_btc = thorchain_rpc::MAYA.asset("btc", "btc_mainnet").unwrap();
+        let quote = get_swap_quote(&thorchain_rpc::MAYA, arb_eth, maya_btc, "0.01", "bc1qp0jus87dalh7xku22tx3uhyhlf8cjuc0vvkhjz").unwrap();
+        let router = quote.router.clone().unwrap();
+        let vault = wallet_flow::parse_evm_address(&quote.inbound_address).unwrap();
+        let value = wallet_flow::parse_eth_to_wei("0.01").unwrap();
+        let expiration = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() + 3600;
+        let calldata = eth_tx::thorchain_deposit_calldata(&vault, &[0u8; 20], value, &quote.memo, expiration);
+        let arbitrum = wallet_flow::evm_network("arbitrum_mainnet").unwrap();
+        let gas = eth_rpc::EthRpc::new(arbitrum.rpc).estimate_gas("0x82aF49447D8a07e3bd95BD0d56f35241523fBab1", &router, value, &calldata).unwrap();
+        println!("Maya arbitrum_mainnet : dépôt 0.01 ETH vers BTC, routeur {router}, gas estimé {gas}");
+
         let usdc_base = thorchain_rpc::asset("usdc", "base_mainnet").unwrap();
         let eth = thorchain_rpc::asset("evm", "evm_mainnet").unwrap();
-        let quote = get_swap_quote(usdc_base, eth, "100", holder).unwrap();
+        let quote = get_swap_quote(&thorchain_rpc::THORCHAIN, usdc_base, eth, "100", holder).unwrap();
         let base = wallet_flow::evm_network("base_mainnet").unwrap();
         let gas_price = evm_gas_price_for_confirmation(base).unwrap();
         let fees = evm_swap_fees(base, usdc_base, &quote, "100", gas_price, Some(holder)).unwrap();

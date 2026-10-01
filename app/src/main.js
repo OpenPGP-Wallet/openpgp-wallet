@@ -741,7 +741,7 @@ const I18N = {
     "send.txSent": "Transaction envoyée : {tx}",
     "swap.title": "Échanger",
     "swap.subtitle":
-      "Passe par un protocole externe non audité par cette app — voir \"Comment ça marche\" pour le détail. Chaque échange (cross-chain via THORChain ou SOL/USDC via Jupiter) inclut 0,80% de frais d'affiliation.",
+      "Passe par un protocole externe non audité par cette app — voir \"Comment ça marche\" pour le détail. Chaque échange (entre réseaux via THORChain ou Maya, sur Solana via Jupiter) inclut 0,80 % de frais d'affiliation, sauf mention contraire dans la confirmation.",
     "swap.fromAsset": "Depuis",
     "swap.toAsset": "Vers",
     "swap.viaJupiter": "via Jupiter, même portefeuille",
@@ -756,7 +756,8 @@ const I18N = {
     "swap.previewTitle": "Vérifiez avant d'échanger",
     "swap.previewSending": "Envoi",
     "swap.previewReceiving": "Réception estimée",
-    "swap.previewFees": "Frais THORChain (inclus)",
+    "swap.previewFees": "Frais du protocole (inclus)",
+    "swap.previewFeesOf": "Frais {name} (inclus)",
     "addProfile.title": "Nouveau profil",
     "addProfile.subtitle":
       "Un profil = une nouvelle adresse par réseau, dérivée de la même clé maîtresse déjà protégée par Shamir/PGP — aucune nouvelle sauvegarde à faire.",
@@ -1206,7 +1207,7 @@ const I18N = {
     "send.txSent": "Transaction sent: {tx}",
     "swap.title": "Swap",
     "swap.subtitle":
-      "Goes through an external protocol not audited by this app — see \"How it works\" for details. Every swap (cross-chain via THORChain or SOL/USDC via Jupiter) includes a 0.80% affiliate fee.",
+      "Goes through an external protocol not audited by this app — see \"How it works\" for details. Every swap (across networks via THORChain or Maya, on Solana via Jupiter) includes a 0.80% affiliate fee, unless the confirmation says otherwise.",
     "swap.fromAsset": "From",
     "swap.toAsset": "To",
     "swap.viaJupiter": "via Jupiter, same wallet",
@@ -1219,7 +1220,8 @@ const I18N = {
     "swap.previewTitle": "Review before swapping",
     "swap.previewSending": "Sending",
     "swap.previewReceiving": "Estimated receive",
-    "swap.previewFees": "THORChain fees (included)",
+    "swap.previewFees": "Protocol fees (included)",
+    "swap.previewFeesOf": "{name} fees (included)",
     "addProfile.title": "New profile",
     "addProfile.subtitle":
       "A profile = a new address per network, derived from the same master key already protected by Shamir/PGP — no new backup needed.",
@@ -4332,7 +4334,9 @@ swapQuoteBtn.addEventListener("click", withBusyButton(swapQuoteBtn, async () => 
     } else {
       const quote = await invoke("get_swap_quote", { fromCoin, fromNetwork, toCoin, toNetwork, amount, destination });
       receivingText = `≈ ${quote.expected_amount_out} ${COIN_SYMBOL[toCoin] || toCoin.toUpperCase()}`;
-      // Frais THORChain, dans la crypto reçue (déjà déduits de la réception).
+      // Frais du protocole (THORChain ou Maya), dans la crypto reçue (déjà
+      // déduits de la réception).
+      document.getElementById("swap-preview-fees-label").textContent = t("swap.previewFeesOf", { name: pair.protocol === "maya" ? "Maya" : "THORChain" });
       document.getElementById("swap-preview-fees").textContent = quote.total_fees != null ? `${quote.total_fees} ${COIN_SYMBOL[toCoin] ?? ""}` : "—";
       document.getElementById("swap-preview-destination").textContent = destination;
       destRow.classList.remove("hidden");
