@@ -108,15 +108,58 @@
    proprement (contrairement à un bouton isolé), le résultat était moche —
    ils gardent leur rayon normal (8px conteneur / 6px option) dans les deux
    modes. */
+:root[data-rounded-buttons="true"] .market-row,
+:root[data-rounded-buttons="true"] .lang-switcher,
+:root[data-rounded-buttons="true"] .lang-switcher-inline {
+  border-radius: 999px;
+}
+
+/* Texte trop près des bords en mode arrondi (signalé) : les extrémités en
+   demi-cercle mangent la marge intérieure. Marge latérale élargie pour les
+   boutons à texte — pas pour les boutons-icônes (copier, QR), qui restent des
+   cercles. Zones qui passent sur plusieurs lignes (adresse, lignes
+   d'historique, de destinataires, phrases du kit) : coins arrondis plutôt
+   qu'une pilule, dont les demi-cercles rognaient le début et la fin des
+   lignes du haut et du bas. */
+:root[data-rounded-buttons="true"] button.primary,
+:root[data-rounded-buttons="true"] button.secondary {
+  padding-left: 22px;
+  padding-right: 22px;
+}
+
+:root[data-rounded-buttons="true"] .nav-tab {
+  padding-left: 18px;
+  padding-right: 18px;
+}
+
+:root[data-rounded-buttons="true"] .navbar.stacked .nav-tab {
+  padding-left: 14px;
+  padding-right: 14px;
+}
+
+:root[data-rounded-buttons="true"] .navbar button#lock-wallet {
+  padding-left: 18px;
+  padding-right: 18px;
+}
+
+:root[data-rounded-buttons="true"] .chart-ranges button {
+  padding-left: 15px;
+  padding-right: 15px;
+}
+
+:root[data-rounded-buttons="true"] .market-row {
+  padding-left: 22px;
+  padding-right: 22px;
+}
+
 :root[data-rounded-buttons="true"] .recipient-item,
 :root[data-rounded-buttons="true"] .recipient-picker-item,
 :root[data-rounded-buttons="true"] .backup-item .passphrase,
 :root[data-rounded-buttons="true"] .address,
-:root[data-rounded-buttons="true"] .market-row,
-:root[data-rounded-buttons="true"] .history-row,
-:root[data-rounded-buttons="true"] .lang-switcher,
-:root[data-rounded-buttons="true"] .lang-switcher-inline {
-  border-radius: 999px;
+:root[data-rounded-buttons="true"] .history-row {
+  border-radius: 16px;
+  padding-left: 16px;
+  padding-right: 16px;
 }
 
 * {
