@@ -173,13 +173,15 @@ mod tests {
         SwapAsset { coin, network }
     }
 
-    /// SOL ⇄ USDC passe par Jupiter (même portefeuille), le reste par
-    /// THORChain ; rien vers soi-même ; USDC Solana n'a pas de pool THORChain.
+    /// SOL ⇄ USDC passe par Jupiter (même portefeuille), un même réseau EVM par
+    /// CoW, le reste par THORChain ou Maya ; rien vers soi-même ; USDC Solana
+    /// n'a pas de pool THORChain.
     #[test]
     fn routes_pick_the_right_protocol() {
         assert_eq!(direct(a("sol", "sol_mainnet"), a("usdc", "sol_mainnet")), Some(Protocol::Jupiter));
         assert_eq!(direct(a("usdc", "evm_mainnet"), a("bnb", "bsc_mainnet")), Some(Protocol::Thorchain));
-        assert_eq!(direct(a("evm", "base_mainnet"), a("vvv", "base_mainnet")), Some(Protocol::Thorchain));
+        let same_network = if cow_enabled() { Protocol::Cow } else { Protocol::Thorchain };
+        assert_eq!(direct(a("evm", "base_mainnet"), a("vvv", "base_mainnet")), Some(same_network), "même réseau : CoW une fois activé");
         assert_eq!(direct(a("usdc", "sol_mainnet"), a("evm", "evm_mainnet")), None, "pas de pool USDC Solana sur THORChain");
         assert_eq!(direct(a("evm", "evm_mainnet"), a("evm", "evm_mainnet")), None);
         assert_eq!(direct(a("evm", "arbitrum_mainnet"), a("btc", "btc_mainnet")), Some(Protocol::Maya), "Arbitrum : via Maya");

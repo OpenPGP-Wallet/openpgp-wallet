@@ -42,9 +42,10 @@ pub const ETH_FLOW: &str = "0xba3cb449bd2b4adddbc894d8697f5170800eadec";
 /// semaine en WETH sur Ethereum à `PARTNER_FEE_RECIPIENT` (CoW en garde une
 /// part, voir docs.cow.fi/governance/fees/partner-fee).
 pub const PARTNER_FEE_BPS: u32 = 100;
-/// Adresse Ethereum du développeur qui reçoit les frais partenaire. Tant
-/// qu'elle n'est pas renseignée, aucune route CoW n'est proposée.
-pub const PARTNER_FEE_RECIPIENT: Option<&str> = None;
+/// Adresse Ethereum du développeur qui reçoit les frais partenaire (donnée par
+/// l'utilisateur le 02/10/2026 ; checksum EIP-55 valide, compte ordinaire sur
+/// Ethereum, sans code de contrat). Sans elle (`None`), aucune route CoW.
+pub const PARTNER_FEE_RECIPIENT: Option<&str> = Some("0xae702daEd4723ac516492Bb1084F50e07e75573C");
 /// Glissement toléré sous la réception attendue (1 %).
 pub const SLIPPAGE_BPS: u32 = 100;
 /// Validité demandée pour un ordre, et maximum accepté d'un devis.
