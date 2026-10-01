@@ -2673,11 +2673,15 @@ async fn swap_transaction(
 
 const JUPITER_DEFAULT_SLIPPAGE_BPS: u32 = 50; // 0,50 %
 
-fn decimals_for_swap_coin(coin: &str) -> u32 {
-    if coin == "usdc" {
-        6
+/// Paire Jupiter désignée par l'interface (réseau Solana) : refusée si aucune
+/// route Jupiter ne la relie (voir `swap_routes::direct`).
+fn jupiter_pair(from_coin: &str, to_coin: &str) -> Result<(), String> {
+    use pgp_wallet_poc::swap_routes;
+    let route = swap_routes::find(from_coin, "sol_mainnet").zip(swap_routes::find(to_coin, "sol_mainnet")).and_then(|(f, t)| swap_routes::direct(f, t));
+    if route == Some(swap_routes::Protocol::Jupiter) {
+        Ok(())
     } else {
-        9 // "sol"
+        Err(translate_error("échange non disponible entre ces deux cryptos"))
     }
 }
 
@@ -2688,8 +2692,9 @@ fn format_native_amount(amount: u64, decimals: u32) -> String {
 #[tauri::command]
 async fn get_jupiter_quote(from_coin: String, to_coin: String, amount: String) -> Result<String, String> {
     run_blocking(move || {
-        let out_amount = api::get_jupiter_quote(&from_coin, &to_coin, &amount, JUPITER_DEFAULT_SLIPPAGE_BPS).t_err()?;
-        Ok(format_native_amount(out_amount, decimals_for_swap_coin(&to_coin)))
+        jupiter_pair(&from_coin, &to_coin)?;
+        let quote = api::get_jupiter_quote(&from_coin, &to_coin, &amount, JUPITER_DEFAULT_SLIPPAGE_BPS).t_err()?;
+        Ok(format_native_amount(quote.out_amount, u32::from(api::jupiter_decimals(&to_coin).t_err()?)))
     })
     .await
 }
@@ -2702,17 +2707,23 @@ async fn get_jupiter_quote(from_coin: String, to_coin: String, amount: String) -
 /// `api::check_swap_effects`) AVANT d'être signée, jamais reconstruite. Le
 /// texte disait encore "vérifiée (payeur de frais)", resté de l'avant-21ᵉ
 /// passage : il sous-décrivait la protection réelle.
-fn confirm_jupiter_swap_native(app: &tauri::AppHandle, from_label: &str, amount: &str, expected_out: &str, to_coin: &str) -> bool {
+fn confirm_jupiter_swap_native(app: &tauri::AppHandle, from_label: &str, amount: &str, expected_out: &str, to_symbol: &str, with_fee: bool) -> bool {
     let from_label = dialog_label(from_label);
+    // Sans compte de frais existant pour ces jetons, l'échange se fait sans
+    // frais d'affiliation (voir `api::jupiter_fee_mint`) : la boîte le dit.
+    let fee_line = match (with_fee, UI_LANG_IS_ENGLISH.load(Ordering::Relaxed)) {
+        (true, true) => "Includes a 0.80% affiliate fee",
+        (true, false) => "Inclut 0,80% de frais d'affiliation",
+        (false, true) => "No affiliate fee on this pair",
+        (false, false) => "Sans frais d'affiliation pour cette paire",
+    };
     let message = if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
         format!(
-            "Swap via Jupiter (external protocol, not audited by this app)\n\nFrom profile: {from_label}\nSending: {amount}\nExpected to receive: ~{expected_out} {}\nIncludes a 0.80% affiliate fee\n\nThe swap transaction itself is built by Jupiter, not by this app. Before signing, it is simulated and refused if it would take more than the amount sent plus network fees, or deliver less than the amount shown (0.5% slippage).\nThis is irreversible.\n\nConfirm this swap?",
-            to_coin.to_uppercase()
+            "Swap via Jupiter (external protocol, not audited by this app)\n\nFrom profile: {from_label}\nSending: {amount}\nExpected to receive: ~{expected_out} {to_symbol}\n{fee_line}\n\nThe swap transaction itself is built by Jupiter, not by this app. Before signing, it is simulated and refused if it would take more than the amount sent plus network fees, or deliver less than the amount shown (0.5% slippage).\nThis is irreversible.\n\nConfirm this swap?"
         )
     } else {
         format!(
-            "Échange via Jupiter (protocole externe, non audité par cette app)\n\nDepuis le profil : {from_label}\nEnvoi : {amount}\nRéception attendue : ~{expected_out} {}\nInclut 0,80% de frais d'affiliation\n\nLa transaction de swap elle-même est construite par Jupiter, pas par cette app. Avant signature, elle est simulée et refusée si elle prenait plus que le montant envoyé et les frais réseau, ou livrait moins que le montant affiché (glissement de 0,5 %).\nC'est irréversible.\n\nConfirmer cet échange ?",
-            to_coin.to_uppercase()
+            "Échange via Jupiter (protocole externe, non audité par cette app)\n\nDepuis le profil : {from_label}\nEnvoi : {amount}\nRéception attendue : ~{expected_out} {to_symbol}\n{fee_line}\n\nLa transaction de swap elle-même est construite par Jupiter, pas par cette app. Avant signature, elle est simulée et refusée si elle prenait plus que le montant envoyé et les frais réseau, ou livrait moins que le montant affiché (glissement de 0,5 %).\nC'est irréversible.\n\nConfirmer cet échange ?"
         )
     };
     app.dialog()
@@ -2736,8 +2747,9 @@ async fn jupiter_swap_transaction(
         let password = Zeroizing::new(password);
         let dir = data_dir(&app)?;
         let network = sol_network("sol_mainnet")?; // Jupiter mainnet uniquement (pas de liquidité fiable en devnet)
+        jupiter_pair(&from_coin, &to_coin)?;
         // Forme canonique, affichée ET signée (voir `send_transaction`).
-        let amount = api::canonical_amount(&from_coin, &amount).t_err()?;
+        let amount = api::canonical_jupiter_amount(&from_coin, &amount).t_err()?;
 
         let from_label = api::list_profiles(&dir)
             .into_iter()
@@ -2747,17 +2759,18 @@ async fn jupiter_swap_transaction(
 
         // Devis relu ICI, juste avant la confirmation — jamais celui affiché dans
         // l'aperçu du frontend, potentiellement déjà légèrement périmé.
-        let out_amount = api::get_jupiter_quote(&from_coin, &to_coin, &amount, JUPITER_DEFAULT_SLIPPAGE_BPS).t_err()?;
-        let expected_out = format_native_amount(out_amount, decimals_for_swap_coin(&to_coin));
-        let amount_line = format!("{amount} {}", from_coin.to_uppercase());
+        let quote = api::get_jupiter_quote(&from_coin, &to_coin, &amount, JUPITER_DEFAULT_SLIPPAGE_BPS).t_err()?;
+        let out_amount = quote.out_amount;
+        let expected_out = format_native_amount(out_amount, u32::from(api::jupiter_decimals(&to_coin).t_err()?));
+        let amount_line = format!("{amount} {}", api::jupiter_symbol(&from_coin).t_err()?);
 
-        if !confirm_jupiter_swap_native(&app, &from_label, &amount_line, &expected_out, &to_coin) {
+        if !confirm_jupiter_swap_native(&app, &from_label, &amount_line, &expected_out, api::jupiter_symbol(&to_coin).t_err()?, quote.fee_mint.is_some()) {
             return Err(translate_error("Échange annulé (confirmation refusée)."));
         }
 
         // `out_amount` = la sortie AFFICHÉE ci-dessus : la transaction réellement
         // signée devra la livrer (au glissement près), vérifié par simulation.
-        api::send_jupiter_swap(&dir, &password, network, &from_coin, &to_coin, &amount, JUPITER_DEFAULT_SLIPPAGE_BPS, out_amount, profile_index)
+        api::send_jupiter_swap(&dir, &password, network, &from_coin, &to_coin, &amount, JUPITER_DEFAULT_SLIPPAGE_BPS, out_amount, quote.fee_mint, profile_index)
             .t_err()
     })
     .await

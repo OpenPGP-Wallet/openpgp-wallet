@@ -2400,9 +2400,9 @@ pub fn canonical_amount(coin: &str, amount: &str) -> Result<String> {
     Ok(format!("{whole}.{}", frac.trim_end_matches('0')))
 }
 
-/// Mint Solana (32 octets) pour un identifiant de coin interne — seuls
-/// "sol"/"usdc" ont un sens ici (swap Jupiter, même chaîne uniquement, voir
-/// jupiter_rpc.rs).
+/// Mint Solana (32 octets) d'une crypto échangée via Jupiter : SOL natif
+/// (wSOL), ou jeton SPL du registre (USDC, USDT, EURC, RENDER…, voir
+/// tokens.rs) — jamais un mint fourni par l'interface.
 fn jupiter_mint_bytes_for_coin(coin: &str) -> Result<[u8; 32]> {
     match coin {
         "sol" => bs58::decode(jupiter_rpc::SOL_MINT)
@@ -2410,8 +2410,7 @@ fn jupiter_mint_bytes_for_coin(coin: &str) -> Result<[u8; 32]> {
             .ok()
             .and_then(|v| v.try_into().ok())
             .context("mint SOL mal formé (bug de compilation)"),
-        "usdc" => Ok(sol_spl::usdc_mint_mainnet()),
-        other => anyhow::bail!("actif non pris en charge pour le swap Jupiter : {other}"),
+        token => registered_spl_mint(token).context("crypto non échangeable via Jupiter"),
     }
 }
 
@@ -2419,22 +2418,73 @@ fn jupiter_mint_for_coin(coin: &str) -> Result<String> {
     Ok(bs58::encode(jupiter_mint_bytes_for_coin(coin)?).into_string())
 }
 
+/// Décimales d'une crypto échangée via Jupiter (SOL : 9 ; jeton : registre).
+pub fn jupiter_decimals(coin: &str) -> Result<u8> {
+    if coin == "sol" {
+        return Ok(9);
+    }
+    Ok(registered_token(coin, "sol_mainnet")?.1.decimals)
+}
+
+/// Symbole affiché d'une crypto échangée via Jupiter.
+pub fn jupiter_symbol(coin: &str) -> Result<&'static str> {
+    if coin == "sol" {
+        return Ok("SOL");
+    }
+    Ok(registered_token(coin, "sol_mainnet")?.0.symbol)
+}
+
+/// Montant (texte) → plus petite unité de la crypto vendue via Jupiter.
+fn jupiter_amount(coin: &str, amount: &str) -> Result<u64> {
+    tokens::parse_amount(amount, jupiter_decimals(coin)?)?.try_into().context("montant trop grand")
+}
+
+/// Montant d'un échange Jupiter sous sa forme canonique (affichée ET signée,
+/// voir `canonical_amount`).
+pub fn canonical_jupiter_amount(coin: &str, amount: &str) -> Result<String> {
+    let decimals = jupiter_decimals(coin)?;
+    Ok(tokens::format_amount(tokens::parse_amount(amount, decimals)?, decimals))
+}
+
 /// Obtient un devis Jupiter (lecture seule, aucun secret impliqué) — montant
 /// de sortie attendu, dans la plus petite unité de l'actif de destination.
 /// `amount` dans l'unité humaine de l'actif SOURCE, comme partout ailleurs
 /// dans cette API.
-pub fn get_jupiter_quote(from_coin: &str, to_coin: &str, amount: &str, slippage_bps: u32) -> Result<u64> {
+pub fn get_jupiter_quote(from_coin: &str, to_coin: &str, amount: &str, slippage_bps: u32) -> Result<JupiterQuoteInfo> {
     let input_mint = jupiter_mint_for_coin(from_coin)?;
     let output_mint = jupiter_mint_for_coin(to_coin)?;
-    let amount_native = parse_swap_amount_for_coin(from_coin, amount)?;
-    let amount_native: u64 = amount_native.try_into().context("montant trop grand")?;
-    Ok(jupiter_rpc::quote(&input_mint, &output_mint, amount_native, slippage_bps)?.out_amount)
+    let amount_native = jupiter_amount(from_coin, amount)?;
+    let fee_mint = jupiter_fee_mint(&sol_rpc::SolRpc::new(wallet_flow::SOLANA_MAINNET.rpc), &input_mint, &output_mint)?;
+    let quote = jupiter_rpc::quote(&input_mint, &output_mint, amount_native, slippage_bps, fee_mint)?;
+    Ok(JupiterQuoteInfo { out_amount: quote.out_amount, fee_mint })
+}
+
+/// Devis Jupiter tel qu'affiché : sortie attendue, et jeton des frais
+/// d'affiliation (`None` : échange sans frais).
+pub struct JupiterQuoteInfo {
+    pub out_amount: u64,
+    pub fee_mint: Option<[u8; 32]>,
+}
+
+/// Jeton des frais d'affiliation d'un échange Jupiter : le premier des
+/// candidats (`jupiter_rpc::fee_mint_candidates`) dont le compte de frais de
+/// l'affilié EXISTE ; `None` sinon — l'échange se fait alors sans frais
+/// plutôt que de faire payer à l'utilisateur la création du compte de frais
+/// du développeur, ou d'échouer (Jupiter refuse un compte absent).
+fn jupiter_fee_mint(rpc: &sol_rpc::SolRpc, input_mint: &str, output_mint: &str) -> Result<Option<[u8; 32]>> {
+    for mint in jupiter_rpc::fee_mint_candidates(input_mint, output_mint) {
+        if rpc.account_exists(&bs58::encode(jupiter_rpc::fee_account(&mint)?).into_string())? {
+            return Ok(Some(mint));
+        }
+    }
+    Ok(None)
 }
 
 /// Envoie un swap SOL <-> USDC via Jupiter (même chaîne, contrairement au
 /// swap cross-chain via THORChain) — voir jupiter_rpc.rs pour le contexte
 /// complet, notamment pourquoi la transaction elle-même n'est pas
 /// reconstruite à la main ici (seulement vérifiée puis signée).
+#[allow(clippy::too_many_arguments)]
 pub fn send_jupiter_swap(
     data_dir: &Path,
     device_password: &str,
@@ -2444,6 +2494,7 @@ pub fn send_jupiter_swap(
     amount: &str,
     slippage_bps: u32,
     shown_out_amount: u64,
+    fee_mint: Option<[u8; 32]>,
     profile_index: u32,
 ) -> Result<String> {
     let seed = unlock_seed(data_dir, device_password)?;
@@ -2454,9 +2505,7 @@ pub fn send_jupiter_swap(
 
     let input_mint = jupiter_mint_for_coin(from_coin)?;
     let output_mint = jupiter_mint_for_coin(to_coin)?;
-    let amount_native: u64 = parse_swap_amount_for_coin(from_coin, amount)?
-        .try_into()
-        .context("montant trop grand")?;
+    let amount_native = jupiter_amount(from_coin, amount)?;
 
     let rpc = sol_rpc::SolRpc::new(network.rpc);
     let sol_balance = rpc.balance_lamports(&owner_address)?;
@@ -2518,7 +2567,8 @@ pub fn send_jupiter_swap(
         );
     }
 
-    let quote = jupiter_rpc::quote(&input_mint, &output_mint, amount_native, slippage_bps)?;
+    // Même décision de frais que celle AFFICHÉE dans la confirmation (`fee_mint`).
+    let quote = jupiter_rpc::quote(&input_mint, &output_mint, amount_native, slippage_bps, fee_mint)?;
     let raw_tx = jupiter_rpc::build_swap_transaction(&quote, &owner_address)?;
 
     // Simulation de la transaction ENTIÈREMENT CONSTRUITE, avec vérification de
@@ -4359,8 +4409,18 @@ mod tests {
         let owner_b58 = "5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9";
         let owner: [u8; 32] = bs58::decode(owner_b58).into_vec().unwrap().try_into().unwrap();
         let rpc = sol_rpc::SolRpc::new(wallet_flow::SOLANA_MAINNET.rpc);
-        for (from, to, amount) in [("sol", "usdc", 100_000_000u64), ("usdc", "sol", 10_000_000u64)] {
-            let q = jupiter_rpc::quote(&jupiter_mint_for_coin(from).unwrap(), &jupiter_mint_for_coin(to).unwrap(), amount, 50).unwrap();
+        for (from, to, amount) in [
+            ("sol", "usdc", 100_000_000u64),
+            ("usdc", "sol", 10_000_000u64),
+            ("sol", "usdt", 100_000_000),
+            ("sol", "eurc", 100_000_000),
+            ("sol", "render", 100_000_000),
+            ("usdc", "render", 10_000_000),
+        ] {
+            let (input, output) = (jupiter_mint_for_coin(from).unwrap(), jupiter_mint_for_coin(to).unwrap());
+            let fee_mint = jupiter_fee_mint(&rpc, &input, &output).unwrap();
+            println!("{from}->{to} : frais d'affiliation {}", if fee_mint.is_some() { "prélevés" } else { "absents (aucun compte de frais)" });
+            let q = jupiter_rpc::quote(&input, &output, amount, 50, fee_mint).unwrap();
             let tx = jupiter_rpc::build_swap_transaction(&q, owner_b58).unwrap();
             let addresses = resolve_writable_addresses(&rpc, &tx).unwrap();
             let pre = rpc.multiple_accounts(&addresses).unwrap();
@@ -4594,7 +4654,7 @@ mod tests {
         println!("portefeuille utilisé (sans compte USDC) : {owner_b58}");
         let owner: [u8; 32] = bs58::decode(owner_b58).into_vec().unwrap().try_into().unwrap();
 
-        let q = jupiter_rpc::quote(jupiter_rpc::SOL_MINT, &jupiter_mint_for_coin("usdc").unwrap(), amount, 50).unwrap();
+        let q = jupiter_rpc::quote(jupiter_rpc::SOL_MINT, &jupiter_mint_for_coin("usdc").unwrap(), amount, 50, None).unwrap();
         let tx = jupiter_rpc::build_swap_transaction(&q, owner_b58).unwrap();
         let limits = swap_effect_limits(owner, "sol", amount, "usdc", q.out_amount * 9_950 / 10_000).unwrap();
         check_swap_effects(&rpc, &tx, &limits).expect("un vrai swap qui crée le compte USDC de destination ne doit pas être rejeté");

@@ -63,15 +63,19 @@ pub struct JupiterQuote {
     /// Montant de sortie attendu, dans la plus petite unité de l'actif de
     /// destination — extrait juste pour l'affichage.
     pub out_amount: u64,
+    /// Jeton des frais d'affiliation (`None` : échange sans frais, faute de
+    /// compte de frais existant pour l'un des deux jetons, voir `api`).
+    pub fee_mint: Option<[u8; 32]>,
 }
 
 /// `amount` dans la plus petite unité de l'actif source (lamports pour SOL,
 /// micro-USDC pour l'USDC). `slippage_bps` : tolérance de glissement de prix,
-/// en points de base (ex: 50 = 0,50 %).
-pub fn quote(input_mint: &str, output_mint: &str, amount: u64, slippage_bps: u32) -> Result<JupiterQuote> {
-    let url = format!(
-        "{JUPITER_BASE}/swap/v1/quote?inputMint={input_mint}&outputMint={output_mint}&amount={amount}&slippageBps={slippage_bps}&platformFeeBps={AFFILIATE_FEE_BPS}"
-    );
+/// en points de base (ex: 50 = 0,50 %). `fee_mint` : jeton dont le compte de
+/// frais de l'affilié recevra les 0,80 % (doit exister, voir
+/// `fee_mint_candidates`) ; `None` : sans frais.
+pub fn quote(input_mint: &str, output_mint: &str, amount: u64, slippage_bps: u32, fee_mint: Option<[u8; 32]>) -> Result<JupiterQuote> {
+    let fee = if fee_mint.is_some() { format!("&platformFeeBps={AFFILIATE_FEE_BPS}") } else { String::new() };
+    let url = format!("{JUPITER_BASE}/swap/v1/quote?inputMint={input_mint}&outputMint={output_mint}&amount={amount}&slippageBps={slippage_bps}{fee}");
     let raw: Value = shared_client()
         .get(&url)
         .send()
@@ -90,7 +94,30 @@ pub fn quote(input_mint: &str, output_mint: &str, amount: u64, slippage_bps: u32
         .parse::<u64>()
         .context("montant de sortie Jupiter illisible")?;
 
-    Ok(JupiterQuote { raw, out_amount })
+    Ok(JupiterQuote { raw, out_amount, fee_mint })
+}
+
+/// Comptes de frais possibles pour un échange, par ordre de préférence : le
+/// jeton reçu, puis le jeton vendu — Jupiter exige un compte de frais de
+/// l'un des deux jetons échangés, EXISTANT (constaté : un compte USDC faisait
+/// échouer SOL → USDT, « Account not associated with this Mint », et un compte
+/// absent échoue en 6025 « InvalidTokenAccount »). Jamais en SOL natif.
+pub fn fee_mint_candidates(input_mint: &str, output_mint: &str) -> Vec<[u8; 32]> {
+    [output_mint, input_mint]
+        .into_iter()
+        .filter(|mint| *mint != SOL_MINT)
+        .filter_map(|mint| bs58::decode(mint).into_vec().ok().and_then(|v| v.try_into().ok()))
+        .collect()
+}
+
+/// Compte de frais (ATA de `AFFILIATE_ADDRESS`) pour le jeton `mint`.
+pub fn fee_account(mint: &[u8; 32]) -> Result<[u8; 32]> {
+    let owner: [u8; 32] = bs58::decode(AFFILIATE_ADDRESS)
+        .into_vec()
+        .ok()
+        .and_then(|v| v.try_into().ok())
+        .context("adresse d'affiliation Jupiter mal formée (bug de compilation)")?;
+    Ok(crate::sol_spl::find_associated_token_address(&owner, mint))
 }
 
 #[derive(Deserialize)]
@@ -104,22 +131,11 @@ struct SwapResponseJson {
 /// signature à zéro) — voir la doc du module : jamais reconstruite à la main,
 /// seulement signée telle quelle après vérification du payeur de frais.
 pub fn build_swap_transaction(quote: &JupiterQuote, user_pubkey: &str) -> Result<Vec<u8>> {
-    // Compte de frais = l'ATA USDC de l'adresse d'affiliation (voir sa doc) —
-    // Jupiter le crée lui-même via une instruction de préparation s'il
-    // n'existe pas encore (même mécanisme que pour le compte de jetons de
-    // l'utilisateur), aucune étape préalable nécessaire ici.
-    let affiliate_owner_bytes = bs58::decode(AFFILIATE_ADDRESS)
-        .into_vec()
-        .ok()
-        .and_then(|v| <[u8; 32]>::try_from(v).ok())
-        .context("adresse d'affiliation Jupiter mal formée (bug de compilation)")?;
-    let fee_ata = crate::sol_spl::find_associated_token_address(&affiliate_owner_bytes, &crate::sol_spl::usdc_mint_mainnet());
-    let fee_account = bs58::encode(fee_ata).into_string();
-
-    let body = serde_json::json!({
+    // Compte de frais : celui du jeton choisi au devis (voir `fee_mint_candidates`) ;
+    // aucun pour un devis sans frais.
+    let mut body = serde_json::json!({
         "quoteResponse": quote.raw,
         "userPublicKey": user_pubkey,
-        "feeAccount": fee_account,
         // Enveloppe/désenveloppe automatiquement le SOL natif en wSOL le
         // temps du swap (obligatoire pour swapper depuis/vers du SOL natif,
         // qui n'est pas lui-même un jeton SPL) — comportement par défaut de
@@ -138,6 +154,9 @@ pub fn build_swap_transaction(quote: &JupiterQuote, user_pubkey: &str) -> Result
             "priorityLevelWithMaxLamports": { "maxLamports": 1_000_000, "priorityLevel": "medium" }
         },
     });
+    if let Some(mint) = quote.fee_mint {
+        body["feeAccount"] = Value::String(bs58::encode(fee_account(&mint)?).into_string());
+    }
     let response: SwapResponseJson = shared_client()
         .post(format!("{JUPITER_BASE}/swap/v1/swap"))
         .json(&body)
@@ -414,7 +433,7 @@ mod tests {
         // USDC ailleurs dans ce projet) — lecture seule, aucun risque.
         let owner = "E645TckHQnDcavVv92Etc6xSWQaq8zzPtPRGBheviRAk";
         let usdc_mint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
-        let q = quote(SOL_MINT, usdc_mint, 100_000_000, 50).expect("devis réel");
+        let q = quote(SOL_MINT, usdc_mint, 100_000_000, 50, None).expect("devis réel");
         assert!(q.out_amount > 0);
 
         let raw_tx = build_swap_transaction(&q, owner).expect("construction réelle");

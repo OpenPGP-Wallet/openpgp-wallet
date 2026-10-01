@@ -602,7 +602,7 @@ mod tests {
         }
 
         let binance = Account { evm: String::new(), solana: "5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9".to_string() };
-        let q = jupiter_rpc::quote(jupiter_rpc::SOL_MINT, &bs58::encode(sol_spl::usdc_mint_mainnet()).into_string(), 100_000_000, 50).unwrap();
+        let q = jupiter_rpc::quote(jupiter_rpc::SOL_MINT, &bs58::encode(sol_spl::usdc_mint_mainnet()).into_string(), 100_000_000, 50, None).unwrap();
         let tx = jupiter_rpc::build_swap_transaction(&q, &binance.solana).unwrap();
         let params = json!({"transaction": base64::engine::general_purpose::STANDARD.encode(&tx)});
         match prepare("solana_signTransaction", &params, SOLANA_MAINNET, &binance).unwrap() {

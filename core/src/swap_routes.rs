@@ -23,7 +23,13 @@ pub enum Protocol {
 }
 
 /// Cryptos échangeables via Jupiter (voir `api::send_jupiter_swap`).
-const JUPITER: [SwapAsset; 2] = [SwapAsset { coin: "sol", network: "sol_mainnet" }, SwapAsset { coin: "usdc", network: "sol_mainnet" }];
+const JUPITER: [SwapAsset; 5] = [
+    SwapAsset { coin: "sol", network: "sol_mainnet" },
+    SwapAsset { coin: "usdc", network: "sol_mainnet" },
+    SwapAsset { coin: "usdt", network: "sol_mainnet" },
+    SwapAsset { coin: "eurc", network: "sol_mainnet" },
+    SwapAsset { coin: "render", network: "sol_mainnet" },
+];
 
 fn on_thorchain(asset: SwapAsset) -> bool {
     thorchain_rpc::asset(asset.coin, asset.network).is_some()
