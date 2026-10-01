@@ -667,6 +667,38 @@ fn with_device_privkey_path_in<T>(
     f(&path.to_string_lossy())
 }
 
+/// Wallet créé avant le passage au coffre OS (25/09/2026) : sa clé privée
+/// "device" était restée en fichier, rien ne la déplaçait (constaté sur un
+/// vrai wallet). Appelé après un déverrouillage RÉUSSI (le fichier est alors
+/// connu bon) : la clé est écrite dans le coffre OS, relue et comparée, et
+/// seulement alors le fichier est supprimé. Une seule copie à la fois : si le
+/// fichier ne peut pas être supprimé, l'entrée du coffre est retirée et la
+/// migration sera retentée au prochain déverrouillage. Sans effet si la clé
+/// est déjà dans le coffre ou si celui-ci est indisponible ; un échec laisse
+/// toujours le wallet dans son état précédent.
+fn migrate_device_privkey_to_store(data_dir: &Path, store: &dyn secure_storage::KeyStore) {
+    let username = secure_storage::entry_username(data_dir);
+    if !matches!(store.read(&username), Ok(None)) {
+        return;
+    }
+    let path = data_dir.join(DEVICE_PRIVKEY_FILE);
+    let Ok(bytes) = std::fs::read(&path).map(Zeroizing::new) else { return };
+    let Ok(text) = std::str::from_utf8(&bytes) else { return };
+    if store.write(&username, text).is_err() {
+        return;
+    }
+    match store.read(&username) {
+        Ok(Some(stored)) if stored.as_str() == text => {
+            if std::fs::remove_file(&path).is_err() {
+                let _ = store.remove(&username);
+            }
+        }
+        _ => {
+            let _ = store.remove(&username);
+        }
+    }
+}
+
 /// Supprime la clé privée "device", où qu'elle vive (coffre OS et/ou fichier
 /// — au plus l'un des deux en pratique, voir `write_device_privkey`, mais
 /// vérifie les deux pour ne jamais laisser une copie orpheline). Best-effort
@@ -964,6 +996,7 @@ fn unlock_seed(data_dir: &Path, device_password: &str) -> Result<Zeroizing<Vec<u
     match result {
         Ok(seed) => {
             reset_unlock_attempts(data_dir);
+            migrate_device_privkey_to_store(data_dir, active_key_store());
             Ok(Zeroizing::new(seed))
         }
         Err(e) => {
@@ -4340,6 +4373,77 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Wallet d'avant le coffre OS (clé en fichier, rien dans le coffre) : le
+    /// premier déverrouillage réussi déplace la clé dans le coffre et supprime
+    /// le fichier ; le wallet se déverrouille ensuite depuis le coffre. Un
+    /// mauvais mot de passe ne déplace rien.
+    #[test]
+    fn legacy_file_key_moves_into_the_os_store_after_a_successful_unlock() {
+        let dir = std::env::temp_dir().join(format!("pgp_wallet_key_migration_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let password = "un mot de passe de test bien assez long";
+        create_wallet(&dir, password).expect("création du wallet");
+        let username = secure_storage::entry_username(&dir);
+        // Simule un wallet créé avant le coffre OS : clé remise en fichier.
+        let key = active_key_store().read(&username).unwrap().expect("clé dans le coffre après création");
+        std::fs::write(dir.join(DEVICE_PRIVKEY_FILE), key.as_bytes()).unwrap();
+        active_key_store().remove(&username).unwrap();
+
+        assert!(unlock_wallet(&dir, "pas le bon mot de passe du tout").is_err());
+        assert!(dir.join(DEVICE_PRIVKEY_FILE).exists(), "mauvais mot de passe : rien ne bouge");
+        assert!(active_key_store().read(&username).unwrap().is_none());
+
+        unlock_wallet(&dir, password).expect("déverrouillage depuis le fichier");
+        assert!(!dir.join(DEVICE_PRIVKEY_FILE).exists(), "fichier supprimé après migration");
+        assert_eq!(active_key_store().read(&username).unwrap().as_deref().map(String::as_str), Some(key.as_str()));
+        unlock_wallet(&dir, password).expect("déverrouillage depuis le coffre");
+
+        active_key_store().remove(&username).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Coffre en panne : la clé reste dans son fichier, intacte.
+    #[test]
+    fn failed_migration_leaves_the_file_key_untouched() {
+        let dir = std::env::temp_dir().join(format!("pgp_wallet_key_migration_failure_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(DEVICE_PRIVKEY_FILE), b"-----BEGIN PGP PRIVATE KEY BLOCK-----").unwrap();
+        migrate_device_privkey_to_store(&dir, &FailingKeyStore);
+        assert_eq!(std::fs::read(dir.join(DEVICE_PRIVKEY_FILE)).unwrap(), b"-----BEGIN PGP PRIVATE KEY BLOCK-----");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Vrai Gestionnaire d'identification Windows, dans un dossier temporaire
+    /// (entrée propre à ce dossier, jamais celle d'un vrai wallet) : migration
+    /// d'une clé de wallet réelle (taille réelle), relecture, puis nettoyage.
+    /// `cargo test -- --ignored real_os_store_migration --nocapture`
+    #[test]
+    #[ignore]
+    fn real_os_store_migration() {
+        use secure_storage::KeyStore;
+        let store = secure_storage::OsKeyStore;
+        let dir = std::env::temp_dir().join(format!("pgp_wallet_real_store_migration_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let password = "un mot de passe de test bien assez long";
+        create_wallet(&dir, password).expect("création du wallet");
+        let username = secure_storage::entry_username(&dir);
+        let key = active_key_store().read(&username).unwrap().expect("clé générée");
+        println!("clé de {} octets", key.len());
+        std::fs::write(dir.join(DEVICE_PRIVKEY_FILE), key.as_bytes()).unwrap();
+        assert!(store.read(&username).unwrap().is_none(), "aucune entrée réelle au départ");
+
+        migrate_device_privkey_to_store(&dir, &store);
+        let stored = store.read(&username).unwrap();
+        let migrated = !dir.join(DEVICE_PRIVKEY_FILE).exists() && stored.as_deref().map(String::as_str) == Some(key.as_str());
+        store.remove(&username).unwrap();
+        active_key_store().remove(&username).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(migrated, "clé dans le vrai coffre, identique, fichier supprimé");
     }
 
     /// Coffre OS qui tombe en panne à chaque lecture (pas "absent" : une vraie
