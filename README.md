@@ -1,4 +1,4 @@
-# PGP Wallet PoC
+# OpenPGP Wallet PoC
 
 Portefeuille crypto multi-réseaux (Bitcoin, Ethereum, Solana), **non-custodial** — la clé maîtresse n'existe jamais en clair hors de l'appareil, et n'est jamais visible par un tiers.
 

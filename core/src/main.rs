@@ -28,7 +28,7 @@ fn prompt(message: &str) -> Result<String> {
 }
 
 fn main() -> Result<()> {
-    println!("=== PGP Wallet PoC — entropie maître fragmentée (Shamir 2-sur-3) ===\n");
+    println!("=== OpenPGP Wallet PoC — entropie maître fragmentée (Shamir 2-sur-3) ===\n");
 
     // 1. Générer l'entropie maître (256 bits)
     let master_entropy = Zeroizing::new(entropy::generate_master_entropy());

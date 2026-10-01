@@ -177,44 +177,44 @@ fn readme(parts: &[u8]) -> String {
     let list = parts.iter().map(u8::to_string).collect::<Vec<_>>().join(", ");
     if parts.len() >= 2 {
         format!(
-            "SAUVEGARDE PGP WALLET — PARTS {list} SUR 3\r\n\
+            "SAUVEGARDE OPENPGP WALLET — PARTS {list} SUR 3\r\n\
              \r\n\
              ATTENTION : cette clé contient PLUSIEURS parts du kit de récupération d'un\r\n\
-             portefeuille PGP Wallet. Elle suffit À ELLE SEULE à récupérer tout le\r\n\
+             portefeuille OpenPGP Wallet. Elle suffit À ELLE SEULE à récupérer tout le\r\n\
              portefeuille et ses fonds, sans aucun mot de passe. Rangez-la en lieu sûr\r\n\
              (coffre), jamais avec l'ordinateur.\r\n\
              \r\n\
-             Restaurer : installez PGP Wallet, choisissez « J'ai déjà un portefeuille »\r\n\
+             Restaurer : installez OpenPGP Wallet, choisissez « J'ai déjà un portefeuille »\r\n\
              (ou « Restaurer depuis une sauvegarde »), puis branchez cette clé.\r\n\
              Ne modifiez ni ne renommez les fichiers de ce dossier.\r\n\
              \r\n\
-             PGP WALLET BACKUP — SHARES {list} OF 3\r\n\
+             OPENPGP WALLET BACKUP — SHARES {list} OF 3\r\n\
              \r\n\
-             WARNING: this drive holds SEVERAL shares of a PGP Wallet recovery kit. On its\r\n\
-             own it is enough to recover the whole wallet and its funds, with no password.\r\n\
-             Keep it somewhere safe, never with the computer. To restore: install PGP\r\n\
-             Wallet, choose \"I already have a wallet\", then plug in this drive.\r\n"
+             WARNING: this drive holds SEVERAL shares of an OpenPGP Wallet recovery kit.\r\n\
+             On its own it is enough to recover the whole wallet and its funds, with no\r\n\
+             password. Keep it somewhere safe, never with the computer. To restore: install\r\n\
+             OpenPGP Wallet, choose \"I already have a wallet\", then plug in this drive.\r\n"
         )
     } else {
         format!(
-            "SAUVEGARDE PGP WALLET — PART N°{list} SUR 3\r\n\
+            "SAUVEGARDE OPENPGP WALLET — PART N°{list} SUR 3\r\n\
              \r\n\
-             Cette clé contient UNE part du kit de récupération d'un portefeuille PGP Wallet.\r\n\
-             Une part seule ne permet rien. DEUX parts réunies donnent un accès COMPLET au\r\n\
-             portefeuille et à ses fonds : gardez chaque clé à un endroit différent, jamais\r\n\
-             avec l'ordinateur ni avec une autre part.\r\n\
+             Cette clé contient UNE part du kit de récupération d'un portefeuille\r\n\
+             OpenPGP Wallet. Une part seule ne permet rien. DEUX parts réunies donnent un\r\n\
+             accès COMPLET au portefeuille et à ses fonds : gardez chaque clé à un endroit\r\n\
+             différent, jamais avec l'ordinateur ni avec une autre part.\r\n\
              \r\n\
-             Restaurer : installez PGP Wallet, choisissez « J'ai déjà un portefeuille »\r\n\
+             Restaurer : installez OpenPGP Wallet, choisissez « J'ai déjà un portefeuille »\r\n\
              (ou « Restaurer depuis une sauvegarde »), puis branchez deux clés de sauvegarde.\r\n\
              Ne modifiez ni ne renommez les fichiers de ce dossier.\r\n\
              \r\n\
-             PGP WALLET BACKUP — SHARE {list} OF 3\r\n\
+             OPENPGP WALLET BACKUP — SHARE {list} OF 3\r\n\
              \r\n\
-             This drive holds ONE share of a PGP Wallet recovery kit. One share alone is\r\n\
-             useless; TWO shares together give FULL access to the wallet and its funds: keep\r\n\
-             each drive in a different place, never with the computer or another share.\r\n\
-             To restore: install PGP Wallet, choose \"I already have a wallet\", then plug in\r\n\
-             two backup drives. Do not edit or rename the files in this folder.\r\n"
+             This drive holds ONE share of an OpenPGP Wallet recovery kit. One share alone\r\n\
+             is useless; TWO shares together give FULL access to the wallet and its funds:\r\n\
+             keep each drive in a different place, never with the computer or another\r\n\
+             share. To restore: install OpenPGP Wallet, choose \"I already have a wallet\",\r\n\
+             then plug in two backup drives. Do not edit or rename the files in this folder.\r\n"
         )
     }
 }
@@ -325,7 +325,7 @@ fn read_part(root: &Path, part: u8) -> Result<(ShareInfo, ShareFiles)> {
     let info = shares_on(root)
         .into_iter()
         .find(|s| s.part == part)
-        .ok_or_else(|| anyhow!("aucune sauvegarde PGP Wallet sur cette clé USB"))?;
+        .ok_or_else(|| anyhow!("aucune sauvegarde OpenPGP Wallet sur cette clé USB"))?;
     let dir = part_dir(root, part);
     let read = |name: &str| -> Result<Vec<u8>> {
         let path = dir.join(name);

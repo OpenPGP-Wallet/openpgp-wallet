@@ -147,7 +147,7 @@ fn enroll_inner(provider: &Provider, key_name_wide: &HSTRING, secret: &[u8], fin
     // applique lui-même à chaque usage futur de la clé privée (voir `unlock`) —
     // pas une case à cocher côté application, une politique imposée par le
     // fournisseur de clé/TPM lui-même.
-    let title = HSTRING::from("PGP Wallet PoC");
+    let title = HSTRING::from("OpenPGP Wallet");
     let friendly_name = HSTRING::from("Déverrouillage biométrique du coffre");
     let description = HSTRING::from("Confirmez votre identité pour déverrouiller ce portefeuille.");
     let ui_policy = NCRYPT_UI_POLICY {

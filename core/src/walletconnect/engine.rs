@@ -215,7 +215,7 @@ pub enum Action {
 /// réel : le projet n'en possède pas, et en emprunter un serait trompeur.
 fn own_metadata() -> Value {
     json!({
-        "name": "PGP Wallet",
+        "name": "OpenPGP Wallet",
         "description": "Portefeuille non-custodial (preuve de concept)",
         "url": "https://pgp-wallet-poc.local",
         "icons": []
