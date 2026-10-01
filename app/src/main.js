@@ -69,8 +69,11 @@ function setWithCoinIcon(el, coin, text) {
 
 // Échange (« Convertir ») : paires possibles, lues auprès de Rust au démarrage
 // (`swap_pairs`, core/src/swap_routes.rs) —
-// [{ from_coin, from_network, to_coin, to_network, protocol }].
+// [{ from_coin, from_network, to_coin, to_network, protocol, via, then_protocol }].
 let swapPairs = [];
+// Échange en 2 étapes en cours (voir « suivi de la crypto intermédiaire »).
+let pendingRoute = null;
+let routePollTimer = null;
 
 const ICON_CONVERT = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h13l-3-3M20 16H7l3 3" /></svg>`;
 
@@ -746,6 +749,17 @@ const I18N = {
     "swap.toAsset": "Vers",
     "swap.viaJupiter": "via Jupiter, même portefeuille",
     "swap.viaCow": "via CoW, même portefeuille",
+    "swap.viaTwoSteps": "en 2 étapes, via {via}",
+    "swap.twoStepHint":
+      "Pas de route directe : l'échange se fait en 2 étapes. 1) {from} → {via} ({first}), reçu sur votre propre adresse. 2) Dès que {via} est arrivé, l'app vous propose {via} → {to} ({second}), avec une seconde confirmation.",
+    "swap.previewRoute": "Étape 1 sur 2 : vers {via} ({first}). Ensuite, {via} → {to} ({second}) vous sera proposé dès l'arrivée de {via}.",
+    "swap.routeStep1Sent": "Étape 1 envoyée : l'étape 2 vous sera proposée dès l'arrivée de {via}.",
+    "swap.routeWaiting": "Échange en 2 étapes vers {to} : en attente de l'arrivée de {via} (étape 1). Entre deux réseaux, cela peut prendre jusqu'à une heure.",
+    "swap.routeReady": "Étape 1 terminée : +{amount} {via} reçus. Étape 2 prête : {via} → {to}.",
+    "swap.routeReadyToast": "{via} reçu : l'étape 2 de votre échange est prête.",
+    "swap.routeLate": "{via} n'est pas encore arrivé (étape 1) : vérifiez l'historique. Vous pouvez arrêter le suivi, les fonds restent les vôtres.",
+    "swap.routeContinue": "Faire l'étape 2",
+    "swap.routeAbandon": "Arrêter le suivi",
     "swap.unavailable": "Échange non disponible entre ces deux cryptos.",
     "swap.amount": "Montant",
     "swap.destination": "Adresse de destination",
@@ -1220,6 +1234,17 @@ const I18N = {
     "swap.toAsset": "To",
     "swap.viaJupiter": "via Jupiter, same wallet",
     "swap.viaCow": "via CoW, same wallet",
+    "swap.viaTwoSteps": "in 2 steps, via {via}",
+    "swap.twoStepHint":
+      "No direct route: the swap takes 2 steps. 1) {from} → {via} ({first}), received on your own address. 2) As soon as the {via} arrives, the app offers {via} → {to} ({second}), with a second confirmation.",
+    "swap.previewRoute": "Step 1 of 2: to {via} ({first}). Then {via} → {to} ({second}) will be offered as soon as the {via} arrives.",
+    "swap.routeStep1Sent": "Step 1 sent: step 2 will be offered as soon as the {via} arrives.",
+    "swap.routeWaiting": "2-step swap to {to}: waiting for the {via} to arrive (step 1). Across networks this can take up to an hour.",
+    "swap.routeReady": "Step 1 done: +{amount} {via} received. Step 2 ready: {via} → {to}.",
+    "swap.routeReadyToast": "{via} received: step 2 of your swap is ready.",
+    "swap.routeLate": "The {via} has not arrived yet (step 1): check the history. You can stop tracking, the funds remain yours.",
+    "swap.routeContinue": "Do step 2",
+    "swap.routeAbandon": "Stop tracking",
     "swap.unavailable": "No swap available between these two cryptos.",
     "swap.amount": "Amount",
     "swap.destination": "Destination address",
@@ -3437,6 +3462,7 @@ function refreshAllBalances() {
     if (!card.classList.contains("asset-hidden") || !hiddenBalancesChecked) refreshBalance(card);
   });
   hiddenBalancesChecked = true;
+  renderRouteBanner();
 }
 
 document.querySelectorAll(".wallet-card").forEach((card) => {
@@ -4255,7 +4281,44 @@ function selectedSwapPair() {
   const from = parseSwapKey(document.getElementById("swap-from-coin").value);
   const to = parseSwapKey(document.getElementById("swap-to-coin").value);
   const pair = swapPairs.find((p) => p.from_coin === from.coin && p.from_network === from.network && p.to_coin === to.coin && p.to_network === to.network);
-  return pair ? { from, to, protocol: pair.protocol } : null;
+  return pair ? { from, to, protocol: pair.protocol, via: pair.via ?? null, thenProtocol: pair.then_protocol ?? null } : null;
+}
+
+const SWAP_PROTOCOL_NAMES = { thorchain: "THORChain", maya: "Maya", jupiter: "Jupiter", cow: "CoW" };
+
+// « SOL », « ETH (Arbitrum) » : symbole, et réseau pour une crypto qui en a
+// plusieurs.
+function swapShortLabel({ coin, network }) {
+  const asset = ASSET_BY_COIN[coin];
+  const symbol = COIN_SYMBOL[coin] ?? coin.toUpperCase();
+  const mainnets = asset ? asset.networks.filter((n) => !TEST_NETWORKS.includes(n)) : [];
+  return mainnets.length > 1 ? `${symbol} (${t(`net.${network}`).split(" — ")[0]})` : symbol;
+}
+
+// Étape à faire maintenant : la paire elle-même, ou sa première étape (vers
+// la crypto intermédiaire) pour un échange en 2 étapes — les commandes
+// d'échange n'acceptent qu'une paire directe.
+function currentSwapStep(pair) {
+  return pair.via ? { from: pair.from, to: pair.via, protocol: pair.protocol } : pair;
+}
+
+// Adresse d'arrivée de l'étape : aucune dans le même portefeuille ; celle de
+// l'utilisateur pour la crypto intermédiaire (TOUJOURS la sienne) ; sinon
+// celle saisie.
+function swapStepDestination(pair, step) {
+  if (isSameWalletSwap(step)) return "";
+  if (pair.via) return addressForCoin(pair.via.coin, pair.via.network);
+  return document.getElementById("swap-destination").value.trim();
+}
+
+function swapRouteVars(pair) {
+  return {
+    from: swapShortLabel(pair.from),
+    via: swapShortLabel(pair.via),
+    to: swapShortLabel(pair.to),
+    first: SWAP_PROTOCOL_NAMES[pair.protocol],
+    second: SWAP_PROTOCOL_NAMES[pair.thenProtocol],
+  };
 }
 
 function updateSwapToOptions() {
@@ -4268,8 +4331,8 @@ function updateSwapToOptions() {
         const option = document.createElement("option");
         option.value = swapKey(p.to_coin, p.to_network);
         option.dataset.coin = p.to_coin;
-        const via = { jupiter: "swap.viaJupiter", cow: "swap.viaCow" }[p.protocol];
-        option.textContent = swapAssetLabel(p.to_coin, p.to_network) + (via ? ` · ${t(via)}` : "");
+        const note = p.via ? t("swap.viaTwoSteps", { via: swapShortLabel(p.via) }) : { jupiter: t("swap.viaJupiter"), cow: t("swap.viaCow") }[p.protocol];
+        option.textContent = swapAssetLabel(p.to_coin, p.to_network) + (note ? ` · ${note}` : "");
         return option;
       })
   );
@@ -4283,13 +4346,19 @@ restrictToAmount(document.getElementById("swap-amount"));
 
 document.getElementById("swap-from-coin").addEventListener("change", updateSwapToOptions);
 
-function openSwapModal(card) {
+function openSwapModal(card, preset = null) {
   const profile = currentProfile();
   swapContext = { card, profileIndex: profile ? profile.index : currentProfileIndex };
-  document.getElementById("swap-amount").value = "";
+  document.getElementById("swap-amount").value = preset?.amount ?? "";
   hideError(document.getElementById("swap-error"));
-  fillSwapFromOptions(swapKey(card.dataset.coin, networkForCard(card)));
+  fillSwapFromOptions(preset ? swapKey(preset.from.coin, preset.from.network) : swapKey(card.dataset.coin, networkForCard(card)));
   updateSwapToOptions();
+  if (preset) {
+    const toSelect = document.getElementById("swap-to-coin");
+    toSelect.value = swapKey(preset.to.coin, preset.to.network);
+    syncCustomSelect(toSelect);
+    updateSwapDestination();
+  }
   swapModal.classList.remove("hidden");
 }
 
@@ -4301,10 +4370,14 @@ const isSameWalletSwap = (pair) => pair?.protocol === "jupiter" || pair?.protoco
 
 function updateSwapDestination() {
   const pair = selectedSwapPair();
-  const sameWallet = isSameWalletSwap(pair);
-  document.getElementById("swap-destination-block").classList.toggle("hidden", sameWallet);
+  const twoSteps = Boolean(pair?.via);
+  const sameWallet = !twoSteps && isSameWalletSwap(pair);
+  document.getElementById("swap-destination-block").classList.toggle("hidden", sameWallet || twoSteps);
   document.getElementById("swap-jupiter-hint").classList.toggle("hidden", !sameWallet);
-  if (pair && !sameWallet) document.getElementById("swap-destination").value = addressForCoin(pair.to.coin, pair.to.network);
+  const routeHint = document.getElementById("swap-route-hint");
+  routeHint.classList.toggle("hidden", !twoSteps);
+  if (twoSteps) routeHint.textContent = t("swap.twoStepHint", swapRouteVars(pair));
+  if (pair && !sameWallet && !twoSteps) document.getElementById("swap-destination").value = addressForCoin(pair.to.coin, pair.to.network);
 }
 
 document.getElementById("swap-to-coin").addEventListener("change", updateSwapDestination);
@@ -4332,11 +4405,12 @@ swapQuoteBtn.addEventListener("click", withBusyButton(swapQuoteBtn, async () => 
     showError(errorEl, t("swap.unavailable"));
     return;
   }
-  const { coin: fromCoin, network: fromNetwork } = pair.from;
-  const { coin: toCoin, network: toNetwork } = pair.to;
+  const step = currentSwapStep(pair);
+  const { coin: fromCoin, network: fromNetwork } = step.from;
+  const { coin: toCoin, network: toNetwork } = step.to;
   const amount = document.getElementById("swap-amount").value.trim().replace(",", ".");
-  const sameWallet = isSameWalletSwap(pair);
-  const destination = sameWallet ? "" : document.getElementById("swap-destination").value.trim();
+  const sameWallet = isSameWalletSwap(step);
+  const destination = swapStepDestination(pair, step);
 
   if (!amount || (!sameWallet && !destination)) {
     showError(errorEl, t("wallet.allFieldsRequired"));
@@ -4349,7 +4423,7 @@ swapQuoteBtn.addEventListener("click", withBusyButton(swapQuoteBtn, async () => 
     const minRow = document.getElementById("swap-preview-min").closest(".send-preview-row");
     minRow.classList.add("hidden");
     let receivingText;
-    if (pair.protocol === "cow") {
+    if (step.protocol === "cow") {
       // Ordre CoW : réception attendue, minimum garanti signé, frais (1 %
       // d'intégration dans la crypto reçue + frais réseau de CoW pris sur la
       // crypto vendue), tous déjà comptés.
@@ -4361,7 +4435,7 @@ swapQuoteBtn.addEventListener("click", withBusyButton(swapQuoteBtn, async () => 
       minRow.classList.remove("hidden");
       destRow.classList.add("hidden");
       feeRow.classList.remove("hidden");
-    } else if (pair.protocol === "jupiter") {
+    } else if (step.protocol === "jupiter") {
       const outAmount = await invoke("get_jupiter_quote", { fromCoin, toCoin, amount });
       receivingText = `≈ ${outAmount} ${COIN_SYMBOL[toCoin] || toCoin.toUpperCase()}`;
       destRow.classList.add("hidden");
@@ -4371,13 +4445,16 @@ swapQuoteBtn.addEventListener("click", withBusyButton(swapQuoteBtn, async () => 
       receivingText = `≈ ${quote.expected_amount_out} ${COIN_SYMBOL[toCoin] || toCoin.toUpperCase()}`;
       // Frais du protocole (THORChain ou Maya), dans la crypto reçue (déjà
       // déduits de la réception).
-      document.getElementById("swap-preview-fees-label").textContent = t("swap.previewFeesOf", { name: pair.protocol === "maya" ? "Maya" : "THORChain" });
+      document.getElementById("swap-preview-fees-label").textContent = t("swap.previewFeesOf", { name: SWAP_PROTOCOL_NAMES[step.protocol] });
       document.getElementById("swap-preview-fees").textContent = quote.total_fees != null ? `${quote.total_fees} ${COIN_SYMBOL[toCoin] ?? ""}` : "—";
       document.getElementById("swap-preview-destination").textContent = destination;
       destRow.classList.remove("hidden");
       feeRow.classList.remove("hidden");
     }
 
+    const routeNote = document.getElementById("swap-preview-route");
+    routeNote.classList.toggle("hidden", !pair.via);
+    if (pair.via) routeNote.textContent = t("swap.previewRoute", swapRouteVars(pair));
     setWithCoinIcon(document.getElementById("swap-preview-sending"), fromCoin, `${amount} ${COIN_SYMBOL[fromCoin] || fromCoin.toUpperCase()}`);
     setWithCoinIcon(document.getElementById("swap-preview-receiving"), toCoin, receivingText);
     document.getElementById("swap-preview-password").value = "";
@@ -4414,11 +4491,13 @@ swapPreviewConfirmBtn.addEventListener("click", withBusyButton(swapPreviewConfir
     showError(errorEl, t("swap.unavailable"));
     return;
   }
-  const { coin: fromCoin, network: fromNetwork } = pair.from;
-  const { coin: toCoin, network: toNetwork } = pair.to;
+  const step = currentSwapStep(pair);
+  const { coin: fromCoin, network: fromNetwork } = step.from;
+  const { coin: toCoin, network: toNetwork } = step.to;
   const amount = document.getElementById("swap-amount").value.trim().replace(",", ".");
-  const destination = isSameWalletSwap(pair) ? "" : document.getElementById("swap-destination").value.trim();
+  const destination = swapStepDestination(pair, step);
   const password = document.getElementById("swap-preview-password").value;
+  const profileIndex = swapContext.profileIndex;
 
   if (!password) {
     showError(errorEl, t("common.passwordRequired"));
@@ -4426,26 +4505,31 @@ swapPreviewConfirmBtn.addEventListener("click", withBusyButton(swapPreviewConfir
   }
 
   try {
-    if (pair.protocol === "cow") {
-      const order = await invoke("cow_swap_transaction", { password, network: fromNetwork, fromCoin, toCoin, amount, profileIndex: swapContext.profileIndex });
+    // 2 étapes : solde de la crypto intermédiaire relevé AVANT l'envoi, pour
+    // reconnaître son arrivée (et le montant reçu) ensuite.
+    const routeAddress = pair.via ? addressForCoin(pair.via.coin, pair.via.network) : "";
+    const routeBefore = pair.via ? await readAssetBalance(pair.via.coin, pair.via.network, routeAddress) : null;
+
+    if (step.protocol === "cow") {
+      const order = await invoke("cow_swap_transaction", { password, network: fromNetwork, fromCoin, toCoin, amount, profileIndex });
       trackCowOrder(successEl, fromNetwork, order);
-      refreshAllBalances();
-      return;
+    } else {
+      const txResult = step.protocol === "jupiter"
+        ? await invoke("jupiter_swap_transaction", { password, fromCoin, toCoin, amount, profileIndex })
+        : await invoke("swap_transaction", { password, fromCoin, fromNetwork, toCoin, toNetwork, amount, destination, profileIndex });
+      successEl.textContent = t("send.txSent", { tx: txResult });
+      successEl.classList.remove("hidden");
     }
-    const txResult = pair.protocol === "jupiter"
-      ? await invoke("jupiter_swap_transaction", { password, fromCoin, toCoin, amount, profileIndex: swapContext.profileIndex })
-      : await invoke("swap_transaction", {
-          password,
-          fromCoin,
-          fromNetwork,
-          toCoin,
-          toNetwork,
-          amount,
-          destination,
-          profileIndex: swapContext.profileIndex,
-        });
-    successEl.textContent = t("send.txSent", { tx: txResult });
-    successEl.classList.remove("hidden");
+
+    if (pair.via) {
+      savePendingRoute({ from: pair.from, via: pair.via, to: pair.to, profileIndex, address: routeAddress, before: routeBefore, startedAt: Date.now() });
+      const note = document.createElement("span");
+      note.textContent = ` ${t("swap.routeStep1Sent", { via: swapShortLabel(pair.via) })}`;
+      successEl.append(note);
+    } else if (pendingRoute && sameSwapAsset(pendingRoute.via, pair.from) && sameSwapAsset(pendingRoute.to, pair.to)) {
+      // Seconde étape d'un échange en 2 étapes : terminé.
+      savePendingRoute(null);
+    }
     // Un swap peut affecter le solde de PLUSIEURS cartes (source ET
     // destination si elle est aussi gérée par ce wallet, ex: SOL<->USDC) —
     // toutes rafraîchies plutôt que juste celle d'où le swap a été ouvert.
@@ -4456,6 +4540,94 @@ swapPreviewConfirmBtn.addEventListener("click", withBusyButton(swapPreviewConfir
     document.getElementById("swap-preview-password").value = "";
   }
 }));
+
+// --- Échange en 2 étapes : suivi de la crypto intermédiaire ---------------------
+// Après l'étape 1, la route est gardée localement (même après un redémarrage)
+// et le solde de la crypto intermédiaire relu toutes les 20 s : dès qu'il
+// monte, l'étape 2 est proposée avec le montant reçu (fenêtre « Convertir »
+// pré-remplie, nouveau devis et nouvelle confirmation native). Rien n'est
+// bloqué si elle n'est jamais faite : l'intermédiaire reste sur le
+// portefeuille de l'utilisateur.
+
+const PENDING_ROUTE_STORAGE_KEY = "pendingSwapRoute";
+const ROUTE_POLL_MS = 20000;
+const ROUTE_MAX_WAIT_MS = 3 * 60 * 60 * 1000;
+
+const sameSwapAsset = (a, b) => Boolean(a && b) && a.coin === b.coin && a.network === b.network;
+
+// Solde d'une crypto sur un réseau, comme sur sa carte (texte « 0.123 »).
+function readAssetBalance(coin, network, address) {
+  return usesTokenRegistry(coin, network)
+    ? invoke("get_token_balance", { token: coin, network, address })
+    : invoke(coin === "usdc" ? "get_usdc_balance" : "get_balance", { network, address });
+}
+
+function savePendingRoute(route) {
+  pendingRoute = route;
+  try {
+    if (route) localStorage.setItem(PENDING_ROUTE_STORAGE_KEY, JSON.stringify(route));
+    else localStorage.removeItem(PENDING_ROUTE_STORAGE_KEY);
+  } catch {
+    // localStorage indisponible : suivi pour cette session seulement.
+  }
+  renderRouteBanner();
+  scheduleRoutePoll();
+}
+
+// Bandeau du portefeuille : seulement pour le profil (et l'adresse) qui a
+// lancé l'échange.
+function renderRouteBanner() {
+  const banner = document.getElementById("swap-route-banner");
+  const route = pendingRoute;
+  const active = Boolean(route) && route.profileIndex === currentProfileIndex && route.address === addressForCoin(route.via.coin, route.via.network);
+  banner.classList.toggle("hidden", !active);
+  if (!active) return;
+  const vars = { via: swapShortLabel(route.via), to: swapShortLabel(route.to), amount: route.received };
+  const late = !route.received && Date.now() - route.startedAt > ROUTE_MAX_WAIT_MS;
+  document.getElementById("swap-route-text").textContent = t(route.received ? "swap.routeReady" : late ? "swap.routeLate" : "swap.routeWaiting", vars);
+  document.getElementById("swap-route-continue").classList.toggle("hidden", !route.received);
+}
+
+function scheduleRoutePoll() {
+  clearTimeout(routePollTimer);
+  if (!pendingRoute || pendingRoute.received || Date.now() - pendingRoute.startedAt > ROUTE_MAX_WAIT_MS) return;
+  routePollTimer = setTimeout(pollPendingRoute, ROUTE_POLL_MS);
+}
+
+async function pollPendingRoute() {
+  const route = pendingRoute;
+  if (!route || route.received) return;
+  try {
+    const balance = await readAssetBalance(route.via.coin, route.via.network, route.address);
+    if (pendingRoute !== route) return;
+    const received = balanceIncrease(route.before, balance);
+    if (received) {
+      savePendingRoute({ ...route, received });
+      showCopyToast(t("swap.routeReadyToast", { via: swapShortLabel(route.via) }), 6000, route.via.coin);
+      return;
+    }
+  } catch (e) {
+    console.error(e);
+  }
+  renderRouteBanner();
+  scheduleRoutePoll();
+}
+
+document.getElementById("swap-route-continue").addEventListener("click", () => {
+  const route = pendingRoute;
+  const card = route && document.querySelector(`.wallet-card[data-coin="${route.via.coin}"]`);
+  if (!card) return;
+  openSwapModal(card, { from: route.via, to: route.to, amount: route.received });
+});
+
+document.getElementById("swap-route-abandon").addEventListener("click", () => savePendingRoute(null));
+
+try {
+  pendingRoute = JSON.parse(localStorage.getItem(PENDING_ROUTE_STORAGE_KEY) || "null");
+} catch {
+  pendingRoute = null;
+}
+scheduleRoutePoll();
 
 // Suivi d'un ordre CoW après l'envoi : son état est relu toutes les 15 s
 // jusqu'à son exécution, son expiration (30 min au plus) ou son annulation ;

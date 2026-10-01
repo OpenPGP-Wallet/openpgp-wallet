@@ -2498,16 +2498,30 @@ struct SwapPairDto {
     from_network: &'static str,
     to_coin: &'static str,
     to_network: &'static str,
+    /// Protocole de la (première) étape.
     protocol: pgp_wallet_poc::swap_routes::Protocol,
+    /// Échange en deux étapes : crypto intermédiaire et protocole de la
+    /// seconde étape (`None` pour un échange direct).
+    via: Option<pgp_wallet_poc::swap_routes::SwapAsset>,
+    then_protocol: Option<pgp_wallet_poc::swap_routes::Protocol>,
 }
 
-/// Paires d'échange possibles (voir `core/src/swap_routes.rs`) : ce que la
-/// fenêtre « Convertir » propose, et ce que les commandes d'échange acceptent.
+/// Paires d'échange possibles, directes ou en deux étapes (voir
+/// `core/src/swap_routes.rs`) : ce que la fenêtre « Convertir » propose. Les
+/// commandes d'échange n'acceptent qu'une paire directe : une étape à la fois.
 #[tauri::command]
 fn swap_pairs() -> Vec<SwapPairDto> {
-    pgp_wallet_poc::swap_routes::pairs()
+    pgp_wallet_poc::swap_routes::routes()
         .into_iter()
-        .map(|(from, to, protocol)| SwapPairDto { from_coin: from.coin, from_network: from.network, to_coin: to.coin, to_network: to.network, protocol })
+        .map(|(from, to, route)| SwapPairDto {
+            from_coin: from.coin,
+            from_network: from.network,
+            to_coin: to.coin,
+            to_network: to.network,
+            protocol: route.first,
+            via: route.via.map(|(via, _)| via),
+            then_protocol: route.via.map(|(_, second)| second),
+        })
         .collect()
 }
 

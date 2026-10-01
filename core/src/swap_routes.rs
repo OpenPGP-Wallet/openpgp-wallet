@@ -1,9 +1,10 @@
 //! Routes d'échange entre les cryptos de l'app : quel protocole relie une
-//! crypto (sur un réseau) à une autre. Fonction pure, sans appel réseau :
-//! source unique de ce que l'interface propose (« Convertir ») et de ce que
-//! les commandes d'échange acceptent.
+//! crypto (sur un réseau) à une autre, directement ou en deux étapes via une
+//! crypto intermédiaire. Fonction pure, sans appel réseau : source unique de
+//! ce que l'interface propose (« Convertir ») et de ce que les commandes
+//! d'échange acceptent (chaque étape est une paire directe).
 
-use crate::{cow, thorchain_rpc};
+use crate::{cow, thorchain_rpc, tokens};
 use serde::Serialize;
 
 /// Une crypto de l'app sur un réseau (identifiant de carte, réseau).
@@ -102,10 +103,58 @@ pub fn assets() -> Vec<SwapAsset> {
     all
 }
 
-/// Toutes les paires reliées directement, avec leur protocole.
-pub fn pairs() -> Vec<(SwapAsset, SwapAsset, Protocol)> {
+/// Échange en une étape (`via` = `None`) ou en deux : la crypto
+/// intermédiaire arrive d'abord sur le portefeuille de l'utilisateur, puis
+/// une seconde confirmation l'échange contre la cible (rien n'est bloqué si
+/// la seconde étape n'est jamais faite).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Route {
+    pub first: Protocol,
+    pub via: Option<(SwapAsset, Protocol)>,
+}
+
+/// Préférence d'une crypto intermédiaire (la plus petite d'abord) : la
+/// monnaie d'un réseau, qui paie aussi les frais de la seconde étape (celle du
+/// réseau de départ, puis d'arrivée, puis une autre) ; puis les dollars
+/// numériques ; puis le reste.
+fn via_rank(via: SwapAsset, from: SwapAsset, to: SwapAsset) -> u8 {
+    let native = tokens::find(via.coin, via.network).is_none();
+    match via.coin {
+        _ if native && via.network == from.network => 0,
+        _ if native && via.network == to.network => 1,
+        _ if native => 2,
+        "usdc" | "usdt" => 3,
+        _ => 4,
+    }
+}
+
+fn route_among(all: &[SwapAsset], from: SwapAsset, to: SwapAsset) -> Option<Route> {
+    if from == to {
+        return None;
+    }
+    if let Some(first) = direct(from, to) {
+        return Some(Route { first, via: None });
+    }
+    all.iter()
+        .filter_map(|&via| {
+            let first = direct(from, via)?;
+            let second = direct(via, to)?;
+            Some((via_rank(via, from, to), Route { first, via: Some((via, second)) }))
+        })
+        .min_by_key(|(rank, _)| *rank)
+        .map(|(_, route)| route)
+}
+
+/// Route de `from` vers `to` : directe si un protocole les relie, sinon en
+/// deux étapes par la crypto intermédiaire préférée (`via_rank`).
+pub fn route(from: SwapAsset, to: SwapAsset) -> Option<Route> {
+    route_among(&assets(), from, to)
+}
+
+/// Toutes les paires possibles, avec leur route.
+pub fn routes() -> Vec<(SwapAsset, SwapAsset, Route)> {
     let all = assets();
-    all.iter().flat_map(|&from| all.iter().filter_map(move |&to| direct(from, to).map(|p| (from, to, p)))).collect()
+    all.iter().flat_map(|&from| all.iter().filter_map(|&to| route_among(&all, from, to).map(|r| (from, to, r))).collect::<Vec<_>>()).collect()
 }
 
 /// Crypto de l'app désignée par l'interface (identifiant et réseau), si elle
@@ -168,6 +217,31 @@ mod tests {
         let eth = a("evm", "evm_mainnet");
         assert_eq!(direct(eth, btc), Some(Protocol::Thorchain));
         assert_eq!(direct(btc, eth).is_some(), thorchain_rpc::AFFILIATE_NAME.is_some());
-        assert!(pairs().iter().all(|(from, to, _)| from != to));
+        for (from, to, _) in routes() {
+            assert!(from != to);
+            assert!(from.coin != "btc" || thorchain_rpc::AFFILIATE_NAME.is_some(), "aucune route depuis Bitcoin sans THORName");
+        }
+    }
+
+    /// Deux étapes quand rien ne relie directement, par la monnaie d'un réseau
+    /// de préférence ; chaque étape est une paire directe ; rien vers HYPE.
+    #[test]
+    fn two_step_routes_go_through_a_network_currency() {
+        let sol = a("sol", "sol_mainnet");
+        let eth = a("evm", "evm_mainnet");
+        assert_eq!(route(a("render", "sol_mainnet"), eth), Some(Route { first: Protocol::Jupiter, via: Some((sol, Protocol::Thorchain)) }));
+        assert_eq!(route(a("usdc", "sol_mainnet"), a("btc", "btc_mainnet")), Some(Route { first: Protocol::Jupiter, via: Some((sol, Protocol::Thorchain)) }));
+        assert_eq!(route(a("evm", "arbitrum_mainnet"), a("bnb", "bsc_mainnet")), Some(Route { first: Protocol::Maya, via: Some((eth, Protocol::Thorchain)) }));
+        assert_eq!(route(eth, a("btc", "btc_mainnet")), Some(Route { first: Protocol::Thorchain, via: None }));
+        assert_eq!(route(eth, a("hype", "hyperevm_mainnet")), None);
+        for (from, to, r) in routes() {
+            match r.via {
+                None => assert_eq!(direct(from, to), Some(r.first)),
+                Some((via, second)) => {
+                    assert!(direct(from, to).is_none() && via != from && via != to);
+                    assert_eq!((direct(from, via), direct(via, to)), (Some(r.first), Some(second)));
+                }
+            }
+        }
     }
 }

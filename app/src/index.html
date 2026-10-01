@@ -171,6 +171,13 @@
           <button id="add-profile-btn" class="secondary" data-i18n="wallet.newProfile">+ Nouveau profil</button>
           <button id="archive-profile-btn" class="secondary" data-i18n="wallet.archiveProfile">Archiver ce profil</button>
         </div>
+        <div id="swap-route-banner" class="route-banner hidden">
+          <span id="swap-route-text"></span>
+          <div class="route-banner-actions">
+            <button id="swap-route-continue" class="primary hidden" data-i18n="swap.routeContinue">Faire l'étape 2</button>
+            <button id="swap-route-abandon" class="link" data-i18n="swap.routeAbandon">Arrêter le suivi</button>
+          </div>
+        </div>
         <div class="wallet-grid">
           <section class="wallet-card" data-coin="evm" data-collapse-key="wallet-evm">
             <header>
@@ -1094,6 +1101,7 @@
           Même portefeuille : la crypto reçue arrive directement sur votre adresse de ce réseau, pas
           besoin d'adresse de destination séparée.
         </p>
+        <p id="swap-route-hint" class="muted hidden"></p>
         <p id="swap-error" class="error hidden"></p>
         <div class="row-buttons">
           <button id="swap-quote-btn" class="primary" data-i18n="swap.getQuote">Obtenir un devis</button>
@@ -1116,6 +1124,7 @@
         <p class="muted" data-i18n="send.previewSubtitle">
           Une confirmation de Windows s'ouvrira juste après — c'est elle qui valide réellement l'envoi.
         </p>
+        <p id="swap-preview-route" class="muted hidden"></p>
         <div class="send-preview-rows">
           <div class="send-preview-row">
             <span class="send-preview-label" data-i18n="swap.previewSending">Envoi</span>
