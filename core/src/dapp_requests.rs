@@ -24,8 +24,27 @@ pub const EVM_SEPOLIA: &str = "eip155:11155111";
 pub const SOLANA_MAINNET: &str = "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp";
 pub const SOLANA_DEVNET: &str = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
 
-pub const EVM_CHAINS: [&str; 2] = [EVM_MAINNET, EVM_SEPOLIA];
 pub const SOLANA_CHAINS: [&str; 2] = [SOLANA_MAINNET, SOLANA_DEVNET];
+
+/// Réseau EVM de l'app désigné par un identifiant CAIP-2 « eip155:<chainId> »
+/// (forme canonique seulement : « eip155:01 » n'est pas accepté) — tous les
+/// réseaux de `wallet_flow::EVM_NETWORKS`, même adresse partout.
+fn evm_network_for_chain(chain: &str) -> Option<&'static wallet_flow::EvmNetwork> {
+    let chain_id: u64 = chain.strip_prefix("eip155:")?.parse().ok()?;
+    if format!("eip155:{chain_id}") != chain {
+        return None;
+    }
+    wallet_flow::EVM_NETWORKS.iter().copied().find(|n| n.chain_id == chain_id)
+}
+
+pub fn evm_chain_supported(chain: &str) -> bool {
+    evm_network_for_chain(chain).is_some()
+}
+
+/// Identifiant CAIP-2 d'un réseau EVM de l'app.
+pub fn evm_caip2(network: &wallet_flow::EvmNetwork) -> String {
+    format!("eip155:{}", network.chain_id)
+}
 
 /// `eth_sign` (signature d'une empreinte brute, à l'aveugle par construction)
 /// est volontairement absent : refusé comme méthode non prise en charge.
@@ -41,11 +60,9 @@ pub enum Network {
 
 pub fn network_for_chain(chain: &str) -> Option<Network> {
     match chain {
-        EVM_MAINNET => Some(Network::Evm(&wallet_flow::ETHEREUM_MAINNET)),
-        EVM_SEPOLIA => Some(Network::Evm(&wallet_flow::SEPOLIA)),
         SOLANA_MAINNET => Some(Network::Solana(&wallet_flow::SOLANA_MAINNET)),
         SOLANA_DEVNET => Some(Network::Solana(&wallet_flow::SOLANA_DEVNET)),
-        _ => None,
+        other => evm_network_for_chain(other).map(Network::Evm),
     }
 }
 
@@ -132,6 +149,9 @@ pub enum Prepared {
         data: Vec<u8>,
         gas_limit: u64,
         gas_price: u128,
+        /// Réseaux OP Stack (Base) : frais de publication sur Ethereum, en plus
+        /// du gas (voir `api::EvmFee`) ; 0 ailleurs.
+        l1_fee: u128,
         call: CallKind,
         to_is_contract: bool,
         token: Option<TokenInfo>,
@@ -263,6 +283,7 @@ fn prepare_evm_transaction(params: &Value, network: &'static wallet_flow::EvmNet
         gas_limit <= DAPP_MAX_GAS_LIMIT,
         "gas estimé anormalement élevé ({gas_limit}, maximum {DAPP_MAX_GAS_LIMIT}) — refusé"
     );
+    let l1_fee = api::evm_l1_fee(network, &to, value, &data, gas_price, gas_limit)?;
     let to_is_contract = !rpc.code(&to_hex)?.is_empty();
     let call = evm_sign::decode_call(&data);
     let token = match call {
@@ -271,7 +292,7 @@ fn prepare_evm_transaction(params: &Value, network: &'static wallet_flow::EvmNet
         }
         _ => None,
     };
-    Ok(Prepared::EvmTransaction { network, to, value, data, gas_limit, gas_price, call, to_is_contract, token })
+    Ok(Prepared::EvmTransaction { network, to, value, data, gas_limit, gas_price, l1_fee, call, to_is_contract, token })
 }
 
 /// Décimales et symbole d'un jeton ERC-20, au mieux (un contrat peut ne pas
@@ -521,7 +542,9 @@ mod tests {
     #[test]
     fn unsupported_methods_and_chains_are_refused() {
         assert!(prepare("eth_sign", &json!([account().evm, "0x00"]), EVM_MAINNET, &account()).is_err());
-        assert!(prepare("personal_sign", &json!(["0x00", account().evm]), "eip155:137", &account()).is_err());
+        assert!(prepare("personal_sign", &json!(["0x00", account().evm]), "eip155:10", &account()).is_err(), "réseau non géré par l'app");
+        assert!(prepare("personal_sign", &json!(["0x00", account().evm]), "eip155:01", &account()).is_err(), "forme non canonique");
+        assert!(network_for_chain("eip155:8453").is_some() && network_for_chain("eip155:999").is_some());
         assert!(prepare("solana_signMessage", &json!({"message": "2"}), EVM_MAINNET, &account()).is_err());
     }
 
@@ -560,6 +583,20 @@ mod tests {
                 assert_eq!(token.decimals, Some(6));
                 assert_eq!(token.symbol.as_deref(), Some("USDC"));
                 println!("approve USDC : gas limite {gas_limit}");
+            }
+            _ => panic!(),
+        }
+
+        // Même demande sur Base (réseau OP Stack) : réseau de la connexion,
+        // contrat USDC de Base, frais de publication sur Ethereum comptés.
+        let usdc_base = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+        let params = json!([{"from": vitalik.evm, "to": usdc_base, "data": approve, "value": "0x0"}]);
+        match prepare("eth_sendTransaction", &params, "eip155:8453", &vitalik).unwrap() {
+            Prepared::EvmTransaction { network, token, l1_fee, gas_limit, .. } => {
+                assert_eq!(network.id, "base_mainnet");
+                assert_eq!(token.unwrap().symbol.as_deref(), Some("USDC"));
+                assert!(l1_fee > 0, "frais de publication sur Ethereum");
+                println!("approve USDC sur Base : gas limite {gas_limit}, frais L1 {l1_fee} wei");
             }
             _ => panic!(),
         }

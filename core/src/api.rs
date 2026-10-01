@@ -1496,14 +1496,20 @@ pub fn evm_fee_for_confirmation(network: &wallet_flow::EvmNetwork, from: &[u8; 2
             with_margin
         }
     };
-    let l1_fee = if network.op_stack_l1_fee {
-        let draft = eth_tx::EthTx { nonce: 0, gas_price, gas_limit, to: *to, value, chain_id: network.chain_id, data: data.to_vec() };
-        let fee = op_stack_l1_fee(&rpc, &draft.unsigned_rlp())?;
-        fee.saturating_add(fee / 4)
-    } else {
-        0
-    };
+    let l1_fee = evm_l1_fee(network, to, value, data, gas_price, gas_limit)?;
     Ok(EvmFee { gas_price, gas_limit, l1_fee })
+}
+
+/// Frais de publication sur Ethereum d'une transaction sur un réseau OP Stack
+/// (Base), marge de 25 % comprise ; 0 sur les autres réseaux. Aussi utilisé
+/// pour les transactions demandées par une dApp (`dapp_requests`).
+pub fn evm_l1_fee(network: &wallet_flow::EvmNetwork, to: &[u8; 20], value: u128, data: &[u8], gas_price: u128, gas_limit: u64) -> Result<u128> {
+    if !network.op_stack_l1_fee {
+        return Ok(0);
+    }
+    let draft = eth_tx::EthTx { nonce: 0, gas_price, gas_limit, to: *to, value, chain_id: network.chain_id, data: data.to_vec() };
+    let fee = op_stack_l1_fee(&eth_rpc::EthRpc::new(network.rpc), &draft.unsigned_rlp())?;
+    Ok(fee.saturating_add(fee / 4))
 }
 
 /// Frais d'un virement natif de `amount` (texte, 18 décimales) vers `to` : voir
@@ -3108,7 +3114,7 @@ pub fn sign_dapp_request(
             let signature = crate::evm_sign::sign_digest(&evm_key()?, digest)?;
             Ok(json!(format!("0x{}", hex::encode(signature))))
         }
-        Prepared::EvmTransaction { network, to, value, data, gas_limit, gas_price, .. } => {
+        Prepared::EvmTransaction { network, to, value, data, gas_limit, gas_price, l1_fee, .. } => {
             check_evm_gas_price(network, *gas_price)?;
             let signing_key = evm_key()?;
             let rpc = eth_rpc::EthRpc::new(network.rpc);
@@ -3130,6 +3136,7 @@ pub fn sign_dapp_request(
             );
             let gas_cost = gas_price
                 .checked_mul(u128::from(*gas_limit))
+                .and_then(|gas| gas.checked_add(*l1_fee))
                 .context("gas_price * gas_limit dépasse la capacité représentable")?;
             let total_needed = value.checked_add(gas_cost).context("montant + frais de gas dépasse la capacité représentable")?;
             anyhow::ensure!(

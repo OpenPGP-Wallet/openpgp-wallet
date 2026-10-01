@@ -266,7 +266,7 @@ pub fn session_namespaces(params: &Value, account: Option<&dapp_requests::Accoun
             for chain in chains {
                 let namespace = chain.split(':').next().unwrap_or("").to_string();
                 let supported = match namespace.as_str() {
-                    "eip155" => dapp_requests::EVM_CHAINS.contains(&chain.as_str()),
+                    "eip155" => dapp_requests::evm_chain_supported(&chain),
                     "solana" => dapp_requests::SOLANA_CHAINS.contains(&chain.as_str()),
                     _ => false,
                 };
@@ -299,7 +299,7 @@ pub fn session_namespaces(params: &Value, account: Option<&dapp_requests::Accoun
         return Err(format!("événement exigé non pris en charge : {e}"));
     }
     if requested.is_empty() {
-        return Err("aucun réseau demandé n'est pris en charge (Ethereum, Solana)".to_string());
+        return Err("aucun réseau demandé n'est pris en charge (réseaux EVM de l'app, Solana)".to_string());
     }
     let mut namespaces = serde_json::Map::new();
     for (namespace, chains) in requested {
@@ -709,13 +709,14 @@ mod tests {
         assert!(actions.contains(&Action::FetchMessages(dapp.pairing_topic.clone())));
 
         let required = json!({"eip155": {"chains": ["eip155:1"], "methods": ["eth_sendTransaction", "personal_sign"], "events": ["accountsChanged", "chainChanged"]}});
-        let optional = json!({"eip155": {"chains": ["eip155:137", "eip155:11155111"], "methods": ["eth_signTypedData_v4", "wallet_switchEthereumChain"], "events": []}, "solana": {"chains": [dapp_requests::SOLANA_MAINNET], "methods": ["solana_signMessage"], "events": []}});
+        let optional = json!({"eip155": {"chains": ["eip155:10", "eip155:11155111", "eip155:8453"], "methods": ["eth_signTypedData_v4", "wallet_switchEthereumChain"], "events": []}, "solana": {"chains": [dapp_requests::SOLANA_MAINNET], "methods": ["solana_signMessage"], "events": []}});
         let actions = engine.handle_incoming(&dapp.pairing_topic.clone(), &dapp.propose(7, required, optional));
         match &actions[..] {
             [Action::Emit(WcEvent::Proposal { id: 7, peer, chains, incompatible: None, .. })] => {
                 assert_eq!(peer.name, "Démo dApp");
                 assert!(chains.contains(&"eip155:1".to_string()) && chains.contains(&"eip155:11155111".to_string()));
-                assert!(!chains.contains(&"eip155:137".to_string()), "réseau facultatif non géré : omis");
+                assert!(!chains.contains(&"eip155:10".to_string()), "réseau facultatif non géré : omis");
+                assert!(chains.contains(&"eip155:8453".to_string()), "Base, géré par l'app : accordé");
             }
             other => panic!("{other:?}"),
         }
@@ -756,7 +757,7 @@ mod tests {
         assert!(engine.respond(99, Ok(json!("rejouée"))).is_err(), "une demande ne reçoit qu'une réponse");
 
         // Méthode hors session (eth_sign) et réseau hors session : erreur immédiate, jamais montrée.
-        for (method, chain, code) in [("eth_sign", "eip155:1", 5101), ("personal_sign", "eip155:137", 5100)] {
+        for (method, chain, code) in [("eth_sign", "eip155:1", 5101), ("personal_sign", "eip155:10", 5100)] {
             let request = json!({"id": 100, "jsonrpc": "2.0", "method": "wc_sessionRequest", "params": {"request": {"method": method, "params": []}, "chainId": chain}});
             let actions = engine.handle_incoming(&session_topic, &crypto::encrypt_type0(&session_key, &request.to_string()).unwrap());
             let (_, message, _) = &published(&actions)[0];
@@ -777,7 +778,7 @@ mod tests {
         let dapp = FakeDapp::new();
         let mut engine = Engine::new(PersistedState::default()).unwrap();
         engine.pair(&dapp.uri()).unwrap();
-        let required = json!({"eip155": {"chains": ["eip155:137"], "methods": ["eth_sendTransaction"], "events": []}});
+        let required = json!({"eip155": {"chains": ["eip155:10"], "methods": ["eth_sendTransaction"], "events": []}});
         let actions = engine.handle_incoming(&dapp.pairing_topic.clone(), &dapp.propose(8, required, json!({})));
         assert!(matches!(&actions[..], [Action::Emit(WcEvent::Proposal { incompatible: Some(_), .. })]));
         assert!(engine.approve(8, 0, &account()).is_err());

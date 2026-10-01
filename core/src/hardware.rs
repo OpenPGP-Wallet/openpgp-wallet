@@ -98,9 +98,12 @@ enum Chain {
 }
 
 fn chain(network: &str) -> Result<Chain> {
+    // Réseaux EVM : tous ceux de l'app (même chemin, même adresse ; la
+    // signature porte l'identifiant de chaîne EIP-155 du réseau).
+    if let Some(net) = wallet_flow::evm_network(network) {
+        return Ok(Chain::Evm(net));
+    }
     Ok(match network {
-        "evm_mainnet" => Chain::Evm(&wallet_flow::ETHEREUM_MAINNET),
-        "evm_sepolia" => Chain::Evm(&wallet_flow::SEPOLIA),
         "btc_mainnet" => Chain::Btc(&wallet_flow::BTC_MAINNET, false),
         "btc_testnet" => Chain::Btc(&wallet_flow::BTC_TESTNET, true),
         "sol_mainnet" => Chain::Sol(&wallet_flow::SOLANA_MAINNET),
@@ -453,6 +456,9 @@ mod tests {
         std::fs::write(dir.join(HARDWARE_ACCOUNTS_FILE), "{pas du json").unwrap();
         assert!(list_accounts(&dir).is_empty());
         assert!(chain("evm_goerli").is_err());
+        for net in wallet_flow::EVM_NETWORKS {
+            assert!(matches!(chain(net.id), Ok(Chain::Evm(n)) if n.chain_id == net.chain_id), "{}", net.id);
+        }
         std::fs::write(
             dir.join(HARDWARE_ACCOUNTS_FILE),
             r#"{"accounts":[{"id":3,"label":"Ancien","network":"evm_mainnet","address":"0xDad77910DbDFdE764fC21FCD4E74D71bBACA6D8D","path":"44'/60'/0'/0/0"}]}"#,

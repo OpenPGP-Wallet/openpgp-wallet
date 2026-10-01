@@ -41,6 +41,11 @@ const ASSETS = [
 ];
 const ASSET_BY_COIN = Object.fromEntries(ASSETS.map((asset) => [asset.coin, asset]));
 const ASSET_BY_GECKO = Object.fromEntries(ASSETS.map((asset) => [asset.gecko, asset]));
+// Monnaie native de chaque réseau (ETH sur Ethereum, Arbitrum et Base ; BNB
+// sur BNB Chain…) : unité et prix des wallets externes et comptes matériels.
+const NATIVE_ASSET_BY_NETWORK = Object.fromEntries(
+  ASSETS.filter((asset) => !asset.token).flatMap((asset) => asset.networks.map((network) => [network, asset]))
+);
 
 // Réseau → format d'adresse : même adresse sur tous les réseaux EVM, une
 // adresse Solana (SOL et jetons SPL), Bitcoin à part.
@@ -4513,10 +4518,17 @@ function externalWalletCoin(network) {
   // toute façon pas ("usdc_solana" ne commence pas par "sol"), mais autant
   // rester explicite plutôt que de dépendre de cet ordre par accident.
   if (network === "usdc_solana") return "usdc";
-  if (network.startsWith("evm")) return "evm";
+  if (isEvmNetwork(network)) return "evm";
   if (network.startsWith("btc")) return "btc";
   if (network.startsWith("sol")) return "sol";
   return null;
+}
+
+// Crypto dont le prix valorise un wallet externe : la monnaie du réseau (BNB
+// sur BNB Chain…), ou USDC pour « USDC — Solana ».
+function externalWalletPriceCoin(network) {
+  if (network === "usdc_solana") return "usdc";
+  return NATIVE_ASSET_BY_NETWORK[network]?.coin ?? null;
 }
 
 function externalNetworkLabel(network) {
@@ -4529,7 +4541,9 @@ function externalNetworkLabel(network) {
     sol_devnet: "external.netSolDevnet",
     usdc_solana: "external.netUsdcSolana",
   }[network];
-  return key ? t(key) : network;
+  if (key) return t(key);
+  // Autres réseaux EVM (Arbitrum, BNB Chain…) : même libellé que sur les cartes.
+  return isEvmNetwork(network) ? t(`net.${network}`) : network;
 }
 
 async function loadExternalWallets() {
@@ -4724,7 +4738,7 @@ async function refreshExternalWalletBalances() {
           wallet.network === "usdc_solana"
             ? await invoke("get_usdc_balance", { network: "sol_mainnet", address: wallet.address })
             : await invoke("get_balance", { network: wallet.network, address: wallet.address });
-        const price = priceForCoin(externalWalletCoin(wallet.network));
+        const price = priceForCoin(externalWalletPriceCoin(wallet.network));
         const usd = price != null ? Number.parseFloat(balance) * price : null;
         balanceEl.textContent = balance;
         row.dataset.usd = usd != null && Number.isFinite(usd) ? String(usd) : "";
@@ -5024,11 +5038,13 @@ const { listen } = window.__TAURI__.event;
 const wcQueue = [];
 let wcCurrent = null;
 
+// Réseaux EVM : tous ceux de l'app (identifiant « eip155:<chainId> »).
 function wcChainLabel(chain) {
+  const evm = Object.keys(EVM_CHAIN_IDS).find((network) => `eip155:${EVM_CHAIN_IDS[network]}` === chain);
+  if (evm === "evm_sepolia") return "Ethereum Sepolia";
+  if (evm) return t(`net.${evm}`);
   return (
     {
-      "eip155:1": "Ethereum",
-      "eip155:11155111": "Ethereum Sepolia",
       "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp": "Solana",
       "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1": "Solana devnet",
     }[chain] || chain
@@ -5271,13 +5287,14 @@ let ledgerAccountsCache = [];
 let ledgerSendAccount = null;
 
 function ledgerCoin(network) {
-  if (network.startsWith("evm")) return "evm";
+  if (isEvmNetwork(network)) return "evm";
   if (network.startsWith("btc")) return "btc";
   return "sol";
 }
 
+// Monnaie du réseau du compte (ETH, BNB, AVAX…).
 function ledgerUnit(network) {
-  return { evm: "ETH", btc: "BTC", sol: "SOL" }[ledgerCoin(network)];
+  return NATIVE_ASSET_BY_NETWORK[network]?.symbol ?? { evm: "ETH", btc: "BTC", sol: "SOL" }[ledgerCoin(network)];
 }
 
 async function loadLedgerAccounts() {

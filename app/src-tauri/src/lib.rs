@@ -3099,13 +3099,15 @@ fn wc_client(app: &tauri::AppHandle) -> Result<std::sync::Arc<pgp_wallet_poc::wa
         .ok_or_else(|| translate_error("WalletConnect indisponible (démarrage impossible)"))
 }
 
-fn caip2_label(chain: &str) -> &'static str {
-    match chain {
-        dapp_requests::EVM_MAINNET => lang("Ethereum MAINNET — fonds réels", "Ethereum MAINNET — real funds"),
-        dapp_requests::EVM_SEPOLIA => "Ethereum Sepolia (testnet)",
-        dapp_requests::SOLANA_MAINNET => lang("Solana MAINNET — fonds réels", "Solana MAINNET — real funds"),
-        dapp_requests::SOLANA_DEVNET => "Solana devnet",
-        _ => lang("réseau inconnu", "unknown network"),
+fn caip2_label(chain: &str) -> String {
+    match dapp_requests::network_for_chain(chain) {
+        Some(dapp_requests::Network::Evm(net)) if net.mainnet => format!("{} MAINNET — {}", net.name, lang("fonds réels", "real funds")),
+        Some(dapp_requests::Network::Evm(net)) => format!("{} (testnet)", net.name),
+        Some(dapp_requests::Network::Solana(_)) if chain == dapp_requests::SOLANA_MAINNET => {
+            lang("Solana MAINNET — fonds réels", "Solana MAINNET — real funds").to_string()
+        }
+        Some(dapp_requests::Network::Solana(_)) => "Solana devnet".to_string(),
+        None => lang("réseau inconnu", "unknown network").to_string(),
     }
 }
 
@@ -3165,17 +3167,17 @@ fn describe_prepared(prepared: &dapp_requests::Prepared, peer: &pgp_wallet_poc::
     });
     let network = match prepared {
         Prepared::EvmPersonalSign { network, .. } | Prepared::EvmTypedData { network, .. } | Prepared::EvmTransaction { network, .. } => {
-            if network.chain_id == 1 { dapp_requests::EVM_MAINNET } else { dapp_requests::EVM_SEPOLIA }
+            dapp_requests::evm_caip2(network)
         }
         Prepared::SolanaMessage { network, .. } | Prepared::SolanaTransaction { network, .. } => {
-            if network.rpc == wallet_flow::SOLANA_MAINNET.rpc { dapp_requests::SOLANA_MAINNET } else { dapp_requests::SOLANA_DEVNET }
+            if network.rpc == wallet_flow::SOLANA_MAINNET.rpc { dapp_requests::SOLANA_MAINNET } else { dapp_requests::SOLANA_DEVNET }.to_string()
         }
     };
     let from_label = dialog_label(from_label);
     lines.push(if en {
-        format!("Network: {}\nAccount: {account} (profile \"{from_label}\")", caip2_label(network))
+        format!("Network: {}\nAccount: {account} (profile \"{from_label}\")", caip2_label(&network))
     } else {
-        format!("Réseau : {}\nCompte : {account} (profil « {from_label} »)", caip2_label(network))
+        format!("Réseau : {}\nCompte : {account} (profil « {from_label} »)", caip2_label(&network))
     });
 
     let message_block = |view: &dapp_requests::MessageView| -> String {
@@ -3253,16 +3255,16 @@ fn describe_prepared(prepared: &dapp_requests::Prepared, peer: &pgp_wallet_poc::
             }
             lines.push(quoted_block(field_lines, 12));
         }
-        Prepared::EvmTransaction { to, value, gas_limit, gas_price, call, to_is_contract, token, data, .. } => {
+        Prepared::EvmTransaction { network, to, value, gas_limit, gas_price, l1_fee, call, to_is_contract, token, data } => {
             let to = pgp_wallet_poc::derivation::format_address(to);
             let kind = if *to_is_contract { lang("contrat", "contract") } else { lang("adresse ordinaire", "regular address") };
             let symbol = token.as_ref().and_then(|t| t.symbol.as_deref()).map(dialog_label).unwrap_or_else(|| lang("jetons", "tokens").to_string());
             let decimals = token.as_ref().and_then(|t| t.decimals);
             let tokens = |amount: &pgp_wallet_poc::evm_sign::U256| format!("{} {symbol}", format_units(&amount.to_decimal(), decimals));
             lines.push(if en {
-                format!("TRANSACTION to {to} ({kind})\nETH sent: {}", format_units(&value.to_string(), Some(18)))
+                format!("TRANSACTION to {to} ({kind})\n{} sent: {}", network.native_symbol, format_units(&value.to_string(), Some(18)))
             } else {
-                format!("TRANSACTION vers {to} ({kind})\nETH envoyé : {}", format_units(&value.to_string(), Some(18)))
+                format!("TRANSACTION vers {to} ({kind})\n{} envoyé : {}", network.native_symbol, format_units(&value.to_string(), Some(18)))
             });
             let addr = |a: &[u8; 20]| pgp_wallet_poc::derivation::format_address(a);
             lines.push(match call {
@@ -3318,7 +3320,7 @@ fn describe_prepared(prepared: &dapp_requests::Prepared, peer: &pgp_wallet_poc::
                     "⚠ Data is attached, but the recipient is not a contract.",
                 ).to_string());
             }
-            lines.push(evm_fee_line(*gas_price, *gas_limit));
+            lines.push(evm_fee_line_for(api::EvmFee { gas_price: *gas_price, gas_limit: *gas_limit, l1_fee: *l1_fee }, network.native_symbol));
         }
         Prepared::SolanaTransaction { send, effects, .. } => {
             lines.push(if *send {
