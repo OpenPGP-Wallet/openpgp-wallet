@@ -532,7 +532,8 @@ const I18N = {
     "net.arbitrum_mainnet": "Arbitrum — Fonds réels",
     "net.base_mainnet": "Base — Fonds réels",
     "net.sol_mainnet": "Solana — Fonds réels",
-    "wallet.tokenHistoryUnavailable": "Historique des jetons pas encore disponible sur ce réseau.",
+    "wallet.historyExplorerOnly": "Pas d'historique ici pour ce réseau : aucun service public gratuit ne le fournit. Il reste consultable sur l'explorateur du réseau.",
+    "wallet.historyOpenExplorer": "Voir sur l'explorateur",
     "net.avax_mainnet": "Avalanche — Fonds réels",
     "net.polygon_mainnet": "Polygon — Fonds réels",
     "net.hyperevm_mainnet": "HyperEVM — Fonds réels",
@@ -542,7 +543,7 @@ const I18N = {
     "assets.hint": "Cochez les cryptos à afficher. Une crypto sur laquelle des fonds arrivent s'affiche d'elle-même.",
     "assets.done": "Terminé",
     "assets.autoShown": "{symbol} affiché : des fonds ont été détectés.",
-    "charts.portfolioPartial": "Pas encore comptés dans cette courbe : {list}.",
+    "charts.constantBalance": "Sans historique sur leur réseau : {list} — solde actuel compté sur toute la période.",
     "settings.currency": "Devise d'affichage",
     "settings.usd": "Dollar ($)",
     "settings.eur": "Euro (€)",
@@ -1000,7 +1001,8 @@ const I18N = {
     "net.arbitrum_mainnet": "Arbitrum — Real funds",
     "net.base_mainnet": "Base — Real funds",
     "net.sol_mainnet": "Solana — Real funds",
-    "wallet.tokenHistoryUnavailable": "Token history not available on this network yet.",
+    "wallet.historyExplorerOnly": "No history here for this network: no free public service provides it. You can still see it on the network's explorer.",
+    "wallet.historyOpenExplorer": "View on the explorer",
     "net.avax_mainnet": "Avalanche — Real funds",
     "net.polygon_mainnet": "Polygon — Real funds",
     "net.hyperevm_mainnet": "HyperEVM — Real funds",
@@ -1010,7 +1012,7 @@ const I18N = {
     "assets.hint": "Tick the cryptos to show. A crypto that receives funds shows up by itself.",
     "assets.done": "Done",
     "assets.autoShown": "{symbol} shown: funds detected.",
-    "charts.portfolioPartial": "Not yet included in this chart: {list}.",
+    "charts.constantBalance": "No history on their network: {list} — current balance counted over the whole period.",
     "settings.currency": "Display currency",
     "settings.usd": "US dollar ($)",
     "settings.eur": "Euro (€)",
@@ -3611,20 +3613,19 @@ async function loadHistorySection(coin) {
     container.innerHTML = `<p class="muted">${t("wallet.historyAddressUnavailable")}</p>`;
     return;
   }
-  if (usesTokenRegistry(coin, network)) {
-    container.replaceChildren(mutedParagraph(t("wallet.tokenHistoryUnavailable")));
-    return;
-  }
-
   try {
-    // USDC (jeton SPL) lit preTokenBalances/postTokenBalances via l'ATA du
-    // propriétaire plutôt que preBalances/postBalances de l'adresse elle-même
-    // (voir core/src/sol_rpc.rs::token_signature_history) : commande dédiée,
-    // comme pour le solde et l'envoi. Mainnet uniquement (sol_spl.rs).
-    const entries =
-      coin === "usdc"
-        ? await invoke("get_usdc_tx_history", { network: "sol_mainnet", address })
-        : await invoke("get_tx_history", { network, address });
+    // Jetons (registre Rust) : commande dédiée, l'interface n'envoie que
+    // l'identifiant du jeton et le réseau (contrat ou mint lus côté Rust).
+    const result = ASSET_BY_COIN[coin]?.token
+      ? await invoke("get_token_tx_history", { token: coin, network, address })
+      : await invoke("get_tx_history", { network, address });
+    // Réseau sans source publique d'historique (BNB Chain, HyperEVM) : lien
+    // vers la page de l'adresse sur l'explorateur du réseau.
+    if (result.explorer_url) {
+      container.replaceChildren(historyExplorerOnly(result.explorer_url));
+      return;
+    }
+    const entries = result.entries;
     container.innerHTML = "";
     if (entries.length === 0) {
       container.innerHTML = `<p class="muted">${t("wallet.historyEmpty")}</p>`;
@@ -3645,6 +3646,20 @@ function mutedParagraph(text) {
   p.className = "muted";
   p.textContent = text;
   return p;
+}
+
+function historyExplorerOnly(url) {
+  const box = document.createElement("div");
+  box.className = "history-explorer-only";
+  const open = document.createElement("button");
+  open.type = "button";
+  open.className = "secondary";
+  open.textContent = t("wallet.historyOpenExplorer");
+  open.addEventListener("click", () => {
+    invoke("open_external_link", { url }).catch((e) => alert(t("wallet.linkError", { err: e })));
+  });
+  box.append(mutedParagraph(t("wallet.historyExplorerOnly")), open);
+  return box;
 }
 
 function loadAllHistory() {
@@ -5665,6 +5680,9 @@ async function loadHoldingsHistory(holdings, range) {
   }
   else if (result.since) notes.push(t("charts.since", { date: new Date(result.since * 1000).toLocaleDateString(chartLocale()) }));
   if (result.approximate && !result.loading) notes.push(t("charts.approximate"));
+  // Réseau sans historique public (BNB Chain, HyperEVM) : solde actuel compté
+  // sur toute la période (voir core/src/portfolio.rs).
+  if (result.constant?.length) notes.push(t("charts.constantBalance", { list: result.constant.join(", ") }));
   return { points: result.points, since: result.since, note: notes.join(" "), loading: result.loading };
 }
 
@@ -5743,15 +5761,21 @@ chartModalTableToggle.addEventListener("click", () => {
 
 // --- Évolution du portefeuille (profil affiché, réseaux principaux) ----------------
 
+// Réseaux de test : fonds sans valeur, hors de la courbe.
+const TEST_NETWORKS = ["evm_sepolia", "btc_testnet", "sol_devnet"];
+
+// Chaque crypto affichée, sur chacun de ses réseaux principaux (ETH sur
+// Ethereum, Arbitrum et Base ; USDC sur Solana et ses trois réseaux EVM…) :
+// la valeur de chaque avoir est reconstruite côté Rust (core/src/portfolio.rs).
 function currentProfileHoldings() {
-  return [
-    ["evm_mainnet", addressForCoin("evm", "evm_mainnet")],
-    ["btc_mainnet", addressForCoin("btc", "btc_mainnet")],
-    ["sol_mainnet", addressForCoin("sol", "sol_mainnet")],
-    ["usdc_solana", addressForCoin("usdc", "sol_mainnet")],
-  ]
-    .filter(([, address]) => address)
-    .map(([network, address]) => ({ network, address }));
+  const holdings = [];
+  for (const asset of ASSETS.filter((a) => isAssetVisible(a.coin))) {
+    for (const network of asset.networks.filter((n) => !TEST_NETWORKS.includes(n))) {
+      const address = addressForCoin(asset.coin, network);
+      if (address) holdings.push(asset.token ? { network, address, token: asset.coin } : { network, address });
+    }
+  }
+  return holdings;
 }
 
 function sectionView(section, extra) {
@@ -5768,21 +5792,11 @@ function sectionView(section, extra) {
   };
 }
 
-// Cryptos affichées que la courbe du portefeuille ne compte pas encore
-// (historique de valeur calculé côté Rust pour ETH, BTC, SOL et USDC).
-function portfolioPartialNote() {
-  const missing = ASSETS.filter((asset) => !DEFAULT_ASSETS.includes(asset.coin) && isAssetVisible(asset.coin)).map((asset) => asset.symbol);
-  return missing.length ? t("charts.portfolioPartial", { list: missing.join(", ") }) : "";
-}
-
 const portfolioSection = document.getElementById("portfolio-chart-section");
 const portfolioView = sectionView(portfolioSection, {
   title: () => t("charts.portfolioTitle"),
   emptyKey: "charts.portfolioEmpty",
-  load: async (range) => {
-    const data = await loadHoldingsHistory(currentProfileHoldings(), range);
-    return { ...data, note: [data.note, portfolioPartialNote()].filter(Boolean).join(" ") };
-  },
+  load: (range) => loadHoldingsHistory(currentProfileHoldings(), range),
 });
 
 function loadPortfolioChart() {

@@ -53,9 +53,34 @@ pub struct EvmNetwork {
     /// Frais de publication sur Ethereum facturés EN PLUS du gas (réseaux OP
     /// Stack, comme Base), lus auprès du contrat oracle du réseau.
     pub op_stack_l1_fee: bool,
-    /// Instance Blockscout (historique des transactions) ; `None` : historique
-    /// pas encore disponible sur ce réseau.
-    pub blockscout: Option<&'static str>,
+    /// Source de l'historique des transactions ; `None` : aucune source publique
+    /// sans clé (BNB Chain, HyperEVM — constaté : ni Blockscout, ni Routescan,
+    /// et l'offre gratuite d'Etherscan exclut BNB Chain) ; l'app renvoie alors
+    /// vers l'explorateur du réseau.
+    pub history: Option<EvmHistory>,
+}
+
+/// Source publique, sans clé, de l'historique d'une adresse EVM.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EvmHistory {
+    /// Instance Blockscout (API v2).
+    Blockscout(&'static str),
+    /// API compatible Etherscan de Routescan, par identifiant de chaîne
+    /// (Avalanche C-Chain).
+    Routescan,
+}
+
+impl EvmNetwork {
+    /// Page d'une adresse (ou, avec `token`, de ses mouvements de ce jeton) sur
+    /// l'explorateur du réseau. Tous les explorateurs de l'app suivent le même
+    /// schéma que leurs liens de transaction (`/tx/` → `/address/`, `/token/`).
+    pub fn explorer_address_url(&self, address: &str, token: Option<&str>) -> String {
+        let root = self.explorer_tx_prefix.trim_end_matches("tx/");
+        match token {
+            Some(contract) => format!("{root}token/{contract}?a={address}"),
+            None => format!("{root}address/{address}"),
+        }
+    }
 }
 
 const GWEI: u128 = 1_000_000_000;
@@ -72,7 +97,7 @@ pub const SEPOLIA: EvmNetwork = EvmNetwork {
     max_gas_price_wei: None,
     transfer_gas: Some(21_000),
     op_stack_l1_fee: false,
-    blockscout: Some("https://eth-sepolia.blockscout.com"),
+    history: Some(EvmHistory::Blockscout("https://eth-sepolia.blockscout.com")),
 };
 
 pub const ETHEREUM_MAINNET: EvmNetwork = EvmNetwork {
@@ -92,7 +117,7 @@ pub const ETHEREUM_MAINNET: EvmNetwork = EvmNetwork {
     max_gas_price_wei: Some(200 * GWEI),
     transfer_gas: Some(21_000),
     op_stack_l1_fee: false,
-    blockscout: Some("https://eth.blockscout.com"),
+    history: Some(EvmHistory::Blockscout("https://eth.blockscout.com")),
 };
 
 pub const ARBITRUM_MAINNET: EvmNetwork = EvmNetwork {
@@ -107,7 +132,7 @@ pub const ARBITRUM_MAINNET: EvmNetwork = EvmNetwork {
     max_gas_price_wei: Some(10 * GWEI),
     transfer_gas: None,
     op_stack_l1_fee: false,
-    blockscout: Some("https://arbitrum.blockscout.com"),
+    history: Some(EvmHistory::Blockscout("https://arbitrum.blockscout.com")),
 };
 
 pub const BASE_MAINNET: EvmNetwork = EvmNetwork {
@@ -122,7 +147,7 @@ pub const BASE_MAINNET: EvmNetwork = EvmNetwork {
     max_gas_price_wei: Some(10 * GWEI),
     transfer_gas: Some(21_000),
     op_stack_l1_fee: true,
-    blockscout: Some("https://base.blockscout.com"),
+    history: Some(EvmHistory::Blockscout("https://base.blockscout.com")),
 };
 
 pub const BSC_MAINNET: EvmNetwork = EvmNetwork {
@@ -137,7 +162,7 @@ pub const BSC_MAINNET: EvmNetwork = EvmNetwork {
     max_gas_price_wei: Some(100 * GWEI),
     transfer_gas: Some(21_000),
     op_stack_l1_fee: false,
-    blockscout: None,
+    history: None,
 };
 
 pub const AVALANCHE_MAINNET: EvmNetwork = EvmNetwork {
@@ -152,7 +177,7 @@ pub const AVALANCHE_MAINNET: EvmNetwork = EvmNetwork {
     max_gas_price_wei: Some(1_000 * GWEI),
     transfer_gas: Some(21_000),
     op_stack_l1_fee: false,
-    blockscout: None,
+    history: Some(EvmHistory::Routescan),
 };
 
 pub const POLYGON_MAINNET: EvmNetwork = EvmNetwork {
@@ -168,7 +193,7 @@ pub const POLYGON_MAINNET: EvmNetwork = EvmNetwork {
     max_gas_price_wei: Some(10_000 * GWEI),
     transfer_gas: Some(21_000),
     op_stack_l1_fee: false,
-    blockscout: Some("https://polygon.blockscout.com"),
+    history: Some(EvmHistory::Blockscout("https://polygon.blockscout.com")),
 };
 
 pub const HYPEREVM_MAINNET: EvmNetwork = EvmNetwork {
@@ -183,7 +208,7 @@ pub const HYPEREVM_MAINNET: EvmNetwork = EvmNetwork {
     max_gas_price_wei: Some(100 * GWEI),
     transfer_gas: Some(21_000),
     op_stack_l1_fee: false,
-    blockscout: None,
+    history: None,
 };
 
 /// Tous les réseaux EVM connus de l'app.

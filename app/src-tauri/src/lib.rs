@@ -38,6 +38,7 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     // Réseaux EVM (core/src/api.rs, history.rs)
     ("adresse d'envoi inconnue : déverrouillez le portefeuille", "sending address unknown: unlock the wallet"),
     ("historique pas encore disponible sur ce réseau", "history not available on this network yet"),
+    ("historique des jetons pas encore disponible sur ce réseau", "token history not available on this network yet"),
     ("jeton non pris en charge sur ce réseau", "token not supported on this network"),
     ("destinataire refusé : c'est le contrat d'un jeton, les fonds y seraient perdus à jamais", "recipient refused: it is a token contract, the funds would be lost forever"),
     ("solde de jeton insuffisant, ou transfert refusé par le contrat du jeton", "insufficient token balance, or transfer refused by the token contract"),
@@ -779,12 +780,19 @@ fn save_bytes_with_dialog(suggested_name: String, content_b64: String, app: taur
 /// aurait laissé un frontend compromis ouvrir n'importe quelle page — un vecteur
 /// de phishing simple, ouvert sans aucun bénéfice fonctionnel puisqu'aucun appel
 /// légitime de cette commande ne cible jamais autre chose que ces domaines.
-const ALLOWED_EXTERNAL_LINK_PREFIXES: [&str; 4] = [
-    "https://etherscan.io/",
-    "https://sepolia.etherscan.io/",
-    "https://explorer.solana.com/",
-    "https://blockstream.info/",
-];
+const ALLOWED_EXTERNAL_LINK_PREFIXES: [&str; 2] = ["https://explorer.solana.com/", "https://blockstream.info/"];
+
+/// Lien vers un explorateur connu de l'app : Solana, Bitcoin, ou l'explorateur
+/// d'un réseau EVM (origine de `explorer_tx_prefix` : Etherscan, Arbiscan,
+/// BscScan…). Avant, seuls etherscan.io et sepolia.etherscan.io étaient
+/// admis : les liens des historiques Arbitrum, Base et Polygon étaient refusés.
+fn external_link_allowed(url: &str) -> bool {
+    let evm_origins = wallet_flow::EVM_NETWORKS.iter().filter_map(|n| {
+        let rest = n.explorer_tx_prefix.strip_prefix("https://")?;
+        Some(&n.explorer_tx_prefix[..8 + rest.find('/')? + 1])
+    });
+    ALLOWED_EXTERNAL_LINK_PREFIXES.into_iter().chain(evm_origins).any(|prefix| url.starts_with(prefix))
+}
 
 /// Ouvre un lien externe (explorateur de blocs) dans le navigateur système : un
 /// `<a target="_blank">` classique ne s'ouvre pas de façon fiable dans la webview
@@ -794,7 +802,7 @@ const ALLOWED_EXTERNAL_LINK_PREFIXES: [&str; 4] = [
 /// blanche ci-dessus, pas seulement au schéma https://.
 #[tauri::command]
 fn open_external_link(url: String, app: tauri::AppHandle) -> Result<(), String> {
-    if !ALLOWED_EXTERNAL_LINK_PREFIXES.iter().any(|prefix| url.starts_with(prefix)) {
+    if !external_link_allowed(&url) {
         return Err(translate_error(
             "lien refusé : seuls les explorateurs de blocs connus de l'app sont autorisés",
         ));
@@ -1535,10 +1543,21 @@ struct TxEntryDto {
     explorer_url: String,
 }
 
+/// Montant exact, chiffre par chiffre : un passage par `f64` (≈ 16 chiffres
+/// significatifs) inventait les derniers chiffres d'un montant à 18 décimales
+/// (« +0.245947228364191028 » pour 245947228364191044 wei).
 fn format_signed_amount(net_amount_minor: Option<i128>, decimals: i32) -> Option<String> {
     net_amount_minor.map(|v| {
-        let value = v as f64 / 10f64.powi(decimals);
-        format!("{:+.*}", decimals as usize, value)
+        let sign = if v < 0 { '-' } else { '+' };
+        let digits = v.unsigned_abs().to_string();
+        let decimals = decimals.max(0) as usize;
+        let padded = format!("{digits:0>width$}", width = decimals + 1);
+        let (int_part, frac_part) = padded.split_at(padded.len() - decimals);
+        if decimals == 0 {
+            format!("{sign}{int_part}")
+        } else {
+            format!("{sign}{int_part}.{frac_part}")
+        }
     })
 }
 
@@ -1595,57 +1614,102 @@ fn history_dtos<E: std::fmt::Display>(
         .collect())
 }
 
+/// Historique d'une crypto sur un réseau.
+#[derive(Serialize)]
+struct HistoryDto {
+    entries: Vec<TxEntryDto>,
+    /// Réseau sans source publique d'historique : page de l'adresse sur
+    /// l'explorateur du réseau, à ouvrir à la place (`entries` vide).
+    explorer_url: Option<String>,
+}
+
+impl HistoryDto {
+    fn read(entries: Result<Vec<TxEntryDto>, String>) -> Result<Self, String> {
+        Ok(Self { entries: entries?, explorer_url: None })
+    }
+
+    fn unavailable(explorer_url: String) -> Result<Self, String> {
+        Ok(Self { entries: Vec::new(), explorer_url: Some(explorer_url) })
+    }
+}
+
 #[tauri::command]
-async fn get_tx_history(network: String, address: String) -> Result<Vec<TxEntryDto>, String> {
+async fn get_tx_history(network: String, address: String) -> Result<HistoryDto, String> {
     run_blocking(move || match network.as_str() {
         n if is_evm(n) => {
             let net = evm_network(&network)?;
-            // Valeur en dollars : ETH (Ethereum et ses L2) pour l'instant.
-            let asset = (net.mainnet && net.native_symbol == "ETH").then_some(price_history::Asset::Eth);
-            history_dtos(
+            if net.history.is_none() {
+                api::validate_evm_recipient(&address).t_err()?;
+                return HistoryDto::unavailable(net.explorer_address_url(&address, None));
+            }
+            // Valeur en dollars : la monnaie du réseau (fonds réels seulement).
+            let asset = if net.mainnet { price_history::price_asset(net.native_symbol) } else { None };
+            HistoryDto::read(history_dtos(
                 || history::evm_history(net.chain_id, &address, HISTORY_LIMIT as usize),
                 asset,
                 18,
                 |id| format!("{}{}", net.explorer_tx_prefix, id),
-            )
+            ))
         }
         "btc_testnet" | "btc_mainnet" => {
             let net = btc_network(&network)?;
             let asset = (network == "btc_mainnet").then_some(price_history::Asset::Btc);
-            history_dtos(|| history::btc_history(net, &address), asset, 8, |id| format!("{}{}", net.explorer_tx_prefix, id))
+            HistoryDto::read(history_dtos(|| history::btc_history(net, &address), asset, 8, |id| format!("{}{}", net.explorer_tx_prefix, id)))
         }
         "sol_devnet" | "sol_mainnet" => {
             let net = sol_network(&network)?;
             let asset = (network == "sol_mainnet").then_some(price_history::Asset::Sol);
-            history_dtos(
+            HistoryDto::read(history_dtos(
                 || history::sol_history(net.rpc, &address, HISTORY_LIMIT),
                 asset,
                 9,
                 |id| format!("{}{}{}", net.explorer_tx_prefix, id, net.explorer_tx_suffix),
-            )
+            ))
         }
         other => Err(translate_error(&format!("réseau inconnu : {other}"))),
     })
     .await
 }
 
-/// Mainnet uniquement (v1, voir core/src/sol_spl.rs — même contrainte que
-/// `get_usdc_balance`/`send_usdc_transaction`) : `network` n'est là que pour
-/// rester cohérent avec `get_tx_history` côté frontend, une seule valeur est
-/// acceptée.
+/// Historique d'un jeton du registre (`core/src/tokens.rs`) : ERC-20 via
+/// l'indexeur du réseau, SPL via le compte de jetons associé. Seuls l'id du
+/// jeton et le réseau viennent du frontend : contrat et mint sont ceux du
+/// registre, jamais une adresse fournie par l'interface.
 #[tauri::command]
-async fn get_usdc_tx_history(network: String, address: String) -> Result<Vec<TxEntryDto>, String> {
+async fn get_token_tx_history(token: String, network: String, address: String) -> Result<HistoryDto, String> {
     run_blocking(move || {
-        if network != "sol_mainnet" {
-            return Err(translate_error(&format!("réseau inconnu : {network}")));
+        let (info, deployment) =
+            pgp_wallet_poc::tokens::find(&token, &network).ok_or_else(|| translate_error("jeton non pris en charge sur ce réseau"))?;
+        let asset = price_history::price_asset(&info.symbol.to_ascii_uppercase());
+        let decimals = i32::from(deployment.decimals);
+        match deployment.kind {
+            pgp_wallet_poc::tokens::TokenKind::Erc20 { contract } => {
+                let net = evm_network(&network)?;
+                api::validate_evm_recipient(&address).t_err()?;
+                if net.history.is_none() {
+                    return HistoryDto::unavailable(net.explorer_address_url(&address, Some(contract)));
+                }
+                HistoryDto::read(history_dtos(
+                    || history::erc20_history_page(net.chain_id, &address, contract, None).map(|(mut entries, _)| {
+                        entries.truncate(HISTORY_LIMIT as usize);
+                        entries
+                    }),
+                    asset,
+                    decimals,
+                    |id| format!("{}{}", net.explorer_tx_prefix, id),
+                ))
+            }
+            pgp_wallet_poc::tokens::TokenKind::Spl { .. } => {
+                let net = sol_network(&network)?;
+                let mint = api::registered_spl_mint(&token).t_err()?;
+                HistoryDto::read(history_dtos(
+                    || api::get_spl_tx_history(&address, &mint, net, HISTORY_LIMIT),
+                    asset,
+                    decimals,
+                    |id| format!("{}{}{}", net.explorer_tx_prefix, id, net.explorer_tx_suffix),
+                ))
+            }
         }
-        let net = sol_network(&network)?;
-        history_dtos(
-            || api::get_usdc_tx_history(&address, net, HISTORY_LIMIT),
-            Some(price_history::Asset::Usdc),
-            6,
-            |id| format!("{}{}{}", net.explorer_tx_prefix, id, net.explorer_tx_suffix),
-        )
     })
     .await
 }
@@ -1672,6 +1736,9 @@ async fn get_price_chart(symbol: String, range: String) -> Result<Vec<(i64, f64)
 struct HoldingDto {
     network: String,
     address: String,
+    /// Jeton du registre ; absent : monnaie du réseau.
+    #[serde(default)]
+    token: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -1681,6 +1748,7 @@ struct PortfolioHistoryDto {
     approximate: bool,
     loading: bool,
     transactions_read: usize,
+    constant: Vec<String>,
 }
 
 /// Valeur en dollars d'un ensemble d'adresses publiques au fil de la période
@@ -1688,8 +1756,10 @@ struct PortfolioHistoryDto {
 #[tauri::command]
 async fn get_portfolio_history(holdings: Vec<HoldingDto>, range: String) -> Result<PortfolioHistoryDto, String> {
     run_blocking(move || {
-        let holdings: Vec<pgp_wallet_poc::portfolio::Holding> =
-            holdings.into_iter().map(|h| pgp_wallet_poc::portfolio::Holding { network: h.network, address: h.address }).collect();
+        let holdings: Vec<pgp_wallet_poc::portfolio::Holding> = holdings
+            .into_iter()
+            .map(|h| pgp_wallet_poc::portfolio::Holding { network: h.network, address: h.address, token: h.token })
+            .collect();
         let history = pgp_wallet_poc::portfolio::portfolio_history(&holdings, chart_range(&range)?).t_err()?;
         Ok(PortfolioHistoryDto {
             points: history.points,
@@ -1697,6 +1767,7 @@ async fn get_portfolio_history(holdings: Vec<HoldingDto>, range: String) -> Resu
             approximate: history.approximate,
             loading: history.loading,
             transactions_read: history.transactions_read,
+            constant: history.constant,
         })
     })
     .await
@@ -3540,7 +3611,7 @@ pub fn run() {
             watch_balances,
             has_pending_tx,
             get_tx_history,
-            get_usdc_tx_history,
+            get_token_tx_history,
             estimate_btc_fees,
             get_crypto_prices,
             get_market_prices,
@@ -3595,6 +3666,46 @@ mod tests {
 
     fn url(s: &str) -> tauri::Url {
         tauri::Url::parse(s).expect("URL de test valide")
+    }
+
+    /// Montants d'historique exacts, même à 18 décimales (valeur relevée sur
+    /// un vrai historique Avalanche).
+    #[test]
+    fn history_amounts_are_exact() {
+        assert_eq!(format_signed_amount(Some(245_947_228_364_191_044), 18).as_deref(), Some("+0.245947228364191044"));
+        assert_eq!(format_signed_amount(Some(-1_500_000), 6).as_deref(), Some("-1.500000"));
+        assert_eq!(format_signed_amount(Some(0), 8).as_deref(), Some("+0.00000000"));
+        assert_eq!(format_signed_amount(Some(12_345_678_901), 8).as_deref(), Some("+123.45678901"));
+        assert_eq!(format_signed_amount(None, 9), None);
+    }
+
+    /// Liens ouverts dans le navigateur : explorateurs de chaque réseau EVM
+    /// (transactions, adresses, jetons), Solana, Bitcoin ; rien d'autre, même
+    /// déguisé (sous-domaine trompeur, http, explorateur cité en paramètre).
+    #[test]
+    fn external_links_are_limited_to_known_explorers() {
+        for allowed in [
+            "https://etherscan.io/tx/0x01",
+            "https://sepolia.etherscan.io/tx/0x01",
+            "https://arbiscan.io/tx/0x01",
+            "https://basescan.org/tx/0x01",
+            "https://polygonscan.com/tx/0x01",
+            "https://snowtrace.io/tx/0x01",
+            "https://bscscan.com/address/0x01",
+            "https://bscscan.com/token/0x000ae314e2a2172a039b26378814c252734f556a?a=0x01",
+            "https://hyperevmscan.io/address/0x01",
+            "https://explorer.solana.com/tx/abc",
+            "https://blockstream.info/tx/abc",
+        ] {
+            assert!(external_link_allowed(allowed), "{allowed}");
+        }
+        for refused in ["https://arbiscan.io.evil.com/tx/0x01", "http://etherscan.io/tx/0x01", "https://evil.com/?u=https://etherscan.io/", "https://bscscan.co/"] {
+            assert!(!external_link_allowed(refused), "{refused}");
+        }
+        for net in wallet_flow::EVM_NETWORKS {
+            assert!(external_link_allowed(&net.explorer_address_url("0x01", None)), "{}", net.id);
+            assert!(external_link_allowed(&net.explorer_address_url("0x01", Some("0x02"))), "{}", net.id);
+        }
     }
 
     /// 22ᵉ passage : reproduit l'attaque vérifiée en réel sur la boîte native

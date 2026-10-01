@@ -1341,20 +1341,26 @@ pub fn get_spl_balance(owner_address: &str, mint: &[u8; 32], network: &wallet_fl
     Ok(sol_rpc::SolRpc::new(network.rpc).token_account_balance(&ata_b58)?.unwrap_or(0))
 }
 
-/// Historique des transactions USDC de `owner_address` : dérive son ATA puis
-/// délègue à `history::usdc_history` (voir sa doc — l'ATA, pas l'adresse
-/// "propriétaire", est ce qui reçoit/envoie effectivement le jeton). Si l'ATA
-/// n'existe pas encore (jamais reçu d'USDC), `getSignaturesForAddress` renvoie
-/// simplement une liste vide, sans erreur.
-pub fn get_usdc_tx_history(owner_address: &str, network: &wallet_flow::SolNetwork, limit: u32) -> Result<Vec<history::TxEntry>> {
-    history::usdc_history(network.rpc, &usdc_token_account(owner_address)?, limit)
+/// Historique d'un jeton SPL du registre pour `owner_address` : dérive son
+/// compte de jetons associé (ATA) puis délègue à `history::spl_history` (voir
+/// sa doc — l'ATA, pas l'adresse "propriétaire", est ce qui reçoit/envoie
+/// effectivement le jeton). Si l'ATA n'existe pas encore (jeton jamais reçu),
+/// `getSignaturesForAddress` renvoie simplement une liste vide, sans erreur.
+pub fn get_spl_tx_history(owner_address: &str, mint: &[u8; 32], network: &wallet_flow::SolNetwork, limit: u32) -> Result<Vec<history::TxEntry>> {
+    history::spl_history(network.rpc, &spl_token_account(owner_address, mint)?, limit)
 }
 
 /// Compte de jetons USDC associé (ATA, base58) de l'adresse Solana `owner_address`.
 pub fn usdc_token_account(owner_address: &str) -> Result<String> {
+    spl_token_account(owner_address, &sol_spl::usdc_mint_mainnet())
+}
+
+/// Compte de jetons associé (ATA, base58) de l'adresse Solana `owner_address`
+/// pour le jeton `mint`.
+pub fn spl_token_account(owner_address: &str, mint: &[u8; 32]) -> Result<String> {
     let owner_bytes = bs58::decode(owner_address.trim()).into_vec().context("adresse Solana invalide (base58 attendu)")?;
     let owner: [u8; 32] = owner_bytes.try_into().map_err(|_| anyhow::anyhow!("une adresse Solana fait 32 octets"))?;
-    let ata = sol_spl::find_associated_token_address(&owner, &sol_spl::usdc_mint_mainnet());
+    let ata = sol_spl::find_associated_token_address(&owner, mint);
     Ok(bs58::encode(ata).into_string())
 }
 

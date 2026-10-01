@@ -9,22 +9,29 @@
 //! limite par adresse. Avant la plus ancienne transaction lue d'une adresse
 //! dont l'historique n'a pas été lu jusqu'au bout, son solde est inconnu : la
 //! courbe commence alors à cet instant (`since`) au lieu d'inventer une valeur.
+//!
+//! Réseau sans source publique d'historique (BNB Chain, HyperEVM) : le solde
+//! actuel est compté sur toute la période, et la crypto est signalée
+//! (`constant`) pour que l'interface le dise.
 
-use crate::blockscout::PageParams;
-use crate::history::{self, TxEntry, TxStatus};
+use crate::history::{self, EvmCursor, TxEntry, TxStatus};
 use crate::price_history::{self, Asset, ChartRange, PriceSeries};
+use crate::tokens::{self, TokenKind};
 use crate::{api, external_wallets, wallet_flow};
-use anyhow::{anyhow, bail, ensure, Result};
+use anyhow::{anyhow, ensure, Result};
 use std::collections::HashMap;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 
-/// Une adresse et son réseau (identifiants de l'app : "evm_mainnet",
-/// "btc_mainnet", "sol_mainnet", "usdc_solana" ; les réseaux de test sont
-/// acceptés mais ignorés, leurs fonds n'ayant pas de valeur).
+/// Une adresse, son réseau (identifiants de l'app : "evm_mainnet",
+/// "base_mainnet", "btc_mainnet", "sol_mainnet"… ; "usdc_solana", ancien
+/// identifiant des wallets externes = USDC sur Solana) et, pour un jeton,
+/// son identifiant dans le registre (`tokens`). Les réseaux de test sont
+/// acceptés mais ignorés, leurs fonds n'ayant pas de valeur.
 pub struct Holding {
     pub network: String,
     pub address: String,
+    pub token: Option<String>,
 }
 
 pub struct PortfolioHistory {
@@ -42,6 +49,9 @@ pub struct PortfolioHistory {
     pub loading: bool,
     /// Transactions lues jusqu'ici, toutes adresses confondues.
     pub transactions_read: usize,
+    /// Cryptos détenues sur un réseau sans historique, comptées à leur solde
+    /// actuel sur toute la période (symboles, sans doublon).
+    pub constant: Vec<String>,
 }
 
 /// Transactions lues au plus par adresse : 20 pages Blockscout, 40 pages
@@ -68,7 +78,7 @@ const DEFAULT_ALL_SPAN: i64 = 365 * 86_400;
 /// Suite d'un historique : curseur propre à chaque source.
 #[derive(Clone)]
 enum Cursor {
-    Evm(PageParams),
+    Evm(EvmCursor),
     /// Dernier txid confirmé vu.
     Btc(String),
     /// Dernière signature vue.
@@ -84,6 +94,9 @@ struct Page {
 struct HoldingData {
     asset: Asset,
     decimals: i32,
+    symbol: &'static str,
+    /// Aucune source d'historique : solde actuel compté sur toute la période.
+    constant: bool,
     /// Solde actuel, en plus petite unité.
     balance: i128,
     /// (instant, variation du solde), du plus récent au plus ancien.
@@ -126,44 +139,99 @@ impl HoldingData {
     }
 }
 
-/// Actif, décimales et limite de lecture d'un réseau ; `None` sans valeur.
-fn network_asset(network: &str) -> Option<(Asset, i32, usize)> {
-    Some(match network {
-        "evm_mainnet" => (Asset::Eth, 18, EVM_MAX),
-        "btc_mainnet" => (Asset::Btc, 8, BTC_MAX),
-        "sol_mainnet" => (Asset::Sol, 9, SOL_MAX),
-        "usdc_solana" => (Asset::Usdc, 6, SOL_MAX),
-        _ => return None,
-    })
+/// Ce qu'il faut lire pour un avoir.
+#[derive(Clone, Copy)]
+struct Spec {
+    asset: Asset,
+    decimals: i32,
+    /// Transactions lues au plus.
+    max_read: usize,
+    symbol: &'static str,
+    source: Source,
 }
 
-fn fetch_balance(network: &str, address: &str) -> Result<i128> {
+#[derive(Clone, Copy)]
+enum Source {
+    Btc,
+    Sol,
+    /// Jeton SPL (mint) : historique de son compte de jetons associé.
+    Spl([u8; 32]),
+    /// Monnaie d'un réseau EVM.
+    Evm(&'static wallet_flow::EvmNetwork),
+    /// Jeton ERC-20 (adresse du contrat).
+    Erc20(&'static wallet_flow::EvmNetwork, &'static str),
+}
+
+impl Spec {
+    /// Une source d'historique existe pour cet avoir (voir `EvmNetwork::history`).
+    fn has_history(&self) -> bool {
+        match self.source {
+            Source::Evm(net) | Source::Erc20(net, _) => net.history.is_some(),
+            Source::Btc | Source::Sol | Source::Spl(_) => true,
+        }
+    }
+}
+
+/// Avoir de `token` (ou de la monnaie du réseau) sur `network` ; `Ok(None)` :
+/// sans valeur (réseau de test, ou crypto sans source de prix).
+fn spec(network: &str, token: Option<&str>) -> Result<Option<Spec>> {
+    let (network, token) = if network == "usdc_solana" { ("sol_mainnet", Some("usdc")) } else { (network, token) };
+    if let Some(token_id) = token {
+        let (token, deployment) = tokens::find(token_id, network).ok_or_else(|| anyhow!("jeton non pris en charge sur ce réseau : {token_id}"))?;
+        let Some(asset) = price_history::price_asset(&token.symbol.to_ascii_uppercase()) else { return Ok(None) };
+        let (source, max_read) = match deployment.kind {
+            TokenKind::Spl { .. } => (Source::Spl(api::registered_spl_mint(token_id)?), SOL_MAX),
+            TokenKind::Erc20 { contract } => {
+                let net = wallet_flow::evm_network(network).ok_or_else(|| anyhow!("réseau inconnu : {network}"))?;
+                (Source::Erc20(net, contract), EVM_MAX)
+            }
+        };
+        return Ok(Some(Spec { asset, decimals: i32::from(deployment.decimals), max_read, symbol: token.symbol, source }));
+    }
+    Ok(Some(match network {
+        "btc_mainnet" => Spec { asset: Asset::Btc, decimals: 8, max_read: BTC_MAX, symbol: "BTC", source: Source::Btc },
+        "sol_mainnet" => Spec { asset: Asset::Sol, decimals: 9, max_read: SOL_MAX, symbol: "SOL", source: Source::Sol },
+        other => match wallet_flow::evm_network(other) {
+            Some(net) if net.mainnet => {
+                let Some(asset) = price_history::price_asset(net.native_symbol) else { return Ok(None) };
+                Spec { asset, decimals: 18, max_read: EVM_MAX, symbol: net.native_symbol, source: Source::Evm(net) }
+            }
+            _ => return Ok(None),
+        },
+    }))
+}
+
+fn fetch_balance(spec: &Spec, address: &str) -> Result<i128> {
     let solana = &wallet_flow::SOLANA_MAINNET;
-    Ok(match network {
-        "evm_mainnet" => api::get_evm_balance(address, &wallet_flow::ETHEREUM_MAINNET)? as i128,
+    Ok(match spec.source {
+        Source::Evm(net) => api::get_evm_balance(address, net)? as i128,
+        Source::Erc20(net, contract) => api::get_erc20_balance(net, contract, address)? as i128,
         // Comme la carte : confirmé moins les envois en attente, SANS les
         // réceptions non confirmées (annulables par leur émetteur, voir
         // `api::BtcBalanceView`) — retirées aussi de l'historique (`fetch_page`).
-        "btc_mainnet" => api::get_btc_balance_view(address, &wallet_flow::BTC_MAINNET)?.settled_sat.into(),
-        "sol_mainnet" => api::get_sol_balance(address, solana)?.into(),
-        "usdc_solana" => api::get_usdc_balance(address, solana)?.into(),
-        other => bail!("réseau sans valeur : {other}"),
+        Source::Btc => api::get_btc_balance_view(address, &wallet_flow::BTC_MAINNET)?.settled_sat.into(),
+        Source::Sol => api::get_sol_balance(address, solana)?.into(),
+        Source::Spl(mint) => api::get_spl_balance(address, &mint, solana)?.into(),
     })
 }
 
 /// Une page d'historique : la première sans `cursor`, sinon la suivante.
-fn fetch_page(network: &str, address: &str, cursor: Option<&Cursor>) -> Result<Page> {
+fn fetch_page(spec: &Spec, address: &str, cursor: Option<&Cursor>) -> Result<Page> {
     let solana = &wallet_flow::SOLANA_MAINNET;
-    match network {
-        "evm_mainnet" => {
-            let page = match cursor {
-                Some(Cursor::Evm(params)) => Some(params),
-                _ => None,
-            };
-            let (entries, next) = history::evm_history_page(wallet_flow::ETHEREUM_MAINNET.chain_id, address, page)?;
+    let evm_cursor = match cursor {
+        Some(Cursor::Evm(evm)) => Some(evm),
+        _ => None,
+    };
+    match spec.source {
+        Source::Evm(net) => {
+            let (entries, next) = history::evm_history_page(net.chain_id, address, evm_cursor)?;
             Ok(Page { entries, next: next.map(Cursor::Evm) })
         }
-        "btc_mainnet" => {
+        Source::Erc20(net, contract) => {
+            let (entries, next) = history::erc20_history_page(net.chain_id, address, contract, evm_cursor)?;
+            Ok(Page { entries, next: next.map(Cursor::Evm) })
+        }
+        Source::Btc => {
             let after = match cursor {
                 Some(Cursor::Btc(txid)) => Some(txid.as_str()),
                 _ => None,
@@ -176,39 +244,53 @@ fn fetch_page(network: &str, address: &str, cursor: Option<&Cursor>) -> Result<P
             entries.retain(|e| !(matches!(e.status, TxStatus::Pending) && e.net_amount_minor.is_some_and(|net| net > 0)));
             Ok(Page { entries, next })
         }
-        "sol_mainnet" | "usdc_solana" => {
+        Source::Sol | Source::Spl(_) => {
             let before = match cursor {
                 Some(Cursor::Sol(signature)) => Some(signature.as_str()),
                 _ => None,
             };
             let size = if before.is_some() { SOL_PAGE } else { SOL_FIRST_PAGE };
-            let entries = if network == "sol_mainnet" {
-                history::sol_history_before(solana.rpc, address, size, before)?
-            } else {
-                history::usdc_history_before(solana.rpc, &api::usdc_token_account(address)?, size, before)?
+            let entries = match spec.source {
+                Source::Spl(mint) => history::spl_history_before(solana.rpc, &api::spl_token_account(address, &mint)?, size, before)?,
+                _ => history::sol_history_before(solana.rpc, address, size, before)?,
             };
             let next = if entries.len() >= size as usize { entries.last().map(|e| Cursor::Sol(e.id.clone())) } else { None };
             Ok(Page { entries, next })
         }
-        other => bail!("réseau sans valeur : {other}"),
     }
 }
 
-/// Solde, puis première page d'historique.
-fn fetch_first(network: &str, address: &str) -> Result<HoldingData> {
-    let (asset, decimals, _) = network_asset(network).ok_or_else(|| anyhow!("réseau sans valeur : {network}"))?;
+/// Solde, puis première page d'historique (sauf réseau sans historique :
+/// solde seul, compté sur toute la période).
+fn fetch_first(spec: &Spec, address: &str) -> Result<HoldingData> {
+    let mut data = HoldingData {
+        asset: spec.asset,
+        decimals: spec.decimals,
+        symbol: spec.symbol,
+        constant: !spec.has_history(),
+        balance: 0,
+        changes: Vec::new(),
+        oldest: None,
+        next: None,
+        read: 0,
+        approximate: false,
+    };
+    if data.constant {
+        data.balance = fetch_balance(spec, address)?;
+        return Ok(data);
+    }
     let (balance, first) = std::thread::scope(|scope| {
-        let balance = scope.spawn(|| fetch_balance(network, address));
-        let first = fetch_page(network, address, None);
+        let balance = scope.spawn(|| fetch_balance(spec, address));
+        let first = fetch_page(spec, address, None);
         (balance.join().expect("le fil du solde ne doit pas paniquer"), first)
     });
-    let mut data = HoldingData { asset, decimals, balance: balance?, changes: Vec::new(), oldest: None, next: None, read: 0, approximate: false };
+    data.balance = balance?;
     data.absorb(first?, price_history::unix_now());
     Ok(data)
 }
 
-/// Réseau et adresse.
-type Key = (String, String);
+/// Réseau, adresse et jeton éventuel.
+type Key = (String, String, Option<String>);
 
 /// Lecture d'une adresse : dernières données publiées, lecture en cours.
 #[derive(Default)]
@@ -243,7 +325,8 @@ fn deepest(a: Option<i64>, b: Option<i64>) -> Option<i64> {
 /// arrière-plan démarre, ou celle en cours est approfondie. Asynchrone : le
 /// nœud Solana public n'accorde qu'environ un détail de transaction par
 /// seconde, un long historique demande des minutes la première fois.
-fn request(key: &Key, until: Option<i64>, max_read: usize) {
+fn request(key: &Key, spec: Spec, until: Option<i64>) {
+    let max_read = spec.max_read;
     let mut map = lock_slots();
     let slot = map.entry(key.clone()).or_default();
     let fresh = slot.data.as_ref().filter(|(fetched, _)| fetched.elapsed() < CACHE_TTL).map(|(fetched, data)| (*fetched, data.clone()));
@@ -265,8 +348,8 @@ fn request(key: &Key, until: Option<i64>, max_read: usize) {
     drop(map);
     let key = key.clone();
     std::thread::spawn(move || {
-        let (network, address) = (key.0.clone(), key.1.clone());
-        load(&key, max_read, base, publish_each_page, || fetch_first(&network, &address), |cursor| fetch_page(&network, &address, Some(cursor)));
+        let address = key.1.clone();
+        load(&key, max_read, base, publish_each_page, || fetch_first(&spec, &address), |cursor| fetch_page(&spec, &address, Some(cursor)));
     });
 }
 
@@ -400,12 +483,14 @@ pub fn portfolio_history(holdings: &[Holding], range: ChartRange) -> Result<Port
     }
     let now = price_history::unix_now();
     let range_start = range.span().map(|span| now - span);
-    let keys: Vec<(Key, usize)> = holdings
-        .iter()
-        .filter_map(|h| network_asset(&h.network).map(|(_, _, max_read)| ((h.network.clone(), h.address.trim().to_string()), max_read)))
-        .collect();
-    for (key, max_read) in &keys {
-        request(key, range_start, *max_read);
+    let mut keys: Vec<(Key, Spec)> = Vec::new();
+    for h in holdings {
+        if let Some(spec) = spec(&h.network, h.token.as_deref())? {
+            keys.push(((h.network.clone(), h.address.trim().to_string(), h.token.clone()), spec));
+        }
+    }
+    for (key, spec) in &keys {
+        request(key, *spec, range_start);
     }
 
     let deadline = Instant::now() + WAIT;
@@ -433,7 +518,13 @@ pub fn portfolio_history(holdings: &[Holding], range: ChartRange) -> Result<Port
     drop(map);
     let transactions_read = data.iter().map(|d| d.read).sum();
     if missing {
-        return Ok(PortfolioHistory { points: Vec::new(), since: None, approximate: false, loading: true, transactions_read });
+        return Ok(PortfolioHistory { points: Vec::new(), since: None, approximate: false, loading: true, transactions_read, constant: Vec::new() });
+    }
+    let mut constant: Vec<String> = Vec::new();
+    for d in data.iter().filter(|d| d.constant && d.balance > 0) {
+        if !constant.iter().any(|s| s == d.symbol) {
+            constant.push(d.symbol.to_string());
+        }
     }
 
     let mut assets: Vec<Asset> = Vec::new();
@@ -452,7 +543,7 @@ pub fn portfolio_history(holdings: &[Holding], range: ChartRange) -> Result<Port
     let step = if range == ChartRange::All { price_history::step_for_span(now - start) } else { range.step() };
     let times = sample_times(start, now, step);
     let (points, negative) = values_over_time(&refs, &times, |asset, t| series.get(&asset).and_then(|s| s.usd_at(Some(t))));
-    Ok(PortfolioHistory { points, since, approximate: negative || data.iter().any(|d| d.approximate), loading, transactions_read })
+    Ok(PortfolioHistory { points, since, approximate: negative || data.iter().any(|d| d.approximate), loading, transactions_read, constant })
 }
 
 #[cfg(test)]
@@ -460,7 +551,7 @@ mod tests {
     use super::*;
 
     fn holding_data(asset: Asset, decimals: i32, balance: i128, changes: &[(i64, i128)]) -> HoldingData {
-        HoldingData { asset, decimals, balance, changes: changes.to_vec(), oldest: changes.last().map(|c| c.0), next: None, read: changes.len(), approximate: false }
+        HoldingData { asset, decimals, symbol: "X", constant: false, balance, changes: changes.to_vec(), oldest: changes.last().map(|c| c.0), next: None, read: changes.len(), approximate: false }
     }
 
     #[test]
@@ -540,7 +631,7 @@ mod tests {
     /// échec d'une page ancienne : lecture arrêtée, données gardées.
     #[test]
     fn background_reads_follow_the_deepest_request() {
-        let key: Key = ("test".into(), "adresse-a".into());
+        let key: Key = ("test".into(), "adresse-a".into(), None);
         lock_slots().insert(key.clone(), Slot { target: Some(850), running: true, ..Default::default() });
         let first = || {
             let mut data = holding_data(Asset::Sol, 9, 100, &[]);
@@ -555,7 +646,7 @@ mod tests {
             let Cursor::Sol(before) = cursor else { unreachable!() };
             if before == "a" {
                 // Pendant la lecture : on demande tout l'historique.
-                request(&key, None, 100);
+                request(&key, Spec { asset: Asset::Sol, decimals: 9, max_read: 100, symbol: "SOL", source: Source::Sol }, None);
                 return Ok(Page { entries: vec![entry("b", Some(800), Some(5))], next: Some(Cursor::Sol("b".into())) });
             }
             Ok(Page { entries: vec![entry("c", Some(700), Some(1))], next: None })
@@ -569,7 +660,7 @@ mod tests {
         assert_eq!((data.read, data.oldest, data.known_since()), (3, Some(700), None));
         drop(map);
 
-        let failing: Key = ("test".into(), "adresse-b".into());
+        let failing: Key = ("test".into(), "adresse-b".into(), None);
         lock_slots().insert(failing.clone(), Slot { running: true, ..Default::default() });
         load(&failing, 100, None, true, || Err(anyhow!("nœud injoignable")), |_| unreachable!());
         let map = lock_slots();
@@ -577,7 +668,7 @@ mod tests {
         assert_eq!((slot.running, slot.error.as_deref(), slot.data.is_none()), (false, Some("nœud injoignable"), true));
         drop(map);
 
-        let partial: Key = ("test".into(), "adresse-c".into());
+        let partial: Key = ("test".into(), "adresse-c".into(), None);
         lock_slots().insert(partial.clone(), Slot { target: None, running: true, ..Default::default() });
         load(&partial, 100, None, true, first, |_| Err(anyhow!("page refusée")));
         let map = lock_slots();
@@ -603,6 +694,45 @@ mod tests {
         assert_eq!(chart_start(&[&quiet], None, 1000 + DEFAULT_ALL_SPAN), (1000, None));
     }
 
+    /// Avoirs RÉELS sur les nouvelles sources : Avalanche (Routescan), jeton
+    /// ERC-20 (Blockscout), jeton SPL, et BNB Chain sans historique (solde
+    /// constant, signalé). Valeur finale = Σ solde actuel × prix actuel.
+    /// `cargo test -- --ignored real_portfolio_history_covers_new_sources --nocapture`
+    #[test]
+    #[ignore]
+    fn real_portfolio_history_covers_new_sources() {
+        let binance = "0x8894E0a0c962CB723c1976a4421c95949bE2D4E3";
+        let holding = |network: &str, address: &str, token: Option<&str>| Holding { network: network.into(), address: address.into(), token: token.map(Into::into) };
+        let holdings = [
+            holding("avax_mainnet", binance, None),
+            holding("bsc_mainnet", binance, None),
+            holding("evm_mainnet", binance, Some("usdt")),
+            holding("sol_mainnet", "3iUShJYbFX6it5ArcR31Pm6SqqowccAe5NwQrfaG1yvG", Some("usdc")),
+        ];
+        let history = loop {
+            let history = portfolio_history(&holdings, ChartRange::Week).unwrap();
+            println!("{} transactions lues, en cours {}", history.transactions_read, history.loading);
+            if !history.loading {
+                break history;
+            }
+        };
+        println!("{} points, depuis {:?}, approximatif {}, constants {:?}", history.points.len(), history.since, history.approximate, history.constant);
+        let mut expected = 0.0;
+        for h in &holdings {
+            let spec = spec(&h.network, h.token.as_deref()).unwrap().unwrap();
+            let balance = fetch_balance(&spec, &h.address).unwrap();
+            let price = price_history::series(spec.asset).unwrap().usd_at(None).unwrap();
+            println!("{} {} : {balance} × {price} $ (historique : {})", h.network, spec.symbol, spec.has_history());
+            expected += balance as f64 / 10f64.powi(spec.decimals) * price;
+        }
+        let (_, last) = *history.points.last().unwrap();
+        println!("valeur actuelle : {last:.2} $, attendu {expected:.2} $");
+        assert!((last - expected).abs() <= expected * 0.01 + 0.01, "{last} vs {expected}");
+        assert!(!spec("bsc_mainnet", None).unwrap().unwrap().has_history());
+        assert!(spec("avax_mainnet", None).unwrap().unwrap().has_history());
+        assert!(spec("evm_sepolia", None).unwrap().is_none(), "réseau de test : sans valeur");
+    }
+
     /// Adresses RÉELLES (réseau principal) : la valeur finale reconstruite
     /// égale solde actuel × prix actuel ; courbe cohérente sur 30 jours.
     /// `cargo test -- --ignored real_portfolio_history_is_consistent --nocapture`
@@ -610,10 +740,10 @@ mod tests {
     #[ignore]
     fn real_portfolio_history_is_consistent() {
         let holdings = [
-            Holding { network: "btc_mainnet".into(), address: "bc1qwqap30shafhtfd0k5hda4xep6xypgm6fyvphnw".into() },
-            Holding { network: "evm_mainnet".into(), address: "0x34deb5AF3e37BD0495dDc1bb1C53c14d7CE064c3".into() },
-            Holding { network: "sol_mainnet".into(), address: "3iUShJYbFX6it5ArcR31Pm6SqqowccAe5NwQrfaG1yvG".into() },
-            Holding { network: "btc_testnet".into(), address: "tb1qzdr7s2sr0dwmkwx033r4nujzk86u0cy6fmzfjk".into() },
+            Holding { network: "btc_mainnet".into(), address: "bc1qwqap30shafhtfd0k5hda4xep6xypgm6fyvphnw".into(), token: None },
+            Holding { network: "evm_mainnet".into(), address: "0x34deb5AF3e37BD0495dDc1bb1C53c14d7CE064c3".into(), token: None },
+            Holding { network: "sol_mainnet".into(), address: "3iUShJYbFX6it5ArcR31Pm6SqqowccAe5NwQrfaG1yvG".into(), token: None },
+            Holding { network: "btc_testnet".into(), address: "tb1qzdr7s2sr0dwmkwx033r4nujzk86u0cy6fmzfjk".into(), token: None },
         ];
         // Appels répétés tant que la lecture continue en arrière-plan, comme l'app.
         let complete = |range| loop {

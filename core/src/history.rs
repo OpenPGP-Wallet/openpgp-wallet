@@ -6,10 +6,11 @@
 //! pour l'UI. Purement informatif : ne joue aucun rôle dans la construction ou la
 //! signature d'une transaction, et ne lit ni ne dérive jamais de clé privée.
 
-use crate::blockscout::{BlockscoutClient, PageParams};
+use crate::blockscout::{BlockscoutClient, EvmTx, PageParams};
 use crate::sol_rpc::{SolRpc, SolTx};
-use crate::{btc_rpc::EsploraClient, wallet_flow};
-use anyhow::Result;
+use crate::wallet_flow::EvmHistory;
+use crate::{btc_rpc::EsploraClient, routescan, wallet_flow};
+use anyhow::{anyhow, Result};
 
 pub enum TxStatus {
     Confirmed,
@@ -126,51 +127,115 @@ pub fn sol_history_before(rpc_url: &str, pubkey_b58: &str, limit: u32, before: O
     Ok(sol_entries(SolRpc::new(rpc_url).signature_history_before(pubkey_b58, limit, before)?))
 }
 
-/// Historique d'un jeton SPL (USDC) : `ata_b58` est le compte de jetons associé
-/// (ATA) du propriétaire, pas son adresse Solana "propriétaire" — voir
+/// Historique d'un jeton SPL : `ata_b58` est le compte de jetons associé (ATA)
+/// du propriétaire pour ce jeton, pas son adresse Solana "propriétaire" — voir
 /// `sol_spl::find_associated_token_address` côté appelant (api.rs) pour le
-/// dériver. `net_amount_minor` est alors en plus petite unité du jeton
-/// (micro-USDC), pas en lamports.
-pub fn usdc_history(rpc_url: &str, ata_b58: &str, limit: u32) -> Result<Vec<TxEntry>> {
-    usdc_history_before(rpc_url, ata_b58, limit, None)
+/// dériver. `net_amount_minor` est alors en plus petite unité du jeton, pas
+/// en lamports.
+pub fn spl_history(rpc_url: &str, ata_b58: &str, limit: u32) -> Result<Vec<TxEntry>> {
+    spl_history_before(rpc_url, ata_b58, limit, None)
 }
 
 /// Page d'historique d'un jeton SPL : `limit` signatures plus anciennes que `before`.
-pub fn usdc_history_before(rpc_url: &str, ata_b58: &str, limit: u32, before: Option<&str>) -> Result<Vec<TxEntry>> {
+pub fn spl_history_before(rpc_url: &str, ata_b58: &str, limit: u32, before: Option<&str>) -> Result<Vec<TxEntry>> {
     Ok(sol_entries(SolRpc::new(rpc_url).token_signature_history_before(ata_b58, limit, before)?))
 }
 
-/// `chain_id` : 1 pour Ethereum mainnet, 11155111 pour Sepolia (voir
-/// wallet_flow::ETHEREUM_MAINNET / SEPOLIA) — détermine quelle instance publique
-/// Blockscout interroger.
+/// Suite d'un historique EVM, propre à la source du réseau.
+#[derive(Clone, Debug)]
+pub enum EvmCursor {
+    Blockscout(PageParams),
+    /// Numéro de la page suivante (Routescan).
+    Page(u32),
+}
+
+/// Source d'historique du réseau EVM `chain_id` (voir `EvmNetwork::history`).
+fn evm_source(chain_id: u64) -> Result<EvmHistory> {
+    wallet_flow::EVM_NETWORKS
+        .iter()
+        .find(|n| n.chain_id == chain_id)
+        .and_then(|n| n.history)
+        .ok_or_else(|| anyhow!("historique pas encore disponible sur ce réseau"))
+}
+
+/// `chain_id` : identifiant du réseau EVM (voir `wallet_flow::EVM_NETWORKS`),
+/// qui détermine la source interrogée.
 pub fn evm_history(chain_id: u64, address: &str, limit: usize) -> Result<Vec<TxEntry>> {
     let (mut entries, _) = evm_history_page(chain_id, address, None)?;
     entries.truncate(limit);
     Ok(entries)
 }
 
-/// Page d'historique Ethereum (50 transactions) et curseur de la suivante,
-/// `None` après la dernière.
-pub fn evm_history_page(chain_id: u64, address: &str, page: Option<&PageParams>) -> Result<(Vec<TxEntry>, Option<PageParams>)> {
-    // Instance Blockscout du réseau (voir `wallet_flow::EvmNetwork::blockscout`).
-    let base_url = crate::wallet_flow::EVM_NETWORKS
-        .iter()
-        .find(|n| n.chain_id == chain_id)
-        .and_then(|n| n.blockscout)
-        .ok_or_else(|| anyhow::anyhow!("historique pas encore disponible sur ce réseau"))?;
-    let (txs, next) = BlockscoutClient::new(base_url).tx_history_page(address, page)?;
-    let entries = txs
+/// Page d'historique EVM (50 transactions) et curseur de la suivante, `None`
+/// après la dernière.
+pub fn evm_history_page(chain_id: u64, address: &str, cursor: Option<&EvmCursor>) -> Result<(Vec<TxEntry>, Option<EvmCursor>)> {
+    let (txs, next) = match evm_source(chain_id)? {
+        EvmHistory::Blockscout(base_url) => {
+            let page = match cursor {
+                Some(EvmCursor::Blockscout(params)) => Some(params),
+                _ => None,
+            };
+            let (txs, next) = BlockscoutClient::new(base_url).tx_history_page(address, page)?;
+            (txs, next.map(EvmCursor::Blockscout))
+        }
+        EvmHistory::Routescan => {
+            let (txs, next) = routescan::tx_history_page(chain_id, address, page_number(cursor))?;
+            (txs, next.map(EvmCursor::Page))
+        }
+    };
+    Ok((txs.into_iter().map(evm_entry).collect(), next))
+}
+
+fn evm_entry(tx: EvmTx) -> TxEntry {
+    TxEntry {
+        kind: classify(Some(tx.net_wei), tx.swap),
+        id: tx.hash,
+        timestamp_unix: tx.timestamp_unix,
+        status: if tx.failed { TxStatus::Failed } else { TxStatus::Confirmed },
+        net_amount_minor: Some(tx.net_wei),
+        fee_minor: tx.fee_wei,
+    }
+}
+
+/// Page d'historique du jeton ERC-20 `contract` pour `address` sur le réseau
+/// `chain_id` (montants en plus petite unité du jeton, aucun frais : ils
+/// sont payés dans la monnaie du réseau), via la source du réseau.
+pub fn erc20_history_page(chain_id: u64, address: &str, contract: &str, cursor: Option<&EvmCursor>) -> Result<(Vec<TxEntry>, Option<EvmCursor>)> {
+    let (moves, next) = match evm_source(chain_id)? {
+        EvmHistory::Blockscout(base_url) => {
+            let page = match cursor {
+                Some(EvmCursor::Blockscout(params)) => Some(params),
+                _ => None,
+            };
+            let (moves, next) = BlockscoutClient::new(base_url).token_transfers_page(address, contract, page)?;
+            (moves, next.map(EvmCursor::Blockscout))
+        }
+        EvmHistory::Routescan => {
+            let (moves, next) = routescan::token_history_page(chain_id, address, contract, page_number(cursor))?;
+            (moves, next.map(EvmCursor::Page))
+        }
+    };
+    let entries = moves
         .into_iter()
-        .map(|tx| TxEntry {
-            kind: classify(Some(tx.net_wei), tx.swap),
-            id: tx.hash,
-            timestamp_unix: tx.timestamp_unix,
-            status: if tx.failed { TxStatus::Failed } else { TxStatus::Confirmed },
-            net_amount_minor: Some(tx.net_wei),
-            fee_minor: tx.fee_wei,
+        .map(|m| TxEntry {
+            kind: classify(Some(m.net), m.swap),
+            id: m.hash,
+            timestamp_unix: m.timestamp_unix,
+            // Un virement de jeton n'existe que dans une transaction réussie.
+            status: TxStatus::Confirmed,
+            net_amount_minor: Some(m.net),
+            fee_minor: 0,
         })
         .collect();
     Ok((entries, next))
+}
+
+/// Page demandée par `cursor` (la première sans curseur).
+fn page_number(cursor: Option<&EvmCursor>) -> u32 {
+    match cursor {
+        Some(EvmCursor::Page(page)) => *page,
+        _ => 1,
+    }
 }
 
 #[cfg(test)]
