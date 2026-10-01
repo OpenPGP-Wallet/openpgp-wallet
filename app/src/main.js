@@ -744,7 +744,7 @@ const I18N = {
     "send.txSent": "Transaction envoyée : {tx}",
     "swap.title": "Échanger",
     "swap.subtitle":
-      "Passe par un protocole externe non audité par cette app — voir \"Comment ça marche\" pour le détail. Chaque échange inclut des frais d'affiliation : 0,80 % entre réseaux (THORChain, Maya) et sur Solana (Jupiter), 1 % sur un même réseau EVM (CoW), sauf mention contraire dans la confirmation.",
+      "Passe par un protocole externe non audité par cette app (voir \"Comment ça marche\"). Frais d'affiliation inclus : 0,80 % (THORChain, Maya, Jupiter), 1 % (CoW, sur un même réseau EVM), sauf mention contraire dans la confirmation.",
     "swap.fromAsset": "Depuis",
     "swap.toAsset": "Vers",
     "swap.viaJupiter": "via Jupiter, même portefeuille",
@@ -774,6 +774,10 @@ const I18N = {
     "swap.previewFees": "Frais du protocole (inclus)",
     "swap.previewFeesOf": "Frais {name} (inclus)",
     "swap.previewMin": "Minimum garanti",
+    "swap.previewCost": "Coût estimé",
+    "swap.previewCostTitle": "Écart entre la valeur envoyée et la valeur reçue au cours du marché, frais compris",
+    "swap.previewCostHigh":
+      "Coût élevé pour cet échange : vérifiez le montant. Sur un petit montant, les frais fixes du réseau pèsent lourd.",
     "swap.cowOrderSent": "Ordre envoyé à CoW — en attente d'exécution (au plus {minutes} min).",
     "swap.cowOrderFilled": "Ordre exécuté : les fonds sont arrivés.",
     "swap.cowOrderExpired": "Ordre expiré sans être exécuté : rien n'a été échangé.",
@@ -1229,7 +1233,7 @@ const I18N = {
     "send.txSent": "Transaction sent: {tx}",
     "swap.title": "Swap",
     "swap.subtitle":
-      "Goes through an external protocol not audited by this app — see \"How it works\" for details. Every swap includes an affiliate fee: 0.80% across networks (THORChain, Maya) and on Solana (Jupiter), 1% on a single EVM network (CoW), unless the confirmation says otherwise.",
+      "Goes through an external protocol not audited by this app (see \"How it works\"). Affiliate fee included: 0.80% (THORChain, Maya, Jupiter), 1% (CoW, on a single EVM network), unless the confirmation says otherwise.",
     "swap.fromAsset": "From",
     "swap.toAsset": "To",
     "swap.viaJupiter": "via Jupiter, same wallet",
@@ -1257,6 +1261,9 @@ const I18N = {
     "swap.previewFees": "Protocol fees (included)",
     "swap.previewFeesOf": "{name} fees (included)",
     "swap.previewMin": "Guaranteed minimum",
+    "swap.previewCost": "Estimated cost",
+    "swap.previewCostTitle": "Gap between the value sent and the value received at market price, fees included",
+    "swap.previewCostHigh": "High cost for this swap: check the amount. On a small amount, fixed network fees weigh heavily.",
     "swap.cowOrderSent": "Order sent to CoW — waiting for execution (at most {minutes} min).",
     "swap.cowOrderFilled": "Order executed: the funds have arrived.",
     "swap.cowOrderExpired": "Order expired without being executed: nothing was swapped.",
@@ -4286,6 +4293,10 @@ function selectedSwapPair() {
 
 const SWAP_PROTOCOL_NAMES = { thorchain: "THORChain", maya: "Maya", jupiter: "Jupiter", cow: "CoW" };
 
+// Au-delà de ce coût estimé (frais et écart au cours du marché), l'aperçu
+// avertit avant de continuer.
+const SWAP_HIGH_COST_PERCENT = 5;
+
 // « SOL », « ETH (Arbitrum) » : symbole, et réseau pour une crypto qui en a
 // plusieurs.
 function swapShortLabel({ coin, network }) {
@@ -4327,6 +4338,7 @@ function updateSwapToOptions() {
   toSelect.replaceChildren(
     ...swapPairs
       .filter((p) => p.from_coin === from.coin && p.from_network === from.network)
+      .sort((a, b) => Number(Boolean(a.via)) - Number(Boolean(b.via)))
       .map((p) => {
         const option = document.createElement("option");
         option.value = swapKey(p.to_coin, p.to_network);
@@ -4423,12 +4435,14 @@ swapQuoteBtn.addEventListener("click", withBusyButton(swapQuoteBtn, async () => 
     const minRow = document.getElementById("swap-preview-min").closest(".send-preview-row");
     minRow.classList.add("hidden");
     let receivingText;
+    let receivedAmount = Number.NaN;
     if (step.protocol === "cow") {
       // Ordre CoW : réception attendue, minimum garanti signé, frais (1 %
       // d'intégration dans la crypto reçue + frais réseau de CoW pris sur la
       // crypto vendue), tous déjà comptés.
       const quote = await invoke("get_cow_quote", { network: fromNetwork, fromCoin, toCoin, amount, profileIndex: swapContext.profileIndex });
       receivingText = `≈ ${quote.expected_out}`;
+      receivedAmount = Number.parseFloat(quote.expected_out);
       document.getElementById("swap-preview-min").textContent = quote.min_out;
       document.getElementById("swap-preview-fees-label").textContent = t("swap.previewFeesOf", { name: "CoW" });
       document.getElementById("swap-preview-fees").textContent = `${quote.partner_fee} + ${quote.network_fee}`;
@@ -4438,11 +4452,13 @@ swapQuoteBtn.addEventListener("click", withBusyButton(swapQuoteBtn, async () => 
     } else if (step.protocol === "jupiter") {
       const outAmount = await invoke("get_jupiter_quote", { fromCoin, toCoin, amount });
       receivingText = `≈ ${outAmount} ${COIN_SYMBOL[toCoin] || toCoin.toUpperCase()}`;
+      receivedAmount = Number(outAmount);
       destRow.classList.add("hidden");
       feeRow.classList.add("hidden");
     } else {
       const quote = await invoke("get_swap_quote", { fromCoin, fromNetwork, toCoin, toNetwork, amount, destination });
       receivingText = `≈ ${quote.expected_amount_out} ${COIN_SYMBOL[toCoin] || toCoin.toUpperCase()}`;
+      receivedAmount = Number(quote.expected_amount_out);
       // Frais du protocole (THORChain ou Maya), dans la crypto reçue (déjà
       // déduits de la réception).
       document.getElementById("swap-preview-fees-label").textContent = t("swap.previewFeesOf", { name: SWAP_PROTOCOL_NAMES[step.protocol] });
@@ -4455,8 +4471,28 @@ swapQuoteBtn.addEventListener("click", withBusyButton(swapQuoteBtn, async () => 
     const routeNote = document.getElementById("swap-preview-route");
     routeNote.classList.toggle("hidden", !pair.via);
     if (pair.via) routeNote.textContent = t("swap.previewRoute", swapRouteVars(pair));
-    setWithCoinIcon(document.getElementById("swap-preview-sending"), fromCoin, `${amount} ${COIN_SYMBOL[fromCoin] || fromCoin.toUpperCase()}`);
-    setWithCoinIcon(document.getElementById("swap-preview-receiving"), toCoin, receivingText);
+    // Valeur en devise de l'envoi et de la réception (cours du marché) et
+    // leur écart : frais compris, un repère pour juger le devis d'un
+    // protocole externe. Masqué sans cours connu.
+    const fromPrice = priceForCoin(fromCoin);
+    const toPrice = priceForCoin(toCoin);
+    const sentValue = fromPrice != null ? Number(amount) * fromPrice : null;
+    const receivedValue = toPrice != null && Number.isFinite(receivedAmount) ? receivedAmount * toPrice : null;
+    const withValue = (text, value) => (value != null && Number.isFinite(value) ? `${text} (${formatUsdApprox(value)})` : text);
+    setWithCoinIcon(document.getElementById("swap-preview-sending"), fromCoin, withValue(`${amount} ${COIN_SYMBOL[fromCoin] || fromCoin.toUpperCase()}`, sentValue));
+    setWithCoinIcon(document.getElementById("swap-preview-receiving"), toCoin, withValue(receivingText, receivedValue));
+    const costRow = document.getElementById("swap-preview-cost").closest(".send-preview-row");
+    const costWarning = document.getElementById("swap-preview-cost-warning");
+    const costKnown = sentValue > 0 && receivedValue != null && Number.isFinite(receivedValue);
+    costRow.classList.toggle("hidden", !costKnown);
+    costWarning.classList.add("hidden");
+    if (costKnown) {
+      const cost = sentValue - receivedValue;
+      const percent = (cost / sentValue) * 100;
+      const percentText = percent.toLocaleString(chartLocale(), { maximumFractionDigits: 1 });
+      document.getElementById("swap-preview-cost").textContent = `${cost > 0 ? formatUsdApprox(cost) : "—"} (${percentText}\u00a0%)`;
+      costWarning.classList.toggle("hidden", percent <= SWAP_HIGH_COST_PERCENT);
+    }
     document.getElementById("swap-preview-password").value = "";
     hideError(document.getElementById("swap-preview-error"));
     document.getElementById("swap-success").classList.add("hidden");

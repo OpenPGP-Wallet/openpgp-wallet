@@ -1063,9 +1063,8 @@
         </div>
         <p class="muted" data-i18n="swap.subtitle">
           Passe par un protocole externe non audité par cette app — voir "Comment ça marche" pour
-          le détail. Chaque échange inclut des frais d'affiliation : 0,80 % entre réseaux (THORChain,
-          Maya) et sur Solana (Jupiter), 1 % sur un même réseau EVM (CoW), sauf mention contraire dans
-          la confirmation.
+          le détail. Frais d'affiliation inclus : 0,80 % (THORChain, Maya, Jupiter), 1 % (CoW, sur un même
+          réseau EVM), sauf mention contraire dans la confirmation.
         </p>
         <label data-i18n="swap.fromAsset">Depuis</label>
         <div class="custom-select dropdown">
@@ -1138,6 +1137,10 @@
             <span class="send-preview-label" data-i18n="swap.previewMin">Minimum garanti</span>
             <span id="swap-preview-min" class="send-preview-value"></span>
           </div>
+          <div class="send-preview-row hidden">
+            <span class="send-preview-label" data-i18n="swap.previewCost" data-i18n-title="swap.previewCostTitle" title="Écart entre la valeur envoyée et la valeur reçue au cours du marché, frais compris">Coût estimé</span>
+            <span id="swap-preview-cost" class="send-preview-value"></span>
+          </div>
           <div class="send-preview-row">
             <span id="swap-preview-fees-label" class="send-preview-label" data-i18n="swap.previewFees">Frais du protocole (inclus)</span>
             <span id="swap-preview-fees" class="send-preview-value"></span>
@@ -1147,6 +1150,10 @@
             <span id="swap-preview-destination" class="send-preview-value mono"></span>
           </div>
         </div>
+        <p id="swap-preview-cost-warning" class="swap-cost-warning hidden" data-i18n="swap.previewCostHigh">
+          Coût élevé pour cet échange : vérifiez le montant. Sur un petit montant, les frais fixes du réseau
+          pèsent lourd.
+        </p>
         <label data-i18n="send.passwordToConfirm">Mot de passe (pour valider la transaction)</label>
         <input id="swap-preview-password" type="password" />
         <p id="swap-preview-error" class="error hidden"></p>

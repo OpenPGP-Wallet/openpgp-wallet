@@ -2725,3 +2725,10 @@ h2 .coin-icon-inline,
 .route-banner-actions button {
   white-space: nowrap;
 }
+
+/* Aperçu d'échange : coût estimé élevé (main.js, SWAP_HIGH_COST_PERCENT). */
+.swap-cost-warning {
+  color: var(--warning);
+  font-size: 0.85rem;
+  margin: 8px 0 0;
+}
