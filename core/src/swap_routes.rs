@@ -206,14 +206,17 @@ mod tests {
         assert_eq!(direct(a("usdc", "evm_mainnet"), a("bnb", "bsc_mainnet")), Some(Protocol::Thorchain));
         let same_network = if cow_enabled() { Protocol::Cow } else { Protocol::Thorchain };
         assert_eq!(direct(a("evm", "base_mainnet"), a("vvv", "base_mainnet")), Some(same_network), "même réseau : CoW une fois activé");
-        assert_eq!(direct(a("usdc", "sol_mainnet"), a("evm", "evm_mainnet")), None, "pas de pool USDC Solana sur THORChain");
+        // Sans route native (pas de pool USDC Solana sur THORChain), LI.FI une
+        // fois activé.
+        let lifi_or_none = lifi_enabled().then_some(Protocol::Lifi);
+        assert_eq!(direct(a("usdc", "sol_mainnet"), a("evm", "evm_mainnet")), lifi_or_none, "pas de pool USDC Solana sur THORChain");
         assert_eq!(direct(a("evm", "evm_mainnet"), a("evm", "evm_mainnet")), None);
         assert_eq!(direct(a("evm", "arbitrum_mainnet"), a("btc", "btc_mainnet")), Some(Protocol::Maya), "Arbitrum : via Maya");
         assert_eq!(direct(a("usdt", "evm_mainnet"), a("usdc", "arbitrum_mainnet")), Some(Protocol::Maya));
         assert_eq!(direct(a("evm", "evm_mainnet"), a("btc", "btc_mainnet")), Some(Protocol::Thorchain), "THORChain avant Maya");
-        assert_eq!(direct(a("evm", "arbitrum_mainnet"), a("bnb", "bsc_mainnet")), None, "aucun protocole ne relie les deux");
+        assert_eq!(direct(a("evm", "arbitrum_mainnet"), a("bnb", "bsc_mainnet")), lifi_or_none, "aucun protocole natif ne relie les deux");
         assert_eq!(find("usdc", "base_mainnet"), Some(a("usdc", "base_mainnet")));
-        assert_eq!(find("hype", "hyperevm_mainnet"), None);
+        assert_eq!(find("hype", "hyperevm_mainnet").is_some(), lifi_enabled(), "HYPE : via LI.FI seulement");
     }
 
     /// CoW : même réseau EVM seulement (monnaie du réseau comprise, via
@@ -280,7 +283,11 @@ mod tests {
     fn every_provider_of_a_pair_is_listed() {
         let eth = a("evm", "evm_mainnet");
         let btc = a("btc", "btc_mainnet");
-        assert_eq!(direct_all(eth, btc), vec![Protocol::Thorchain, Protocol::Maya]);
+        let mut eth_btc = vec![Protocol::Thorchain, Protocol::Maya];
+        if lifi_enabled() {
+            eth_btc.push(Protocol::Lifi);
+        }
+        assert_eq!(direct_all(eth, btc), eth_btc);
         let usdc = a("usdc", "evm_mainnet");
         let expected = if cow_enabled() { vec![Protocol::Cow, Protocol::Thorchain, Protocol::Maya] } else { vec![Protocol::Thorchain, Protocol::Maya] };
         assert_eq!(direct_all(eth, usdc), expected);
@@ -290,16 +297,27 @@ mod tests {
     }
 
     /// Deux étapes quand rien ne relie directement, par la monnaie d'un réseau
-    /// de préférence ; chaque étape est une paire directe ; rien vers HYPE.
+    /// de préférence ; chaque étape est une paire directe ; HYPE seulement via
+    /// LI.FI.
     #[test]
     fn two_step_routes_go_through_a_network_currency() {
         let sol = a("sol", "sol_mainnet");
         let eth = a("evm", "evm_mainnet");
-        assert_eq!(route(a("render", "sol_mainnet"), eth), Some(Route { first: Protocol::Jupiter, via: Some((sol, Protocol::Thorchain)) }));
-        assert_eq!(route(a("usdc", "sol_mainnet"), a("btc", "btc_mainnet")), Some(Route { first: Protocol::Jupiter, via: Some((sol, Protocol::Thorchain)) }));
-        assert_eq!(route(a("evm", "arbitrum_mainnet"), a("bnb", "bsc_mainnet")), Some(Route { first: Protocol::Maya, via: Some((eth, Protocol::Thorchain)) }));
+        let hype = a("hype", "hyperevm_mainnet");
         assert_eq!(route(eth, a("btc", "btc_mainnet")), Some(Route { first: Protocol::Thorchain, via: None }));
-        assert_eq!(route(eth, a("hype", "hyperevm_mainnet")), None);
+        if lifi_enabled() {
+            // Directs via LI.FI ; il reste 2 étapes depuis HyperEVM vers Solana
+            // (pas de simulation sur HyperEVM : LI.FI seulement vers un réseau EVM).
+            let lifi = Some(Route { first: Protocol::Lifi, via: None });
+            assert_eq!(route(a("render", "sol_mainnet"), eth), lifi);
+            assert_eq!(route(a("evm", "arbitrum_mainnet"), a("bnb", "bsc_mainnet")), lifi);
+            assert_eq!(route(hype, sol), Some(Route { first: Protocol::Lifi, via: Some((eth, Protocol::Thorchain)) }));
+        } else {
+            assert_eq!(route(a("render", "sol_mainnet"), eth), Some(Route { first: Protocol::Jupiter, via: Some((sol, Protocol::Thorchain)) }));
+            assert_eq!(route(a("usdc", "sol_mainnet"), a("btc", "btc_mainnet")), Some(Route { first: Protocol::Jupiter, via: Some((sol, Protocol::Thorchain)) }));
+            assert_eq!(route(a("evm", "arbitrum_mainnet"), a("bnb", "bsc_mainnet")), Some(Route { first: Protocol::Maya, via: Some((eth, Protocol::Thorchain)) }));
+            assert_eq!(route(eth, hype), None);
+        }
         for (from, to, r) in routes() {
             match r.via {
                 None => assert_eq!(direct(from, to), Some(r.first)),

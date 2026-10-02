@@ -28,9 +28,11 @@ use serde_json::Value;
 use std::sync::OnceLock;
 
 const API_BASE: &str = "https://li.quest/v1";
-/// Nom d'intégrateur enregistré sur portal.li.fi (portefeuilles de frais
-/// configurés là-bas). Sans lui (`None`), aucune route LI.FI.
-pub const INTEGRATOR: Option<&str> = None;
+/// Nom d'intégrateur enregistré sur portal.li.fi par l'utilisateur le
+/// 02/10/2026 (portefeuilles de frais configurés là-bas ; frais acceptés par
+/// LI.FI, vérifié sur de vrais devis : « LIFI Fixed Fee » 1,05 % = 0,25 % de
+/// LI.FI + nos 0,80 %). Sans lui (`None`), aucune route LI.FI.
+pub const INTEGRATOR: Option<&str> = Some("openpgp-wallet");
 /// Frais intégrateur : 0,80 % du montant envoyé (LI.FI prend en plus 0,25 %).
 pub const FEE: f64 = 0.008;
 /// Glissement toléré (1 %), garanti par le pont.
@@ -904,7 +906,7 @@ mod tests {
                     crate::eth_rpc::SimCallRequest { from: holder, to: &diamond_str, value, data },
                 ])
                 .unwrap();
-            let exp = Expected { user: addr(holder), sell_token: Some(addr(LINK)), amount: AMOUNT, diamond: to, destination_chain: SOLANA_CHAIN, receiver: &receiver, integrator: None };
+            let exp = Expected { user: addr(holder), sell_token: Some(addr(LINK)), amount: AMOUNT, diamond: to, destination_chain: SOLANA_CHAIN, receiver: &receiver, integrator: INTEGRATOR };
             let outcome = verify_simulation(&sim, &exp).unwrap();
             println!("{bridge} : {outcome:?}");
             assert_eq!(outcome == Verification::Verified, want_verified, "{bridge}");
