@@ -2,6 +2,28 @@ use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
 use std::sync::OnceLock;
 
+/// Appel à simuler par `EthRpc::simulate_v1`.
+pub struct SimCallRequest<'a> {
+    pub from: &'a str,
+    pub to: &'a str,
+    pub value: u128,
+    pub data: &'a [u8],
+}
+
+/// Résultat d'un appel simulé : succès et événements émis.
+#[derive(Clone)]
+pub struct SimulatedCall {
+    pub success: bool,
+    pub logs: Vec<SimulatedLog>,
+}
+
+#[derive(Clone)]
+pub struct SimulatedLog {
+    pub address: [u8; 20],
+    pub topics: Vec<[u8; 32]>,
+    pub data: Vec<u8>,
+}
+
 /// Client JSON-RPC minimal pour parler à un nœud Ethereum (ici : Sepolia testnet).
 pub struct EthRpc {
     endpoint: String,
@@ -108,6 +130,62 @@ impl EthRpc {
         )?;
         let hex_str = result.as_str().ok_or_else(|| anyhow!("réponse eth_call non textuelle"))?;
         hex::decode(hex_str.trim_start_matches("0x")).with_context(|| format!("réponse eth_call non hexadécimale : {hex_str}"))
+    }
+
+    /// Simule des appels À LA SUITE dans un même bloc (`eth_simulateV1`, état
+    /// "latest", sans vérification de nonce ni de frais) et renvoie, pour
+    /// chacun, son succès et les événements émis. Rien n'est diffusé. Sert à
+    /// lire ce qu'une transaction construite par un tiers ferait réellement
+    /// (destinataire émis par le contrat, jetons qui quittent l'utilisateur)
+    /// avant de la signer — autorisation préalable comprise, simulée juste
+    /// avant dans le même bloc.
+    pub fn simulate_v1(&self, calls: &[SimCallRequest]) -> Result<Vec<SimulatedCall>> {
+        let calls_json: Vec<Value> = calls
+            .iter()
+            .map(|c| {
+                json!({
+                    "from": c.from,
+                    "to": c.to,
+                    "value": format!("0x{:x}", c.value),
+                    "data": format!("0x{}", hex::encode(c.data)),
+                })
+            })
+            .collect();
+        let result = self.call("eth_simulateV1", json!([{ "blockStateCalls": [{ "calls": calls_json }], "validation": false }, "latest"]))?;
+        let simulated = result
+            .get(0)
+            .and_then(|block| block.get("calls"))
+            .and_then(Value::as_array)
+            .ok_or_else(|| anyhow!("réponse eth_simulateV1 sans appels"))?;
+        anyhow::ensure!(simulated.len() == calls.len(), "réponse eth_simulateV1 incomplète");
+        let hex_bytes = |v: &Value| -> Result<Vec<u8>> {
+            let s = v.as_str().ok_or_else(|| anyhow!("réponse eth_simulateV1 non textuelle"))?;
+            hex::decode(s.trim_start_matches("0x")).context("réponse eth_simulateV1 non hexadécimale")
+        };
+        simulated
+            .iter()
+            .map(|call| {
+                let logs = call
+                    .get("logs")
+                    .and_then(Value::as_array)
+                    .map(Vec::as_slice)
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|log| {
+                        let address: [u8; 20] = hex_bytes(&log["address"])?.try_into().map_err(|_| anyhow!("adresse d'événement invalide"))?;
+                        let topics = log["topics"]
+                            .as_array()
+                            .map(Vec::as_slice)
+                            .unwrap_or_default()
+                            .iter()
+                            .map(|t| hex_bytes(t)?.try_into().map_err(|_| anyhow!("sujet d'événement invalide")))
+                            .collect::<Result<Vec<[u8; 32]>>>()?;
+                        Ok(SimulatedLog { address, topics, data: hex_bytes(&log["data"])? })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(SimulatedCall { success: call.get("status").and_then(Value::as_str) == Some("0x1"), logs })
+            })
+            .collect()
     }
 
     /// Code déployé à `address` (vide pour une adresse ordinaire, sans contrat).

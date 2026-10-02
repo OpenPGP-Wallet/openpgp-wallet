@@ -4,7 +4,7 @@
 //! ce que l'interface propose (« Convertir ») et de ce que les commandes
 //! d'échange acceptent (chaque étape est une paire directe).
 
-use crate::{cow, thorchain_rpc, tokens};
+use crate::{cow, lifi, thorchain_rpc, tokens};
 use serde::{Deserialize, Serialize};
 
 /// Une crypto de l'app sur un réseau (identifiant de carte, réseau).
@@ -25,6 +25,9 @@ pub enum Protocol {
     Maya,
     /// Même réseau EVM : ordre signé (EIP-712) exécuté par CoW Protocol.
     Cow,
+    /// Entre deux écosystèmes : agrégateur LI.FI, transaction construite par
+    /// LI.FI et vérifiée avant signature (voir `core/src/lifi.rs`).
+    Lifi,
 }
 
 impl Protocol {
@@ -34,7 +37,7 @@ impl Protocol {
         match self {
             Protocol::Thorchain => Some(&thorchain_rpc::THORCHAIN),
             Protocol::Maya => Some(&thorchain_rpc::MAYA),
-            Protocol::Jupiter | Protocol::Cow => None,
+            Protocol::Jupiter | Protocol::Cow | Protocol::Lifi => None,
         }
     }
 }
@@ -72,11 +75,18 @@ fn cow_enabled() -> bool {
     cow::PARTNER_FEE_RECIPIENT.is_some()
 }
 
+/// LI.FI n'est proposé qu'une fois le nom d'intégrateur renseigné.
+fn lifi_enabled() -> bool {
+    lifi::INTEGRATOR.is_some()
+}
+
 /// Tous les protocoles qui relient directement `from` à `to`, du préféré au
 /// moins préféré : Jupiter (même portefeuille Solana), CoW sur un même réseau
 /// EVM (ordre sans transaction d'échange, meilleurs prix), THORChain (pools
-/// les plus profonds), Maya (Arbitrum). L'utilisateur peut choisir n'importe
-/// lequel ; les commandes d'échange refusent un protocole absent de la liste.
+/// les plus profonds), Maya (Arbitrum), puis LI.FI (agrégateur : transaction
+/// construite par un tiers, vérifiée avant signature). L'utilisateur peut
+/// choisir n'importe lequel ; les commandes d'échange refusent un protocole
+/// absent de la liste.
 pub fn direct_all(from: SwapAsset, to: SwapAsset) -> Vec<Protocol> {
     let mut all = Vec::new();
     if from == to {
@@ -94,6 +104,9 @@ pub fn direct_all(from: SwapAsset, to: SwapAsset) -> Vec<Protocol> {
     if links(&thorchain_rpc::MAYA, from, to) {
         all.push(Protocol::Maya);
     }
+    if lifi_enabled() && lifi::links((from.coin, from.network), (to.coin, to.network)) {
+        all.push(Protocol::Lifi);
+    }
     all
 }
 
@@ -107,7 +120,8 @@ pub fn assets() -> Vec<SwapAsset> {
     let mut all: Vec<SwapAsset> = Vec::new();
     let cross_chain = thorchain_rpc::ASSETS.iter().chain(thorchain_rpc::MAYA_ASSETS.iter()).map(|a| SwapAsset { coin: a.coin, network: a.network });
     let cow_assets = cow::tradable().into_iter().filter(|_| cow_enabled()).map(|(coin, network)| SwapAsset { coin, network });
-    for asset in cross_chain.chain(JUPITER).chain(cow_assets) {
+    let lifi_assets = lifi::tradable().into_iter().filter(|_| lifi_enabled()).map(|(coin, network)| SwapAsset { coin, network });
+    for asset in cross_chain.chain(JUPITER).chain(cow_assets).chain(lifi_assets) {
         if !all.contains(&asset) {
             all.push(asset);
         }
@@ -237,6 +251,27 @@ mod tests {
         for (from, to, _) in routes() {
             assert!(from != to);
             assert!(from.coin != "btc" || thorchain_rpc::AFFILIATE_NAME.is_some(), "aucune route depuis Bitcoin sans THORName");
+        }
+    }
+
+    /// LI.FI : entre deux réseaux différents, jamais depuis Bitcoin, et depuis
+    /// un réseau sans simulation (Avalanche, HyperEVM) vers un réseau EVM
+    /// seulement ; proposé en dernier, une fois le nom d'intégrateur renseigné.
+    #[test]
+    fn lifi_links_between_ecosystems() {
+        assert!(lifi::links(("render", "sol_mainnet"), ("link", "evm_mainnet")), "le cas qui manquait");
+        assert!(lifi::links(("link", "evm_mainnet"), ("render", "sol_mainnet")));
+        assert!(lifi::links(("evm", "evm_mainnet"), ("btc", "btc_mainnet")));
+        assert!(lifi::links(("hype", "hyperevm_mainnet"), ("usdc", "arbitrum_mainnet")), "HYPE vendu vers un réseau EVM");
+        assert!(lifi::links(("usdc", "base_mainnet"), ("hype", "hyperevm_mainnet")), "HYPE acheté");
+        assert!(!lifi::links(("hype", "hyperevm_mainnet"), ("sol", "sol_mainnet")), "HyperEVM ne simule pas : pas vers Solana");
+        assert!(!lifi::links(("avax", "avax_mainnet"), ("btc", "btc_mainnet")));
+        assert!(!lifi::links(("btc", "btc_mainnet"), ("evm", "evm_mainnet")), "jamais depuis Bitcoin");
+        assert!(!lifi::links(("link", "evm_mainnet"), ("usdc", "evm_mainnet")), "même réseau : CoW");
+        let render_link = direct_all(a("render", "sol_mainnet"), a("link", "evm_mainnet"));
+        assert_eq!(render_link.contains(&Protocol::Lifi), lifi_enabled());
+        if lifi_enabled() {
+            assert_eq!(direct_all(a("evm", "evm_mainnet"), a("btc", "btc_mainnet")).last(), Some(&Protocol::Lifi), "LI.FI en dernier");
         }
     }
 

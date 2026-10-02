@@ -14,7 +14,7 @@
 //!   perdu — jamais utilisé pour le déverrouillage quotidien.
 
 use crate::{
-    btc_rpc, cow, dapp_requests, derivation, entropy, eth_rpc, eth_tx, history, jupiter_rpc, memory_guard, pgp_engine, secure_storage, shamir,
+    btc_rpc, cow, dapp_requests, derivation, lifi, entropy, eth_rpc, eth_tx, history, jupiter_rpc, memory_guard, pgp_engine, secure_storage, shamir,
     evm_sign, sol_rpc, sol_spl, sol_tx, thorchain_rpc, tokens, wallet_flow,
 };
 use anyhow::{Context, Result};
@@ -2168,6 +2168,318 @@ pub fn send_cow_eth_flow(
     Ok((hash, uid))
 }
 
+// --- Échange LI.FI (entre deux écosystèmes) ------------------------------------
+
+/// Ponts qui gardent le destinataire hors chaîne quand l'arrivée n'est pas sur
+/// un réseau EVM (relevé le 02/10/2026 : l'événement du contrat ne porte
+/// qu'un marqueur) : écartés d'emblée depuis un réseau EVM, sinon chaque devis
+/// serait refusé à la vérification. Vers un réseau EVM, le destinataire est
+/// dans `BridgeData` : ils restent permis.
+const LIFI_HIDDEN_RECEIVER_BRIDGES: [&str; 1] = ["relaydepository"];
+/// Plafond du gas d'un appel LI.FI (pont avec échange préalable : ~550 000
+/// mesurés en simulation sur Ethereum).
+const LIFI_MAX_GAS: u64 = 1_000_000;
+/// Budget de frais Solana d'un envoi LI.FI (frais, priorité, rent d'un compte
+/// d'ordre du pont) : 0,01 SOL.
+pub const LIFI_SOL_FEE_BUDGET_LAMPORTS: u64 = 10_000_000;
+
+/// Jetons LI.FI (envoyé, reçu) d'une paire désignée par l'interface.
+pub fn lifi_tokens(from_coin: &str, from_network: &str, to_coin: &str, to_network: &str) -> Result<(lifi::LifiToken, lifi::LifiToken)> {
+    let from = lifi::token(from_coin, from_network).context("crypto non échangeable via LI.FI")?;
+    let to = lifi::token(to_coin, to_network).context("crypto non échangeable via LI.FI")?;
+    Ok((from, to))
+}
+
+/// Forme canonique du montant envoyé (décimales du jeton), affichée ET signée.
+pub fn canonical_lifi_amount(from: &lifi::LifiToken, amount: &str) -> Result<String> {
+    Ok(tokens::format_amount(tokens::parse_amount(amount, from.decimals)?, from.decimals))
+}
+
+fn lifi_initial_deny(from_network: &str, to_network: &str) -> Vec<String> {
+    if lifi::diamond(from_network).is_some() && lifi::diamond(to_network).is_none() {
+        LIFI_HIDDEN_RECEIVER_BRIDGES.iter().map(|b| b.to_string()).collect()
+    } else {
+        Vec::new()
+    }
+}
+
+/// Devis LI.FI pour l'aperçu (sans vérification de la transaction, faite à
+/// la confirmation) : mêmes ponts écartés que pour l'envoi.
+#[allow(clippy::too_many_arguments)]
+pub fn get_lifi_quote(
+    from_network: &'static str,
+    from: &lifi::LifiToken,
+    to_network: &'static str,
+    to: &lifi::LifiToken,
+    amount: &str,
+    from_address: &str,
+    to_address: &str,
+) -> Result<lifi::LifiQuote> {
+    lifi::Receiver::parse(to_network, to_address)?;
+    let units = tokens::parse_amount(amount, from.decimals)?;
+    lifi::quote(from_network, from, to_network, to, units, from_address, to_address, &lifi_initial_deny(from_network, to_network), None)
+}
+
+/// Vérifie la transaction d'un devis LI.FI avant signature (voir
+/// `core/src/lifi.rs`). `Some(true)` : destinataire vérifié ; `Some(false)` :
+/// effets vérifiés mais destinataire géré hors chaîne par le pont (source
+/// Solana, dit dans la boîte de confirmation) ; `None` : pont qui cache le
+/// destinataire depuis un réseau EVM, à écarter.
+fn verify_lifi_quote(quote: &lifi::LifiQuote, receiver: &lifi::Receiver) -> Result<Option<bool>> {
+    match &quote.tx {
+        lifi::LifiTx::Evm { to, data, value } => {
+            let network = wallet_flow::evm_network(quote.from_network).context("réseau EVM inconnu")?;
+            let sell_token = if quote.from.native { None } else { Some(wallet_flow::parse_evm_address(&quote.from.address)?) };
+            let expected = lifi::Expected {
+                user: wallet_flow::parse_evm_address(&quote.from_address)?,
+                sell_token,
+                amount: quote.from_amount,
+                diamond: *to,
+                destination_chain: quote.to.chain,
+                receiver,
+                integrator: lifi::INTEGRATOR,
+            };
+            if !lifi::simulates(quote.from_network) {
+                lifi::verify_static(data, &expected)?;
+                return Ok(Some(true));
+            }
+            let diamond = derivation::format_address(to);
+            let approve = sell_token.map(|_| erc20_approve_data(to, quote.from_amount));
+            let mut calls = Vec::new();
+            if let Some(approve) = &approve {
+                calls.push(eth_rpc::SimCallRequest { from: &quote.from_address, to: &quote.from.address, value: 0, data: approve });
+            }
+            calls.push(eth_rpc::SimCallRequest { from: &quote.from_address, to: &diamond, value: *value, data });
+            let simulated = eth_rpc::EthRpc::new(network.rpc).simulate_v1(&calls)?;
+            Ok(match lifi::verify_simulation(&simulated, &expected)? {
+                lifi::Verification::Verified => Some(true),
+                lifi::Verification::ReceiverHidden { .. } => None,
+            })
+        }
+        lifi::LifiTx::Solana { raw } => {
+            let owner: [u8; 32] = bs58::decode(&quote.from_address).into_vec().ok().and_then(|v| v.try_into().ok()).context("adresse Solana invalide")?;
+            let rpc = sol_rpc::SolRpc::new(wallet_flow::SOLANA_MAINNET.rpc);
+            check_swap_effects(&rpc, raw, &lifi_solana_limits(owner, quote)?)?;
+            Ok(Some(false))
+        }
+    }
+}
+
+/// Bornes d'un envoi LI.FI depuis Solana : le jeton vendu sort au plus du
+/// montant, les lamports au plus du montant (SOL) + budget de frais, rien
+/// n'est attendu en retour sur Solana.
+fn lifi_solana_limits(owner: [u8; 32], quote: &lifi::LifiQuote) -> Result<SwapEffectLimits> {
+    let amount = u64::try_from(quote.from_amount).context("montant hors limites")?;
+    let (sold_lamports, input_token) = if quote.from.native {
+        (amount, None)
+    } else {
+        let mint: [u8; 32] = bs58::decode(&quote.from.address).into_vec().ok().and_then(|v| v.try_into().ok()).context("mint invalide")?;
+        (0, Some((mint, amount)))
+    };
+    Ok(SwapEffectLimits {
+        user: owner,
+        max_lamport_loss: sold_lamports.checked_add(LIFI_SOL_FEE_BUDGET_LAMPORTS).context("montant hors limites")?,
+        input_token,
+        min_output: MinOutput::Nothing,
+    })
+}
+
+/// Devis LI.FI dont la transaction a passé la vérification : nouveau devis
+/// sans le pont fautif tant que le destinataire est caché (au plus
+/// `lifi::MAX_ROUTE_ATTEMPTS` fois). Renvoie le devis et si le destinataire a
+/// été vérifié.
+#[allow(clippy::too_many_arguments)]
+pub fn lifi_verified_quote(
+    from_network: &'static str,
+    from: &lifi::LifiToken,
+    to_network: &'static str,
+    to: &lifi::LifiToken,
+    amount: &str,
+    from_address: &str,
+    to_address: &str,
+) -> Result<(lifi::LifiQuote, bool)> {
+    let receiver = lifi::Receiver::parse(to_network, to_address)?;
+    let units = tokens::parse_amount(amount, from.decimals)?;
+    ensure_lifi_balance(from_network, from, units, from_address)?;
+    let mut deny = lifi_initial_deny(from_network, to_network);
+    for _ in 0..lifi::MAX_ROUTE_ATTEMPTS {
+        let quote = lifi::quote(from_network, from, to_network, to, units, from_address, to_address, &deny, None)?;
+        match verify_lifi_quote(&quote, &receiver)? {
+            Some(verified) => return Ok((quote, verified)),
+            None => deny.push(quote.tool.clone()),
+        }
+    }
+    anyhow::bail!("aucune route LI.FI dont le destinataire soit vérifiable (ponts écartés : {})", deny.join(", "))
+}
+
+/// Solde suffisant pour l'envoi, vérifié avant la simulation (qui échouerait
+/// sinon avec un message trompeur).
+fn ensure_lifi_balance(from_network: &str, from: &lifi::LifiToken, units: u128, from_address: &str) -> Result<()> {
+    let available = if let Some(network) = wallet_flow::evm_network(from_network) {
+        if from.native {
+            eth_rpc::EthRpc::new(network.rpc).balance(from_address)?
+        } else {
+            get_erc20_balance(network, &from.address, from_address)?
+        }
+    } else {
+        let rpc = sol_rpc::SolRpc::new(wallet_flow::SOLANA_MAINNET.rpc);
+        if from.native {
+            u128::from(rpc.balance_lamports(from_address)?)
+        } else {
+            let owner: [u8; 32] = bs58::decode(from_address).into_vec().ok().and_then(|v| v.try_into().ok()).context("adresse Solana invalide")?;
+            let mint: [u8; 32] = bs58::decode(&from.address).into_vec().ok().and_then(|v| v.try_into().ok()).context("mint invalide")?;
+            let ata = bs58::encode(sol_spl::find_associated_token_address(&owner, &mint)).into_string();
+            u128::from(rpc.token_account_balance(&ata)?.unwrap_or(0))
+        }
+    };
+    anyhow::ensure!(
+        units <= available,
+        "{} insuffisants : {} disponibles, {} demandés",
+        from.symbol,
+        tokens::format_amount(available, from.decimals),
+        tokens::format_amount(units, from.decimals)
+    );
+    Ok(())
+}
+
+/// Devis RE-demandé après la confirmation (la boîte native reste ouverte un
+/// temps arbitraire, la transaction d'un pont expire vite) sur le MÊME pont,
+/// refusé s'il ne correspond plus à ce qui a été affiché : même destinataire,
+/// minimum d'au moins 99 % de celui affiché, même niveau de vérification.
+pub fn refresh_lifi_quote_matching(shown: &lifi::LifiQuote, shown_verified: bool) -> Result<lifi::LifiQuote> {
+    let receiver = lifi::Receiver::parse(shown.to_network, &shown.to_address)?;
+    let quote = lifi::quote(
+        shown.from_network,
+        &shown.from,
+        shown.to_network,
+        &shown.to,
+        shown.from_amount,
+        &shown.from_address,
+        &shown.to_address,
+        &[],
+        Some(&shown.tool),
+    )?;
+    anyhow::ensure!(quote.tool == shown.tool, "LI.FI propose maintenant un autre pont que celui affiché — relancez l'échange");
+    anyhow::ensure!(
+        quote.to_amount_min.saturating_mul(100) >= shown.to_amount_min.saturating_mul(99),
+        "le minimum annoncé par LI.FI a baissé de plus de 1 % depuis l'affichage — relancez l'échange"
+    );
+    anyhow::ensure!(
+        verify_lifi_quote(&quote, &receiver)? == Some(shown_verified),
+        "la nouvelle transaction LI.FI ne passe plus la même vérification — relancez l'échange"
+    );
+    Ok(quote)
+}
+
+/// Frais maximum d'un envoi LI.FI depuis un réseau EVM, montrés avant la
+/// confirmation : l'appel au plafond de gas (+ frais L1 sur Base) et les
+/// autorisations au contrat LI.FI s'il en faut.
+pub fn lifi_evm_fees(network: &wallet_flow::EvmNetwork, quote: &lifi::LifiQuote, gas_price: u128) -> Result<(EvmFee, EvmFee, usize)> {
+    let lifi::LifiTx::Evm { to, data, value } = &quote.tx else { anyhow::bail!("devis LI.FI non EVM") };
+    let cap = lifi_gas_cap(network);
+    let call = EvmFee { gas_price, gas_limit: cap, l1_fee: evm_l1_fee(network, to, *value, data, gas_price, cap)? };
+    let (approve_cap, _) = swap_gas_caps(network);
+    let (approve, approvals) = if quote.from.native {
+        (EvmFee { gas_price, gas_limit: 0, l1_fee: 0 }, 0)
+    } else {
+        let contract = wallet_flow::parse_evm_address(&quote.from.address)?;
+        let approve_data = erc20_approve_data(to, quote.from_amount);
+        let fee = EvmFee { gas_price, gas_limit: approve_cap, l1_fee: evm_l1_fee(network, &contract, 0, &approve_data, gas_price, approve_cap)? };
+        let owner = wallet_flow::parse_evm_address(&quote.from_address)?;
+        (fee, approval_amounts(get_erc20_allowance(network, &quote.from.address, &owner, to)?, quote.from_amount).len())
+    };
+    Ok((call, approve, approvals))
+}
+
+fn lifi_gas_cap(network: &wallet_flow::EvmNetwork) -> u64 {
+    // Arbitrum : la limite de gas compte aussi la publication sur Ethereum.
+    if network.transfer_gas.is_none() {
+        EVM_MAX_ESTIMATED_GAS
+    } else {
+        LIFI_MAX_GAS
+    }
+}
+
+/// Envoi LI.FI depuis un réseau EVM : la transaction AFFICHÉE et vérifiée
+/// (`quote`), au nom du profil qui signe, au prix du gas affiché ;
+/// autorisation au montant exact au contrat LI.FI si nécessaire (mêmes règles
+/// que les autres échanges). Renvoie le hash de la transaction.
+pub fn send_lifi_evm(
+    data_dir: &Path,
+    device_password: &str,
+    network: &wallet_flow::EvmNetwork,
+    quote: &lifi::LifiQuote,
+    gas_price: u128,
+    profile_index: u32,
+) -> Result<String> {
+    check_evm_gas_price(network, gas_price)?;
+    let lifi::LifiTx::Evm { to, data, value } = &quote.tx else { anyhow::bail!("devis LI.FI non EVM") };
+    anyhow::ensure!(quote.from_network == network.id && lifi::diamond(network.id).map(wallet_flow::parse_evm_address).transpose()? == Some(*to), "transaction LI.FI incohérente — échange refusé");
+    let seed = unlock_seed(data_dir, device_password)?;
+    let _seed_lock = memory_guard::lock(&seed);
+    let (signing_key, address) = derivation::derive_evm_key(&seed, profile_index)?;
+    let address_str = derivation::format_address(&address);
+    anyhow::ensure!(address_str.eq_ignore_ascii_case(&quote.from_address), "la transaction LI.FI n'est pas au nom de ce profil — échange refusé");
+    let rpc = eth_rpc::EthRpc::new(network.rpc);
+    let diamond = derivation::format_address(to);
+
+    let (nonce, chain_id, balance) = std::thread::scope(|scope| {
+        let nonce = scope.spawn(|| rpc.nonce(&address_str));
+        let chain_id = scope.spawn(|| rpc.chain_id());
+        let balance = scope.spawn(|| rpc.balance(&address_str));
+        let join = "un fil de lecture ne doit pas paniquer";
+        (nonce.join().expect(join), chain_id.join().expect(join), balance.join().expect(join))
+    });
+    let (mut nonce, chain_id, balance) = (nonce?, chain_id?, balance?);
+    anyhow::ensure!(chain_id == network.chain_id, "le nœud RPC répond pour le réseau {chain_id}, pas {} — envoi refusé", network.chain_id);
+
+    let cap = lifi_gas_cap(network);
+    let call_fee = gas_price
+        .checked_mul(u128::from(cap))
+        .and_then(|g| g.checked_add(evm_l1_fee(network, to, *value, data, gas_price, cap).ok()?))
+        .and_then(|f| f.checked_add(*value))
+        .context("montant + frais dépassant la capacité représentable")?;
+    if quote.from.native {
+        ensure_fees_covered(network, to, to, &[], gas_price, call_fee, balance)?;
+    } else {
+        let contract = wallet_flow::parse_evm_address(&quote.from.address)?;
+        let token_balance = get_erc20_balance(network, &quote.from.address, &address_str)?;
+        anyhow::ensure!(
+            quote.from_amount <= token_balance,
+            "{} insuffisants : {} disponibles, {} demandés",
+            quote.from.symbol,
+            tokens::format_amount(token_balance, quote.from.decimals),
+            tokens::format_amount(quote.from_amount, quote.from.decimals)
+        );
+        let approvals = approval_amounts(get_erc20_allowance(network, &quote.from.address, &address, to)?, quote.from_amount);
+        ensure_fees_covered(network, &contract, to, &approvals, gas_price, call_fee, balance)?;
+        nonce = send_approvals(&rpc, network, &signing_key, &address_str, chain_id, nonce, &contract, to, &approvals, gas_price)?;
+    }
+
+    let estimated = rpc.estimate_gas(&address_str, &diamond, *value, data)?;
+    let gas_limit = estimated.saturating_mul(12).div_ceil(10).max(eth_tx::intrinsic_gas(data));
+    anyhow::ensure!(gas_limit <= cap, "gas estimé anormalement élevé pour l'échange LI.FI ({gas_limit}, maximum {cap}) — échange refusé");
+    let tx = eth_tx::EthTx { nonce, gas_price, gas_limit, to: *to, value: *value, chain_id, data: data.clone() };
+    rpc.send_raw_transaction(&tx.sign(&signing_key)?)
+}
+
+/// Envoi LI.FI depuis Solana : effets revérifiés par simulation juste avant
+/// la signature (le jeton vendu sort au plus du montant, rien d'autre ne
+/// quitte l'utilisateur au-delà du budget de frais, aucune autorité cédée),
+/// puis signature de la transaction AFFICHÉE au nom du profil.
+pub fn send_lifi_solana(data_dir: &Path, device_password: &str, quote: &lifi::LifiQuote, profile_index: u32) -> Result<String> {
+    let lifi::LifiTx::Solana { raw } = &quote.tx else { anyhow::bail!("devis LI.FI non Solana") };
+    let seed = unlock_seed(data_dir, device_password)?;
+    let _seed_lock = memory_guard::lock(&seed);
+    let signing_key = derivation::derive_solana_key(&seed, profile_index);
+    let owner = signing_key.verifying_key().to_bytes();
+    anyhow::ensure!(bs58::encode(owner).into_string() == quote.from_address, "la transaction LI.FI n'est pas au nom de ce profil — échange refusé");
+    let rpc = sol_rpc::SolRpc::new(wallet_flow::SOLANA_MAINNET.rpc);
+    check_swap_effects(&rpc, raw, &lifi_solana_limits(owner, quote)?)?;
+    let signed = jupiter_rpc::sign_swap_transaction(raw, &signing_key, &owner)?;
+    rpc.send_transaction(&signed)
+}
+
 pub struct BtcFeeEstimate {
     pub fast_sat: u64,
     pub medium_sat: u64,
@@ -2871,6 +3183,9 @@ enum MinOutput {
     Lamports(u64),
     /// Jeton SPL (mint, quantité minimale).
     Token([u8; 32], u64),
+    /// Rien n'arrive sur Solana : échange vers un autre réseau (LI.FI), où
+    /// seules les pertes sont bornées.
+    Nothing,
 }
 
 fn swap_effect_limits(owner: [u8; 32], from_coin: &str, amount_native: u64, to_coin: &str, min_out: u64) -> Result<SwapEffectLimits> {
@@ -3082,6 +3397,7 @@ fn verify_swap_effects(
                 after.saturating_sub(before)
             );
         }
+        MinOutput::Nothing => {}
     }
     for (mint, before) in &tokens_pre {
         let allowed = match limits.input_token {
@@ -3107,7 +3423,7 @@ fn check_swap_effects(rpc: &sol_rpc::SolRpc, tx: &[u8], limits: &SwapEffectLimit
     let pre = rpc.multiple_accounts(&addresses)?;
     match rpc.simulate_with_account_states(tx, &addresses)? {
         sol_rpc::SimulationOutcome::Failed { logs } => Err(
-            sol_rpc::insufficient_lamports_error(&logs).unwrap_or_else(|| anyhow::anyhow!("échec de simulation du swap Jupiter :\n{logs}")),
+            sol_rpc::insufficient_lamports_error(&logs).unwrap_or_else(|| anyhow::anyhow!("échec de simulation de l'échange :\n{logs}")),
         ),
         sol_rpc::SimulationOutcome::Succeeded { post_states } => verify_swap_effects(&addresses, &pre, &post_states, limits),
     }

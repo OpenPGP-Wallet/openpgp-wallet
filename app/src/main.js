@@ -744,7 +744,7 @@ const I18N = {
     "send.txSent": "Transaction envoyée : {tx}",
     "swap.title": "Échanger",
     "swap.subtitle":
-      "Passe par un protocole externe non audité par cette app (voir \"Comment ça marche\"). Frais d'affiliation inclus : 0,80 % (THORChain, Maya, Jupiter), 1 % (CoW, sur un même réseau EVM), sauf mention contraire dans la confirmation.",
+      "Passe par un protocole externe non audité par cette app (voir \"Comment ça marche\"). Frais d'affiliation inclus : 0,80 % (THORChain, Maya, Jupiter, LI.FI), 1 % (CoW, sur un même réseau EVM), sauf mention contraire dans la confirmation.",
     "swap.fromAsset": "Depuis",
     "swap.toAsset": "Vers",
     "swap.viaJupiter": "via Jupiter, même portefeuille",
@@ -787,6 +787,16 @@ const I18N = {
     "swap.cowOrderCancelled": "Ordre annulé : rien n'a été échangé.",
     "swap.cowOrderUnknown": "Suivi de l'ordre indisponible pour l'instant — voir CoW Explorer.",
     "swap.cowViewOrder": "Voir l'ordre",
+    "swap.viaLifi": "via LI.FI",
+    "swap.previewLifiRoute": "Pont (via LI.FI)",
+    "swap.lifiDuration": "≈ {minutes} min",
+    "swap.lifiSent": "Transaction envoyée. Transfert en cours (≈ {minutes} min)…",
+    "swap.lifiDone": "Échange terminé : les fonds sont arrivés.",
+    "swap.lifiPartial": "Échange terminé, mais reçu dans une autre crypto que prévu — voir LI.FI Scan.",
+    "swap.lifiRefunded": "Le pont a remboursé le montant : l'échange n'a pas eu lieu.",
+    "swap.lifiFailed": "Le transfert a échoué — voir LI.FI Scan (le pont rembourse selon ses règles).",
+    "swap.lifiUnknown": "Suivi indisponible pour l'instant — voir LI.FI Scan.",
+    "swap.lifiView": "Voir sur LI.FI Scan",
     "addProfile.title": "Nouveau profil",
     "addProfile.subtitle":
       "Un profil = une nouvelle adresse par réseau, dérivée de la même clé maîtresse déjà protégée par Shamir/PGP — aucune nouvelle sauvegarde à faire.",
@@ -1236,7 +1246,7 @@ const I18N = {
     "send.txSent": "Transaction sent: {tx}",
     "swap.title": "Swap",
     "swap.subtitle":
-      "Goes through an external protocol not audited by this app (see \"How it works\"). Affiliate fee included: 0.80% (THORChain, Maya, Jupiter), 1% (CoW, on a single EVM network), unless the confirmation says otherwise.",
+      "Goes through an external protocol not audited by this app (see \"How it works\"). Affiliate fee included: 0.80% (THORChain, Maya, Jupiter, LI.FI), 1% (CoW, on a single EVM network), unless the confirmation says otherwise.",
     "swap.fromAsset": "From",
     "swap.toAsset": "To",
     "swap.viaJupiter": "via Jupiter, same wallet",
@@ -1276,6 +1286,16 @@ const I18N = {
     "swap.cowOrderCancelled": "Order cancelled: nothing was swapped.",
     "swap.cowOrderUnknown": "Order tracking unavailable for now — see CoW Explorer.",
     "swap.cowViewOrder": "View order",
+    "swap.viaLifi": "via LI.FI",
+    "swap.previewLifiRoute": "Bridge (via LI.FI)",
+    "swap.lifiDuration": "≈ {minutes} min",
+    "swap.lifiSent": "Transaction sent. Transfer in progress (≈ {minutes} min)…",
+    "swap.lifiDone": "Swap completed: the funds have arrived.",
+    "swap.lifiPartial": "Swap completed, but received in a different crypto than planned — see LI.FI Scan.",
+    "swap.lifiRefunded": "The bridge refunded the amount: the swap did not happen.",
+    "swap.lifiFailed": "The transfer failed — see LI.FI Scan (the bridge refunds according to its rules).",
+    "swap.lifiUnknown": "Tracking unavailable for now — see LI.FI Scan.",
+    "swap.lifiView": "View on LI.FI Scan",
     "addProfile.title": "New profile",
     "addProfile.subtitle":
       "A profile = a new address per network, derived from the same master key already protected by Shamir/PGP — no new backup needed.",
@@ -4307,7 +4327,7 @@ function selectedSwapPair() {
 
 // Frais d'affiliation de chaque fournisseur, en % (voir core/src/cow.rs et
 // core/src/thorchain_rpc.rs).
-const SWAP_PROVIDER_FEE_PERCENT = { thorchain: 0.8, maya: 0.8, jupiter: 0.8, cow: 1 };
+const SWAP_PROVIDER_FEE_PERCENT = { thorchain: 0.8, maya: 0.8, jupiter: 0.8, cow: 1, lifi: 0.8 };
 
 // Menu « Fournisseur » : tous ceux qui savent faire l'étape, le recommandé
 // en premier et choisi par défaut à chaque changement de paire.
@@ -4333,7 +4353,7 @@ function onSwapTargetChange() {
   updateSwapDestination();
 }
 
-const SWAP_PROTOCOL_NAMES = { thorchain: "THORChain", maya: "Maya", jupiter: "Jupiter", cow: "CoW" };
+const SWAP_PROTOCOL_NAMES = { thorchain: "THORChain", maya: "Maya", jupiter: "Jupiter", cow: "CoW", lifi: "LI.FI" };
 
 // Au-delà de ce coût estimé (frais et écart au cours du marché), l'aperçu
 // avertit avant de continuer.
@@ -4385,7 +4405,7 @@ function updateSwapToOptions() {
         const option = document.createElement("option");
         option.value = swapKey(p.to_coin, p.to_network);
         option.dataset.coin = p.to_coin;
-        const note = p.via ? t("swap.viaTwoSteps", { via: swapShortLabel(p.via) }) : { jupiter: t("swap.viaJupiter"), cow: t("swap.viaCow") }[p.protocol];
+        const note = p.via ? t("swap.viaTwoSteps", { via: swapShortLabel(p.via) }) : { jupiter: t("swap.viaJupiter"), cow: t("swap.viaCow"), lifi: t("swap.viaLifi") }[p.protocol];
         option.textContent = swapAssetLabel(p.to_coin, p.to_network) + (note ? ` · ${note}` : "");
         return option;
       })
@@ -4492,6 +4512,20 @@ swapQuoteBtn.addEventListener("click", withBusyButton(swapQuoteBtn, async () => 
       minRow.classList.remove("hidden");
       destRow.classList.add("hidden");
       feeRow.classList.remove("hidden");
+    } else if (step.protocol === "lifi") {
+      // LI.FI : pont choisi par l'agrégateur, durée estimée, minimum annoncé
+      // (garanti par le pont) ; la transaction elle-même est vérifiée à la
+      // confirmation.
+      const quote = await invoke("get_lifi_quote", { fromCoin, fromNetwork, toCoin, toNetwork, amount, destination, profileIndex: swapContext.profileIndex });
+      receivingText = `≈ ${quote.expected_out}`;
+      receivedAmount = Number.parseFloat(quote.expected_out);
+      document.getElementById("swap-preview-min").textContent = quote.min_out;
+      document.getElementById("swap-preview-fees-label").textContent = t("swap.previewLifiRoute");
+      document.getElementById("swap-preview-fees").textContent = `${quote.bridge}, ${t("swap.lifiDuration", { minutes: Math.max(1, Math.ceil(quote.duration_secs / 60)) })}`;
+      document.getElementById("swap-preview-destination").textContent = destination;
+      minRow.classList.remove("hidden");
+      destRow.classList.remove("hidden");
+      feeRow.classList.remove("hidden");
     } else if (step.protocol === "jupiter") {
       const outAmount = await invoke("get_jupiter_quote", { fromCoin, toCoin, amount });
       receivingText = `≈ ${outAmount} ${COIN_SYMBOL[toCoin] || toCoin.toUpperCase()}`;
@@ -4592,6 +4626,9 @@ swapPreviewConfirmBtn.addEventListener("click", withBusyButton(swapPreviewConfir
     if (step.protocol === "cow") {
       const order = await invoke("cow_swap_transaction", { password, network: fromNetwork, fromCoin, toCoin, amount, profileIndex });
       trackCowOrder(successEl, fromNetwork, order);
+    } else if (step.protocol === "lifi") {
+      const transfer = await invoke("lifi_swap_transaction", { password, fromCoin, fromNetwork, toCoin, toNetwork, amount, destination, profileIndex });
+      trackLifiTransfer(successEl, transfer);
     } else {
       const txResult = step.protocol === "jupiter"
         ? await invoke("jupiter_swap_transaction", { password, fromCoin, toCoin, amount, profileIndex })
@@ -4713,6 +4750,55 @@ scheduleRoutePoll();
 // lien vers CoW Explorer.
 const COW_ORDER_POLL_MS = 15000;
 const COW_ORDER_MAX_WAIT_MS = 35 * 60 * 1000;
+
+// Suivi d'un transfert LI.FI : état relu toutes les 15 s jusqu'à son arrivée,
+// son échec ou un remboursement (au plus 2 h) ; lien vers LI.FI Scan.
+const LIFI_POLL_MS = 15000;
+const LIFI_MAX_WAIT_MS = 2 * 60 * 60 * 1000;
+
+function trackLifiTransfer(successEl, transfer) {
+  const text = document.createElement("span");
+  const setText = (key, vars) => {
+    text.textContent = t(key, vars);
+  };
+  setText("swap.lifiSent", { minutes: Math.max(1, Math.ceil(transfer.duration_secs / 60)) });
+  const link = document.createElement("button");
+  link.type = "button";
+  link.className = "link";
+  link.textContent = t("swap.lifiView");
+  link.addEventListener("click", () => {
+    invoke("open_external_link", { url: transfer.explorer_url }).catch((e) => alert(t("wallet.linkError", { err: e })));
+  });
+  successEl.replaceChildren(text, " ", link);
+  successEl.classList.remove("hidden");
+
+  const started = Date.now();
+  const poll = async () => {
+    let status;
+    try {
+      status = await invoke("lifi_status", { txHash: transfer.tx_hash, fromChain: transfer.from_chain, toChain: transfer.to_chain });
+    } catch (e) {
+      console.error(e);
+    }
+    const final = {
+      "DONE:COMPLETED": "swap.lifiDone",
+      "DONE:PARTIAL": "swap.lifiPartial",
+      "DONE:REFUNDED": "swap.lifiRefunded",
+      FAILED: "swap.lifiFailed",
+    }[status] ?? (status?.startsWith("DONE") ? "swap.lifiDone" : null);
+    if (final) {
+      setText(final);
+      refreshAllBalances();
+      return;
+    }
+    if (Date.now() - started > LIFI_MAX_WAIT_MS) {
+      setText("swap.lifiUnknown");
+      return;
+    }
+    setTimeout(poll, LIFI_POLL_MS);
+  };
+  setTimeout(poll, LIFI_POLL_MS);
+}
 
 function trackCowOrder(successEl, network, order) {
   const text = document.createElement("span");

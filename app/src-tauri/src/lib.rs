@@ -152,6 +152,22 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("Échange annulé (confirmation refusée).", "Swap cancelled (confirmation refused)."),
     // CoW Protocol (core/src/cow.rs, core/src/api.rs)
     ("échange via CoW pas encore activé", "swaps via CoW are not enabled yet"),
+    // LI.FI (core/src/lifi.rs, core/src/api.rs)
+    (
+        "limite de devis LI.FI atteinte (75 toutes les 2 heures sans compte) — réessayez plus tard",
+        "LI.FI quote limit reached (75 every 2 hours without an account) — try again later",
+    ),
+    ("LI.FI propose maintenant un autre pont que celui affiché — relancez l'échange", "LI.FI now offers a different bridge than the one shown — start the swap again"),
+    (
+        "le minimum annoncé par LI.FI a baissé de plus de 1 % depuis l'affichage — relancez l'échange",
+        "the minimum announced by LI.FI dropped by more than 1% since it was shown — start the swap again",
+    ),
+    (
+        "la nouvelle transaction LI.FI ne passe plus la même vérification — relancez l'échange",
+        "the new LI.FI transaction no longer passes the same check — start the swap again",
+    ),
+    ("la transaction LI.FI n'est pas au nom de ce profil — échange refusé", "the LI.FI transaction is not in this profile's name — swap refused"),
+    ("transaction LI.FI incohérente — échange refusé", "inconsistent LI.FI transaction — swap refused"),
     ("le devis CoW a expiré — relancez l'échange", "the CoW quote expired — start the swap again"),
     ("ordre CoW incohérent — échange refusé", "inconsistent CoW order — swap refused"),
     ("l'ordre CoW n'est pas au nom de ce profil — échange refusé", "the CoW order is not in this profile's name — swap refused"),
@@ -454,6 +470,12 @@ fn translate_dynamic_error(msg: &str) -> Option<String> {
     }
     if let Some(label) = msg.strip_prefix("le compte « ").and_then(|rest| rest.strip_suffix(" » n'est pas sur ce réseau")) {
         return Some(format!("the account \"{label}\" is not on this network"));
+    }
+    if let Some(rest) = msg.strip_prefix("devis LI.FI refusé : ") {
+        return Some(format!("LI.FI quote refused: {rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("aucune route LI.FI dont le destinataire soit vérifiable (ponts écartés : ") {
+        return Some(format!("no LI.FI route with a verifiable recipient (bridges excluded: {rest}"));
     }
     if let Some(rest) = msg.strip_prefix("devis CoW refusé : ") {
         return Some(format!("CoW quote refused: {rest}"));
@@ -797,7 +819,7 @@ fn save_bytes_with_dialog(suggested_name: String, content_b64: String, app: taur
 /// aurait laissé un frontend compromis ouvrir n'importe quelle page — un vecteur
 /// de phishing simple, ouvert sans aucun bénéfice fonctionnel puisqu'aucun appel
 /// légitime de cette commande ne cible jamais autre chose que ces domaines.
-const ALLOWED_EXTERNAL_LINK_PREFIXES: [&str; 3] = ["https://explorer.solana.com/", "https://blockstream.info/", "https://explorer.cow.fi/"];
+const ALLOWED_EXTERNAL_LINK_PREFIXES: [&str; 4] = ["https://explorer.solana.com/", "https://blockstream.info/", "https://explorer.cow.fi/", "https://scan.li.fi/"];
 
 /// Lien vers un explorateur connu de l'app : Solana, Bitcoin, ou l'explorateur
 /// d'un réseau EVM (origine de `explorer_tx_prefix` : Etherscan, Arbiscan,
@@ -3036,6 +3058,241 @@ async fn cow_swap_transaction(
     .await
 }
 
+// --- Swap (LI.FI) ------------------------------------------------------------
+// Entre deux écosystèmes : transaction construite par LI.FI, vérifiée avant
+// signature (voir core/src/lifi.rs et api::lifi_verified_quote).
+
+type LifiPair = (&'static str, &'static str, pgp_wallet_poc::lifi::LifiToken, pgp_wallet_poc::lifi::LifiToken);
+
+/// Paire LI.FI désignée par l'interface : refusée si LI.FI ne la relie pas
+/// (voir `swap_routes::direct_all`). Renvoie les réseaux (identifiants
+/// statiques) et les jetons LI.FI.
+fn lifi_pair(from_coin: &str, from_network: &str, to_coin: &str, to_network: &str) -> Result<LifiPair, String> {
+    use pgp_wallet_poc::swap_routes;
+    let (from, to) = swap_routes::find(from_coin, from_network)
+        .zip(swap_routes::find(to_coin, to_network))
+        .filter(|(f, t)| swap_routes::direct_all(*f, *t).contains(&swap_routes::Protocol::Lifi))
+        .ok_or_else(|| translate_error("échange non disponible entre ces deux cryptos"))?;
+    let (from_token, to_token) = api::lifi_tokens(from_coin, from_network, to_coin, to_network).t_err()?;
+    Ok((from.network, to.network, from_token, to_token))
+}
+
+/// Adresse publique du profil sur le réseau de départ (mémorisée au
+/// déverrouillage) : l'envoi revérifie qu'elle est celle de la clé qui signe.
+fn profile_address_on(app: &tauri::AppHandle, profile_index: u32, network: &str) -> Result<String, String> {
+    let cache = app.state::<ProfileAddressCache>();
+    let cache = cache.0.lock().unwrap_or_else(|p| p.into_inner());
+    let (evm, solana) = cache.get(&profile_index).ok_or_else(|| translate_error("adresse du profil inconnue — déverrouillez le portefeuille"))?;
+    match network {
+        "sol_mainnet" => Ok(solana.clone()),
+        _ if wallet_flow::evm_network(network).is_some() => Ok(evm.clone()),
+        _ => Err(translate_error("échange non disponible entre ces deux cryptos")),
+    }
+}
+
+/// Montant affiché : 8 décimales au plus, TRONQUÉ.
+fn lifi_amount(units: u128, token: &pgp_wallet_poc::lifi::LifiToken) -> String {
+    let cut = 10u128.pow(u32::from(token.decimals.saturating_sub(8)));
+    format!("{} {}", pgp_wallet_poc::tokens::format_amount(units / cut * cut, token.decimals), token.symbol)
+}
+
+#[derive(Serialize)]
+struct LifiQuoteDto {
+    expected_out: String,
+    min_out: String,
+    bridge: String,
+    duration_secs: u64,
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn get_lifi_quote(
+    from_coin: String,
+    from_network: String,
+    to_coin: String,
+    to_network: String,
+    amount: String,
+    destination: String,
+    profile_index: u32,
+    app: tauri::AppHandle,
+) -> Result<LifiQuoteDto, String> {
+    run_blocking(move || {
+        let (from_net, to_net, from, to) = lifi_pair(&from_coin, &from_network, &to_coin, &to_network)?;
+        let from_address = profile_address_on(&app, profile_index, from_net)?;
+        let destination = canonical_address_input(&destination)?;
+        let quote = api::get_lifi_quote(from_net, &from, to_net, &to, &amount, &from_address, &destination).t_err()?;
+        Ok(LifiQuoteDto {
+            expected_out: lifi_amount(quote.to_amount, &to),
+            min_out: lifi_amount(quote.to_amount_min, &to),
+            bridge: quote.tool_name,
+            duration_secs: quote.duration_secs,
+        })
+    })
+    .await
+}
+
+fn lifi_duration(secs: u64) -> String {
+    let minutes = secs.div_ceil(60).max(1);
+    lang(&format!("≈ {minutes} min"), &format!("≈ {minutes} min")).to_string()
+}
+
+/// Confirmation native d'un échange LI.FI : pont, montants, adresse d'arrivée
+/// et niveau de vérification de cette adresse (vérifiée dans la simulation,
+/// ou gérée hors chaîne par le pont depuis Solana), frais, transactions —
+/// texte construit uniquement à partir du devis vérifié côté Rust.
+#[allow(clippy::too_many_arguments)]
+fn confirm_lifi_swap_native(
+    app: &tauri::AppHandle,
+    from_label: &str,
+    route: &str,
+    sell_line: &str,
+    expected_out: &str,
+    min_out: &str,
+    bridge: &str,
+    duration: &str,
+    destination: &str,
+    receiver_verified: bool,
+    fee_lines: &str,
+) -> bool {
+    let from_label = dialog_label(from_label);
+    let message = if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
+        let receiver_line = if receiver_verified {
+            "(address checked by the app in a simulation of the transaction — verify this is really yours)".to_string()
+        } else {
+            format!("⚠ This address is handled off-chain by the {bridge} bridge: the app checked what leaves your wallet, but cannot verify the arrival address.")
+        };
+        format!(
+            "Swap via LI.FI (external aggregator, not audited by this app)\n\nFrom profile: {from_label}\nRoute: {route}\nSending: {sell_line}\nBridge chosen by LI.FI: {bridge} (estimated time {duration})\nExpected to receive: ~{expected_out}\nMinimum announced by LI.FI: {min_out} (guaranteed by the bridge, not verifiable by this app)\nFunds will arrive at: {destination}\n{receiver_line}\n{fee_lines}\nIncludes a 0.80% affiliate fee, plus LI.FI's and the bridge's own fees.\nThis is irreversible.\n\nConfirm this swap?"
+        )
+    } else {
+        let receiver_line = if receiver_verified {
+            "(adresse vérifiée par l'app dans une simulation de la transaction — vérifiez qu'il s'agit bien de la vôtre)".to_string()
+        } else {
+            format!("⚠ Cette adresse est gérée hors chaîne par le pont {bridge} : l'app a vérifié ce qui quitte votre portefeuille, mais ne peut pas vérifier l'adresse d'arrivée.")
+        };
+        format!(
+            "Échange via LI.FI (agrégateur externe, non audité par cette app)\n\nDepuis le profil : {from_label}\nTrajet : {route}\nEnvoi : {sell_line}\nPont choisi par LI.FI : {bridge} (durée estimée {duration})\nRéception attendue : ~{expected_out}\nMinimum annoncé par LI.FI : {min_out} (garanti par le pont, non vérifiable par cette app)\nLes fonds arriveront sur : {destination}\n{receiver_line}\n{fee_lines}\nInclut 0,80 % de frais d'affiliation, plus les frais de LI.FI et du pont.\nC'est irréversible.\n\nConfirmer cet échange ?"
+        )
+    };
+    app.dialog()
+        .message(message)
+        .title(lang("Confirmer l'échange", "Confirm the swap"))
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancel)
+        .blocking_show()
+}
+
+#[derive(Serialize)]
+struct LifiTransferDto {
+    tx_hash: String,
+    explorer_url: String,
+    from_chain: u64,
+    to_chain: u64,
+    duration_secs: u64,
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn lifi_swap_transaction(
+    password: String,
+    from_coin: String,
+    from_network: String,
+    to_coin: String,
+    to_network: String,
+    amount: String,
+    destination: String,
+    profile_index: u32,
+    app: tauri::AppHandle,
+) -> Result<LifiTransferDto, String> {
+    run_blocking(move || {
+        let password = Zeroizing::new(password);
+        let dir = data_dir(&app)?;
+        let (from_net, to_net, from, to) = lifi_pair(&from_coin, &from_network, &to_coin, &to_network)?;
+        // Formes canoniques, affichées ET signées (voir `send_transaction`).
+        let amount = api::canonical_lifi_amount(&from, &amount).t_err()?;
+        let destination = canonical_address_input(&destination)?;
+        let from_address = profile_address_on(&app, profile_index, from_net)?;
+        let from_label = api::list_profiles(&dir)
+            .into_iter()
+            .find(|p| p.index == profile_index)
+            .map(|p| p.label)
+            .unwrap_or_else(|| format!("profil #{profile_index}"));
+
+        // Devis obtenu ICI et sa transaction vérifiée AVANT la confirmation.
+        let (quote, receiver_verified) = api::lifi_verified_quote(from_net, &from, to_net, &to, &amount, &from_address, &destination).t_err()?;
+        let sell_line = lifi_amount(quote.from_amount, &from);
+        let evm_net = wallet_flow::evm_network(from_net);
+        let gas_price = match evm_net {
+            Some(net) => Some(api::evm_gas_price_for_confirmation(net).t_err()?),
+            None => None,
+        };
+        let fee_lines = match (evm_net, gas_price) {
+            (Some(net), Some(gas_price)) => {
+                let (call, approve, approvals) = api::lifi_evm_fees(net, &quote, gas_price).t_err()?;
+                let total = call.max_total().t_err()?.saturating_add(approve.max_total().t_err()?.saturating_mul(approvals as u128)) as f64 / 1e18;
+                let (gwei, symbol) = (gas_price as f64 / 1e9, net.native_symbol);
+                let diamond = pgp_wallet_poc::lifi::diamond(from_net).unwrap_or("?");
+                let mut lines = lang(
+                    &format!("Frais réseau maximum : {total:.8} {symbol} ({gwei:.4} gwei)"),
+                    &format!("Maximum network fee: {total:.8} {symbol} ({gwei:.4} gwei)"),
+                )
+                .to_string();
+                if approvals > 0 {
+                    lines.push_str(lang(
+                        &format!("\nAutorisation préalable (transaction séparée) : le contrat LI.FI {diamond} pourra prélever exactement {sell_line}, une seule fois."),
+                        &format!("\nPrior approval (separate transaction): LI.FI's contract {diamond} will be allowed to take exactly {sell_line}, once."),
+                    ));
+                }
+                lines
+            }
+            _ => lang("Frais réseau Solana : au plus 0,01 SOL", "Solana network fee: at most 0.01 SOL").to_string(),
+        };
+        let short_name = |network: &str| match network {
+            "sol_mainnet" => "Solana".to_string(),
+            "btc_mainnet" => "Bitcoin".to_string(),
+            _ => wallet_flow::evm_network(network).map(|n| n.name.to_string()).unwrap_or_else(|| network.to_string()),
+        };
+        let route = format!("{} → {}", short_name(from_net), short_name(to_net));
+        if !confirm_lifi_swap_native(
+            &app,
+            &from_label,
+            &route,
+            &sell_line,
+            &lifi_amount(quote.to_amount, &to),
+            &lifi_amount(quote.to_amount_min, &to),
+            &quote.tool_name,
+            &lifi_duration(quote.duration_secs),
+            &quote.to_address,
+            receiver_verified,
+            &fee_lines,
+        ) {
+            return Err(translate_error("Échange annulé (confirmation refusée)."));
+        }
+
+        // Nouveau devis sur le même pont (la transaction d'un pont expire
+        // vite), refusé s'il ne correspond plus à ce qui a été affiché.
+        let fresh = api::refresh_lifi_quote_matching(&quote, receiver_verified).t_err()?;
+        let tx_hash = match (evm_net, gas_price) {
+            (Some(net), Some(gas_price)) => api::send_lifi_evm(&dir, &password, net, &fresh, gas_price, profile_index).t_err()?,
+            _ => api::send_lifi_solana(&dir, &password, &fresh, profile_index).t_err()?,
+        };
+        Ok(LifiTransferDto {
+            explorer_url: pgp_wallet_poc::lifi::explorer_url(&tx_hash),
+            tx_hash,
+            from_chain: fresh.from.chain,
+            to_chain: fresh.to.chain,
+            duration_secs: fresh.duration_secs,
+        })
+    })
+    .await
+}
+
+/// État d'un transfert LI.FI, suivi par l'interface après l'envoi.
+#[tauri::command]
+async fn lifi_status(tx_hash: String, from_chain: u64, to_chain: u64) -> Result<String, String> {
+    run_blocking(move || pgp_wallet_poc::lifi::status(&tx_hash, from_chain, to_chain).t_err()).await
+}
+
 /// État d'un ordre CoW (« open », « fulfilled », « expired »…), suivi par
 /// l'interface après l'envoi.
 #[tauri::command]
@@ -3969,6 +4226,9 @@ pub fn run() {
             get_cow_quote,
             cow_swap_transaction,
             cow_order_status,
+            get_lifi_quote,
+            lifi_swap_transaction,
+            lifi_status,
             get_own_certificate,
             list_recipients,
             add_recipient,
