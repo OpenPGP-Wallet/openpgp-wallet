@@ -2779,6 +2779,9 @@ h2 .coin-icon-inline,
   cursor: grab;
   outline: 1px dashed var(--border);
   outline-offset: 2px;
+  /* Glissement au pointeur : pas de défilement tactile ni de sélection. */
+  touch-action: none;
+  user-select: none;
 }
 
 .wallet-grid.organizing .wallet-card > :not(.organize-controls) {

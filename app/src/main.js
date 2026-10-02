@@ -4061,9 +4061,6 @@ function setOrganizing(on) {
   document.getElementById("organize-bar").classList.toggle("hidden", !on);
   document.getElementById("organize-btn").setAttribute("aria-pressed", String(on));
   walletGrid.classList.toggle("organizing", on);
-  walletGrid.querySelectorAll(".wallet-card").forEach((card) => {
-    card.draggable = on;
-  });
   renderOrganizeModes();
 }
 
@@ -4076,37 +4073,65 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && organizing && !document.querySelector(".modal-overlay:not(.hidden)")) setOrganizing(false);
 });
 
-// Glisser-déposer (souris) : la carte survolée s'écarte en direct ; insertion
-// avant ou après elle selon la position du pointeur (horizontale en grille,
-// verticale sur une seule colonne, vue liste comprise).
-walletGrid.addEventListener("dragstart", (e) => {
-  const card = e.target.closest?.(".wallet-card");
-  if (!organizing || !card) return;
-  draggingCard = card;
-  card.classList.add("dragging");
-  e.dataTransfer.effectAllowed = "move";
-  e.dataTransfer.setData("text/plain", card.dataset.coin);
-});
-walletGrid.addEventListener("dragover", (e) => {
-  if (!draggingCard) return;
+// Glisser-déposer au pointeur (souris, stylet, tactile) — pas le
+// glisser-déposer HTML5 : sous Windows, Tauri intercepte le glissement dans
+// la fenêtre (dépôt de fichiers) et ses événements n'arrivent jamais aux
+// cartes. Le déplacement commence après quelques pixels ; la carte survolée
+// s'écarte en direct (insertion avant ou après elle selon la position du
+// pointeur : horizontale en grille, verticale sur une seule colonne, vue liste
+// comprise) ; près du bord de la fenêtre, la page défile.
+const DRAG_START_DISTANCE = 6;
+const DRAG_SCROLL_EDGE = 60;
+let pointerDrag = null;
+
+walletGrid.addEventListener("pointerdown", (e) => {
+  if (!organizing || e.button !== 0 || e.target.closest(".organize-move")) return;
+  const card = e.target.closest(".wallet-card");
+  if (!card) return;
+  pointerDrag = { card, pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, started: false };
+  card.setPointerCapture(e.pointerId);
   e.preventDefault();
-  const target = e.target.closest?.(".wallet-card");
-  if (!target || target === draggingCard) return;
+});
+
+// Mouvement et relâchement écoutés sur toute la page : déplacer la carte
+// dans la grille lui fait perdre la capture du pointeur, et le relâchement
+// peut avoir lieu hors de la grille (constaté : carte restée « en cours »).
+document.addEventListener("pointermove", (e) => {
+  if (!pointerDrag || e.pointerId !== pointerDrag.pointerId) return;
+  if (!pointerDrag.started) {
+    if (Math.hypot(e.clientX - pointerDrag.startX, e.clientY - pointerDrag.startY) < DRAG_START_DISTANCE) return;
+    pointerDrag.started = true;
+    draggingCard = pointerDrag.card;
+    draggingCard.classList.add("dragging");
+  }
+  if (e.clientY < DRAG_SCROLL_EDGE) window.scrollBy(0, -20);
+  else if (e.clientY > window.innerHeight - DRAG_SCROLL_EDGE) window.scrollBy(0, 20);
+  const target = document
+    .elementsFromPoint(e.clientX, e.clientY)
+    .map((el) => el.closest(".wallet-card"))
+    .find((card) => card && card !== draggingCard && card.parentElement === walletGrid);
+  if (!target) return;
+  // Carte sur toute la largeur (une colonne, ou vue liste où chaque carte
+  // occupe sa ligne) : décision verticale ; sinon horizontale.
   const rect = target.getBoundingClientRect();
-  const columns = getComputedStyle(walletGrid).gridTemplateColumns.split(" ").filter(Boolean).length;
-  const before = columns > 1 ? e.clientX < rect.left + rect.width / 2 : e.clientY < rect.top + rect.height / 2;
+  const fullRow = rect.width > walletGrid.clientWidth * 0.75;
+  const before = fullRow ? e.clientY < rect.top + rect.height / 2 : e.clientX < rect.left + rect.width / 2;
   const reference = before ? target : target.nextSibling;
   if (reference !== draggingCard) walletGrid.insertBefore(draggingCard, reference);
 });
-walletGrid.addEventListener("drop", (e) => {
-  if (draggingCard) e.preventDefault();
-});
-walletGrid.addEventListener("dragend", () => {
-  if (!draggingCard) return;
-  draggingCard.classList.remove("dragging");
+
+function endPointerDrag(e) {
+  if (!pointerDrag || e.pointerId !== pointerDrag.pointerId) return;
+  const { card, started } = pointerDrag;
+  pointerDrag = null;
+  if (card.hasPointerCapture(e.pointerId)) card.releasePointerCapture(e.pointerId);
+  if (!started) return;
+  card.classList.remove("dragging");
   draggingCard = null;
   adoptDisplayedOrder();
-});
+}
+document.addEventListener("pointerup", endPointerDrag);
+document.addEventListener("pointercancel", endPointerDrag);
 
 // Ordre initial une fois tout le module chargé (« Valeur détenue » lit des
 // constantes déclarées plus bas dans ce fichier).
