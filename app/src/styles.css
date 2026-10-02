@@ -2732,3 +2732,76 @@ h2 .coin-icon-inline,
   font-size: 0.85rem;
   margin: 8px 0 0;
 }
+
+/* « Organiser » (main.js, « Ordre des cartes ») : barre de tri au-dessus de la
+   grille, poignée et flèches sur chaque carte, contenu des cartes neutralisé
+   (aucun envoi par mégarde pendant qu'on les déplace). */
+.organize-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 16px;
+  padding: 12px 16px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.organize-modes {
+  display: flex;
+  gap: 6px;
+}
+
+.organize-bar button {
+  width: auto;
+  margin-top: 0;
+  white-space: nowrap;
+}
+
+.organize-hint {
+  flex: 1 1 200px;
+  font-size: 0.85rem;
+}
+
+.organize-controls {
+  display: none;
+}
+
+.wallet-grid.organizing .organize-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.wallet-grid.organizing .wallet-card {
+  cursor: grab;
+  outline: 1px dashed var(--border);
+  outline-offset: 2px;
+}
+
+.wallet-grid.organizing .wallet-card > :not(.organize-controls) {
+  pointer-events: none;
+  user-select: none;
+}
+
+.wallet-grid.organizing .wallet-card.dragging {
+  opacity: 0.45;
+  cursor: grabbing;
+}
+
+.drag-handle {
+  font-size: 1.1rem;
+  color: var(--muted);
+  margin-right: auto;
+  cursor: grab;
+}
+
+.organize-move {
+  width: 32px;
+  height: 28px;
+  margin-top: 0;
+  padding: 0;
+  line-height: 1;
+}

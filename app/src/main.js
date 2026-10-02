@@ -597,6 +597,16 @@ const I18N = {
     "net.hyperevm_mainnet": "HyperEVM — Fonds réels",
     "wallet.receiveAsset": "Recevoir {symbol}",
     "assets.manage": "Gérer mes cryptos",
+    "assets.organize": "Organiser",
+    "organize.sortBy": "Trier :",
+    "organize.custom": "Mon ordre",
+    "organize.value": "Valeur détenue",
+    "organize.name": "Nom",
+    "organize.hint": "Glissez les cartes pour les réordonner (ou utilisez les flèches).",
+    "organize.done": "Terminé",
+    "organize.drag": "Glisser pour déplacer",
+    "organize.moveUp": "Avancer",
+    "organize.moveDown": "Reculer",
     "assets.title": "Mes cryptos",
     "assets.hint": "Cochez les cryptos à afficher. Une crypto sur laquelle des fonds arrivent s'affiche d'elle-même.",
     "assets.done": "Terminé",
@@ -1099,6 +1109,16 @@ const I18N = {
     "net.hyperevm_mainnet": "HyperEVM — Real funds",
     "wallet.receiveAsset": "Receive {symbol}",
     "assets.manage": "Manage my cryptos",
+    "assets.organize": "Organize",
+    "organize.sortBy": "Sort:",
+    "organize.custom": "My order",
+    "organize.value": "Value held",
+    "organize.name": "Name",
+    "organize.hint": "Drag the cards to reorder them (or use the arrows).",
+    "organize.done": "Done",
+    "organize.drag": "Drag to move",
+    "organize.moveUp": "Move earlier",
+    "organize.moveDown": "Move later",
     "assets.title": "My cryptos",
     "assets.hint": "Tick the cryptos to show. A crypto that receives funds shows up by itself.",
     "assets.done": "Done",
@@ -2880,6 +2900,7 @@ async function refreshPrices() {
       console.error(e);
     }
     document.querySelectorAll(".wallet-card").forEach(updateFiatValue);
+    scheduleCardResort();
     renderMarkets(coins);
     // Garde les montants rapides de la modale d'envoi synchronisés avec le cours si
     // elle reste ouverte pendant un cycle de rafraîchissement (toutes les 60s, voir
@@ -3366,6 +3387,7 @@ async function refreshBalance(card) {
         const received = previous == null ? null : balanceIncrease(previous, balance);
         if (received) announceReceived(card, network, received);
         revealIfFunded(card, balance);
+        scheduleCardResort();
       })
       .catch((e) => {
         console.error(e);
@@ -3850,7 +3872,7 @@ const assetsModal = document.getElementById("assets-modal");
 document.getElementById("manage-assets-btn").addEventListener("click", () => {
   const list = document.getElementById("assets-list");
   list.replaceChildren(
-    ...ASSETS.map((asset) => {
+    ...orderedCoins().map((coin) => ASSET_BY_COIN[coin]).map((asset) => {
       const li = document.createElement("li");
       const label = document.createElement("label");
       label.className = "asset-choice";
@@ -3887,6 +3909,199 @@ assetsModal.addEventListener("click", (e) => {
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !assetsModal.classList.contains("hidden")) closeAssetsModal();
 });
+
+// --- Ordre des cartes (« Organiser ») ------------------------------------------
+// Trois modes : « Mon ordre » (glisser-déposer ou flèches), « Valeur détenue »
+// (valeur en devise du solde affiché, décroissante, recalculée à chaque
+// nouveau solde ou cours) et « Nom ». Préférence d'affichage par appareil,
+// retenue localement comme la vue liste. Réordonner ne change que la place
+// des éléments dans la grille (et dans l'onglet Historique, et la liste
+// « Gérer mes cryptos ») : aucun autre code n'en dépend.
+
+const CARD_ORDER_STORAGE_KEY = "pgp-wallet-card-order";
+const CARD_ORDER_MODES = ["custom", "value", "name"];
+const walletGrid = document.querySelector(".wallet-grid");
+// Ordre d'origine (cartes d'index.html, puis celles générées depuis ASSETS) :
+// base de « Mon ordre » pour les cryptos jamais déplacées.
+const DEFAULT_CARD_ORDER = [...walletGrid.querySelectorAll(".wallet-card")].map((card) => card.dataset.coin);
+let cardOrder = { mode: "custom", custom: [] };
+try {
+  const saved = JSON.parse(localStorage.getItem(CARD_ORDER_STORAGE_KEY) || "null");
+  if (saved && CARD_ORDER_MODES.includes(saved.mode) && Array.isArray(saved.custom)) {
+    cardOrder = { mode: saved.mode, custom: saved.custom.filter((coin) => DEFAULT_CARD_ORDER.includes(coin)) };
+  }
+} catch (e) {
+  // localStorage indisponible : ordre d'origine.
+}
+let organizing = false;
+let draggingCard = null;
+let cardResortTimer = null;
+
+function saveCardOrder() {
+  try {
+    localStorage.setItem(CARD_ORDER_STORAGE_KEY, JSON.stringify(cardOrder));
+  } catch (e) {
+    // Best-effort : l'ordre reste appliqué pour cette session.
+  }
+}
+
+// « Mon ordre » complet : l'ordre enregistré, puis les cryptos qui n'y sont
+// pas encore (ajoutées depuis), à leur place d'origine.
+function customOrder() {
+  return [...cardOrder.custom, ...DEFAULT_CARD_ORDER.filter((coin) => !cardOrder.custom.includes(coin))];
+}
+
+// Valeur en devise du solde affiché par la carte (réseau de test : aucune).
+function cardValue(coin) {
+  const card = walletGrid.querySelector(`.wallet-card[data-coin="${coin}"]`);
+  if (!card || TEST_NETWORKS.includes(networkForCard(card))) return 0;
+  const amount = Number.parseFloat(card.querySelector('[data-field="balance"]').textContent);
+  const price = priceForCoin(coin);
+  return Number.isFinite(amount) && price != null ? amount * price : 0;
+}
+
+function orderedCoins() {
+  const custom = customOrder();
+  if (cardOrder.mode === "value") {
+    const values = new Map(custom.map((coin) => [coin, cardValue(coin)]));
+    const rank = new Map(custom.map((coin, i) => [coin, i]));
+    return [...custom].sort((a, b) => values.get(b) - values.get(a) || rank.get(a) - rank.get(b));
+  }
+  if (cardOrder.mode === "name") {
+    const collator = new Intl.Collator(currentLang);
+    return [...custom].sort((a, b) => collator.compare(ASSET_BY_COIN[a].name, ASSET_BY_COIN[b].name));
+  }
+  return custom;
+}
+
+// Place les éléments dans l'ordre voulu, sans rien déplacer s'ils y sont
+// déjà (pas de saut d'affichage ni de perte du focus à chaque recalcul).
+function placeInOrder(container, elements) {
+  const current = [...container.children].filter((el) => elements.includes(el));
+  if (current.length === elements.length && current.every((el, i) => el === elements[i])) return;
+  for (const el of elements) container.appendChild(el);
+}
+
+function applyCardOrder() {
+  if (draggingCard) return;
+  const coins = orderedCoins();
+  placeInOrder(walletGrid, coins.map((coin) => walletGrid.querySelector(`.wallet-card[data-coin="${coin}"]`)).filter(Boolean));
+  const historyCard = document.querySelector('.tab-panel[data-panel="history"] .card');
+  placeInOrder(historyCard, coins.map((coin) => document.getElementById(`history-section-${coin}`)).filter(Boolean));
+}
+
+// « Valeur détenue » : recalcul après un nouveau solde ou cours, regroupé
+// (plusieurs soldes arrivent presque ensemble).
+function scheduleCardResort() {
+  if (cardOrder.mode !== "value") return;
+  clearTimeout(cardResortTimer);
+  cardResortTimer = setTimeout(applyCardOrder, 500);
+}
+
+function setCardOrderMode(mode) {
+  cardOrder.mode = mode;
+  saveCardOrder();
+  applyCardOrder();
+  renderOrganizeModes();
+}
+
+function renderOrganizeModes() {
+  document.querySelectorAll("[data-order-mode]").forEach((button) => {
+    const active = button.dataset.orderMode === cardOrder.mode;
+    button.classList.toggle("primary", active);
+    button.classList.toggle("secondary", !active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+}
+
+// Ordre affiché actuel → « Mon ordre » (après un glisser ou une flèche).
+function adoptDisplayedOrder() {
+  cardOrder.custom = [...walletGrid.querySelectorAll(".wallet-card")].map((card) => card.dataset.coin);
+  setCardOrderMode("custom");
+}
+
+// Poignée et flèches de chaque carte, visibles seulement en mode « Organiser ».
+function addOrganizeControls(card) {
+  const controls = document.createElement("div");
+  controls.className = "organize-controls";
+  controls.innerHTML = `
+    <span class="drag-handle" aria-hidden="true" data-i18n-title="organize.drag">⠿</span>
+    <button type="button" class="organize-move" data-move="-1" data-i18n-title="organize.moveUp" aria-label="${t("organize.moveUp")}">↑</button>
+    <button type="button" class="organize-move" data-move="1" data-i18n-title="organize.moveDown" aria-label="${t("organize.moveDown")}">↓</button>`;
+  controls.querySelectorAll("[data-move]").forEach((button) => {
+    button.title = t(button.dataset.move === "-1" ? "organize.moveUp" : "organize.moveDown");
+    button.addEventListener("click", () => moveCard(card, Number(button.dataset.move), button));
+  });
+  card.prepend(controls);
+}
+walletGrid.querySelectorAll(".wallet-card").forEach(addOrganizeControls);
+
+// Déplace une carte d'un cran parmi les cartes AFFICHÉES (les masquées
+// gardent leur place relative).
+function moveCard(card, step, focusAfter) {
+  const visible = [...walletGrid.querySelectorAll(".wallet-card:not(.asset-hidden)")];
+  const neighbor = visible[visible.indexOf(card) + step];
+  if (!neighbor) return;
+  walletGrid.insertBefore(card, step < 0 ? neighbor : neighbor.nextSibling);
+  adoptDisplayedOrder();
+  focusAfter?.focus();
+}
+
+function setOrganizing(on) {
+  organizing = on;
+  document.getElementById("organize-bar").classList.toggle("hidden", !on);
+  document.getElementById("organize-btn").setAttribute("aria-pressed", String(on));
+  walletGrid.classList.toggle("organizing", on);
+  walletGrid.querySelectorAll(".wallet-card").forEach((card) => {
+    card.draggable = on;
+  });
+  renderOrganizeModes();
+}
+
+document.getElementById("organize-btn").addEventListener("click", () => setOrganizing(!organizing));
+document.getElementById("organize-done").addEventListener("click", () => setOrganizing(false));
+document.querySelectorAll("[data-order-mode]").forEach((button) => {
+  button.addEventListener("click", () => setCardOrderMode(button.dataset.orderMode));
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && organizing && !document.querySelector(".modal-overlay:not(.hidden)")) setOrganizing(false);
+});
+
+// Glisser-déposer (souris) : la carte survolée s'écarte en direct ; insertion
+// avant ou après elle selon la position du pointeur (horizontale en grille,
+// verticale sur une seule colonne, vue liste comprise).
+walletGrid.addEventListener("dragstart", (e) => {
+  const card = e.target.closest?.(".wallet-card");
+  if (!organizing || !card) return;
+  draggingCard = card;
+  card.classList.add("dragging");
+  e.dataTransfer.effectAllowed = "move";
+  e.dataTransfer.setData("text/plain", card.dataset.coin);
+});
+walletGrid.addEventListener("dragover", (e) => {
+  if (!draggingCard) return;
+  e.preventDefault();
+  const target = e.target.closest?.(".wallet-card");
+  if (!target || target === draggingCard) return;
+  const rect = target.getBoundingClientRect();
+  const columns = getComputedStyle(walletGrid).gridTemplateColumns.split(" ").filter(Boolean).length;
+  const before = columns > 1 ? e.clientX < rect.left + rect.width / 2 : e.clientY < rect.top + rect.height / 2;
+  const reference = before ? target : target.nextSibling;
+  if (reference !== draggingCard) walletGrid.insertBefore(draggingCard, reference);
+});
+walletGrid.addEventListener("drop", (e) => {
+  if (draggingCard) e.preventDefault();
+});
+walletGrid.addEventListener("dragend", () => {
+  if (!draggingCard) return;
+  draggingCard.classList.remove("dragging");
+  draggingCard = null;
+  adoptDisplayedOrder();
+});
+
+// Ordre initial une fois tout le module chargé (« Valeur détenue » lit des
+// constantes déclarées plus bas dans ce fichier).
+setTimeout(applyCardOrder, 0);
 
 // Onglet Historique, défilé jusqu'à la section de `coin` (sous la barre de
 // navigation, qui reste en haut) et brièvement mise en évidence.
