@@ -118,8 +118,11 @@
 
   .hero-visual { position: relative; display: flex; flex-direction: column; align-items: center; }
   .lock-stage { position: relative; width: min(100%, 560px); aspect-ratio: 1 / 1; }
-  .lock-stage canvas, .lock-stage .lock-fallback { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
-  .lock-fallback { display: none; }
+  .lock-stage canvas, .lock-stage .lock-fallback { position: absolute; inset: 0; width: 100%; height: 100%; }
+  /* Un seul des deux à la fois : le dessin seulement sans WebGL (sinon il
+     recouvrait le cadenas 3D). */
+  .lock-stage canvas { display: block; }
+  .lock-stage .lock-fallback { display: none; }
   .lock-stage.no-webgl canvas { display: none; }
   .lock-stage.no-webgl .lock-fallback { display: block; }
   .lock-floor { position: absolute; left: 50%; bottom: 5%; width: 56%; height: 10%; transform: translateX(-50%); background: radial-gradient(ellipse at center, rgba(124, 147, 255, 0.30), rgba(124, 147, 255, 0) 70%); filter: blur(10px); pointer-events: none; }
@@ -644,115 +647,121 @@
 
   // ===== Cadenas 3D =========================================================
   // Rendu par lancer de rayons sur une scène décrite par des fonctions de
-  // distance (WebGL 1, aucune bibliothèque) : corps en métal anodisé avec
-  // liseré et serrure, anse chromée qui se soulève puis pivote autour de sa
-  // branche longue. Éclairage de studio simulé (boîte à lumière, bande
-  // verticale, contre-jour bleuté) : les reflets bougent quand le cadenas
-  // tourne. Sans WebGL, un cadenas dessiné (SVG) prend sa place.
+  // distance (WebGL 1, aucune bibliothèque) : corps en aluminium anodisé
+  // graphite aux arêtes très arrondies, barillet chromé et serrure éclairée de
+  // l'intérieur, anse en acier poli qui se soulève puis pivote autour de sa
+  // branche longue. Éclairage de studio simulé (boîte à lumière au-dessus,
+  // bande blanche à gauche, contre-jour bleuté à droite) : les reflets
+  // glissent sur les arêtes quand le cadenas tourne. Sans WebGL, un cadenas
+  // dessiné (SVG) prend sa place.
   var VERT = "attribute vec2 p; void main() { gl_Position = vec4(p, 0.0, 1.0); }";
   var FRAG = [
     "precision highp float;",
     "uniform vec2 uRes;",
-    "uniform float uLift, uSwing, uGlow, uYaw, uPitch;",
+    "uniform float uLift, uSwing, uGlow, uYaw, uPitch, uBob;",
     "uniform vec3 uAccent;",
     "const float R = 0.40;",            // demi-écart des branches de l'anse
-    "const float TR = 0.088;",          // rayon du tube de l'anse
-    "const vec3 BODY = vec3(0.66, 0.52, 0.27);",
-    "const vec3 BODY_C = vec3(0.0, -0.36, 0.0);",
-    "const vec3 CENTER = vec3(0.0, 0.26, 0.0);",
+    "const float TR = 0.095;",          // rayon du tube de l'anse
+    "const vec3 BODY = vec3(0.70, 0.56, 0.30);",
+    "const vec3 BODY_C = vec3(0.0, -0.40, 0.0);",
+    "const vec3 CENTER = vec3(0.0, 0.22, 0.0);",
     "mat2 rot(float a) { float c = cos(a), s = sin(a); return mat2(c, s, -s, c); }",
     "float sdRoundBox(vec3 p, vec3 b, float r) { vec3 q = abs(p) - b + r; return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0) - r; }",
     "float sdRoundRect(vec2 p, vec2 b, float r) { vec2 q = abs(p) - b + r; return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r; }",
     "float sdCapsule(vec3 p, vec3 a, vec3 b, float r) { vec3 pa = p - a, ba = b - a; float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0); return length(pa - ba * h) - r; }",
+    "float sdRoundCyl(vec3 p, float ra, float rb, float h) { vec2 d = vec2(length(p.xy) - ra + rb, abs(p.z) - h + rb); return min(max(d.x, d.y), 0.0) + length(max(d, 0.0)) - rb; }",
     "float shackle(vec3 p) {",
-    "  p.y -= 0.62 + 0.30 * uLift;",
+    "  p.y -= 0.64 + 0.32 * uLift;",
     "  p.x += R; p.xz = rot(uSwing) * p.xz; p.x -= R;",
     "  float arc = p.y > 0.0 ? length(vec2(length(p.xy) - R, p.z)) - TR : 1e5;",
-    "  float legL = sdCapsule(p, vec3(-R, 0.0, 0.0), vec3(-R, -1.10, 0.0), TR);",
-    "  float legR = sdCapsule(p, vec3(R, 0.0, 0.0), vec3(R, -0.58, 0.0), TR);",
+    "  float legL = sdCapsule(p, vec3(-R, 0.0, 0.0), vec3(-R, -1.12, 0.0), TR);",
+    "  float legR = sdCapsule(p, vec3(R, 0.0, 0.0), vec3(R, -0.60, 0.0), TR);",
     "  return min(arc, min(legL, legR));",
     "}",
-    "float body(vec3 p, out float cavity) {",
-    "  vec3 q = p - BODY_C;",
-    "  float d = sdRoundBox(q, BODY, 0.16);",
-    "  float holes = max(length(vec2(abs(q.x) - R, q.z)) - (TR + 0.014), abs(q.y - BODY.y) - 0.07);",
-    "  d = max(d, -holes);",
-    "  float plate = abs(sdRoundRect(q.xy, BODY.xy - vec2(0.12), 0.08)) - 0.006;",
-    "  d = max(d, -max(plate, abs(q.z - BODY.z) - 0.012));",
-    "  vec2 k = q.xy - vec2(0.0, -0.06);",
-    "  float hole = min(length(k - vec2(0.0, 0.07)) - 0.075, sdRoundRect(k - vec2(0.0, -0.07), vec2(0.034, 0.11), 0.02));",
-    "  cavity = max(hole, abs(q.z - BODY.z) - 0.07);",
-    "  return max(d, -cavity);",
-    "}",
+    // Distance et matière : 1 corps, 2 chrome (anse, barillet), 3 serrure.
     "vec2 map(vec3 p) {",
+    "  p.y -= uBob;",
     "  p -= CENTER; p.xz = rot(uYaw) * p.xz; p.yz = rot(uPitch) * p.yz; p += CENTER;",
-    "  float cav;",
-    "  float b = body(p, cav);",
+    "  vec3 q = p - BODY_C;",
+    "  float body = sdRoundBox(q, BODY, 0.22);",
+    "  body = max(body, -max(length(vec2(abs(q.x) - R, q.z)) - (TR + 0.012), abs(q.y - BODY.y) - 0.08));",
+    "  vec3 k = q - vec3(0.0, -0.05, BODY.z);",
+    "  float bezel = sdRoundCyl(k, 0.17, 0.025, 0.04);",
+    "  float wall = -max(min(length(k.xy - vec2(0.0, 0.03)) - 0.05, sdRoundRect(k.xy - vec2(0.0, -0.045), vec2(0.021, 0.065), 0.01)), abs(k.z) - 0.16);",
+    "  vec2 res = vec2(max(body, wall), 1.0);",
+    "  float cyl = max(bezel, wall);",
+    "  if (cyl < res.x) res = vec2(cyl, 2.0);",
+    "  if (res.x == wall) res.y = 3.0;",
     "  float s = shackle(p);",
-    "  return b < s ? vec2(b, cav < 0.003 ? 3.0 : 1.0) : vec2(s, 2.0);",
+    "  if (s < res.x) res = vec2(s, 2.0);",
+    "  return res;",
     "}",
     "vec3 calcNormal(vec3 p) {",
-    "  const vec2 e = vec2(1.0, -1.0) * 0.0008;",
+    "  const vec2 e = vec2(1.0, -1.0) * 0.0007;",
     "  return normalize(e.xyy * map(p + e.xyy).x + e.yyx * map(p + e.yyx).x + e.yxy * map(p + e.yxy).x + e.xxx * map(p + e.xxx).x);",
     "}",
     "float calcAO(vec3 p, vec3 n) {",
     "  float occ = 0.0, sca = 1.0;",
-    "  for (int i = 0; i < 5; i++) { float h = 0.01 + 0.06 * float(i); occ += (h - map(p + h * n).x) * sca; sca *= 0.85; }",
-    "  return clamp(1.0 - 2.4 * occ, 0.0, 1.0);",
+    "  for (int i = 0; i < 5; i++) { float h = 0.01 + 0.07 * float(i); occ += (h - map(p + h * n).x) * sca; sca *= 0.8; }",
+    "  return clamp(1.0 - 2.2 * occ, 0.0, 1.0);",
     "}",
-    "vec3 env(vec3 r) {",
-    "  vec3 c = mix(vec3(0.012, 0.013, 0.017), vec3(0.07, 0.075, 0.09), smoothstep(-0.5, 0.7, r.y));",
-    "  c += vec3(1.0, 0.98, 0.95) * pow(max(dot(r, normalize(vec3(-0.5, 0.75, 0.55))), 0.0), 36.0) * 3.2;",
-    "  c += vec3(0.85, 0.88, 1.0) * smoothstep(0.55, 1.0, r.y) * 0.35;",
-    "  c += vec3(0.9, 0.93, 1.0) * pow(max(dot(r, normalize(vec3(-0.25, 0.45, 1.0))), 0.0), 5.0) * 0.32;",
-    "  c += uAccent * pow(max(dot(r, normalize(vec3(0.95, 0.15, -0.3))), 0.0), 7.0) * 1.5;",
-    "  vec3 h = normalize(vec3(r.x, 0.0, r.z) + vec3(1e-4));",
-    "  c += vec3(1.0) * smoothstep(0.982, 1.0, dot(h, normalize(vec3(0.8, 0.0, 0.6)))) * smoothstep(-0.2, 0.5, r.y) * 1.1;",
+    // Studio ; `w` élargit les transitions pour une matière plus mate.
+    "vec3 env(vec3 r, float w) {",
+    "  vec3 c = mix(vec3(0.008, 0.009, 0.012), vec3(0.05, 0.055, 0.07), smoothstep(-0.4, 0.8, r.y));",
+    "  c += vec3(1.0) * 2.2 * smoothstep(0.62 - w, 0.86 + 0.5 * w, dot(r, normalize(vec3(-0.3, 1.0, 0.5))));",
+    "  float az = atan(r.x, r.z);",
+    "  c += vec3(1.0, 0.98, 0.95) * 1.7 * (1.0 - smoothstep(0.03, 0.12 + w, abs(az + 1.2))) * smoothstep(-0.35 - w, 0.25, r.y) * (1.0 - smoothstep(0.45 - w, 0.9, r.y));",
+    "  c += uAccent * 1.5 * (1.0 - smoothstep(0.05, 0.2 + w, abs(az - 1.95))) * smoothstep(-0.5, 0.2, r.y);",
+    "  c += vec3(0.75, 0.8, 0.9) * 0.3 * pow(max(dot(r, normalize(vec3(0.15, 0.2, 1.0))), 0.0), 3.0);",
     "  return c;",
     "}",
     "void main() {",
     "  vec2 uv = (2.0 * gl_FragCoord.xy - uRes) / uRes.y;",
-    "  vec3 ro = vec3(0.0, 0.34, 4.1);",
+    "  vec3 ro = vec3(0.0, 0.45, 4.2);",
     "  vec3 ww = normalize(CENTER - ro);",
     "  vec3 uu = normalize(cross(ww, vec3(0.0, 1.0, 0.0)));",
     "  vec3 vv = cross(uu, ww);",
-    "  const float FL = 2.2;",
+    "  const float FL = 2.55;",
     "  vec3 rd = normalize(uv.x * uu + uv.y * vv + FL * ww);",
     "  vec3 oc = ro - CENTER;",
     "  float bq = dot(oc, rd);",
-    "  float disc = bq * bq - (dot(oc, oc) - 1.5 * 1.5);",
+    "  float disc = bq * bq - (dot(oc, oc) - 1.55 * 1.55);",
     "  if (disc < 0.0) { gl_FragColor = vec4(0.0); return; }",
     "  disc = sqrt(disc);",
     "  float t = max(-bq - disc, 0.0), tEnd = -bq + disc;",
     "  float px = 2.0 / (uRes.y * FL);",
     "  float minD = 1e9, tMin = t, tHit = -1.0, mat = 1.0;",
-    "  for (int i = 0; i < 96; i++) {",
+    "  for (int i = 0; i < 110; i++) {",
     "    vec2 m = map(ro + rd * t);",
     "    if (m.x < minD) { minD = m.x; tMin = t; }",
-    "    if (m.x < 0.0004 * t) { tHit = t; mat = m.y; break; }",
-    "    t += m.x * 0.9;",
+    "    if (m.x < 0.0003 * t) { tHit = t; mat = m.y; break; }",
+    "    t += m.x * 0.85;",
     "    if (t > tEnd) break;",
     "  }",
-    "  float alpha = tHit > 0.0 ? 1.0 : 1.0 - smoothstep(0.0, 1.6 * px * tMin, minD);",
+    "  float alpha = tHit > 0.0 ? 1.0 : 1.0 - smoothstep(0.0, 1.5 * px * tMin, minD);",
     "  if (alpha <= 0.0) { gl_FragColor = vec4(0.0); return; }",
     "  vec3 pos = ro + rd * (tHit > 0.0 ? tHit : tMin);",
     "  if (tHit < 0.0) mat = map(pos).y;",
     "  vec3 n = calcNormal(pos);",
+    "  float ao = calcAO(pos, n);",
     "  vec3 col;",
     "  if (mat > 2.5) {",
-    "    col = vec3(0.008) + uAccent * uGlow * 1.8;",
+    "    col = vec3(0.004) + uAccent * uGlow * (0.25 + 0.75 * ao);",
     "  } else {",
     "    bool chrome = mat > 1.5;",
-    "    vec3 tint = chrome ? vec3(0.93, 0.94, 0.97) : vec3(0.48, 0.51, 0.58);",
-    "    float rough = chrome ? 0.06 : 0.36;",
+    "    vec3 tint = chrome ? vec3(0.95, 0.95, 0.97) : vec3(0.30, 0.32, 0.37);",
+    "    float rough = chrome ? 0.04 : 0.28;",
     "    vec3 rf = reflect(rd, n);",
-    "    float fres = pow(1.0 - max(dot(n, -rd), 0.0), 5.0);",
-    "    vec3 F = tint + (1.0 - tint) * fres;",
-    "    col = env(normalize(mix(rf, n, rough))) * F;",
-    "    col += tint * 0.035 * max(dot(n, normalize(vec3(-0.5, 0.8, 0.6))), 0.0);",
-    "    col *= calcAO(pos, n);",
+    "    float ndv = max(dot(n, -rd), 0.0);",
+    "    vec3 F = tint + (1.0 - tint) * pow(1.0 - ndv, 5.0);",
+    "    col = env(normalize(mix(rf, n, 0.5 * rough)), rough) * F;",
+    "    vec3 L = normalize(vec3(-0.5, 0.9, 0.7));",
+    "    vec3 H = normalize(L - rd);",
+    "    col += F * pow(max(dot(n, H), 0.0), chrome ? 400.0 : 60.0) * (chrome ? 2.0 : 0.6);",
+    "    col += tint * 0.03 * max(dot(n, L), 0.0);",
+    "    col *= mix(0.35, 1.0, ao);",
     "  }",
-    "  col = 1.0 - exp(-col * 1.3);",
+    "  col = clamp((col * (2.51 * col + 0.03)) / (col * (2.43 * col + 0.59) + 0.14), 0.0, 1.0);",
     "  col = pow(col, vec3(0.4545));",
     "  gl_FragColor = vec4(col * alpha, alpha);",
     "}"
@@ -802,7 +811,7 @@
     gl.enableVertexAttribArray(loc);
     gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
     var u = {};
-    ["uRes", "uLift", "uSwing", "uGlow", "uYaw", "uPitch", "uAccent"].forEach(function (name) { u[name] = gl.getUniformLocation(program, name); });
+    ["uRes", "uLift", "uSwing", "uGlow", "uYaw", "uPitch", "uBob", "uAccent"].forEach(function (name) { u[name] = gl.getUniformLocation(program, name); });
     gl.uniform3f(u.uAccent, 0.486, 0.576, 1.0);
     gl.clearColor(0, 0, 0, 0);
 
@@ -828,6 +837,7 @@
         gl.uniform1f(u.uGlow, s.glow);
         gl.uniform1f(u.uYaw, s.yaw);
         gl.uniform1f(u.uPitch, s.pitch);
+        gl.uniform1f(u.uBob, s.bob || 0);
         gl.clear(gl.COLOR_BUFFER_BIT);
         gl.drawArrays(gl.TRIANGLES, 0, 3);
       },
@@ -843,29 +853,35 @@
   // Le texte de l'accroche suit le cadenas : chiffré quand il est fermé, il
   // se déchiffre quand l'anse se soulève et se rechiffre quand elle retombe.
   var CYCLE = 20;
-  var SWING_OPEN = -2.25;
+  var SWING_OPEN = -2.3;
+  // Étapes, en secondes dans le cycle.
+  var T_UNLOCK = 1.0, T_SWING = 1.55, T_SWING_BACK = 14.6, T_DROP = 15.45, T_SHUT = 15.75;
   function clamp01(x) { return x < 0 ? 0 : x > 1 ? 1 : x; }
   function smooth(x) { x = clamp01(x); return x * x * (3 - 2 * x); }
-  function easeOut(x) { x = clamp01(x); return 1 - Math.pow(1 - x, 3); }
   function easeIn(x) { x = clamp01(x); return x * x * x; }
+  function easeInOut(x) { x = clamp01(x); return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2; }
+  // Arrivée avec un léger dépassement (ressort), `k` : son ampleur.
+  function easeOutBack(x, k) { x = clamp01(x); return 1 + (k + 1) * Math.pow(x - 1, 3) + k * Math.pow(x - 1, 2); }
 
   function lockState(c) {
-    var lift = 0, swing = 0, click = 0;
-    if (c >= 0.9 && c < 15.6) lift = easeOut((c - 0.9) / 0.55);
-    else if (c >= 15.6 && c < 16.0) lift = 1 - easeIn((c - 15.6) / 0.4);
-    if (c >= 1.55 && c < 14.6) swing = SWING_OPEN * smooth((c - 1.55) / 0.9);
-    else if (c >= 14.6 && c < 15.5) swing = SWING_OPEN * (1 - smooth((c - 14.6) / 0.9));
-    if (c >= 16.0 && c < 16.8) click = Math.exp(-(c - 16.0) * 7) * Math.sin((c - 16.0) * 40) * 0.035;
-    var open = c >= 0.9 && c < 16.0;
-    return { lift: lift, swing: swing, click: click, open: open, glow: open ? 0.35 + 0.65 * smooth((c - 0.9) / 0.6) : 0.3 };
+    var lift = 0, swing = 0, jolt = 0;
+    if (c >= T_UNLOCK && c < T_DROP) lift = easeOutBack((c - T_UNLOCK) / 0.5, 1.6);
+    else if (c >= T_DROP && c < T_SHUT) lift = 1 - easeIn((c - T_DROP) / (T_SHUT - T_DROP));
+    if (c >= T_SWING && c < T_SWING_BACK) swing = SWING_OPEN * easeOutBack((c - T_SWING) / 1.0, 0.9);
+    else if (c >= T_SWING_BACK && c < T_DROP) swing = SWING_OPEN * (1 - easeInOut((c - T_SWING_BACK) / (T_DROP - T_SWING_BACK - 0.05)));
+    // « Clac » de la fermeture : rebond amorti de tout le cadenas.
+    if (c >= T_SHUT && c < T_SHUT + 1) jolt = Math.exp(-(c - T_SHUT) * 6) * Math.sin((c - T_SHUT) * 34);
+    var open = c >= T_UNLOCK && c < T_SHUT;
+    var glow = open ? 0.25 + 0.75 * smooth((c - T_UNLOCK) / 0.5) : 0.25 + 0.75 * (c >= T_SHUT ? Math.max(0, 1 - (c - T_SHUT) / 0.6) : 0);
+    return { lift: lift, swing: swing, jolt: jolt, open: open, glow: glow };
   }
 
   // Avancement du déchiffrement (0 = tout chiffré, 1 = tout clair).
   function textProgress(c) {
-    if (c < 0.9) return 0;
-    if (c < 2.7) return (c - 0.9) / 1.8;
-    if (c < 14.6) return 1;
-    if (c < 16.0) return 1 - (c - 14.6) / 1.4;
+    if (c < T_UNLOCK) return 0;
+    if (c < T_UNLOCK + 1.8) return (c - T_UNLOCK) / 1.8;
+    if (c < T_SWING_BACK) return 1;
+    if (c < T_SHUT) return 1 - (c - T_SWING_BACK) / (T_SHUT - T_SWING_BACK);
     return 0;
   }
 
@@ -929,7 +945,7 @@
     var still = function () {
       if (!renderer) return;
       renderer.resize();
-      renderer.draw({ lift: 0, swing: 0, glow: 0.35, yaw: -0.5, pitch: -0.14 });
+      renderer.draw({ lift: 0, swing: 0, glow: 0.3, yaw: -0.35, pitch: -0.15, bob: 0 });
     };
     still();
     window.addEventListener("resize", still);
@@ -956,8 +972,9 @@
       if (!renderer || !visible || document.hidden) return;
       tilt.x += (pointer.x - tilt.x) * 0.06;
       tilt.y += (pointer.y - tilt.y) * 0.06;
-      s.yaw = -0.42 + 0.38 * Math.sin(time * 0.32) + tilt.x * 0.45;
-      s.pitch = -0.13 + 0.05 * Math.sin(time * 0.5) + tilt.y * 0.22 + s.click;
+      s.yaw = -0.35 + 0.2 * Math.sin(time * 0.3) + tilt.x * 0.35;
+      s.pitch = -0.15 + 0.04 * Math.sin(time * 0.45) + tilt.y * 0.18 + s.jolt * 0.03;
+      s.bob = 0.025 * Math.sin(time * 0.9) - s.jolt * 0.015;
       renderer.draw(s);
       // Images trop lentes (plus de 28 ms) plusieurs fois de suite : résolution réduite.
       if (dt > 28 && dt < 200) slowFrames++; else slowFrames = Math.max(0, slowFrames - 1);
