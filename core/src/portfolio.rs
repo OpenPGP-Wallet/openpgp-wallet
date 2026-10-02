@@ -160,6 +160,8 @@ enum Source {
     Evm(&'static wallet_flow::EvmNetwork),
     /// Jeton ERC-20 (adresse du contrat).
     Erc20(&'static wallet_flow::EvmNetwork, &'static str),
+    /// Zcash transparent : solde actuel, compté constant sur la période.
+    Zec,
 }
 
 impl Spec {
@@ -168,6 +170,7 @@ impl Spec {
         match self.source {
             Source::Evm(net) | Source::Erc20(net, _) => net.history.is_some(),
             Source::Btc | Source::Sol | Source::Spl(_) => true,
+            Source::Zec => false,
         }
     }
 }
@@ -191,6 +194,7 @@ fn spec(network: &str, token: Option<&str>) -> Result<Option<Spec>> {
     Ok(Some(match network {
         "btc_mainnet" => Spec { asset: Asset::Btc, decimals: 8, max_read: BTC_MAX, symbol: "BTC", source: Source::Btc },
         "sol_mainnet" => Spec { asset: Asset::Sol, decimals: 9, max_read: SOL_MAX, symbol: "SOL", source: Source::Sol },
+        "zec_mainnet" => Spec { asset: Asset::Pair("ZECUSDT"), decimals: 8, max_read: BTC_MAX, symbol: "ZEC", source: Source::Zec },
         other => match wallet_flow::evm_network(other) {
             Some(net) if net.mainnet => {
                 let Some(asset) = price_history::price_asset(net.native_symbol) else { return Ok(None) };
@@ -211,6 +215,7 @@ fn fetch_balance(spec: &Spec, address: &str) -> Result<i128> {
         // `api::BtcBalanceView`) — retirées aussi de l'historique (`fetch_page`).
         Source::Btc => api::get_btc_balance_view(address, &wallet_flow::BTC_MAINNET)?.settled_sat.into(),
         Source::Sol => api::get_sol_balance(address, solana)?.into(),
+        Source::Zec => api::get_zec_balance(address)?.into(),
         Source::Spl(mint) => api::get_spl_balance(address, &mint, solana)?.into(),
     })
 }
@@ -257,6 +262,8 @@ fn fetch_page(spec: &Spec, address: &str, cursor: Option<&Cursor>) -> Result<Pag
             let next = if entries.len() >= size as usize { entries.last().map(|e| Cursor::Sol(e.id.clone())) } else { None };
             Ok(Page { entries, next })
         }
+        // Solde compté constant (`has_history`) : jamais lu page par page.
+        Source::Zec => Ok(Page { entries: Vec::new(), next: None }),
     }
 }
 

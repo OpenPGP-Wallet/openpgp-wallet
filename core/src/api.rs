@@ -14,7 +14,7 @@
 //!   perdu — jamais utilisé pour le déverrouillage quotidien.
 
 use crate::{
-    btc_rpc, cow, dapp_requests, derivation, lifi, entropy, eth_rpc, eth_tx, history, jupiter_rpc, memory_guard, pgp_engine, secure_storage, shamir,
+    btc_rpc, cow, dapp_requests, derivation, lifi, zcash, entropy, eth_rpc, eth_tx, history, jupiter_rpc, memory_guard, pgp_engine, secure_storage, shamir,
     evm_sign, sol_rpc, sol_spl, sol_tx, thorchain_rpc, tokens, wallet_flow,
 };
 use anyhow::{Context, Result};
@@ -180,6 +180,8 @@ pub struct Addresses {
     /// `solana`, qui servent inchangées sur toutes les variantes de leur réseau.
     pub btc_mainnet: String,
     pub solana: String,
+    /// Adresse Zcash transparente (t1…), chemin m/44'/133'/0'/0/{index}.
+    pub zcash: String,
 }
 
 const PROFILES_FILE: &str = "profiles.json";
@@ -299,7 +301,9 @@ fn derive_addresses(seed: &[u8], index: u32) -> Result<Addresses> {
     let (_btc_testnet_key, btc_testnet_hash160) = derivation::derive_btc_testnet_key(seed, index)?;
     let (_btc_mainnet_key, btc_mainnet_hash160) = derivation::derive_btc_mainnet_key(seed, index)?;
     let sol_key = derivation::derive_solana_key(seed, index);
+    let (_zec_key, zec_hash160) = derivation::derive_zec_key(seed, index)?;
     Ok(Addresses {
+        zcash: zcash::p2pkh_address(&zec_hash160),
         evm: derivation::format_address(&evm_address),
         btc_testnet: derivation::format_btc_testnet_address(&btc_testnet_hash160)?,
         btc_mainnet: derivation::format_btc_mainnet_address(&btc_mainnet_hash160)?,
@@ -2478,6 +2482,62 @@ pub fn send_lifi_solana(data_dir: &Path, device_password: &str, quote: &lifi::Li
     check_swap_effects(&rpc, raw, &lifi_solana_limits(owner, quote)?)?;
     let signed = jupiter_rpc::sign_swap_transaction(raw, &signing_key, &owner)?;
     rpc.send_transaction(&signed)
+}
+
+// --- Zcash (adresses transparentes) ---------------------------------------------
+
+pub fn get_zec_balance(address: &str) -> Result<u64> {
+    zcash::balance(address)
+}
+
+/// État d'une adresse Zcash destinataire, pour les avertissements de la boîte.
+pub fn zec_recipient_activity(to: &str) -> Result<RecipientActivity> {
+    let address = zcash::transparent_address(&zcash::parse_recipient(to)?);
+    Ok(match zcash::address_activity(&address)? {
+        (true, _) => RecipientActivity::Funded,
+        (false, true) => RecipientActivity::Empty,
+        (false, false) => RecipientActivity::Unused,
+    })
+}
+
+/// Forme canonique d'un montant en ZEC (8 décimales), affichée ET signée.
+pub fn canonical_zec_amount(amount: &str) -> Result<String> {
+    Ok(tokens::format_amount(tokens::parse_amount(amount, 8)?, 8))
+}
+
+/// Envoi préparé pour la boîte de confirmation : destinataire vérifié (t1,
+/// t3, tex1 ; jamais soi-même), sorties choisies, frais ZIP-317 et monnaie
+/// rendue.
+pub fn zec_send_plan(from_address: &str, to: &str, amount: &str) -> Result<zcash::SendPlan> {
+    let recipient = zcash::parse_recipient(to)?;
+    anyhow::ensure!(recipient != zcash::parse_recipient(from_address)?, "envoi vers votre propre adresse Zcash");
+    let units = u64::try_from(tokens::parse_amount(amount, 8)?).context("montant hors limites")?;
+    zcash::plan_send(zcash::utxos(from_address)?, units)
+}
+
+/// Envoi Zcash : sorties relues, frais jamais supérieurs à ceux affichés
+/// (`shown_fee`), branche de consensus vérifiée auprès du serveur,
+/// transaction construite et signée ici, puis diffusée.
+pub fn send_zec(data_dir: &Path, device_password: &str, to: &str, amount: &str, shown_fee: u64, profile_index: u32) -> Result<String> {
+    let recipient = zcash::parse_recipient(to)?;
+    let units = u64::try_from(tokens::parse_amount(amount, 8)?).context("montant hors limites")?;
+    let seed = unlock_seed(data_dir, device_password)?;
+    let _seed_lock = memory_guard::lock(&seed);
+    let (key, hash160) = derivation::derive_zec_key(&seed, profile_index)?;
+    anyhow::ensure!(recipient != zcash::Recipient::P2pkh(hash160), "envoi vers votre propre adresse Zcash");
+    let from = zcash::p2pkh_address(&hash160);
+    let plan = zcash::plan_send(zcash::utxos(&from)?, units)?;
+    anyhow::ensure!(
+        plan.fee <= shown_fee,
+        "les frais Zcash ont augmenté depuis la confirmation ({} au lieu de {} ZEC) — relancez l'envoi",
+        zcash::format_zec(plan.fee),
+        zcash::format_zec(shown_fee)
+    );
+    let chain = zcash::chain_info()?;
+    let target = chain.height + 1;
+    let branch = zcash::branch_for(target, chain.branch_id)?;
+    let signed = zcash::build_signed(&plan, &key, &hash160, &recipient, target, branch)?;
+    zcash::broadcast(&signed.raw, &signed.txid)
 }
 
 pub struct BtcFeeEstimate {

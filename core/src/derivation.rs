@@ -95,6 +95,17 @@ pub fn format_address(address: &[u8; 20]) -> String {
 
 /// hash160 = RIPEMD160(SHA256(clé publique compressée)), tel qu'utilisé par Bitcoin
 /// pour construire une adresse P2WPKH.
+/// Dérive la clé Zcash transparente n°`index` (chemin BIP44
+/// m/44'/133'/0'/0/{index}, coin_type 133' = Zcash dans SLIP-0044 — même chemin
+/// que Ledger et les portefeuilles Zcash pour les adresses transparentes) et
+/// retourne le hash160 de la clé publique compressée (adresse P2PKH t1…, voir
+/// `zcash::p2pkh_address`).
+pub fn derive_zec_key(seed: &[u8], index: u32) -> Result<(SigningKey, [u8; 20])> {
+    let signing_key = derive_key_from_path(seed, &format!("m/44'/133'/0'/0/{index}"))?;
+    let hash160 = btc_hash160_from_key(&signing_key);
+    Ok((signing_key, hash160))
+}
+
 fn btc_hash160_from_key(signing_key: &SigningKey) -> [u8; 20] {
     let compressed = signing_key.verifying_key().to_encoded_point(true);
     let sha256 = Sha256::digest(compressed.as_bytes());

@@ -59,6 +59,11 @@ fn links(protocol: &thorchain_rpc::CrossChain, from: SwapAsset, to: SwapAsset) -
     if from.coin == "btc" && protocol.affiliate_name.is_none() {
         return false;
     }
+    // ZEC : en destination seulement (vendre du ZEC demande une transaction
+    // Zcash avec memo, pas encore construite par l'app, et un nom court).
+    if from.coin == "zec" {
+        return false;
+    }
     protocol.asset(from.coin, from.network).is_some() && protocol.asset(to.coin, to.network).is_some()
 }
 
@@ -276,6 +281,16 @@ mod tests {
         if lifi_enabled() {
             assert_eq!(direct_all(a("evm", "evm_mainnet"), a("btc", "btc_mainnet")).last(), Some(&Protocol::Lifi), "LI.FI en dernier");
         }
+    }
+
+    /// ZEC via Maya, en destination seulement.
+    #[test]
+    fn zec_is_a_destination_only() {
+        let zec = a("zec", "zec_mainnet");
+        assert_eq!(direct(a("evm", "evm_mainnet"), zec), Some(Protocol::Maya));
+        assert_eq!(direct(a("usdc", "arbitrum_mainnet"), zec), Some(Protocol::Maya));
+        assert!(direct_all(zec, a("evm", "evm_mainnet")).is_empty());
+        assert!(routes().iter().all(|(from, _, _)| from.coin != "zec"));
     }
 
     /// Plusieurs fournisseurs possibles : tous listés, le préféré d'abord.

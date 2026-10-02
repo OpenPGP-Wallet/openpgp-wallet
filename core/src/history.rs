@@ -78,6 +78,24 @@ pub(crate) fn is_swap_memo(memo: &str) -> bool {
     matches!(prefix.as_deref(), Some("=" | "s" | "swap" | "out" | "refund"))
 }
 
+/// Historique Zcash transparent (voir `zcash::history`).
+pub fn zec_history(address: &str) -> Result<Vec<TxEntry>> {
+    let crate::zcash::Recipient::P2pkh(hash160) = crate::zcash::parse_recipient(address)? else {
+        anyhow::bail!("adresse Zcash du portefeuille attendue (t1…)")
+    };
+    Ok(crate::zcash::history(address, &hash160)?
+        .into_iter()
+        .map(|tx| TxEntry {
+            kind: classify(Some(tx.net_zat), false),
+            id: tx.txid,
+            timestamp_unix: tx.time,
+            status: if tx.height > 0 { TxStatus::Confirmed } else { TxStatus::Pending },
+            net_amount_minor: Some(tx.net_zat),
+            fee_minor: 0,
+        })
+        .collect())
+}
+
 pub fn btc_history(network: &wallet_flow::BtcNetwork, address: &str) -> Result<Vec<TxEntry>> {
     btc_history_after(network, address, None)
 }

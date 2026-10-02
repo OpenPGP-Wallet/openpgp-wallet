@@ -19,6 +19,7 @@ const ASSETS = [
   { coin: "avax", name: "Avalanche", symbol: "AVAX", family: "evm", icon: "/assets/avax.png", gecko: "avalanche-2", decimals: 6, chart: "AVAX", networks: ["avax_mainnet"] },
   { coin: "pol", name: "Polygon", symbol: "POL", family: "evm", icon: "/assets/pol.png", gecko: "polygon-ecosystem-token", decimals: 6, chart: "POL", networks: ["polygon_mainnet"] },
   { coin: "hype", name: "Hyperliquid", symbol: "HYPE", family: "evm", icon: "/assets/hype.jpg", iconRound: true, gecko: "hyperliquid", decimals: 6, chart: "HYPE", networks: ["hyperevm_mainnet"] },
+  { coin: "zec", name: "Zcash", symbol: "ZEC", family: "zec", icon: "/assets/zec.png", gecko: "zcash", decimals: 8, chart: "ZEC", networks: ["zec_mainnet"] },
   // Jetons (`token: true`) : contrats et mints relevés dans core/src/tokens.rs —
   // SEUL le registre Rust fait foi pour un envoi (l'interface n'envoie que
   // l'identifiant et le réseau) ; ceux-ci ne servent qu'aux demandes de
@@ -590,6 +591,7 @@ const I18N = {
     "net.arbitrum_mainnet": "Arbitrum — Fonds réels",
     "net.base_mainnet": "Base — Fonds réels",
     "net.sol_mainnet": "Solana — Fonds réels",
+    "net.zec_mainnet": "Zcash — Fonds réels",
     "wallet.historyExplorerOnly": "Pas d'historique ici pour ce réseau : aucun service public gratuit ne le fournit. Il reste consultable sur l'explorateur du réseau.",
     "wallet.historyOpenExplorer": "Voir sur l'explorateur",
     "net.avax_mainnet": "Avalanche — Fonds réels",
@@ -1102,6 +1104,7 @@ const I18N = {
     "net.arbitrum_mainnet": "Arbitrum — Real funds",
     "net.base_mainnet": "Base — Real funds",
     "net.sol_mainnet": "Solana — Real funds",
+    "net.zec_mainnet": "Zcash — Real funds",
     "wallet.historyExplorerOnly": "No history here for this network: no free public service provides it. You can still see it on the network's explorer.",
     "wallet.historyOpenExplorer": "View on the explorer",
     "net.avax_mainnet": "Avalanche — Real funds",
@@ -3085,6 +3088,9 @@ function addressForCoin(coin, network) {
   // compris.
   if (isEvmNetwork(network)) return profile.addresses.evm;
   if (coin === "btc") return network === "btc_mainnet" ? profile.addresses.btc_mainnet : profile.addresses.btc_testnet;
+  // Zcash transparent (t1…) ; absente d'un profil dérivé avant son ajout,
+  // jusqu'au prochain déverrouillage.
+  if (coin === "zec") return profile.addresses.zcash ?? "";
   // Jetons Solana (USDC, USDT…) : même adresse propriétaire que SOL (le compte
   // de jetons associé qui les détient réellement est un détail invisible pour
   // l'utilisateur, dérivé côté Rust — voir core/src/sol_spl.rs).
@@ -3464,6 +3470,8 @@ function updateBalanceWatch() {
       // Jetons du registre : pas de surveillance en direct (solde relu avec
       // les autres toutes les 60 s) — la surveillance lit un solde natif.
       if (usesTokenRegistry(coin, network)) return { address: "" };
+      // Zcash : pas de surveillance en direct (solde relu toutes les 15 s).
+      if (coin === "zec") return { address: "" };
       return { id: coin, network: coin === "usdc" ? "usdc_solana" : network, address: addressForCoin(coin, network) };
     })
     .filter((target) => target.address);
@@ -3609,6 +3617,7 @@ function paymentUri(coin, network, address, amount) {
   }
   if (asset?.token && network === "sol_mainnet") return `solana:${address}?amount=${amount}&spl-token=${asset.contracts.sol_mainnet}`;
   if (coin === "btc") return `bitcoin:${address}?amount=${amount}`;
+  if (coin === "zec") return `zcash:${address}?amount=${amount}`;
   if (coin === "sol") return `solana:${address}?amount=${amount}`;
   if (coin === "usdc") return `solana:${address}?amount=${amount}&spl-token=${USDC_MINT}`;
   if (ASSET_BY_COIN[coin]?.family === "evm") {

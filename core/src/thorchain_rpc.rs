@@ -102,14 +102,17 @@ pub const MAYA_AFFILIATE_ADDRESS: &str = "maya12j5rrcflhffxmq0ekwvk0h7g0mdy8gn4f
 
 /// Pools disponibles sur Maya relevés en direct le 01/10/2026. Codes courts
 /// propres à Maya, relevés sur de vrais devis : « a » y désigne l'ETH
-/// d'Arbitrum (sur THORChain, « a » est AVAX).
-pub const MAYA_ASSETS: [ThorAsset; 6] = [
+/// d'Arbitrum (sur THORChain, « a » est AVAX). ZEC (« z », relevé dans
+/// `Asset::ShortCode` de Mayanode, pool vérifié le 02/10/2026) : en
+/// destination seulement (voir `swap_routes`).
+pub const MAYA_ASSETS: [ThorAsset; 7] = [
     native("btc", "btc_mainnet", "BTC", "BTC.BTC", "b", 8),
     native("evm", "evm_mainnet", "ETH", "ETH.ETH", "e", 18),
     native("evm", "arbitrum_mainnet", "ETH", "ARB.ETH", "a", 18),
     erc20("usdc", "evm_mainnet", "USDC", "ETH.USDC-0XA0B86991C6218B36C1D19D4A2E9EB0CE3606EB48", 6, "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"),
     erc20("usdt", "evm_mainnet", "USDT", "ETH.USDT-0XDAC17F958D2EE523A2206206994597C13D831EC7", 6, "0xdac17f958d2ee523a2206206994597c13d831ec7"),
     erc20("usdc", "arbitrum_mainnet", "USDC", "ARB.USDC-0XAF88D065E77C8CC2239327C5EDB3A432268E5831", 6, "0xaf88d065e77c8cc2239327c5edb3a432268e5831"),
+    native("zec", "zec_mainnet", "ZEC", "ZEC.ZEC", "z", 8),
 ];
 
 /// Protocole d'échange entre réseaux de la famille THORChain : THORChain et
@@ -661,15 +664,19 @@ mod tests {
     #[ignore]
     fn maya_quotes_match_the_real_network() {
         let evm = "0x8894E0a0c962CB723c1976a4421c95949bE2D4E3";
+        let zec = crate::zcash::p2pkh_address(&[0x11; 20]);
         for (from, to, amount, dest) in [
             ("ARB.ETH", "BTC.BTC", 10_000_000u64, "bc1qp0jus87dalh7xku22tx3uhyhlf8cjuc0vvkhjz"),
             ("ARB.USDC-0XAF88D065E77C8CC2239327C5EDB3A432268E5831", "ETH.ETH", 10_000_000_000, evm),
             ("ETH.USDT-0XDAC17F958D2EE523A2206206994597C13D831EC7", "ARB.ETH", 10_000_000_000, evm),
             ("ARB.ETH", "ARB.USDC-0XAF88D065E77C8CC2239327C5EDB3A432268E5831", 10_000_000, evm),
+            ("ETH.ETH", "ZEC.ZEC", 10_000_000, zec.as_str()),
+            ("ARB.USDC-0XAF88D065E77C8CC2239327C5EDB3A432268E5831", "ZEC.ZEC", 10_000_000_000, zec.as_str()),
         ] {
             let quote = MAYA.quote_swap(from, to, amount, dest).unwrap_or_else(|e| panic!("{from} -> {to} : {e:#}"));
             println!("{from} -> {to} : {} (routeur {:?})", quote.memo, quote.router);
             assert!(quote.router.is_some());
+            MAYA.verify_swap_memo(&quote.memo, to, dest, quote.expected_amount_out).unwrap_or_else(|e| panic!("memo {from} -> {to} : {e:#}"));
         }
     }
 

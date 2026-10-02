@@ -152,6 +152,15 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("Échange annulé (confirmation refusée).", "Swap cancelled (confirmation refused)."),
     // CoW Protocol (core/src/cow.rs, core/src/api.rs)
     ("échange via CoW pas encore activé", "swaps via CoW are not enabled yet"),
+    // Zcash (core/src/zcash.rs, core/src/api.rs)
+    ("adresse Zcash invalide", "invalid Zcash address"),
+    (
+        "envoi vers une adresse Zcash protégée (zs…, u1…) pas encore pris en charge — utilisez une adresse transparente t1…",
+        "sending to a shielded Zcash address (zs…, u1…) is not supported yet — use a transparent t1… address",
+    ),
+    ("adresse Zcash d'un autre réseau (test) — refusée", "Zcash address from another network (test) — refused"),
+    ("envoi vers votre propre adresse Zcash", "sending to your own Zcash address"),
+    ("aucun serveur Zcash joignable", "no Zcash server reachable"),
     // LI.FI (core/src/lifi.rs, core/src/api.rs)
     (
         "limite de devis LI.FI atteinte (75 toutes les 2 heures sans compte) — réessayez plus tard",
@@ -471,6 +480,15 @@ fn translate_dynamic_error(msg: &str) -> Option<String> {
     if let Some(label) = msg.strip_prefix("le compte « ").and_then(|rest| rest.strip_suffix(" » n'est pas sur ce réseau")) {
         return Some(format!("the account \"{label}\" is not on this network"));
     }
+    if let Some(rest) = msg.strip_prefix("ZEC insuffisants : ") {
+        return Some(format!("insufficient ZEC: {rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("transaction Zcash refusée par le réseau : ") {
+        return Some(format!("Zcash transaction refused by the network: {rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("le réseau Zcash a changé de version") {
+        return Some(format!("the Zcash network was upgraded{rest} — update the app before sending"));
+    }
     if let Some(rest) = msg.strip_prefix("devis LI.FI refusé : ") {
         return Some(format!("LI.FI quote refused: {rest}"));
     }
@@ -703,6 +721,7 @@ struct AddressesDto {
     btc_testnet: String,
     btc_mainnet: String,
     solana: String,
+    zcash: String,
 }
 
 impl From<api::Addresses> for AddressesDto {
@@ -712,6 +731,7 @@ impl From<api::Addresses> for AddressesDto {
             btc_testnet: a.btc_testnet,
             btc_mainnet: a.btc_mainnet,
             solana: a.solana,
+            zcash: a.zcash,
         }
     }
 }
@@ -819,7 +839,7 @@ fn save_bytes_with_dialog(suggested_name: String, content_b64: String, app: taur
 /// aurait laissé un frontend compromis ouvrir n'importe quelle page — un vecteur
 /// de phishing simple, ouvert sans aucun bénéfice fonctionnel puisqu'aucun appel
 /// légitime de cette commande ne cible jamais autre chose que ces domaines.
-const ALLOWED_EXTERNAL_LINK_PREFIXES: [&str; 4] = ["https://explorer.solana.com/", "https://blockstream.info/", "https://explorer.cow.fi/", "https://scan.li.fi/"];
+const ALLOWED_EXTERNAL_LINK_PREFIXES: [&str; 5] = ["https://explorer.solana.com/", "https://blockstream.info/", "https://explorer.cow.fi/", "https://scan.li.fi/", "https://blockchair.com/zcash/"];
 
 /// Lien vers un explorateur connu de l'app : Solana, Bitcoin, ou l'explorateur
 /// d'un réseau EVM (origine de `explorer_tx_prefix` : Etherscan, Arbiscan,
@@ -911,7 +931,7 @@ fn create_wallet(password: String, app: tauri::AppHandle) -> Result<CreateWallet
     let password = Zeroizing::new(password);
     let dir = data_dir(&app)?;
     let result = api::create_wallet(&dir, &password).t_err()?;
-    remember_addresses(&app, 0, &result.addresses.evm, &result.addresses.solana);
+    remember_addresses(&app, 0, &result.addresses.evm, &result.addresses.solana, &result.addresses.zcash);
 
     let backups = backup_dtos(result.backups);
 
@@ -989,7 +1009,7 @@ fn unlock_wallet(password: String, app: tauri::AppHandle) -> Result<Vec<ProfileD
 fn remember_profiles(app: &tauri::AppHandle, profiles: &[api::ProfileAddresses]) {
     for p in profiles {
         if let Some(a) = &p.addresses {
-            remember_addresses(app, p.profile.index, &a.evm, &a.solana);
+            remember_addresses(app, p.profile.index, &a.evm, &a.solana, &a.zcash);
         }
     }
 }
@@ -1342,7 +1362,7 @@ fn restore_wallet_from_usb(new_password: String, app: tauri::AppHandle) -> Resul
     .t_err()?;
     state.0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     forget_wallet_connections(&app);
-    remember_addresses(&app, 0, &addresses.evm, &addresses.solana);
+    remember_addresses(&app, 0, &addresses.evm, &addresses.solana, &addresses.zcash);
     Ok(addresses.into())
 }
 
@@ -1385,7 +1405,7 @@ fn restore_wallet(
     .t_err()?;
     // Nouveau portefeuille : les connexions et adresses de l'ancien ne valent plus.
     forget_wallet_connections(&app);
-    remember_addresses(&app, 0, &addresses.evm, &addresses.solana);
+    remember_addresses(&app, 0, &addresses.evm, &addresses.solana, &addresses.zcash);
     Ok(addresses.into())
 }
 
@@ -1397,6 +1417,7 @@ fn forget_wallet_connections(app: &tauri::AppHandle) {
     }
     app.state::<WcState>().prepared.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<ProfileAddressCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    app.state::<ProfileZcashCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
 }
 
 fn evm_network(network: &str) -> Result<&'static wallet_flow::EvmNetwork, String> {
@@ -1446,6 +1467,7 @@ async fn get_balance(network: String, address: String) -> Result<String, String>
                 let lamports = api::get_sol_balance(&address, net).t_err()?;
                 Ok(format!("{:.9}", lamports as f64 / 1e9))
             }
+            "zec_mainnet" => Ok(pgp_wallet_poc::zcash::format_zec(api::get_zec_balance(&address).t_err()?)),
             other => Err(translate_error(&format!("réseau inconnu : {other}"))),
         }
     })
@@ -1557,6 +1579,9 @@ async fn has_pending_tx(network: String, address: String) -> Result<bool, String
                 let net = sol_network(&network)?;
                 api::has_pending_sol(&address, net).t_err()
             }
+            // Pas de lecture de la réserve de transactions : un envoi apparaît
+            // à sa confirmation (~75 s).
+            "zec_mainnet" => Ok(false),
             other => Err(translate_error(&format!("réseau inconnu : {other}"))),
         }
     })
@@ -1695,6 +1720,12 @@ async fn get_tx_history(network: String, address: String) -> Result<HistoryDto, 
             let asset = (network == "btc_mainnet").then_some(price_history::Asset::Btc);
             HistoryDto::read(history_dtos(|| history::btc_history(net, &address), asset, 8, |id| format!("{}{}", net.explorer_tx_prefix, id)))
         }
+        "zec_mainnet" => HistoryDto::read(history_dtos(
+            || history::zec_history(&address),
+            Some(price_history::Asset::Pair("ZECUSDT")),
+            8,
+            |id| format!("https://blockchair.com/zcash/transaction/{id}"),
+        )),
         "sol_devnet" | "sol_mainnet" => {
             let net = sol_network(&network)?;
             let asset = (network == "sol_mainnet").then_some(price_history::Asset::Sol);
@@ -1949,6 +1980,7 @@ fn network_label(network: &str) -> String {
         "btc_mainnet" => lang("Bitcoin MAINNET — fonds réels", "Bitcoin MAINNET — real funds").to_string(),
         "sol_devnet" => lang("Solana devnet", "Solana devnet").to_string(),
         "sol_mainnet" => lang("Solana MAINNET — fonds réels", "Solana MAINNET — real funds").to_string(),
+        "zec_mainnet" => lang("Zcash MAINNET — fonds réels", "Zcash MAINNET — real funds").to_string(),
         other => match wallet_flow::evm_network(other) {
             Some(net) if net.mainnet => format!("{} — {}", net.name, lang("fonds réels", "real funds")),
             Some(net) => format!("{} (testnet)", net.name),
@@ -1963,6 +1995,7 @@ fn network_unit(network: &str) -> &'static str {
     match network {
         "btc_testnet" | "btc_mainnet" => "BTC",
         "sol_devnet" | "sol_mainnet" => "SOL",
+        "zec_mainnet" => "ZEC",
         other => wallet_flow::evm_network(other).map(|n| n.native_symbol).unwrap_or(""),
     }
 }
@@ -2159,7 +2192,8 @@ async fn send_transaction(
             .unwrap_or_else(|p| p.into_inner())
             .get(&profile_index)
             .map(|(evm, _)| evm.clone());
-        let send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &from_label, None, from_evm.as_deref())?;
+        let from_zec = app.state::<ProfileZcashCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).cloned();
+        let send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &from_label, None, from_evm.as_deref(), from_zec.as_deref())?;
 
         let result = match network.as_str() {
             n if is_evm(n) => {
@@ -2175,6 +2209,10 @@ async fn send_transaction(
             "sol_devnet" | "sol_mainnet" => {
                 let net = sol_network(&network)?;
                 api::send_sol(&dir, &password, net, &send.to, &send.amount, profile_index).t_err()
+            }
+            "zec_mainnet" => {
+                let shown_fee = send.zec_fee.ok_or_else(|| "frais Zcash manquants".to_string())?;
+                api::send_zec(&dir, &password, &send.to, &send.amount, shown_fee, profile_index).t_err()
             }
             other => Err(translate_error(&format!("réseau inconnu : {other}"))),
         };
@@ -2205,6 +2243,8 @@ struct ConfirmedSend {
     amount: String,
     evm_fee: Option<api::EvmFee>,
     fee_sat: Option<u64>,
+    /// Frais Zcash affichés (plafond à l'envoi).
+    zec_fee: Option<u64>,
 }
 
 /// Validation, avertissements et boîte de confirmation native, communs aux
@@ -2221,6 +2261,7 @@ fn confirm_send(
     from_label: &str,
     device_note: Option<&str>,
     from_evm: Option<&str>,
+    from_zec: Option<&str>,
 ) -> Result<ConfirmedSend, String> {
     // Réseau validé AVANT la boîte de confirmation (22ᵉ passage) : un réseau
     // inconnu était jusqu'ici affiché tel quel (texte libre du frontend) dans
@@ -2231,10 +2272,11 @@ fn confirm_send(
         n if is_evm(n) => "evm",
         "btc_testnet" | "btc_mainnet" => "btc",
         "sol_devnet" | "sol_mainnet" => "sol",
+        "zec_mainnet" => "zec",
         other => return Err(translate_error(&format!("réseau inconnu : {other}"))),
     };
     let to = canonical_address_input(to)?;
-    let amount = api::canonical_amount(coin, amount).t_err()?;
+    let amount = if coin == "zec" { api::canonical_zec_amount(amount).t_err()? } else { api::canonical_amount(coin, amount).t_err()? };
 
     // Frais affichés dans la boîte de dialogue native (voir sa doc : "montre
     // exactement ce que le backend a compris") : choisis par l'utilisateur pour
@@ -2245,6 +2287,15 @@ fn confirm_send(
     // fixe —, frais de publication OP Stack), affichés puis signés tels quels.
     let evm_fee = match coin {
         "evm" => Some(api::evm_transfer_fee_for_confirmation(evm_network(network)?, from_evm, &to, &amount).t_err()?),
+        _ => None,
+    };
+    // Zcash : destinataire vérifié, sorties choisies et frais ZIP-317
+    // calculés MAINTENANT, affichés, puis jamais dépassés à l'envoi.
+    let zec_plan = match coin {
+        "zec" => {
+            let from = from_zec.ok_or_else(|| translate_error("adresse du profil inconnue — déverrouillez le portefeuille"))?;
+            Some(api::zec_send_plan(from, &to, &amount).t_err()?)
+        }
         _ => None,
     };
     // Adresse refusée AVANT la confirmation si elle est mal formée (EVM/BTC :
@@ -2261,6 +2312,8 @@ fn confirm_send(
             api::validate_btc_recipient(&to, net).t_err()?;
             api::btc_recipient_activity(&to, net).ok()
         }
+        // Adresse déjà vérifiée par la préparation de l'envoi.
+        "zec" => api::zec_recipient_activity(&to).ok(),
         _ => {
             let net = sol_network(network)?;
             api::check_solana_recipient(&to, net).t_err()?;
@@ -2276,6 +2329,16 @@ fn confirm_send(
             let fee_sat = fee_sat.ok_or_else(|| "frais Bitcoin manquants (choisis une vitesse d'envoi)".to_string())?;
             Some(format!("{} : {fee_sat} sat", lang("Frais", "Fee")))
         }
+        "zec" => zec_plan.as_ref().map(|plan| {
+            let mut line = format!("{} : {} ZEC (ZIP-317)", lang("Frais", "Fee"), pgp_wallet_poc::zcash::format_zec(plan.fee));
+            if plan.change > 0 {
+                let change = pgp_wallet_poc::zcash::format_zec(plan.change);
+                line.push_str(lang(&format!("
+Monnaie rendue à votre adresse : {change} ZEC"), &format!("
+Change returned to your address: {change} ZEC")));
+            }
+            line
+        }),
         _ => evm_fee.map(|fee| evm_fee_line_for(fee, network_unit(network))),
     };
     let fee_line = fee_and_device_note(fee_line, device_note);
@@ -2285,7 +2348,7 @@ fn confirm_send(
     if !confirm_transaction_native(app, network, &to, &amount_line, from_label, fee_line.as_deref(), warning.as_deref(), None) {
         return Err(translate_error("Virement annulé (confirmation refusée)."));
     }
-    Ok(ConfirmedSend { to, amount, evm_fee, fee_sat })
+    Ok(ConfirmedSend { to, amount, evm_fee, fee_sat, zec_fee: zec_plan.map(|plan| plan.fee) })
 }
 
 // --- Comptes Ledger / Trezor (core/src/hardware.rs) ----------------------------
@@ -2386,7 +2449,7 @@ async fn hardware_send(id: u32, to: String, amount: String, fee_sat: Option<u64>
         } else {
             format!("Signature sur le {device} : vérifiez sur SON écran que le destinataire et le montant sont identiques, puis confirmez-y.")
         };
-        let send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &format!("{device} — {}", account.label), Some(&note), Some(&account.address))?;
+        let send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &format!("{device} — {}", account.label), Some(&note), Some(&account.address), None)?;
         let result = match network.as_str() {
             n if is_evm(n) => {
                 let fee = send.evm_fee.ok_or_else(|| "frais EVM manquants".to_string())?;
@@ -3676,6 +3739,12 @@ fn remove_address_book_entry(id: u32, app: tauri::AppHandle) -> Result<(), Strin
 #[derive(Default)]
 struct ProfileAddressCache(std::sync::Mutex<std::collections::HashMap<u32, (String, String)>>);
 
+/// Adresse Zcash transparente de chaque profil, mémorisée au même moment :
+/// préparer un envoi ZEC (sorties à dépenser, frais) demande l'adresse de
+/// départ AVANT la boîte de confirmation, donc avant tout mot de passe.
+#[derive(Default)]
+struct ProfileZcashCache(std::sync::Mutex<std::collections::HashMap<u32, String>>);
+
 #[derive(Default)]
 struct WcState {
     client: std::sync::OnceLock<std::sync::Arc<pgp_wallet_poc::walletconnect::WalletConnect>>,
@@ -3684,9 +3753,12 @@ struct WcState {
     prepared: std::sync::Mutex<std::collections::HashMap<u64, (String, dapp_requests::Prepared)>>,
 }
 
-fn remember_addresses(app: &tauri::AppHandle, index: u32, evm: &str, solana: &str) {
+fn remember_addresses(app: &tauri::AppHandle, index: u32, evm: &str, solana: &str, zcash: &str) {
     if let Some(cache) = app.try_state::<ProfileAddressCache>() {
         cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, (evm.to_string(), solana.to_string()));
+    }
+    if let Some(cache) = app.try_state::<ProfileZcashCache>() {
+        cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, zcash.to_string());
     }
 }
 
@@ -4150,6 +4222,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(ProfileAddressCache::default())
+        .manage(ProfileZcashCache::default())
         .manage(WcState::default())
         .manage(BalanceWatchState::default())
         .manage(UsbRestoreState::default())
