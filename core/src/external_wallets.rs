@@ -82,6 +82,12 @@ pub(crate) fn validate_address(network: &str, address: &str) -> Result<()> {
                 .context("adresse Solana invalide (base58 attendu)")?;
             anyhow::ensure!(bytes.len() == 32, "une adresse Solana fait 32 octets");
         }
+        // Zcash transparent (t1, t3, tex1) ; adresses protégées refusées. Sans
+        // cette branche, la courbe du portefeuille (qui valide chaque avoir)
+        // échouait dès que la carte Zcash était affichée.
+        "zec_mainnet" => {
+            crate::zcash::parse_recipient(address)?;
+        }
         other => anyhow::bail!("réseau inconnu : {other}"),
     }
     Ok(())
@@ -194,6 +200,16 @@ mod tests {
 
     const VALID_EVM_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
     const VALID_SOL_ADDRESS: &str = "11111111111111111111111111111111";
+
+    /// Adresse Zcash transparente (celle de la carte Zcash) acceptée, adresse
+    /// d'un autre réseau refusée.
+    #[test]
+    fn validates_zcash_transparent_addresses() {
+        let t1 = crate::zcash::p2pkh_address(&[7u8; 20]);
+        assert!(validate_address("zec_mainnet", &t1).is_ok(), "{t1}");
+        assert!(validate_address("zec_mainnet", VALID_EVM_ADDRESS).is_err());
+        assert!(validate_address("zec_mainnet", "t1pasuneadresse").is_err());
+    }
 
     #[test]
     fn add_wallet_accepts_usdc_solana_network_with_a_valid_solana_address() {
