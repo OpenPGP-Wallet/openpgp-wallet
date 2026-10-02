@@ -3560,3 +3560,46 @@ h2 .coin-icon-inline,
 .wallet-card.collapsed {
   align-self: start;
 }
+
+/* --- Cartes repliées : même hauteur quel que soit le solde ----------------------
+   Solde seul sur sa ligne, puis équivalence en devise à gauche et boutons
+   (adresse, copie, QR code) à droite sur la ligne suivante : toujours deux
+   lignes. Avant, les boutons passaient ou non à la ligne selon la longueur du
+   solde, et les cartes repliées n'avaient pas la même hauteur. */
+:root:not([data-wallet-list-view="true"]) .wallet-card.collapsed {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-auto-flow: row dense;
+  column-gap: 8px;
+  align-content: start;
+}
+
+:root:not([data-wallet-list-view="true"]) .wallet-card.collapsed > * {
+  grid-column: 1 / -1;
+}
+
+:root:not([data-wallet-list-view="true"]) .wallet-card.collapsed > .balance-row {
+  display: contents;
+}
+
+:root:not([data-wallet-list-view="true"]) .wallet-card.collapsed .balance-row > .balance {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding-top: 10px;
+  font-size: 1.3rem;
+  white-space: nowrap;
+}
+
+:root:not([data-wallet-list-view="true"]) .wallet-card.collapsed .collapsed-actions {
+  grid-column: 2;
+  justify-self: end;
+  align-self: center;
+  margin: 8px 0 0;
+}
+
+:root:not([data-wallet-list-view="true"]) .wallet-card.collapsed > .fiat-value,
+:root:not([data-wallet-list-view="true"]) .wallet-card.collapsed > .fiat-pending-row {
+  grid-column: 1;
+  align-self: center;
+  margin: 8px 0 0;
+}
