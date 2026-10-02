@@ -1247,12 +1247,11 @@ textarea:focus {
   grid-template-columns: repeat(auto-fill, minmax(236px, 1fr));
   gap: 16px;
   margin-top: 20px;
-  /* Sans ça, la grille étire par défaut chaque carte à la hauteur de la plus
-     haute de sa rangée (ex: BTC/SOL avec leur badge "transaction en attente"
-     réservé) — même une carte plus légère comme ETH ou USDC se retrouve alors
-     gonflée artificiellement. Avec `start`, chaque carte garde sa propre
-     hauteur, celle de son contenu réel. */
-  align-items: start;
+  /* Cartes d'une même rangée à la même hauteur, actions posées en bas (voir
+     « Cartes : actions alignées ») : les rangées d'actions s'alignent d'une
+     carte à l'autre même quand l'adresse est plus courte ou qu'il n'y a pas
+     de « Convertir ». Une carte repliée garde sa propre hauteur. */
+  align-items: stretch;
 }
 
 .wallet-card {
@@ -3487,26 +3486,42 @@ h2 .coin-icon-inline,
     font-size: 1.4rem;
   }
 
-  /* Actions serrées : chacune à la largeur de son libellé (mesuré : les quatre
-     tiennent dans une carte de 236 px), sans libellé coupé. */
+  /* Actions en emplacements égaux (cercles régulièrement espacés), sans
+     écart entre eux ; la rangée déborde de 4 px de chaque côté de la carte
+     pour que « Historique », le plus long (mesuré), tienne dans le sien. */
   :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner {
-    column-gap: 2px;
+    column-gap: 0;
   }
 
   :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .address-row > [data-action="copy-address"] {
-    margin-left: 6px;
+    margin-left: 8px;
   }
 
   :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .row-buttons > button:not([data-action="refresh"]),
   :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .address-row > .convert-btn {
-    flex: 1 1 auto;
+    flex: 1 1 0;
+    min-width: 44px;
     overflow: visible;
+  }
+
+  :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .row-buttons > [data-action="send"] {
+    margin-left: -4px;
+  }
+
+  :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .row-buttons > [data-action="history"] {
+    margin-right: -4px;
+  }
+
+  /* Adresses de même hauteur d'une carte à l'autre (3 lignes : les plus
+     longues, ETH, BTC, SOL), texte centré dans l'encart. */
+  :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .address-row > .address {
+    min-height: calc(3 * 1.5em + 20px);
   }
 
   :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .row-buttons > button:not([data-action="refresh"]),
   :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .address-row > .convert-btn {
     gap: 6px;
-    font-size: 0.7rem;
+    font-size: 0.68rem;
   }
 
   :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .row-buttons > button:not([data-action="refresh"])::before,
@@ -3529,4 +3544,19 @@ h2 .coin-icon-inline,
    carte s'allonge seulement le temps où il s'affiche. */
 :root:not([data-wallet-list-view="true"]) .wallet-card .pending-badge:not(.visible) {
   display: none;
+}
+
+/* --- Cartes : actions alignées ------------------------------------------------
+   La partie dépliable occupe toute la hauteur restante de la carte, l'adresse
+   reste en haut et la rangée d'actions descend en bas. */
+:root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-body {
+  flex: 1 1 auto;
+}
+
+:root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner {
+  align-content: space-between;
+}
+
+.wallet-card.collapsed {
+  align-self: start;
 }
