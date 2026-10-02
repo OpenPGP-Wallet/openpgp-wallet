@@ -1191,7 +1191,10 @@
     <!-- « Gérer mes cryptos » : cartes affichées sur le tableau de bord. -->
     <div id="assets-modal" class="modal-overlay hidden">
       <div class="modal">
-        <h2 data-i18n="assets.title">Mes cryptos</h2>
+        <div class="modal-header-row">
+          <h2 data-i18n="assets.title">Mes cryptos</h2>
+          <button type="button" id="assets-close-x" class="modal-close-btn" data-i18n-title="common.close" title="Fermer" aria-label="Fermer">×</button>
+        </div>
         <p class="muted" data-i18n="assets.hint">Cochez les cryptos à afficher. Une crypto sur laquelle des fonds arrivent s'affiche d'elle-même.</p>
         <ul id="assets-list" class="assets-list"></ul>
         <button id="assets-done" class="primary" data-i18n="assets.done">Terminé</button>

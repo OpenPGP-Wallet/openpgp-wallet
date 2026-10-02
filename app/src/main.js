@@ -3871,7 +3871,22 @@ document.getElementById("manage-assets-btn").addEventListener("click", () => {
   );
   assetsModal.classList.remove("hidden");
 });
-document.getElementById("assets-done").addEventListener("click", () => assetsModal.classList.add("hidden"));
+// Fermée par « Terminé », la croix, Échap, ou un clic à côté — seulement si
+// le clic a aussi COMMENCÉ à côté : un geste commencé dans la fenêtre (faire
+// défiler la liste, sélectionner du texte) et relâché dehors ne la ferme pas.
+const closeAssetsModal = () => assetsModal.classList.add("hidden");
+document.getElementById("assets-done").addEventListener("click", closeAssetsModal);
+document.getElementById("assets-close-x").addEventListener("click", closeAssetsModal);
+let assetsPressedOutside = false;
+assetsModal.addEventListener("pointerdown", (e) => {
+  assetsPressedOutside = e.target === assetsModal;
+});
+assetsModal.addEventListener("click", (e) => {
+  if (e.target === assetsModal && assetsPressedOutside) closeAssetsModal();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !assetsModal.classList.contains("hidden")) closeAssetsModal();
+});
 
 // Onglet Historique, défilé jusqu'à la section de `coin` (sous la barre de
 // navigation, qui reste en haut) et brièvement mise en évidence.
