@@ -1107,8 +1107,19 @@
           </button>
           <ul class="custom-select-options"></ul>
         </div>
-        <label id="swap-amount-label" data-i18n="swap.amount">Montant</label>
-        <input id="swap-amount" type="text" placeholder="0.1" />
+        <label data-i18n="swap.amount">Montant</label>
+        <div class="amount-pair">
+          <div class="amount-field">
+            <input id="swap-amount" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="0.1" />
+            <span id="swap-amount-unit" class="amount-unit"></span>
+          </div>
+          <span class="amount-pair-equals" aria-hidden="true">≈</span>
+          <div class="amount-field">
+            <input id="swap-amount-fiat" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="0,00" data-i18n-aria-label="send.amountFiat" aria-label="Montant dans la devise affichée" />
+            <span id="swap-amount-fiat-unit" class="amount-unit"></span>
+          </div>
+        </div>
+        <p id="swap-balance" class="muted swap-balance"></p>
         <div id="swap-destination-block">
           <label data-i18n="swap.destination">Adresse de destination</label>
           <input id="swap-destination" type="text" />

@@ -1367,7 +1367,8 @@ h2 .coin-icon-inline,
   vertical-align: -3px;
 }
 
-/* Montant d'un envoi : en crypto OU dans la devise affichée, les deux liés. */
+/* Montant d'un envoi ou d'un échange : en crypto OU dans la devise affichée,
+   les deux liés. */
 .amount-pair {
   display: flex;
   align-items: center;
@@ -1407,6 +1408,17 @@ h2 .coin-icon-inline,
 .amount-pair-equals {
   color: var(--muted);
   flex-shrink: 0;
+}
+
+/* Solde de la crypto de départ, sous le montant d'un échange. */
+.swap-balance {
+  margin: 6px 0 0;
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.swap-balance.swap-balance-short {
+  color: var(--warning);
 }
 
 .qr-btn {

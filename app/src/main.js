@@ -777,6 +777,9 @@ const I18N = {
     "swap.routeAbandon": "Arrêter le suivi",
     "swap.unavailable": "Échange non disponible entre ces deux cryptos.",
     "swap.amount": "Montant",
+    "swap.balance": "Disponible : {balance}",
+    "swap.balanceUnavailable": "Solde indisponible pour le moment.",
+    "swap.balanceShort": "montant supérieur au solde",
     "swap.destination": "Adresse de destination",
     "swap.destinationHint":
       "Pré-remplie avec votre propre adresse sur le réseau choisi — modifiable si vous voulez échanger vers une autre adresse.",
@@ -1290,6 +1293,9 @@ const I18N = {
     "swap.routeAbandon": "Stop tracking",
     "swap.unavailable": "No swap available between these two cryptos.",
     "swap.amount": "Amount",
+    "swap.balance": "Available: {balance}",
+    "swap.balanceUnavailable": "Balance unavailable right now.",
+    "swap.balanceShort": "more than your balance",
     "swap.destination": "Destination address",
     "swap.destinationHint": "Pre-filled with your own address on the chosen network — editable if you want to swap to a different address.",
     "swap.jupiterHint": "Same wallet: the crypto you receive lands directly on your address on this network, no separate destination address needed.",
@@ -2844,6 +2850,7 @@ function refreshCurrencyDisplays() {
     renderQuickAmounts();
     renderSendAmountUnits();
   }
+  if (!swapModal.classList.contains("hidden")) renderSwapAmount();
 }
 let priceRefreshTimer = null;
 let pricesRefreshing = false;
@@ -2913,6 +2920,7 @@ async function refreshPrices() {
       renderQuickAmounts();
       renderSendAmountUnits();
     }
+    if (!swapModal.classList.contains("hidden")) renderSwapAmount();
   } finally {
     pricesRefreshing = false;
   }
@@ -3344,6 +3352,16 @@ function balanceKey(card) {
   return `${network}|${addressForCoin(card.dataset.coin, network)}`;
 }
 
+// Solde de `coin` sur `network` à `address`, tel que Rust le formate
+// (« 0.500000 », sans symbole). USDC est un jeton SPL, pas un "réseau" au sens
+// où get_balance l'entend (pas de notion de décimales/mint par actif dans
+// cette commande) : une commande dédiée, voir core/src/api.rs::get_usdc_balance.
+function fetchBalance(coin, network, address) {
+  return usesTokenRegistry(coin, network)
+    ? invoke("get_token_balance", { token: coin, network, address })
+    : invoke(coin === "usdc" ? "get_usdc_balance" : "get_balance", { network, address });
+}
+
 async function refreshBalance(card) {
   // Verrou par carte, partagé entre le clic manuel (bouton "Actualiser") et le
   // rafraîchissement automatique (setInterval, toutes les 60 s) : sans lui, un appel
@@ -3375,14 +3393,7 @@ async function refreshBalance(card) {
     // indépendants (l'un ne dépend pas du résultat de l'autre) : les lancer en
     // parallèle plutôt que l'un après l'autre coupe la latence perçue du
     // rafraîchissement en deux.
-    // USDC est un jeton SPL, pas un "réseau" au sens où get_balance l'entend
-    // (pas de notion de décimales/mint par actif dans cette commande) : une
-    // commande dédiée, voir core/src/api.rs::get_usdc_balance.
-    const balancePromise = (
-      usesTokenRegistry(coin, network)
-        ? invoke("get_token_balance", { token: coin, network, address })
-        : invoke(coin === "usdc" ? "get_usdc_balance" : "get_balance", { network, address })
-    )
+    const balancePromise = fetchBalance(coin, network, address)
       .then((balance) => {
         if (balanceKey(card) !== key) return; // réseau ou profil changé entre-temps
         // Solde précédent de CETTE adresse sur CE réseau (pas au premier
@@ -4324,13 +4335,17 @@ let sendContext = null;
 const sendAmountInput = document.getElementById("send-amount");
 const sendFiatInput = document.getElementById("send-amount-fiat");
 
-// Cours de la crypto envoyée : dollars pour 1 unité, dollars pour 1 unité de la
-// devise affichée ; `null` si inconnu ou réseau de test.
-function sendRate() {
-  if (!sendContext || !networkForCard(sendContext.card).endsWith("mainnet")) return null;
-  const price = priceForCoin(sendContext.coin);
+// Cours d'une crypto : dollars pour 1 unité, dollars pour 1 unité de la devise
+// affichée ; `null` si inconnu ou réseau de test (fonds sans valeur).
+function fiatRate(coin, network) {
+  if (!network?.endsWith("mainnet")) return null;
+  const price = priceForCoin(coin);
   const usdPerUnit = displayCurrency === "eur" ? usdPerEur : 1;
   return price != null && price > 0 && usdPerUnit ? { price, usdPerUnit } : null;
+}
+
+function sendRate() {
+  return sendContext ? fiatRate(sendContext.coin, networkForCard(sendContext.card)) : null;
 }
 
 function parseAmountInput(text) {
@@ -4338,21 +4353,27 @@ function parseAmountInput(text) {
   return Number.isFinite(value) ? value : null;
 }
 
+// Texte du champ en devise pour un montant en crypto (« 12,34 »), et texte du
+// champ en crypto pour un montant en devise (aux décimales de la crypto).
+function fiatAmountText(crypto, rate) {
+  const fiat = ((crypto * rate.price) / rate.usdPerUnit).toFixed(2);
+  return currentLang === "fr" ? fiat.replace(".", ",") : fiat;
+}
+
+function cryptoAmountText(fiat, rate, coin) {
+  return ((fiat * rate.usdPerUnit) / rate.price).toFixed(COIN_DECIMALS[coin]);
+}
+
 function syncSendFiatFromCrypto() {
   const rate = sendRate();
   const crypto = parseAmountInput(sendAmountInput.value);
-  if (!rate || crypto == null) {
-    sendFiatInput.value = "";
-    return;
-  }
-  const fiat = ((crypto * rate.price) / rate.usdPerUnit).toFixed(2);
-  sendFiatInput.value = currentLang === "fr" ? fiat.replace(".", ",") : fiat;
+  sendFiatInput.value = rate && crypto != null ? fiatAmountText(crypto, rate) : "";
 }
 
 function syncSendCryptoFromFiat() {
   const rate = sendRate();
   const fiat = parseAmountInput(sendFiatInput.value);
-  sendAmountInput.value = rate && fiat != null ? ((fiat * rate.usdPerUnit) / rate.price).toFixed(COIN_DECIMALS[sendContext.coin]) : "";
+  sendAmountInput.value = rate && fiat != null ? cryptoAmountText(fiat, rate, sendContext.coin) : "";
 }
 
 function setSendCryptoAmount(value) {
@@ -4836,19 +4857,129 @@ function updateSwapToOptions() {
       })
   );
   syncCustomSelect(toSelect);
-  setWithCoinIcon(document.getElementById("swap-amount-label"), from.coin, `${t("swap.amount")} (${COIN_SYMBOL[from.coin] ?? ""})`);
+  renderSwapAmount();
+  loadSwapBalance();
   onSwapTargetChange();
 }
 
-// Montant à échanger : chiffres seulement (comme à l'envoi).
-restrictToAmount(document.getElementById("swap-amount"));
+// Montant à échanger en crypto OU dans la devise affichée, comme à l'envoi :
+// seul le montant en crypto part dans le devis (puis dans l'aperçu et la
+// boîte de confirmation de Windows). Quand la crypto de départ change ou que
+// le cours est rafraîchi, le dernier champ saisi fait foi : 20 € restent
+// 20 €, 0,1 reste 0,1.
+const swapAmountInput = document.getElementById("swap-amount");
+const swapFiatInput = document.getElementById("swap-amount-fiat");
+let swapAmountTypedIn = "crypto";
+
+const swapFromAsset = () => parseSwapKey(document.getElementById("swap-from-coin").value);
+
+function syncSwapFiatFromCrypto() {
+  const { coin, network } = swapFromAsset();
+  const rate = fiatRate(coin, network);
+  const crypto = parseAmountInput(swapAmountInput.value);
+  swapFiatInput.value = rate && crypto != null ? fiatAmountText(crypto, rate) : "";
+}
+
+function syncSwapCryptoFromFiat() {
+  const { coin, network } = swapFromAsset();
+  const rate = fiatRate(coin, network);
+  const fiat = parseAmountInput(swapFiatInput.value);
+  swapAmountInput.value = rate && fiat != null ? cryptoAmountText(fiat, rate, coin) : "";
+}
+
+restrictToAmount(swapAmountInput, () => {
+  swapAmountTypedIn = "crypto";
+  syncSwapFiatFromCrypto();
+  renderSwapBalance();
+});
+restrictToAmount(swapFiatInput, () => {
+  swapAmountTypedIn = "fiat";
+  syncSwapCryptoFromFiat();
+  renderSwapBalance();
+});
+
+// Unités à droite des deux champs, champ en devise activé ou non, montants
+// resynchronisés.
+function renderSwapAmount() {
+  const { coin, network } = swapFromAsset();
+  setWithCoinIcon(document.getElementById("swap-amount-unit"), coin, COIN_SYMBOL[coin] ?? "");
+  document.getElementById("swap-amount-fiat-unit").textContent = displayCurrency === "eur" ? "€" : "$";
+  const rate = fiatRate(coin, network);
+  swapFiatInput.disabled = !rate;
+  swapFiatInput.placeholder = rate ? (currentLang === "fr" ? "0,00" : "0.00") : "—";
+  if (swapAmountTypedIn === "fiat" && rate) syncSwapCryptoFromFiat();
+  else syncSwapFiatFromCrypto();
+  renderSwapBalance();
+}
+
+// Solde de la crypto de départ, sous le montant : relu sur son réseau à chaque
+// choix (la carte peut afficher un autre réseau, ou un solde d'il y a 15 s).
+// `{ key, text, amount }` une fois lu, `text: null` pendant la lecture,
+// `failed` après un échec.
+let swapBalance = null;
+
+async function loadSwapBalance() {
+  const { coin, network } = swapFromAsset();
+  swapBalance = null;
+  if (!coin) {
+    renderSwapBalance(); // aucune crypto de départ proposée
+    return;
+  }
+  const key = swapKey(coin, network);
+  const address = addressForCoin(coin, network);
+  swapBalance = { key, text: null };
+  renderSwapBalance();
+  let next;
+  try {
+    if (!address) throw new Error("adresse inconnue");
+    const text = await fetchBalance(coin, network, address);
+    next = { key, text, amount: Number.parseFloat(text) };
+  } catch (e) {
+    console.error(e);
+    next = { key, failed: true };
+  }
+  if (swapBalance?.key !== key) return; // autre crypto choisie entre-temps
+  swapBalance = next;
+  renderSwapBalance();
+}
+
+// « Disponible : 0.500000 ETH (≈ 1 234,56 €) », signalé quand le montant
+// saisi le dépasse (simple aide : les frais du réseau ne sont pas déduits).
+function renderSwapBalance() {
+  const el = document.getElementById("swap-balance");
+  el.classList.remove("swap-balance-short");
+  if (!swapBalance) {
+    el.textContent = "";
+    return;
+  }
+  if (swapBalance.failed) {
+    el.textContent = t("swap.balanceUnavailable");
+    return;
+  }
+  const { coin, network } = parseSwapKey(swapBalance.key);
+  if (swapBalance.text == null) {
+    el.textContent = t("swap.balance", { balance: "…" });
+    return;
+  }
+  const rate = fiatRate(coin, network);
+  const fiat = rate && Number.isFinite(swapBalance.amount) ? ` (${formatUsdApprox(swapBalance.amount * rate.price)})` : "";
+  el.textContent = t("swap.balance", { balance: `${swapBalance.text} ${COIN_SYMBOL[coin] ?? ""}${fiat}` });
+  const amount = parseAmountInput(swapAmountInput.value);
+  if (amount != null && Number.isFinite(swapBalance.amount) && amount > swapBalance.amount) {
+    el.textContent += ` — ${t("swap.balanceShort")}`;
+    el.classList.add("swap-balance-short");
+  }
+}
 
 document.getElementById("swap-from-coin").addEventListener("change", updateSwapToOptions);
 
 function openSwapModal(card, preset = null) {
   const profile = currentProfile();
   swapContext = { card, profileIndex: profile ? profile.index : currentProfileIndex };
-  document.getElementById("swap-amount").value = preset?.amount ?? "";
+  swapAmountInput.value = preset?.amount ?? "";
+  swapFiatInput.value = "";
+  swapAmountTypedIn = "crypto";
+  swapBalance = null;
   hideError(document.getElementById("swap-error"));
   fillSwapFromOptions(preset ? swapKey(preset.from.coin, preset.from.network) : swapKey(card.dataset.coin, networkForCard(card)));
   updateSwapToOptions();
