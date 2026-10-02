@@ -3365,3 +3365,51 @@ h2 .coin-icon-inline,
 :root[data-wallet-list-view="true"] .wallet-card .receive-action {
   display: none;
 }
+
+/* Courbe du portefeuille dans l'en-tête, sous la valeur totale : sans cadre
+   propre, séparée par un filet. Le total est déjà affiché au-dessus : de son
+   résumé, seule la variation sur la période choisie reste visible. */
+.portfolio-hero .chart-section {
+  margin-top: 22px;
+  padding: 18px 0 0;
+  background: none;
+  border: 0;
+  border-top: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.portfolio-hero .chart-section .section-title {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.portfolio-hero .chart-scope {
+  display: none;
+}
+
+.portfolio-hero .chart-summary {
+  margin: 4px 0 0;
+  min-height: 0;
+  font-size: 0;
+}
+
+.portfolio-hero .chart-summary .chart-delta {
+  margin-left: 0;
+  font-size: 0.85rem;
+}
+
+.portfolio-hero .chart-section-header {
+  align-items: center;
+}
+
+/* Pas encore de courbe (aucun fonds) : le message seul, sans la hauteur
+   réservée à la courbe. */
+.portfolio-hero .chart-area:has(> .chart-empty) {
+  min-height: 0;
+}
+
+.portfolio-hero .chart-empty {
+  padding: 22px 0 6px;
+}

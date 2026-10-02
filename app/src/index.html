@@ -150,35 +150,58 @@
         <!-- En-tête du portefeuille : profil, puis valeur totale (main.js,
              « Valeur totale »). -->
         <div class="portfolio-hero">
-        <div class="profile-bar">
-          <label for="profile-select" data-i18n="wallet.profile">Profil</label>
-          <div class="custom-select dropdown">
-            <select id="profile-select"></select>
-            <button type="button" class="custom-select-trigger">
-              <span class="custom-select-label"></span>
-              <span class="select-arrow"></span>
-            </button>
-            <ul class="custom-select-options"></ul>
+          <div class="profile-bar">
+            <label for="profile-select" data-i18n="wallet.profile">Profil</label>
+            <div class="custom-select dropdown">
+              <select id="profile-select"></select>
+              <button type="button" class="custom-select-trigger">
+                <span class="custom-select-label"></span>
+                <span class="select-arrow"></span>
+              </button>
+              <ul class="custom-select-options"></ul>
+            </div>
+            <div class="action-menu dropdown">
+              <button type="button" class="custom-select-trigger">
+                <span data-i18n="wallet.receive">Recevoir</span>
+                <span class="select-arrow"></span>
+              </button>
+              <ul class="custom-select-options">
+                <li data-coin="evm" data-i18n="wallet.receiveEth">Recevoir ETH</li>
+                <li data-coin="btc" data-i18n="wallet.receiveBtc">Recevoir BTC</li>
+                <li data-coin="sol" data-i18n="wallet.receiveSol">Recevoir SOL</li>
+              </ul>
+            </div>
+            <button id="add-profile-btn" class="secondary" data-i18n="wallet.newProfile">+ Nouveau profil</button>
+            <button id="archive-profile-btn" class="secondary" data-i18n="wallet.archiveProfile">Archiver ce profil</button>
           </div>
-          <div class="action-menu dropdown">
-            <button type="button" class="custom-select-trigger">
-              <span data-i18n="wallet.receive">Recevoir</span>
-              <span class="select-arrow"></span>
-            </button>
-            <ul class="custom-select-options">
-              <li data-coin="evm" data-i18n="wallet.receiveEth">Recevoir ETH</li>
-              <li data-coin="btc" data-i18n="wallet.receiveBtc">Recevoir BTC</li>
-              <li data-coin="sol" data-i18n="wallet.receiveSol">Recevoir SOL</li>
-            </ul>
-          </div>
-          <button id="add-profile-btn" class="secondary" data-i18n="wallet.newProfile">+ Nouveau profil</button>
-          <button id="archive-profile-btn" class="secondary" data-i18n="wallet.archiveProfile">Archiver ce profil</button>
-        </div>
           <div class="hero-figures">
             <div class="hero-label" data-i18n="wallet.totalValue">Valeur totale</div>
             <div class="hero-total" id="portfolio-total">—</div>
             <div class="hero-change" id="portfolio-change"></div>
           </div>
+          <!-- Courbe du portefeuille, juste sous la valeur totale. -->
+          <section class="chart-section" id="portfolio-chart-section" data-collapse-key="portfolio-chart">
+            <div class="chart-section-header">
+              <div>
+                <h2 class="section-title">
+                  <button type="button" class="collapse-toggle" aria-expanded="true" aria-controls="portfolio-chart-body">
+                    <span class="collapse-chevron" aria-hidden="true"></span>
+                    <span data-i18n="charts.portfolioTitle">Évolution du portefeuille</span>
+                  </button>
+                </h2>
+                <p class="muted chart-scope" data-i18n="charts.portfolioScope">Profil affiché, fonds réels (mainnet)</p>
+              </div>
+              <button type="button" class="link chart-expand" data-i18n="charts.expand">Agrandir</button>
+            </div>
+            <p class="chart-summary" data-field="summary"></p>
+            <div class="collapsible-body" id="portfolio-chart-body">
+              <div class="collapsible-inner">
+                <div class="chart-ranges" role="group"></div>
+                <div class="chart-area" data-field="chart"></div>
+                <p class="muted chart-note" data-field="note"></p>
+              </div>
+            </div>
+          </section>
         </div>
         <div id="swap-route-banner" class="route-banner hidden">
           <span id="swap-route-text"></span>
@@ -609,29 +632,6 @@
             </div>
           </section>
         </div>
-
-        <section class="chart-section" id="portfolio-chart-section" data-collapse-key="portfolio-chart">
-          <div class="chart-section-header">
-            <div>
-              <h2 class="section-title">
-                <button type="button" class="collapse-toggle" aria-expanded="true" aria-controls="portfolio-chart-body">
-                  <span class="collapse-chevron" aria-hidden="true"></span>
-                  <span data-i18n="charts.portfolioTitle">Évolution du portefeuille</span>
-                </button>
-              </h2>
-              <p class="muted chart-scope" data-i18n="charts.portfolioScope">Profil affiché, fonds réels (mainnet)</p>
-            </div>
-            <button type="button" class="link chart-expand" data-i18n="charts.expand">Agrandir</button>
-          </div>
-          <p class="chart-summary" data-field="summary"></p>
-          <div class="collapsible-body" id="portfolio-chart-body">
-            <div class="collapsible-inner">
-              <div class="chart-ranges" role="group"></div>
-              <div class="chart-area" data-field="chart"></div>
-              <p class="muted chart-note" data-field="note"></p>
-            </div>
-          </div>
-        </section>
 
         <section class="markets-section" data-collapse-key="markets">
           <h2 class="section-title">
