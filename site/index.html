@@ -51,8 +51,8 @@
   /* ===== Navigation ===== */
   .nav {
     position: fixed; inset: 0 0 auto 0; z-index: 40;
-    height: 72px; display: flex; align-items: center; gap: 32px;
-    padding: 0 var(--gutter);
+    height: 72px; display: flex; align-items: center; gap: 24px;
+    padding: 0 clamp(20px, 3vw, 40px);
     background: rgba(6, 7, 8, 0.72);
     backdrop-filter: saturate(140%) blur(14px);
     -webkit-backdrop-filter: saturate(140%) blur(14px);
@@ -60,8 +60,8 @@
   }
   .brand { display: flex; align-items: center; gap: 11px; font-family: var(--font-display); font-weight: 700; font-size: 19px; letter-spacing: -0.01em; white-space: nowrap; }
   .brand-mark { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; background: linear-gradient(145deg, #1d2330, #0d1016); border: 1px solid var(--line-2); }
-  .nav-links { display: flex; gap: 26px; }
-  .nav-links a { color: var(--muted); font-size: 15.5px; font-weight: 500; transition: color 0.2s; white-space: nowrap; }
+  .nav-links { display: flex; gap: 18px; }
+  .nav-links a { color: var(--muted); font-size: 15px; font-weight: 500; transition: color 0.2s; white-space: nowrap; }
   .nav-links a:hover { color: var(--text); }
   .nav-actions { margin-left: auto; display: flex; align-items: center; gap: 12px; }
   .badge-private {
@@ -263,7 +263,11 @@
   .dot.active { background: var(--text); border-color: var(--text); transform: scale(1.3); }
 
   /* ===== Écrans étroits ===== */
-  @media (max-width: 1240px) { .nav-links { display: none; } }
+  /* Les 8 liens tiennent à partir de ~1360 px (mesuré), avec le badge
+     raccourci sous 1600 px ; en dessous, les points de navigation à droite de
+     la page prennent le relais. */
+  @media (max-width: 1599px) { .badge-extra { display: none; } }
+  @media (max-width: 1359px) { .nav-links { display: none; } }
   @media (max-width: 960px) {
     .hero { padding-top: 104px; }
     .hero-inner, .feature-inner { grid-template-columns: 1fr; }
@@ -306,12 +310,14 @@
     <a href="#sec-lock">Déverrouillage</a>
     <a href="#sec-networks">Multi-réseau</a>
     <a href="#sec-confirm">Confirmation</a>
+    <a href="#sec-fees">Frais</a>
+    <a href="#sec-messaging">Messagerie</a>
     <a href="#sec-security">Sécurité</a>
     <a href="#sec-status">Statut</a>
     <a href="#sec-howitworks">Comment ça marche</a>
   </nav>
   <div class="nav-actions">
-    <span class="badge-private">APERÇU PRIVÉ · NON PUBLIC</span>
+    <span class="badge-private">APERÇU PRIVÉ<span class="badge-extra"> · NON PUBLIC</span></span>
     <a class="icon-btn" href="https://github.com/KHADEVS/pgp-wallet-poc" aria-label="Voir le code sur GitHub">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2C6.48 2 2 6.58 2 12.25c0 4.53 2.87 8.37 6.84 9.73.5.1.68-.22.68-.49 0-.24-.01-.87-.01-1.71-2.78.62-3.37-1.37-3.37-1.37-.45-1.18-1.11-1.49-1.11-1.49-.91-.64.07-.63.07-.63 1 .07 1.53 1.06 1.53 1.06.89 1.56 2.34 1.11 2.91.85.09-.66.35-1.11.63-1.37-2.22-.26-4.56-1.14-4.56-5.07 0-1.12.39-2.03 1.03-2.75-.1-.26-.45-1.31.1-2.72 0 0 .84-.28 2.75 1.05a9.32 9.32 0 0 1 5 0c1.91-1.33 2.75-1.05 2.75-1.05.55 1.41.2 2.46.1 2.72.64.72 1.03 1.63 1.03 2.75 0 3.94-2.34 4.8-4.57 5.06.36.32.68.95.68 1.92 0 1.39-.01 2.51-.01 2.85 0 .27.18.6.69.49A10.26 10.26 0 0 0 22 12.25C22 6.58 17.52 2 12 2Z"/></svg>
     </a>
