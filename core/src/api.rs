@@ -2480,7 +2480,9 @@ pub fn send_lifi_solana(data_dir: &Path, device_password: &str, quote: &lifi::Li
     anyhow::ensure!(bs58::encode(owner).into_string() == quote.from_address, "la transaction LI.FI n'est pas au nom de ce profil — échange refusé");
     let rpc = sol_rpc::SolRpc::new(wallet_flow::SOLANA_MAINNET.rpc);
     check_swap_effects(&rpc, raw, &lifi_solana_limits(owner, quote)?)?;
-    let signed = jupiter_rpc::sign_swap_transaction(raw, &signing_key, &owner)?;
+    // Blockhash frais de notre nœud (voir `jupiter_rpc::with_recent_blockhash`).
+    let raw = jupiter_rpc::with_recent_blockhash(raw, &rpc.latest_blockhash()?)?;
+    let signed = jupiter_rpc::sign_swap_transaction(&raw, &signing_key, &owner)?;
     rpc.send_transaction(&signed)
 }
 
@@ -3187,6 +3189,8 @@ pub fn send_jupiter_swap(
     let min_out = shown_out_amount.saturating_mul(u64::from(10_000 - slippage_bps.min(10_000))) / 10_000;
     check_swap_effects(&rpc, &raw_tx, &swap_effect_limits(owner, from_coin, amount_native, to_coin, min_out)?)?;
 
+    // Blockhash frais de notre nœud (voir `jupiter_rpc::with_recent_blockhash`).
+    let raw_tx = jupiter_rpc::with_recent_blockhash(&raw_tx, &rpc.latest_blockhash()?)?;
     let signed_tx = jupiter_rpc::sign_swap_transaction(&raw_tx, &signing_key, &owner)?;
     rpc.send_transaction(&signed_tx)
 }

@@ -346,6 +346,27 @@ pub fn transaction_message(raw_tx: &[u8]) -> Result<&[u8]> {
     split_single_signer_transaction(raw_tx).map(|(_, message)| message)
 }
 
+/// Remplace le blockhash récent d'une transaction à signataire unique par
+/// `blockhash`, lu sur NOTRE nœud juste avant de signer. Celui choisi par le
+/// tiers qui a construit la transaction peut expirer avant l'envoi (mesuré le
+/// 02/10/2026 : ~35 s de validité pour une transaction LI.FI, moins que
+/// déverrouillage + simulation après la confirmation → « BlockhashNotFound »)
+/// ou être inconnu de notre nœud. Sans effet sur les instructions ; refusé
+/// pour un nonce durable (le « blockhash » y est la valeur du nonce).
+pub fn with_recent_blockhash(raw_tx: &[u8], blockhash: &[u8; 32]) -> Result<Vec<u8>> {
+    let (message_start, message) = split_single_signer_transaction(raw_tx)?;
+    anyhow::ensure!(!message_writable_accounts(message)?.advances_durable_nonce, "transaction à nonce durable : blockhash non remplaçable");
+    let header_start = if message.first().is_some_and(|b| b & 0x80 != 0) { 1 } else { 0 };
+    let keys_start = header_start + 3;
+    anyhow::ensure!(message.len() > keys_start, "message Solana tronqué (en-tête)");
+    let (count, consumed) = read_shortvec_len(&message[keys_start..])?;
+    let start = message_start + keys_start + consumed + 32 * count;
+    anyhow::ensure!(raw_tx.len() >= start + 32, "message Solana tronqué (blockhash)");
+    let mut out = raw_tx.to_vec();
+    out[start..start + 32].copy_from_slice(blockhash);
+    Ok(out)
+}
+
 /// Signe une transaction Jupiter (voir `build_swap_transaction`) après avoir
 /// vérifié que son payeur de frais est bien `expected_signer` — refuse de
 /// signer sinon, plutôt que de faire confiance aveuglément à une transaction
@@ -410,6 +431,26 @@ mod tests {
         let mut truncated = legacy_message_with_first_instruction(&[4, 0, 0, 0]);
         truncated.truncate(truncated.len() - 3);
         assert!(message_writable_accounts(&truncated).is_err());
+    }
+
+    /// Blockhash remplacé à sa place exacte (message legacy puis v0), rien
+    /// d'autre ne bouge ; refusé pour un nonce durable.
+    #[test]
+    fn with_recent_blockhash_replaces_only_the_blockhash() {
+        let tx = |message: &[u8]| [&[1u8][..], &[0u8; 64], message].concat();
+        let transfer = legacy_message_with_first_instruction(&[2, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0]);
+        let fresh = [5u8; 32];
+        let legacy = tx(&transfer);
+        let replaced = with_recent_blockhash(&legacy, &fresh).unwrap();
+        let start = 1 + 64 + 4 + 2 * 32; // signature, en-tête + nombre de clés, 2 clés
+        assert_eq!(replaced[start..start + 32], fresh);
+        assert_eq!((&replaced[..start], &replaced[start + 32..]), (&legacy[..start], &legacy[start + 32..]));
+        // v0 : octet de version en tête, aucune table de correspondance en fin.
+        let v0 = tx(&[&[0x80u8][..], &transfer, &[0]].concat());
+        let replaced = with_recent_blockhash(&v0, &fresh).unwrap();
+        assert_eq!(replaced[start + 1..start + 33], fresh);
+        assert_eq!((&replaced[..start + 1], &replaced[start + 33..]), (&v0[..start + 1], &v0[start + 33..]));
+        assert!(with_recent_blockhash(&tx(&legacy_message_with_first_instruction(&[4, 0, 0, 0])), &fresh).is_err(), "nonce durable");
     }
 
     #[test]

@@ -273,7 +273,14 @@ impl SolRpc {
 
     pub fn send_transaction(&self, raw_tx: &[u8]) -> Result<String> {
         let b64 = base64::engine::general_purpose::STANDARD.encode(raw_tx);
-        let result = self.call("sendTransaction", json!([b64, {"encoding": "base64"}]))?;
+        // Refusée par la simulation préalable du nœud : rien n'est diffusé.
+        let result = self.call("sendTransaction", json!([b64, {"encoding": "base64"}])).map_err(|e| {
+            if e.to_string().contains("\"BlockhashNotFound\"") {
+                anyhow!(BLOCKHASH_EXPIRED_ERROR)
+            } else {
+                e
+            }
+        })?;
         result
             .as_str()
             .map(String::from)
@@ -647,6 +654,11 @@ fn is_swap_transaction(tx: &Value) -> bool {
 /// lisible que le journal brut pour un montant/frais/rent qui ne peut pas
 /// être prédit à l'avance de façon fiable (ex: coût exact d'une route de
 /// swap Jupiter, qui varie d'un appel à l'autre).
+/// Transaction dont le blockhash a expiré (ou est inconnu du nœud) avant
+/// l'envoi : refusée avant toute diffusion.
+pub const BLOCKHASH_EXPIRED_ERROR: &str =
+    "la transaction a expiré avant d'être envoyée (délai de validité de Solana dépassé) — rien n'a été envoyé ni débité, réessayez";
+
 /// Lamports en SOL, sans zéros inutiles (« 0.00065024 »).
 pub fn format_lamports(lamports: u64) -> String {
     let text = format!("{}.{:09}", lamports / 1_000_000_000, lamports % 1_000_000_000);

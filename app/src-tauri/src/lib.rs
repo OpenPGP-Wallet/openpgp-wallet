@@ -35,6 +35,11 @@ fn set_ui_language(lang: String) {
 /// Messages sans valeur interpolée : correspondance exacte avec le texte français
 /// tel qu'écrit dans `core/` et dans ce fichier.
 const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
+    // Solana (core/src/sol_rpc.rs)
+    (
+        pgp_wallet_poc::sol_rpc::BLOCKHASH_EXPIRED_ERROR,
+        "the transaction expired before being sent (Solana validity window exceeded) — nothing was sent or debited, try again",
+    ),
     // Réseaux EVM (core/src/api.rs, history.rs)
     ("adresse d'envoi inconnue : déverrouillez le portefeuille", "sending address unknown: unlock the wallet"),
     ("historique pas encore disponible sur ce réseau", "history not available on this network yet"),
