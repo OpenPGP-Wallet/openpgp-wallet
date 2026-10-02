@@ -173,6 +173,7 @@ function buildAssetCard(asset) {
         </div>
         <div class="row-buttons">
           <button class="secondary" data-action="refresh" data-i18n="wallet.refresh">Actualiser</button>
+          <button class="secondary receive-action" data-action="qr" data-i18n="wallet.receive">Recevoir</button>
           <button class="secondary" data-action="history" data-i18n="wallet.history">Historique</button>
           <button class="primary" data-action="send" data-i18n="wallet.send">Envoyer</button>
         </div>
@@ -558,6 +559,8 @@ const I18N = {
     "wc.expires": "expire le {date}",
     "wallet.profile": "Profil",
     "wallet.receive": "Recevoir",
+    "wallet.totalValue": "Valeur totale",
+    "wallet.change24h": "{change} sur 24 h",
     "wallet.receiveEth": "Recevoir ETH",
     "wallet.receiveBtc": "Recevoir BTC",
     "wallet.receiveSol": "Recevoir SOL",
@@ -1075,6 +1078,8 @@ const I18N = {
     "wc.expires": "expires on {date}",
     "wallet.profile": "Profile",
     "wallet.receive": "Receive",
+    "wallet.totalValue": "Total value",
+    "wallet.change24h": "{change} over 24h",
     "wallet.receiveEth": "Receive ETH",
     "wallet.receiveBtc": "Receive BTC",
     "wallet.receiveSol": "Receive SOL",
@@ -2845,7 +2850,55 @@ function priceForCoin(coin) {
   return latestPrices[asset.gecko] ?? null;
 }
 
+// --- Valeur totale (en-tête du tableau de bord) -----------------------------
+// Somme des cartes affichées sur un réseau principal (solde × cours, comme leur
+// valeur en devise : fonds de test exclus) et variation sur 24 h pondérée par
+// la valeur de chaque crypto (variations de la liste des marchés).
+function marketChange24h(coin) {
+  const gecko = ASSET_BY_COIN[coin]?.gecko;
+  const market = gecko && lastMarketCoins ? lastMarketCoins.find((c) => c.id === gecko) : null;
+  return market && Number.isFinite(market.change_24h_percent) ? market.change_24h_percent : null;
+}
+
+function updatePortfolioTotal() {
+  const totalEl = document.getElementById("portfolio-total");
+  const changeEl = document.getElementById("portfolio-change");
+  if (!totalEl) return;
+  let usd = 0;
+  let weighted = 0;
+  let weight = 0;
+  let known = false;
+  document.querySelectorAll(".wallet-card:not(.asset-hidden)").forEach((card) => {
+    if (!networkForCard(card).endsWith("mainnet")) return;
+    const balance = Number.parseFloat(card.querySelector('[data-field="balance"]').textContent);
+    const price = priceForCoin(card.dataset.coin);
+    if (!Number.isFinite(balance) || price == null) return;
+    known = true;
+    const value = balance * price;
+    usd += value;
+    const change = marketChange24h(card.dataset.coin);
+    if (change != null && value > 0) {
+      weighted += value * change;
+      weight += value;
+    }
+  });
+  const fiat = known ? usdToFiat(usd) : null;
+  const text = fiat == null ? "—" : withCurrency(fiat.toLocaleString(chartLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+  if (totalEl.textContent !== text) totalEl.textContent = text;
+  // Variation : seulement avec des fonds (pondérée par leur valeur).
+  const change = weight > 0 ? weighted / weight : null;
+  changeEl.classList.toggle("up", change != null && change > 0);
+  changeEl.classList.toggle("down", change != null && change < 0);
+  if (change == null) {
+    changeEl.textContent = "";
+    return;
+  }
+  const shown = `${change > 0 ? "▲" : change < 0 ? "▼" : ""} ${Math.abs(change).toLocaleString(chartLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })}${currentLang === "en" ? "%" : "\u00a0%"}`.trim();
+  changeEl.textContent = t("wallet.change24h", { change: shown });
+}
+
 function updateFiatValue(card) {
+  updatePortfolioTotal();
   const fiatEl = card.querySelector('[data-field="fiat"]');
   if (!fiatEl) return;
   const price = priceForCoin(card.dataset.coin);
@@ -3861,6 +3914,7 @@ renderReceiveMenu();
 // prix en direct, courbe du portefeuille.
 function refreshAssetDisplays() {
   applyAssetVisibility();
+  updatePortfolioTotal();
   renderReceiveMenu();
   updateBalanceWatch();
   if (lastMarketCoins) renderMarkets(lastMarketCoins);

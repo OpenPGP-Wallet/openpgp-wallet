@@ -3120,6 +3120,8 @@ h2 .coin-icon-inline,
 .wallet-card [data-action="send"] { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M7%2017%2017%207'%2F%3E%3Cpath%20d%3D'M8.5%207H17v8.5'%2F%3E%3C%2Fsvg%3E"); }
 .wallet-card [data-action="history"] { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Ccircle%20cx%3D'12'%20cy%3D'12'%20r%3D'8.5'%2F%3E%3Cpath%20d%3D'M12%207.5V12l3%202'%2F%3E%3C%2Fsvg%3E"); }
 .wallet-card [data-action="refresh"] { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M20%2011a8%208%200%200%200-14.3-4.3L4%208.5'%2F%3E%3Cpath%20d%3D'M4%204v4.5h4.5'%2F%3E%3Cpath%20d%3D'M4%2013a8%208%200%200%200%2014.3%204.3l1.7-1.8'%2F%3E%3Cpath%20d%3D'M20%2020v-4.5h-4.5'%2F%3E%3C%2Fsvg%3E"); }
+.wallet-card .receive-action { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M17%207%207%2017'%2F%3E%3Cpath%20d%3D'M15.5%2017H7V8.5'%2F%3E%3C%2Fsvg%3E"); }
+.wallet-card [data-action="swap"] { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M4%208h13l-3.5-3.5'%2F%3E%3Cpath%20d%3D'M20%2016H7l3.5%203.5'%2F%3E%3C%2Fsvg%3E"); }
 
 /* Actions secondaires d'une carte : discrètes, « Envoyer » seul en avant. */
 .wallet-card .row-buttons button.secondary {
@@ -3167,4 +3169,199 @@ h2 .coin-icon-inline,
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--border-strong) transparent;
+}
+
+/* --- En-tête du portefeuille : profil et valeur totale ------------------------ */
+.portfolio-hero {
+  position: relative;
+  padding: 18px 22px 26px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background:
+    radial-gradient(ellipse 65% 130% at 100% 0%, color-mix(in srgb, var(--accent) 24%, transparent), transparent 62%),
+    radial-gradient(ellipse 45% 90% at 0% 100%, color-mix(in srgb, var(--accent) 9%, transparent), transparent 70%),
+    linear-gradient(180deg, color-mix(in srgb, var(--surface), white 3%), var(--surface));
+  box-shadow: var(--shadow);
+}
+
+.dashboard .portfolio-hero .profile-bar {
+  padding: 0;
+  background: none;
+  border: 0;
+}
+
+.hero-figures {
+  margin-top: 28px;
+}
+
+.hero-label {
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.hero-total {
+  margin-top: 4px;
+  font-family: "Space Grotesk", "IBM Plex Sans", sans-serif;
+  font-size: clamp(2.4rem, 4.4vw, 3.2rem);
+  font-weight: 600;
+  letter-spacing: -0.035em;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.hero-change {
+  display: inline-flex;
+  margin-top: 10px;
+  padding: 4px 11px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.hero-change:empty {
+  display: none;
+}
+
+.hero-change.up {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+}
+
+.hero-change.down {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+/* --- Cartes : actions rondes (vue cartes ; la vue liste garde ses boutons) -----
+   L'adresse et sa copie en première ligne, puis une rangée d'actions rondes à
+   icône, libellé dessous : Envoyer, Recevoir (le QR code), Convertir,
+   Historique, Actualiser. Les conteneurs d'origine (.address-row,
+   .row-buttons) s'effacent (`display: contents`) : rien ne change dans le
+   document, dont le JS dépend. */
+:root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 8px;
+}
+
+:root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .address-row,
+:root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .row-buttons {
+  display: contents;
+}
+
+:root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .address-row > .address {
+  flex: 1 1 calc(100% - 48px);
+  font-size: 0.75rem;
+}
+
+:root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .address-row > [data-action="copy-address"] {
+  flex: 0 0 40px;
+  padding: 0;
+}
+
+/* Le QR code s'ouvre par « Recevoir ». */
+:root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .address-row > [data-action="qr"] {
+  display: none;
+}
+
+:root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .row-buttons > button,
+:root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .address-row > .convert-btn {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 7px;
+  margin: 8px 0 0;
+  padding: 0 0 2px;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Cercle (avant) et icône (après), posée au centre du cercle. */
+:root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .row-buttons > button::before,
+:root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .address-row > .convert-btn::before {
+  content: "";
+  flex-shrink: 0;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  -webkit-mask: none;
+  mask: none;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+:root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .row-buttons > button::after,
+:root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .address-row > .convert-btn::after {
+  content: "";
+  position: absolute;
+  top: 13px;
+  left: 50%;
+  width: 20px;
+  height: 20px;
+  margin-left: -10px;
+  background: var(--text);
+  -webkit-mask: var(--icon) center / contain no-repeat;
+  mask: var(--icon) center / contain no-repeat;
+}
+
+:root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .row-buttons > button:hover:not(:disabled),
+:root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .address-row > .convert-btn:hover {
+  background: transparent;
+  color: var(--text);
+}
+
+:root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .row-buttons > button:hover:not(:disabled)::before,
+:root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .address-row > .convert-btn:hover::before {
+  background: var(--surface-3);
+  border-color: var(--border-strong);
+}
+
+/* « Envoyer » : seul cercle plein. */
+:root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .row-buttons > button.primary {
+  color: var(--text);
+}
+
+:root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .row-buttons > button.primary::before,
+:root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .row-buttons > button.primary:hover::before {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent), white 12%), var(--accent));
+  border-color: transparent;
+  box-shadow: 0 8px 18px -10px color-mix(in srgb, var(--accent) 85%, transparent);
+}
+
+:root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .row-buttons > button.primary::after {
+  background: white;
+}
+
+:root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .address-row > .convert-btn svg {
+  display: none;
+}
+
+/* Ordre des actions. */
+:root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner [data-action="send"] { order: 1; }
+:root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner .receive-action { order: 2; }
+:root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner [data-action="swap"] { order: 3; }
+:root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner [data-action="history"] { order: 4; }
+:root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner [data-action="refresh"] { order: 5; }
+
+/* Vue liste : le QR code reste à côté de l'adresse, pas de « Recevoir » en plus. */
+:root[data-wallet-list-view="true"] .wallet-card .receive-action {
+  display: none;
 }

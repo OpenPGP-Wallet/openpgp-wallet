@@ -147,6 +147,9 @@
       </nav>
 
       <section class="tab-panel dashboard" data-panel="wallet">
+        <!-- En-tête du portefeuille : profil, puis valeur totale (main.js,
+             « Valeur totale »). -->
+        <div class="portfolio-hero">
         <div class="profile-bar">
           <label for="profile-select" data-i18n="wallet.profile">Profil</label>
           <div class="custom-select dropdown">
@@ -170,6 +173,12 @@
           </div>
           <button id="add-profile-btn" class="secondary" data-i18n="wallet.newProfile">+ Nouveau profil</button>
           <button id="archive-profile-btn" class="secondary" data-i18n="wallet.archiveProfile">Archiver ce profil</button>
+        </div>
+          <div class="hero-figures">
+            <div class="hero-label" data-i18n="wallet.totalValue">Valeur totale</div>
+            <div class="hero-total" id="portfolio-total">—</div>
+            <div class="hero-change" id="portfolio-change"></div>
+          </div>
         </div>
         <div id="swap-route-banner" class="route-banner hidden">
           <span id="swap-route-text"></span>
@@ -292,6 +301,7 @@
                      besoin. -->
                 <div class="row-buttons">
                   <button class="secondary" data-action="refresh" data-i18n="wallet.refresh">Actualiser</button>
+                  <button class="secondary receive-action" data-action="qr" data-i18n="wallet.receive">Recevoir</button>
                   <button class="secondary" data-action="history" data-i18n="wallet.history">Historique</button>
                   <button class="primary" data-action="send" data-i18n="wallet.send">Envoyer</button>
                 </div>
@@ -390,6 +400,7 @@
                 </div>
                 <div class="row-buttons">
                   <button class="secondary" data-action="refresh" data-i18n="wallet.refresh">Actualiser</button>
+                  <button class="secondary receive-action" data-action="qr" data-i18n="wallet.receive">Recevoir</button>
                   <button class="secondary" data-action="history" data-i18n="wallet.history">Historique</button>
                   <button class="primary" data-action="send" data-i18n="wallet.send">Envoyer</button>
                 </div>
@@ -488,6 +499,7 @@
                 </div>
                 <div class="row-buttons">
                   <button class="secondary" data-action="refresh" data-i18n="wallet.refresh">Actualiser</button>
+                  <button class="secondary receive-action" data-action="qr" data-i18n="wallet.receive">Recevoir</button>
                   <button class="secondary" data-action="history" data-i18n="wallet.history">Historique</button>
                   <button class="primary" data-action="send" data-i18n="wallet.send">Envoyer</button>
                 </div>
@@ -589,6 +601,7 @@
                 </div>
                 <div class="row-buttons">
                   <button class="secondary" data-action="refresh" data-i18n="wallet.refresh">Actualiser</button>
+                  <button class="secondary receive-action" data-action="qr" data-i18n="wallet.receive">Recevoir</button>
                   <button class="secondary" data-action="history" data-i18n="wallet.history">Historique</button>
                   <button class="primary" data-action="send" data-i18n="wallet.send">Envoyer</button>
                 </div>
