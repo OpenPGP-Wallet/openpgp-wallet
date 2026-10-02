@@ -11,8 +11,9 @@
     "windows": [
       {
         "title": "OpenPGP Wallet",
-        "width": 800,
-        "height": 600,
+        "width": 1080,
+        "height": 720,
+        "center": true,
         "minWidth": 720,
         "minHeight": 480
       }

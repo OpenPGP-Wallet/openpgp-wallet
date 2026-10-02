@@ -2335,34 +2335,12 @@ resetAutoLockTimer();
 
 // --- Onglets de navigation ---------------------------------------------
 
-// Barre sur une ligne (onglets centrés) quand tout y tient ; sinon, logo et
-// boutons sur une rangée, onglets en dessous (renvoyés à la ligne au besoin) :
-// la page ne défile jamais horizontalement. Mesuré, pas deviné par une largeur
-// fixe : la place prise dépend de la langue et de la police. Élément relu à
-// chaque appel : aussi appelée par `applyLanguage`, qui tourne plus haut.
+// Navigation en barre latérale (voir styles.css, « Barre latérale ») : plus
+// rien à mesurer ni à replier selon la largeur. Gardée (aussi appelée par
+// `applyLanguage`, plus haut) pour la hauteur réservée en haut de page, nulle
+// avec une barre sur le côté.
 function fitNavbar() {
-  const navbar = document.querySelector(".navbar");
-  if (!navbar || navbar.clientWidth === 0) return; // tableau de bord caché
-  navbar.classList.remove("stacked");
-  const tabs = navbar.querySelector(".nav-tabs");
-  const overflows = navbar.scrollWidth > navbar.clientWidth + 1 || tabs.scrollWidth > tabs.clientWidth + 1;
-  navbar.classList.toggle("stacked", overflows);
-  // Messages (« Adresse copiée ! », fonds reçus) placés juste sous la barre,
-  // plus haute sur deux rangées.
-  document.documentElement.style.setProperty("--navbar-height", `${navbar.offsetHeight}px`);
-}
-
-{
-  // Largeur seulement : le passage sur deux rangées change la hauteur de la
-  // barre, qui ne doit pas relancer la mesure.
-  let lastWidth = 0;
-  new ResizeObserver(([entry]) => {
-    const width = Math.round(entry.contentRect.width);
-    if (width === lastWidth) return;
-    lastWidth = width;
-    fitNavbar();
-  }).observe(document.querySelector(".navbar"));
-  if (document.fonts) document.fonts.ready.then(fitNavbar);
+  document.documentElement.style.setProperty("--navbar-height", "0px");
 }
 
 document.querySelectorAll(".nav-tab").forEach((tab) => {
@@ -4317,8 +4295,8 @@ function openHistoryFor(coin) {
   document.querySelector('.nav-tab[data-tab="history"]').click();
   const section = document.getElementById(`history-section-${coin}`);
   if (!section) return;
-  const navbar = document.querySelector(".navbar");
-  window.scrollTo({ top: section.getBoundingClientRect().top + window.scrollY - navbar.offsetHeight - 16 });
+  // Barre de navigation sur le côté : rien ne masque le haut de la page.
+  window.scrollTo({ top: section.getBoundingClientRect().top + window.scrollY - 24 });
   section.classList.remove("history-section-flash");
   void section.offsetWidth; // relance l'animation si on reclique aussitôt
   section.classList.add("history-section-flash");
