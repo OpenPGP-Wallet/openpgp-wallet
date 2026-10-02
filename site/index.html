@@ -183,7 +183,11 @@
   .panel-bar { display: flex; justify-content: space-between; align-items: center; padding: 18px 24px; border-bottom: 1px solid var(--line); font-size: 15px; color: var(--dim); }
   .rows { padding: 16px; display: flex; flex-direction: column; gap: 10px; }
   .coin-row { display: flex; align-items: center; gap: 14px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 14px; background: rgba(255, 255, 255, 0.015); }
-  .coin-dot { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; font-family: var(--font-display); font-weight: 700; font-size: 14px; color: #fff; flex-shrink: 0; }
+  /* Logos officiels, les mêmes que dans l'app (app/src/assets). */
+  .coin-logo { width: 36px; height: 36px; object-fit: contain; flex-shrink: 0; }
+  /* Ce PNG a une large marge transparente autour du symbole : agrandi pour
+     paraître à la même taille que les autres (comme dans l'app). */
+  .coin-logo.sol { transform: scale(2.05); }
   .coin-name { font-weight: 600; font-size: 17px; line-height: 1.25; }
   .coin-net { font-size: 14px; color: var(--dim); }
   .coin-amount { margin-left: auto; font-family: var(--font-mono); font-size: 16px; color: var(--text); }
@@ -431,11 +435,11 @@
         <div class="panel list">
           <div class="panel-bar"><span>Portefeuille</span><span>Profil principal</span></div>
           <div class="rows">
-            <div class="coin-row reveal" style="--d: 0.05s"><span class="coin-dot" style="background: #627eea">Ξ</span><div><div class="coin-name">Ethereum</div><div class="coin-net">Ethereum</div></div><span class="coin-amount">0.842 ETH</span></div>
-            <div class="coin-row reveal" style="--d: 0.20s"><span class="coin-dot" style="background: #f7931a">₿</span><div><div class="coin-name">Bitcoin</div><div class="coin-net">Bitcoin</div></div><span class="coin-amount">0.041 BTC</span></div>
-            <div class="coin-row reveal" style="--d: 0.35s"><span class="coin-dot" style="background: linear-gradient(135deg, #9945ff, #14f195)">S</span><div><div class="coin-name">Solana</div><div class="coin-net">Solana</div></div><span class="coin-amount">12.4 SOL</span></div>
-            <div class="coin-row reveal" style="--d: 0.50s"><span class="coin-dot" style="background: #2775ca">$</span><div><div class="coin-name">USDC</div><div class="coin-net">Base</div></div><span class="coin-amount">250.00 USDC</span></div>
-            <div class="coin-row reveal" style="--d: 0.65s"><span class="coin-dot" style="background: #f4b728; color: #1b1300">Z</span><div><div class="coin-name">Zcash</div><div class="coin-net">Zcash</div></div><span class="coin-amount">1.20 ZEC</span></div>
+            <div class="coin-row reveal" style="--d: 0.05s"><img class="coin-logo" src="assets/eth.svg" alt="" width="36" height="36"><div><div class="coin-name">Ethereum</div><div class="coin-net">Ethereum</div></div><span class="coin-amount">0.842 ETH</span></div>
+            <div class="coin-row reveal" style="--d: 0.20s"><img class="coin-logo" src="assets/btc.webp" alt="" width="36" height="36"><div><div class="coin-name">Bitcoin</div><div class="coin-net">Bitcoin</div></div><span class="coin-amount">0.041 BTC</span></div>
+            <div class="coin-row reveal" style="--d: 0.35s"><img class="coin-logo sol" src="assets/sol.png" alt="" width="36" height="36"><div><div class="coin-name">Solana</div><div class="coin-net">Solana</div></div><span class="coin-amount">12.4 SOL</span></div>
+            <div class="coin-row reveal" style="--d: 0.50s"><img class="coin-logo" src="assets/usdc.png" alt="" width="36" height="36"><div><div class="coin-name">USDC</div><div class="coin-net">Base</div></div><span class="coin-amount">250.00 USDC</span></div>
+            <div class="coin-row reveal" style="--d: 0.65s"><img class="coin-logo" src="assets/zec.png" alt="" width="36" height="36"><div><div class="coin-name">Zcash</div><div class="coin-net">Zcash</div></div><span class="coin-amount">1.20 ZEC</span></div>
           </div>
         </div>
       </div>
