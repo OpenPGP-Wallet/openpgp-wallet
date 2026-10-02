@@ -945,7 +945,7 @@
     var still = function () {
       if (!renderer) return;
       renderer.resize();
-      renderer.draw({ lift: 0, swing: 0, glow: 0.3, yaw: -0.35, pitch: -0.15, bob: 0 });
+      renderer.draw({ lift: 0, swing: 0, glow: 0.3, yaw: -0.12, pitch: -0.15, bob: 0 });
     };
     still();
     window.addEventListener("resize", still);
@@ -972,7 +972,7 @@
       if (!renderer || !visible || document.hidden) return;
       tilt.x += (pointer.x - tilt.x) * 0.06;
       tilt.y += (pointer.y - tilt.y) * 0.06;
-      s.yaw = -0.35 + 0.2 * Math.sin(time * 0.3) + tilt.x * 0.35;
+      s.yaw = -0.12 + 0.16 * Math.sin(time * 0.3) + tilt.x * 0.35;
       s.pitch = -0.15 + 0.04 * Math.sin(time * 0.45) + tilt.y * 0.18 + s.jolt * 0.03;
       s.bob = 0.025 * Math.sin(time * 0.9) - s.jolt * 0.015;
       renderer.draw(s);
