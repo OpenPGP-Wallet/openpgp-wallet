@@ -1319,16 +1319,46 @@ textarea:focus {
   border-radius: 50%;
 }
 
-/* « Gérer mes cryptos », sous la liste des cartes. */
+/* « Mes cryptos », au-dessus des cartes : titre à gauche, « Gérer mes cryptos »
+   et « Organiser » à droite. */
 .manage-assets-row {
   display: flex;
-  justify-content: center;
-  margin-top: 16px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 26px;
+}
+
+.assets-heading {
+  margin: 0 auto 0 4px;
+  font-size: 1.15rem;
+  font-weight: 600;
 }
 
 .manage-assets-row button {
   width: auto;
   margin-top: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+}
+
+.manage-assets-row button::before {
+  content: "";
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  background: currentColor;
+  -webkit-mask: var(--icon) center / contain no-repeat;
+  mask: var(--icon) center / contain no-repeat;
+}
+
+/* Mode « Organiser » actif. */
+#organize-btn[aria-pressed="true"] {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  color: var(--accent-text);
 }
 
 /* Crypto non choisie dans « Gérer mes cryptos ». */
@@ -3036,10 +3066,19 @@ h2 .coin-icon-inline,
 
 .organize-move {
   width: 32px;
-  height: 28px;
+  height: 30px;
   margin-top: 0;
   padding: 0;
   line-height: 1;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+}
+
+.organize-move:hover:not(:disabled) {
+  background: var(--surface-3);
+  border-color: var(--border-strong);
 }
 
 /* --- Icônes ---------------------------------------------------------------
@@ -3056,6 +3095,9 @@ h2 .coin-icon-inline,
 .nav-tab[data-tab="ledger"] { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Crect%20x%3D'7'%20y%3D'2.5'%20width%3D'10'%20height%3D'13'%20rx%3D'2'%2F%3E%3Cpath%20d%3D'M10%2015.5V19a2%202%200%200%200%204%200v-3.5'%2F%3E%3Cpath%20d%3D'M10%206.5h4'%2F%3E%3C%2Fsvg%3E"); }
 .nav-tab[data-tab="settings"] { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M4%207h9M17%207h3M4%2012h3M11%2012h9M4%2017h11M19%2017h1'%2F%3E%3Ccircle%20cx%3D'15'%20cy%3D'7'%20r%3D'2'%2F%3E%3Ccircle%20cx%3D'9'%20cy%3D'12'%20r%3D'2'%2F%3E%3Ccircle%20cx%3D'17'%20cy%3D'17'%20r%3D'2'%2F%3E%3C%2Fsvg%3E"); }
 .navbar button#lock-wallet { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Crect%20x%3D'5'%20y%3D'11'%20width%3D'14'%20height%3D'10'%20rx%3D'2.5'%2F%3E%3Cpath%20d%3D'M8%2011V8a4%204%200%200%201%208%200v3'%2F%3E%3C%2Fsvg%3E"); }
+
+#manage-assets-btn { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Crect%20x%3D'3.5'%20y%3D'3.5'%20width%3D'7'%20height%3D'7'%20rx%3D'1.5'%2F%3E%3Crect%20x%3D'13.5'%20y%3D'3.5'%20width%3D'7'%20height%3D'7'%20rx%3D'1.5'%2F%3E%3Crect%20x%3D'3.5'%20y%3D'13.5'%20width%3D'7'%20height%3D'7'%20rx%3D'1.5'%2F%3E%3Cpath%20d%3D'M14%2017h6M17%2014v6'%2F%3E%3C%2Fsvg%3E"); }
+#organize-btn { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M7%204v16M3.5%207.5%207%204l3.5%203.5'%2F%3E%3Cpath%20d%3D'M17%2020V4M13.5%2016.5%2017%2020l3.5-3.5'%2F%3E%3C%2Fsvg%3E"); }
 
 /* Actions d'une carte : icône devant le libellé. */
 .wallet-card .row-buttons button[data-action] {
@@ -3107,9 +3149,6 @@ h2 .coin-icon-inline,
   padding-left: 4px;
 }
 
-.manage-assets-row {
-  gap: 10px;
-}
 
 /* Le message de copie reste centré sur la zone de contenu. */
 :root:has(#view-dashboard:not(.hidden)) {
