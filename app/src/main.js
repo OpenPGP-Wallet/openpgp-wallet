@@ -4048,15 +4048,17 @@ walletGrid.querySelectorAll(".wallet-card").forEach(addOrganizeControls);
 // Déplace une carte d'un cran parmi les cartes AFFICHÉES (les masquées
 // gardent leur place relative).
 function moveCard(card, step, focusAfter) {
+  if (draggingCard) return;
   const visible = [...walletGrid.querySelectorAll(".wallet-card:not(.asset-hidden)")];
   const neighbor = visible[visible.indexOf(card) + step];
   if (!neighbor) return;
-  walletGrid.insertBefore(card, step < 0 ? neighbor : neighbor.nextSibling);
+  animateLayout(() => walletGrid.insertBefore(card, step < 0 ? neighbor : neighbor.nextSibling));
   adoptDisplayedOrder();
   focusAfter?.focus();
 }
 
 function setOrganizing(on) {
+  if (!on && pointerDrag) cancelCardDrag();
   organizing = on;
   document.getElementById("organize-bar").classList.toggle("hidden", !on);
   document.getElementById("organize-btn").setAttribute("aria-pressed", String(on));
@@ -4070,22 +4072,160 @@ document.querySelectorAll("[data-order-mode]").forEach((button) => {
   button.addEventListener("click", () => setCardOrderMode(button.dataset.orderMode));
 });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && organizing && !document.querySelector(".modal-overlay:not(.hidden)")) setOrganizing(false);
+  if (e.key !== "Escape" || !organizing || document.querySelector(".modal-overlay:not(.hidden)")) return;
+  if (pointerDrag) cancelCardDrag();
+  else setOrganizing(false);
 });
 
 // Glisser-déposer au pointeur (souris, stylet, tactile) — pas le
 // glisser-déposer HTML5 : sous Windows, Tauri intercepte le glissement dans
 // la fenêtre (dépôt de fichiers) et ses événements n'arrivent jamais aux
-// cartes. Le déplacement commence après quelques pixels ; la carte survolée
-// s'écarte en direct (insertion avant ou après elle selon la position du
-// pointeur : horizontale en grille, verticale sur une seule colonne, vue liste
-// comprise) ; près du bord de la fenêtre, la page défile.
+// cartes. Après quelques pixels, la carte elle-même se soulève et suit le
+// pointeur (légèrement inclinée, ombrée) ; un emplacement en pointillés
+// marque l'endroit où elle sera rangée et se déplace entre les autres cartes,
+// qui glissent en douceur ; près du bord de la fenêtre, la page défile ; au
+// relâchement, la carte glisse jusqu'à l'emplacement (Échap la ramène à sa
+// place d'origine). Aucune copie de carte : la carte soulevée reste la vraie
+// (son solde continue d'être mis à jour).
 const DRAG_START_DISTANCE = 6;
-const DRAG_SCROLL_EDGE = 60;
+const DRAG_SCROLL_EDGE = 70;
+const DRAG_SCROLL_MAX_SPEED = 18;
+const prefersReducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 let pointerDrag = null;
 
+// Rectangle de mise en page (sans les translations des animations en cours),
+// en coordonnées de la fenêtre.
+function layoutRect(el) {
+  const rect = el.getBoundingClientRect();
+  const transform = getComputedStyle(el).transform;
+  const matrix = transform && transform !== "none" ? new DOMMatrixReadOnly(transform) : null;
+  const dx = matrix ? matrix.m41 : 0;
+  const dy = matrix ? matrix.m42 : 0;
+  return { left: rect.left - dx, top: rect.top - dy, width: rect.width, height: rect.height, right: rect.right - dx, bottom: rect.bottom - dy };
+}
+
+// Réordonne (`change`) puis fait glisser chaque carte et l'emplacement de leur
+// ancienne position visuelle à la nouvelle (technique FLIP), animations en
+// cours comprises.
+function animateLayout(change) {
+  const items = [...walletGrid.querySelectorAll(".wallet-card:not(.asset-hidden):not(.drag-floating), .card-placeholder")];
+  const before = new Map(items.map((el) => [el, el.getBoundingClientRect()]));
+  change();
+  if (prefersReducedMotion()) return;
+  for (const el of items) {
+    el.style.transition = "none";
+    el.style.transform = "";
+  }
+  const moved = [];
+  for (const el of items) {
+    const was = before.get(el);
+    const now = el.getBoundingClientRect();
+    const dx = was.left - now.left;
+    const dy = was.top - now.top;
+    if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) {
+      el.style.transition = "";
+      continue;
+    }
+    el.style.transform = `translate(${dx}px, ${dy}px)`;
+    moved.push(el);
+  }
+  requestAnimationFrame(() => {
+    for (const el of moved) {
+      el.style.transition = "transform 200ms cubic-bezier(0.2, 0.8, 0.2, 1)";
+      el.style.transform = "";
+      // Fin du glissement : plus aucun style en ligne. Interrompu par un
+      // nouveau réordonnancement, ce dernier reprend la main sur la carte.
+      const done = (e) => {
+        if (e.target !== el || e.propertyName !== "transform") return;
+        el.removeEventListener("transitionend", done);
+        if (!el.style.transform) el.style.transition = "";
+      };
+      el.addEventListener("transitionend", done);
+    }
+  });
+}
+
+// Colonnes d'une carte en largeurs fixes. En vue liste, la carte est un
+// sous-grille (`subgrid`) qui n'a plus de colonnes une fois hors de la grille :
+// elle reçoit celles de la grille, moins sa marge intérieure et sa bordure aux
+// bords (que le sous-grille reporte sur les éléments des colonnes extrêmes).
+function frozenColumns(style) {
+  if (!style.gridTemplateColumns.startsWith("subgrid")) return style.gridTemplateColumns;
+  const tracks = (getComputedStyle(walletGrid).gridTemplateColumns.match(/[\d.]+px/g) || []).map(parseFloat);
+  if (!tracks.length) return "";
+  tracks[0] -= parseFloat(style.paddingLeft) + parseFloat(style.borderLeftWidth);
+  tracks[tracks.length - 1] -= parseFloat(style.paddingRight) + parseFloat(style.borderRightWidth);
+  return tracks.map((track) => `${Math.max(track, 0)}px`).join(" ");
+}
+
+function startCardDrag(drag) {
+  const { card } = drag;
+  const rect = card.getBoundingClientRect();
+  const style = getComputedStyle(card);
+  // Colonnes de la grille figées le temps du glisser : en vue liste, leur
+  // largeur dépend du contenu de toutes les cartes, et les autres cartes
+  // changeraient de colonnes en perdant la carte soulevée.
+  walletGrid.style.gridTemplateColumns = getComputedStyle(walletGrid).gridTemplateColumns;
+  const placeholder = document.createElement("div");
+  placeholder.className = "card-placeholder";
+  placeholder.style.height = `${rect.height}px`;
+  walletGrid.insertBefore(placeholder, card);
+  // La carte sort de la grille (position fixe) en gardant sa taille et ses
+  // colonnes.
+  card.style.gridTemplateColumns = frozenColumns(style);
+  card.style.left = `${rect.left}px`;
+  card.style.top = `${rect.top}px`;
+  card.style.width = `${rect.width}px`;
+  card.style.height = `${rect.height}px`;
+  card.style.transition = "none";
+  card.classList.add("drag-floating");
+  Object.assign(drag, { started: true, placeholder, originLeft: rect.left, originTop: rect.top, lastX: drag.startX, lastY: drag.startY });
+  draggingCard = card;
+  followPointer(drag);
+  drag.scrollFrame = requestAnimationFrame(() => autoScroll(drag));
+}
+
+function followPointer(drag) {
+  const { card, startX, startY, lastX, lastY } = drag;
+  card.style.transform = `translate(${lastX - startX}px, ${lastY - startY}px) rotate(1.5deg) scale(1.02)`;
+}
+
+// Place l'emplacement selon la carte survolée (rectangles de mise en page,
+// pour ne pas osciller pendant les animations) : avant ou après elle, à la
+// verticale quand elle occupe toute la largeur (une colonne, vue liste), à
+// l'horizontale sinon.
+function placePlaceholder(drag) {
+  const { placeholder, lastX: x, lastY: y } = drag;
+  const candidates = [...walletGrid.querySelectorAll(".wallet-card:not(.asset-hidden):not(.drag-floating)")];
+  const target = candidates.find((el) => {
+    const r = layoutRect(el);
+    return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+  });
+  if (!target) return;
+  const r = layoutRect(target);
+  const fullRow = r.width > walletGrid.clientWidth * 0.75;
+  const before = fullRow ? y < r.top + r.height / 2 : x < r.left + r.width / 2;
+  const reference = before ? target : target.nextSibling;
+  if (reference === placeholder || placeholder.nextSibling === reference) return;
+  animateLayout(() => walletGrid.insertBefore(placeholder, reference));
+}
+
+// Défilement continu près du bord de la fenêtre, plus rapide tout au bord.
+function autoScroll(drag) {
+  if (pointerDrag !== drag || !drag.started) return;
+  const { lastY } = drag;
+  let speed = 0;
+  if (lastY < DRAG_SCROLL_EDGE) speed = -DRAG_SCROLL_MAX_SPEED * (1 - Math.max(lastY, 0) / DRAG_SCROLL_EDGE);
+  else if (lastY > window.innerHeight - DRAG_SCROLL_EDGE) speed = DRAG_SCROLL_MAX_SPEED * (1 - Math.max(window.innerHeight - lastY, 0) / DRAG_SCROLL_EDGE);
+  if (speed) {
+    window.scrollBy(0, speed);
+    placePlaceholder(drag);
+  }
+  drag.scrollFrame = requestAnimationFrame(() => autoScroll(drag));
+}
+
 walletGrid.addEventListener("pointerdown", (e) => {
-  if (!organizing || e.button !== 0 || e.target.closest(".organize-move")) return;
+  if (!organizing || e.button !== 0 || pointerDrag || draggingCard || e.target.closest(".organize-move")) return;
   const card = e.target.closest(".wallet-card");
   if (!card) return;
   pointerDrag = { card, pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, started: false };
@@ -4093,45 +4233,66 @@ walletGrid.addEventListener("pointerdown", (e) => {
   e.preventDefault();
 });
 
-// Mouvement et relâchement écoutés sur toute la page : déplacer la carte
-// dans la grille lui fait perdre la capture du pointeur, et le relâchement
-// peut avoir lieu hors de la grille (constaté : carte restée « en cours »).
+// Mouvement et relâchement écoutés sur toute la page : la carte soulevée
+// n'est plus sous le pointeur, et le relâchement peut avoir lieu hors de la
+// grille.
 document.addEventListener("pointermove", (e) => {
-  if (!pointerDrag || e.pointerId !== pointerDrag.pointerId) return;
-  if (!pointerDrag.started) {
-    if (Math.hypot(e.clientX - pointerDrag.startX, e.clientY - pointerDrag.startY) < DRAG_START_DISTANCE) return;
-    pointerDrag.started = true;
-    draggingCard = pointerDrag.card;
-    draggingCard.classList.add("dragging");
+  const drag = pointerDrag;
+  if (!drag || e.pointerId !== drag.pointerId) return;
+  if (!drag.started) {
+    if (Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) < DRAG_START_DISTANCE) return;
+    startCardDrag(drag);
   }
-  if (e.clientY < DRAG_SCROLL_EDGE) window.scrollBy(0, -20);
-  else if (e.clientY > window.innerHeight - DRAG_SCROLL_EDGE) window.scrollBy(0, 20);
-  const target = document
-    .elementsFromPoint(e.clientX, e.clientY)
-    .map((el) => el.closest(".wallet-card"))
-    .find((card) => card && card !== draggingCard && card.parentElement === walletGrid);
-  if (!target) return;
-  // Carte sur toute la largeur (une colonne, ou vue liste où chaque carte
-  // occupe sa ligne) : décision verticale ; sinon horizontale.
-  const rect = target.getBoundingClientRect();
-  const fullRow = rect.width > walletGrid.clientWidth * 0.75;
-  const before = fullRow ? e.clientY < rect.top + rect.height / 2 : e.clientX < rect.left + rect.width / 2;
-  const reference = before ? target : target.nextSibling;
-  if (reference !== draggingCard) walletGrid.insertBefore(draggingCard, reference);
+  drag.lastX = e.clientX;
+  drag.lastY = e.clientY;
+  followPointer(drag);
+  placePlaceholder(drag);
 });
 
-function endPointerDrag(e) {
-  if (!pointerDrag || e.pointerId !== pointerDrag.pointerId) return;
-  const { card, started } = pointerDrag;
+// Fin du glisser : la carte glisse jusqu'à l'emplacement, puis y reprend sa
+// place dans la grille ; `draggingCard` reste posé jusque-là (pas de tri ni de
+// nouveau glisser pendant qu'elle se pose).
+function finishCardDrag(drag, { adopt }) {
+  const { card, placeholder } = drag;
   pointerDrag = null;
-  if (card.hasPointerCapture(e.pointerId)) card.releasePointerCapture(e.pointerId);
-  if (!started) return;
-  card.classList.remove("dragging");
-  draggingCard = null;
-  adoptDisplayedOrder();
+  if (card.hasPointerCapture(drag.pointerId)) card.releasePointerCapture(drag.pointerId);
+  if (!drag.started) return;
+  cancelAnimationFrame(drag.scrollFrame);
+  const settle = () => {
+    card.classList.remove("drag-floating", "drag-landing");
+    for (const property of ["gridTemplateColumns", "left", "top", "width", "height", "transform", "transition"]) card.style[property] = "";
+    placeholder.replaceWith(card);
+    walletGrid.style.gridTemplateColumns = "";
+    draggingCard = null;
+    if (adopt) adoptDisplayedOrder();
+  };
+  if (prefersReducedMotion()) {
+    settle();
+    return;
+  }
+  const target = layoutRect(placeholder);
+  card.style.transition = "transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 180ms ease";
+  card.style.transform = `translate(${target.left - drag.originLeft}px, ${target.top - drag.originTop}px)`;
+  card.classList.add("drag-landing");
+  setTimeout(settle, 190);
+}
+
+// Échap (ou sortie du mode) pendant le glisser : la carte retourne à sa place
+// d'origine — elle n'a jamais quitté sa position dans la grille, seul
+// l'emplacement a bougé — et le mode de tri ne change pas.
+function cancelCardDrag() {
+  const drag = pointerDrag;
+  if (drag.started) animateLayout(() => walletGrid.insertBefore(drag.placeholder, drag.card));
+  finishCardDrag(drag, { adopt: false });
+}
+
+function endPointerDrag(e) {
+  if (pointerDrag && e.pointerId === pointerDrag.pointerId) finishCardDrag(pointerDrag, { adopt: true });
 }
 document.addEventListener("pointerup", endPointerDrag);
-document.addEventListener("pointercancel", endPointerDrag);
+document.addEventListener("pointercancel", (e) => {
+  if (pointerDrag && e.pointerId === pointerDrag.pointerId) cancelCardDrag();
+});
 
 // Ordre initial une fois tout le module chargé (« Valeur détenue » lit des
 // constantes déclarées plus bas dans ce fichier).
