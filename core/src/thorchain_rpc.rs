@@ -158,6 +158,65 @@ pub const MAYA: CrossChain = CrossChain {
     assets: &MAYA_ASSETS,
 };
 
+/// État d'une chaîne dans `inbound_addresses` (champs de pause absents chez
+/// Maya : faux par défaut).
+#[derive(Deserialize)]
+struct InboundStatusJson {
+    chain: String,
+    #[serde(default)]
+    halted: bool,
+    #[serde(default)]
+    chain_trading_paused: bool,
+    #[serde(default)]
+    global_trading_paused: bool,
+}
+
+/// Suspensions en cours (voir `CrossChain::halts`) ; `all` : pause générale.
+struct Halts {
+    all: bool,
+    chains: Vec<String>,
+}
+
+impl Halts {
+    fn from_statuses(chains: Vec<InboundStatusJson>) -> Self {
+        Halts {
+            all: chains.iter().any(|c| c.global_trading_paused),
+            chains: chains.into_iter().filter(|c| c.halted || c.chain_trading_paused).map(|c| c.chain).collect(),
+        }
+    }
+
+    fn covers(&self, asset: &str) -> bool {
+        self.all || self.chains.iter().any(|c| c == chain_of(asset))
+    }
+}
+
+/// « THORChain a suspendu les échanges sur Solana pour le moment… » (réseaux
+/// omis s'ils sont inconnus).
+pub fn halted_message(protocol: &str, networks: &[&str]) -> String {
+    let place = if networks.is_empty() { String::new() } else { format!(" sur {}", networks.join(" et ")) };
+    format!("{protocol} a suspendu les échanges{place} pour le moment (incident ou maintenance de son côté) — réessayez plus tard ou choisissez un autre fournisseur")
+}
+
+/// Chaîne d'un actif : « SOL » pour `SOL.SOL`, « ETH » pour `ETH.USDC-0X…`.
+fn chain_of(asset: &str) -> &str {
+    asset.split('.').next().unwrap_or(asset)
+}
+
+/// Nom du réseau d'une chaîne, pour les messages.
+fn chain_label(chain: &str) -> &str {
+    match chain {
+        "BTC" => "Bitcoin",
+        "ETH" => "Ethereum",
+        "SOL" => "Solana",
+        "BASE" => "Base",
+        "ARB" => "Arbitrum",
+        "AVAX" => "Avalanche",
+        "BSC" => "BNB Chain",
+        "ZEC" => "Zcash",
+        other => other,
+    }
+}
+
 #[derive(Deserialize)]
 struct ThorNameJson {
     #[serde(default)]
@@ -200,6 +259,38 @@ impl CrossChain {
     /// Nom `name` relu auprès du protocole (une fois par session) : il doit
     /// exister, ne pas être expiré, et pointer vers l'adresse d'affiliation —
     /// sinon les frais iraient à quelqu'un d'autre.
+    /// Chaînes où les échanges sont suspendus en ce moment (chaîne arrêtée ou
+    /// échanges en pause : incident, maintenance), lues sur
+    /// `inbound_addresses`.
+    fn halts(&self) -> Result<Halts> {
+        let name = self.name;
+        let url = format!("{}/{}/inbound_addresses", self.node_base, self.module);
+        let chains: Vec<InboundStatusJson> = shared_client()
+            .get(&url)
+            .send()
+            .with_context(|| format!("état des réseaux {name} illisible"))?
+            .json()
+            .with_context(|| format!("état des réseaux {name} illisible"))?;
+        Ok(Halts::from_statuses(chains))
+    }
+
+    /// Actifs de ce protocole qu'il n'échange pas en ce moment.
+    pub fn halted_assets(&self) -> Result<Vec<&'static ThorAsset>> {
+        let halts = self.halts()?;
+        Ok(self.assets.iter().filter(|a| halts.covers(a.asset)).collect())
+    }
+
+    /// Échange refusé parce qu'une chaîne est suspendue : laquelle, en clair
+    /// (lue en direct ; non nommée si la lecture échoue).
+    fn halt_message(&self, from_asset: &str, to_asset: &str) -> String {
+        let mut networks: Vec<&str> = match self.halts() {
+            Ok(halts) => [from_asset, to_asset].into_iter().filter(|a| halts.covers(a)).map(|a| chain_label(chain_of(a))).collect(),
+            Err(_) => Vec::new(),
+        };
+        networks.dedup();
+        halted_message(self.name, &networks)
+    }
+
     fn verified_affiliate(&self, name: &'static str) -> Result<&'static str> {
         type Checked = std::sync::Mutex<std::collections::HashMap<&'static str, std::result::Result<(), String>>>;
         static CHECKED: OnceLock<Checked> = OnceLock::new();
@@ -332,6 +423,11 @@ impl CrossChain {
         // (constaté : sans ce champ, le message de Maya était perdu).
         if response.code.is_some() || response.error.is_some() {
             let message = response.message.or(response.error).unwrap_or_else(|| "raison inconnue".to_string());
+            // « trading is halted, can't process swap » (constaté le
+            // 02/10/2026 : réseau Solana suspendu chez THORChain).
+            if message.contains("halted") {
+                anyhow::bail!("{}", self.halt_message(from_asset, to_asset));
+            }
             anyhow::bail!("devis {name} refusé : {message}");
         }
 
@@ -447,6 +543,33 @@ mod tests {
     /// Memo réel renvoyé par la passerelle (ETH -> BTC, liquidity_tolerance_bps=50).
     fn real_memo() -> String {
         format!("=:b:{DEST_BTC}:3146167:{AFFILIATE_ADDRESS}:80")
+    }
+
+    /// Réponses réelles de `inbound_addresses` (abrégées) : réseau Solana
+    /// suspendu chez THORChain le 02/10/2026 ; Maya sans champs de pause.
+    #[test]
+    fn reads_halted_chains() {
+        let parse = |json: &str| Halts::from_statuses(serde_json::from_str(json).unwrap());
+        let thor = parse(
+            r#"[{"chain":"BTC","halted":false,"chain_trading_paused":false,"global_trading_paused":false},
+                {"chain":"SOL","halted":true,"chain_trading_paused":true,"global_trading_paused":false}]"#,
+        );
+        assert!(thor.covers("SOL.SOL") && !thor.covers("BTC.BTC") && !thor.covers("ETH.USDC-0XA0B86991C6218B36C1D19D4A2E9EB0CE3606EB48"));
+        let maya = parse(r#"[{"chain":"ZEC","halted":false},{"chain":"ETH","halted":false}]"#);
+        assert!(!maya.covers("ZEC.ZEC") && !maya.covers("ETH.ETH"));
+        let paused = parse(r#"[{"chain":"BTC","halted":false,"global_trading_paused":true}]"#);
+        assert!(paused.covers("ETH.ETH"), "pause générale : tout est suspendu");
+        assert_eq!((chain_of("BASE.ETH"), chain_label("SOL"), chain_label("XYZ")), ("BASE", "Solana", "XYZ"));
+    }
+
+    /// Réseau : état réel des deux protocoles (lecture seule).
+    #[test]
+    #[ignore]
+    fn real_halted_assets_are_readable() {
+        for protocol in [&THORCHAIN, &MAYA] {
+            let halted: Vec<&str> = protocol.halted_assets().unwrap().iter().map(|a| a.asset).collect();
+            println!("{} : suspendus {halted:?}", protocol.name);
+        }
     }
 
     #[test]

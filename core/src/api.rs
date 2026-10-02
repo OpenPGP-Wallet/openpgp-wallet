@@ -3482,9 +3482,9 @@ fn check_swap_effects(rpc: &sol_rpc::SolRpc, tx: &[u8], limits: &SwapEffectLimit
     let addresses = resolve_writable_addresses(rpc, tx)?;
     let pre = rpc.multiple_accounts(&addresses)?;
     match rpc.simulate_with_account_states(tx, &addresses)? {
-        sol_rpc::SimulationOutcome::Failed { logs } => Err(
-            sol_rpc::insufficient_lamports_error(&logs).unwrap_or_else(|| anyhow::anyhow!("échec de simulation de l'échange :\n{logs}")),
-        ),
+        sol_rpc::SimulationOutcome::Failed { err, logs } => {
+            Err(rpc.explain_simulation_failure(&err, &logs).unwrap_or_else(|| anyhow::anyhow!("échec de simulation de l'échange ({err}) :\n{logs}")))
+        }
         sol_rpc::SimulationOutcome::Succeeded { post_states } => verify_swap_effects(&addresses, &pre, &post_states, limits),
     }
 }
@@ -5060,7 +5060,7 @@ mod tests {
             let pre = rpc.multiple_accounts(&addresses).unwrap();
             let post_states = match rpc.simulate_with_account_states(&tx, &addresses).unwrap() {
                 sol_rpc::SimulationOutcome::Succeeded { post_states } => post_states,
-                sol_rpc::SimulationOutcome::Failed { logs } => panic!("simulation réelle en échec pour {from}->{to} :\n{logs}"),
+                sol_rpc::SimulationOutcome::Failed { err, logs } => panic!("simulation réelle en échec pour {from}->{to} ({err}) :\n{logs}"),
             };
             let user_lamports = |states: &[Option<sol_rpc::AccountState>]| -> i128 {
                 addresses

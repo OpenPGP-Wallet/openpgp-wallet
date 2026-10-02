@@ -483,6 +483,25 @@ fn translate_dynamic_error(msg: &str) -> Option<String> {
     if let Some(rest) = msg.strip_prefix("ZEC insuffisants : ") {
         return Some(format!("insufficient ZEC: {rest}"));
     }
+    if let Some((name, rest)) = msg.split_once(" a suspendu les échanges") {
+        if let Some(place) = rest.strip_suffix(" pour le moment (incident ou maintenance de son côté) — réessayez plus tard ou choisissez un autre fournisseur") {
+            let place = place.strip_prefix(" sur ").map(|p| format!(" on {}", p.replace(" et ", " and "))).unwrap_or_default();
+            return Some(format!("{name} has paused swaps{place} for now (incident or maintenance on their side) — try again later or choose another provider"));
+        }
+    }
+    if let Some(reserve) = msg.strip_prefix("solde SOL trop juste : il doit rester au moins ").and_then(|rest| {
+        rest.strip_suffix(" SOL sur votre compte après l'opération (réserve minimale imposée par Solana) — réduisez le montant de SOL envoyé d'autant, ou ajoutez du SOL")
+    }) {
+        return Some(format!(
+            "SOL balance too tight: at least {reserve} SOL must remain in your account after the operation (minimum reserve required by Solana) — reduce the amount of SOL sent by that much, or add SOL"
+        ));
+    }
+    if let Some(reserve) = msg
+        .strip_prefix("un autre compte touché par l'opération finirait sous la réserve minimale de Solana (")
+        .and_then(|rest| rest.strip_suffix(" SOL), le réseau la refuserait — essayez un montant plus élevé"))
+    {
+        return Some(format!("another account touched by the operation would end up below Solana's minimum reserve ({reserve} SOL); the network would refuse it — try a larger amount"));
+    }
     if let Some(rest) = msg.strip_prefix("transaction Zcash refusée par le réseau : ") {
         return Some(format!("Zcash transaction refused by the network: {rest}"));
     }
@@ -2593,6 +2612,40 @@ fn evm_swap_fee_line(fees: &api::EvmSwapFees, symbol: &str) -> Result<String, St
     Ok(line)
 }
 
+/// Actifs (`coin@network`) que THORChain et Maya n'échangent pas en ce moment
+/// (réseau suspendu : incident, maintenance).
+#[derive(Serialize)]
+struct SwapHaltsDto {
+    thorchain: Vec<String>,
+    maya: Vec<String>,
+}
+
+/// Lu à l'ouverture de la fenêtre « Convertir » : un fournisseur suspendu
+/// pour l'échange choisi n'y est plus proposé par défaut. Lecture en échec :
+/// rien de marqué (le devis dira alors la suspension en clair).
+#[tauri::command]
+async fn swap_halts() -> Result<SwapHaltsDto, String> {
+    use pgp_wallet_poc::thorchain_rpc::{CrossChain, MAYA, THORCHAIN};
+    run_blocking(|| {
+        let keys = |protocol: &CrossChain| -> Vec<String> {
+            match protocol.halted_assets() {
+                Ok(assets) => assets.iter().map(|a| format!("{}@{}", a.coin, a.network)).collect(),
+                Err(e) => {
+                    eprintln!("état des réseaux {} : {e:#}", protocol.name);
+                    Vec::new()
+                }
+            }
+        };
+        let (thorchain, maya) = std::thread::scope(|s| {
+            let thorchain = s.spawn(|| keys(&THORCHAIN));
+            let maya = keys(&MAYA);
+            (thorchain.join().unwrap_or_default(), maya)
+        });
+        Ok(SwapHaltsDto { thorchain, maya })
+    })
+    .await
+}
+
 #[derive(Serialize)]
 struct SwapPairDto {
     from_coin: &'static str,
@@ -4294,6 +4347,7 @@ pub fn run() {
             get_swap_quote,
             swap_transaction,
             swap_pairs,
+            swap_halts,
             get_jupiter_quote,
             jupiter_swap_transaction,
             get_cow_quote,
@@ -4513,6 +4567,25 @@ mod tests {
         assert_eq!(translate_dynamic_error("le compte « A » n'est pas sur ce réseau").unwrap(), "the account \"A\" is not on this network");
         assert_eq!(translate_dynamic_error("données refusées par le Trezor : Invalid path").unwrap(), "data refused by the Trezor: Invalid path");
         assert!(EXACT_ERROR_TRANSLATIONS.iter().any(|(fr, _)| *fr == "compte matériel introuvable"));
+    }
+
+    /// Échange suspendu chez THORChain/Maya, solde SOL sous la réserve
+    /// minimale : messages produits par le code de `core` lui-même (un texte
+    /// renommé là-bas ferait échouer ce test).
+    #[test]
+    fn swap_halt_and_rent_errors_are_translated() {
+        use pgp_wallet_poc::{sol_rpc, thorchain_rpc};
+        assert_eq!(
+            translate_dynamic_error(&thorchain_rpc::halted_message("THORChain", &["Solana"])).unwrap(),
+            "THORChain has paused swaps on Solana for now (incident or maintenance on their side) — try again later or choose another provider"
+        );
+        assert!(translate_dynamic_error(&thorchain_rpc::halted_message("Maya", &["Bitcoin", "Zcash"])).unwrap().starts_with("Maya has paused swaps on Bitcoin and Zcash for now"));
+        assert!(translate_dynamic_error(&thorchain_rpc::halted_message("Maya", &[])).unwrap().starts_with("Maya has paused swaps for now"));
+        // Nœud injoignable : réserve par défaut (0,00065024 SOL).
+        let rpc = sol_rpc::SolRpc::new("http://127.0.0.1:1");
+        let rent = |index: u64| rpc.explain_simulation_failure(&serde_json::json!({"InsufficientFundsForRent": {"account_index": index}}), "").unwrap().to_string();
+        assert!(translate_dynamic_error(&rent(0)).unwrap().starts_with("SOL balance too tight: at least 0.00065024 SOL must remain"));
+        assert!(translate_dynamic_error(&rent(2)).unwrap().starts_with("another account touched by the operation would end up below Solana's minimum reserve (0.00065024 SOL)"));
     }
 
     /// Chaque message d'erreur des modules matériels a sa traduction : les

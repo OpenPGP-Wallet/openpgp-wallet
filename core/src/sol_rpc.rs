@@ -323,7 +323,7 @@ impl SolRpc {
                 .and_then(Value::as_array)
                 .map(|entries| entries.iter().filter_map(Value::as_str).collect::<Vec<_>>().join("\n"))
                 .unwrap_or_default();
-            return Ok(SimulationOutcome::Failed { logs });
+            return Ok(SimulationOutcome::Failed { err: err.cloned().unwrap_or(Value::Null), logs });
         }
         let accounts = result
             .pointer("/value/accounts")
@@ -490,6 +490,36 @@ impl SolRpc {
         result.as_u64().ok_or_else(|| anyhow!("réponse getMinimumBalanceForRentExemption inattendue"))
     }
 
+    /// Message clair pour une simulation en échec dont la cause est connue :
+    /// SOL manquant relevé dans le journal (`insufficient_lamports_error`), ou
+    /// compte qui finirait sous la réserve minimale de Solana. Ce dernier cas
+    /// n'apparaît PAS dans le journal (le réseau le vérifie après les
+    /// instructions, qui réussissent toutes) : seulement dans `err`, constaté
+    /// le 02/10/2026 sur un échange LI.FI de presque tout le solde.
+    /// `None` : cause inconnue, à l'appelant d'afficher `err` et le journal.
+    pub fn explain_simulation_failure(&self, err: &Value, logs: &str) -> Option<anyhow::Error> {
+        if let Some(error) = insufficient_lamports_error(logs) {
+            return Some(error);
+        }
+        let index = err.pointer("/InsufficientFundsForRent/account_index").and_then(Value::as_u64)?;
+        // Réserve d'un compte sans données, lue en direct : ce paramètre du
+        // réseau a déjà baissé (0,00089088 SOL auparavant, 0,00065024 constaté
+        // le 02/10/2026) ; cette dernière valeur si la lecture échoue.
+        let reserve = format_lamports(self.minimum_rent_exempt_balance(0).unwrap_or(650_240));
+        // Compte 0 : le payeur des frais — l'utilisateur dans toute transaction
+        // que l'app accepte de signer (signataire unique et payeur vérifiés,
+        // voir jupiter_rpc::sign_swap_transaction et dapp_requests).
+        // Réduire le montant de SOL envoyé de la réserve suffit toujours : ce
+        // qui resterait est positif, sinon le transfert lui-même aurait échoué.
+        Some(if index == 0 {
+            anyhow!(
+                "solde SOL trop juste : il doit rester au moins {reserve} SOL sur votre compte après l'opération (réserve minimale imposée par Solana) — réduisez le montant de SOL envoyé d'autant, ou ajoutez du SOL"
+            )
+        } else {
+            anyhow!("un autre compte touché par l'opération finirait sous la réserve minimale de Solana ({reserve} SOL), le réseau la refuserait — essayez un montant plus élevé")
+        })
+    }
+
     /// Détail d'une transaction (`getTransaction`) ; `None` si le nœud ne l'a
     /// plus (signature ancienne purgée).
     fn transaction(&self, signature: &str) -> Result<Option<Value>> {
@@ -617,6 +647,12 @@ fn is_swap_transaction(tx: &Value) -> bool {
 /// lisible que le journal brut pour un montant/frais/rent qui ne peut pas
 /// être prédit à l'avance de façon fiable (ex: coût exact d'une route de
 /// swap Jupiter, qui varie d'un appel à l'autre).
+/// Lamports en SOL, sans zéros inutiles (« 0.00065024 »).
+pub fn format_lamports(lamports: u64) -> String {
+    let text = format!("{}.{:09}", lamports / 1_000_000_000, lamports % 1_000_000_000);
+    text.trim_end_matches('0').trim_end_matches('.').to_string()
+}
+
 pub fn insufficient_lamports_error(logs: &str) -> Option<anyhow::Error> {
     let line = logs.lines().find(|l| l.contains("insufficient lamports"))?;
     let numbers: Vec<u64> = line
@@ -659,7 +695,9 @@ impl AccountState {
 }
 
 pub enum SimulationOutcome {
-    Failed { logs: String },
+    /// `err` : erreur de transaction renvoyée par le nœud (seule trace de
+    /// certaines causes, voir `SolRpc::explain_simulation_failure`).
+    Failed { err: Value, logs: String },
     Succeeded { post_states: Vec<Option<AccountState>> },
 }
 
@@ -697,6 +735,29 @@ mod tests {
     #[test]
     fn insufficient_lamports_error_returns_none_without_the_pattern() {
         assert!(insufficient_lamports_error("Program log: Instruction: Route\nProgram ... success").is_none());
+    }
+
+    /// Échec réel du 02/10/2026 (échange LI.FI de presque tout le solde,
+    /// reproduit en simulation) : toutes les instructions réussissent, seule
+    /// l'erreur dit qu'un compte finirait sous la réserve minimale. Nœud
+    /// injoignable ici : réserve par défaut.
+    #[test]
+    fn explains_a_balance_left_under_the_rent_reserve() {
+        let rpc = SolRpc::new("http://127.0.0.1:1");
+        let logs = "Program 99vQwtBwYtrqqD9YSXbdum3KBdxPAVxYTaQ3cfnJSrN2 invoke [1]\nProgram log: Instruction: DepositNative\nProgram 99vQwtBwYtrqqD9YSXbdum3KBdxPAVxYTaQ3cfnJSrN2 success";
+        let own = rpc.explain_simulation_failure(&json!({"InsufficientFundsForRent": {"account_index": 0}}), logs).expect("cause reconnue").to_string();
+        assert!(own.starts_with("solde SOL trop juste") && own.contains("0.00065024 SOL"), "{own}");
+        let other = rpc.explain_simulation_failure(&json!({"InsufficientFundsForRent": {"account_index": 3}}), logs).expect("cause reconnue").to_string();
+        assert!(other.starts_with("un autre compte") && other.contains("0.00065024 SOL"), "{other}");
+        assert!(rpc.explain_simulation_failure(&json!({"InstructionError": [6, {"Custom": 1}]}), logs).is_none());
+    }
+
+    #[test]
+    fn formats_lamports_as_sol() {
+        assert_eq!(format_lamports(890_880), "0.00089088");
+        assert_eq!(format_lamports(1_500_000_000), "1.5");
+        assert_eq!(format_lamports(10_000_000_000), "10");
+        assert_eq!(format_lamports(0), "0");
     }
 
     /// Formats de vraies transactions du réseau principal : swap Jupiter

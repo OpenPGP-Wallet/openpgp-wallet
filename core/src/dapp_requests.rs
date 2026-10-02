@@ -339,9 +339,8 @@ fn prepare_solana_transaction(
     let addresses = api::resolve_writable_addresses(&rpc, &tx)?;
     let pre = rpc.multiple_accounts(&addresses)?;
     let post = match rpc.simulate_with_account_states(&tx, &addresses)? {
-        sol_rpc::SimulationOutcome::Failed { logs } => {
-            return Err(sol_rpc::insufficient_lamports_error(&logs)
-                .unwrap_or_else(|| anyhow!("la transaction échouerait (simulation) :\n{logs}")))
+        sol_rpc::SimulationOutcome::Failed { err, logs } => {
+            return Err(rpc.explain_simulation_failure(&err, &logs).unwrap_or_else(|| anyhow!("la transaction échouerait (simulation, {err}) :\n{logs}")))
         }
         sol_rpc::SimulationOutcome::Succeeded { post_states } => post_states,
     };

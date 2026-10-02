@@ -765,6 +765,7 @@ const I18N = {
     "swap.provider": "Fournisseur",
     "swap.providerOption": "{name} — frais {fee}",
     "swap.providerRecommended": "{name} — frais {fee} (recommandé)",
+    "swap.providerHalted": "{name} — suspendu en ce moment",
     "swap.twoStepHint":
       "Pas de route directe : l'échange se fait en 2 étapes. 1) {from} → {via} ({first}), reçu sur votre propre adresse. 2) Dès que {via} est arrivé, l'app vous propose {via} → {to} ({second}), avec une seconde confirmation.",
     "swap.previewRoute": "Étape 1 sur 2 : vers {via} ({first}). Ensuite, {via} → {to} ({second}) vous sera proposé dès l'arrivée de {via}.",
@@ -1281,6 +1282,7 @@ const I18N = {
     "swap.provider": "Provider",
     "swap.providerOption": "{name} — {fee} fee",
     "swap.providerRecommended": "{name} — {fee} fee (recommended)",
+    "swap.providerHalted": "{name} — paused right now",
     "swap.twoStepHint":
       "No direct route: the swap takes 2 steps. 1) {from} → {via} ({first}), received on your own address. 2) As soon as the {via} arrives, the app offers {via} → {to} ({second}), with a second confirmation.",
     "swap.previewRoute": "Step 1 of 2: to {via} ({first}). Then {via} → {to} ({second}) will be offered as soon as the {via} arrives.",
@@ -4775,22 +4777,38 @@ function selectedSwapPair() {
 // core/src/thorchain_rpc.rs).
 const SWAP_PROVIDER_FEE_PERCENT = { thorchain: 0.8, maya: 0.8, jupiter: 0.8, cow: 1, lifi: 0.8 };
 
+// Actifs que THORChain et Maya n'échangent pas en ce moment (`coin@network`,
+// réseau suspendu : incident, maintenance), lus à chaque ouverture de la
+// fenêtre (commande `swap_halts`).
+let swapHalts = {};
+
+// Le fournisseur `protocol` a-t-il suspendu l'un des deux actifs de l'étape ?
+function isProviderHalted(protocol, step) {
+  const halted = swapHalts[protocol] ?? [];
+  return [step.from, step.to].some(({ coin, network }) => halted.includes(swapKey(coin, network)));
+}
+
 // Menu « Fournisseur » : tous ceux qui savent faire l'étape, le recommandé
-// en premier et choisi par défaut à chaque changement de paire.
+// en premier et choisi par défaut à chaque changement de paire. Un
+// fournisseur suspendu passe en dernier, marqué : choisi par défaut seulement
+// s'il n'y en a pas d'autre (son devis dira alors la suspension en clair).
 function fillSwapProviderOptions() {
   const select = document.getElementById("swap-provider");
   const pair = selectedSwapPair();
   const providers = pair ? pair.providers : [];
+  const halted = (protocol) => isProviderHalted(protocol, { from: pair.from, to: pair.via ?? pair.to });
+  const ordered = [...providers.filter((protocol) => !halted(protocol)), ...providers.filter(halted)];
   select.replaceChildren(
-    ...providers.map((protocol, index) => {
+    ...ordered.map((protocol, index) => {
       const option = document.createElement("option");
       option.value = protocol;
       const fee = `${SWAP_PROVIDER_FEE_PERCENT[protocol].toLocaleString(chartLocale(), { minimumFractionDigits: 2 })}\u00a0%`;
-      option.textContent = t(index === 0 ? "swap.providerRecommended" : "swap.providerOption", { name: SWAP_PROTOCOL_NAMES[protocol], fee });
+      const label = halted(protocol) ? "swap.providerHalted" : index === 0 ? "swap.providerRecommended" : "swap.providerOption";
+      option.textContent = t(label, { name: SWAP_PROTOCOL_NAMES[protocol], fee });
       return option;
     })
   );
-  select.value = providers[0] ?? "";
+  select.value = ordered[0] ?? "";
   syncCustomSelect(select);
 }
 
@@ -4980,6 +4998,14 @@ function openSwapModal(card, preset = null) {
   swapFiatInput.value = "";
   swapAmountTypedIn = "crypto";
   swapBalance = null;
+  swapHalts = {};
+  invoke("swap_halts")
+    .then((halts) => {
+      if (swapContext?.card !== card) return; // fenêtre fermée ou rouverte entre-temps
+      swapHalts = halts;
+      onSwapTargetChange();
+    })
+    .catch((e) => console.error(e));
   hideError(document.getElementById("swap-error"));
   fillSwapFromOptions(preset ? swapKey(preset.from.coin, preset.from.network) : swapKey(card.dataset.coin, networkForCard(card)));
   updateSwapToOptions();
