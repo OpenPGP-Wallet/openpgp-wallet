@@ -172,7 +172,7 @@ function buildAssetCard(asset) {
           <button class="convert-btn hidden" data-action="swap" data-i18n-title="wallet.convertHint">${ICON_CONVERT}<span data-i18n="wallet.convert">Convertir</span></button>
         </div>
         <div class="row-buttons">
-          <button class="secondary" data-action="refresh" data-i18n="wallet.refresh">Actualiser</button>
+          <button class="secondary" data-action="refresh" data-i18n="wallet.refresh" data-i18n-title="wallet.refresh">Actualiser</button>
           <button class="secondary receive-action" data-action="qr" data-i18n="wallet.receive">Recevoir</button>
           <button class="secondary" data-action="history" data-i18n="wallet.history">Historique</button>
           <button class="primary" data-action="send" data-i18n="wallet.send">Envoyer</button>

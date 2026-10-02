@@ -877,7 +877,7 @@ legend {
 }
 
 .tab-panel {
-  padding: 28px 32px 56px;
+  padding: 28px 28px 56px;
   max-width: 1040px;
   margin: 0 auto;
 }
@@ -1240,13 +1240,12 @@ textarea:focus {
 
 .wallet-grid {
   display: grid;
-  /* 315px minimum : 2 cartes par rangée, de la largeur minimale de la fenêtre
-     à celle, plafonnée, du panneau. À 260px, 3 cartes tenaient par rangée dès
-     ~1000px de large (la 4ᵉ seule en dessous), trop étroites pour l'en-tête
-     Ethereum (réseau renvoyé à la ligne, toute la carte décalée) et pour les
-     3 boutons. */
-  grid-template-columns: repeat(auto-fit, minmax(315px, 1fr));
-  gap: 20px;
+  /* 236px minimum : 3 cartes par rangée dès la taille de fenêtre par défaut
+     (1080 px), 2 en fenêtre étroite, 4 sur un grand écran. Les cartes
+     étroites se resserrent d'elles-mêmes (voir « Cartes compactes ») : réseau
+     sous le nom, solde et actions rondes plus petits. */
+  grid-template-columns: repeat(auto-fill, minmax(236px, 1fr));
+  gap: 16px;
   margin-top: 20px;
   /* Sans ça, la grille étire par défaut chaque carte à la hauteur de la plus
      haute de sa rangée (ex: BTC/SOL avec leur badge "transaction en attente"
@@ -3273,6 +3272,7 @@ h2 .coin-icon-inline,
 :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .address-row > .convert-btn {
   position: relative;
   flex: 1 1 0;
+  width: auto;
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -3412,4 +3412,121 @@ h2 .coin-icon-inline,
 
 .portfolio-hero .chart-empty {
   padding: 22px 0 6px;
+}
+
+/* --- Cartes compactes ----------------------------------------------------------
+   Chaque carte est un conteneur (requêtes de conteneur) : étroite, elle
+   resserre son solde et ses actions. Vue cartes seulement : en vue liste, la
+   carte est un sous-grille, que l'endiguement de taille casserait. */
+:root:not([data-wallet-list-view="true"]) .wallet-card {
+  position: relative;
+  container-type: inline-size;
+}
+
+/* « Actualiser » : petite icône ronde dans le coin de la carte (qui tourne
+   pendant la lecture), plus une action de la rangée. Place réservée à droite
+   de l'en-tête. */
+:root:not([data-wallet-list-view="true"]) .wallet-card header {
+  padding-right: 42px;
+}
+
+:root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .row-buttons > [data-action="refresh"] {
+  position: absolute;
+  top: 21px;
+  right: 18px;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  margin: 0;
+  padding: 0;
+  gap: 0;
+  font-size: 0;
+  overflow: visible;
+}
+
+:root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .row-buttons > [data-action="refresh"]::before {
+  width: 32px;
+  height: 32px;
+}
+
+:root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .row-buttons > [data-action="refresh"]::after {
+  top: 8px;
+  width: 16px;
+  height: 16px;
+  margin-left: -8px;
+  background: var(--muted);
+}
+
+:root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .row-buttons > [data-action="refresh"]:hover:not(:disabled)::after {
+  background: var(--text);
+}
+
+:root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .row-buttons > [data-action="refresh"][aria-busy="true"]::after {
+  animation: refresh-spin 0.9s linear infinite;
+}
+
+@keyframes refresh-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .row-buttons > [data-action="refresh"][aria-busy="true"]::after {
+    animation: none;
+  }
+}
+
+/* Mode « Organiser » : la poignée et les flèches occupent le haut de la carte. */
+.wallet-grid.organizing .wallet-card .collapsible-inner > .row-buttons > [data-action="refresh"] {
+  display: none;
+}
+
+@container (max-width: 300px) {
+  .wallet-card .balance {
+    font-size: 1.4rem;
+  }
+
+  /* Actions serrées : chacune à la largeur de son libellé (mesuré : les quatre
+     tiennent dans une carte de 236 px), sans libellé coupé. */
+  :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner {
+    column-gap: 2px;
+  }
+
+  :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .address-row > [data-action="copy-address"] {
+    margin-left: 6px;
+  }
+
+  :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .row-buttons > button:not([data-action="refresh"]),
+  :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .address-row > .convert-btn {
+    flex: 1 1 auto;
+    overflow: visible;
+  }
+
+  :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .row-buttons > button:not([data-action="refresh"]),
+  :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .address-row > .convert-btn {
+    gap: 6px;
+    font-size: 0.7rem;
+  }
+
+  :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .row-buttons > button:not([data-action="refresh"])::before,
+  :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .address-row > .convert-btn::before {
+    width: 40px;
+    height: 40px;
+  }
+
+  :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .row-buttons > button:not([data-action="refresh"])::after,
+  :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .address-row > .convert-btn::after {
+    top: 11px;
+    width: 18px;
+    height: 18px;
+    margin-left: -9px;
+  }
+}
+
+/* Badge « transaction en attente » : plus de place réservée tant qu'il est
+   caché (dans une carte étroite, son texte en réservait plusieurs lignes) ; la
+   carte s'allonge seulement le temps où il s'affiche. */
+:root:not([data-wallet-list-view="true"]) .wallet-card .pending-badge:not(.visible) {
+  display: none;
 }
