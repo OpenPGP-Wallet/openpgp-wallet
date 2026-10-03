@@ -2139,20 +2139,29 @@ h2 .coin-icon-inline,
   color: var(--danger);
 }
 
-/* Historique d'une crypto (page ouverte depuis sa carte) : retour au
-   portefeuille au-dessus du titre. */
-button.link.coin-history-back {
-  display: block;
-  width: auto;
-  margin: 0 0 10px;
-  padding: 0;
-  text-align: left;
+/* Historique d'une crypto (ouvert depuis sa carte) : grande fenêtre au-dessus
+   du portefeuille, qui reste visible derrière, flouté — voile plus léger et
+   flou plus fort que les autres fenêtres. */
+.modal-overlay.coin-history-overlay {
+  background: rgba(4, 5, 8, 0.32);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+:root[data-theme="light"] .modal-overlay.coin-history-overlay {
+  background: rgba(20, 24, 32, 0.14);
+}
+
+.modal.coin-history-sheet {
+  max-width: 760px;
+  min-height: min(520px, calc(100vh - 48px));
 }
 
 .coin-history-title {
   display: flex;
   align-items: center;
   gap: 10px;
+  margin-bottom: 4px;
 }
 
 .coin-history-title .coin-icon-inline {

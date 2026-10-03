@@ -694,20 +694,6 @@
         </div>
       </section>
 
-      <!-- Historique d'une seule crypto : page ouverte par le bouton
-           « Historique » de sa carte (sous-page du portefeuille). -->
-      <section class="tab-panel hidden" data-panel="coin-history">
-        <div class="card wide">
-          <button type="button" id="coin-history-back" class="link coin-history-back" data-i18n="coinHistory.back">← Portefeuille</button>
-          <h1 id="coin-history-title" class="coin-history-title"></h1>
-          <p id="coin-history-network" class="muted"></p>
-          <div class="row-buttons">
-            <button id="coin-history-refresh" class="secondary" data-i18n="wallet.refresh">Actualiser</button>
-          </div>
-          <div id="coin-history-list" class="history-list"></div>
-        </div>
-      </section>
-
       <section class="tab-panel hidden" data-panel="message">
         <div class="card wide message-panel">
           <h1 data-i18n="message.title">Chiffrer un message</h1>
@@ -1311,6 +1297,22 @@
     </div>
 
     <!-- « Gérer mes cryptos » : cartes affichées sur le tableau de bord. -->
+    <!-- Historique d'une seule crypto : fenêtre ouverte par le bouton
+         « Historique » de sa carte, au-dessus du portefeuille (flouté derrière). -->
+    <div id="coin-history-modal" class="modal-overlay coin-history-overlay hidden">
+      <div class="modal coin-history-sheet" role="dialog" aria-modal="true" aria-labelledby="coin-history-title">
+        <div class="modal-header-row">
+          <h2 id="coin-history-title" class="coin-history-title"></h2>
+          <button type="button" id="coin-history-close" class="modal-close-btn" data-i18n-title="common.close" data-i18n-aria-label="common.close" title="Fermer" aria-label="Fermer">×</button>
+        </div>
+        <p id="coin-history-network" class="muted"></p>
+        <div class="row-buttons">
+          <button id="coin-history-refresh" class="secondary" data-i18n="wallet.refresh">Actualiser</button>
+        </div>
+        <div id="coin-history-list" class="history-list"></div>
+      </div>
+    </div>
+
     <div id="assets-modal" class="modal-overlay hidden">
       <div class="modal">
         <div class="modal-header-row">
