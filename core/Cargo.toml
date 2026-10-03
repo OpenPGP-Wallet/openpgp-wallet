@@ -115,6 +115,10 @@ rusqlite = { version = "0.37", features = ["bundled"] }
 # de la synchronisation ; rand_core : générateur système exigé par la base.
 zip32 = "0.2"
 async-trait = "0.1"
+# Types de l'interface du prouveur Sapling, remplacé par un prouveur qui refuse
+# (Orchard seul, voir zcash_shielded::NoSapling).
+jubjub = "0.10"
+bls12_381 = "0.8"
 rand_core = { version = "0.6", features = ["getrandom"] }
 
 # --- WalletConnect v2 (voir core/src/walletconnect/) ---

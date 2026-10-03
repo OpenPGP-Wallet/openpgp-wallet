@@ -3738,3 +3738,11 @@ h2 .coin-icon-inline,
 :root[data-wallet-list-view="true"] .zec-shielded {
   display: none;
 }
+
+.zec-shielded-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 6px;
+  font-size: 0.85rem;
+}

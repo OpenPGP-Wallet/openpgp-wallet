@@ -306,6 +306,11 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("adresse d'affiliation jamais approvisionnée sur ce réseau", "affiliate address never funded on this network"),
     ("Inscription annulée (confirmation refusée).", "Registration cancelled (confirmation declined)."),
     ("aucun nom d'affiliation prévu sur ce réseau", "no affiliate name planned on this network"),
+    // Zcash protégé (core/src/zcash_shielded.rs)
+    ("Protection annulée (confirmation refusée).", "Shielding cancelled (confirmation declined)."),
+    ("fonds protégés pas encore prêts (synchronisation en cours)", "shielded funds not ready yet (sync in progress)"),
+    ("adresse Zcash Sapling seule (zs…) pas prise en charge — demandez une adresse u1… ou t1…", "Sapling-only Zcash address (zs…) not supported — ask for a u1… or t1… address"),
+    ("adresse Zcash d'un autre réseau (test) — refusée", "Zcash address from another network (test) — refused"),
     // Clé Etherscan (core/src/etherscan_key.rs, core/src/routescan.rs)
     (
         "clé Etherscan invalide : 34 lettres majuscules et chiffres attendus (à copier depuis etherscan.io/myapikey)",
@@ -630,6 +635,15 @@ fn translate_dynamic_error(msg: &str) -> Option<String> {
         if let Some((network, reason)) = rest.split_once(" : ") {
             return Some(format!("transaction refused by {network}: {reason}"));
         }
+    }
+    if let Some(rest) = msg.strip_prefix("rien à protéger pour l'instant (") {
+        return Some(format!("nothing to shield for now ({rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("envoi Zcash protégé impossible (") {
+        return Some(format!("shielded Zcash transfer impossible ({rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("transaction Zcash protégée : construction impossible (") {
+        return Some(format!("shielded Zcash transaction: could not build it ({rest}"));
     }
     if let Some(rest) = msg.strip_prefix("memo Maya trop long pour une sortie OP_RETURN (") {
         return Some(format!("Maya memo too long for an OP_RETURN output ({}", rest.replace("octets", "bytes")));
@@ -4198,6 +4212,72 @@ struct ShieldedBalanceDto {
     synced: bool,
 }
 
+fn shielded_dialog(app: &tauri::AppHandle, title: (&str, &str), message: String) -> bool {
+    app.dialog().message(message).title(lang(title.0, title.1)).kind(MessageDialogKind::Warning).buttons(MessageDialogButtons::OkCancel).blocking_show()
+}
+
+/// Protège les ZEC transparents du profil (t1 → adresse Orchard du même
+/// profil) après une boîte de confirmation native (montant, frais ZIP-317).
+#[tauri::command]
+async fn zec_shield(password: String, profile_index: u32, app: tauri::AppHandle) -> Result<String, String> {
+    run_blocking(move || {
+        let password = Zeroizing::new(password);
+        let dir = data_dir(&app)?;
+        let t1 = app
+            .state::<ProfileZcashCache>()
+            .0
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(&profile_index)
+            .cloned()
+            .ok_or_else(|| translate_error("adresse du profil inconnue — déverrouillez le portefeuille"))?;
+        let confirm = |s: &pgp_wallet_poc::zcash_shielded::SpendSummary| {
+            let (amount, fee) = (pgp_wallet_poc::zcash::format_zec(s.amount), pgp_wallet_poc::zcash::format_zec(s.fee));
+            let to = &s.recipient;
+            let message = if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
+                format!("Shield your transparent ZEC\n\nFrom: {t1}\nTo your shielded address: {to}\nAmount shielded: {amount} ZEC\nNetwork fee: {fee} ZEC (ZIP-317)\n\nOnce shielded, amounts and addresses are no longer visible on the blockchain.\n\nConfirm?")
+            } else {
+                format!("Protéger vos ZEC transparents\n\nDepuis : {t1}\nVers votre adresse protégée : {to}\nMontant protégé : {amount} ZEC\nFrais réseau : {fee} ZEC (ZIP-317)\n\nUne fois protégés, montants et adresses ne sont plus visibles sur la blockchain.\n\nConfirmer ?")
+            };
+            shielded_dialog(&app, ("Confirmer la protection", "Confirm shielding"), message)
+        };
+        match api::shield_zec(&dir, &password, profile_index, &t1, confirm).t_err()? {
+            Some(txid) => Ok(txid),
+            None => Err(translate_error("Protection annulée (confirmation refusée).")),
+        }
+    })
+    .await
+}
+
+/// Envoie depuis les fonds Zcash protégés du profil, après une boîte de
+/// confirmation native (destinataire, montant, frais).
+#[tauri::command]
+async fn zec_send_shielded(password: String, profile_index: u32, to: String, amount: String, app: tauri::AppHandle) -> Result<String, String> {
+    run_blocking(move || {
+        let password = Zeroizing::new(password);
+        let dir = data_dir(&app)?;
+        let to = canonical_address_input(&to)?;
+        let amount = api::canonical_zec_amount(&amount).t_err()?;
+        let from_label = api::list_profiles(&dir).into_iter().find(|p| p.index == profile_index).map(|p| p.label).unwrap_or_else(|| format!("profil #{profile_index}"));
+        let from_label = dialog_label(&from_label);
+        let confirm = |s: &pgp_wallet_poc::zcash_shielded::SpendSummary| {
+            let (amount, fee) = (pgp_wallet_poc::zcash::format_zec(s.amount), pgp_wallet_poc::zcash::format_zec(s.fee));
+            let to = &s.recipient;
+            let message = if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
+                format!("Send from your shielded ZEC\n\nFrom profile: {from_label}\nTo: {to}\nAmount: {amount} ZEC\nNetwork fee: {fee} ZEC (ZIP-317)\n\nThis is irreversible.\n\nConfirm this transfer?")
+            } else {
+                format!("Envoi depuis vos ZEC protégés\n\nDepuis le profil : {from_label}\nVers : {to}\nMontant : {amount} ZEC\nFrais réseau : {fee} ZEC (ZIP-317)\n\nC'est irréversible.\n\nConfirmer cet envoi ?")
+            };
+            shielded_dialog(&app, ("Confirmer l'envoi", "Confirm the transfer"), message)
+        };
+        match api::send_zec_shielded(&dir, &password, profile_index, &to, &amount, confirm).t_err()? {
+            Some(txid) => Ok(txid),
+            None => Err(translate_error("Envoi annulé (confirmation refusée).")),
+        }
+    })
+    .await
+}
+
 /// Solde Zcash protégé du profil (lu dans la base locale, aucun appel réseau).
 #[tauri::command]
 async fn zec_shielded_balance(profile_index: u32, app: tauri::AppHandle) -> Result<ShieldedBalanceDto, String> {
@@ -4720,6 +4800,8 @@ pub fn run() {
             affiliate_names_status,
             register_affiliate_name,
             zec_shielded_balance,
+            zec_shield,
+            zec_send_shielded,
             unlock_wallet,
             biometric_unlock_available,
             biometric_unlock_enrolled,

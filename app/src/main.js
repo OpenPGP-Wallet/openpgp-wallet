@@ -179,6 +179,10 @@ function buildAssetCard(asset) {
             <button class="qr-btn" data-action="copy-shielded" data-i18n-title="wallet.copyShielded">${ICON_COPY}</button>
             <button class="qr-btn" data-action="qr-shielded" data-i18n-title="wallet.showShieldedQr">${ICON_QR}</button>
           </div>
+          <div class="zec-shielded-actions">
+            <button class="link" data-action="shield" data-i18n="shielded.shield">Protéger mes ZEC transparents</button>
+            <button class="link" data-action="send-shielded" data-i18n="shielded.send">Envoyer depuis les fonds protégés</button>
+          </div>
         </div>`
             : ""
         }
@@ -499,6 +503,13 @@ const I18N = {
     "nav.history": "Historique",
     "wallet.history": "Historique",
     "wallet.shieldedBalance": "Fonds protégés",
+    "shielded.shield": "Protéger mes ZEC transparents",
+    "shielded.send": "Envoyer depuis les fonds protégés",
+    "shielded.shieldTitle": "Protéger mes ZEC",
+    "shielded.sendTitle": "Envoyer des ZEC protégés",
+    "shielded.shieldHint": "Déplace les ZEC de votre adresse transparente (t1…) vers votre adresse protégée : montants et adresses ne seront plus visibles sur la blockchain. Les ZEC doivent avoir quelques confirmations.",
+    "shielded.sendHint": "Depuis vos fonds protégés, vers une adresse u1… (protégée) ou t1… (transparente). Les adresses Sapling seules (zs…) ne sont pas prises en charge.",
+    "shielded.password": "Mot de passe",
     "wallet.shieldedSyncing": "(synchronisation…)",
     "wallet.shieldedPending": "(dont {amount} en attente de confirmation)",
     "wallet.copyShielded": "Copier l'adresse protégée",
@@ -1051,6 +1062,13 @@ const I18N = {
     "nav.history": "History",
     "wallet.history": "History",
     "wallet.shieldedBalance": "Shielded funds",
+    "shielded.shield": "Shield my transparent ZEC",
+    "shielded.send": "Send from shielded funds",
+    "shielded.shieldTitle": "Shield my ZEC",
+    "shielded.sendTitle": "Send shielded ZEC",
+    "shielded.shieldHint": "Moves the ZEC of your transparent address (t1…) to your shielded address: amounts and addresses will no longer be visible on the blockchain. The ZEC need a few confirmations.",
+    "shielded.sendHint": "From your shielded funds, to a u1… (shielded) or t1… (transparent) address. Sapling-only addresses (zs…) are not supported.",
+    "shielded.password": "Password",
     "wallet.shieldedSyncing": "(syncing…)",
     "wallet.shieldedPending": "({amount} awaiting confirmation)",
     "wallet.copyShielded": "Copy the shielded address",
@@ -3711,6 +3729,62 @@ async function refreshShielded(card) {
   }
 }
 
+// Fenêtre des dépenses protégées : « shield » (mot de passe seul) ou « send »
+// (destinataire, montant). La boîte de confirmation native, construite côté
+// Rust à partir de la transaction proposée, montre montant et frais.
+let shieldedMode = "send";
+
+function openShieldedModal(mode) {
+  shieldedMode = mode;
+  const title = document.getElementById("shielded-modal-title");
+  title.dataset.i18n = mode === "shield" ? "shielded.shieldTitle" : "shielded.sendTitle";
+  title.textContent = t(title.dataset.i18n);
+  document.getElementById("shielded-modal-hint").textContent = t(mode === "shield" ? "shielded.shieldHint" : "shielded.sendHint");
+  document.getElementById("shielded-send-fields").classList.toggle("hidden", mode === "shield");
+  for (const id of ["shielded-to", "shielded-amount", "shielded-password"]) document.getElementById(id).value = "";
+  hideError(document.getElementById("shielded-error"));
+  document.getElementById("shielded-success").classList.add("hidden");
+  document.getElementById("shielded-modal").classList.remove("hidden");
+}
+
+document.getElementById("shielded-cancel").addEventListener("click", () => {
+  document.getElementById("shielded-modal").classList.add("hidden");
+  document.getElementById("shielded-password").value = "";
+});
+
+restrictToAmount(document.getElementById("shielded-amount"));
+
+const shieldedConfirmBtn = document.getElementById("shielded-confirm");
+shieldedConfirmBtn.addEventListener("click", withBusyButton(shieldedConfirmBtn, async () => {
+  const errorEl = document.getElementById("shielded-error");
+  const successEl = document.getElementById("shielded-success");
+  hideError(errorEl);
+  successEl.classList.add("hidden");
+  const passwordEl = document.getElementById("shielded-password");
+  if (!passwordEl.value) {
+    showError(errorEl, t("common.passwordRequired"));
+    return;
+  }
+  try {
+    const txid = shieldedMode === "shield"
+      ? await invoke("zec_shield", { password: passwordEl.value, profileIndex: currentProfileIndex })
+      : await invoke("zec_send_shielded", {
+          password: passwordEl.value,
+          profileIndex: currentProfileIndex,
+          to: document.getElementById("shielded-to").value.trim(),
+          amount: document.getElementById("shielded-amount").value.trim().replace(",", "."),
+        });
+    successEl.textContent = t("send.txSent", { tx: txid });
+    successEl.classList.remove("hidden");
+    const card = document.querySelector('.wallet-card[data-coin="zec"]');
+    if (card) refreshBalance(card);
+  } catch (e) {
+    showError(errorEl, String(e));
+  } finally {
+    passwordEl.value = "";
+  }
+}));
+
 function formatZecAmount(value) {
   return value.toFixed(8).replace(/\.?0+$/, "") || "0";
 }
@@ -3880,6 +3954,8 @@ document.querySelectorAll(".wallet-card").forEach((card) => {
     const address = shieldedAddress();
     if (address) openQrModal(card, address);
   });
+  card.querySelector('[data-action="shield"]')?.addEventListener("click", () => openShieldedModal("shield"));
+  card.querySelector('[data-action="send-shielded"]')?.addEventListener("click", () => openShieldedModal("send"));
   // Même historique que l'onglet « Historique », ouvert directement sur cette
   // crypto : plus facile à trouver depuis la carte que l'onglet seul.
   card.querySelector('[data-action="history"]').addEventListener("click", () => openHistoryFor(card.dataset.coin));

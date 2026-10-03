@@ -2564,6 +2564,26 @@ pub fn zec_shielded_balance(data_dir: &Path, profile_index: u32) -> Result<zcash
     zcash_shielded::balance(data_dir, profile_index)
 }
 
+/// Protège les ZEC de l'adresse t1 du profil : résumé confirmé par
+/// `confirm`, puis seed déverrouillée (mot de passe), signature, diffusion.
+/// `Ok(None)` : confirmation refusée.
+pub fn shield_zec(data_dir: &Path, device_password: &str, profile_index: u32, t1: &str, confirm: impl FnOnce(&zcash_shielded::SpendSummary) -> bool) -> Result<Option<String>> {
+    zcash_shielded::shield(data_dir, profile_index, t1, confirm, || unlock_seed(data_dir, device_password))
+}
+
+/// Envoie depuis les fonds protégés du profil (montant en ZEC, 8 décimales).
+pub fn send_zec_shielded(
+    data_dir: &Path,
+    device_password: &str,
+    profile_index: u32,
+    to: &str,
+    amount: &str,
+    confirm: impl FnOnce(&zcash_shielded::SpendSummary) -> bool,
+) -> Result<Option<String>> {
+    let units = u64::try_from(tokens::parse_amount(amount, 8)?).context("montant hors limites")?;
+    zcash_shielded::send(data_dir, profile_index, to, units, confirm, || unlock_seed(data_dir, device_password))
+}
+
 // --- Zcash (adresses transparentes) ---------------------------------------------
 
 pub fn get_zec_balance(address: &str) -> Result<u64> {

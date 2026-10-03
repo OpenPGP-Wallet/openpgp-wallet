@@ -193,6 +193,225 @@ pub fn balance(data_dir: &Path, profile: u32) -> Result<ShieldedBalance> {
     })
 }
 
+// --- Dépenses : protéger les ZEC transparents, envoyer depuis Orchard -------------
+// Comme ailleurs dans l'app : la transaction est d'abord PROPOSÉE (entrées,
+// frais ZIP-317, monnaie, sans aucune clé de dépense), son résumé est
+// confirmé dans une boîte native, puis CETTE proposition est signée avec la
+// clé dérivée de la seed (mot de passe) et diffusée par lightwalletd.
+
+use zcash_client_backend::data_api::wallet::input_selection::{GreedyInputSelector, SpendPolicy};
+use zcash_client_backend::data_api::wallet::{create_proposed_transactions, propose_shielding, propose_transfer, SpendingKeys};
+use zcash_client_backend::data_api::CoinbaseFilter;
+use zcash_client_backend::fees::{zip317::SingleOutputChangeStrategy, DustOutputPolicy, StandardFeeRule};
+use zcash_client_backend::proposal::Proposal;
+use zcash_client_backend::wallet::OvkPolicy;
+use zcash_client_backend::zip321::{Payment, TransactionRequest};
+use zcash_protocol::value::Zatoshis;
+use zcash_protocol::{PoolType, ShieldedPool};
+
+/// Prouveur Sapling absent : l'app ne dépense ni ne crée jamais de note
+/// Sapling (Orchard seul : destinataires transparents ou Orchard, monnaie vers
+/// Orchard, vérifiés avant la proposition). Une dépense Sapling échouerait à la
+/// préparation du circuit ; une sortie Sapling donnerait une preuve vide que
+/// le réseau refuserait — jamais de fonds engagés.
+struct NoSapling;
+
+impl sapling_crypto::prover::SpendProver for NoSapling {
+    type Proof = ();
+
+    fn prepare_circuit(
+        _: sapling_crypto::ProofGenerationKey,
+        _: sapling_crypto::Diversifier,
+        _: sapling_crypto::Rseed,
+        _: sapling_crypto::value::NoteValue,
+        _: jubjub::Fr,
+        _: sapling_crypto::value::ValueCommitTrapdoor,
+        _: bls12_381::Scalar,
+        _: sapling_crypto::MerklePath,
+    ) -> Option<sapling_crypto::circuit::Spend> {
+        None
+    }
+
+    fn create_proof<R: rand_core::RngCore>(&self, _: sapling_crypto::circuit::Spend, _: &mut R) -> Self::Proof {}
+
+    fn encode_proof(_: Self::Proof) -> sapling_crypto::bundle::GrothProofBytes {
+        // Taille d'une preuve Groth16 (48 + 96 + 48 octets).
+        [0; 192]
+    }
+}
+
+impl sapling_crypto::prover::OutputProver for NoSapling {
+    type Proof = ();
+
+    fn prepare_circuit(
+        _: &sapling_crypto::keys::EphemeralSecretKey,
+        _: sapling_crypto::PaymentAddress,
+        _: jubjub::Fr,
+        _: sapling_crypto::value::NoteValue,
+        _: sapling_crypto::value::ValueCommitTrapdoor,
+    ) -> sapling_crypto::circuit::Output {
+        sapling_crypto::circuit::Output { value_commitment_opening: None, payment_address: None, commitment_randomness: None, esk: None }
+    }
+
+    fn create_proof<R: rand_core::RngCore>(&self, _: sapling_crypto::circuit::Output, _: &mut R) -> Self::Proof {}
+
+    fn encode_proof(_: Self::Proof) -> sapling_crypto::bundle::GrothProofBytes {
+        // Taille d'une preuve Groth16 (48 + 96 + 48 octets).
+        [0; 192]
+    }
+}
+
+/// Résumé d'une dépense, montré dans la boîte de confirmation.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SpendSummary {
+    /// Montant qui arrive au destinataire (ou protégé), en zatoshis.
+    pub amount: u64,
+    /// Frais ZIP-317.
+    pub fee: u64,
+    /// Destinataire (adresse protégée du profil pour une protection).
+    pub recipient: String,
+}
+
+fn change_strategy() -> SingleOutputChangeStrategy<StandardFeeRule, Db> {
+    SingleOutputChangeStrategy::new(StandardFeeRule::Zip317, None, ShieldedPool::Orchard, DustOutputPolicy::default())
+}
+
+/// Clés de dépense du profil : clé unifiée du compte ZIP-32, et clé de
+/// l'adresse t1 importée (profils autres que le principal).
+fn spending_keys(seed: &[u8], profile: u32) -> Result<SpendingKeys> {
+    let usk = UnifiedSpendingKey::from_seed(&MainNetwork, seed, account_index(profile)?).map_err(|e| anyhow!("clé Zcash protégée : {e:?}"))?;
+    let mut standalone = std::collections::HashMap::new();
+    if profile != 0 {
+        let (key, hash160) = derivation::derive_zec_key(seed, profile)?;
+        let secret = secp256k1::SecretKey::from_slice(&key.to_bytes()).context("clé Zcash invalide")?;
+        standalone.insert(zcash_transparent::address::TransparentAddress::PublicKeyHash(hash160), vec![secret]);
+    }
+    Ok(SpendingKeys::new(usk, standalone))
+}
+
+/// Signe la proposition et diffuse ses transactions ; renvoie le dernier
+/// identifiant.
+fn create_and_broadcast<N: std::fmt::Display>(db: &mut Db, proposal: &Proposal<StandardFeeRule, N>, keys: &SpendingKeys) -> Result<String> {
+    // Types d'erreur de sélection et de monnaie : propres à la proposition,
+    // jamais produits par la construction.
+    let txids = create_proposed_transactions::<_, _, std::convert::Infallible, _, std::convert::Infallible, _>(db, &MainNetwork, &NoSapling, &NoSapling, keys, OvkPolicy::Sender, proposal, None)
+        .map_err(|e| anyhow!("transaction Zcash protégée : construction impossible ({e})"))?;
+    let mut last = String::new();
+    for txid in txids {
+        let tx = db.get_transaction(txid)?.context("transaction Zcash protégée introuvable après sa construction")?;
+        let mut raw = Vec::new();
+        tx.write(&mut raw).context("sérialisation de la transaction Zcash impossible")?;
+        last = zcash::broadcast(&raw, &txid.to_string())?;
+    }
+    Ok(last)
+}
+
+/// Fonds insuffisants, en clair : messages de la bibliothèque relevés en
+/// réel (« Insufficient balance (have 0, need 1010000 including fee) »,
+/// « Insufficient funds: required 10000 zatoshis, but only 0 zatoshis were
+/// available »).
+fn insufficient(message: &str) -> Option<anyhow::Error> {
+    let number_after = |marker: &str| -> Option<u64> {
+        let rest = &message[message.find(marker)? + marker.len()..];
+        rest.split(|c: char| !c.is_ascii_digit()).next()?.parse().ok()
+    };
+    let (have, need) = match (number_after("have "), number_after("need ")) {
+        (Some(have), Some(need)) => (have, need),
+        _ => (number_after("but only ")?, number_after("required ")?),
+    };
+    Some(anyhow!("ZEC insuffisants : {} disponibles, {} nécessaires (frais compris)", zcash::format_zec(have), zcash::format_zec(need)))
+}
+
+fn proposal_fee<N>(proposal: &Proposal<StandardFeeRule, N>) -> u64 {
+    proposal.steps().iter().map(|step| u64::from(step.balance().fee_required())).sum()
+}
+
+/// Protège les ZEC de l'adresse t1 `t1` du profil (vers son adresse
+/// Orchard) : propose, fait confirmer le résumé (`confirm`), puis signe avec
+/// la seed (`seed`) et diffuse. `Ok(None)` : confirmation refusée.
+pub fn shield(
+    data_dir: &Path,
+    profile: u32,
+    t1: &str,
+    confirm: impl FnOnce(&SpendSummary) -> bool,
+    seed: impl FnOnce() -> Result<zeroize::Zeroizing<Vec<u8>>>,
+) -> Result<Option<String>> {
+    let mut db = open(data_dir)?;
+    let account = find_account(&db, profile)?.context("fonds protégés pas encore prêts (synchronisation en cours)")?;
+    let from = match zcash::parse_recipient(t1)? {
+        zcash::Recipient::P2pkh(hash) => zcash_transparent::address::TransparentAddress::PublicKeyHash(hash),
+        zcash::Recipient::P2sh(_) => anyhow::bail!("adresse t1 du profil attendue"),
+    };
+    let proposal = propose_shielding::<_, _, _, _, std::convert::Infallible>(
+        &mut db,
+        &MainNetwork,
+        &GreedyInputSelector::new(),
+        &change_strategy(),
+        Zatoshis::const_from_u64(10_000),
+        &[from],
+        account,
+        ConfirmationsPolicy::default(),
+        CoinbaseFilter::AllTransparentOutputs,
+        None,
+    )
+    .map_err(|e| insufficient(&e.to_string()).unwrap_or_else(|| anyhow!("rien à protéger pour l'instant ({e})")))?;
+    let fee = proposal_fee(&proposal);
+    let inputs: u64 = proposal.steps().iter().flat_map(|s| s.transparent_inputs()).map(|i| u64::from(i.txout().value())).sum();
+    let ufvk = db.get_account(account)?.and_then(|a| a.ufvk().cloned()).context("compte Zcash protégé sans clé de visualisation")?;
+    let summary = SpendSummary { amount: inputs.saturating_sub(fee), fee, recipient: address(&ufvk)? };
+    if !confirm(&summary) {
+        return Ok(None);
+    }
+    let seed = seed()?;
+    create_and_broadcast(&mut db, &proposal, &spending_keys(&seed, profile)?).map(Some)
+}
+
+/// Le destinataire peut-il recevoir sans Sapling (transparent, ou adresse
+/// unifiée avec un récepteur Orchard) ?
+pub fn check_recipient(address: &str) -> Result<zcash_address::ZcashAddress> {
+    let parsed = zcash_address::ZcashAddress::try_from_encoded(address.trim()).map_err(|_| anyhow!("adresse Zcash invalide"))?;
+    anyhow::ensure!(parsed.can_receive_as(PoolType::ORCHARD) || parsed.can_receive_as(PoolType::TRANSPARENT), "adresse Zcash Sapling seule (zs…) pas prise en charge — demandez une adresse u1… ou t1…");
+    let mainnet = ["u1", "t1", "t3", "tex1"].iter().any(|prefix| address.trim().starts_with(prefix));
+    anyhow::ensure!(mainnet, "adresse Zcash d'un autre réseau (test) — refusée");
+    Ok(parsed)
+}
+
+/// Envoie `amount` zatoshis depuis les fonds protégés du profil vers `to` :
+/// mêmes étapes que `shield`.
+pub fn send(
+    data_dir: &Path,
+    profile: u32,
+    to: &str,
+    amount: u64,
+    confirm: impl FnOnce(&SpendSummary) -> bool,
+    seed: impl FnOnce() -> Result<zeroize::Zeroizing<Vec<u8>>>,
+) -> Result<Option<String>> {
+    let recipient = check_recipient(to)?;
+    let mut db = open(data_dir)?;
+    let account = find_account(&db, profile)?.context("fonds protégés pas encore prêts (synchronisation en cours)")?;
+    let value = Zatoshis::from_u64(amount).map_err(|_| anyhow!("montant hors limites"))?;
+    let request = TransactionRequest::new(vec![Payment::without_memo(recipient, value)]).map_err(|e| anyhow!("demande de paiement invalide ({e:?})"))?;
+    let proposal = propose_transfer::<_, _, _, _, std::convert::Infallible>(
+        &mut db,
+        &MainNetwork,
+        account,
+        &GreedyInputSelector::new(),
+        &change_strategy(),
+        request,
+        ConfirmationsPolicy::default(),
+        &SpendPolicy::default(),
+        None,
+        None,
+    )
+    .map_err(|e| insufficient(&e.to_string()).unwrap_or_else(|| anyhow!("envoi Zcash protégé impossible ({e})")))?;
+    let summary = SpendSummary { amount, fee: proposal_fee(&proposal), recipient: to.trim().to_string() };
+    if !confirm(&summary) {
+        return Ok(None);
+    }
+    let seed = seed()?;
+    create_and_broadcast(&mut db, &proposal, &spending_keys(&seed, profile)?).map(Some)
+}
+
 // --- Cache de blocs en mémoire (le temps d'une synchronisation) -------------------
 
 #[derive(Debug)]
@@ -266,6 +485,7 @@ impl BlockCache for MemoryCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use zcash_address::ToAddress as _;
 
     const SEED: [u8; 64] = [5u8; 64];
 
@@ -280,6 +500,31 @@ mod tests {
         let parsed = zcash_address::ZcashAddress::try_from_encoded(&a0).unwrap();
         assert!(parsed.can_receive_as(zcash_protocol::PoolType::ORCHARD));
         assert!(!parsed.can_receive_as(zcash_protocol::PoolType::SAPLING) && !parsed.can_receive_as(zcash_protocol::PoolType::TRANSPARENT));
+    }
+
+    /// Destinataires : t1 et u1 Orchard acceptés ; Sapling seule refusée.
+    #[test]
+    fn recipients_without_sapling() {
+        let u1 = address(&viewing_key(&SEED, 0).unwrap()).unwrap();
+        assert!(check_recipient(&u1).is_ok());
+        assert!(check_recipient("t1VtnnhTYhmADh7L2uKU3Sev7GscBHT6HfE").is_ok());
+        // Adresse Sapling seule bien formée (encodage officiel, somme de contrôle valide).
+        let sapling = zcash_address::ZcashAddress::from_sapling(zcash_protocol::consensus::NetworkType::Main, [7u8; 43]).encode();
+        assert!(sapling.starts_with("zs1"));
+        assert!(check_recipient(&sapling).unwrap_err().to_string().contains("Sapling"), "Sapling seule");
+        let testnet = zcash_address::ZcashAddress::from_transparent_p2pkh(zcash_protocol::consensus::NetworkType::Test, [7u8; 20]).encode();
+        assert!(check_recipient(&testnet).is_err(), "réseau de test");
+        assert!(check_recipient("pas une adresse").is_err());
+    }
+
+    /// Fonds insuffisants : messages réels de la bibliothèque, en clair.
+    #[test]
+    fn insufficient_funds_in_plain_words() {
+        let send = insufficient("Insufficient balance (have 0, need 1010000 including fee)").unwrap().to_string();
+        assert_eq!(send, "ZEC insuffisants : 0.00000000 disponibles, 0.01010000 nécessaires (frais compris)");
+        let shield = insufficient("Change output generation failed: Insufficient funds: required 10000 zatoshis, but only 0 zatoshis were available.").unwrap().to_string();
+        assert_eq!(shield, "ZEC insuffisants : 0.00000000 disponibles, 0.00010000 nécessaires (frais compris)");
+        assert!(insufficient("autre erreur").is_none());
     }
 
     /// Réseau réel (lecture seule) : comptes créés à la naissance commune,

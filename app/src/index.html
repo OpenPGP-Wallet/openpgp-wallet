@@ -1018,6 +1018,28 @@
       </section>
     </main>
 
+    <!-- Zcash protégé : protéger les ZEC transparents, ou envoyer depuis les fonds protégés -->
+    <div id="shielded-modal" class="modal-overlay hidden">
+      <div class="modal">
+        <h2 id="shielded-modal-title" data-i18n="shielded.sendTitle">Envoyer des ZEC protégés</h2>
+        <p id="shielded-modal-hint" class="muted"></p>
+        <div id="shielded-send-fields">
+          <label for="shielded-to" data-i18n="send.toAddress">Adresse destinataire</label>
+          <input id="shielded-to" type="text" spellcheck="false" autocomplete="off" />
+          <label for="shielded-amount" data-i18n="send.amount">Montant</label>
+          <input id="shielded-amount" type="text" inputmode="decimal" autocomplete="off" placeholder="0.1" />
+        </div>
+        <label for="shielded-password" data-i18n="shielded.password">Mot de passe</label>
+        <input id="shielded-password" type="password" autocomplete="current-password" />
+        <p id="shielded-error" class="error hidden"></p>
+        <p id="shielded-success" class="success hidden"></p>
+        <div class="modal-actions">
+          <button id="shielded-confirm" class="primary" data-i18n="send.previewConfirm">Continuer</button>
+          <button id="shielded-cancel" class="link" data-i18n="common.cancel">Annuler</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Modale d'envoi -->
     <div id="send-modal" class="modal-overlay hidden">
       <div class="modal">
