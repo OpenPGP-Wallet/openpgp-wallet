@@ -1865,6 +1865,9 @@ struct WatchTargetDto {
     id: String,
     network: String,
     address: String,
+    /// Jeton du registre ; absent : la monnaie du réseau.
+    #[serde(default)]
+    token: Option<String>,
 }
 
 /// Surveillance en direct des soldes des cartes affichées.
@@ -1887,7 +1890,7 @@ fn watch_balances(targets: Vec<WatchTargetDto>, app: tauri::AppHandle, state: ta
     });
     let targets = targets
         .into_iter()
-        .map(|t| pgp_wallet_poc::balance_watch::Target { id: t.id, network: t.network, address: t.address })
+        .map(|t| pgp_wallet_poc::balance_watch::Target { id: t.id, network: t.network, address: t.address, token: t.token })
         .collect();
     *current = Some(pgp_wallet_poc::balance_watch::start(targets, notify).t_err()?);
     Ok(())

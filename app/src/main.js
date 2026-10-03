@@ -3957,15 +3957,16 @@ function announceReceived(card, network, amount) {
 // une réception change le solde d'une carte affichée, Rust le signale
 // ("balance-changed") et la carte est relue aussitôt — Solana/USDC poussés par
 // le nœud (~1 s), Ethereum relu toutes les 6 s, Bitcoin toutes les 10 s (mempool
-// compris). Le rafraîchissement toutes les 15 s reste en filet de sécurité.
+// compris), jetons du registre (ERC-20 toutes les 12 s, Solana poussés). Le
+// rafraîchissement toutes les 15 s reste en filet de sécurité.
 function updateBalanceWatch() {
   const targets = [...document.querySelectorAll(".wallet-card:not(.asset-hidden)")]
     .map((card) => {
       const coin = card.dataset.coin;
       const network = networkForCard(card);
-      // Jetons du registre : pas de surveillance en direct (solde relu avec
-      // les autres toutes les 60 s) — la surveillance lit un solde natif.
-      if (usesTokenRegistry(coin, network)) return { address: "" };
+      // Jetons du registre : contrat ou mint lus côté Rust (seul l'identifiant
+      // part d'ici).
+      if (usesTokenRegistry(coin, network)) return { id: coin, network, address: addressForCoin(coin, network), token: coin };
       // Zcash : pas de surveillance en direct (solde relu toutes les 15 s).
       // Monero, Zcash protégé : solde tenu par la synchronisation de fond.
       if (coin === "zec" || coin === "xmr" || coin === "zecs") return { address: "" };

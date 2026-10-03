@@ -10,11 +10,15 @@
 //!   publics n'exposent pas les transactions en attente d'une adresse).
 //! - Bitcoin : statistiques de l'adresse (confirmé + mempool) relues toutes
 //!   les 10 s — une transaction diffusée se voit avant sa confirmation.
+//! - Jetons du registre (`tokens.rs`) : ERC-20 relus toutes les 12 s (un
+//!   bloc Ethereum ; plusieurs jetons affichés ne doivent pas saturer les nœuds
+//!   publics), jetons Solana poussés comme l'USDC (compte de jetons associé).
 //!
 //! Rien de nouveau n'est envoyé à personne : les mêmes adresses publiques, aux
 //! mêmes fournisseurs que les lectures de solde. La surveillance s'arrête quand
 //! le `BalanceWatch` est lâché (verrouillage, changement de profil ou de réseau).
 
+use crate::tokens::{self, TokenKind};
 use crate::{api, btc_rpc, external_wallets, wallet_flow};
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use serde_json::{json, Value};
@@ -33,6 +37,9 @@ pub struct Target {
     /// "sol_mainnet", "sol_devnet" ou "usdc_solana".
     pub network: String,
     pub address: String,
+    /// Jeton du registre (`tokens.rs`) détenu à `address` sur `network` ;
+    /// `None` : la monnaie du réseau.
+    pub token: Option<String>,
 }
 
 /// Appelé avec l'`id` d'une adresse dont le solde a changé (ou a pu changer
@@ -53,12 +60,25 @@ impl Drop for BalanceWatch {
 const MAX_TARGETS: usize = 64;
 const EVM_INTERVAL: Duration = Duration::from_secs(6);
 const BTC_INTERVAL: Duration = Duration::from_secs(10);
+const TOKEN_INTERVAL: Duration = Duration::from_secs(12);
 const HEARTBEAT: Duration = Duration::from_secs(30);
 const MAX_BACKOFF_SECS: u64 = 60;
 
 enum Polled {
     Evm(&'static wallet_flow::EvmNetwork, String),
     Btc(&'static wallet_flow::BtcNetwork, String),
+    /// Jeton ERC-20 : réseau, contrat, détenteur.
+    Erc20(&'static wallet_flow::EvmNetwork, &'static str, String),
+}
+
+impl Polled {
+    fn interval(&self) -> Duration {
+        match self {
+            Polled::Evm(..) => EVM_INTERVAL,
+            Polled::Btc(..) => BTC_INTERVAL,
+            Polled::Erc20(..) => TOKEN_INTERVAL,
+        }
+    }
 }
 
 /// Démarre la surveillance de `targets` (adresses vérifiées d'abord).
@@ -71,6 +91,21 @@ pub fn start(targets: Vec<Target>, notify: Notify) -> Result<BalanceWatch> {
     for target in targets {
         let address = target.address.trim().to_string();
         external_wallets::validate_address(&target.network, &address)?;
+        if let Some(token) = &target.token {
+            let (_, deployment) = tokens::find(token, &target.network).ok_or_else(|| anyhow!("jeton non pris en charge sur ce réseau : {token}"))?;
+            match deployment.kind {
+                TokenKind::Erc20 { contract } => {
+                    let net = wallet_flow::evm_network(&target.network).ok_or_else(|| anyhow!("réseau inconnu : {}", target.network))?;
+                    polled.push((target.id, Polled::Erc20(net, contract, address)));
+                }
+                TokenKind::Spl { .. } => {
+                    ensure!(target.network == "sol_mainnet", "jeton Solana hors du réseau principal : {token}");
+                    let account = api::spl_token_account(&address, &api::registered_spl_mint(token)?)?;
+                    solana.entry(wallet_flow::SOLANA_MAINNET.rpc).or_default().push((target.id, account));
+                }
+            }
+            continue;
+        }
         match target.network.as_str() {
             "sol_mainnet" => solana.entry(wallet_flow::SOLANA_MAINNET.rpc).or_default().push((target.id, address)),
             "sol_devnet" => solana.entry(wallet_flow::SOLANA_DEVNET.rpc).or_default().push((target.id, address)),
@@ -239,6 +274,7 @@ fn read(polled: &Polled) -> Result<String> {
             let stats = btc_rpc::EsploraClient::new(network.esplora_base).address_stats(address)?;
             format!("{}:{}", stats.tx_count, stats.balance_sat)
         }
+        Polled::Erc20(network, contract, address) => api::get_erc20_balance(network, contract, address)?.to_string(),
     })
 }
 
@@ -253,7 +289,7 @@ fn poll(targets: &[(String, Polled)], stop: &AtomicBool, notify: &Notify) {
             if Instant::now() < due[index] {
                 continue;
             }
-            due[index] = Instant::now() + if matches!(polled, Polled::Evm(..)) { EVM_INTERVAL } else { BTC_INTERVAL };
+            due[index] = Instant::now() + polled.interval();
             let Ok(reading) = read(polled) else { continue };
             if last[index].as_ref().is_some_and(|previous| *previous != reading) {
                 notify(id);
@@ -289,9 +325,15 @@ mod tests {
     #[test]
     fn targets_are_checked_before_anything_starts() {
         let notify: Notify = Arc::new(|_| {});
-        let target = |network: &str, address: &str| Target { id: "x".into(), network: network.into(), address: address.into() };
+        let target = |network: &str, address: &str| Target { id: "x".into(), network: network.into(), address: address.into(), token: None };
         assert!(start(vec![target("sol_mainnet", "pas une adresse")], notify.clone()).is_err());
         assert!(start(vec![target("dogecoin", "D123")], notify.clone()).is_err());
+        // Jeton inconnu, ou absent de ce réseau : refusé avant tout démarrage.
+        let token = |network: &str, address: &str, id: &str| Target { id: "x".into(), network: network.into(), address: address.into(), token: Some(id.into()) };
+        let evm = "0x34deb5AF3e37BD0495dDc1bb1C53c14d7CE064c3";
+        assert!(start(vec![token("evm_mainnet", evm, "pas-un-jeton")], notify.clone()).is_err());
+        assert!(start(vec![token("sol_mainnet", evm, "usdt")], notify.clone()).is_err(), "adresse EVM sur Solana");
+        assert!(start(vec![token("evm_mainnet", evm, "usdt")], notify.clone()).is_ok());
         let many = (0..=MAX_TARGETS).map(|_| target("evm_mainnet", "0x34deb5AF3e37BD0495dDc1bb1C53c14d7CE064c3")).collect();
         assert!(start(many, notify).is_err());
     }
@@ -311,7 +353,7 @@ mod tests {
         let wallet = std::env::var("WATCH_SOL_ADDRESS").ok();
         let sol = wallet.clone().unwrap_or_else(|| "SysvarC1ock11111111111111111111111111111111".to_string());
         let sol = sol.as_str();
-        let target = |id: &str, network: &str, address: &str| Target { id: id.into(), network: network.into(), address: address.into() };
+        let target = |id: &str, network: &str, address: &str| Target { id: id.into(), network: network.into(), address: address.into(), token: None };
         let before = api::get_sol_balance(sol, &wallet_flow::SOLANA_MAINNET).unwrap();
         let started = Instant::now();
         let watch = start(
@@ -319,13 +361,15 @@ mod tests {
                 target("sol", "sol_mainnet", sol),
                 target("eth", "evm_mainnet", "0x28C6c06298d514Db089934071355E5743bf21d60"),
                 target("btc", "btc_mainnet", "bc1qm34lsc65zpw79lxes69zkqmk6ee3ewf0j77s3h"),
+                // Jeton ERC-20 : USDT du même portefeuille d'échange.
+                Target { token: Some("usdt".into()), ..target("usdt", "evm_mainnet", "0x28C6c06298d514Db089934071355E5743bf21d60") },
             ],
             notify,
         )
         .unwrap();
         while started.elapsed() < Duration::from_secs(120) {
             let ids: Vec<String> = seen.lock().unwrap().iter().map(|(id, _)| id.clone()).collect();
-            if ["sol", "eth", "btc"].iter().all(|id| ids.iter().any(|seen| seen == id)) {
+            if ["sol", "eth", "btc", "usdt"].iter().all(|id| ids.iter().any(|seen| seen == id)) {
                 break;
             }
             std::thread::sleep(Duration::from_millis(500));
@@ -335,7 +379,7 @@ mod tests {
             println!("{id} après {:?}", at.duration_since(started));
         }
         let ids: Vec<String> = seen.lock().unwrap().iter().map(|(id, _)| id.clone()).collect();
-        for id in ["sol", "eth", "btc"] {
+        for id in ["sol", "eth", "btc", "usdt"] {
             assert!(ids.iter().any(|seen| seen == id), "aucun changement signalé pour {id}");
         }
         let after = api::get_sol_balance(sol, &wallet_flow::SOLANA_MAINNET).unwrap();
