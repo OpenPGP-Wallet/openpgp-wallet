@@ -940,13 +940,20 @@
     statusTextEl.textContent = open ? "Déverrouillé par votre mot de passe" : "Coffre verrouillé · chiffré OpenPGP";
   }
 
-  // Orientation : lent balancement, plus l'inclinaison vers le pointeur.
-  var pointer = { x: 0, y: 0 }, tilt = { x: 0, y: 0 };
+  // Orientation : le cadenas se tourne vers le curseur (jusqu'à ~50° de côté,
+  // ~25° en hauteur) ; sans pointeur sur la page, lent balancement. Position
+  // du curseur relative au centre du cadenas, en demi-fenêtres.
+  var FOLLOW_YAW = 0.85, FOLLOW_PITCH = 0.45;
+  var pointer = { x: 0, y: 0, active: false }, tilt = { x: 0, y: 0 }, follow = 0;
   window.addEventListener("pointermove", function (e) {
     var r = stage.getBoundingClientRect();
     pointer.x = Math.max(-1, Math.min(1, (e.clientX - (r.left + r.width / 2)) / (window.innerWidth / 2)));
     pointer.y = Math.max(-1, Math.min(1, (e.clientY - (r.top + r.height / 2)) / (window.innerHeight / 2)));
+    pointer.active = true;
   }, { passive: true });
+  var pointerGone = function () { pointer.active = false; pointer.x = 0; pointer.y = 0; };
+  document.documentElement.addEventListener("pointerleave", pointerGone);
+  window.addEventListener("blur", pointerGone);
 
   if (reducedMotion) {
     // Image fixe : cadenas fermé de trois quarts, texte en clair.
@@ -980,10 +987,14 @@
       renderText(textProgress(c));
       renderStatus(s.open);
       if (!renderer || !visible || document.hidden) return;
-      tilt.x += (pointer.x - tilt.x) * 0.06;
-      tilt.y += (pointer.y - tilt.y) * 0.06;
-      s.yaw = -0.12 + 0.16 * Math.sin(time * 0.3) + tilt.x * 0.35;
-      s.pitch = -0.15 + 0.04 * Math.sin(time * 0.45) + tilt.y * 0.18 + s.jolt * 0.03;
+      // Suivi lissé (réponse vive mais sans à-coups) ; le balancement
+      // s'efface pendant le suivi et revient quand le curseur quitte la page.
+      tilt.x += (pointer.x - tilt.x) * 0.12;
+      tilt.y += (pointer.y - tilt.y) * 0.12;
+      follow += ((pointer.active ? 1 : 0) - follow) * 0.05;
+      var sway = 1 - 0.75 * follow;
+      s.yaw = -0.12 + sway * 0.16 * Math.sin(time * 0.3) + tilt.x * FOLLOW_YAW;
+      s.pitch = -0.15 + sway * 0.04 * Math.sin(time * 0.45) + tilt.y * FOLLOW_PITCH + s.jolt * 0.03;
       s.bob = 0.025 * Math.sin(time * 0.9) - s.jolt * 0.015;
       renderer.draw(s);
       // Images trop lentes (plus de 28 ms) plusieurs fois de suite : résolution réduite.

@@ -3621,3 +3621,38 @@ h2 .coin-icon-inline,
 #etherscan-key-input {
   margin-bottom: 12px;
 }
+
+/* --- Thème « Blanc » ----------------------------------------------------------
+   Clair, repris de la boîte de confirmation Windows du site vitrine (section
+   « À l'envoi ») : fond gris très clair, surfaces blanches, bordures #e3e3e3,
+   texte quasi noir, accent bleu Windows. Les jetons dérivés (définis en
+   mélangeant du blanc pour les thèmes sombres) sont redéfinis en mélangeant du
+   noir ; ombres et voile des fenêtres adoucis. Placé en fin de feuille : il
+   l'emporte sur les blocs de même spécificité plus haut (courbes). */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f3f3f3;
+  --surface: #ffffff;
+  --surface-2: #f7f7f8;
+  --border: #e3e3e3;
+  --text: #1b1b1b;
+  --muted: #5b6270;
+  --dim: #6e7581;
+  --accent: #0067c0;
+  --accent-hover: #005aa8;
+  --danger: #c42b1c;
+  --success: #107c10;
+  --warning: #9d5d00;
+  --surface-3: color-mix(in srgb, var(--surface-2), black 4%);
+  --border-strong: color-mix(in srgb, var(--border), black 12%);
+  --accent-soft: color-mix(in srgb, var(--accent) 10%, transparent);
+  --accent-text: #005aa8;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06);
+  --shadow: 0 10px 28px -16px rgba(0, 0, 0, 0.22);
+  --shadow-lg: 0 28px 70px -28px rgba(0, 0, 0, 0.3);
+  --chart-line: #0067c0;
+}
+
+:root[data-theme="light"] .modal-overlay {
+  background: rgba(20, 24, 32, 0.32);
+}
