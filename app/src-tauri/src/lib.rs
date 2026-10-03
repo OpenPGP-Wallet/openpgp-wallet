@@ -4401,7 +4401,7 @@ fn start_monero_sync(app: &tauri::AppHandle) {
         let wanted = XMR_SYNC_WANTED.load(Ordering::Relaxed) || data_dir(&app).is_ok_and(|dir| api::xmr_has_received(&dir));
         if wanted && !keys.is_empty() {
             match data_dir(&app) {
-                Ok(dir) => match api::sync_xmr(&dir, &keys) {
+                Ok(dir) => match catch_sync_panic(|| api::sync_xmr(&dir, &keys)) {
                     Ok(()) => {
                         let _ = app.emit("xmr-synced", ());
                     }
@@ -4467,6 +4467,16 @@ fn set_xmr_node(url: String, app: tauri::AppHandle) -> Result<Option<String>, St
     Ok(node)
 }
 
+/// Passage de synchronisation de fond protégé contre une panique d'une
+/// bibliothèque (donnée inattendue d'un nœud) : sans cela le fil s'arrêterait
+/// pour de bon, sans le dire, jusqu'au redémarrage de l'app.
+fn catch_sync_panic<E: std::fmt::Display>(sync: impl FnOnce() -> Result<(), E>) -> Result<(), String> {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(sync)) {
+        Ok(result) => result.map_err(|e| format!("{e:#}")),
+        Err(_) => Err("synchronisation interrompue (erreur interne), reprise au passage suivant".to_string()),
+    }
+}
+
 /// Clés de visualisation des comptes Zcash protégés, mémorisées au
 /// déverrouillage (jamais envoyées à l'interface).
 #[derive(Default)]
@@ -4498,7 +4508,7 @@ fn start_shielded_sync(app: &tauri::AppHandle) {
         let keys: Vec<_> = app.state::<ShieldedKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).values().map(|(_, keys)| keys.clone()).collect();
         if !keys.is_empty() {
             match data_dir(&app) {
-                Ok(dir) => match api::sync_zec_shielded(&dir, &keys) {
+                Ok(dir) => match catch_sync_panic(|| api::sync_zec_shielded(&dir, &keys)) {
                     Ok(()) => {
                         let _ = app.emit("zec-shielded-synced", ());
                     }
