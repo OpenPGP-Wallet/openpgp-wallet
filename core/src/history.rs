@@ -167,6 +167,16 @@ pub enum EvmCursor {
     Page(u32),
 }
 
+/// Historique lisible sur `net` : une source existe, et pour Etherscan une
+/// clé est enregistrée (voir `etherscan_key`).
+pub fn evm_history_available(net: &wallet_flow::EvmNetwork) -> bool {
+    match net.history {
+        None => false,
+        Some(EvmHistory::Etherscan) => crate::etherscan_key::current().is_some(),
+        Some(_) => true,
+    }
+}
+
 /// Source d'historique du réseau EVM `chain_id` (voir `EvmNetwork::history`).
 fn evm_source(chain_id: u64) -> Result<EvmHistory> {
     wallet_flow::EVM_NETWORKS
@@ -196,8 +206,8 @@ pub fn evm_history_page(chain_id: u64, address: &str, cursor: Option<&EvmCursor>
             let (txs, next) = BlockscoutClient::new(base_url).tx_history_page(address, page)?;
             (txs, next.map(EvmCursor::Blockscout))
         }
-        EvmHistory::Routescan => {
-            let (txs, next) = routescan::tx_history_page(chain_id, address, page_number(cursor))?;
+        source @ (EvmHistory::Routescan | EvmHistory::Etherscan) => {
+            let (txs, next) = routescan::tx_history_page(etherscan_api(source), chain_id, address, page_number(cursor))?;
             (txs, next.map(EvmCursor::Page))
         }
     };
@@ -228,8 +238,8 @@ pub fn erc20_history_page(chain_id: u64, address: &str, contract: &str, cursor: 
             let (moves, next) = BlockscoutClient::new(base_url).token_transfers_page(address, contract, page)?;
             (moves, next.map(EvmCursor::Blockscout))
         }
-        EvmHistory::Routescan => {
-            let (moves, next) = routescan::token_history_page(chain_id, address, contract, page_number(cursor))?;
+        source @ (EvmHistory::Routescan | EvmHistory::Etherscan) => {
+            let (moves, next) = routescan::token_history_page(etherscan_api(source), chain_id, address, contract, page_number(cursor))?;
             (moves, next.map(EvmCursor::Page))
         }
     };
@@ -246,6 +256,14 @@ pub fn erc20_history_page(chain_id: u64, address: &str, contract: &str, cursor: 
         })
         .collect();
     Ok((entries, next))
+}
+
+/// Service compatible Etherscan d'une source d'historique.
+fn etherscan_api(source: EvmHistory) -> routescan::Api {
+    match source {
+        EvmHistory::Etherscan => routescan::Api::Etherscan,
+        _ => routescan::Api::Routescan,
+    }
 }
 
 /// Page demandée par `cursor` (la première sans curseur).

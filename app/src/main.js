@@ -597,6 +597,10 @@ const I18N = {
     "net.zec_mainnet": "Zcash — Fonds réels",
     "wallet.historyExplorerOnly": "Pas d'historique ici pour ce réseau : aucun service public gratuit ne le fournit. Il reste consultable sur l'explorateur du réseau.",
     "wallet.historyOpenExplorer": "Voir sur l'explorateur",
+    "wallet.historyNeedsKey": "Pour voir l'historique de ce réseau ici, ajoutez une clé API Etherscan gratuite dans Paramètres. Il reste consultable sur l'explorateur du réseau.",
+    "wallet.historyPaidPlan": "Etherscan ne fournit l'historique de ce réseau qu'avec une offre payante : une clé gratuite ne suffit pas. Il reste consultable sur l'explorateur du réseau.",
+    "wallet.historyAddKey": "Ajouter une clé",
+    "wallet.historyPaidKey": "Etherscan ne fournit l'historique de ce réseau qu'avec une offre payante : une clé gratuite ne suffit pas. Avec une clé payante, ajoutez-la dans Paramètres. Il reste consultable sur l'explorateur du réseau.",
     "net.avax_mainnet": "Avalanche — Fonds réels",
     "net.polygon_mainnet": "Polygon — Fonds réels",
     "net.hyperevm_mainnet": "HyperEVM — Fonds réels",
@@ -724,6 +728,16 @@ const I18N = {
     "settings.thorHint":
       "Adresse THORChain dérivée de votre clé maîtresse — lecture seule, aucune fonction d'envoi ni de solde RUNE dans cette version. Sert uniquement de référence pour la fonctionnalité d'échange (swap).",
     "settings.thorShow": "Afficher l'adresse",
+    "settings.etherscanTitle": "Historique HyperEVM et BNB Chain",
+    "settings.etherscanHint":
+      "Aucun service public sans clé ne fournit l'historique de ces réseaux. Avec une clé API Etherscan gratuite (créée sur etherscan.io, gardée uniquement sur cet appareil), l'historique HyperEVM s'affiche dans l'app ; BNB Chain demande une offre Etherscan payante. Cette clé ne donne accès qu'à des données publiques.",
+    "settings.etherscanLabel": "Clé API Etherscan",
+    "settings.etherscanSave": "Enregistrer la clé",
+    "settings.etherscanRemove": "Supprimer la clé",
+    "settings.etherscanCreate": "Créer une clé gratuite sur etherscan.io",
+    "settings.etherscanSaved": "Clé enregistrée : {key}",
+    "settings.etherscanNone": "Aucune clé enregistrée.",
+    "settings.etherscanEmpty": "Collez d'abord votre clé.",
     "settings.deviceSecurity": "Sécurité de l'appareil",
     "settings.biometricTitle": "Déverrouillage biométrique",
     "settings.biometricHint":
@@ -1116,6 +1130,10 @@ const I18N = {
     "net.zec_mainnet": "Zcash — Real funds",
     "wallet.historyExplorerOnly": "No history here for this network: no free public service provides it. You can still see it on the network's explorer.",
     "wallet.historyOpenExplorer": "View on the explorer",
+    "wallet.historyNeedsKey": "To see this network's history here, add a free Etherscan API key in Settings. You can still see it on the network's explorer.",
+    "wallet.historyPaidPlan": "Etherscan only provides this network's history with a paid plan: a free key is not enough. You can still see it on the network's explorer.",
+    "wallet.historyAddKey": "Add a key",
+    "wallet.historyPaidKey": "Etherscan only provides this network's history with a paid plan: a free key is not enough. With a paid key, add it in Settings. You can still see it on the network's explorer.",
     "net.avax_mainnet": "Avalanche — Real funds",
     "net.polygon_mainnet": "Polygon — Real funds",
     "net.hyperevm_mainnet": "HyperEVM — Real funds",
@@ -1243,6 +1261,16 @@ const I18N = {
     "settings.thorHint":
       "THORChain address derived from your master key — read-only, no send function or RUNE balance in this version. Used only as a reference for the swap feature.",
     "settings.thorShow": "Show address",
+    "settings.etherscanTitle": "HyperEVM and BNB Chain history",
+    "settings.etherscanHint":
+      "No public keyless service provides these networks' history. With a free Etherscan API key (created on etherscan.io, kept only on this device), HyperEVM history shows in the app; BNB Chain requires a paid Etherscan plan. This key only gives access to public data.",
+    "settings.etherscanLabel": "Etherscan API key",
+    "settings.etherscanSave": "Save the key",
+    "settings.etherscanRemove": "Remove the key",
+    "settings.etherscanCreate": "Create a free key on etherscan.io",
+    "settings.etherscanSaved": "Key saved: {key}",
+    "settings.etherscanNone": "No key saved.",
+    "settings.etherscanEmpty": "Paste your key first.",
     "settings.deviceSecurity": "Device security",
     "settings.biometricTitle": "Biometric unlock",
     "settings.biometricHint":
@@ -1495,6 +1523,7 @@ document.querySelectorAll(".lang-btn").forEach((btn) => {
     // langue. Les autres listes dynamiques (historique, frais, kit de sauvegarde...)
     // adopteront la nouvelle langue à leur prochain affichage.
     renderRecipientList();
+    renderEtherscanKey();
     // Valeur en dollars des cartes (« ≈ 1 234,56 $ » / « ≈ $1,234.56 ») :
     // recalculée sur place, sans appel réseau.
     document.querySelectorAll(".wallet-card").forEach(updateFiatValue);
@@ -2260,6 +2289,57 @@ document.getElementById("regenerate-backup-close").addEventListener("click", () 
   document.getElementById("regenerate-backup-list").innerHTML = "";
 });
 
+// --- Clé Etherscan (historiques HyperEVM et BNB Chain) ------------------------
+// Gardée par Rust sur l'appareil (core/src/etherscan_key.rs) ; l'interface ne
+// reçoit jamais que sa forme masquée.
+
+let etherscanKeyMasked = null;
+
+function renderEtherscanKey() {
+  document.getElementById("etherscan-key-status").textContent = etherscanKeyMasked
+    ? t("settings.etherscanSaved", { key: etherscanKeyMasked })
+    : t("settings.etherscanNone");
+  document.getElementById("etherscan-key-remove").classList.toggle("hidden", !etherscanKeyMasked);
+}
+
+function loadEtherscanKey() {
+  invoke("etherscan_key_status")
+    .then((masked) => {
+      etherscanKeyMasked = masked;
+      renderEtherscanKey();
+    })
+    .catch((e) => console.error(e));
+}
+
+async function saveEtherscanKey(key) {
+  const errorEl = document.getElementById("etherscan-key-error");
+  hideError(errorEl);
+  try {
+    etherscanKeyMasked = await invoke("set_etherscan_key", { key });
+    document.getElementById("etherscan-key-input").value = "";
+    renderEtherscanKey();
+  } catch (e) {
+    showError(errorEl, String(e));
+  }
+}
+
+const etherscanSaveBtn = document.getElementById("etherscan-key-save");
+etherscanSaveBtn.addEventListener("click", withBusyButton(etherscanSaveBtn, async () => {
+  const key = document.getElementById("etherscan-key-input").value.trim();
+  if (!key) {
+    showError(document.getElementById("etherscan-key-error"), t("settings.etherscanEmpty"));
+    return;
+  }
+  await saveEtherscanKey(key);
+}));
+
+const etherscanRemoveBtn = document.getElementById("etherscan-key-remove");
+etherscanRemoveBtn.addEventListener("click", withBusyButton(etherscanRemoveBtn, () => saveEtherscanKey("")));
+
+document.getElementById("etherscan-key-create").addEventListener("click", () => {
+  invoke("open_external_link", { url: "https://etherscan.io/myapikey" }).catch((e) => alert(t("wallet.linkError", { err: e })));
+});
+
 // --- Adresse THOR (frais de swap) -------------------------------------------
 // Purement informatif (voir api::get_thor_fee_address) : aucune fonction
 // d'envoi/solde RUNE, juste la dérivation + l'affichage de l'adresse.
@@ -2366,6 +2446,7 @@ document.querySelectorAll(".nav-tab").forEach((tab) => {
     if (target === "settings") {
       loadArchivedProfiles();
       loadBiometricSettings();
+      loadEtherscanKey();
     }
   });
 });
@@ -3847,10 +3928,11 @@ async function loadHistorySection(coin) {
     const result = ASSET_BY_COIN[coin]?.token
       ? await invoke("get_token_tx_history", { token: coin, network, address })
       : await invoke("get_tx_history", { network, address });
-    // Réseau sans source publique d'historique (BNB Chain, HyperEVM) : lien
-    // vers la page de l'adresse sur l'explorateur du réseau.
+    // Historique indisponible (BNB Chain, HyperEVM sans clé Etherscan, ou
+    // offre gratuite refusée) : motif, et lien vers la page de l'adresse sur
+    // l'explorateur du réseau.
     if (result.explorer_url) {
-      container.replaceChildren(historyExplorerOnly(result.explorer_url));
+      container.replaceChildren(historyExplorerOnly(result.explorer_url, result.reason));
       return;
     }
     const entries = result.entries;
@@ -3876,7 +3958,7 @@ function mutedParagraph(text) {
   return p;
 }
 
-function historyExplorerOnly(url) {
+function historyExplorerOnly(url, reason) {
   const box = document.createElement("div");
   box.className = "history-explorer-only";
   const open = document.createElement("button");
@@ -3886,7 +3968,20 @@ function historyExplorerOnly(url) {
   open.addEventListener("click", () => {
     invoke("open_external_link", { url }).catch((e) => alert(t("wallet.linkError", { err: e })));
   });
-  box.append(mutedParagraph(t("wallet.historyExplorerOnly")), open);
+  const message = { no_key: "wallet.historyNeedsKey", paid_key: "wallet.historyPaidKey", paid_plan: "wallet.historyPaidPlan" }[reason] ?? "wallet.historyExplorerOnly";
+  box.append(mutedParagraph(t(message)));
+  if (reason === "no_key" || reason === "paid_key") {
+    const addKey = document.createElement("button");
+    addKey.type = "button";
+    addKey.className = "secondary";
+    addKey.textContent = t("wallet.historyAddKey");
+    addKey.addEventListener("click", () => {
+      document.querySelector('.nav-tab[data-tab="settings"]')?.click();
+      document.getElementById("etherscan-key-input").focus();
+    });
+    box.append(addKey);
+  }
+  box.append(open);
   return box;
 }
 
@@ -4801,13 +4896,23 @@ function selectedSwapPair() {
   const stepTo = pair.via ?? to;
   const direct = swapPairs.find((p) => p.from_coin === from.coin && p.from_network === from.network && p.to_coin === stepTo.coin && p.to_network === stepTo.network && !p.via);
   const providers = direct?.protocols?.length ? direct.protocols : [pair.protocol];
+  // Frais d'affiliation de l'app pour cette étape, en points de base, déclarés
+  // par Rust pour chaque fournisseur (0 depuis Bitcoin ou Zcash via THORChain
+  // ou Maya, voir `swap_routes::affiliate_fee_bps`).
+  const feesBps = Object.fromEntries((direct?.protocols ?? []).map((protocol, index) => [protocol, direct.fees_bps?.[index]]));
   const chosen = document.getElementById("swap-provider").value;
-  return { from, to, protocol: providers.includes(chosen) ? chosen : providers[0], providers, via: pair.via ?? null, thenProtocol: pair.then_protocol ?? null };
+  return { from, to, protocol: providers.includes(chosen) ? chosen : providers[0], providers, feesBps, via: pair.via ?? null, thenProtocol: pair.then_protocol ?? null };
 }
 
-// Frais d'affiliation de chaque fournisseur, en % (voir core/src/cow.rs et
-// core/src/thorchain_rpc.rs).
+// Frais d'affiliation par défaut de chaque fournisseur, en % (voir
+// core/src/cow.rs et core/src/thorchain_rpc.rs), quand Rust n'en déclare pas
+// pour la paire.
 const SWAP_PROVIDER_FEE_PERCENT = { thorchain: 0.8, maya: 0.8, jupiter: 0.8, cow: 1, lifi: 0.8 };
+
+function swapProviderFeePercent(pair, protocol) {
+  const bps = pair?.feesBps?.[protocol];
+  return typeof bps === "number" ? bps / 100 : SWAP_PROVIDER_FEE_PERCENT[protocol];
+}
 
 // Actifs que THORChain et Maya n'échangent pas en ce moment (`coin@network`,
 // réseau suspendu : incident, maintenance), lus à chaque ouverture de la
@@ -4834,7 +4939,7 @@ function fillSwapProviderOptions() {
     ...ordered.map((protocol, index) => {
       const option = document.createElement("option");
       option.value = protocol;
-      const fee = `${SWAP_PROVIDER_FEE_PERCENT[protocol].toLocaleString(chartLocale(), { minimumFractionDigits: 2 })}\u00a0%`;
+      const fee = `${swapProviderFeePercent(pair, protocol).toLocaleString(chartLocale(), { minimumFractionDigits: 2 })}\u00a0%`;
       const label = halted(protocol) ? "swap.providerHalted" : index === 0 ? "swap.providerRecommended" : "swap.providerOption";
       option.textContent = t(label, { name: SWAP_PROTOCOL_NAMES[protocol], fee });
       return option;

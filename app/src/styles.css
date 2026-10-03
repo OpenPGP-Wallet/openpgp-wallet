@@ -3603,3 +3603,21 @@ h2 .coin-icon-inline,
   align-self: center;
   margin: 8px 0 0;
 }
+
+/* Historique indisponible : message, puis boutons côte à côte, espacés. */
+.history-explorer-only {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.history-explorer-only > p {
+  flex-basis: 100%;
+  margin: 0 0 4px;
+}
+
+/* Clé Etherscan (Paramètres) : espace entre le champ et les boutons. */
+#etherscan-key-input {
+  margin-bottom: 12px;
+}

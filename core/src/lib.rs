@@ -7,6 +7,7 @@ pub mod eth_tx;
 pub mod eth_rpc;
 pub mod btc_tx;
 pub mod btc_rpc;
+pub mod btc_psbt;
 pub mod sol_tx;
 pub mod sol_rpc;
 pub mod sol_spl;
@@ -36,6 +37,7 @@ pub mod swap_routes;
 pub mod jupiter_rpc;
 pub mod cow;
 pub mod lifi;
+pub mod etherscan_key;
 pub mod zcash;
 #[cfg(windows)]
 pub mod windows_hello;

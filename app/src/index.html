@@ -976,6 +976,23 @@
           </div>
 
           <div class="settings-section">
+            <h2 class="section-title" data-i18n="settings.etherscanTitle">Historique HyperEVM et BNB Chain</h2>
+            <p class="muted" data-i18n="settings.etherscanHint">
+              Aucun service public sans clé ne fournit l'historique de ces réseaux. Avec une clé API
+              Etherscan gratuite (créée sur etherscan.io, gardée uniquement sur cet appareil),
+              l'historique HyperEVM s'affiche dans l'app ; BNB Chain demande une offre Etherscan
+              payante. Cette clé ne donne accès qu'à des données publiques.
+            </p>
+            <p id="etherscan-key-status" class="muted"></p>
+            <label for="etherscan-key-input" data-i18n="settings.etherscanLabel">Clé API Etherscan</label>
+            <input id="etherscan-key-input" type="password" autocomplete="off" spellcheck="false" />
+            <p id="etherscan-key-error" class="error hidden"></p>
+            <button id="etherscan-key-save" class="secondary" data-i18n="settings.etherscanSave">Enregistrer la clé</button>
+            <button id="etherscan-key-remove" class="link hidden" data-i18n="settings.etherscanRemove">Supprimer la clé</button>
+            <button id="etherscan-key-create" class="link" data-i18n="settings.etherscanCreate">Créer une clé gratuite sur etherscan.io</button>
+          </div>
+
+          <div class="settings-section">
             <h2 class="section-title" data-i18n="settings.deviceSecurity">Sécurité de l'appareil</h2>
             <button id="reset-wallet-dashboard" class="link" data-i18n="unlock.resetWallet">
               Réinitialiser cet appareil (supprime le coffre local)

@@ -474,11 +474,23 @@ pub fn broadcast(raw: &[u8], txid: &str) -> Result<String> {
 
 // --- Envoi ---------------------------------------------------------------------
 
+/// Taille sérialisée d'une sortie P2PKH (valeur, longueur, script de 25 octets).
+const P2PKH_OUTPUT_SIZE: u64 = 34;
+
 /// Frais ZIP-317 d'une transaction transparente P2PKH : une action par entrée
 /// (150 octets) ou par sortie (34 octets au plus), le plus grand des deux, 2
 /// au minimum.
 pub fn zip317_fee(inputs: usize, outputs: usize) -> u64 {
-    MARGINAL_FEE * GRACE_ACTIONS.max(inputs.max(outputs) as u64)
+    zip317_fee_with_memo(inputs, outputs, None)
+}
+
+/// Comme `zip317_fee`, avec en plus une sortie OP_RETURN de `memo_len`
+/// octets : ZIP-317 compte les sorties transparentes par TAILLE (34 octets
+/// par action), si bien qu'un memo de 55 octets (66 octets de sortie) pèse
+/// deux actions.
+pub fn zip317_fee_with_memo(inputs: usize, outputs: usize, memo_len: Option<usize>) -> u64 {
+    let output_size = outputs as u64 * P2PKH_OUTPUT_SIZE + memo_len.map_or(0, crate::btc_tx::op_return_output_size);
+    MARGINAL_FEE * GRACE_ACTIONS.max((inputs as u64).max(output_size.div_ceil(P2PKH_OUTPUT_SIZE)))
 }
 
 /// Envoi préparé : ce qui est montré dans la boîte de confirmation, puis signé.
@@ -489,28 +501,43 @@ pub struct SendPlan {
     pub fee: u64,
     /// Rendu à sa propre adresse (0 : pas de sortie de monnaie).
     pub change: u64,
+    /// Memo d'un dépôt d'échange (Maya), en sortie OP_RETURN sans valeur
+    /// après la monnaie — l'ordre demandé par Maya (coffre, monnaie, memo).
+    pub memo: Option<Vec<u8>>,
 }
 
 /// Choisit les sorties à dépenser (les plus grosses d'abord) pour `amount`
 /// zatoshis, frais ZIP-317 compris. Une monnaie inférieure à `DUST_CHANGE` va
 /// aux frais. Fonction pure.
-pub fn plan_send(mut utxos: Vec<Utxo>, amount: u64) -> Result<SendPlan> {
+pub fn plan_send(utxos: Vec<Utxo>, amount: u64) -> Result<SendPlan> {
+    plan(utxos, amount, None)
+}
+
+/// Dépôt d'échange : comme `plan_send`, avec le memo (80 octets au plus,
+/// limite d'une sortie OP_RETURN standard) compté dans les frais.
+pub fn plan_deposit(utxos: Vec<Utxo>, amount: u64, memo: &[u8]) -> Result<SendPlan> {
+    ensure!(memo.len() <= 80, "memo d'échange trop long pour une sortie OP_RETURN ({} octets, 80 au plus)", memo.len());
+    plan(utxos, amount, Some(memo.to_vec()))
+}
+
+fn plan(mut utxos: Vec<Utxo>, amount: u64, memo: Option<Vec<u8>>) -> Result<SendPlan> {
     ensure!(amount > 0, "montant nul");
     utxos.sort_by_key(|u| std::cmp::Reverse(u.value));
     let available: u64 = utxos.iter().map(|u| u.value).sum();
+    let memo_len = memo.as_ref().map(Vec::len);
     let mut inputs = Vec::new();
     let mut total: u64 = 0;
     for utxo in utxos {
         total = total.checked_add(utxo.value).context("montant hors limites")?;
         inputs.push(utxo);
-        let fee_with_change = zip317_fee(inputs.len(), 2);
-        let fee_without = zip317_fee(inputs.len(), 1);
+        let fee_with_change = zip317_fee_with_memo(inputs.len(), 2, memo_len);
+        let fee_without = zip317_fee_with_memo(inputs.len(), 1, memo_len);
         if total >= amount + fee_with_change && total - amount - fee_with_change >= DUST_CHANGE {
-            return Ok(SendPlan { inputs, amount, fee: fee_with_change, change: total - amount - fee_with_change });
+            return Ok(SendPlan { inputs, amount, fee: fee_with_change, change: total - amount - fee_with_change, memo });
         }
         if total >= amount + fee_without {
             // Pas de monnaie (ou poussière, ajoutée aux frais).
-            return Ok(SendPlan { inputs, amount, fee: total - amount, change: 0 });
+            return Ok(SendPlan { inputs, amount, fee: total - amount, change: 0, memo });
         }
     }
     bail!(
@@ -584,6 +611,9 @@ fn build_signed_with_sighashes(
     builder.add_output(&recipient.address(), zat(plan.amount)?).map_err(|e| anyhow!("sortie Zcash refusée : {e:?}"))?;
     if plan.change > 0 {
         builder.add_output(&TransparentAddress::PublicKeyHash(*own_hash160), zat(plan.change)?).map_err(|e| anyhow!("sortie Zcash refusée : {e:?}"))?;
+    }
+    if let Some(memo) = &plan.memo {
+        builder.add_null_data_output(memo).map_err(|e| anyhow!("memo Zcash refusé : {e:?}"))?;
     }
     let inputs_total: u64 = plan.inputs.iter().map(|u| u.value).sum();
     ensure!(inputs_total == plan.amount + plan.fee + plan.change, "envoi Zcash incohérent (entrées ≠ montant + frais + monnaie)");
@@ -761,6 +791,15 @@ mod tests {
                 .unwrap();
             assert_eq!(zip317_fee(inputs, outputs), u64::from(official), "{inputs} entrées, {outputs} sorties");
         }
+        // Avec un memo OP_RETURN (dépôt Maya), sortie comptée par sa taille.
+        for (inputs, outputs, memo) in [(1, 2, 55), (1, 1, 54), (2, 2, 65), (1, 2, 80), (3, 2, 10), (1, 2, 76)] {
+            let mut sizes = vec![34; outputs];
+            sizes.push(crate::btc_tx::op_return_output_size(memo) as usize);
+            let official = rule
+                .fee_required(&MainNetwork, BlockHeight::from_u32(3_000_000), vec![InputSize::STANDARD_P2PKH; inputs], sizes, 0, 0, 0, 0)
+                .unwrap();
+            assert_eq!(zip317_fee_with_memo(inputs, outputs, Some(memo)), u64::from(official), "{inputs} entrées, {outputs} sorties, memo {memo}");
+        }
     }
 
     #[test]
@@ -813,8 +852,33 @@ mod tests {
             assert_ne!(script.eval(flags, &tampered), Ok(true));
         }
         // Une sortie qui n'est pas à cette adresse : refus.
-        let foreign = SendPlan { inputs: vec![utxo(150_000, 1, &[0xee; 20])], amount: 100_000, fee: 10_000, change: 40_000 };
+        let foreign = SendPlan { inputs: vec![utxo(150_000, 1, &[0xee; 20])], amount: 100_000, fee: 10_000, change: 40_000, memo: None };
         assert!(build_signed(&foreign, &key, &h, &recipient, target, branch).is_err());
+    }
+
+    /// Dépôt Maya (memo réel d'un devis ZEC → ETH) : sorties coffre, monnaie,
+    /// puis OP_RETURN sans valeur portant le memo ; relu par la bibliothèque
+    /// officielle, sortie memo de la taille comptée dans les frais.
+    #[test]
+    fn deposit_carries_the_memo_after_the_change() {
+        let (key, h) = own();
+        let memo = b"=:e:0x59D78c44ac60F09369b544778358704B7b18E6ba:48048634";
+        let plan = plan_deposit(vec![utxo(500_000, 3, &h)], 139_440, memo).unwrap();
+        assert_eq!((plan.fee, plan.change), (20_000, 500_000 - 139_440 - 20_000), "1 entrée, 34 + 34 + 66 octets de sorties : 4 actions");
+        assert!(plan_deposit(vec![utxo(500_000, 3, &h)], 139_440, &[b'x'; 81]).is_err(), "memo de 81 octets");
+        let target = 3_000_000;
+        let branch = BranchId::for_height(&MainNetwork, BlockHeight::from_u32(target));
+        let vault = parse_recipient("t1VtnnhTYhmADh7L2uKU3Sev7GscBHT6HfE").unwrap();
+        let signed = build_signed(&plan, &key, &h, &vault, target, branch).unwrap();
+        let tx = Transaction::read(&signed.raw[..], branch).unwrap();
+        let outputs = &tx.transparent_bundle().unwrap().vout;
+        let values: Vec<u64> = outputs.iter().map(|o| u64::from(o.value())).collect();
+        assert_eq!(values, vec![139_440, plan.change, 0]);
+        let mut memo_output = Vec::new();
+        outputs[2].write(&mut memo_output).unwrap();
+        assert_eq!(memo_output.len() as u64, crate::btc_tx::op_return_output_size(memo.len()));
+        assert_eq!(&memo_output[memo_output.len() - memo.len()..], memo);
+        assert_eq!(memo_output[9], 0x6a, "OP_RETURN");
     }
 
     /// Bilan de l'historique : réception, puis envoi qui dépense cette
@@ -869,12 +933,18 @@ mod tests {
         let tag = (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() % 251) as u8;
         let plan = plan_send(vec![utxo(1_000_000, tag, &h)], 100_000).unwrap();
         let signed = build_signed(&plan, &key, &h, &Recipient::P2pkh([9; 20]), info.height + 1, branch).unwrap();
-        match broadcast(&signed.raw, &signed.txid) {
-            Ok(txid) => println!("mise en file de vérification par le nœud : {txid}"),
-            Err(e) => {
-                let error = e.to_string();
-                println!("{error}");
-                assert!(error.contains("pas encore acceptée"), "refusée d'emblée : {error}");
+        // Dépôt d'échange Maya (memo en sortie OP_RETURN), même épreuve.
+        let deposit_plan = plan_deposit(vec![utxo(1_000_000, tag.wrapping_add(1), &h)], 139_440, b"=:e:0x59D78c44ac60F09369b544778358704B7b18E6ba:48048634").unwrap();
+        let vault = parse_recipient("t1VtnnhTYhmADh7L2uKU3Sev7GscBHT6HfE").unwrap();
+        let deposit = build_signed(&deposit_plan, &key, &h, &vault, info.height + 1, branch).unwrap();
+        for tx in [&signed, &deposit] {
+            match broadcast(&tx.raw, &tx.txid) {
+                Ok(txid) => println!("mise en file de vérification par le nœud : {txid}"),
+                Err(e) => {
+                    let error = e.to_string();
+                    println!("{error}");
+                    assert!(error.contains("pas encore acceptée"), "refusée d'emblée : {error}");
+                }
             }
         }
         // Une transaction tronquée, elle, est refusée tout de suite.

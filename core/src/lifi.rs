@@ -15,14 +15,18 @@
 //! - source Solana : simulation des effets sur les comptes de l'utilisateur
 //!   (même contrôle que Jupiter, voir `api::send_lifi_solana`) ; le
 //!   destinataire, géré hors chaîne par le pont, n'est pas vérifiable — la
-//!   boîte de confirmation le dit.
+//!   boîte de confirmation le dit ;
+//! - source Bitcoin : PSBT relue sortie par sortie (`verify_btc_deposit`) —
+//!   entrées de l'utilisateur, un seul dépôt, frais bornés — puis
+//!   re-sérialisée et signée par l'app ; destinataire non vérifiable non
+//!   plus (pont hors chaîne), dit dans la boîte de confirmation.
 //!
 //! Sans clé d'API (elle ne doit jamais être embarquée dans une app installée) :
 //! 75 devis par 2 heures et par adresse IP, assez pour un portefeuille. Les
 //! frais intégrateur (`FEE`) exigent un compte sur portal.li.fi : tant que
 //! `INTEGRATOR` n'est pas renseigné, aucune route LI.FI n'est proposée.
 
-use crate::{eth_rpc, evm_sign, tokens, wallet_flow};
+use crate::{btc_psbt, btc_tx, derivation, eth_rpc, evm_sign, tokens, wallet_flow};
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use serde_json::Value;
 use std::sync::OnceLock;
@@ -35,6 +39,9 @@ const API_BASE: &str = "https://li.quest/v1";
 pub const INTEGRATOR: Option<&str> = Some("openpgp-wallet");
 /// Frais intégrateur : 0,80 % du montant envoyé (LI.FI prend en plus 0,25 %).
 pub const FEE: f64 = 0.008;
+/// Frais de LI.FI lui-même, en plus des nôtres (relevé sur de vrais devis :
+/// « LIFI Fixed Fee » 1,05 % = 0,25 % + nos 0,80 %).
+const LIFI_OWN_FEE_BPS: u128 = 25;
 /// Glissement toléré (1 %), garanti par le pont.
 const SLIPPAGE: &str = "0.01";
 /// Identifiants de chaîne LI.FI des réseaux non EVM.
@@ -45,6 +52,8 @@ pub const BITCOIN_CHAIN: u64 = 20_000_000_000_001;
 const NON_EVM_RECEIVER: [u8; 20] = [
     0x11, 0xf1, 0x11, 0xf1, 0x11, 0xf1, 0x11, 0xf1, 0x11, 0xf1, 0x11, 0xf1, 0x11, 0xf1, 0x11, 0xf1, 0x11, 0xf1, 0x11, 0xf1,
 ];
+/// Devis LI.FI depuis une adresse Bitcoin sans fonds confirmés.
+pub const NO_CONFIRMED_BTC: &str = "aucun BTC confirmé sur votre adresse : LI.FI prépare le dépôt à partir de fonds reçus et confirmés (au moins une confirmation)";
 /// Nouveaux devis demandés au plus quand le pont proposé garde le destinataire
 /// hors chaîne.
 pub const MAX_ROUTE_ATTEMPTS: usize = 3;
@@ -150,14 +159,14 @@ pub fn tradable() -> Vec<(&'static str, &'static str)> {
 }
 
 /// LI.FI relie-t-il ces deux cryptos (hors activation) ? Entre deux réseaux
-/// différents seulement (un même réseau passe par CoW ou Jupiter) ; jamais
-/// depuis Bitcoin (PSBT fournie par LI.FI, pas prise en charge) ; depuis un
+/// différents seulement (un même réseau passe par CoW ou Jupiter) ; depuis un
 /// réseau qui ne simule pas, seulement vers un réseau EVM (destinataire lu
-/// dans les données de l'appel).
+/// dans les données de l'appel). Depuis Bitcoin : PSBT vérifiée par
+/// `verify_btc_deposit` (relevé le 03/10/2026 : LI.FI propose BTC vers
+/// chaque réseau de l'app, via LayerSwap ou Relay).
 pub fn links(from: (&str, &str), to: (&str, &str)) -> bool {
     let ((from_coin, from_network), (to_coin, to_network)) = (from, to);
     from_network != to_network
-        && from_network != "btc_mainnet"
         && (simulates(from_network) || is_evm(to_network))
         && token(from_coin, from_network).is_some()
         && token(to_coin, to_network).is_some()
@@ -169,6 +178,9 @@ pub enum LifiTx {
     Evm { to: [u8; 20], data: Vec<u8>, value: u128 },
     /// Transaction Solana sérialisée (un seul signataire : l'utilisateur).
     Solana { raw: Vec<u8> },
+    /// PSBT d'un dépôt Bitcoin vers l'adresse du pont (`deposit`, script
+    /// `deposit_script`), vérifiée par `verify_btc_deposit` avant signature.
+    Bitcoin { psbt: btc_psbt::Psbt, deposit: String, deposit_script: Vec<u8> },
 }
 
 /// Devis LI.FI revérifié.
@@ -260,6 +272,12 @@ pub fn quote(
     let q: Value = response.json().context("réponse de devis LI.FI illisible")?;
     if q.get("transactionRequest").is_none() {
         let message = q.get("message").and_then(Value::as_str).unwrap_or("réponse inattendue");
+        // Depuis Bitcoin, LI.FI construit le dépôt sur les sorties confirmées
+        // de l'adresse (réponse réelle sans elles : « No UTXOs found for any
+        // sender addresses »).
+        if message.contains("No UTXOs found") {
+            bail!(NO_CONFIRMED_BTC);
+        }
         bail!("devis LI.FI refusé : {message}");
     }
     parse_quote(&q, from_network, from, to_network, to, amount, from_address, to_address)
@@ -316,6 +334,14 @@ fn parse_quote(
     } else if from_network == "sol_mainnet" {
         let raw = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, text(request, &["data"])).context("transaction LI.FI Solana illisible")?;
         LifiTx::Solana { raw }
+    } else if from_network == "btc_mainnet" {
+        // `to` : adresse de dépôt du pont ; `value` : montant (décimal) ;
+        // `data` : PSBT en hexadécimal (relevé sur de vrais devis).
+        ensure!(text(request, &["value"]) == amount.to_string(), "transaction LI.FI avec un autre montant que celui demandé");
+        let deposit = text(request, &["to"]);
+        let deposit_script = derivation::btc_mainnet_script_pubkey(&deposit).context("adresse de dépôt LI.FI invalide")?;
+        let bytes = hex::decode(text(request, &["data"]).trim_start_matches("0x")).context("PSBT LI.FI illisible")?;
+        LifiTx::Bitcoin { psbt: btc_psbt::parse(&bytes)?, deposit, deposit_script }
     } else {
         bail!("envoi depuis ce réseau non pris en charge par LI.FI dans l'app");
     };
@@ -334,6 +360,100 @@ fn parse_quote(
         duration_secs: estimate["executionDuration"].as_f64().unwrap_or(0.0) as u64,
         tx,
     })
+}
+
+// --- Dépôt Bitcoin (PSBT) -------------------------------------------------------
+
+/// Dépôt Bitcoin d'un devis LI.FI, vérifié : la transaction à signer et ce
+/// que montre la boîte de confirmation.
+#[derive(Debug)]
+pub struct BtcDeposit {
+    pub tx: btc_tx::RawTx,
+    pub network_fee: u64,
+    /// Taille une fois signée, au plus.
+    pub vsize: u64,
+    /// Sorties de frais vers LI.FI et l'intégrateur, comprises dans le
+    /// montant envoyé.
+    pub service_fees: u64,
+}
+
+/// Vérifie la PSBT d'un dépôt LI.FI depuis Bitcoin, sortie par sortie, avec
+/// les sorties dépensables de l'utilisateur relues par l'app (`utxos`,
+/// confirmées) — rien n'est repris des montants annoncés par la PSBT :
+/// - chaque entrée dépense une de SES sorties, une seule fois (montant relu,
+///   engagé par la signature BIP143) ;
+///   sans verrou temporel relatif (séquence 0xfffffffd au moins) ;
+/// - exactement un paiement à l'adresse de dépôt annoncée (`deposit_script`) ;
+/// - la monnaie revient à son adresse ; au plus un memo OP_RETURN, sans valeur ;
+/// - le reste (frais LI.FI et intégrateur, 3 sorties au plus) : dépôt +
+///   frais = montant envoyé, frais au plus 1,05 % ;
+/// - frais réseau au plus `max_fee_rate` sat/vB (taille signée maximale).
+///
+/// L'adresse d'arrivée, gérée hors chaîne par le pont, reste invérifiable
+/// (dit dans la boîte de confirmation).
+pub fn verify_btc_deposit(
+    psbt: &btc_psbt::Psbt,
+    deposit_script: &[u8],
+    own_script: &[u8],
+    utxos: &[btc_tx::Utxo],
+    amount: u64,
+    max_fee_rate: u64,
+) -> Result<BtcDeposit> {
+    ensure!(matches!(psbt.version, 1 | 2), "transaction Bitcoin LI.FI d'une version inattendue");
+    ensure!(deposit_script != own_script, "dépôt LI.FI vers votre propre adresse — refusé");
+    ensure!(
+        psbt.inputs.iter().all(|i| i.sequence >= 0xffff_fffd),
+        "transaction Bitcoin LI.FI avec un verrou temporel — refusé"
+    );
+    let mut inputs: Vec<btc_tx::RawInput> = Vec::with_capacity(psbt.inputs.len());
+    for input in &psbt.inputs {
+        ensure!(
+            !inputs.iter().any(|i| i.txid == input.txid && i.vout == input.vout),
+            "transaction Bitcoin LI.FI qui dépense deux fois la même sortie — refusé"
+        );
+        let utxo = utxos
+            .iter()
+            .find(|u| u.txid == input.txid && u.vout == input.vout)
+            .ok_or_else(|| anyhow!("la transaction LI.FI dépense une sortie absente (ou pas encore confirmée) de votre adresse Bitcoin — refusé"))?;
+        inputs.push(btc_tx::RawInput { txid: input.txid, vout: input.vout, sequence: input.sequence, value_sat: utxo.value_sat });
+    }
+
+    let (mut deposits, mut deposit, mut memos, mut service_outputs, mut service_fees) = (0, 0u64, 0, 0, 0u64);
+    for (value, script) in &psbt.outputs {
+        if script.as_slice() == deposit_script {
+            deposits += 1;
+            deposit = *value;
+        } else if script.as_slice() == own_script {
+            // Monnaie rendue : reste à l'utilisateur.
+        } else if script.first() == Some(&0x6a) {
+            memos += 1;
+            ensure!(*value == 0 && script.len() <= 83, "memo OP_RETURN inattendu dans la transaction LI.FI — refusé");
+        } else {
+            service_outputs += 1;
+            service_fees = service_fees.checked_add(*value).context("montant hors limites")?;
+        }
+    }
+    ensure!(deposits == 1, "la transaction LI.FI ne paie pas exactement une fois l'adresse de dépôt annoncée — refusé");
+    ensure!(memos <= 1 && service_outputs <= 3, "transaction LI.FI avec des sorties inattendues — refusé");
+    ensure!(deposit.checked_add(service_fees) == Some(amount), "la transaction LI.FI n'envoie pas exactement le montant affiché — refusé");
+    let fee_bps = LIFI_OWN_FEE_BPS + (FEE * 10_000.0).round() as u128;
+    ensure!(
+        u128::from(service_fees) <= u128::from(amount) * fee_bps / 10_000 + 1,
+        "frais LI.FI de la transaction Bitcoin au-delà de {},{:02} % — refusé",
+        fee_bps / 100,
+        fee_bps % 100
+    );
+
+    let inputs_total = inputs.iter().try_fold(0u64, |sum, i| sum.checked_add(i.value_sat)).context("montant hors limites")?;
+    let outputs_total = psbt.outputs.iter().try_fold(0u64, |sum, (v, _)| sum.checked_add(*v)).context("montant hors limites")?;
+    let network_fee = inputs_total.checked_sub(outputs_total).context("la transaction LI.FI dépense plus que ses entrées — refusé")?;
+    let tx = btc_tx::RawTx { version: psbt.version, inputs, outputs: psbt.outputs.clone(), locktime: psbt.locktime };
+    let vsize = tx.signed_vsize();
+    ensure!(
+        network_fee <= vsize.saturating_mul(max_fee_rate),
+        "frais réseau Bitcoin anormalement élevés dans la transaction LI.FI ({network_fee} sat pour ~{vsize} vB, plafond {max_fee_rate} sat/vB) — refusé"
+    );
+    Ok(BtcDeposit { tx, network_fee, vsize, service_fees })
 }
 
 // --- Décodage ABI (juste ce qu'exige BridgeData) ------------------------------
@@ -444,6 +564,8 @@ impl Receiver {
                 Ok(Receiver::Solana(key))
             }
             "btc_mainnet" => {
+                // Version SegWit et encodage cohérents (voir `derivation::decode_segwit`).
+                derivation::btc_mainnet_script_pubkey(address).context("adresse Bitcoin invalide (bech32 attendu)")?;
                 let (hrp, data, _) = bech32::decode(address).context("adresse Bitcoin invalide (bech32 attendu)")?;
                 ensure!(hrp == "bc", "adresse Bitcoin du réseau principal attendue (bc1…)");
                 let groups: Vec<u8> = data.iter().map(|g| g.to_u8()).collect();
@@ -881,6 +1003,7 @@ mod tests {
                     }
                 }
                 LifiTx::Solana { ref raw } => assert!(!raw.is_empty()),
+                LifiTx::Bitcoin { ref psbt, .. } => assert!(!psbt.inputs.is_empty()),
             }
         }
     }
@@ -911,5 +1034,47 @@ mod tests {
             println!("{bridge} : {outcome:?}");
             assert_eq!(outcome == Verification::Verified, want_verified, "{bridge}");
         }
+    }
+
+    /// Devis réel BTC → ETH (LayerSwap, testdata) : lu, puis sa PSBT vérifiée
+    /// contre la sortie dépensée (montant relevé sur Esplora) ; chaque
+    /// altération qui coûterait à l'utilisateur est refusée.
+    #[test]
+    fn bitcoin_deposits_are_verified_output_by_output() {
+        let q: Value = serde_json::from_str(include_str!("../testdata/lifi_btc_quote.json")).unwrap();
+        let (from, to) = (token("btc", "btc_mainnet").unwrap(), token("evm", "evm_mainnet").unwrap());
+        let user = "bc1qm34lsc65zpw79lxes69zkqmk6ee3ewf0j77s3h";
+        let evm_user = "0x59D78c44ac60F09369b544778358704B7b18E6ba";
+        let quote = parse_quote(&q, "btc_mainnet", &from, "evm_mainnet", &to, 1_000_000, user, evm_user).unwrap();
+        assert!(parse_quote(&q, "btc_mainnet", &from, "evm_mainnet", &to, 900_000, user, evm_user).is_err(), "autre montant");
+        let LifiTx::Bitcoin { psbt, deposit, deposit_script } = &quote.tx else { panic!("PSBT attendue") };
+        assert_eq!(deposit, "bc1plxa9q77gz9r33g8pd4c2ygzezchjffuedtzdrkclyceseyw8v80qasmquf");
+        let own = derivation::btc_mainnet_script_pubkey(user).unwrap();
+        let utxos = [btc_tx::Utxo { txid: psbt.inputs[0].txid, vout: 0, value_sat: 24_649_986_775 }];
+        let check = |psbt: &btc_psbt::Psbt| verify_btc_deposit(psbt, deposit_script, &own, &utxos, 1_000_000, 50);
+
+        let ok = check(psbt).unwrap();
+        assert_eq!((ok.network_fee, ok.service_fees), (1_913, 10_500));
+        assert!((240..=250).contains(&ok.vsize), "{}", ok.vsize);
+
+        let other = |byte: u8| [vec![0x00, 0x14], vec![byte; 20]].concat();
+        let altered = |change: &dyn Fn(&mut btc_psbt::Psbt)| {
+            let mut copy = psbt.clone();
+            change(&mut copy);
+            check(&copy).is_err()
+        };
+        assert!(verify_btc_deposit(psbt, deposit_script, &own, &[], 1_000_000, 50).is_err(), "sortie absente ou non confirmée");
+        assert!(verify_btc_deposit(psbt, deposit_script, &own, &utxos, 900_000, 50).is_err(), "autre montant");
+        assert!(verify_btc_deposit(psbt, deposit_script, &own, &utxos, 1_000_000, 5).is_err(), "frais réseau au-delà du plafond");
+        assert!(altered(&|p| { p.outputs[4].0 += 5_000; p.outputs[2].0 -= 5_000 }), "frais LI.FI gonflés sur la monnaie");
+        assert!(altered(&|p| p.outputs[2].1 = other(0x66)), "monnaie détournée");
+        assert!(altered(&|p| p.outputs[0].1 = other(0x77)), "dépôt redirigé");
+        assert!(altered(&|p| p.outputs[2].0 -= 100_000), "frais réseau excessifs");
+        assert!(altered(&|p| { p.outputs[1].0 = 1_000; p.outputs[2].0 -= 1_000 }), "memo avec valeur");
+        assert!(altered(&|p| { let dup = p.inputs[0].clone(); p.inputs.push(dup) }), "même sortie dépensée deux fois");
+        assert!(altered(&|p| { let dup = p.outputs[0].clone(); p.outputs.push(dup) }), "deux dépôts");
+        assert!(altered(&|p| p.version = 3), "version inattendue");
+        assert!(altered(&|p| p.inputs[0].sequence = 144), "verrou temporel relatif");
+        assert!(verify_btc_deposit(psbt, &own, &own, &utxos, 1_000_000, 50).is_err(), "dépôt vers soi");
     }
 }

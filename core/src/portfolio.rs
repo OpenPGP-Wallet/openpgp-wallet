@@ -165,10 +165,15 @@ enum Source {
 }
 
 impl Spec {
+    /// Historique lu chez Etherscan, avec la clé de l'utilisateur.
+    fn uses_etherscan(&self) -> bool {
+        matches!(self.source, Source::Evm(net) | Source::Erc20(net, _) if matches!(net.history, Some(wallet_flow::EvmHistory::Etherscan)))
+    }
+
     /// Une source d'historique existe pour cet avoir (voir `EvmNetwork::history`).
     fn has_history(&self) -> bool {
         match self.source {
-            Source::Evm(net) | Source::Erc20(net, _) => net.history.is_some(),
+            Source::Evm(net) | Source::Erc20(net, _) => history::evm_history_available(net),
             Source::Btc | Source::Sol | Source::Spl(_) => true,
             Source::Zec => false,
         }
@@ -292,7 +297,14 @@ fn fetch_first(spec: &Spec, address: &str) -> Result<HoldingData> {
         (balance.join().expect("le fil du solde ne doit pas paniquer"), first)
     });
     data.balance = balance?;
-    data.absorb(first?, price_history::unix_now());
+    match first {
+        Ok(page) => data.absorb(page, price_history::unix_now()),
+        // Clé Etherscan refusée pour ce réseau (offre gratuite sur BNB Chain,
+        // clé révoquée…) : solde compté constant plutôt qu'une courbe entière
+        // en échec — l'interface le dit (`constant`).
+        Err(_) if spec.uses_etherscan() => data.constant = true,
+        Err(e) => return Err(e),
+    }
     Ok(data)
 }
 

@@ -254,6 +254,54 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("encodage bech32 impossible", "bech32 encoding failed"),
     ("adresse bech32 invalide", "invalid bech32 address"),
     ("adresse bech32 vide", "empty bech32 address"),
+    (
+        "adresse Bitcoin mal formée (version SegWit, encodage ou longueur incohérents)",
+        "malformed Bitcoin address (inconsistent SegWit version, encoding or length)",
+    ),
+    // Échanges depuis Bitcoin (LI.FI, core/src/lifi.rs) et Zcash (Maya, core/src/api.rs)
+    ("dépôt LI.FI vers votre propre adresse — refusé", "LI.FI deposit to your own address — refused"),
+    ("transaction Bitcoin LI.FI d'une version inattendue", "LI.FI Bitcoin transaction with an unexpected version"),
+    ("transaction Bitcoin LI.FI avec un verrou temporel — refusé", "LI.FI Bitcoin transaction with a time lock — refused"),
+    ("transaction Bitcoin LI.FI qui dépense deux fois la même sortie — refusé", "LI.FI Bitcoin transaction spending the same output twice — refused"),
+    (
+        "la transaction LI.FI dépense une sortie absente (ou pas encore confirmée) de votre adresse Bitcoin — refusé",
+        "the LI.FI transaction spends an output that is missing (or not yet confirmed) on your Bitcoin address — refused",
+    ),
+    ("memo OP_RETURN inattendu dans la transaction LI.FI — refusé", "unexpected OP_RETURN memo in the LI.FI transaction — refused"),
+    (
+        "la transaction LI.FI ne paie pas exactement une fois l'adresse de dépôt annoncée — refusé",
+        "the LI.FI transaction does not pay the announced deposit address exactly once — refused",
+    ),
+    ("transaction LI.FI avec des sorties inattendues — refusé", "LI.FI transaction with unexpected outputs — refused"),
+    ("la transaction LI.FI n'envoie pas exactement le montant affiché — refusé", "the LI.FI transaction does not send exactly the amount shown — refused"),
+    ("la transaction LI.FI dépense plus que ses entrées — refusé", "the LI.FI transaction spends more than its inputs — refused"),
+    ("transaction LI.FI avec un autre montant que celui demandé", "LI.FI transaction for another amount than the one requested"),
+    ("adresse de dépôt LI.FI invalide", "invalid LI.FI deposit address"),
+    ("PSBT LI.FI illisible", "unreadable LI.FI PSBT"),
+    (
+        "l'adresse de dépôt du pont a changé pendant la confirmation — relancez l'échange",
+        "the bridge's deposit address changed during the confirmation — start the swap again",
+    ),
+    (
+        "les frais réseau Bitcoin de la transaction LI.FI ont augmenté depuis la confirmation — relancez l'échange",
+        "the Bitcoin network fee of the LI.FI transaction increased since the confirmation — start the swap again",
+    ),
+    ("adresse de dépôt Maya égale à votre propre adresse — échange refusé", "Maya deposit address equal to your own address — swap refused"),
+    ("adresse de dépôt Maya invalide", "invalid Maya deposit address"),
+    // Clé Etherscan (core/src/etherscan_key.rs, core/src/routescan.rs)
+    (
+        "clé Etherscan invalide : 34 lettres majuscules et chiffres attendus (à copier depuis etherscan.io/myapikey)",
+        "invalid Etherscan key: 34 uppercase letters and digits expected (copy it from etherscan.io/myapikey)",
+    ),
+    (pgp_wallet_poc::routescan::ETHERSCAN_KEY_MISSING, "history of this network: add your free Etherscan key in Settings"),
+    (pgp_wallet_poc::routescan::ETHERSCAN_KEY_REFUSED, "Etherscan refuses the saved key (invalid or revoked) — check it in Settings"),
+    (
+        pgp_wallet_poc::lifi::NO_CONFIRMED_BTC,
+        "no confirmed BTC on your address: LI.FI builds the deposit from funds received and confirmed (at least one confirmation)",
+    ),
+    ("enregistrement de la clé Etherscan impossible", "could not save the Etherscan key"),
+    ("suppression de la clé Etherscan impossible", "could not remove the Etherscan key"),
+    ("clé Etherscan illisible", "unreadable Etherscan key"),
     ("conversion base32 -> octets impossible", "base32 -> bytes conversion failed"),
     (
         "programme témoin de taille inattendue (P2WPKH attend 20 octets)",
@@ -515,6 +563,44 @@ fn translate_dynamic_error(msg: &str) -> Option<String> {
     }
     if let Some(rest) = msg.strip_prefix("devis LI.FI refusé : ") {
         return Some(format!("LI.FI quote refused: {rest}"));
+    }
+    for name in ["THORChain", "Maya"] {
+        if let Some(rest) = msg.strip_prefix(&format!("devis {name} refusé : ")) {
+            return Some(format!("{name} quote refused: {rest}"));
+        }
+    }
+    for name in ["Etherscan", "Routescan"] {
+        if let Some(rest) = msg.strip_prefix(&format!("{name} a refusé la demande : ")) {
+            return Some(format!("{name} refused the request: {rest}"));
+        }
+        if let Some(rest) = msg.strip_prefix(&format!("appel {name} impossible : ")) {
+            return Some(format!("could not reach {name}: {rest}"));
+        }
+    }
+    if let Some((name, minimum)) = msg
+        .strip_prefix("montant trop faible pour ")
+        .and_then(|rest| rest.strip_suffix(" (en dessous, le dépôt serait ignoré ou son remboursement impossible)"))
+        .and_then(|rest| rest.split_once(" : au moins "))
+    {
+        return Some(format!("amount too small for {name}: at least {minimum} (below that, the deposit would be ignored or its refund impossible)"));
+    }
+    if let Some(cap) = msg.strip_prefix("frais LI.FI de la transaction Bitcoin au-delà de ").and_then(|rest| rest.strip_suffix(" — refusé")) {
+        return Some(format!("LI.FI fees in the Bitcoin transaction above {} — refused", cap.replace(',', ".").replace(" %", "%")));
+    }
+    if let Some(detail) = msg
+        .strip_prefix("frais réseau Bitcoin anormalement élevés dans la transaction LI.FI (")
+        .and_then(|rest| rest.strip_suffix(") — refusé"))
+    {
+        return Some(format!("abnormally high Bitcoin network fee in the LI.FI transaction ({}) — refused", detail.replace(" pour ", " for ").replace("plafond", "cap")));
+    }
+    if let Some(detail) = msg
+        .strip_prefix("les frais Zcash ont augmenté depuis la confirmation (")
+        .and_then(|rest| rest.strip_suffix(") — relancez l'échange").or_else(|| rest.strip_suffix(") — relancez l'envoi")))
+    {
+        return Some(format!("Zcash fees increased since the confirmation ({}) — start again", detail.replace(" au lieu de ", " instead of ")));
+    }
+    if let Some(rest) = msg.strip_prefix("memo Maya trop long pour une sortie OP_RETURN (") {
+        return Some(format!("Maya memo too long for an OP_RETURN output ({}", rest.replace("octets", "bytes")));
     }
     if let Some(rest) = msg.strip_prefix("aucune route LI.FI dont le destinataire soit vérifiable (ponts écartés : ") {
         return Some(format!("no LI.FI route with a verifiable recipient (bridges excluded: {rest}"));
@@ -955,7 +1041,7 @@ fn create_wallet(password: String, app: tauri::AppHandle) -> Result<CreateWallet
     let password = Zeroizing::new(password);
     let dir = data_dir(&app)?;
     let result = api::create_wallet(&dir, &password).t_err()?;
-    remember_addresses(&app, 0, &result.addresses.evm, &result.addresses.solana, &result.addresses.zcash);
+    remember_addresses(&app, 0, &result.addresses);
 
     let backups = backup_dtos(result.backups);
 
@@ -1033,7 +1119,7 @@ fn unlock_wallet(password: String, app: tauri::AppHandle) -> Result<Vec<ProfileD
 fn remember_profiles(app: &tauri::AppHandle, profiles: &[api::ProfileAddresses]) {
     for p in profiles {
         if let Some(a) = &p.addresses {
-            remember_addresses(app, p.profile.index, &a.evm, &a.solana, &a.zcash);
+            remember_addresses(app, p.profile.index, a);
         }
     }
 }
@@ -1386,7 +1472,7 @@ fn restore_wallet_from_usb(new_password: String, app: tauri::AppHandle) -> Resul
     .t_err()?;
     state.0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     forget_wallet_connections(&app);
-    remember_addresses(&app, 0, &addresses.evm, &addresses.solana, &addresses.zcash);
+    remember_addresses(&app, 0, &addresses);
     Ok(addresses.into())
 }
 
@@ -1429,7 +1515,7 @@ fn restore_wallet(
     .t_err()?;
     // Nouveau portefeuille : les connexions et adresses de l'ancien ne valent plus.
     forget_wallet_connections(&app);
-    remember_addresses(&app, 0, &addresses.evm, &addresses.solana, &addresses.zcash);
+    remember_addresses(&app, 0, &addresses);
     Ok(addresses.into())
 }
 
@@ -1442,6 +1528,7 @@ fn forget_wallet_connections(app: &tauri::AppHandle) {
     app.state::<WcState>().prepared.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<ProfileAddressCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<ProfileZcashCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    app.state::<ProfileBtcCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
 }
 
 fn evm_network(network: &str) -> Result<&'static wallet_flow::EvmNetwork, String> {
@@ -1706,18 +1793,33 @@ fn history_dtos<E: std::fmt::Display>(
 #[derive(Serialize)]
 struct HistoryDto {
     entries: Vec<TxEntryDto>,
-    /// Réseau sans source publique d'historique : page de l'adresse sur
+    /// Réseau sans source d'historique utilisable : page de l'adresse sur
     /// l'explorateur du réseau, à ouvrir à la place (`entries` vide).
     explorer_url: Option<String>,
+    /// Pourquoi : « no_key » (clé Etherscan gratuite à saisir dans
+    /// Paramètres), « paid_key » (sans clé, sur un réseau que seule une offre
+    /// Etherscan payante couvre), « paid_plan » (clé enregistrée refusée pour
+    /// ce réseau par l'offre gratuite).
+    reason: Option<&'static str>,
 }
 
 impl HistoryDto {
     fn read(entries: Result<Vec<TxEntryDto>, String>) -> Result<Self, String> {
-        Ok(Self { entries: entries?, explorer_url: None })
+        Ok(Self { entries: entries?, explorer_url: None, reason: None })
     }
 
-    fn unavailable(explorer_url: String) -> Result<Self, String> {
-        Ok(Self { entries: Vec::new(), explorer_url: Some(explorer_url) })
+    /// Historique EVM : sans clé Etherscan pour ce réseau, ou refusé par
+    /// l'offre gratuite, la page de l'explorateur avec le motif.
+    fn evm(net: &wallet_flow::EvmNetwork, explorer_url: String, read: impl FnOnce() -> Result<Vec<TxEntryDto>, String>) -> Result<Self, String> {
+        if !history::evm_history_available(net) {
+            let reason = (net.history == Some(wallet_flow::EvmHistory::Etherscan))
+                .then_some(if pgp_wallet_poc::routescan::etherscan_free_tier_covers(net.chain_id) { "no_key" } else { "paid_key" });
+            return Ok(Self { entries: Vec::new(), explorer_url: Some(explorer_url), reason });
+        }
+        match read() {
+            Err(e) if pgp_wallet_poc::routescan::is_paid_plan_refusal(&e) => Ok(Self { entries: Vec::new(), explorer_url: Some(explorer_url), reason: Some("paid_plan") }),
+            entries => Self::read(entries),
+        }
     }
 }
 
@@ -1726,18 +1828,17 @@ async fn get_tx_history(network: String, address: String) -> Result<HistoryDto, 
     run_blocking(move || match network.as_str() {
         n if is_evm(n) => {
             let net = evm_network(&network)?;
-            if net.history.is_none() {
-                api::validate_evm_recipient(&address).t_err()?;
-                return HistoryDto::unavailable(net.explorer_address_url(&address, None));
-            }
+            api::validate_evm_recipient(&address).t_err()?;
             // Valeur en dollars : la monnaie du réseau (fonds réels seulement).
             let asset = if net.mainnet { price_history::price_asset(net.native_symbol) } else { None };
-            HistoryDto::read(history_dtos(
-                || history::evm_history(net.chain_id, &address, HISTORY_LIMIT as usize),
-                asset,
-                18,
-                |id| format!("{}{}", net.explorer_tx_prefix, id),
-            ))
+            HistoryDto::evm(net, net.explorer_address_url(&address, None), || {
+                history_dtos(
+                    || history::evm_history(net.chain_id, &address, HISTORY_LIMIT as usize),
+                    asset,
+                    18,
+                    |id| format!("{}{}", net.explorer_tx_prefix, id),
+                )
+            })
         }
         "btc_testnet" | "btc_mainnet" => {
             let net = btc_network(&network)?;
@@ -1765,6 +1866,22 @@ async fn get_tx_history(network: String, address: String) -> Result<HistoryDto, 
     .await
 }
 
+/// Clé Etherscan enregistrée sur l'appareil, sous forme masquée seulement
+/// (voir `core/src/etherscan_key.rs`) : jamais renvoyée en entier.
+#[tauri::command]
+fn etherscan_key_status() -> Option<String> {
+    pgp_wallet_poc::etherscan_key::masked()
+}
+
+/// Enregistre (ou, vide, supprime) la clé Etherscan de l'utilisateur ;
+/// renvoie sa forme masquée.
+#[tauri::command]
+fn set_etherscan_key(key: String, app: tauri::AppHandle) -> Result<Option<String>, String> {
+    let key = Zeroizing::new(key);
+    let dir = data_dir(&app)?;
+    pgp_wallet_poc::etherscan_key::save(&dir, &key).t_err()
+}
+
 /// Historique d'un jeton du registre (`core/src/tokens.rs`) : ERC-20 via
 /// l'indexeur du réseau, SPL via le compte de jetons associé. Seuls l'id du
 /// jeton et le réseau viennent du frontend : contrat et mint sont ceux du
@@ -1780,18 +1897,17 @@ async fn get_token_tx_history(token: String, network: String, address: String) -
             pgp_wallet_poc::tokens::TokenKind::Erc20 { contract } => {
                 let net = evm_network(&network)?;
                 api::validate_evm_recipient(&address).t_err()?;
-                if net.history.is_none() {
-                    return HistoryDto::unavailable(net.explorer_address_url(&address, Some(contract)));
-                }
-                HistoryDto::read(history_dtos(
-                    || history::erc20_history_page(net.chain_id, &address, contract, None).map(|(mut entries, _)| {
-                        entries.truncate(HISTORY_LIMIT as usize);
-                        entries
-                    }),
-                    asset,
-                    decimals,
-                    |id| format!("{}{}", net.explorer_tx_prefix, id),
-                ))
+                HistoryDto::evm(net, net.explorer_address_url(&address, Some(contract)), || {
+                    history_dtos(
+                        || history::erc20_history_page(net.chain_id, &address, contract, None).map(|(mut entries, _)| {
+                            entries.truncate(HISTORY_LIMIT as usize);
+                            entries
+                        }),
+                        asset,
+                        decimals,
+                        |id| format!("{}{}", net.explorer_tx_prefix, id),
+                    )
+                })
             }
             pgp_wallet_poc::tokens::TokenKind::Spl { .. } => {
                 let net = sol_network(&network)?;
@@ -2662,6 +2778,9 @@ struct SwapPairDto {
     /// Paire directe : tous les fournisseurs possibles, le préféré d'abord
     /// (vide pour un échange en deux étapes).
     protocols: Vec<pgp_wallet_poc::swap_routes::Protocol>,
+    /// Frais d'affiliation de l'app pour chacun de `protocols` (points de
+    /// base) : 0 depuis Bitcoin ou Zcash via THORChain ou Maya sans nom court.
+    fees_bps: Vec<u32>,
     /// Échange en deux étapes : crypto intermédiaire et protocole de la
     /// seconde étape (`None` pour un échange direct).
     via: Option<pgp_wallet_poc::swap_routes::SwapAsset>,
@@ -2675,15 +2794,19 @@ struct SwapPairDto {
 fn swap_pairs() -> Vec<SwapPairDto> {
     pgp_wallet_poc::swap_routes::routes()
         .into_iter()
-        .map(|(from, to, route)| SwapPairDto {
-            from_coin: from.coin,
-            from_network: from.network,
-            to_coin: to.coin,
-            to_network: to.network,
-            protocol: route.first,
-            protocols: if route.via.is_none() { pgp_wallet_poc::swap_routes::direct_all(from, to) } else { Vec::new() },
-            via: route.via.map(|(via, _)| via),
-            then_protocol: route.via.map(|(_, second)| second),
+        .map(|(from, to, route)| {
+            let protocols = if route.via.is_none() { pgp_wallet_poc::swap_routes::direct_all(from, to) } else { Vec::new() };
+            SwapPairDto {
+                from_coin: from.coin,
+                from_network: from.network,
+                to_coin: to.coin,
+                to_network: to.network,
+                protocol: route.first,
+                fees_bps: protocols.iter().map(|p| pgp_wallet_poc::swap_routes::affiliate_fee_bps(*p, from)).collect(),
+                protocols,
+                via: route.via.map(|(via, _)| via),
+                then_protocol: route.via.map(|(_, second)| second),
+            }
         })
         .collect()
 }
@@ -2727,8 +2850,13 @@ fn confirm_swap_native(
     final_destination: &str,
     network_fee_line: Option<&str>,
     approval_line: Option<&str>,
+    affiliate: bool,
 ) -> bool {
     let network_fee_line = network_fee_line.map(|f| format!("{f}\n")).unwrap_or_default();
+    // Depuis Bitcoin ou Zcash sans nom court : aucun frais pour l'app (voir
+    // `thorchain_rpc::CrossChain::charges_affiliate`).
+    let affiliate_en = if affiliate { ", plus a 0.80% affiliate fee" } else { ", with no affiliate fee for this app on this swap" };
+    let affiliate_fr = if affiliate { ", plus 0,80% de frais d'affiliation" } else { ", sans frais d'affiliation pour cette app sur cet échange" };
     let approval_line = approval_line.map(|a| format!("{a}\n")).unwrap_or_default();
     let from_label = dialog_label(from_label);
     let english = UI_LANG_IS_ENGLISH.load(Ordering::Relaxed);
@@ -2747,11 +2875,11 @@ fn confirm_swap_native(
     };
     let message = if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
         format!(
-            "Swap via {protocol} (external protocol, not audited by this app)\n\nFrom profile: {from_label}\nSending: {amount}\nExpected to receive: ~{expected_out} {to_symbol}\n{vault_line}{arrival_line}{approval_line}{network_fee_line}\nIncludes {protocol}'s own network/liquidity fees, plus a 0.80% affiliate fee.\nThis is irreversible, and once sent this app can no longer track or reverse it.\n\nConfirm this swap?"
+            "Swap via {protocol} (external protocol, not audited by this app)\n\nFrom profile: {from_label}\nSending: {amount}\nExpected to receive: ~{expected_out} {to_symbol}\n{vault_line}{arrival_line}{approval_line}{network_fee_line}\nIncludes {protocol}'s own network/liquidity fees{affiliate_en}.\nThis is irreversible, and once sent this app can no longer track or reverse it.\n\nConfirm this swap?"
         )
     } else {
         format!(
-            "Échange via {protocol} (protocole externe, non audité par cette app)\n\nDepuis le profil : {from_label}\nEnvoi : {amount}\nRéception attendue : ~{expected_out} {to_symbol}\n{vault_line}{arrival_line}{approval_line}{network_fee_line}\nInclut les frais propres à {protocol} (réseau/liquidité), plus 0,80% de frais d'affiliation.\nC'est irréversible, et une fois envoyé cette app ne peut plus ni suivre ni annuler l'opération.\n\nConfirmer cet échange ?"
+            "Échange via {protocol} (protocole externe, non audité par cette app)\n\nDepuis le profil : {from_label}\nEnvoi : {amount}\nRéception attendue : ~{expected_out} {to_symbol}\n{vault_line}{arrival_line}{approval_line}{network_fee_line}\nInclut les frais propres à {protocol} (réseau/liquidité){affiliate_fr}.\nC'est irréversible, et une fois envoyé cette app ne peut plus ni suivre ni annuler l'opération.\n\nConfirmer cet échange ?"
         )
     };
     app.dialog()
@@ -2807,6 +2935,7 @@ async fn swap_transaction(
             None => None,
         };
         let mut approval_line = None;
+        let mut zec_fee = None;
         let network_fee_line = match (evm_net, evm_gas_price) {
             (Some(net), Some(gas_price)) => {
                 let owner = app.state::<ProfileAddressCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).map(|(evm, _)| evm.clone());
@@ -2821,6 +2950,20 @@ async fn swap_transaction(
                 Some(evm_swap_fee_line(&fees, net.native_symbol)?)
             }
             _ if from.network == "sol_mainnet" => Some(lang("Frais réseau : 0,000005 SOL", "Network fee: 0.000005 SOL").to_string()),
+            _ if from.network == "zec_mainnet" => {
+                let from_zec = app
+                    .state::<ProfileZcashCache>()
+                    .0
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .get(&profile_index)
+                    .cloned()
+                    .ok_or_else(|| translate_error("adresse du profil inconnue — déverrouillez le portefeuille"))?;
+                let plan = api::zec_swap_plan(&from_zec, &quote, &amount).t_err()?;
+                zec_fee = Some(plan.fee);
+                let fee = pgp_wallet_poc::zcash::format_zec(plan.fee);
+                Some(lang(&format!("Frais réseau Zcash : au plus {fee} ZEC (ZIP-317)"), &format!("Zcash network fee: at most {fee} ZEC (ZIP-317)")).to_string())
+            }
             _ => Some(
                 lang(
                     &format!("Frais réseau : vitesse moyenne, au plus {} sat/vB", api::BTC_SWAP_MAX_FEE_RATE_SAT_VB),
@@ -2843,6 +2986,7 @@ async fn swap_transaction(
             &destination,
             network_fee_line.as_deref(),
             approval_line.as_deref(),
+            protocol.charges_affiliate(from.asset),
         ) {
             return Err(translate_error("Échange annulé (confirmation refusée)."));
         }
@@ -2856,6 +3000,10 @@ async fn swap_transaction(
         match (from.network, evm_net, evm_gas_price) {
             ("sol_mainnet", _, _) => api::send_swap_sol(&dir, &password, sol_network("sol_mainnet")?, &quote, &amount, profile_index).t_err(),
             ("btc_mainnet", _, _) => api::send_swap_btc(&dir, &password, btc_network("btc_mainnet")?, &quote, &amount, profile_index).t_err(),
+            ("zec_mainnet", _, _) => {
+                let shown_fee = zec_fee.ok_or_else(|| "frais Zcash manquants".to_string())?;
+                api::send_swap_zec(&dir, &password, &quote, &amount, shown_fee, profile_index).t_err()
+            }
             (_, Some(net), Some(gas_price)) if from.contract.is_some() => {
                 api::send_swap_erc20(&dir, &password, net, from, &quote, &amount, gas_price, profile_index).t_err()
             }
@@ -3201,6 +3349,11 @@ fn lifi_pair(from_coin: &str, from_network: &str, to_coin: &str, to_network: &st
 /// Adresse publique du profil sur le réseau de départ (mémorisée au
 /// déverrouillage) : l'envoi revérifie qu'elle est celle de la clé qui signe.
 fn profile_address_on(app: &tauri::AppHandle, profile_index: u32, network: &str) -> Result<String, String> {
+    if network == "btc_mainnet" {
+        let cache = app.state::<ProfileBtcCache>();
+        let cache = cache.0.lock().unwrap_or_else(|p| p.into_inner());
+        return cache.get(&profile_index).cloned().ok_or_else(|| translate_error("adresse du profil inconnue — déverrouillez le portefeuille"));
+    }
     let cache = app.state::<ProfileAddressCache>();
     let cache = cache.0.lock().unwrap_or_else(|p| p.into_inner());
     let (evm, solana) = cache.get(&profile_index).ok_or_else(|| translate_error("adresse du profil inconnue — déverrouillez le portefeuille"))?;
@@ -3347,7 +3500,25 @@ async fn lifi_swap_transaction(
             Some(net) => Some(api::evm_gas_price_for_confirmation(net).t_err()?),
             None => None,
         };
+        // Bitcoin : frais réseau fixés par la PSBT de LI.FI, montrés et bornés
+        // (au plus 1,5 fois ceux affichés après le nouveau devis).
+        let mut btc_max_network_fee = None;
         let fee_lines = match (evm_net, gas_price) {
+            _ if from_net == "btc_mainnet" => {
+                let deposit = api::lifi_btc_deposit(&quote).t_err()?;
+                let pgp_wallet_poc::lifi::LifiTx::Bitcoin { deposit: address, .. } = &quote.tx else {
+                    return Err(translate_error("devis LI.FI non Bitcoin"));
+                };
+                let (fee, rate) = (deposit.network_fee, deposit.network_fee as f64 / deposit.vsize.max(1) as f64);
+                let max_fee = fee.saturating_mul(3) / 2;
+                btc_max_network_fee = Some(max_fee);
+                let service = deposit.service_fees;
+                lang(
+                    &format!("Dépôt Bitcoin vers l'adresse du pont : {address}\nFrais réseau Bitcoin : {fee} sat (≈ {rate:.1} sat/vB), au plus {max_fee} sat\nFrais de LI.FI et de l'app prélevés sur l'envoi : {service} sat"),
+                    &format!("Bitcoin deposit to the bridge's address: {address}\nBitcoin network fee: {fee} sat (≈ {rate:.1} sat/vB), at most {max_fee} sat\nLI.FI's and the app's fees taken from the amount sent: {service} sat"),
+                )
+                .to_string()
+            }
             (Some(net), Some(gas_price)) => {
                 let (call, approve, approvals) = api::lifi_evm_fees(net, &quote, gas_price).t_err()?;
                 let total = call.max_total().t_err()?.saturating_add(approve.max_total().t_err()?.saturating_mul(approvals as u128)) as f64 / 1e18;
@@ -3394,6 +3565,10 @@ async fn lifi_swap_transaction(
         // vite), refusé s'il ne correspond plus à ce qui a été affiché.
         let fresh = api::refresh_lifi_quote_matching(&quote, receiver_verified).t_err()?;
         let tx_hash = match (evm_net, gas_price) {
+            _ if from_net == "btc_mainnet" => {
+                let max_fee = btc_max_network_fee.ok_or_else(|| "frais Bitcoin manquants".to_string())?;
+                api::send_lifi_btc(&dir, &password, &fresh, max_fee, profile_index).t_err()?
+            }
             (Some(net), Some(gas_price)) => api::send_lifi_evm(&dir, &password, net, &fresh, gas_price, profile_index).t_err()?,
             _ => api::send_lifi_solana(&dir, &password, &fresh, profile_index).t_err()?,
         };
@@ -3803,6 +3978,12 @@ struct ProfileAddressCache(std::sync::Mutex<std::collections::HashMap<u32, (Stri
 #[derive(Default)]
 struct ProfileZcashCache(std::sync::Mutex<std::collections::HashMap<u32, String>>);
 
+/// Adresse Bitcoin (réseau principal) de chaque profil, mémorisée au même
+/// moment : un échange LI.FI depuis Bitcoin demande un devis (PSBT construite
+/// sur ses sorties) AVANT la boîte de confirmation.
+#[derive(Default)]
+struct ProfileBtcCache(std::sync::Mutex<std::collections::HashMap<u32, String>>);
+
 #[derive(Default)]
 struct WcState {
     client: std::sync::OnceLock<std::sync::Arc<pgp_wallet_poc::walletconnect::WalletConnect>>,
@@ -3811,12 +3992,15 @@ struct WcState {
     prepared: std::sync::Mutex<std::collections::HashMap<u64, (String, dapp_requests::Prepared)>>,
 }
 
-fn remember_addresses(app: &tauri::AppHandle, index: u32, evm: &str, solana: &str, zcash: &str) {
+fn remember_addresses(app: &tauri::AppHandle, index: u32, addresses: &api::Addresses) {
     if let Some(cache) = app.try_state::<ProfileAddressCache>() {
-        cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, (evm.to_string(), solana.to_string()));
+        cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, (addresses.evm.clone(), addresses.solana.clone()));
     }
     if let Some(cache) = app.try_state::<ProfileZcashCache>() {
-        cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, zcash.to_string());
+        cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, addresses.zcash.clone());
+    }
+    if let Some(cache) = app.try_state::<ProfileBtcCache>() {
+        cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, addresses.btc_mainnet.clone());
     }
 }
 
@@ -4281,6 +4465,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(ProfileAddressCache::default())
         .manage(ProfileZcashCache::default())
+        .manage(ProfileBtcCache::default())
         .manage(WcState::default())
         .manage(BalanceWatchState::default())
         .manage(UsbRestoreState::default())
@@ -4291,6 +4476,10 @@ pub fn run() {
                 // Détails des transactions Solana finalisées déjà lus (données publiques) :
                 // le nœud public n'en accorde qu'environ un par seconde.
                 pgp_wallet_poc::sol_rpc::use_details_cache_file(dir.join("solana_tx_cache.jsonl"));
+                // Clé Etherscan de l'utilisateur (historiques HyperEVM et BNB Chain).
+                if let Err(e) = pgp_wallet_poc::etherscan_key::load(&dir) {
+                    eprintln!("clé Etherscan : {e:#}");
+                }
                 // Événements WalletConnect (proposition, demande, état du relais)
                 // relayés au frontend ; le contenu des demandes, lui, n'est
                 // jamais relu depuis le frontend (voir `wc_prepare_request`).
@@ -4344,6 +4533,8 @@ pub fn run() {
             has_pending_tx,
             get_tx_history,
             get_token_tx_history,
+            etherscan_key_status,
+            set_etherscan_key,
             estimate_btc_fees,
             get_crypto_prices,
             get_market_prices,
@@ -4591,6 +4782,29 @@ mod tests {
         let rent = |index: u64| rpc.explain_simulation_failure(&serde_json::json!({"InsufficientFundsForRent": {"account_index": index}}), "").unwrap().to_string();
         assert!(translate_dynamic_error(&rent(0)).unwrap().starts_with("SOL balance too tight: at least 0.00065024 SOL must remain"));
         assert!(translate_dynamic_error(&rent(2)).unwrap().starts_with("another account touched by the operation would end up below Solana's minimum reserve (0.00065024 SOL)"));
+    }
+
+    /// Échanges depuis Bitcoin et Zcash : messages dynamiques de `core`
+    /// traduits (formes produites par le code de `core`).
+    #[test]
+    fn bitcoin_and_zcash_swap_errors_are_translated() {
+        assert_eq!(
+            translate_dynamic_error("montant trop faible pour Maya : au moins 0.0013944 ZEC (en dessous, le dépôt serait ignoré ou son remboursement impossible)").unwrap(),
+            "amount too small for Maya: at least 0.0013944 ZEC (below that, the deposit would be ignored or its refund impossible)"
+        );
+        assert_eq!(translate_dynamic_error("frais LI.FI de la transaction Bitcoin au-delà de 1,05 % — refusé").unwrap(), "LI.FI fees in the Bitcoin transaction above 1.05% — refused");
+        assert_eq!(
+            translate_dynamic_error("frais réseau Bitcoin anormalement élevés dans la transaction LI.FI (101913 sat pour ~244 vB, plafond 50 sat/vB) — refusé").unwrap(),
+            "abnormally high Bitcoin network fee in the LI.FI transaction (101913 sat for ~244 vB, cap 50 sat/vB) — refused"
+        );
+        assert_eq!(
+            translate_dynamic_error("les frais Zcash ont augmenté depuis la confirmation (0.00025000 au lieu de 0.00020000 ZEC) — relancez l'échange").unwrap(),
+            "Zcash fees increased since the confirmation (0.00025000 instead of 0.00020000 ZEC) — start again"
+        );
+        assert_eq!(translate_dynamic_error("devis Maya refusé : amount less than dust threshold").unwrap(), "Maya quote refused: amount less than dust threshold");
+        for fr in ["la transaction LI.FI n'envoie pas exactement le montant affiché — refusé", "adresse de dépôt Maya invalide", "PSBT LI.FI illisible"] {
+            assert!(EXACT_ERROR_TRANSLATIONS.iter().any(|(text, _)| *text == fr), "{fr}");
+        }
     }
 
     /// Chaque message d'erreur des modules matériels a sa traduction : les

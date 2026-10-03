@@ -1,0 +1,42 @@
+{
+ "tool": "layerswap",
+ "toolDetails": {
+  "name": "Layerswap"
+ },
+ "integrator": "openpgp-wallet",
+ "action": {
+  "fromChainId": 20000000000001,
+  "toChainId": 1,
+  "fromToken": {
+   "address": "bitcoin"
+  },
+  "toToken": {
+   "address": "0x0000000000000000000000000000000000000000"
+  },
+  "fromAmount": "1000000",
+  "fromAddress": "bc1qm34lsc65zpw79lxes69zkqmk6ee3ewf0j77s3h",
+  "toAddress": "0x59D78c44ac60F09369b544778358704B7b18E6ba"
+ },
+ "estimate": {
+  "toAmount": "312888980000000000",
+  "toAmountMin": "309760090000000000",
+  "executionDuration": 939,
+  "feeCosts": [
+   {
+    "name": "LIFI Fixed Fee",
+    "amount": "10500",
+    "included": true
+   },
+   {
+    "name": "LayerSwap fee",
+    "amount": "921",
+    "included": true
+   }
+  ]
+ },
+ "transactionRequest": {
+  "to": "bc1plxa9q77gz9r33g8pd4c2ygzezchjffuedtzdrkclyceseyw8v80qasmquf",
+  "value": "1000000",
+  "data": "70736274ff0100d80200000001c968def56a09bc4eb34bad1896ef2f735aebc4387245d47b07dbc92708d09a8b0000000000fdffffff053c190f0000000000225120f9ba507bc8114718a0e16d70a22059162f24a7996ac4d1db1f26330c91c761de0000000000000000146a12313139386632653b3d7c6c696669d2dfec1c1ea931bd05000000160014dc6bf86354105de2fcd9868a2b0376d6731cb92fc4090000000000001600149ab105ce5f65cc9d3e51e4b2403eef1831eb5bfd401f00000000000016001416ee74e3d28cc8dd0b97e97d191236fb9b568781000000000001011fd7f240bd05000000160014dc6bf86354105de2fcd9868a2b0376d6731cb92f000000000000"
+ }
+}

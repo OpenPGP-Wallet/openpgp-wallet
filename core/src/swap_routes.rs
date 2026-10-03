@@ -51,20 +51,30 @@ const JUPITER: [SwapAsset; 5] = [
     SwapAsset { coin: "render", network: "sol_mainnet" },
 ];
 
-/// `protocol` relie-t-il `from` à `to` ? Depuis Bitcoin, pas tant que son
-/// nom court d'affiliation n'est pas enregistré : le memo avec l'adresse
-/// complète dépasse les 80 octets d'un OP_RETURN (voir
-/// `thorchain_rpc::AFFILIATE_NAME`).
+/// `protocol` relie-t-il `from` à `to` ? Depuis Bitcoin ou Zcash aussi :
+/// sans nom court d'affiliation, sans frais pour l'app (voir
+/// `thorchain_rpc::CrossChain::charges_affiliate`).
 fn links(protocol: &thorchain_rpc::CrossChain, from: SwapAsset, to: SwapAsset) -> bool {
-    if from.coin == "btc" && protocol.affiliate_name.is_none() {
-        return false;
-    }
-    // ZEC : en destination seulement (vendre du ZEC demande une transaction
-    // Zcash avec memo, pas encore construite par l'app, et un nom court).
-    if from.coin == "zec" {
-        return false;
-    }
     protocol.asset(from.coin, from.network).is_some() && protocol.asset(to.coin, to.network).is_some()
+}
+
+/// Frais d'affiliation de l'app (points de base) d'un échange depuis `from`
+/// via `protocol` : 0 depuis Bitcoin ou Zcash par THORChain ou Maya tant que
+/// le nom court n'existe pas. Jupiter : sans compte de frais pour la paire,
+/// l'échange se fait sans frais (dit dans sa boîte de confirmation).
+pub fn affiliate_fee_bps(protocol: Protocol, from: SwapAsset) -> u32 {
+    match protocol {
+        Protocol::Thorchain | Protocol::Maya => {
+            let cross_chain = protocol.cross_chain().expect("THORChain ou Maya");
+            match cross_chain.asset(from.coin, from.network) {
+                Some(asset) if !cross_chain.charges_affiliate(asset.asset) => 0,
+                _ => thorchain_rpc::AFFILIATE_FEE_BPS,
+            }
+        }
+        Protocol::Jupiter => crate::jupiter_rpc::AFFILIATE_FEE_BPS,
+        Protocol::Cow => cow::PARTNER_FEE_BPS,
+        Protocol::Lifi => (lifi::FEE * 10_000.0).round() as u32,
+    }
 }
 
 /// CoW relie deux cryptos du MÊME réseau EVM qu'il connaît (la monnaie du
@@ -89,9 +99,11 @@ fn lifi_enabled() -> bool {
 /// moins préféré : Jupiter (même portefeuille Solana), CoW sur un même réseau
 /// EVM (ordre sans transaction d'échange, meilleurs prix), THORChain (pools
 /// les plus profonds), Maya (Arbitrum), puis LI.FI (agrégateur : transaction
-/// construite par un tiers, vérifiée avant signature). L'utilisateur peut
-/// choisir n'importe lequel ; les commandes d'échange refusent un protocole
-/// absent de la liste.
+/// construite par un tiers, vérifiée avant signature). Depuis Bitcoin sans
+/// nom court THORChain, LI.FI d'abord : seule route qui porte les frais de
+/// l'app (choix du développeur, 03/10/2026). L'utilisateur peut choisir
+/// n'importe lequel ; les commandes d'échange refusent un protocole absent de
+/// la liste.
 pub fn direct_all(from: SwapAsset, to: SwapAsset) -> Vec<Protocol> {
     let mut all = Vec::new();
     if from == to {
@@ -110,7 +122,11 @@ pub fn direct_all(from: SwapAsset, to: SwapAsset) -> Vec<Protocol> {
         all.push(Protocol::Maya);
     }
     if lifi_enabled() && lifi::links((from.coin, from.network), (to.coin, to.network)) {
-        all.push(Protocol::Lifi);
+        if from.network == "btc_mainnet" && thorchain_rpc::AFFILIATE_NAME.is_none() {
+            all.insert(0, Protocol::Lifi);
+        } else {
+            all.push(Protocol::Lifi);
+        }
     }
     all
 }
@@ -147,9 +163,13 @@ pub struct Route {
 /// Préférence d'une crypto intermédiaire (la plus petite d'abord) : la
 /// monnaie d'un réseau, qui paie aussi les frais de la seconde étape (celle du
 /// réseau de départ, puis d'arrivée, puis une autre) ; puis les dollars
-/// numériques ; puis le reste.
+/// numériques ; puis le reste ; Bitcoin et Zcash en dernier recours
+/// (confirmations lentes, frais de la seconde étape plus élevés).
 fn via_rank(via: SwapAsset, from: SwapAsset, to: SwapAsset) -> u8 {
     let native = tokens::find(via.coin, via.network).is_none();
+    if matches!(via.network, "btc_mainnet" | "zec_mainnet") {
+        return 5;
+    }
     match via.coin {
         _ if native && via.network == from.network => 0,
         _ if native && via.network == to.network => 1,
@@ -248,23 +268,40 @@ mod tests {
         }
     }
 
-    /// Depuis Bitcoin : aucune route tant que le THORName n'existe pas ; vers
-    /// Bitcoin : oui.
+    /// Depuis Bitcoin : LI.FI d'abord (avec les frais de l'app) tant que le
+    /// THORName n'existe pas, puis THORChain et Maya sans frais ; vers
+    /// Bitcoin : THORChain d'abord.
     #[test]
-    fn bitcoin_sources_wait_for_the_thorname() {
+    fn bitcoin_sources_offer_lifi_first_then_fee_free_pools() {
         let btc = a("btc", "btc_mainnet");
         let eth = a("evm", "evm_mainnet");
         assert_eq!(direct(eth, btc), Some(Protocol::Thorchain));
-        assert_eq!(direct(btc, eth).is_some(), thorchain_rpc::AFFILIATE_NAME.is_some());
-        for (from, to, _) in routes() {
-            assert!(from != to);
-            assert!(from.coin != "btc" || thorchain_rpc::AFFILIATE_NAME.is_some(), "aucune route depuis Bitcoin sans THORName");
+        let mut expected = vec![Protocol::Thorchain, Protocol::Maya];
+        if lifi_enabled() {
+            if thorchain_rpc::AFFILIATE_NAME.is_none() {
+                expected.insert(0, Protocol::Lifi);
+            } else {
+                expected.push(Protocol::Lifi);
+            }
+        }
+        assert_eq!(direct_all(btc, eth), expected);
+        let free = u32::from(thorchain_rpc::AFFILIATE_NAME.is_some()) * thorchain_rpc::AFFILIATE_FEE_BPS;
+        assert_eq!(affiliate_fee_bps(Protocol::Thorchain, btc), free);
+        assert_eq!(affiliate_fee_bps(Protocol::Maya, btc), 0, "Maya : pas de MAYAName");
+        assert_eq!(affiliate_fee_bps(Protocol::Thorchain, eth), 80);
+        assert_eq!(affiliate_fee_bps(Protocol::Lifi, btc), 80);
+        assert_eq!(affiliate_fee_bps(Protocol::Cow, eth), 100);
+        // Toute crypto que l'app échange est joignable depuis Bitcoin.
+        let all = assets();
+        for to in all.iter().filter(|t| **t != btc) {
+            assert!(route(btc, *to).is_some(), "aucune route BTC → {to:?}");
         }
     }
 
-    /// LI.FI : entre deux réseaux différents, jamais depuis Bitcoin, et depuis
-    /// un réseau sans simulation (Avalanche, HyperEVM) vers un réseau EVM
-    /// seulement ; proposé en dernier, une fois le nom d'intégrateur renseigné.
+    /// LI.FI : entre deux réseaux différents (Bitcoin compris, PSBT vérifiée),
+    /// et depuis un réseau sans simulation (Avalanche, HyperEVM) vers un
+    /// réseau EVM seulement ; proposé en dernier (sauf depuis Bitcoin), une
+    /// fois le nom d'intégrateur renseigné.
     #[test]
     fn lifi_links_between_ecosystems() {
         assert!(lifi::links(("render", "sol_mainnet"), ("link", "evm_mainnet")), "le cas qui manquait");
@@ -274,7 +311,9 @@ mod tests {
         assert!(lifi::links(("usdc", "base_mainnet"), ("hype", "hyperevm_mainnet")), "HYPE acheté");
         assert!(!lifi::links(("hype", "hyperevm_mainnet"), ("sol", "sol_mainnet")), "HyperEVM ne simule pas : pas vers Solana");
         assert!(!lifi::links(("avax", "avax_mainnet"), ("btc", "btc_mainnet")));
-        assert!(!lifi::links(("btc", "btc_mainnet"), ("evm", "evm_mainnet")), "jamais depuis Bitcoin");
+        assert!(lifi::links(("btc", "btc_mainnet"), ("evm", "evm_mainnet")), "depuis Bitcoin : PSBT vérifiée");
+        assert!(lifi::links(("btc", "btc_mainnet"), ("sol", "sol_mainnet")));
+        assert!(!lifi::links(("zec", "zec_mainnet"), ("evm", "evm_mainnet")), "ZEC inconnu de LI.FI");
         assert!(!lifi::links(("link", "evm_mainnet"), ("usdc", "evm_mainnet")), "même réseau : CoW");
         let render_link = direct_all(a("render", "sol_mainnet"), a("link", "evm_mainnet"));
         assert_eq!(render_link.contains(&Protocol::Lifi), lifi_enabled());
@@ -283,14 +322,24 @@ mod tests {
         }
     }
 
-    /// ZEC via Maya, en destination seulement.
+    /// ZEC via Maya, dans les deux sens ; depuis ZEC sans frais pour l'app
+    /// (pas de MAYAName) ; vers une crypto que Maya n'a pas, en deux étapes
+    /// par une monnaie de réseau rapide (ETH), jamais par Bitcoin.
     #[test]
-    fn zec_is_a_destination_only() {
+    fn zec_swaps_both_ways_through_maya() {
         let zec = a("zec", "zec_mainnet");
-        assert_eq!(direct(a("evm", "evm_mainnet"), zec), Some(Protocol::Maya));
+        let eth = a("evm", "evm_mainnet");
+        assert_eq!(direct(eth, zec), Some(Protocol::Maya));
         assert_eq!(direct(a("usdc", "arbitrum_mainnet"), zec), Some(Protocol::Maya));
-        assert!(direct_all(zec, a("evm", "evm_mainnet")).is_empty());
-        assert!(routes().iter().all(|(from, _, _)| from.coin != "zec"));
+        assert_eq!(direct_all(zec, eth), vec![Protocol::Maya]);
+        assert_eq!(direct_all(zec, a("btc", "btc_mainnet")), vec![Protocol::Maya]);
+        assert_eq!(affiliate_fee_bps(Protocol::Maya, zec), 0);
+        let to_sol = route(zec, a("sol", "sol_mainnet")).expect("ZEC → SOL en deux étapes");
+        let (via, _) = to_sol.via.expect("deux étapes");
+        assert!(!matches!(via.network, "btc_mainnet" | "zec_mainnet"), "intermédiaire lent : {via:?}");
+        for to in assets().into_iter().filter(|t| *t != zec) {
+            assert!(route(zec, to).is_some(), "aucune route ZEC → {to:?}");
+        }
     }
 
     /// Plusieurs fournisseurs possibles : tous listés, le préféré d'abord.

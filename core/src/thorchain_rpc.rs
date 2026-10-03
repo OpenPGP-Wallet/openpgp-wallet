@@ -39,12 +39,14 @@ const THORNODE_BASE: &str = "https://gateway.liquify.com/chain/thorchain_api";
 pub const AFFILIATE_ADDRESS: &str = "thor12j5rrcflhffxmq0ekwvk0h7g0mdy8gn4fg0w3e";
 
 /// THORName (alias court) de `AFFILIATE_ADDRESS`, une fois enregistré par le
-/// développeur. Indispensable aux échanges DEPUIS Bitcoin : son memo tient en
-/// 80 octets (OP_RETURN), et l'adresse `thor1…` complète (43 caractères) l'en
-/// faisait déborder — constaté le 01/10/2026, THORChain refusait alors tout
-/// devis depuis BTC (« generated memo too long for source chain »). Avant
-/// usage, le nom est revérifié auprès de THORChain : son alias THOR doit être
-/// `AFFILIATE_ADDRESS` (voir `verified_affiliate`).
+/// développeur. Indispensable aux frais d'affiliation DEPUIS Bitcoin : son
+/// memo tient en 80 octets (OP_RETURN), et l'adresse `thor1…` complète (43
+/// caractères) l'en faisait déborder — constaté le 01/10/2026, THORChain
+/// refusait alors tout devis depuis BTC avec affilié (« generated memo too
+/// long for source chain »). Sans lui, les échanges depuis Bitcoin (et Zcash
+/// sur Maya) se font SANS frais d'affiliation (voir `charges_affiliate`).
+/// Avant usage, le nom est revérifié auprès de THORChain : son alias THOR doit
+/// être `AFFILIATE_ADDRESS` (voir `verified_affiliate`).
 pub const AFFILIATE_NAME: Option<&str> = None;
 
 /// 80 points de base = 0,80 %.
@@ -202,6 +204,13 @@ fn chain_of(asset: &str) -> &str {
     asset.split('.').next().unwrap_or(asset)
 }
 
+/// Chaînes de départ dont le memo voyage dans une sortie OP_RETURN, limitée
+/// à 80 octets : Bitcoin, et Zcash sur Maya (relevé le 03/10/2026 : memo de
+/// 102 octets avec l'affilié `maya1…` complet, refusé).
+fn memo_in_op_return(asset: &str) -> bool {
+    matches!(chain_of(asset), "BTC" | "ZEC")
+}
+
 /// Nom du réseau d'une chaîne, pour les messages.
 fn chain_label(chain: &str) -> &str {
     match chain {
@@ -245,6 +254,14 @@ fn check_thorname(body: &str, current_height: i64, native_chain: &str, affiliate
 impl CrossChain {
     pub fn asset(&self, coin: &str, network: &str) -> Option<&'static ThorAsset> {
         self.assets.iter().find(|a| a.coin == coin && a.network == network)
+    }
+
+    /// Frais d'affiliation prélevés sur un échange depuis `from_asset` ? Oui,
+    /// sauf depuis une chaîne à OP_RETURN (Bitcoin, Zcash) tant que le nom
+    /// court n'est pas enregistré : l'adresse complète ferait déborder le memo,
+    /// l'échange se fait alors sans frais pour l'app (memo à 4 champs).
+    pub fn charges_affiliate(&self, from_asset: &str) -> bool {
+        self.affiliate_name.is_some() || !memo_in_op_return(from_asset)
     }
 
     /// Affilié à inscrire dans les devis : le nom court s'il est enregistré (et
@@ -345,6 +362,9 @@ pub struct SwapQuote {
     /// purement informatif pour l'affichage — déjà déduit de
     /// `expected_amount_out`, jamais à soustraire une seconde fois.
     pub total_fees: Option<u64>,
+    /// Tarif de frais conseillé pour le dépôt (sat/vB sur Bitcoin), sous
+    /// lequel le protocole peut tarder à le voir.
+    pub recommended_gas_rate: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -354,6 +374,11 @@ struct QuoteResponseJson {
     memo: Option<String>,
     expected_amount_out: Option<String>,
     fees: Option<FeesJson>,
+    recommended_gas_rate: Option<String>,
+    /// Montant sous lequel un dépôt est ignoré (fonds perdus), et minimum
+    /// conseillé (en dessous, un remboursement peut échouer) — en 1e8.
+    dust_threshold: Option<String>,
+    recommended_min_amount_in: Option<String>,
     /// Présent (avec `code`) sur une réponse d'erreur réelle — vérifié contre
     /// un appel en direct : `{"code":3,"message":"...","details":[]}`, PAS un
     /// champ `error` comme on pourrait le supposer par convention.
@@ -407,9 +432,13 @@ impl CrossChain {
     /// Devis d'échange (voir `quote_swap`), memo vérifié avant tout usage.
     pub fn quote_swap(&self, from_asset: &str, to_asset: &str, amount: u64, destination: &str) -> Result<SwapQuote> {
         let name = self.name;
-        let affiliate = self.affiliate()?;
+        let affiliate = if self.charges_affiliate(from_asset) {
+            format!("&affiliate={}&affiliate_bps={AFFILIATE_FEE_BPS}", self.affiliate()?)
+        } else {
+            String::new()
+        };
         let url = format!(
-            "{}/{}/quote/swap?from_asset={from_asset}&to_asset={to_asset}&amount={amount}&destination={destination}&affiliate={affiliate}&affiliate_bps={AFFILIATE_FEE_BPS}&liquidity_tolerance_bps={SWAP_TOLERANCE_BPS}",
+            "{}/{}/quote/swap?from_asset={from_asset}&to_asset={to_asset}&amount={amount}&destination={destination}{affiliate}&liquidity_tolerance_bps={SWAP_TOLERANCE_BPS}",
             self.node_base, self.module
         );
         let response: QuoteResponseJson = shared_client()
@@ -439,11 +468,42 @@ impl CrossChain {
             .parse::<u64>()
             .context("montant de sortie attendu illisible")?;
         let total_fees = response.fees.and_then(|f| f.total).and_then(|s| s.parse::<u64>().ok());
+        let number = |field: &Option<String>| field.as_deref().and_then(|s| s.parse::<u64>().ok());
 
-        self.verify_swap_memo(&memo, to_asset, destination, expected_amount_out)?;
+        // Sous le seuil de poussière, le dépôt est ignoré : les fonds seraient
+        // perdus (relevé : 10 000 sur Maya pour BTC et ZEC, 1 000 sur THORChain).
+        let minimum = number(&response.dust_threshold).max(number(&response.recommended_min_amount_in));
+        if let Some(minimum) = minimum.filter(|m| amount < *m) {
+            anyhow::bail!(
+                "montant trop faible pour {name} : au moins {} {} (en dessous, le dépôt serait ignoré ou son remboursement impossible)",
+                format_1e8(minimum),
+                ticker(from_asset)
+            );
+        }
 
-        Ok(SwapQuote { inbound_address, router: response.router, memo, expected_amount_out, total_fees })
+        self.verify_memo_for(&memo, from_asset, to_asset, destination, expected_amount_out)?;
+
+        Ok(SwapQuote {
+            inbound_address,
+            router: response.router,
+            memo,
+            expected_amount_out,
+            total_fees,
+            recommended_gas_rate: number(&response.recommended_gas_rate),
+        })
     }
+}
+
+/// Montant en 1e8 lisible (« 0.0013944 »).
+fn format_1e8(amount: u64) -> String {
+    let text = format!("{}.{:08}", amount / 100_000_000, amount % 100_000_000);
+    text.trim_end_matches('0').trim_end_matches('.').to_string()
+}
+
+/// Symbole d'un actif (« BTC », « USDC » pour `ETH.USDC-0X…`).
+fn ticker(asset: &str) -> &str {
+    let ticker = asset.split_once('.').map_or(asset, |(_, t)| t);
+    ticker.split_once('-').map_or(ticker, |(t, _)| t)
 }
 
 /// L'actif d'un memo désigne-t-il `to_asset` ? Formes relevées sur de vrais
@@ -479,10 +539,29 @@ fn memo_asset_matches(assets: &[ThorAsset], field: &str, to_asset: &str) -> bool
 /// exactement 6 champs. Tout champ supplémentaire est refusé : THORChain
 /// accepte des champs d'agrégateur DEX après le 6ᵉ (contrat intermédiaire,
 /// jeton final, sortie minimale) qui redirigeraient la sortie ailleurs.
+/// Sans frais d'affiliation (départ Bitcoin ou Zcash, voir
+/// `charges_affiliate`) : exactement les 4 premiers champs (relevé en direct :
+/// `=:e:0x59D7…E6ba:31290403`) — un affilié inattendu est refusé.
 impl CrossChain {
+/// Memo d'un échange depuis `from_asset` : avec ou sans frais d'affiliation
+/// selon `charges_affiliate`.
+pub fn verify_memo_for(&self, memo: &str, from_asset: &str, to_asset: &str, destination: &str, expected_amount_out: u64) -> Result<()> {
+    self.verify_memo(memo, self.charges_affiliate(from_asset), to_asset, destination, expected_amount_out)
+}
+
+/// Memo d'un échange avec nos frais d'affiliation (voir `verify_memo_for`).
 pub fn verify_swap_memo(&self, memo: &str, to_asset: &str, destination: &str, expected_amount_out: u64) -> Result<()> {
+    self.verify_memo(memo, true, to_asset, destination, expected_amount_out)
+}
+
+fn verify_memo(&self, memo: &str, with_affiliate: bool, to_asset: &str, destination: &str, expected_amount_out: u64) -> Result<()> {
     let fields: Vec<&str> = memo.split(':').collect();
-    anyhow::ensure!(fields.len() == 6, "memo THORChain inattendu ({} champs au lieu de 6) : {memo}", fields.len());
+    let expected_fields = if with_affiliate { 6 } else { 4 };
+    anyhow::ensure!(
+        fields.len() == expected_fields,
+        "memo THORChain inattendu ({} champs au lieu de {expected_fields}) : {memo}",
+        fields.len()
+    );
 
     // Alias du type "swap" dans le code source de THORNode (`memo.go`) : "swap", "s", "=".
     anyhow::ensure!(
@@ -523,13 +602,15 @@ pub fn verify_swap_memo(&self, memo: &str, to_asset: &str, destination: &str, ex
         "sortie minimale du memo THORChain ({limit}) trop basse par rapport à la sortie attendue ({expected_amount_out}) — swap refusé"
     );
 
-    let affiliate_ok = fields[4] == self.affiliate_address || self.affiliate_name == Some(fields[4]);
-    anyhow::ensure!(
-        affiliate_ok && fields[5] == AFFILIATE_FEE_BPS.to_string(),
-        "frais d'affiliation du memo THORChain inattendus ({}:{}) — swap refusé",
-        fields[4],
-        fields[5]
-    );
+    if with_affiliate {
+        let affiliate_ok = fields[4] == self.affiliate_address || self.affiliate_name == Some(fields[4]);
+        anyhow::ensure!(
+            affiliate_ok && fields[5] == AFFILIATE_FEE_BPS.to_string(),
+            "frais d'affiliation du memo THORChain inattendus ({}:{}) — swap refusé",
+            fields[4],
+            fields[5]
+        );
+    }
     Ok(())
 }
 }
@@ -543,6 +624,52 @@ mod tests {
     /// Memo réel renvoyé par la passerelle (ETH -> BTC, liquidity_tolerance_bps=50).
     fn real_memo() -> String {
         format!("=:b:{DEST_BTC}:3146167:{AFFILIATE_ADDRESS}:80")
+    }
+
+    /// Départ Bitcoin ou Zcash sans nom court : devis sans affilié, memo à 4
+    /// champs (formes réelles relevées le 03/10/2026) ; un affilié glissé dans
+    /// un tel memo, même le nôtre, est refusé (frais non affichés).
+    #[test]
+    fn op_return_sources_carry_no_affiliate() {
+        let evm = "0x59D78c44ac60F09369b544778358704B7b18E6ba";
+        assert_eq!(THORCHAIN.charges_affiliate("BTC.BTC"), AFFILIATE_NAME.is_some());
+        assert!(!MAYA.charges_affiliate("ZEC.ZEC") && !MAYA.charges_affiliate("BTC.BTC"));
+        assert!(THORCHAIN.charges_affiliate("ETH.ETH") && MAYA.charges_affiliate("ARB.ETH"));
+        if AFFILIATE_NAME.is_none() {
+            THORCHAIN.verify_memo_for(&format!("=:e:{evm}:31290403"), "BTC.BTC", "ETH.ETH", evm, 31_606_468).expect("BTC → ETH");
+            THORCHAIN
+                .verify_memo_for(&format!("=:ETH.USDC:{evm}:83511423369"), "BTC.BTC", "ETH.USDC-0XA0B86991C6218B36C1D19D4A2E9EB0CE3606EB48", evm, 84_354_973_100)
+                .expect("BTC → USDC");
+            let with_fee = format!("=:e:{evm}:31290403:{AFFILIATE_ADDRESS}:80");
+            assert!(THORCHAIN.verify_memo_for(&with_fee, "BTC.BTC", "ETH.ETH", evm, 31_606_468).is_err(), "affilié inattendu");
+        }
+        MAYA.verify_memo_for(&format!("=:e:{evm}:48048634"), "ZEC.ZEC", "ETH.ETH", evm, 48_533_974).expect("ZEC → ETH");
+        MAYA.verify_memo_for(&format!("=:b:{DEST_BTC}:1521019"), "ZEC.ZEC", "BTC.BTC", DEST_BTC, 1_536_383).expect("ZEC → BTC");
+        MAYA.verify_memo_for(&format!("=:ARB.USDC:{evm}:92037029832"), "ZEC.ZEC", "ARB.USDC-0XAF88D065E77C8CC2239327C5EDB3A432268E5831", evm, 92_966_696_800)
+            .expect("ZEC → USDC Arbitrum");
+        assert!(MAYA.verify_memo_for("=:e:0x1111111111111111111111111111111111111111:48048634", "ZEC.ZEC", "ETH.ETH", evm, 48_533_974).is_err(), "autre destination");
+        assert!(MAYA.verify_memo_for(&format!("=:e:{evm}:1000"), "ZEC.ZEC", "ETH.ETH", evm, 48_533_974).is_err(), "limite dérisoire");
+        assert!(MAYA.verify_memo_for(&format!("=:e:{evm}:48048634:maya1autre:9000"), "ZEC.ZEC", "ETH.ETH", evm, 48_533_974).is_err(), "affilié étranger");
+        assert!(MAYA.verify_memo_for(&format!("=:e:{evm}:48048634"), "ETH.ETH", "ETH.ETH", evm, 48_533_974).is_err(), "depuis ETH : affilié exigé");
+        assert_eq!((format_1e8(139_440), format_1e8(100_000_000), format_1e8(1_000)), ("0.0013944".to_string(), "1".to_string(), "0.00001".to_string()));
+        assert_eq!((ticker("ZEC.ZEC"), ticker("ETH.USDC-0XA0B8")), ("ZEC", "USDC"));
+    }
+
+    /// Devis réels sans affilié depuis Bitcoin et Zcash (lecture seule), memo
+    /// vérifié, et montant sous le seuil de poussière refusé.
+    #[test]
+    #[ignore]
+    fn real_quotes_from_op_return_sources() {
+        let evm = "0x59D78c44ac60F09369b544778358704B7b18E6ba";
+        for (protocol, from, amount) in [(&THORCHAIN, "BTC.BTC", 1_000_000), (&MAYA, "BTC.BTC", 1_000_000), (&MAYA, "ZEC.ZEC", 100_000_000)] {
+            let quote = protocol.quote_swap(from, "ETH.ETH", amount, evm).unwrap_or_else(|e| panic!("{} {from} : {e:#}", protocol.name));
+            println!("{} {from} : {} ({} octets), gas {:?}", protocol.name, quote.memo, quote.memo.len(), quote.recommended_gas_rate);
+            assert!(quote.memo.len() <= 80);
+        }
+        // Entre le seuil de poussière (10 000, refusé par Maya lui-même) et le
+        // minimum conseillé (~139 000) : refusé par l'app.
+        let err = MAYA.quote_swap("ZEC.ZEC", "ETH.ETH", 50_000, evm).err().expect("montant sous le minimum refusé").to_string();
+        assert!(err.contains("trop faible"), "{err}");
     }
 
     /// Réponses réelles de `inbound_addresses` (abrégées) : réseau Solana

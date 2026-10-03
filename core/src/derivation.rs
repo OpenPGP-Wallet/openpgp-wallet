@@ -213,28 +213,50 @@ pub fn derive_solana_key(seed: &[u8], account_index: u32) -> ed25519_dalek::Sign
 
 /// Décode une adresse Bitcoin testnet P2WPKH (bech32) en hash160 (20 octets).
 pub fn parse_btc_testnet_address(address: &str) -> Result<[u8; 20]> {
-    let (hrp, data, _variant) = bech32::decode(address).context("adresse bech32 invalide")?;
-    if hrp != "tb" {
-        return Err(anyhow!("adresse non-testnet (préfixe 'tb' attendu, trouvé '{hrp}')"));
-    }
-    parse_btc_witness_program(data)
+    p2wpkh_hash160(decode_segwit(address, "tb", "testnet")?)
 }
 
 /// Décode une adresse Bitcoin MAINNET P2WPKH (bech32) en hash160 (20 octets).
 pub fn parse_btc_mainnet_address(address: &str) -> Result<[u8; 20]> {
-    let (hrp, data, _variant) = bech32::decode(address).context("adresse bech32 invalide")?;
-    if hrp != "bc" {
-        return Err(anyhow!("adresse non-mainnet (préfixe 'bc' attendu, trouvé '{hrp}')"));
-    }
-    parse_btc_witness_program(data)
+    p2wpkh_hash160(decode_segwit(address, "bc", "mainnet")?)
 }
 
-fn parse_btc_witness_program(data: Vec<bech32::u5>) -> Result<[u8; 20]> {
-    let (_witness_version, program) = data
-        .split_first()
-        .ok_or_else(|| anyhow!("adresse bech32 vide"))?;
-    let bytes = Vec::<u8>::from_base32(program).context("conversion base32 -> octets impossible")?;
-    bytes
+/// Script de sortie (scriptPubKey) d'une adresse Bitcoin MAINNET SegWit
+/// quelconque : v0 (bc1q…, P2WPKH ou P2WSH) ou v1 (bc1p…, Taproot) —
+/// l'adresse de dépôt d'un pont, que l'app paie sans la détenir.
+pub fn btc_mainnet_script_pubkey(address: &str) -> Result<Vec<u8>> {
+    let (version, program) = decode_segwit(address, "bc", "mainnet")?;
+    anyhow::ensure!(version <= 1, "adresse Bitcoin d'une version SegWit future (v{version}) — refusée");
+    // OP_0, ou OP_1 (0x51) ; puis le programme poussé tel quel.
+    let mut script = vec![if version == 0 { 0x00 } else { 0x51 }, program.len() as u8];
+    script.extend_from_slice(&program);
+    Ok(script)
+}
+
+/// Version témoin et programme d'une adresse SegWit (BIP173 / BIP350), avec
+/// les règles que le décodage bech32 seul ne vérifie pas : encodage bech32
+/// pour la version 0 et bech32m au-delà, tailles de programme valides. Sans
+/// elles, une adresse Taproot de 20 octets (v1, bech32m) passait pour une
+/// P2WPKH — le paiement partait vers un autre script que celui saisi.
+fn decode_segwit(address: &str, expected_hrp: &str, network: &str) -> Result<(u8, Vec<u8>)> {
+    let (hrp, data, variant) = bech32::decode(address).context("adresse bech32 invalide")?;
+    if hrp != expected_hrp {
+        return Err(anyhow!("adresse non-{network} (préfixe '{expected_hrp}' attendu, trouvé '{hrp}')"));
+    }
+    let (version, program) = data.split_first().ok_or_else(|| anyhow!("adresse bech32 vide"))?;
+    let version = version.to_u8();
+    let program = Vec::<u8>::from_base32(program).context("conversion base32 -> octets impossible")?;
+    let expected_variant = if version == 0 { Variant::Bech32 } else { Variant::Bech32m };
+    anyhow::ensure!(
+        version <= 16 && variant == expected_variant && (2..=40).contains(&program.len()) && (version != 0 || matches!(program.len(), 20 | 32)),
+        "adresse Bitcoin mal formée (version SegWit, encodage ou longueur incohérents)"
+    );
+    Ok((version, program))
+}
+
+fn p2wpkh_hash160((version, program): (u8, Vec<u8>)) -> Result<[u8; 20]> {
+    anyhow::ensure!(version == 0, "programme témoin de taille inattendue (P2WPKH attend 20 octets)");
+    program
         .try_into()
         .map_err(|_| anyhow!("programme témoin de taille inattendue (P2WPKH attend 20 octets)"))
 }
@@ -304,5 +326,35 @@ mod tests {
         // aucune raison de produire le même hash160 pour la même seed/index.
         let (_btc_key, btc_hash160) = derive_btc_mainnet_key(&seed, 0).unwrap();
         assert_ne!(hash160, btc_hash160);
+    }
+
+    /// Vecteurs de BIP173 / BIP350, et le cas qui passait avant : un programme
+    /// de 20 octets en version 1 (bech32m) lu comme une P2WPKH.
+    #[test]
+    fn segwit_addresses_follow_bip173_and_bip350() {
+        assert_eq!(
+            hex::encode(btc_mainnet_script_pubkey("BC1QW508D6QEJXTDG4Y5R3ZARVARY0C5XW7KV8F3T4").unwrap()),
+            "0014751e76e8199196d454941c45d1b3a323f1433bd6"
+        );
+        assert_eq!(
+            hex::encode(btc_mainnet_script_pubkey("bc1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqzk5jj0").unwrap()),
+            "512079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+        );
+        assert_eq!(hex::encode(parse_btc_mainnet_address("bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4").unwrap()), "751e76e8199196d454941c45d1b3a323f1433bd6");
+
+        let encode = |version: u8, program: &[u8], variant: Variant| {
+            let mut data = vec![bech32::u5::try_from_u8(version).unwrap()];
+            data.extend(program.to_base32());
+            bech32::encode("bc", data, variant).unwrap()
+        };
+        let taproot_20 = encode(1, &[0x75; 20], Variant::Bech32m);
+        assert!(parse_btc_mainnet_address(&taproot_20).is_err(), "v1 de 20 octets n'est pas une P2WPKH");
+        let v0_bech32m = encode(0, &[0x75; 20], Variant::Bech32m);
+        assert!(parse_btc_mainnet_address(&v0_bech32m).is_err() && btc_mainnet_script_pubkey(&v0_bech32m).is_err(), "v0 en bech32m");
+        let v1_bech32 = encode(1, &[0x79; 32], Variant::Bech32);
+        assert!(btc_mainnet_script_pubkey(&v1_bech32).is_err(), "v1 en bech32");
+        assert!(btc_mainnet_script_pubkey(&encode(2, &[0x75; 16], Variant::Bech32m)).is_err(), "version future refusée");
+        assert!(btc_mainnet_script_pubkey(&encode(0, &[0x75; 25], Variant::Bech32)).is_err(), "v0 : 20 ou 32 octets");
+        assert!(parse_btc_mainnet_address("tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx").is_err(), "testnet");
     }
 }

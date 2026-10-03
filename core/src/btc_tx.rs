@@ -85,6 +85,13 @@ fn op_return_script(data: &[u8]) -> Vec<u8> {
     s
 }
 
+/// Taille (octets, = vbytes : aucune partie témoin) d'une sortie OP_RETURN
+/// portant `len` octets : valeur, longueur du script, script.
+pub fn op_return_output_size(len: usize) -> u64 {
+    let script = 1 + if len <= 75 { 1 } else { 2 } + len as u64;
+    8 + varint_len(script) + script
+}
+
 /// scriptCode utilisé dans le sighash BIP143 pour un input P2WPKH : équivalent
 /// au script P2PKH classique (imposé par la spec, même si l'input n'est pas P2PKH).
 fn p2wpkh_script_code(hash160: &[u8; 20]) -> Vec<u8> {
@@ -94,65 +101,66 @@ fn p2wpkh_script_code(hash160: &[u8; 20]) -> Vec<u8> {
     s
 }
 
-impl BtcTx {
+/// Entrée P2WPKH d'une transaction quelconque (voir `RawTx`).
+#[derive(Debug)]
+pub struct RawInput {
+    /// Ordre "affiché" (big-endian), comme `Utxo::txid`.
+    pub txid: [u8; 32],
+    pub vout: u32,
+    pub sequence: u32,
+    /// Montant de la sortie dépensée, engagé par la signature (BIP143).
+    pub value_sat: u64,
+}
+
+/// Transaction dont toutes les entrées sont des P2WPKH d'une même clé, avec
+/// des sorties quelconques (valeur, script) : celle que l'app construit
+/// (`BtcTx`), ou celle d'une PSBT fournie par un tiers (LI.FI), relue et
+/// re-sérialisée ici avant signature.
+#[derive(Debug)]
+pub struct RawTx {
+    pub version: u32,
+    pub inputs: Vec<RawInput>,
+    pub outputs: Vec<(u64, Vec<u8>)>,
+    pub locktime: u32,
+}
+
+impl RawTx {
     /// Sorties sérialisées SANS le préfixe de compte (varint) : c'est le format attendu
     /// par le sighash BIP143 pour `hashOutputs` (contrairement à la transaction finale,
     /// qui elle a besoin de ce préfixe — voir `sign()`).
     fn outputs_body(&self) -> Vec<u8> {
         let mut buf = Vec::new();
-
-        buf.extend_from_slice(&self.value_sat.to_le_bytes());
-        let script = p2wpkh_script_pubkey(&self.to_hash160);
-        push_varint(&mut buf, script.len() as u64);
-        buf.extend_from_slice(&script);
-
-        if self.change_sat > 0 {
-            buf.extend_from_slice(&self.change_sat.to_le_bytes());
-            let change_script = p2wpkh_script_pubkey(&self.change_hash160);
-            push_varint(&mut buf, change_script.len() as u64);
-            buf.extend_from_slice(&change_script);
-        }
-
-        if let Some(data) = &self.op_return_data {
-            buf.extend_from_slice(&0u64.to_le_bytes()); // valeur 0 : non dépensable
-            let script = op_return_script(data);
+        for (value, script) in &self.outputs {
+            buf.extend_from_slice(&value.to_le_bytes());
             push_varint(&mut buf, script.len() as u64);
-            buf.extend_from_slice(&script);
+            buf.extend_from_slice(script);
         }
         buf
     }
 
-    fn num_outputs(&self) -> u64 {
-        1 + (self.change_sat > 0) as u64 + self.op_return_data.is_some() as u64
-    }
-
     fn hash_prevouts(&self) -> [u8; 32] {
         let mut buf = Vec::new();
-        for u in &self.inputs {
-            let mut txid_le = u.txid;
+        for input in &self.inputs {
+            let mut txid_le = input.txid;
             txid_le.reverse();
             buf.extend_from_slice(&txid_le);
-            buf.extend_from_slice(&u.vout.to_le_bytes());
+            buf.extend_from_slice(&input.vout.to_le_bytes());
         }
         dsha256(&buf)
     }
 
     fn hash_sequence(&self) -> [u8; 32] {
         let mut buf = Vec::new();
-        for _ in &self.inputs {
-            buf.extend_from_slice(&0xffff_ffffu32.to_le_bytes());
+        for input in &self.inputs {
+            buf.extend_from_slice(&input.sequence.to_le_bytes());
         }
         dsha256(&buf)
     }
 
-    fn hash_outputs(&self) -> [u8; 32] {
-        dsha256(&self.outputs_body())
-    }
-
-    /// Sighash BIP143 pour l'input `index`, dont le scriptCode correspond à `input_hash160`.
+    /// Sighash BIP143 (SIGHASH_ALL) pour l'input `index`, dont le scriptCode correspond à `input_hash160`.
     fn sighash(&self, index: usize, input_hash160: &[u8; 20]) -> [u8; 32] {
         let mut preimage = Vec::new();
-        preimage.extend_from_slice(&1u32.to_le_bytes()); // version
+        preimage.extend_from_slice(&self.version.to_le_bytes());
         preimage.extend_from_slice(&self.hash_prevouts());
         preimage.extend_from_slice(&self.hash_sequence());
 
@@ -164,17 +172,37 @@ impl BtcTx {
 
         preimage.extend_from_slice(&p2wpkh_script_code(input_hash160));
         preimage.extend_from_slice(&input.value_sat.to_le_bytes());
-        preimage.extend_from_slice(&0xffff_ffffu32.to_le_bytes()); // sequence
+        preimage.extend_from_slice(&input.sequence.to_le_bytes());
 
-        preimage.extend_from_slice(&self.hash_outputs());
-        preimage.extend_from_slice(&0u32.to_le_bytes()); // locktime
+        preimage.extend_from_slice(&dsha256(&self.outputs_body()));
+        preimage.extend_from_slice(&self.locktime.to_le_bytes());
         preimage.extend_from_slice(&1u32.to_le_bytes()); // SIGHASH_ALL
 
         dsha256(&preimage)
     }
 
+    /// Taille hors témoins (version, entrées, sorties, locktime).
+    fn base_size(&self) -> u64 {
+        let mut size = 4 + 4 + varint_len(self.inputs.len() as u64) + varint_len(self.outputs.len() as u64);
+        size += self.inputs.len() as u64 * (32 + 4 + 1 + 4);
+        for (_, script) in &self.outputs {
+            size += 8 + varint_len(script.len() as u64) + script.len() as u64;
+        }
+        size
+    }
+
+    /// Taille virtuelle une fois signée, au plus (signature DER de 72 octets
+    /// avec son type, clé compressée) : sert à vérifier le tarif de frais
+    /// d'une transaction préparée par un tiers.
+    pub fn signed_vsize(&self) -> u64 {
+        // Marqueur et drapeau segwit (2), puis par entrée : compte (1) +
+        // signature (1 + 72) + clé (1 + 33).
+        let witness = 2 + self.inputs.len() as u64 * (1 + 1 + 72 + 1 + 33);
+        (self.base_size() * 4 + witness).div_ceil(4)
+    }
+
     /// Construit et signe la transaction. Toutes les entrées doivent appartenir à la
-    /// même clé (`input_hash160`), ce qui est le cas dans cette démo mono-adresse.
+    /// même clé (`input_hash160`).
     pub fn sign(&self, key: &SigningKey, input_hash160: &[u8; 20]) -> Result<Vec<u8>> {
         let pubkey_compressed = key.verifying_key().to_encoded_point(true);
 
@@ -192,21 +220,21 @@ impl BtcTx {
         }
 
         let mut tx = Vec::new();
-        tx.extend_from_slice(&1u32.to_le_bytes()); // version
+        tx.extend_from_slice(&self.version.to_le_bytes());
         tx.push(0x00); // marker segwit
         tx.push(0x01); // flag segwit
 
         push_varint(&mut tx, self.inputs.len() as u64);
-        for u in &self.inputs {
-            let mut txid_le = u.txid;
+        for input in &self.inputs {
+            let mut txid_le = input.txid;
             txid_le.reverse();
             tx.extend_from_slice(&txid_le);
-            tx.extend_from_slice(&u.vout.to_le_bytes());
+            tx.extend_from_slice(&input.vout.to_le_bytes());
             tx.push(0x00); // scriptSig vide (segwit natif)
-            tx.extend_from_slice(&0xffff_ffffu32.to_le_bytes()); // sequence
+            tx.extend_from_slice(&input.sequence.to_le_bytes());
         }
 
-        push_varint(&mut tx, self.num_outputs());
+        push_varint(&mut tx, self.outputs.len() as u64);
         tx.extend_from_slice(&self.outputs_body());
 
         for (sig, pubkey) in &witnesses {
@@ -217,8 +245,50 @@ impl BtcTx {
             tx.extend_from_slice(pubkey);
         }
 
-        tx.extend_from_slice(&0u32.to_le_bytes()); // locktime
+        tx.extend_from_slice(&self.locktime.to_le_bytes());
         Ok(tx)
+    }
+}
+
+fn varint_len(n: u64) -> u64 {
+    match n {
+        0..=0xfc => 1,
+        0xfd..=0xffff => 3,
+        0x1_0000..=0xffff_ffff => 5,
+        _ => 9,
+    }
+}
+
+impl BtcTx {
+    /// Même transaction sous forme générique : version 1, séquences
+    /// 0xffffffff, locktime 0 ; destinataire, monnaie (si au-dessus de la
+    /// poussière) puis OP_RETURN (si présent), dans cet ordre.
+    fn to_raw(&self) -> RawTx {
+        let mut outputs = vec![(self.value_sat, p2wpkh_script_pubkey(&self.to_hash160))];
+        if self.change_sat > 0 {
+            outputs.push((self.change_sat, p2wpkh_script_pubkey(&self.change_hash160)));
+        }
+        if let Some(data) = &self.op_return_data {
+            outputs.push((0, op_return_script(data))); // valeur 0 : non dépensable
+        }
+        let inputs = self.inputs.iter().map(|u| RawInput { txid: u.txid, vout: u.vout, sequence: 0xffff_ffff, value_sat: u.value_sat }).collect();
+        RawTx { version: 1, inputs, outputs, locktime: 0 }
+    }
+
+    #[cfg(test)]
+    fn outputs_body(&self) -> Vec<u8> {
+        self.to_raw().outputs_body()
+    }
+
+    #[cfg(test)]
+    fn sighash(&self, index: usize, input_hash160: &[u8; 20]) -> [u8; 32] {
+        self.to_raw().sighash(index, input_hash160)
+    }
+
+    /// Construit et signe la transaction. Toutes les entrées doivent appartenir à la
+    /// même clé (`input_hash160`), ce qui est le cas dans cette démo mono-adresse.
+    pub fn sign(&self, key: &SigningKey, input_hash160: &[u8; 20]) -> Result<Vec<u8>> {
+        self.to_raw().sign(key, input_hash160)
     }
 }
 
@@ -361,5 +431,41 @@ mod tests {
         verifying_key
             .verify_prehash(&expected_hash, &signature)
             .expect("la signature doit vérifier contre le sighash BIP143 recalculé");
+    }
+
+    /// Vecteur officiel de BIP143 (« Native P2WPKH ») : version 1, séquence
+    /// 0xffffffee sur la première entrée, locktime 17, sorties P2PKH — les
+    /// champs qu'une PSBT d'un tiers peut fixer autrement que l'app.
+    #[test]
+    fn raw_tx_sighash_matches_the_bip143_native_p2wpkh_vector() {
+        let display = |le_hex: &str| -> [u8; 32] {
+            let mut bytes: [u8; 32] = hex::decode(le_hex).unwrap().try_into().unwrap();
+            bytes.reverse();
+            bytes
+        };
+        let tx = RawTx {
+            version: 1,
+            inputs: vec![
+                RawInput { txid: display("fff7f7881a8099afa6940d42d1e7f6362bec38171ea3edf433541db4e4ad969f"), vout: 0, sequence: 0xffff_ffee, value_sat: 625_000_000 },
+                RawInput { txid: display("ef51e1b804cc89d182d279655c3aa89e815b1b309fe287d9b2b55d57b90ec68a"), vout: 1, sequence: 0xffff_ffff, value_sat: 600_000_000 },
+            ],
+            outputs: vec![
+                (112_340_000, hex::decode("76a9148280b37df378db99f66f85c95a783a76ac7a6d5988ac").unwrap()),
+                (223_450_000, hex::decode("76a9143bde42dbee7e4dbe6a21b2d50ce2f0167faa815988ac").unwrap()),
+            ],
+            locktime: 17,
+        };
+        let hash160: [u8; 20] = hex::decode("1d0f172a0ecb48aee1be1f2687d2963ae33f71a1").unwrap().try_into().unwrap();
+        assert_eq!(hex::encode(tx.sighash(1, &hash160)), "c37af31116d1b27caf68aae9e3ac82f1477929014d5b917657d0eb49478cb670");
+
+        // Signature avec la clé du vecteur : valide pour ce sighash, et taille
+        // réelle sous la borne de `signed_vsize`.
+        let key = SigningKey::from_slice(&hex::decode("619c335025c7f4012e556c2a58b2506e30b8511b53ade95ea316fd8c3286feb9").unwrap()).unwrap();
+        let raw = tx.sign(&key, &hash160).unwrap();
+        let witness_bytes = raw.len() as u64 - (tx.base_size());
+        let real_vsize = (tx.base_size() * 4 + witness_bytes).div_ceil(4);
+        assert!(real_vsize <= tx.signed_vsize(), "{real_vsize} > {}", tx.signed_vsize());
+        assert_eq!(op_return_output_size(55), 8 + 1 + 57);
+        assert_eq!(op_return_output_size(80), 8 + 1 + 83);
     }
 }

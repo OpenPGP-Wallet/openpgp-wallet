@@ -2266,7 +2266,51 @@ fn verify_lifi_quote(quote: &lifi::LifiQuote, receiver: &lifi::Receiver) -> Resu
             check_swap_effects(&rpc, raw, &lifi_solana_limits(owner, quote)?)?;
             Ok(Some(false))
         }
+        // Dépôt vérifié par `lifi_btc_deposit` (sorties relues sur Esplora) :
+        // avant la boîte de confirmation, qui en montre les frais, puis de
+        // nouveau juste avant la signature (`send_lifi_btc`) — pas ici, pour
+        // ne pas relire deux fois les mêmes données à chaque étape.
+        lifi::LifiTx::Bitcoin { .. } => Ok(Some(false)),
     }
+}
+
+/// Dépôt Bitcoin d'un devis LI.FI vérifié contre les sorties confirmées de
+/// l'adresse, relues ICI (voir `lifi::verify_btc_deposit`), avec un tarif
+/// de frais réseau au plus double du tarif « prochain bloc » d'Esplora (20
+/// sat/vB au moins, `BTC_SWAP_MAX_FEE_RATE_SAT_VB` au plus) : c'est LI.FI
+/// qui fixe ces frais, l'app les borne.
+pub fn lifi_btc_deposit(quote: &lifi::LifiQuote) -> Result<lifi::BtcDeposit> {
+    let lifi::LifiTx::Bitcoin { psbt, deposit_script, .. } = &quote.tx else { anyhow::bail!("devis LI.FI non Bitcoin") };
+    let network = &wallet_flow::BTC_MAINNET;
+    let own_script = crate::btc_tx::p2wpkh_script_pubkey(&(network.parse_address)(&quote.from_address)?);
+    let esplora = btc_rpc::EsploraClient::new(network.esplora_base);
+    let (utxos, estimates) = std::thread::scope(|scope| {
+        let utxos = scope.spawn(|| esplora.utxos(&quote.from_address));
+        let estimates = esplora.fee_estimates();
+        (utxos.join().expect("le thread UTXOs ne doit pas paniquer"), estimates)
+    });
+    let max_fee_rate = (fee_rate_for_target(&estimates?, 1) * 2.0).ceil().clamp(20.0, f64::from(BTC_SWAP_MAX_FEE_RATE_SAT_VB)) as u64;
+    let amount = u64::try_from(quote.from_amount).context("montant hors limites")?;
+    lifi::verify_btc_deposit(psbt, deposit_script, &own_script, &utxos?, amount, max_fee_rate)
+}
+
+/// Envoi LI.FI depuis Bitcoin : dépôt revérifié juste avant la signature
+/// (sorties relues, frais réseau au plus `max_network_fee`, le plafond
+/// affiché), transaction re-sérialisée et signée par l'app au nom du profil,
+/// diffusée via Esplora. Renvoie l'identifiant de la transaction.
+pub fn send_lifi_btc(data_dir: &Path, device_password: &str, quote: &lifi::LifiQuote, max_network_fee: u64, profile_index: u32) -> Result<String> {
+    let network = &wallet_flow::BTC_MAINNET;
+    let seed = unlock_seed(data_dir, device_password)?;
+    let _seed_lock = memory_guard::lock(&seed);
+    let (signing_key, hash160) = (network.derive_key)(&seed, profile_index)?;
+    anyhow::ensure!((network.format_address)(&hash160)? == quote.from_address, "la transaction LI.FI n'est pas au nom de ce profil — échange refusé");
+    let deposit = lifi_btc_deposit(quote)?;
+    anyhow::ensure!(
+        deposit.network_fee <= max_network_fee,
+        "les frais réseau Bitcoin de la transaction LI.FI ont augmenté depuis la confirmation — relancez l'échange"
+    );
+    let raw = deposit.tx.sign(&signing_key, &hash160)?;
+    btc_rpc::EsploraClient::new(network.esplora_base).broadcast(&raw)
 }
 
 /// Bornes d'un envoi LI.FI depuis Solana : le jeton vendu sort au plus du
@@ -2319,7 +2363,11 @@ pub fn lifi_verified_quote(
 /// Solde suffisant pour l'envoi, vérifié avant la simulation (qui échouerait
 /// sinon avec un message trompeur).
 fn ensure_lifi_balance(from_network: &str, from: &lifi::LifiToken, units: u128, from_address: &str) -> Result<()> {
-    let available = if let Some(network) = wallet_flow::evm_network(from_network) {
+    let available = if from_network == "btc_mainnet" {
+        // Sorties confirmées seulement : les seules que le dépôt peut dépenser.
+        let utxos = btc_rpc::EsploraClient::new(wallet_flow::BTC_MAINNET.esplora_base).utxos(from_address)?;
+        utxos.iter().map(|u| u128::from(u.value_sat)).sum()
+    } else if let Some(network) = wallet_flow::evm_network(from_network) {
         if from.native {
             eth_rpc::EthRpc::new(network.rpc).balance(from_address)?
         } else {
@@ -2364,6 +2412,9 @@ pub fn refresh_lifi_quote_matching(shown: &lifi::LifiQuote, shown_verified: bool
         Some(&shown.tool),
     )?;
     anyhow::ensure!(quote.tool == shown.tool, "LI.FI propose maintenant un autre pont que celui affiché — relancez l'échange");
+    if let (lifi::LifiTx::Bitcoin { deposit: shown_deposit, .. }, lifi::LifiTx::Bitcoin { deposit, .. }) = (&shown.tx, &quote.tx) {
+        anyhow::ensure!(deposit == shown_deposit, "l'adresse de dépôt du pont a changé pendant la confirmation — relancez l'échange");
+    }
     anyhow::ensure!(
         quote.to_amount_min.saturating_mul(100) >= shown.to_amount_min.saturating_mul(99),
         "le minimum annoncé par LI.FI a baissé de plus de 1 % depuis l'affichage — relancez l'échange"
@@ -2542,6 +2593,54 @@ pub fn send_zec(data_dir: &Path, device_password: &str, to: &str, amount: &str, 
     zcash::broadcast(&signed.raw, &signed.txid)
 }
 
+/// Dépôt d'un échange depuis Zcash (Maya), préparé pour la boîte de
+/// confirmation : frais calculés pour un memo de 80 octets, le plus long
+/// possible — le devis relu après la confirmation peut porter un memo d'un
+/// octet de plus ou de moins, jamais des frais au-delà de ceux affichés.
+pub fn zec_swap_plan(from_address: &str, quote: &thorchain_rpc::SwapQuote, amount: &str) -> Result<zcash::SendPlan> {
+    let vault = zec_vault(quote)?;
+    anyhow::ensure!(vault != zcash::parse_recipient(from_address)?, "adresse de dépôt Maya égale à votre propre adresse — échange refusé");
+    let units = u64::try_from(tokens::parse_amount(amount, 8)?).context("montant hors limites")?;
+    zcash::plan_deposit(zcash::utxos(from_address)?, units, &[0; 80])
+}
+
+/// Coffre Zcash du devis : une adresse transparente (Maya n'en annonce pas
+/// d'autre, voir les notes de ses devis).
+fn zec_vault(quote: &thorchain_rpc::SwapQuote) -> Result<zcash::Recipient> {
+    anyhow::ensure!(
+        quote.memo.len() <= 80,
+        "memo Maya trop long pour une sortie OP_RETURN ({} octets)",
+        quote.memo.len()
+    );
+    zcash::parse_recipient(&quote.inbound_address).context("adresse de dépôt Maya invalide")
+}
+
+/// Envoie un échange depuis Zcash : virement transparent vers le coffre du
+/// devis, avec le memo en sortie OP_RETURN (coffre, monnaie, memo — l'ordre
+/// demandé par Maya), frais ZIP-317 jamais au-delà de ceux affichés
+/// (`shown_fee`), branche de consensus vérifiée auprès du serveur.
+pub fn send_swap_zec(data_dir: &Path, device_password: &str, quote: &thorchain_rpc::SwapQuote, amount: &str, shown_fee: u64, profile_index: u32) -> Result<String> {
+    let vault = zec_vault(quote)?;
+    let units = u64::try_from(tokens::parse_amount(amount, 8)?).context("montant hors limites")?;
+    let seed = unlock_seed(data_dir, device_password)?;
+    let _seed_lock = memory_guard::lock(&seed);
+    let (key, hash160) = derivation::derive_zec_key(&seed, profile_index)?;
+    anyhow::ensure!(vault != zcash::Recipient::P2pkh(hash160), "adresse de dépôt Maya égale à votre propre adresse — échange refusé");
+    let from = zcash::p2pkh_address(&hash160);
+    let plan = zcash::plan_deposit(zcash::utxos(&from)?, units, quote.memo.as_bytes())?;
+    anyhow::ensure!(
+        plan.fee <= shown_fee,
+        "les frais Zcash ont augmenté depuis la confirmation ({} au lieu de {} ZEC) — relancez l'échange",
+        zcash::format_zec(plan.fee),
+        zcash::format_zec(shown_fee)
+    );
+    let chain = zcash::chain_info()?;
+    let target = chain.height + 1;
+    let branch = zcash::branch_for(target, chain.branch_id)?;
+    let signed = zcash::build_signed(&plan, &key, &hash160, &vault, target, branch)?;
+    zcash::broadcast(&signed.raw, &signed.txid)
+}
+
 pub struct BtcFeeEstimate {
     pub fast_sat: u64,
     pub medium_sat: u64,
@@ -2682,9 +2781,9 @@ pub fn send_swap_btc(
     profile_index: u32,
 ) -> Result<String> {
     anyhow::ensure!(
-        quote.memo.as_bytes().len() <= 80,
+        quote.memo.len() <= 80,
         "memo THORChain trop long pour une sortie OP_RETURN standard ({} octets)",
-        quote.memo.as_bytes().len()
+        quote.memo.len()
     );
 
     let seed = unlock_seed(data_dir, device_password)?;
@@ -2708,14 +2807,12 @@ pub fn send_swap_btc(
     let estimates = estimates?;
     let total_sat: u64 = utxos.iter().map(|u| u.value_sat).sum();
 
-    // Poids approximatif d'une sortie OP_RETURN (script <= 80 octets) : 8
-    // (valeur) + 1 (longueur script) + jusqu'à 82 (OP_RETURN + pushdata +
-    // données) => ~91 octets, contre ~31 pour une sortie P2WPKH classique.
-    // `estimate_p2wpkh_vsize` sous-estimerait donc légèrement les frais réels
-    // ici ; la marge (~60 vbytes) reste négligeable face à la volatilité des
-    // frais réseau eux-mêmes.
-    let vsize = crate::btc_tx::estimate_p2wpkh_vsize(utxos.len(), 2) as f64;
-    let fee_rate = fee_rate_for_target(&estimates, 3);
+    // Coffre + monnaie (P2WPKH), plus la sortie OP_RETURN à sa taille réelle
+    // (66 octets pour un memo de 55, contre 31 pour une sortie P2WPKH).
+    let vsize = (crate::btc_tx::estimate_p2wpkh_vsize(utxos.len(), 2) + crate::btc_tx::op_return_output_size(quote.memo.len())) as f64;
+    // Jamais sous le tarif conseillé par le protocole (`recommended_gas_rate`) :
+    // un dépôt moins payé peut tarder à être pris en compte.
+    let fee_rate = fee_rate_for_target(&estimates, 3).max(quote.recommended_gas_rate.unwrap_or(0) as f64);
     // Tarif lu auprès d'Esplora sans intervention de l'utilisateur (contrairement
     // à `send_btc`, où il choisit un palier affiché en sats) : plafonné pour qu'un
     // serveur compromis ne puisse pas gonfler les frais à volonté — même famille
@@ -3580,7 +3677,7 @@ pub fn refresh_swap_quote_matching(
     shown: &thorchain_rpc::SwapQuote,
 ) -> Result<thorchain_rpc::SwapQuote> {
     let fresh = get_swap_quote(protocol, from, to, amount, destination)?;
-    ensure_quote_matches_shown(protocol, &fresh, shown, to.asset, destination)?;
+    ensure_quote_matches_shown(protocol, &fresh, shown, from.asset, to.asset, destination)?;
     Ok(fresh)
 }
 
@@ -3588,6 +3685,7 @@ fn ensure_quote_matches_shown(
     protocol: &thorchain_rpc::CrossChain,
     fresh: &thorchain_rpc::SwapQuote,
     shown: &thorchain_rpc::SwapQuote,
+    from_asset: &str,
     to_asset: &str,
     destination: &str,
 ) -> Result<()> {
@@ -3597,7 +3695,7 @@ fn ensure_quote_matches_shown(
         protocol.name
     );
     protocol
-        .verify_swap_memo(&fresh.memo, to_asset, destination, shown.expected_amount_out)
+        .verify_memo_for(&fresh.memo, from_asset, to_asset, destination, shown.expected_amount_out)
         .context("le cours a bougé pendant la confirmation (sortie minimale sous 99 % du montant affiché) — relancez l'échange")
 }
 
@@ -4647,27 +4745,36 @@ mod tests {
             memo: format!("=:b:bc1qdest:{memo_limit}:{}:80", thorchain_rpc::AFFILIATE_ADDRESS),
             expected_amount_out: 1_000_000,
             total_fees: None,
+            recommended_gas_rate: None,
         }
     }
 
     #[test]
     fn refreshed_quote_must_match_what_was_shown() {
         let shown = shown_quote(990_000);
-        ensure_quote_matches_shown(&thorchain_rpc::THORCHAIN, &shown_quote(990_000), &shown, "BTC.BTC", "bc1qdest").expect("identique");
+        ensure_quote_matches_shown(&thorchain_rpc::THORCHAIN, &shown_quote(990_000), &shown, "ETH.ETH", "BTC.BTC", "bc1qdest").expect("identique");
 
         let mut churned = shown_quote(990_000);
         churned.inbound_address = "bc1qautrevaultautrevaultautrevault00000".into();
-        assert!(ensure_quote_matches_shown(&thorchain_rpc::THORCHAIN, &churned, &shown, "BTC.BTC", "bc1qdest").is_err(), "vault changé");
+        assert!(ensure_quote_matches_shown(&thorchain_rpc::THORCHAIN, &churned, &shown, "ETH.ETH", "BTC.BTC", "bc1qdest").is_err(), "vault changé");
 
         let mut rerouted = shown_quote(990_000);
         rerouted.router = Some("0xAutreRouteur".into());
-        assert!(ensure_quote_matches_shown(&thorchain_rpc::THORCHAIN, &rerouted, &shown, "BTC.BTC", "bc1qdest").is_err(), "routeur changé");
+        assert!(ensure_quote_matches_shown(&thorchain_rpc::THORCHAIN, &rerouted, &shown, "ETH.ETH", "BTC.BTC", "bc1qdest").is_err(), "routeur changé");
 
         // Cours tombé à 950 000 : la nouvelle sortie minimale (99 % de 950 000)
         // est sous 99 % de ce qui a été AFFICHÉ (1 000 000) — refusé.
         let price_dropped = shown_quote(940_500);
-        let err = ensure_quote_matches_shown(&thorchain_rpc::THORCHAIN, &price_dropped, &shown, "BTC.BTC", "bc1qdest").unwrap_err();
+        let err = ensure_quote_matches_shown(&thorchain_rpc::THORCHAIN, &price_dropped, &shown, "ETH.ETH", "BTC.BTC", "bc1qdest").unwrap_err();
         assert!(format!("{err:#}").contains("cours a bougé"), "{err:#}");
+
+        // Depuis Zcash (Maya, sans affilié) : memo à 4 champs relu de même.
+        let mut zec_shown = shown_quote(990_000);
+        zec_shown.memo = "=:b:bc1qdest:990000".into();
+        let zec_fresh = |memo: &str| thorchain_rpc::SwapQuote { memo: memo.into(), ..shown_quote(0) };
+        ensure_quote_matches_shown(&thorchain_rpc::MAYA, &zec_fresh("=:b:bc1qdest:990000"), &zec_shown, "ZEC.ZEC", "BTC.BTC", "bc1qdest").expect("identique");
+        assert!(ensure_quote_matches_shown(&thorchain_rpc::MAYA, &zec_fresh("=:b:bc1qautre:990000"), &zec_shown, "ZEC.ZEC", "BTC.BTC", "bc1qdest").is_err());
+        assert!(ensure_quote_matches_shown(&thorchain_rpc::MAYA, &zec_fresh("=:b:bc1qdest:990000:maya1x:50"), &zec_shown, "ZEC.ZEC", "BTC.BTC", "bc1qdest").is_err());
     }
 
     // --- verify_swap_effects : une attaque par cas -------------------------

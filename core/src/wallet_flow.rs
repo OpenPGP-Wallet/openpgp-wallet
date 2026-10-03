@@ -60,7 +60,7 @@ pub struct EvmNetwork {
     pub history: Option<EvmHistory>,
 }
 
-/// Source publique, sans clé, de l'historique d'une adresse EVM.
+/// Source publique de l'historique d'une adresse EVM (sans clé, sauf Etherscan).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EvmHistory {
     /// Instance Blockscout (API v2).
@@ -68,6 +68,10 @@ pub enum EvmHistory {
     /// API compatible Etherscan de Routescan, par identifiant de chaîne
     /// (Avalanche C-Chain).
     Routescan,
+    /// API v2 d'Etherscan, avec la clé de l'utilisateur (voir
+    /// `etherscan_key`) : HyperEVM (offre gratuite), BNB Chain (offre payante
+    /// seulement).
+    Etherscan,
 }
 
 impl EvmNetwork {
@@ -162,7 +166,7 @@ pub const BSC_MAINNET: EvmNetwork = EvmNetwork {
     max_gas_price_wei: Some(100 * GWEI),
     transfer_gas: Some(21_000),
     op_stack_l1_fee: false,
-    history: None,
+    history: Some(EvmHistory::Etherscan),
 };
 
 pub const AVALANCHE_MAINNET: EvmNetwork = EvmNetwork {
@@ -208,7 +212,7 @@ pub const HYPEREVM_MAINNET: EvmNetwork = EvmNetwork {
     max_gas_price_wei: Some(100 * GWEI),
     transfer_gas: Some(21_000),
     op_stack_l1_fee: false,
-    history: None,
+    history: Some(EvmHistory::Etherscan),
 };
 
 /// Tous les réseaux EVM connus de l'app.
