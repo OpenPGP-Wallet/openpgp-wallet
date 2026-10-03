@@ -3030,8 +3030,12 @@ h2 .coin-icon-inline,
 /* Carte soulevée : elle suit le pointeur au-dessus de tout (main.js,
    startCardDrag), ombrée ; elle ne capte plus le pointeur, pour que la carte
    survolée soit trouvée en dessous. Indépendant de `.organizing` : quitter le
-   mode pendant que la carte se pose ne la fait pas sauter. */
-.wallet-grid .wallet-card.drag-floating {
+   mode pendant que la carte se pose ne la fait pas sauter. `:root` en tête :
+   plus spécifique que `:root:not([data-wallet-list-view="true"]) .wallet-card`
+   (cartes compactes, position relative, plus loin dans ce fichier) — sinon la
+   carte soulevée gardait sa case dans la grille et l'emplacement ne trouvait
+   jamais de carte sous le pointeur. */
+:root .wallet-grid .wallet-card.drag-floating {
   position: fixed;
   z-index: 1000;
   margin: 0;
@@ -3042,7 +3046,7 @@ h2 .coin-icon-inline,
   will-change: transform;
 }
 
-.wallet-grid .wallet-card.drag-floating.drag-landing {
+:root .wallet-grid .wallet-card.drag-floating.drag-landing {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25), 0 0 0 1px var(--border);
 }
 
