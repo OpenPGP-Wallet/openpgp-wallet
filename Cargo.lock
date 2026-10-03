@@ -7516,7 +7516,7 @@ dependencies = [
 
 [[package]]
 name = "wallet"
-version = "2.8.0"
+version = "2.9.0"
 dependencies = [
  "base64 0.22.1",
  "pgp-wallet-poc",
