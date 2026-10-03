@@ -2508,8 +2508,9 @@ fn lookalike_warning(dir: &std::path::Path, to: &str) -> Option<String> {
 /// enregistré dans ce portefeuille (voir `sent_recipients`) ; (2) sur la
 /// blockchain, l'adresse n'a jamais servi, ou est vide ; `activity` à `None`
 /// si cette lecture a échoué — dit explicitement plutôt qu'un silence qui
-/// passerait pour rassurant. `coin` : "evm", "btc", "sol" ou "usdc" (nomme
-/// l'actif absent, une adresse "vide" de SOL pouvant détenir autre chose).
+/// passerait pour rassurant. `coin` : "evm", "btc", "sol", "usdc", "zec",
+/// "xmr" ou "zecs" (nomme l'actif absent, une adresse "vide" de SOL pouvant
+/// détenir autre chose).
 fn recipient_warning_lines(first_send: bool, coin: &str, activity: Option<api::RecipientActivity>) -> Vec<String> {
     let mut lines = Vec::new();
     if first_send {
@@ -2523,11 +2524,18 @@ fn recipient_warning_lines(first_send: bool, coin: &str, activity: Option<api::R
             .to_string(),
         );
     }
+    // Monero, Zcash protégé : adresses et montants invisibles sur la chaîne —
+    // rien à vérifier, et pas une panne de réseau à signaler.
+    if matches!(coin, "xmr" | "zecs") {
+        return lines;
+    }
     let (asset_fr, asset_en) = match coin {
         "evm" => ("aucun ETH", "no ETH"),
         "btc" => ("aucun BTC", "no BTC"),
         "usdc" => ("ni SOL ni USDC", "neither SOL nor USDC"),
-        _ => ("aucun SOL", "no SOL"),
+        "zec" => ("aucun ZEC", "no ZEC"),
+        "sol" => ("aucun SOL", "no SOL"),
+        _ => ("aucun fonds", "no funds"),
     };
     let (history_fr, history_en) = if coin == "evm" {
         ("aucune transaction envoyée, aucun ETH", "no transaction sent, no ETH")
@@ -4559,18 +4567,30 @@ async fn zec_send_shielded(password: String, profile_index: u32, to: String, amo
         let amount = api::canonical_zec_amount(&amount).t_err()?;
         let from_label = api::list_profiles(&dir).into_iter().find(|p| p.index == profile_index).map(|p| p.label).unwrap_or_else(|| format!("profil #{profile_index}"));
         let from_label = dialog_label(&from_label);
+        // Comme les autres envois : adresse ressemblante, jamais payée, et —
+        // vers une adresse transparente — état sur la chaîne.
+        let warning = if to.starts_with('t') {
+            send_warnings(&dir, "zec_shielded", "zec", &to, api::zec_recipient_activity(&to).ok())
+        } else {
+            send_warnings(&dir, "zec_shielded", "zecs", &to, None)
+        };
+        let warning = warning.map(|w| format!("{w}\n\n")).unwrap_or_default();
         let confirm = |s: &pgp_wallet_poc::zcash_shielded::SpendSummary| {
             let (amount, fee) = (pgp_wallet_poc::zcash::format_zec(s.amount), pgp_wallet_poc::zcash::format_zec(s.fee));
             let to = &s.recipient;
             let message = if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
-                format!("Send from your shielded ZEC\n\nFrom profile: {from_label}\nTo: {to}\nAmount: {amount} ZEC\nNetwork fee: {fee} ZEC (ZIP-317)\n\nThis is irreversible.\n\nConfirm this transfer?")
+                format!("{warning}Send from your shielded ZEC\n\nFrom profile: {from_label}\nTo: {to}\nAmount: {amount} ZEC\nNetwork fee: {fee} ZEC (ZIP-317)\n\nThis is irreversible.\n\nConfirm this transfer?")
             } else {
-                format!("Envoi depuis vos ZEC protégés\n\nDepuis le profil : {from_label}\nVers : {to}\nMontant : {amount} ZEC\nFrais réseau : {fee} ZEC (ZIP-317)\n\nC'est irréversible.\n\nConfirmer cet envoi ?")
+                format!("{warning}Envoi depuis vos ZEC protégés\n\nDepuis le profil : {from_label}\nVers : {to}\nMontant : {amount} ZEC\nFrais réseau : {fee} ZEC (ZIP-317)\n\nC'est irréversible.\n\nConfirmer cet envoi ?")
             };
             shielded_dialog(&app, ("Confirmer l'envoi", "Confirm the transfer"), message)
         };
         match api::send_zec_shielded(&dir, &password, profile_index, &to, &amount, confirm).t_err()? {
-            Some(txid) => Ok(txid),
+            Some(txid) => {
+                // Destinataire mémorisé après une diffusion réussie seulement.
+                let _ = sent_recipients::record_sent(&dir, "zec_shielded", &to);
+                Ok(txid)
+            }
             None => Err(translate_error("Envoi annulé (confirmation refusée).")),
         }
     })
@@ -5302,8 +5322,19 @@ mod tests {
         let lines = recipient_warning_lines(false, "sol", None);
         assert!(lines.len() == 1 && lines[0].contains("impossible à vérifier"), "{lines:?}");
 
+        // Zcash transparent : l'actif absent est ZEC (pas SOL).
+        assert!(recipient_warning_lines(false, "zec", Some(Empty))[0].contains("aucun ZEC"));
+
+        // Monero, Zcash protégé : rien n'est lisible sur la chaîne — seule
+        // l'alerte « nouvelle adresse », jamais une fausse panne réseau.
+        for coin in ["xmr", "zecs"] {
+            assert!(recipient_warning_lines(false, coin, None).is_empty(), "{coin}");
+            let lines = recipient_warning_lines(true, coin, None);
+            assert!(lines.len() == 1 && lines[0].contains("NOUVELLE ADRESSE"), "{coin} : {lines:?}");
+        }
+
         // Chaque avertissement tient sur un seul paragraphe (mise en page de la boîte).
-        for coin in ["evm", "btc", "sol", "usdc"] {
+        for coin in ["evm", "btc", "sol", "usdc", "zec", "xmr", "zecs"] {
             for activity in [Some(Unused), Some(Empty), None] {
                 assert!(recipient_warning_lines(true, coin, activity).iter().all(|l| !l.contains('\n')));
             }
