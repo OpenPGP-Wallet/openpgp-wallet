@@ -281,7 +281,7 @@ impl BtcTx {
     }
 
     #[cfg(test)]
-    fn sighash(&self, index: usize, input_hash160: &[u8; 20]) -> [u8; 32] {
+    pub(crate) fn sighash(&self, index: usize, input_hash160: &[u8; 20]) -> [u8; 32] {
         self.to_raw().sighash(index, input_hash160)
     }
 

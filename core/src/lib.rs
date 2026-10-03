@@ -42,6 +42,8 @@ pub mod native_deposit;
 pub mod zcash;
 pub mod zcash_shielded;
 pub mod monero;
+#[cfg(test)]
+mod robustness_tests;
 #[cfg(windows)]
 pub mod windows_hello;
 pub mod secure_storage;
