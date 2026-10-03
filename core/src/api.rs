@@ -14,7 +14,7 @@
 //!   perdu — jamais utilisé pour le déverrouillage quotidien.
 
 use crate::{
-    btc_rpc, cow, dapp_requests, derivation, lifi, zcash, entropy, eth_rpc, eth_tx, history, jupiter_rpc, memory_guard, pgp_engine, secure_storage, shamir,
+    btc_rpc, cow, dapp_requests, derivation, lifi, native_deposit, zcash, entropy, eth_rpc, eth_tx, history, jupiter_rpc, memory_guard, pgp_engine, secure_storage, shamir,
     evm_sign, sol_rpc, sol_spl, sol_tx, thorchain_rpc, tokens, wallet_flow,
 };
 use anyhow::{Context, Result};
@@ -182,6 +182,9 @@ pub struct Addresses {
     pub solana: String,
     /// Adresse Zcash transparente (t1…), chemin m/44'/133'/0'/0/{index}.
     pub zcash: String,
+    /// Adresse THORChain (thor1…), chemin m/44'/931'/0'/0/{index} : celle du
+    /// profil principal du développeur est l'adresse d'affiliation de l'app.
+    pub thor: String,
 }
 
 const PROFILES_FILE: &str = "profiles.json";
@@ -302,7 +305,9 @@ fn derive_addresses(seed: &[u8], index: u32) -> Result<Addresses> {
     let (_btc_mainnet_key, btc_mainnet_hash160) = derivation::derive_btc_mainnet_key(seed, index)?;
     let sol_key = derivation::derive_solana_key(seed, index);
     let (_zec_key, zec_hash160) = derivation::derive_zec_key(seed, index)?;
+    let (_thor_key, thor_hash160) = derivation::derive_thor_key(seed, index)?;
     Ok(Addresses {
+        thor: derivation::format_thor_address(&thor_hash160)?,
         zcash: zcash::p2pkh_address(&zec_hash160),
         evm: derivation::format_address(&evm_address),
         btc_testnet: derivation::format_btc_testnet_address(&btc_testnet_hash160)?,
@@ -3639,9 +3644,12 @@ pub fn get_swap_quote(
     destination: &str,
 ) -> Result<thorchain_rpc::SwapQuote> {
     anyhow::ensure!(!std::ptr::eq(from, to), "échange d'une crypto vers elle-même");
+    protocol.quote_swap(from.asset, to.asset, swap_amount_1e8(from, amount)?, destination)
+}
+
+fn swap_amount_1e8(from: &thorchain_rpc::ThorAsset, amount: &str) -> Result<u64> {
     let amount_native = tokens::parse_amount(amount, from.decimals as u8)?;
-    let amount_thorchain = thorchain_rpc::to_thorchain_amount(amount_native, from.decimals)?;
-    protocol.quote_swap(from.asset, to.asset, amount_thorchain, destination)
+    thorchain_rpc::to_thorchain_amount(amount_native, from.decimals)
 }
 
 /// Actif d'une crypto de l'app (`coin`) sur `network` pour `protocol`
@@ -3676,8 +3684,9 @@ pub fn refresh_swap_quote_matching(
     destination: &str,
     shown: &thorchain_rpc::SwapQuote,
 ) -> Result<thorchain_rpc::SwapQuote> {
-    let fresh = get_swap_quote(protocol, from, to, amount, destination)?;
-    ensure_quote_matches_shown(protocol, &fresh, shown, from.asset, to.asset, destination)?;
+    // Même affilié que le devis affiché (frais annoncés dans la boîte).
+    let fresh = protocol.quote_swap_as(from.asset, to.asset, swap_amount_1e8(from, amount)?, destination, shown.affiliate.as_deref())?;
+    ensure_quote_matches_shown(protocol, &fresh, shown, to.asset, destination)?;
     Ok(fresh)
 }
 
@@ -3685,7 +3694,6 @@ fn ensure_quote_matches_shown(
     protocol: &thorchain_rpc::CrossChain,
     fresh: &thorchain_rpc::SwapQuote,
     shown: &thorchain_rpc::SwapQuote,
-    from_asset: &str,
     to_asset: &str,
     destination: &str,
 ) -> Result<()> {
@@ -3695,8 +3703,130 @@ fn ensure_quote_matches_shown(
         protocol.name
     );
     protocol
-        .verify_memo_for(&fresh.memo, from_asset, to_asset, destination, shown.expected_amount_out)
+        .verify_memo(&fresh.memo, shown.affiliate.as_deref(), to_asset, destination, shown.expected_amount_out)
         .context("le cours a bougé pendant la confirmation (sortie minimale sous 99 % du montant affiché) — relancez l'échange")
+}
+
+// --- Nom d'affiliation (THORName / MAYAName) -----------------------------------
+// Réservé au portefeuille du développeur : celui dont l'adresse THOR (clé
+// m/44'/931'/0'/0/0, même hash160 sur Maya) EST l'adresse d'affiliation de
+// l'app. Inscription par un dépôt natif signé ici (voir `native_deposit`).
+
+/// Protocole d'un nom : réseau natif et protocole d'échange.
+pub fn affiliate_name_chains(chain: &str) -> Result<(&'static native_deposit::NativeChain, &'static thorchain_rpc::CrossChain)> {
+    match chain {
+        "thorchain" => Ok((&native_deposit::THORCHAIN, &thorchain_rpc::THORCHAIN)),
+        "maya" => Ok((&native_deposit::MAYA, &thorchain_rpc::MAYA)),
+        other => anyhow::bail!("réseau de nom inconnu : {other}"),
+    }
+}
+
+/// Nom d'affiliation sur un protocole, vu depuis l'app.
+#[derive(Clone, Debug, PartialEq)]
+pub enum NameState {
+    /// Libre (ou expiré) : inscription possible.
+    Free,
+    /// Inscrit par l'adresse d'affiliation ; années restantes ; alias correct.
+    Ours { years_left: f64, points_to_affiliate: bool },
+    /// Inscrit par quelqu'un d'autre.
+    Taken,
+}
+
+pub struct NameStatus {
+    pub name: &'static str,
+    pub state: NameState,
+    /// Adresse d'affiliation sur ce réseau (paie l'inscription, reçoit les frais).
+    pub address: &'static str,
+    pub balance: u128,
+    pub decimals: u32,
+    /// Montant du dépôt proposé : inscription (un an inclus) + un an, ou un
+    /// an de plus si le nom est déjà à nous.
+    pub deposit: u128,
+    pub network_fee: u128,
+}
+
+/// Inscription (un an inclus) et un an de plus, d'après les constantes du
+/// protocole (relevées sur de vraies inscriptions : 10 RUNE ou 10 CACAO, puis
+/// ~1,05 par an).
+fn name_costs(native: &native_deposit::NativeChain) -> Result<(u128, u128)> {
+    let register = native_deposit::constant(native, "TNSRegisterFee")?;
+    let per_block = native_deposit::constant(native, "TNSFeePerBlock")?;
+    Ok((u128::from(register), u128::from(per_block) * u128::from(thorchain_rpc::NAME_BLOCKS_PER_YEAR)))
+}
+
+fn name_state(protocol: &thorchain_rpc::CrossChain, name: &str) -> Result<NameState> {
+    Ok(match protocol.name_record(name)? {
+        None => NameState::Free,
+        Some(record) if record.expired() => NameState::Free,
+        Some(record) if record.owner == protocol.affiliate_address => NameState::Ours {
+            years_left: (record.expire_height - record.current_height) as f64 / thorchain_rpc::NAME_BLOCKS_PER_YEAR as f64,
+            points_to_affiliate: record.points_to_affiliate,
+        },
+        Some(_) => NameState::Taken,
+    })
+}
+
+/// Dépôt à faire pour l'état `state` (`None` : nom pris par un autre).
+fn name_deposit(state: &NameState, register: u128, year: u128) -> Option<u128> {
+    match state {
+        NameState::Free => Some(register + year),
+        NameState::Ours { .. } => Some(year),
+        NameState::Taken => None,
+    }
+}
+
+/// État du nom d'affiliation sur `chain` (« thorchain », « maya ») : lecture
+/// seule, données publiques.
+pub fn affiliate_name_status(chain: &str) -> Result<NameStatus> {
+    let (native, protocol) = affiliate_name_chains(chain)?;
+    let name = protocol.affiliate_name.context("aucun nom d'affiliation prévu sur ce réseau")?;
+    let state = name_state(protocol, name)?;
+    let (register, year) = name_costs(native)?;
+    Ok(NameStatus {
+        name,
+        deposit: name_deposit(&state, register, year).unwrap_or(0),
+        state,
+        address: protocol.affiliate_address,
+        balance: native_deposit::balance(native, protocol.affiliate_address)?,
+        decimals: native.decimals,
+        network_fee: native_deposit::network_fee(native)?,
+    })
+}
+
+/// Inscrit (ou prolonge d'un an) le nom d'affiliation sur `chain`, signé par
+/// la clé THOR du profil principal — refusé si elle n'est pas l'adresse
+/// d'affiliation de l'app. `shown_deposit` : montant affiché dans la boîte
+/// de confirmation, jamais dépassé. Renvoie l'identifiant de la transaction.
+pub fn register_affiliate_name(data_dir: &Path, device_password: &str, chain: &str, shown_deposit: u128) -> Result<String> {
+    let (native, protocol) = affiliate_name_chains(chain)?;
+    let name = protocol.affiliate_name.context("aucun nom d'affiliation prévu sur ce réseau")?;
+    let seed = unlock_seed(data_dir, device_password)?;
+    let _seed_lock = memory_guard::lock(&seed);
+    let (key, hash160) = derivation::derive_thor_key(&seed, 0)?;
+    let address = bech32::encode(native.hrp, bech32::ToBase32::to_base32(&hash160), bech32::Variant::Bech32).context("encodage bech32 impossible")?;
+    anyhow::ensure!(
+        address == protocol.affiliate_address,
+        "ce portefeuille n'est pas celui qui reçoit les frais d'affiliation de l'app — inscription réservée à ce dernier"
+    );
+    let (register, year) = name_costs(native)?;
+    let state = name_state(protocol, name)?;
+    let deposit = name_deposit(&state, register, year).with_context(|| format!("le nom « {name} » appartient déjà à quelqu'un d'autre sur {}", native.name))?;
+    anyhow::ensure!(deposit <= shown_deposit, "le coût du nom a changé depuis la confirmation — relancez l'inscription");
+    let fee = native_deposit::network_fee(native)?;
+    let balance = native_deposit::balance(native, &address)?;
+    anyhow::ensure!(
+        balance >= deposit + fee,
+        "solde insuffisant sur l'adresse d'affiliation {} : {} disponibles, {} nécessaires (dépôt + frais réseau)",
+        native.name,
+        tokens::format_amount(balance, native.decimals as u8),
+        tokens::format_amount(deposit + fee, native.decimals as u8)
+    );
+    let (account_number, sequence) = native_deposit::account(native, &address)?.context("adresse d'affiliation jamais approvisionnée sur ce réseau")?;
+    // Alias de la chaîne native vers l'adresse d'affiliation ; propriétaire :
+    // le signataire (cette même adresse).
+    let memo = format!("~:{name}:{}:{address}", protocol.native_chain());
+    let tx = native_deposit::signed_deposit(native, &key, deposit, &memo, account_number, sequence)?;
+    native_deposit::broadcast(native, &tx)
 }
 
 /// Envoie un swap THORChain depuis Solana : construit un transfert SOL vers
@@ -4746,35 +4876,46 @@ mod tests {
             expected_amount_out: 1_000_000,
             total_fees: None,
             recommended_gas_rate: None,
+            affiliate: Some(thorchain_rpc::AFFILIATE_ADDRESS.to_string()),
         }
+    }
+
+    /// Coût d'un nom selon son état : libre = inscription + un an, à nous = un
+    /// an de plus, pris = rien.
+    #[test]
+    fn name_deposit_follows_the_state() {
+        assert_eq!(name_deposit(&NameState::Free, 1_000_000_000, 105_120_000), Some(1_105_120_000));
+        assert_eq!(name_deposit(&NameState::Ours { years_left: 0.5, points_to_affiliate: true }, 1_000_000_000, 105_120_000), Some(105_120_000));
+        assert_eq!(name_deposit(&NameState::Taken, 1_000_000_000, 105_120_000), None);
     }
 
     #[test]
     fn refreshed_quote_must_match_what_was_shown() {
         let shown = shown_quote(990_000);
-        ensure_quote_matches_shown(&thorchain_rpc::THORCHAIN, &shown_quote(990_000), &shown, "ETH.ETH", "BTC.BTC", "bc1qdest").expect("identique");
+        ensure_quote_matches_shown(&thorchain_rpc::THORCHAIN, &shown_quote(990_000), &shown, "BTC.BTC", "bc1qdest").expect("identique");
 
         let mut churned = shown_quote(990_000);
         churned.inbound_address = "bc1qautrevaultautrevaultautrevault00000".into();
-        assert!(ensure_quote_matches_shown(&thorchain_rpc::THORCHAIN, &churned, &shown, "ETH.ETH", "BTC.BTC", "bc1qdest").is_err(), "vault changé");
+        assert!(ensure_quote_matches_shown(&thorchain_rpc::THORCHAIN, &churned, &shown, "BTC.BTC", "bc1qdest").is_err(), "vault changé");
 
         let mut rerouted = shown_quote(990_000);
         rerouted.router = Some("0xAutreRouteur".into());
-        assert!(ensure_quote_matches_shown(&thorchain_rpc::THORCHAIN, &rerouted, &shown, "ETH.ETH", "BTC.BTC", "bc1qdest").is_err(), "routeur changé");
+        assert!(ensure_quote_matches_shown(&thorchain_rpc::THORCHAIN, &rerouted, &shown, "BTC.BTC", "bc1qdest").is_err(), "routeur changé");
 
         // Cours tombé à 950 000 : la nouvelle sortie minimale (99 % de 950 000)
         // est sous 99 % de ce qui a été AFFICHÉ (1 000 000) — refusé.
         let price_dropped = shown_quote(940_500);
-        let err = ensure_quote_matches_shown(&thorchain_rpc::THORCHAIN, &price_dropped, &shown, "ETH.ETH", "BTC.BTC", "bc1qdest").unwrap_err();
+        let err = ensure_quote_matches_shown(&thorchain_rpc::THORCHAIN, &price_dropped, &shown, "BTC.BTC", "bc1qdest").unwrap_err();
         assert!(format!("{err:#}").contains("cours a bougé"), "{err:#}");
 
         // Depuis Zcash (Maya, sans affilié) : memo à 4 champs relu de même.
         let mut zec_shown = shown_quote(990_000);
         zec_shown.memo = "=:b:bc1qdest:990000".into();
+        zec_shown.affiliate = None;
         let zec_fresh = |memo: &str| thorchain_rpc::SwapQuote { memo: memo.into(), ..shown_quote(0) };
-        ensure_quote_matches_shown(&thorchain_rpc::MAYA, &zec_fresh("=:b:bc1qdest:990000"), &zec_shown, "ZEC.ZEC", "BTC.BTC", "bc1qdest").expect("identique");
-        assert!(ensure_quote_matches_shown(&thorchain_rpc::MAYA, &zec_fresh("=:b:bc1qautre:990000"), &zec_shown, "ZEC.ZEC", "BTC.BTC", "bc1qdest").is_err());
-        assert!(ensure_quote_matches_shown(&thorchain_rpc::MAYA, &zec_fresh("=:b:bc1qdest:990000:maya1x:50"), &zec_shown, "ZEC.ZEC", "BTC.BTC", "bc1qdest").is_err());
+        ensure_quote_matches_shown(&thorchain_rpc::MAYA, &zec_fresh("=:b:bc1qdest:990000"), &zec_shown, "BTC.BTC", "bc1qdest").expect("identique");
+        assert!(ensure_quote_matches_shown(&thorchain_rpc::MAYA, &zec_fresh("=:b:bc1qautre:990000"), &zec_shown, "BTC.BTC", "bc1qdest").is_err());
+        assert!(ensure_quote_matches_shown(&thorchain_rpc::MAYA, &zec_fresh("=:b:bc1qdest:990000:maya1x:50"), &zec_shown, "BTC.BTC", "bc1qdest").is_err());
     }
 
     // --- verify_swap_effects : une attaque par cas -------------------------

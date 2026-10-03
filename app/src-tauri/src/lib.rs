@@ -24,6 +24,11 @@ use zeroize::Zeroizing;
 // recomposés par découpage de chaîne plutôt que par expression régulière.
 static UI_LANG_IS_ENGLISH: AtomicBool = AtomicBool::new(false);
 
+/// Le profil principal déverrouillé est-il le portefeuille du développeur
+/// (adresse THOR = adresse d'affiliation de l'app) ? Seul lui voit et peut
+/// utiliser l'inscription du nom d'affiliation.
+static IS_AFFILIATE_WALLET: AtomicBool = AtomicBool::new(false);
+
 /// Appelée par le frontend à chaque changement de langue (bouton FR/EN) et au
 /// démarrage. Un simple booléen process-wide suffit : ce n'est qu'une préférence
 /// d'affichage, jamais une donnée de sécurité.
@@ -288,6 +293,15 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ),
     ("adresse de dépôt Maya égale à votre propre adresse — échange refusé", "Maya deposit address equal to your own address — swap refused"),
     ("adresse de dépôt Maya invalide", "invalid Maya deposit address"),
+    // Nom d'affiliation (core/src/api.rs, core/src/native_deposit.rs)
+    (
+        "ce portefeuille n'est pas celui qui reçoit les frais d'affiliation de l'app — inscription réservée à ce dernier",
+        "this wallet is not the one receiving the app's affiliate fees — registration is reserved for it",
+    ),
+    ("le coût du nom a changé depuis la confirmation — relancez l'inscription", "the name's cost changed since the confirmation — start the registration again"),
+    ("adresse d'affiliation jamais approvisionnée sur ce réseau", "affiliate address never funded on this network"),
+    ("Inscription annulée (confirmation refusée).", "Registration cancelled (confirmation declined)."),
+    ("aucun nom d'affiliation prévu sur ce réseau", "no affiliate name planned on this network"),
     // Clé Etherscan (core/src/etherscan_key.rs, core/src/routescan.rs)
     (
         "clé Etherscan invalide : 34 lettres majuscules et chiffres attendus (à copier depuis etherscan.io/myapikey)",
@@ -598,6 +612,20 @@ fn translate_dynamic_error(msg: &str) -> Option<String> {
         .and_then(|rest| rest.strip_suffix(") — relancez l'échange").or_else(|| rest.strip_suffix(") — relancez l'envoi")))
     {
         return Some(format!("Zcash fees increased since the confirmation ({}) — start again", detail.replace(" au lieu de ", " instead of ")));
+    }
+    if let Some(rest) = msg.strip_prefix("solde insuffisant sur l'adresse d'affiliation ") {
+        return Some(format!(
+            "insufficient balance on the affiliate address on {}",
+            rest.replace(" disponibles, ", " available, ").replace(" nécessaires (dépôt + frais réseau)", " needed (deposit + network fee)")
+        ));
+    }
+    if let Some((name, network)) = msg.strip_prefix("le nom « ").and_then(|rest| rest.split_once(" » appartient déjà à quelqu'un d'autre sur ")) {
+        return Some(format!("the name \"{name}\" already belongs to someone else on {network}"));
+    }
+    if let Some(rest) = msg.strip_prefix("transaction refusée par ") {
+        if let Some((network, reason)) = rest.split_once(" : ") {
+            return Some(format!("transaction refused by {network}: {reason}"));
+        }
     }
     if let Some(rest) = msg.strip_prefix("memo Maya trop long pour une sortie OP_RETURN (") {
         return Some(format!("Maya memo too long for an OP_RETURN output ({}", rest.replace("octets", "bytes")));
@@ -1107,6 +1135,111 @@ fn get_thor_fee_address(password: String, app: tauri::AppHandle) -> Result<Strin
     api::get_thor_fee_address(&dir, &password).t_err()
 }
 
+// --- Nom d'affiliation (portefeuille du développeur seulement) -----------------
+
+#[derive(Serialize)]
+struct AffiliateNameDto {
+    /// « thorchain » ou « maya ».
+    chain: &'static str,
+    protocol: &'static str,
+    name: &'static str,
+    /// « free », « ours », « taken ».
+    state: &'static str,
+    years_left: Option<f64>,
+    address: &'static str,
+    symbol: &'static str,
+    balance: String,
+    deposit: String,
+    network_fee: String,
+}
+
+fn native_amount(units: u128, decimals: u32) -> String {
+    pgp_wallet_poc::tokens::format_amount(units, decimals as u8)
+}
+
+/// État du nom d'affiliation sur THORChain et Maya (données publiques) ;
+/// `None` si le profil principal n'est pas le portefeuille du développeur.
+#[tauri::command]
+async fn affiliate_names_status() -> Result<Option<Vec<AffiliateNameDto>>, String> {
+    if !IS_AFFILIATE_WALLET.load(Ordering::Relaxed) {
+        return Ok(None);
+    }
+    run_blocking(|| {
+        let read = |chain: &'static str| -> Result<AffiliateNameDto, String> {
+            let (native, protocol) = api::affiliate_name_chains(chain).t_err()?;
+            let status = api::affiliate_name_status(chain).t_err()?;
+            let (state, years_left) = match status.state {
+                api::NameState::Free => ("free", None),
+                api::NameState::Ours { years_left, .. } => ("ours", Some(years_left)),
+                api::NameState::Taken => ("taken", None),
+            };
+            Ok(AffiliateNameDto {
+                chain,
+                protocol: protocol.name,
+                name: status.name,
+                state,
+                years_left,
+                address: status.address,
+                symbol: if chain == "maya" { "CACAO" } else { "RUNE" },
+                balance: native_amount(status.balance, native.decimals),
+                deposit: native_amount(status.deposit, native.decimals),
+                network_fee: native_amount(status.network_fee, native.decimals),
+            })
+        };
+        let (thorchain, maya) = std::thread::scope(|scope| {
+            let thorchain = scope.spawn(|| read("thorchain"));
+            (thorchain.join().unwrap_or_else(|_| Err("lecture THORChain interrompue".to_string())), read("maya"))
+        });
+        Ok(Some(vec![thorchain?, maya?]))
+    })
+    .await
+}
+
+/// Inscrit (ou prolonge d'un an) le nom d'affiliation sur `chain`, après une
+/// boîte de confirmation native construite à partir de l'état relu ICI.
+#[tauri::command]
+async fn register_affiliate_name(password: String, chain: String, app: tauri::AppHandle) -> Result<String, String> {
+    if !IS_AFFILIATE_WALLET.load(Ordering::Relaxed) {
+        return Err(translate_error("ce portefeuille n'est pas celui qui reçoit les frais d'affiliation de l'app — inscription réservée à ce dernier"));
+    }
+    run_blocking(move || {
+        let password = Zeroizing::new(password);
+        let dir = data_dir(&app)?;
+        let (native, protocol) = api::affiliate_name_chains(&chain).t_err()?;
+        let status = api::affiliate_name_status(&chain).t_err()?;
+        let symbol = if chain == "maya" { "CACAO" } else { "RUNE" };
+        let amount = |units: u128| format!("{} {symbol}", native_amount(units, native.decimals));
+        let (action_fr, action_en) = match status.state {
+            api::NameState::Free => ("Inscription (un an inclus) et un an de plus", "Registration (one year included) plus one more year"),
+            api::NameState::Ours { .. } => ("Prolongation d'un an", "One-year extension"),
+            api::NameState::Taken => return Err(translate_error(&format!("le nom « {} » appartient déjà à quelqu'un d'autre sur {}", status.name, native.name))),
+        };
+        let (name, network) = (status.name, protocol.name);
+        let (deposit, fee, address) = (amount(status.deposit), amount(status.network_fee), status.address);
+        let message = if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
+            format!(
+                "Affiliate name \"{name}\" on {network}\n\n{action_en}: {deposit}\nNetwork fee: {fee}\nPaid from, owned by, and fees sent to: {address}\n\nOnce registered, swaps from Bitcoin (and Zcash on Maya) include the app's 0.80% affiliate fee. This deposit is irreversible.\n\nConfirm?"
+            )
+        } else {
+            format!(
+                "Nom d'affiliation « {name} » sur {network}\n\n{action_fr} : {deposit}\nFrais réseau : {fee}\nPayé par, appartenant à, et frais versés à : {address}\n\nUne fois inscrit, les échanges depuis Bitcoin (et Zcash sur Maya) incluent les 0,80 % d'affiliation de l'app. Ce dépôt est irréversible.\n\nConfirmer ?"
+            )
+        };
+        let confirmed = app
+            .dialog()
+            .message(message)
+            .title(lang("Confirmer l'inscription du nom", "Confirm the name registration"))
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::OkCancel)
+            .blocking_show();
+        if !confirmed {
+            return Err(translate_error("Inscription annulée (confirmation refusée)."));
+        }
+        api::register_affiliate_name(&dir, &password, &chain, status.deposit).t_err()
+    })
+    .await
+}
+
 #[tauri::command]
 fn unlock_wallet(password: String, app: tauri::AppHandle) -> Result<Vec<ProfileDto>, String> {
     let password = Zeroizing::new(password);
@@ -1529,6 +1662,7 @@ fn forget_wallet_connections(app: &tauri::AppHandle) {
     app.state::<ProfileAddressCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<ProfileZcashCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<ProfileBtcCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    IS_AFFILIATE_WALLET.store(false, Ordering::Relaxed);
 }
 
 fn evm_network(network: &str) -> Result<&'static wallet_flow::EvmNetwork, String> {
@@ -2790,8 +2924,14 @@ struct SwapPairDto {
 /// Paires d'échange possibles, directes ou en deux étapes (voir
 /// `core/src/swap_routes.rs`) : ce que la fenêtre « Convertir » propose. Les
 /// commandes d'échange n'acceptent qu'une paire directe : une étape à la fois.
+/// Asynchrone : les frais affichés dépendent du nom d'affiliation, relu sur
+/// THORChain et Maya (voir `thorchain_rpc::CrossChain::affiliate_for`).
 #[tauri::command]
-fn swap_pairs() -> Vec<SwapPairDto> {
+async fn swap_pairs() -> Vec<SwapPairDto> {
+    run_blocking(|| Ok::<_, String>(swap_pair_dtos())).await.unwrap_or_default()
+}
+
+fn swap_pair_dtos() -> Vec<SwapPairDto> {
     pgp_wallet_poc::swap_routes::routes()
         .into_iter()
         .map(|(from, to, route)| {
@@ -2986,7 +3126,7 @@ async fn swap_transaction(
             &destination,
             network_fee_line.as_deref(),
             approval_line.as_deref(),
-            protocol.charges_affiliate(from.asset),
+            quote.affiliate.is_some(),
         ) {
             return Err(translate_error("Échange annulé (confirmation refusée)."));
         }
@@ -3993,6 +4133,9 @@ struct WcState {
 }
 
 fn remember_addresses(app: &tauri::AppHandle, index: u32, addresses: &api::Addresses) {
+    if index == 0 {
+        IS_AFFILIATE_WALLET.store(addresses.thor == pgp_wallet_poc::thorchain_rpc::AFFILIATE_ADDRESS, Ordering::Relaxed);
+    }
     if let Some(cache) = app.try_state::<ProfileAddressCache>() {
         cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, (addresses.evm.clone(), addresses.solana.clone()));
     }
@@ -4506,6 +4649,8 @@ pub fn run() {
             create_wallet,
             regenerate_backup_kit,
             get_thor_fee_address,
+            affiliate_names_status,
+            register_affiliate_name,
             unlock_wallet,
             biometric_unlock_available,
             biometric_unlock_enrolled,

@@ -976,6 +976,21 @@
             </button>
           </div>
 
+          <div id="affiliate-names-section" class="settings-section hidden">
+            <h2 class="section-title" data-i18n="settings.affiliateTitle">Nom d'affiliation (frais des échanges)</h2>
+            <p class="muted" data-i18n="settings.affiliateHint">
+              Visible seulement sur le portefeuille qui reçoit les frais d'affiliation de l'app. Un nom
+              court inscrit sur THORChain et Maya permet de prélever les 0,80 % aussi sur les échanges
+              depuis Bitcoin et Zcash. Approvisionnez d'abord chaque adresse (RUNE sur THORChain, CACAO
+              sur Maya), puis inscrivez le nom.
+            </p>
+            <div id="affiliate-names-list" class="affiliate-names"></div>
+            <label for="affiliate-password" data-i18n="settings.affiliatePassword">Mot de passe (pour signer l'inscription)</label>
+            <input id="affiliate-password" type="password" autocomplete="current-password" />
+            <p id="affiliate-names-error" class="error hidden"></p>
+            <p id="affiliate-names-success" class="success hidden"></p>
+          </div>
+
           <div class="settings-section">
             <h2 class="section-title" data-i18n="settings.etherscanTitle">Historique HyperEVM et BNB Chain</h2>
             <p class="muted" data-i18n="settings.etherscanHint">

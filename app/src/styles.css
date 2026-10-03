@@ -3656,3 +3656,34 @@ h2 .coin-icon-inline,
 :root[data-theme="light"] .modal-overlay {
   background: rgba(20, 24, 32, 0.32);
 }
+
+/* Nom d'affiliation (Paramètres) : une ligne par réseau. */
+.affiliate-names {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.affiliate-name {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+}
+
+.affiliate-name-state {
+  margin: 0 0 4px;
+  font-weight: 600;
+}
+
+.affiliate-name .mono {
+  overflow-wrap: anywhere;
+}
+
+.affiliate-name-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}

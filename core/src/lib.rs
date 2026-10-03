@@ -38,6 +38,7 @@ pub mod jupiter_rpc;
 pub mod cow;
 pub mod lifi;
 pub mod etherscan_key;
+pub mod native_deposit;
 pub mod zcash;
 #[cfg(windows)]
 pub mod windows_hello;

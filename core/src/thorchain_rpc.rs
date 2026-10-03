@@ -38,16 +38,25 @@ const THORNODE_BASE: &str = "https://gateway.liquify.com/chain/thorchain_api";
 /// l'utilisateur lui-même avant d'être figée ici.
 pub const AFFILIATE_ADDRESS: &str = "thor12j5rrcflhffxmq0ekwvk0h7g0mdy8gn4fg0w3e";
 
-/// THORName (alias court) de `AFFILIATE_ADDRESS`, une fois enregistré par le
-/// développeur. Indispensable aux frais d'affiliation DEPUIS Bitcoin : son
-/// memo tient en 80 octets (OP_RETURN), et l'adresse `thor1…` complète (43
-/// caractères) l'en faisait déborder — constaté le 01/10/2026, THORChain
-/// refusait alors tout devis depuis BTC avec affilié (« generated memo too
-/// long for source chain »). Sans lui, les échanges depuis Bitcoin (et Zcash
-/// sur Maya) se font SANS frais d'affiliation (voir `charges_affiliate`).
-/// Avant usage, le nom est revérifié auprès de THORChain : son alias THOR doit
-/// être `AFFILIATE_ADDRESS` (voir `verified_affiliate`).
-pub const AFFILIATE_NAME: Option<&str> = None;
+/// THORName (alias court) de `AFFILIATE_ADDRESS`, inscrit par le développeur
+/// depuis l'app (Paramètres, voir `native_deposit`). Indispensable aux frais
+/// d'affiliation DEPUIS Bitcoin : son memo tient en 80 octets (OP_RETURN), et
+/// l'adresse `thor1…` complète (43 caractères) l'en faisait déborder —
+/// constaté le 01/10/2026 (« generated memo too long for source chain »).
+/// N'est utilisé qu'une fois relu sur le réseau (existe, non expiré, alias THOR
+/// = `AFFILIATE_ADDRESS`, voir `verified_name`) : avant son inscription, ou
+/// s'il expire, l'app retombe d'elle-même sur l'adresse complète (et sans
+/// frais depuis Bitcoin), sans nouvelle version. 2 caractères : la plus
+/// grande marge possible dans les memos (noms d'une lettre tous pris).
+pub const AFFILIATE_NAME: Option<&str> = Some("ow");
+
+/// MAYAName du développeur sur Maya (même nom, même règle), alias MAYA =
+/// `MAYA_AFFILIATE_ADDRESS` : frais d'affiliation depuis Bitcoin et Zcash.
+pub const MAYA_AFFILIATE_NAME: Option<&str> = Some("ow");
+
+/// Nombre de blocs par an retenu par les deux protocoles pour la durée d'un
+/// nom (une inscription inclut un an ; relevé sur de vraies inscriptions).
+pub const NAME_BLOCKS_PER_YEAR: u64 = 5_256_000;
 
 /// 80 points de base = 0,80 %.
 pub const AFFILIATE_FEE_BPS: u32 = 80;
@@ -156,7 +165,7 @@ pub const MAYA: CrossChain = CrossChain {
     native_chain: "MAYA",
     name_route: "mayaname",
     affiliate_address: MAYA_AFFILIATE_ADDRESS,
-    affiliate_name: None,
+    affiliate_name: MAYA_AFFILIATE_NAME,
     assets: &MAYA_ASSETS,
 };
 
@@ -231,7 +240,40 @@ struct ThorNameJson {
     #[serde(default)]
     aliases: Vec<ThorNameAlias>,
     expire_block_height: Option<i64>,
+    #[serde(default)]
+    owner: String,
 }
+
+/// Nom court tel qu'enregistré sur le protocole.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NameRecord {
+    pub owner: String,
+    pub expire_height: i64,
+    pub current_height: i64,
+    /// Alias de la chaîne native = l'adresse d'affiliation de l'app.
+    pub points_to_affiliate: bool,
+}
+
+impl NameRecord {
+    pub fn expired(&self) -> bool {
+        self.expire_height <= self.current_height
+    }
+}
+
+/// Affilié d'un devis depuis `from_asset` : le nom court vérifié, sinon
+/// l'adresse complète — sauf depuis une chaîne à OP_RETURN, où elle ferait
+/// déborder le memo : aucun affilié (échange sans frais pour l'app).
+fn choose_affiliate(verified_name: Option<&'static str>, address: &'static str, from_asset: &str) -> Option<&'static str> {
+    match verified_name {
+        Some(name) => Some(name),
+        None if memo_in_op_return(from_asset) => None,
+        None => Some(address),
+    }
+}
+
+/// Réussite gardée pour la session ; échec (nom pas encore inscrit, réseau
+/// injoignable) relu après ce délai.
+const NAME_RECHECK: std::time::Duration = std::time::Duration::from_secs(300);
 
 #[derive(Deserialize)]
 struct ThorNameAlias {
@@ -239,16 +281,19 @@ struct ThorNameAlias {
     address: String,
 }
 
-/// Réponse de résolution d'un nom : alias de la chaîne native = l'adresse
-/// d'affiliation, non expiré.
-fn check_thorname(body: &str, current_height: i64, native_chain: &str, affiliate_address: &str) -> Result<()> {
-    let parsed: ThorNameJson = serde_json::from_str(body).context("nom introuvable")?;
-    anyhow::ensure!(
-        parsed.aliases.iter().any(|a| a.chain == native_chain && a.address == affiliate_address),
-        "il ne pointe pas vers l'adresse d'affiliation de l'app"
-    );
-    anyhow::ensure!(parsed.expire_block_height.unwrap_or(0) > current_height, "il a expiré");
-    Ok(())
+/// Réponse de résolution d'un nom (`None` : inexistant) : propriétaire,
+/// expiration, et si l'alias de la chaîne native est l'adresse d'affiliation.
+fn parse_name(body: &str, current_height: i64, native_chain: &str, affiliate_address: &str) -> Result<Option<NameRecord>> {
+    if body.contains("doesn't exist") {
+        return Ok(None);
+    }
+    let parsed: ThorNameJson = serde_json::from_str(body).context("nom illisible")?;
+    Ok(Some(NameRecord {
+        points_to_affiliate: parsed.aliases.iter().any(|a| a.chain == native_chain && a.address == affiliate_address),
+        owner: parsed.owner,
+        expire_height: parsed.expire_block_height.unwrap_or(0),
+        current_height,
+    }))
 }
 
 impl CrossChain {
@@ -256,26 +301,69 @@ impl CrossChain {
         self.assets.iter().find(|a| a.coin == coin && a.network == network)
     }
 
+    /// Affilié à inscrire dans un devis depuis `from_asset` (voir
+    /// `choose_affiliate`).
+    pub fn affiliate_for(&self, from_asset: &str) -> Option<&'static str> {
+        choose_affiliate(self.verified_name(), self.affiliate_address, from_asset)
+    }
+
     /// Frais d'affiliation prélevés sur un échange depuis `from_asset` ? Oui,
-    /// sauf depuis une chaîne à OP_RETURN (Bitcoin, Zcash) tant que le nom
-    /// court n'est pas enregistré : l'adresse complète ferait déborder le memo,
-    /// l'échange se fait alors sans frais pour l'app (memo à 4 champs).
+    /// sauf depuis Bitcoin ou Zcash tant que le nom court n'est pas inscrit et
+    /// vérifié (memo à 4 champs).
     pub fn charges_affiliate(&self, from_asset: &str) -> bool {
-        self.affiliate_name.is_some() || !memo_in_op_return(from_asset)
+        self.affiliate_for(from_asset).is_some()
     }
 
-    /// Affilié à inscrire dans les devis : le nom court s'il est enregistré (et
-    /// revérifié), sinon l'adresse complète.
-    fn affiliate(&self) -> Result<&'static str> {
-        match self.affiliate_name {
-            Some(name) => self.verified_affiliate(name),
-            None => Ok(self.affiliate_address),
+    /// Chaîne native des alias de nom (« THOR », « MAYA »).
+    pub fn native_chain(&self) -> &'static str {
+        self.native_chain
+    }
+
+    /// Nom court relu auprès du protocole : il doit exister, ne pas être
+    /// expiré, et pointer vers l'adresse d'affiliation — sinon les frais
+    /// iraient à quelqu'un d'autre (voir `NAME_RECHECK`). Tests unitaires :
+    /// jamais vérifié (aucun appel réseau).
+    fn verified_name(&self) -> Option<&'static str> {
+        let name = self.affiliate_name?;
+        if cfg!(test) {
+            return None;
         }
+        type Checked = std::sync::Mutex<std::collections::HashMap<&'static str, (bool, std::time::Instant)>>;
+        static CHECKED: OnceLock<Checked> = OnceLock::new();
+        let cache = CHECKED.get_or_init(Default::default);
+        if let Some((ok, at)) = cache.lock().unwrap_or_else(|p| p.into_inner()).get(self.module).copied() {
+            if ok || at.elapsed() < NAME_RECHECK {
+                return ok.then_some(name);
+            }
+        }
+        let ok = matches!(self.name_record(name), Ok(Some(record)) if record.points_to_affiliate && !record.expired());
+        cache.lock().unwrap_or_else(|p| p.into_inner()).insert(self.module, (ok, std::time::Instant::now()));
+        ok.then_some(name)
     }
 
-    /// Nom `name` relu auprès du protocole (une fois par session) : il doit
-    /// exister, ne pas être expiré, et pointer vers l'adresse d'affiliation —
-    /// sinon les frais iraient à quelqu'un d'autre.
+    /// Nom `name` sur ce protocole (`None` s'il n'existe pas), avec la
+    /// hauteur actuelle du réseau.
+    pub fn name_record(&self, name: &str) -> Result<Option<NameRecord>> {
+        let label = self.name;
+        let body = shared_client()
+            .get(format!("{}/{}/{}/{name}", self.node_base, self.module, self.name_route))
+            .send()
+            .with_context(|| format!("nœud {label} injoignable"))?
+            .text()
+            .with_context(|| format!("réponse {label} illisible"))?;
+        if body.contains("doesn't exist") {
+            return Ok(None);
+        }
+        let height: Vec<serde_json::Value> = shared_client()
+            .get(format!("{}/{}/lastblock", self.node_base, self.module))
+            .send()
+            .with_context(|| format!("nœud {label} injoignable"))?
+            .json()
+            .with_context(|| format!("hauteur {label} illisible"))?;
+        let current_height = height.first().and_then(|b| b.get(self.module)).and_then(serde_json::Value::as_i64).context("hauteur du réseau illisible")?;
+        parse_name(&body, current_height, self.native_chain, self.affiliate_address).with_context(|| format!("nom {name} illisible chez {label}"))
+    }
+
     /// Chaînes où les échanges sont suspendus en ce moment (chaîne arrêtée ou
     /// échanges en pause : incident, maintenance), lues sur
     /// `inbound_addresses`.
@@ -308,23 +396,6 @@ impl CrossChain {
         halted_message(self.name, &networks)
     }
 
-    fn verified_affiliate(&self, name: &'static str) -> Result<&'static str> {
-        type Checked = std::sync::Mutex<std::collections::HashMap<&'static str, std::result::Result<(), String>>>;
-        static CHECKED: OnceLock<Checked> = OnceLock::new();
-        let cache = CHECKED.get_or_init(Default::default);
-        if let Some(outcome) = cache.lock().unwrap_or_else(|p| p.into_inner()).get(self.module) {
-            return outcome.as_ref().map(|_| name).map_err(|e| anyhow!("nom d'affiliation « {name} » refusé : {e}"));
-        }
-        let check = || -> Result<()> {
-            let body = shared_client().get(format!("{}/{}/{}/{name}", self.node_base, self.module, self.name_route)).send()?.text()?;
-            let height: Vec<serde_json::Value> = shared_client().get(format!("{}/{}/lastblock", self.node_base, self.module)).send()?.json()?;
-            let current = height.first().and_then(|b| b.get(self.module)).and_then(serde_json::Value::as_i64).unwrap_or(0);
-            check_thorname(&body, current, self.native_chain, self.affiliate_address)
-        };
-        let outcome = check().map_err(|e| format!("{e:#}"));
-        cache.lock().unwrap_or_else(|p| p.into_inner()).insert(self.module, outcome.clone());
-        outcome.map(|_| name).map_err(|e| anyhow!("nom d'affiliation « {name} » refusé : {e}"))
-    }
 }
 
 /// Sortie minimale exigée, en points de base SOUS le montant de sortie attendu
@@ -365,6 +436,9 @@ pub struct SwapQuote {
     /// Tarif de frais conseillé pour le dépôt (sat/vB sur Bitcoin), sous
     /// lequel le protocole peut tarder à le voir.
     pub recommended_gas_rate: Option<u64>,
+    /// Affilié demandé par l'app pour ce devis (nom court ou adresse), et
+    /// exigé tel quel dans le memo ; `None` : échange sans frais pour l'app.
+    pub affiliate: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -429,16 +503,29 @@ pub fn verify_swap_memo(memo: &str, to_asset: &str, destination: &str, expected_
 }
 
 impl CrossChain {
-    /// Devis d'échange (voir `quote_swap`), memo vérifié avant tout usage.
+    /// Devis d'échange (voir `quote_swap`), memo vérifié avant tout usage,
+    /// avec l'affilié retenu par `affiliate_for`. Depuis Bitcoin ou Zcash, un
+    /// gros échange découpé par le protocole (memo allongé de « /0/2147 »,
+    /// relevé le 03/10/2026) peut ne plus tenir en 80 octets même avec le nom
+    /// court : nouveau devis sans affilié (sans frais, dit dans la boîte de
+    /// confirmation) plutôt qu'un refus.
     pub fn quote_swap(&self, from_asset: &str, to_asset: &str, amount: u64, destination: &str) -> Result<SwapQuote> {
+        let affiliate = self.affiliate_for(from_asset);
+        match self.quote_swap_as(from_asset, to_asset, amount, destination, affiliate) {
+            Err(e) if affiliate.is_some() && memo_in_op_return(from_asset) && e.to_string().contains("memo too long") => {
+                self.quote_swap_as(from_asset, to_asset, amount, destination, None)
+            }
+            other => other,
+        }
+    }
+
+    /// Devis avec l'affilié `affiliate` imposé (`None` : sans frais) — pour
+    /// relire un devis après la confirmation dans les conditions affichées.
+    pub fn quote_swap_as(&self, from_asset: &str, to_asset: &str, amount: u64, destination: &str, affiliate: Option<&str>) -> Result<SwapQuote> {
         let name = self.name;
-        let affiliate = if self.charges_affiliate(from_asset) {
-            format!("&affiliate={}&affiliate_bps={AFFILIATE_FEE_BPS}", self.affiliate()?)
-        } else {
-            String::new()
-        };
+        let affiliate_query = affiliate.map(|a| format!("&affiliate={a}&affiliate_bps={AFFILIATE_FEE_BPS}")).unwrap_or_default();
         let url = format!(
-            "{}/{}/quote/swap?from_asset={from_asset}&to_asset={to_asset}&amount={amount}&destination={destination}{affiliate}&liquidity_tolerance_bps={SWAP_TOLERANCE_BPS}",
+            "{}/{}/quote/swap?from_asset={from_asset}&to_asset={to_asset}&amount={amount}&destination={destination}{affiliate_query}&liquidity_tolerance_bps={SWAP_TOLERANCE_BPS}",
             self.node_base, self.module
         );
         let response: QuoteResponseJson = shared_client()
@@ -481,7 +568,7 @@ impl CrossChain {
             );
         }
 
-        self.verify_memo_for(&memo, from_asset, to_asset, destination, expected_amount_out)?;
+        self.verify_memo(&memo, affiliate, to_asset, destination, expected_amount_out)?;
 
         Ok(SwapQuote {
             inbound_address,
@@ -490,6 +577,7 @@ impl CrossChain {
             expected_amount_out,
             total_fees,
             recommended_gas_rate: number(&response.recommended_gas_rate),
+            affiliate: affiliate.map(str::to_string),
         })
     }
 }
@@ -540,23 +628,21 @@ fn memo_asset_matches(assets: &[ThorAsset], field: &str, to_asset: &str) -> bool
 /// accepte des champs d'agrégateur DEX après le 6ᵉ (contrat intermédiaire,
 /// jeton final, sortie minimale) qui redirigeraient la sortie ailleurs.
 /// Sans frais d'affiliation (départ Bitcoin ou Zcash, voir
-/// `charges_affiliate`) : exactement les 4 premiers champs (relevé en direct :
-/// `=:e:0x59D7…E6ba:31290403`) — un affilié inattendu est refusé.
+/// `choose_affiliate`) : exactement les 4 premiers champs (relevé en direct :
+/// `=:e:0x59D7…E6ba:31290403`) — un affilié inattendu est refusé. Avec : le
+/// 5ᵉ champ doit être EXACTEMENT l'affilié demandé par l'app (adresse, ou nom
+/// court vérifié) — sinon une passerelle pourrait substituer un nom court
+/// inscrit par un autre.
 impl CrossChain {
-/// Memo d'un échange depuis `from_asset` : avec ou sans frais d'affiliation
-/// selon `charges_affiliate`.
-pub fn verify_memo_for(&self, memo: &str, from_asset: &str, to_asset: &str, destination: &str, expected_amount_out: u64) -> Result<()> {
-    self.verify_memo(memo, self.charges_affiliate(from_asset), to_asset, destination, expected_amount_out)
-}
-
-/// Memo d'un échange avec nos frais d'affiliation (voir `verify_memo_for`).
+/// Memo d'un échange avec nos frais d'affiliation à l'adresse complète.
 pub fn verify_swap_memo(&self, memo: &str, to_asset: &str, destination: &str, expected_amount_out: u64) -> Result<()> {
-    self.verify_memo(memo, true, to_asset, destination, expected_amount_out)
+    self.verify_memo(memo, Some(self.affiliate_address), to_asset, destination, expected_amount_out)
 }
 
-fn verify_memo(&self, memo: &str, with_affiliate: bool, to_asset: &str, destination: &str, expected_amount_out: u64) -> Result<()> {
+/// Memo d'un échange avec l'affilié `affiliate` demandé (`None` : sans).
+pub fn verify_memo(&self, memo: &str, affiliate: Option<&str>, to_asset: &str, destination: &str, expected_amount_out: u64) -> Result<()> {
     let fields: Vec<&str> = memo.split(':').collect();
-    let expected_fields = if with_affiliate { 6 } else { 4 };
+    let expected_fields = if affiliate.is_some() { 6 } else { 4 };
     anyhow::ensure!(
         fields.len() == expected_fields,
         "memo THORChain inattendu ({} champs au lieu de {expected_fields}) : {memo}",
@@ -602,10 +688,10 @@ fn verify_memo(&self, memo: &str, with_affiliate: bool, to_asset: &str, destinat
         "sortie minimale du memo THORChain ({limit}) trop basse par rapport à la sortie attendue ({expected_amount_out}) — swap refusé"
     );
 
-    if with_affiliate {
-        let affiliate_ok = fields[4] == self.affiliate_address || self.affiliate_name == Some(fields[4]);
+    if let Some(affiliate) = affiliate {
+        let ours = affiliate == self.affiliate_address || self.affiliate_name == Some(affiliate);
         anyhow::ensure!(
-            affiliate_ok && fields[5] == AFFILIATE_FEE_BPS.to_string(),
+            ours && fields[4] == affiliate && fields[5] == AFFILIATE_FEE_BPS.to_string(),
             "frais d'affiliation du memo THORChain inattendus ({}:{}) — swap refusé",
             fields[4],
             fields[5]
@@ -632,25 +718,39 @@ mod tests {
     #[test]
     fn op_return_sources_carry_no_affiliate() {
         let evm = "0x59D78c44ac60F09369b544778358704B7b18E6ba";
-        assert_eq!(THORCHAIN.charges_affiliate("BTC.BTC"), AFFILIATE_NAME.is_some());
-        assert!(!MAYA.charges_affiliate("ZEC.ZEC") && !MAYA.charges_affiliate("BTC.BTC"));
+        // Choix de l'affilié : nom vérifié partout ; sinon adresse, sauf depuis
+        // Bitcoin / Zcash (aucun).
+        assert_eq!(choose_affiliate(Some("ow"), AFFILIATE_ADDRESS, "BTC.BTC"), Some("ow"));
+        assert_eq!(choose_affiliate(Some("ow"), AFFILIATE_ADDRESS, "ETH.ETH"), Some("ow"));
+        assert_eq!(choose_affiliate(None, AFFILIATE_ADDRESS, "BTC.BTC"), None);
+        assert_eq!(choose_affiliate(None, MAYA_AFFILIATE_ADDRESS, "ZEC.ZEC"), None);
+        assert_eq!(choose_affiliate(None, AFFILIATE_ADDRESS, "ETH.ETH"), Some(AFFILIATE_ADDRESS));
+        // Tests hors réseau : nom jamais vérifié.
+        assert!(!THORCHAIN.charges_affiliate("BTC.BTC") && !MAYA.charges_affiliate("ZEC.ZEC"));
         assert!(THORCHAIN.charges_affiliate("ETH.ETH") && MAYA.charges_affiliate("ARB.ETH"));
-        if AFFILIATE_NAME.is_none() {
-            THORCHAIN.verify_memo_for(&format!("=:e:{evm}:31290403"), "BTC.BTC", "ETH.ETH", evm, 31_606_468).expect("BTC → ETH");
-            THORCHAIN
-                .verify_memo_for(&format!("=:ETH.USDC:{evm}:83511423369"), "BTC.BTC", "ETH.USDC-0XA0B86991C6218B36C1D19D4A2E9EB0CE3606EB48", evm, 84_354_973_100)
-                .expect("BTC → USDC");
-            let with_fee = format!("=:e:{evm}:31290403:{AFFILIATE_ADDRESS}:80");
-            assert!(THORCHAIN.verify_memo_for(&with_fee, "BTC.BTC", "ETH.ETH", evm, 31_606_468).is_err(), "affilié inattendu");
-        }
-        MAYA.verify_memo_for(&format!("=:e:{evm}:48048634"), "ZEC.ZEC", "ETH.ETH", evm, 48_533_974).expect("ZEC → ETH");
-        MAYA.verify_memo_for(&format!("=:b:{DEST_BTC}:1521019"), "ZEC.ZEC", "BTC.BTC", DEST_BTC, 1_536_383).expect("ZEC → BTC");
-        MAYA.verify_memo_for(&format!("=:ARB.USDC:{evm}:92037029832"), "ZEC.ZEC", "ARB.USDC-0XAF88D065E77C8CC2239327C5EDB3A432268E5831", evm, 92_966_696_800)
+
+        THORCHAIN.verify_memo(&format!("=:e:{evm}:31290403"), None, "ETH.ETH", evm, 31_606_468).expect("BTC → ETH");
+        THORCHAIN
+            .verify_memo(&format!("=:ETH.USDC:{evm}:83511423369"), None, "ETH.USDC-0XA0B86991C6218B36C1D19D4A2E9EB0CE3606EB48", evm, 84_354_973_100)
+            .expect("BTC → USDC");
+        let with_fee = format!("=:e:{evm}:31290403:{AFFILIATE_ADDRESS}:80");
+        assert!(THORCHAIN.verify_memo(&with_fee, None, "ETH.ETH", evm, 31_606_468).is_err(), "affilié inattendu");
+        // Nom court : exigé tel que demandé, jamais substitué.
+        let with_name = format!("=:e:{evm}:31290403:ow:80");
+        THORCHAIN.verify_memo(&with_name, Some("ow"), "ETH.ETH", evm, 31_606_468).expect("nom court demandé");
+        assert!(THORCHAIN.verify_memo(&with_name, Some(AFFILIATE_ADDRESS), "ETH.ETH", evm, 31_606_468).is_err(), "nom substitué à l'adresse demandée");
+        assert!(THORCHAIN.verify_memo(&with_fee, Some("ow"), "ETH.ETH", evm, 31_606_468).is_err(), "adresse à la place du nom demandé");
+        assert!(THORCHAIN.verify_memo(&format!("=:e:{evm}:31290403:zz:80"), Some("zz"), "ETH.ETH", evm, 31_606_468).is_err(), "nom d'un autre");
+
+        MAYA.verify_memo(&format!("=:e:{evm}:48048634"), None, "ETH.ETH", evm, 48_533_974).expect("ZEC → ETH");
+        MAYA.verify_memo(&format!("=:b:{DEST_BTC}:1521019"), None, "BTC.BTC", DEST_BTC, 1_536_383).expect("ZEC → BTC");
+        MAYA.verify_memo(&format!("=:ARB.USDC:{evm}:92037029832"), None, "ARB.USDC-0XAF88D065E77C8CC2239327C5EDB3A432268E5831", evm, 92_966_696_800)
             .expect("ZEC → USDC Arbitrum");
-        assert!(MAYA.verify_memo_for("=:e:0x1111111111111111111111111111111111111111:48048634", "ZEC.ZEC", "ETH.ETH", evm, 48_533_974).is_err(), "autre destination");
-        assert!(MAYA.verify_memo_for(&format!("=:e:{evm}:1000"), "ZEC.ZEC", "ETH.ETH", evm, 48_533_974).is_err(), "limite dérisoire");
-        assert!(MAYA.verify_memo_for(&format!("=:e:{evm}:48048634:maya1autre:9000"), "ZEC.ZEC", "ETH.ETH", evm, 48_533_974).is_err(), "affilié étranger");
-        assert!(MAYA.verify_memo_for(&format!("=:e:{evm}:48048634"), "ETH.ETH", "ETH.ETH", evm, 48_533_974).is_err(), "depuis ETH : affilié exigé");
+        MAYA.verify_memo(&format!("=:e:{evm}:48048634:ow:80"), Some("ow"), "ETH.ETH", evm, 48_533_974).expect("MAYAName");
+        assert!(MAYA.verify_memo("=:e:0x1111111111111111111111111111111111111111:48048634", None, "ETH.ETH", evm, 48_533_974).is_err(), "autre destination");
+        assert!(MAYA.verify_memo(&format!("=:e:{evm}:1000"), None, "ETH.ETH", evm, 48_533_974).is_err(), "limite dérisoire");
+        assert!(MAYA.verify_memo(&format!("=:e:{evm}:48048634:maya1autre:9000"), None, "ETH.ETH", evm, 48_533_974).is_err(), "affilié étranger");
+        assert!(MAYA.verify_memo(&format!("=:e:{evm}:48048634"), Some(MAYA_AFFILIATE_ADDRESS), "ETH.ETH", evm, 48_533_974).is_err(), "affilié exigé");
         assert_eq!((format_1e8(139_440), format_1e8(100_000_000), format_1e8(1_000)), ("0.0013944".to_string(), "1".to_string(), "0.00001".to_string()));
         assert_eq!((ticker("ZEC.ZEC"), ticker("ETH.USDC-0XA0B8")), ("ZEC", "USDC"));
     }
@@ -842,11 +942,22 @@ mod tests {
         let name = |alias: &str, expire: i64| {
             format!(r#"{{"name":"x","expire_block_height":{expire},"owner":"thor1u7ent5406np9t9u35ls0vxnv8rcmlzudf9zpq0","aliases":[{{"chain":"THOR","address":"{alias}"}},{{"chain":"ETH","address":"0x335fd459eadf098f8b2f26692936ee3d5bb425a2"}}]}}"#)
         };
-        check_thorname(&name(AFFILIATE_ADDRESS, 1000), 999, "THOR", AFFILIATE_ADDRESS).expect("bon alias, valide");
-        assert!(check_thorname(&name("thor1xnkml34dfmhtmx3hfxte4jxrxn2j3604mtx5h0", 1000), 999, "THOR", AFFILIATE_ADDRESS).is_err(), "autre adresse");
-        assert!(check_thorname(&name(AFFILIATE_ADDRESS, 1000), 1000, "THOR", AFFILIATE_ADDRESS).is_err(), "expiré");
-        assert!(check_thorname(&name(AFFILIATE_ADDRESS, 1000), 999, "MAYA", MAYA_AFFILIATE_ADDRESS).is_err(), "alias THOR, pas MAYA");
-        assert!(check_thorname(r#"{"code":3,"message":"THORName doesn't exist"}"#, 0, "THOR", AFFILIATE_ADDRESS).is_err(), "inexistant");
+        let usable = |body: &str, height: i64, chain: &str, address: &str| {
+            matches!(parse_name(body, height, chain, address), Ok(Some(r)) if r.points_to_affiliate && !r.expired())
+        };
+        assert!(usable(&name(AFFILIATE_ADDRESS, 1000), 999, "THOR", AFFILIATE_ADDRESS), "bon alias, valide");
+        assert!(!usable(&name("thor1xnkml34dfmhtmx3hfxte4jxrxn2j3604mtx5h0", 1000), 999, "THOR", AFFILIATE_ADDRESS), "autre adresse");
+        assert!(!usable(&name(AFFILIATE_ADDRESS, 1000), 1000, "THOR", AFFILIATE_ADDRESS), "expiré");
+        assert!(!usable(&name(AFFILIATE_ADDRESS, 1000), 999, "MAYA", MAYA_AFFILIATE_ADDRESS), "alias THOR, pas MAYA");
+        let record = parse_name(&name(AFFILIATE_ADDRESS, 1000), 999, "THOR", AFFILIATE_ADDRESS).unwrap().unwrap();
+        assert_eq!(record.owner, "thor1u7ent5406np9t9u35ls0vxnv8rcmlzudf9zpq0");
+        // Réponse réelle d'un nom inexistant (relevée le 03/10/2026).
+        let missing = r#"{"code":3,"message":"fail to fetch THORName: 2 errors occurred:
+	* internal error
+	* THORName doesn't exist: ow
+
+: invalid request","details":[]}"#;
+        assert_eq!(parse_name(missing, 0, "THOR", AFFILIATE_ADDRESS).unwrap(), None, "inexistant");
     }
 
     /// Devis RÉELS pour les nouvelles paires (lecture seule) : jeton ERC-20 en

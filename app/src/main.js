@@ -729,6 +729,19 @@ const I18N = {
     "settings.thorHint":
       "Adresse THORChain dérivée de votre clé maîtresse — lecture seule, aucune fonction d'envoi ni de solde RUNE dans cette version. Sert uniquement de référence pour la fonctionnalité d'échange (swap).",
     "settings.thorShow": "Afficher l'adresse",
+    "settings.affiliateTitle": "Nom d'affiliation (frais des échanges)",
+    "settings.affiliateHint":
+      "Visible seulement sur le portefeuille qui reçoit les frais d'affiliation de l'app. Un nom court inscrit sur THORChain et Maya permet de prélever les 0,80 % aussi sur les échanges depuis Bitcoin et Zcash. Approvisionnez d'abord chaque adresse (RUNE sur THORChain, CACAO sur Maya), puis inscrivez le nom.",
+    "settings.affiliateFree": "« {name} » sur {protocol} : libre",
+    "settings.affiliateOurs": "« {name} » sur {protocol} : inscrit à votre nom, encore environ {years} an(s)",
+    "settings.affiliateTaken": "« {name} » sur {protocol} : déjà pris par quelqu'un d'autre",
+    "settings.affiliateBalance": "Adresse : {address} · solde : {balance} {symbol}",
+    "settings.affiliateRegister": "Inscrire « {name} » ({deposit} {symbol} + {fee} de frais)",
+    "settings.affiliateRenew": "Prolonger d'un an ({deposit} {symbol} + {fee} de frais)",
+    "settings.affiliateCopy": "Copier l'adresse",
+    "settings.affiliatePassword": "Mot de passe (pour signer l'inscription)",
+    "settings.affiliateCopied": "Adresse copiée",
+    "settings.affiliateDone": "Transaction envoyée : {tx}. Le nom apparaît ici en quelques secondes.",
     "settings.etherscanTitle": "Historique HyperEVM et BNB Chain",
     "settings.etherscanHint":
       "Aucun service public sans clé ne fournit l'historique de ces réseaux. Avec une clé API Etherscan gratuite (créée sur etherscan.io, gardée uniquement sur cet appareil), l'historique HyperEVM s'affiche dans l'app ; BNB Chain demande une offre Etherscan payante. Cette clé ne donne accès qu'à des données publiques.",
@@ -1263,6 +1276,19 @@ const I18N = {
     "settings.thorHint":
       "THORChain address derived from your master key — read-only, no send function or RUNE balance in this version. Used only as a reference for the swap feature.",
     "settings.thorShow": "Show address",
+    "settings.affiliateTitle": "Affiliate name (swap fees)",
+    "settings.affiliateHint":
+      "Visible only on the wallet that receives the app's affiliate fees. A short name registered on THORChain and Maya lets the app take its 0.80% on swaps from Bitcoin and Zcash too. First fund each address (RUNE on THORChain, CACAO on Maya), then register the name.",
+    "settings.affiliateFree": "\"{name}\" on {protocol}: available",
+    "settings.affiliateOurs": "\"{name}\" on {protocol}: registered to you, about {years} more year(s)",
+    "settings.affiliateTaken": "\"{name}\" on {protocol}: already taken by someone else",
+    "settings.affiliateBalance": "Address: {address} · balance: {balance} {symbol}",
+    "settings.affiliateRegister": "Register \"{name}\" ({deposit} {symbol} + {fee} fee)",
+    "settings.affiliateRenew": "Extend by one year ({deposit} {symbol} + {fee} fee)",
+    "settings.affiliateCopy": "Copy address",
+    "settings.affiliatePassword": "Password (to sign the registration)",
+    "settings.affiliateCopied": "Address copied",
+    "settings.affiliateDone": "Transaction sent: {tx}. The name shows here within a few seconds.",
     "settings.etherscanTitle": "HyperEVM and BNB Chain history",
     "settings.etherscanHint":
       "No public keyless service provides these networks' history. With a free Etherscan API key (created on etherscan.io, kept only on this device), HyperEVM history shows in the app; BNB Chain requires a paid Etherscan plan. This key only gives access to public data.",
@@ -1526,6 +1552,7 @@ document.querySelectorAll(".lang-btn").forEach((btn) => {
     // adopteront la nouvelle langue à leur prochain affichage.
     renderRecipientList();
     renderEtherscanKey();
+    renderAffiliateNames();
     // Valeur en dollars des cartes (« ≈ 1 234,56 $ » / « ≈ $1,234.56 ») :
     // recalculée sur place, sans appel réseau.
     document.querySelectorAll(".wallet-card").forEach(updateFiatValue);
@@ -2291,6 +2318,86 @@ document.getElementById("regenerate-backup-close").addEventListener("click", () 
   document.getElementById("regenerate-backup-list").innerHTML = "";
 });
 
+// --- Nom d'affiliation (portefeuille du développeur seulement) -----------------
+// Rust ne renvoie rien (null) pour un autre portefeuille : la section reste
+// cachée. L'inscription passe par une boîte de confirmation native, construite
+// côté Rust à partir de l'état relu sur le réseau.
+
+let affiliateNames = null;
+
+function renderAffiliateNames() {
+  const section = document.getElementById("affiliate-names-section");
+  section.classList.toggle("hidden", !affiliateNames);
+  if (!affiliateNames) return;
+  const list = document.getElementById("affiliate-names-list");
+  list.replaceChildren(
+    ...affiliateNames.map((item) => {
+      const row = document.createElement("div");
+      row.className = "affiliate-name";
+      const years = item.years_left == null ? "" : item.years_left.toLocaleString(chartLocale(), { maximumFractionDigits: 1 });
+      const stateKey = { free: "settings.affiliateFree", ours: "settings.affiliateOurs", taken: "settings.affiliateTaken" }[item.state];
+      const title = document.createElement("p");
+      title.className = "affiliate-name-state";
+      title.textContent = t(stateKey, { name: item.name, protocol: item.protocol, years });
+      const balance = mutedParagraph(t("settings.affiliateBalance", { address: item.address, balance: item.balance, symbol: item.symbol }));
+      balance.classList.add("mono");
+      const actions = document.createElement("div");
+      actions.className = "affiliate-name-actions";
+      const copy = document.createElement("button");
+      copy.type = "button";
+      copy.className = "link";
+      copy.textContent = t("settings.affiliateCopy");
+      copy.addEventListener("click", () => copyText(item.address, t("settings.affiliateCopied")));
+      actions.append(copy);
+      if (item.state !== "taken") {
+        const register = document.createElement("button");
+        register.type = "button";
+        register.className = "secondary";
+        const vars = { name: item.name, deposit: item.deposit, symbol: item.symbol, fee: item.network_fee };
+        register.textContent = t(item.state === "free" ? "settings.affiliateRegister" : "settings.affiliateRenew", vars);
+        register.addEventListener("click", withBusyButton(register, () => registerAffiliateName(item.chain)));
+        actions.prepend(register);
+      }
+      row.append(title, balance, actions);
+      return row;
+    })
+  );
+}
+
+function loadAffiliateNames() {
+  invoke("affiliate_names_status")
+    .then((names) => {
+      affiliateNames = names;
+      renderAffiliateNames();
+    })
+    .catch((e) => {
+      console.error(e);
+      showError(document.getElementById("affiliate-names-error"), String(e));
+    });
+}
+
+async function registerAffiliateName(chain) {
+  const errorEl = document.getElementById("affiliate-names-error");
+  const successEl = document.getElementById("affiliate-names-success");
+  hideError(errorEl);
+  successEl.classList.add("hidden");
+  const passwordEl = document.getElementById("affiliate-password");
+  if (!passwordEl.value) {
+    showError(errorEl, t("common.passwordRequired"));
+    return;
+  }
+  try {
+    const tx = await invoke("register_affiliate_name", { password: passwordEl.value, chain });
+    successEl.textContent = t("settings.affiliateDone", { tx });
+    successEl.classList.remove("hidden");
+    setTimeout(loadAffiliateNames, 8000);
+  } catch (e) {
+    showError(errorEl, String(e));
+  } finally {
+    passwordEl.value = "";
+  }
+}
+
 // --- Clé Etherscan (historiques HyperEVM et BNB Chain) ------------------------
 // Gardée par Rust sur l'appareil (core/src/etherscan_key.rs) ; l'interface ne
 // reçoit jamais que sa forme masquée.
@@ -2449,6 +2556,7 @@ document.querySelectorAll(".nav-tab").forEach((tab) => {
       loadArchivedProfiles();
       loadBiometricSettings();
       loadEtherscanKey();
+      loadAffiliateNames();
     }
   });
 });

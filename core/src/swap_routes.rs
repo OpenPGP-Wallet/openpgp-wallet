@@ -99,9 +99,9 @@ fn lifi_enabled() -> bool {
 /// moins préféré : Jupiter (même portefeuille Solana), CoW sur un même réseau
 /// EVM (ordre sans transaction d'échange, meilleurs prix), THORChain (pools
 /// les plus profonds), Maya (Arbitrum), puis LI.FI (agrégateur : transaction
-/// construite par un tiers, vérifiée avant signature). Depuis Bitcoin sans
-/// nom court THORChain, LI.FI d'abord : seule route qui porte les frais de
-/// l'app (choix du développeur, 03/10/2026). L'utilisateur peut choisir
+/// construite par un tiers, vérifiée avant signature). Depuis Bitcoin, tant
+/// que le nom court THORChain n'est pas inscrit et vérifié, LI.FI d'abord :
+/// seule route qui porte les frais de l'app (choix du développeur, 03/10/2026). L'utilisateur peut choisir
 /// n'importe lequel ; les commandes d'échange refusent un protocole absent de
 /// la liste.
 pub fn direct_all(from: SwapAsset, to: SwapAsset) -> Vec<Protocol> {
@@ -122,7 +122,7 @@ pub fn direct_all(from: SwapAsset, to: SwapAsset) -> Vec<Protocol> {
         all.push(Protocol::Maya);
     }
     if lifi_enabled() && lifi::links((from.coin, from.network), (to.coin, to.network)) {
-        if from.network == "btc_mainnet" && thorchain_rpc::AFFILIATE_NAME.is_none() {
+        if from.network == "btc_mainnet" && !thorchain_rpc::THORCHAIN.charges_affiliate("BTC.BTC") {
             all.insert(0, Protocol::Lifi);
         } else {
             all.push(Protocol::Lifi);
@@ -278,14 +278,14 @@ mod tests {
         assert_eq!(direct(eth, btc), Some(Protocol::Thorchain));
         let mut expected = vec![Protocol::Thorchain, Protocol::Maya];
         if lifi_enabled() {
-            if thorchain_rpc::AFFILIATE_NAME.is_none() {
+            if !thorchain_rpc::THORCHAIN.charges_affiliate("BTC.BTC") {
                 expected.insert(0, Protocol::Lifi);
             } else {
                 expected.push(Protocol::Lifi);
             }
         }
         assert_eq!(direct_all(btc, eth), expected);
-        let free = u32::from(thorchain_rpc::AFFILIATE_NAME.is_some()) * thorchain_rpc::AFFILIATE_FEE_BPS;
+        let free = u32::from(thorchain_rpc::THORCHAIN.charges_affiliate("BTC.BTC")) * thorchain_rpc::AFFILIATE_FEE_BPS;
         assert_eq!(affiliate_fee_bps(Protocol::Thorchain, btc), free);
         assert_eq!(affiliate_fee_bps(Protocol::Maya, btc), 0, "Maya : pas de MAYAName");
         assert_eq!(affiliate_fee_bps(Protocol::Thorchain, eth), 80);
