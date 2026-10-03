@@ -278,7 +278,11 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
         "the LI.FI transaction does not pay the announced deposit address exactly once — refused",
     ),
     ("transaction LI.FI avec des sorties inattendues — refusé", "LI.FI transaction with unexpected outputs — refused"),
-    ("la transaction LI.FI n'envoie pas exactement le montant affiché — refusé", "the LI.FI transaction does not send exactly the amount shown — refused"),
+    ("la transaction LI.FI envoie plus que le montant affiché — refusé", "the LI.FI transaction sends more than the amount shown — refused"),
+    (
+        "la transaction LI.FI dépose moins que le montant affiché, frais annoncés déduits — refusé",
+        "the LI.FI transaction deposits less than the amount shown, announced fees deducted — refused",
+    ),
     ("la transaction LI.FI dépense plus que ses entrées — refusé", "the LI.FI transaction spends more than its inputs — refused"),
     ("transaction LI.FI avec un autre montant que celui demandé", "LI.FI transaction for another amount than the one requested"),
     ("adresse de dépôt LI.FI invalide", "invalid LI.FI deposit address"),
@@ -3652,10 +3656,10 @@ async fn lifi_swap_transaction(
                 let (fee, rate) = (deposit.network_fee, deposit.network_fee as f64 / deposit.vsize.max(1) as f64);
                 let max_fee = fee.saturating_mul(3) / 2;
                 btc_max_network_fee = Some(max_fee);
-                let service = deposit.service_fees;
+                let (service, total) = (deposit.service_fees, deposit.total_debit);
                 lang(
-                    &format!("Dépôt Bitcoin vers l'adresse du pont : {address}\nFrais réseau Bitcoin : {fee} sat (≈ {rate:.1} sat/vB), au plus {max_fee} sat\nFrais de LI.FI et de l'app prélevés sur l'envoi : {service} sat"),
-                    &format!("Bitcoin deposit to the bridge's address: {address}\nBitcoin network fee: {fee} sat (≈ {rate:.1} sat/vB), at most {max_fee} sat\nLI.FI's and the app's fees taken from the amount sent: {service} sat"),
+                    &format!("Dépôt Bitcoin vers l'adresse du pont : {address}\nFrais réseau Bitcoin : {fee} sat (≈ {rate:.1} sat/vB), au plus {max_fee} sat\nFrais de LI.FI et de l'app : {service} sat\nTotal débité de votre adresse : {total} sat"),
+                    &format!("Bitcoin deposit to the bridge's address: {address}\nBitcoin network fee: {fee} sat (≈ {rate:.1} sat/vB), at most {max_fee} sat\nLI.FI's and the app's fees: {service} sat\nTotal debited from your address: {total} sat"),
                 )
                 .to_string()
             }
@@ -4947,7 +4951,7 @@ mod tests {
             "Zcash fees increased since the confirmation (0.00025000 instead of 0.00020000 ZEC) — start again"
         );
         assert_eq!(translate_dynamic_error("devis Maya refusé : amount less than dust threshold").unwrap(), "Maya quote refused: amount less than dust threshold");
-        for fr in ["la transaction LI.FI n'envoie pas exactement le montant affiché — refusé", "adresse de dépôt Maya invalide", "PSBT LI.FI illisible"] {
+        for fr in ["la transaction LI.FI envoie plus que le montant affiché — refusé", "adresse de dépôt Maya invalide", "PSBT LI.FI illisible"] {
             assert!(EXACT_ERROR_TRANSLATIONS.iter().any(|(text, _)| *text == fr), "{fr}");
         }
     }

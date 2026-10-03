@@ -193,17 +193,29 @@ fn u128_field(value: &Value, field: &str) -> Result<u128> {
         .ok_or_else(|| anyhow!("devis CoW sans « {field} » exploitable"))
 }
 
+/// a × b / c sans dépassement intermédiaire : deux jetons à 18 décimales et
+/// faible prix unitaire (FET, ARB…) donnent des produits au-delà de 2^128
+/// (relevé sur de vrais devis FET ⇄ ARB : ~1,7e39), d'où un refus
+/// « montant hors limites » avant ce calcul en précision étendue.
+fn mul_div(a: u128, b: u128, c: u128) -> Option<u128> {
+    use num_bigint::BigUint;
+    if c == 0 {
+        return None;
+    }
+    u128::try_from(BigUint::from(a) * BigUint::from(b) / BigUint::from(c)).ok()
+}
+
 /// Montants de l'ordre à partir du devis (vente après frais réseau, réception
 /// correspondante, frais réseau en jeton vendu, frais du protocole en bps),
 /// formule du SDK officiel : (vente totale, réception attendue, minimum,
 /// frais partenaire).
 pub fn order_amounts(sell: u128, buy: u128, fee: u128, protocol_fee_bps: f64) -> Result<(u128, u128, u128, u128)> {
     ensure!(sell > 0 && buy > 0, "devis CoW vide");
-    let cost_in_buy = buy.checked_mul(fee).context("montant hors limites")? / sell;
+    let cost_in_buy = mul_div(buy, fee, sell).context("montant hors limites")?;
     let scaled = (protocol_fee_bps * 100_000.0).round();
     ensure!((0.0..1e9).contains(&scaled), "frais du protocole CoW inattendus");
     let scaled = scaled as u128;
-    let protocol_fee = if scaled > 0 { buy.checked_mul(scaled).context("montant hors limites")? / (10_000 * 100_000 - scaled) } else { 0 };
+    let protocol_fee = if scaled > 0 { mul_div(buy, scaled, 10_000 * 100_000 - scaled).context("montant hors limites")? } else { 0 };
     let before_all = buy.checked_add(cost_in_buy).and_then(|b| b.checked_add(protocol_fee)).context("montant hors limites")?;
     let partner_fee = before_all.checked_mul(u128::from(PARTNER_FEE_BPS)).context("montant hors limites")? / 10_000;
     let expected = buy.checked_sub(partner_fee).context("frais supérieurs à la réception")?;
@@ -567,6 +579,14 @@ mod tests {
         assert!(order_amounts(100, 50, 10, -1.0).is_err());
         assert!(order_amounts(100, 50, 10, f64::NAN).is_err());
         assert!(order_amounts(u128::MAX, u128::MAX, 1, 0.0).is_err());
+        // Deux jetons à 18 décimales et faible prix (ordres de grandeur d'un
+        // vrai devis FET → ARB) : le produit buy × fee dépasse 2^128.
+        let (sell, expected, _, partner) = order_amounts(100_000_000_000_000_000_000, 166_000_000_000_000_000_000, 10_000_000_000_000_000_000, 0.0).unwrap();
+        assert_eq!(sell, 110_000_000_000_000_000_000);
+        assert_eq!(partner, (166_000_000_000_000_000_000u128 + 16_600_000_000_000_000_000) / 100);
+        assert_eq!(expected, 166_000_000_000_000_000_000 - partner);
+        assert_eq!(mul_div(u128::MAX, 2, 4), Some(u128::MAX / 2));
+        assert_eq!(mul_div(1, 1, 0), None);
     }
 
     /// Empreinte EIP-712 identique à `hashOrder` de @cowprotocol/contracts

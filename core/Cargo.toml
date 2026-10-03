@@ -48,6 +48,9 @@ reqwest = { version = "0.12", features = ["blocking", "json"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 hex = "0.4"
+# num-bigint : calculs de montants CoW en précision étendue (déjà présent via
+# les dépendances Zcash, voir `cow::mul_div`).
+num-bigint = "0.4"
 
 # --- Ajouts pour la démo Solana (ed25519, pas secp256k1 : dérivation et signature
 # totalement différentes de BTC/EVM) ---

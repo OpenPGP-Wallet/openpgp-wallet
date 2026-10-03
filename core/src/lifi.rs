@@ -372,10 +372,18 @@ pub struct BtcDeposit {
     pub network_fee: u64,
     /// Taille une fois signée, au plus.
     pub vsize: u64,
-    /// Sorties de frais vers LI.FI et l'intégrateur, comprises dans le
-    /// montant envoyé.
+    /// Sorties de frais vers LI.FI et l'intégrateur.
     pub service_fees: u64,
+    /// Total qui quitte l'adresse : dépôt, frais LI.FI et intégrateur, frais
+    /// réseau (montré dans la boîte de confirmation).
+    pub total_debit: u64,
 }
+
+/// Plus petite sortie P2WPKH relayée par le réseau Bitcoin (seuil de
+/// poussière de Bitcoin Core) : une part de frais plus petite est arrondie à
+/// ce montant par LI.FI, le complément venant de la monnaie (relevé le
+/// 03/10/2026 : 0,25 % de 58 928 sats = 147, sortie de 294).
+const BTC_DUST_SAT: u64 = 294;
 
 /// Vérifie la PSBT d'un dépôt LI.FI depuis Bitcoin, sortie par sortie, avec
 /// les sorties dépensables de l'utilisateur relues par l'app (`utxos`,
@@ -385,8 +393,10 @@ pub struct BtcDeposit {
 ///   sans verrou temporel relatif (séquence 0xfffffffd au moins) ;
 /// - exactement un paiement à l'adresse de dépôt annoncée (`deposit_script`) ;
 /// - la monnaie revient à son adresse ; au plus un memo OP_RETURN, sans valeur ;
-/// - le reste (frais LI.FI et intégrateur, 3 sorties au plus) : dépôt +
-///   frais = montant envoyé, frais au plus 1,05 % ;
+/// - le reste (frais LI.FI et intégrateur, 3 sorties au plus) : dépôt au
+///   moins égal au montant moins 1,05 %, frais au plus 1,05 % — plus, par
+///   sortie de frais, le complément au seuil de poussière (`BTC_DUST_SAT`)
+///   quand une part est trop petite pour être relayée ;
 /// - frais réseau au plus `max_fee_rate` sat/vB (taille signée maximale).
 ///
 /// L'adresse d'arrivée, gérée hors chaîne par le pont, reste invérifiable
@@ -435,10 +445,19 @@ pub fn verify_btc_deposit(
     }
     ensure!(deposits == 1, "la transaction LI.FI ne paie pas exactement une fois l'adresse de dépôt annoncée — refusé");
     ensure!(memos <= 1 && service_outputs <= 3, "transaction LI.FI avec des sorties inattendues — refusé");
-    ensure!(deposit.checked_add(service_fees) == Some(amount), "la transaction LI.FI n'envoie pas exactement le montant affiché — refusé");
     let fee_bps = LIFI_OWN_FEE_BPS + (FEE * 10_000.0).round() as u128;
+    let fee_share = u128::from(amount) * fee_bps / 10_000 + 1;
+    let dust_top_up = u128::from(BTC_DUST_SAT) * service_outputs as u128;
     ensure!(
-        u128::from(service_fees) <= u128::from(amount) * fee_bps / 10_000 + 1,
+        u128::from(deposit) + fee_share >= u128::from(amount),
+        "la transaction LI.FI dépose moins que le montant affiché, frais annoncés déduits — refusé"
+    );
+    ensure!(
+        u128::from(deposit) + u128::from(service_fees) <= u128::from(amount) + dust_top_up,
+        "la transaction LI.FI envoie plus que le montant affiché — refusé"
+    );
+    ensure!(
+        u128::from(service_fees) <= fee_share + dust_top_up,
         "frais LI.FI de la transaction Bitcoin au-delà de {},{:02} % — refusé",
         fee_bps / 100,
         fee_bps % 100
@@ -453,7 +472,8 @@ pub fn verify_btc_deposit(
         network_fee <= vsize.saturating_mul(max_fee_rate),
         "frais réseau Bitcoin anormalement élevés dans la transaction LI.FI ({network_fee} sat pour ~{vsize} vB, plafond {max_fee_rate} sat/vB) — refusé"
     );
-    Ok(BtcDeposit { tx, network_fee, vsize, service_fees })
+    let total_debit = deposit + service_fees + network_fee;
+    Ok(BtcDeposit { tx, network_fee, vsize, service_fees, total_debit })
 }
 
 // --- Décodage ABI (juste ce qu'exige BridgeData) ------------------------------
@@ -1054,7 +1074,7 @@ mod tests {
         let check = |psbt: &btc_psbt::Psbt| verify_btc_deposit(psbt, deposit_script, &own, &utxos, 1_000_000, 50);
 
         let ok = check(psbt).unwrap();
-        assert_eq!((ok.network_fee, ok.service_fees), (1_913, 10_500));
+        assert_eq!((ok.network_fee, ok.service_fees, ok.total_debit), (1_913, 10_500, 1_001_913));
         assert!((240..=250).contains(&ok.vsize), "{}", ok.vsize);
 
         let other = |byte: u8| [vec![0x00, 0x14], vec![byte; 20]].concat();
@@ -1076,5 +1096,33 @@ mod tests {
         assert!(altered(&|p| p.version = 3), "version inattendue");
         assert!(altered(&|p| p.inputs[0].sequence = 144), "verrou temporel relatif");
         assert!(verify_btc_deposit(psbt, &own, &own, &utxos, 1_000_000, 50).is_err(), "dépôt vers soi");
+        assert!(altered(&|p| { p.outputs[0].0 -= 2_000; p.outputs[2].0 += 2_000 }), "dépôt réduit au-delà des frais annoncés");
+    }
+
+    /// Petit montant (forme réelle relevée le 03/10/2026 pour 58 928 sats) :
+    /// la part de LI.FI (147 sats) est arrondie au seuil de poussière (294),
+    /// le complément pris sur la monnaie — accepté, et compté dans le total
+    /// débité ; au-delà du seuil, refusé.
+    #[test]
+    fn small_bitcoin_deposits_allow_the_dust_top_up() {
+        let own = derivation::btc_mainnet_script_pubkey("bc1q0syth5ya7up2k0jj36uw8l03c2dpru2c3hhjy3").unwrap();
+        let deposit_script = derivation::btc_mainnet_script_pubkey("bc1plxa9q77gz9r33g8pd4c2ygzezchjffuedtzdrkclyceseyw8v80qasmquf").unwrap();
+        let p2wpkh = |hex_hash: &str| [vec![0x00, 0x14], hex::decode(hex_hash).unwrap()].concat();
+        let psbt = |lifi_fee: u64, change: u64| btc_psbt::Psbt {
+            version: 2,
+            inputs: vec![btc_psbt::PsbtInput { txid: [0x28; 32], vout: 0, sequence: 0xffff_fffd }],
+            outputs: vec![
+                (58_310, deposit_script.clone()),
+                (0, vec![0x6a, 0x02, 0x11, 0xab]),
+                (change, own.clone()),
+                (lifi_fee, p2wpkh("9ab105ce5f65cc9d3e51e4b2403eef1831eb5bfd")),
+                (471, p2wpkh("16ee74e3d28cc8dd0b97e97d191236fb9b568781")),
+            ],
+            locktime: 0,
+        };
+        let utxos = [btc_tx::Utxo { txid: [0x28; 32], vout: 0, value_sat: 550_000 }];
+        let ok = verify_btc_deposit(&psbt(294, 489_395), &deposit_script, &own, &utxos, 58_928, 50).unwrap();
+        assert_eq!((ok.service_fees, ok.network_fee, ok.total_debit), (765, 1_530, 60_605));
+        assert!(verify_btc_deposit(&psbt(900, 488_789), &deposit_script, &own, &utxos, 58_928, 50).is_err(), "au-delà du complément de poussière");
     }
 }

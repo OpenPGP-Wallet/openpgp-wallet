@@ -4277,6 +4277,10 @@ pub fn sign_dapp_request(
 }
 
 #[cfg(test)]
+#[path = "swap_matrix.rs"]
+mod swap_matrix;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
