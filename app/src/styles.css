@@ -1365,6 +1365,21 @@ textarea:focus {
 }
 
 /* « Gérer mes cryptos » : une ligne par crypto, case à droite. */
+/* Recherche de « Gérer mes cryptos » : loupe dans le champ. `input.` : plus
+   spécifique que le style commun des champs texte. */
+input.assets-search {
+  margin-top: 12px;
+  padding-left: 38px;
+  background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'%238a8f98'%20stroke-width%3D'2'%20stroke-linecap%3D'round'%3E%3Ccircle%20cx%3D'11'%20cy%3D'11'%20r%3D'6.5'%2F%3E%3Cpath%20d%3D'm16%2016%204%204'%2F%3E%3C%2Fsvg%3E");
+  background-repeat: no-repeat;
+  background-position: 12px center;
+  background-size: 18px;
+}
+
+#assets-no-match {
+  margin: 14px 0 0;
+}
+
 .assets-list {
   list-style: none;
   margin: 14px 0 0;
@@ -3132,6 +3147,7 @@ h2 .coin-icon-inline,
 .wallet-card [data-action="history"] { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Ccircle%20cx%3D'12'%20cy%3D'12'%20r%3D'8.5'%2F%3E%3Cpath%20d%3D'M12%207.5V12l3%202'%2F%3E%3C%2Fsvg%3E"); }
 .wallet-card [data-action="refresh"] { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M20%2011a8%208%200%200%200-14.3-4.3L4%208.5'%2F%3E%3Cpath%20d%3D'M4%204v4.5h4.5'%2F%3E%3Cpath%20d%3D'M4%2013a8%208%200%200%200%2014.3%204.3l1.7-1.8'%2F%3E%3Cpath%20d%3D'M20%2020v-4.5h-4.5'%2F%3E%3C%2Fsvg%3E"); }
 .wallet-card .receive-action { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M17%207%207%2017'%2F%3E%3Cpath%20d%3D'M15.5%2017H7V8.5'%2F%3E%3C%2Fsvg%3E"); }
+.wallet-card [data-action="shield"] { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M12%203l7%203v5c0%204.5-3%208.5-7%2010-4-1.5-7-5.5-7-10V6z'%2F%3E%3Cpath%20d%3D'M9%2012l2%202%204-4'%2F%3E%3C%2Fsvg%3E"); }
 .wallet-card [data-action="swap"] { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M4%208h13l-3.5-3.5'%2F%3E%3Cpath%20d%3D'M20%2016H7l3.5%203.5'%2F%3E%3C%2Fsvg%3E"); }
 
 /* Actions secondaires d'une carte : discrètes, « Envoyer » seul en avant. */
@@ -3370,6 +3386,7 @@ h2 .coin-icon-inline,
 :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner [data-action="send"] { order: 1; }
 :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner .receive-action { order: 2; }
 :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner [data-action="swap"] { order: 3; }
+:root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner [data-action="shield"] { order: 3; }
 :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner [data-action="history"] { order: 4; }
 :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner [data-action="refresh"] { order: 5; }
 
@@ -3701,70 +3718,15 @@ h2 .coin-icon-inline,
   margin-top: 8px;
 }
 
-/* Zcash protégé : solde et adresse u1 dans la carte Zcash, sur leur propre
-   ligne entre l'adresse t1 et les actions (vue cartes) ; masqué en vue liste
-   (colonnes alignées). */
-.zec-shielded {
-  flex: 1 1 100%;
-  order: 0;
-  /* Sans ces deux lignes, l'adresse u1 (sur une ligne) imposait sa largeur à
-     toute la carte. */
-  min-width: 0;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 8px 10px;
-  background: var(--accent-soft);
-}
-
-.zec-shielded-balance {
-  margin: 0 0 6px;
-  font-size: 0.9rem;
-}
-
-.zec-shielded-address {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.zec-shielded-address .address {
-  flex: 1 1 auto;
-  min-width: 0;
-  margin: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.zec-shielded-address .qr-btn {
-  flex: 0 0 32px;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-}
-
-:root[data-wallet-list-view="true"] .zec-shielded {
-  display: none;
-}
-
-.zec-shielded-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 12px;
-  margin-top: 6px;
-  font-size: 0.85rem;
-}
-
-/* Monero : part encore bloquée (10 confirmations) ou synchronisation en
-   cours, sous la valeur en monnaie ; masquée en vue liste. */
-.xmr-status {
+/* Ligne d'état sous la valeur en monnaie (Monero : part encore bloquée ;
+   Zcash protégé : synchronisation, attente, invitation à protéger) ; masquée
+   en vue liste. */
+.coin-status {
   margin: 2px 0 0;
   font-size: 0.85rem;
 }
 
-.xmr-status:empty,
-:root[data-wallet-list-view="true"] .xmr-status {
+.coin-status:empty,
+:root[data-wallet-list-view="true"] .coin-status {
   display: none;
 }

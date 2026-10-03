@@ -20,6 +20,9 @@ const ASSETS = [
   { coin: "pol", name: "Polygon", symbol: "POL", family: "evm", icon: "/assets/pol.png", gecko: "polygon-ecosystem-token", decimals: 6, chart: "POL", networks: ["polygon_mainnet"] },
   { coin: "hype", name: "Hyperliquid", symbol: "HYPE", family: "evm", icon: "/assets/hype.jpg", iconRound: true, gecko: "hyperliquid", decimals: 6, chart: "HYPE", networks: ["hyperevm_mainnet"] },
   { coin: "zec", name: "Zcash", symbol: "ZEC", family: "zec", icon: "/assets/zec.png", gecko: "zcash", decimals: 8, chart: "ZEC", networks: ["zec_mainnet"] },
+  // Fonds Zcash protégés (Orchard, adresse u1) : leur propre carte, à côté de
+  // la carte transparente (t1). `nameKey` : nom traduit (voir `assetName`).
+  { coin: "zecs", name: "Zcash protégé", nameKey: "coin.zecsName", symbol: "ZEC", family: "zecs", icon: "/assets/zec-shielded.svg", gecko: "zcash", decimals: 8, chart: "ZEC", networks: ["zec_shielded"] },
   { coin: "xmr", name: "Monero", symbol: "XMR", family: "xmr", icon: "/assets/xmr.png", gecko: "monero", decimals: 6, chart: "XMR", networks: ["xmr_mainnet"] },
   // Jetons (`token: true`) : contrats et mints relevés dans core/src/tokens.rs —
   // SEUL le registre Rust fait foi pour un envoi (l'interface n'envoie que
@@ -42,7 +45,16 @@ const ASSETS = [
   { coin: "render", name: "Render", symbol: "RENDER", token: true, icon: "/assets/render.png", gecko: "render-token", decimals: 6, unitDecimals: 8, chart: "RENDER", networks: ["sol_mainnet"], contracts: { sol_mainnet: "rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof" } },
 ];
 const ASSET_BY_COIN = Object.fromEntries(ASSETS.map((asset) => [asset.coin, asset]));
-const ASSET_BY_GECKO = Object.fromEntries(ASSETS.map((asset) => [asset.gecko, asset]));
+// Première crypto de chaque identifiant CoinGecko (Zcash, pas Zcash protégé,
+// qui a le même cours) : marchés et courbes.
+const ASSET_BY_GECKO = Object.fromEntries([...ASSETS].reverse().map((asset) => [asset.gecko, asset]));
+
+// Nom affiché d'une crypto : traduit pour celles qui en ont un (« Zcash
+// protégé »), sinon son nom propre. Pas au chargement du module (traductions
+// déclarées plus bas) : les éléments créés alors portent `data-i18n`.
+function assetName(asset) {
+  return asset.nameKey ? t(asset.nameKey) : asset.name;
+}
 // Monnaie native de chaque réseau (ETH sur Ethereum, Arbitrum et Base ; BNB
 // sur BNB Chain…) : unité et prix des wallets externes et comptes matériels.
 const NATIVE_ASSET_BY_NETWORK = Object.fromEntries(
@@ -163,8 +175,8 @@ function buildAssetCard(asset) {
       </div>
     </div>
     <p class="fiat-value" data-field="fiat">—</p>${
-      asset.coin === "xmr" ? `
-    <p class="xmr-status muted" data-field="xmr-status"></p>` : ""
+      asset.coin === "xmr" || asset.coin === "zecs" ? `
+    <p class="coin-status muted" data-field="coin-status"></p>` : ""
     }
     <p class="address collapsed-address hidden" data-field="collapsed-address"></p>
     <div class="collapsible-body" id="wallet-body-${asset.coin}">
@@ -174,31 +186,22 @@ function buildAssetCard(asset) {
           <button class="qr-btn" data-action="copy-address" data-i18n-title="wallet.copyAddress">${ICON_COPY}</button>
           <button class="qr-btn" data-action="qr" data-i18n-title="wallet.showQr">${ICON_QR}</button>
           <button class="convert-btn hidden" data-action="swap" data-i18n-title="wallet.convertHint">${ICON_CONVERT}<span data-i18n="wallet.convert">Convertir</span></button>
-        </div>${
-          asset.coin === "zec"
-            ? `<div class="zec-shielded">
-          <p class="zec-shielded-balance"><span data-i18n="wallet.shieldedBalance">Fonds protégés</span> <strong data-field="shielded-balance">…</strong> <span class="muted" data-field="shielded-sync"></span></p>
-          <div class="zec-shielded-address">
-            <p class="address" data-field="shielded-address"></p>
-            <button class="qr-btn" data-action="copy-shielded" data-i18n-title="wallet.copyShielded">${ICON_COPY}</button>
-            <button class="qr-btn" data-action="qr-shielded" data-i18n-title="wallet.showShieldedQr">${ICON_QR}</button>
-          </div>
-          <div class="zec-shielded-actions">
-            <button class="link" data-action="shield" data-i18n="shielded.shield">Protéger mes ZEC transparents</button>
-            <button class="link" data-action="send-shielded" data-i18n="shielded.send">Envoyer depuis les fonds protégés</button>
-          </div>
-        </div>`
-            : ""
-        }
+        </div>
         <div class="row-buttons">
           <button class="secondary" data-action="refresh" data-i18n="wallet.refresh" data-i18n-title="wallet.refresh">Actualiser</button>
-          <button class="secondary receive-action" data-action="qr" data-i18n="wallet.receive">Recevoir</button>
+          <button class="secondary receive-action" data-action="qr" data-i18n="wallet.receive">Recevoir</button>${
+            asset.coin === "zecs"
+              ? `
+          <button class="secondary" data-action="shield" data-i18n="shielded.shieldAction" data-i18n-title="shielded.shieldTitle">Protéger</button>`
+              : ""
+          }
           <button class="secondary" data-action="history" data-i18n="wallet.history">Historique</button>
           <button class="primary" data-action="send" data-i18n="wallet.send">Envoyer</button>
         </div>
       </div>
     </div>`;
   card.querySelector(".coin-name").textContent = asset.name;
+  if (asset.nameKey) card.querySelector(".coin-name").dataset.i18n = asset.nameKey;
   card.querySelector(".coin-symbol").textContent = asset.symbol;
   return card;
 }
@@ -215,6 +218,11 @@ function buildHistorySection(asset) {
     </div>
     <div id="history-list-${asset.coin}" class="history-list"></div>`;
   setWithCoinIcon(section.querySelector("h2"), asset.coin, asset.name);
+  if (asset.nameKey) {
+    const label = Object.assign(document.createElement("span"), { textContent: asset.name });
+    label.dataset.i18n = asset.nameKey;
+    section.querySelector("h2").lastChild.replaceWith(label);
+  }
   return section;
 }
 
@@ -245,7 +253,10 @@ try {
 }
 
 function isAssetVisible(coin) {
-  return coin in assetChoices ? assetChoices[coin] : DEFAULT_ASSETS.includes(coin);
+  if (coin in assetChoices) return assetChoices[coin];
+  // Zcash protégé suit la carte Zcash tant qu'aucun choix n'est fait pour lui.
+  if (coin === "zecs") return isAssetVisible("zec");
+  return DEFAULT_ASSETS.includes(coin);
 }
 
 function saveAssetChoices() {
@@ -511,20 +522,18 @@ const I18N = {
     "nav.history": "Activité",
     "coinHistory.title": "Historique {name}",
     "wallet.history": "Historique",
-    "wallet.shieldedBalance": "Fonds protégés",
     "wallet.xmrSyncing": "Synchronisation Monero en cours…",
     "wallet.xmrLocked": "dont {amount} XMR en attente (10 confirmations, ≈ 20 min)",
-    "shielded.shield": "Protéger mes ZEC transparents",
-    "shielded.send": "Envoyer depuis les fonds protégés",
+    "coin.zecsName": "Zcash protégé",
+    "shielded.shieldAction": "Protéger",
     "shielded.shieldTitle": "Protéger mes ZEC",
     "shielded.sendTitle": "Envoyer des ZEC protégés",
     "shielded.shieldHint": "Déplace les ZEC de votre adresse transparente (t1…) vers votre adresse protégée : montants et adresses ne seront plus visibles sur la blockchain. Les ZEC doivent avoir quelques confirmations.",
     "shielded.sendHint": "Depuis vos fonds protégés, vers une adresse u1… (protégée) ou t1… (transparente). Les adresses Sapling seules (zs…) ne sont pas prises en charge.",
     "shielded.password": "Mot de passe",
-    "wallet.shieldedSyncing": "(synchronisation…)",
-    "wallet.shieldedPending": "(dont {amount} en attente de confirmation)",
-    "wallet.copyShielded": "Copier l'adresse protégée",
-    "wallet.showShieldedQr": "Code QR de l'adresse protégée",
+    "wallet.shieldedSyncing": "Synchronisation des fonds protégés…",
+    "wallet.shieldedPending": "dont {amount} ZEC en attente de confirmation",
+    "wallet.shieldSuggestion": "Vous avez des ZEC transparents : « Protéger » les déplace ici.",
     "nav.message": "Message",
     "nav.certificate": "Certificat",
     "nav.external": "Wallets externes",
@@ -633,6 +642,7 @@ const I18N = {
     "net.base_mainnet": "Base — Fonds réels",
     "net.sol_mainnet": "Solana — Fonds réels",
     "net.zec_mainnet": "Zcash — Fonds réels",
+    "net.zec_shielded": "Zcash — Fonds protégés",
     "net.xmr_mainnet": "Monero — Fonds réels",
     "wallet.historyExplorerOnly": "Pas d'historique ici pour ce réseau : aucun service public gratuit ne le fournit. Il reste consultable sur l'explorateur du réseau.",
     "wallet.historyOpenExplorer": "Voir sur l'explorateur",
@@ -645,6 +655,8 @@ const I18N = {
     "net.hyperevm_mainnet": "HyperEVM — Fonds réels",
     "wallet.receiveAsset": "Recevoir {symbol}",
     "assets.manage": "Gérer mes cryptos",
+    "assets.search": "Rechercher une crypto…",
+    "assets.noMatch": "Aucune crypto ne correspond.",
     "assets.organize": "Organiser",
     "organize.sortBy": "Trier :",
     "organize.custom": "Mon ordre",
@@ -1083,20 +1095,18 @@ const I18N = {
     "nav.history": "Activity",
     "coinHistory.title": "{name} history",
     "wallet.history": "History",
-    "wallet.shieldedBalance": "Shielded funds",
     "wallet.xmrSyncing": "Monero sync in progress…",
     "wallet.xmrLocked": "incl. {amount} XMR pending (10 confirmations, ≈ 20 min)",
-    "shielded.shield": "Shield my transparent ZEC",
-    "shielded.send": "Send from shielded funds",
+    "coin.zecsName": "Shielded Zcash",
+    "shielded.shieldAction": "Shield",
     "shielded.shieldTitle": "Shield my ZEC",
     "shielded.sendTitle": "Send shielded ZEC",
     "shielded.shieldHint": "Moves the ZEC of your transparent address (t1…) to your shielded address: amounts and addresses will no longer be visible on the blockchain. The ZEC need a few confirmations.",
     "shielded.sendHint": "From your shielded funds, to a u1… (shielded) or t1… (transparent) address. Sapling-only addresses (zs…) are not supported.",
     "shielded.password": "Password",
-    "wallet.shieldedSyncing": "(syncing…)",
-    "wallet.shieldedPending": "({amount} awaiting confirmation)",
-    "wallet.copyShielded": "Copy the shielded address",
-    "wallet.showShieldedQr": "QR code of the shielded address",
+    "wallet.shieldedSyncing": "Syncing shielded funds…",
+    "wallet.shieldedPending": "incl. {amount} ZEC awaiting confirmation",
+    "wallet.shieldSuggestion": "You have transparent ZEC: “Shield” moves them here.",
     "nav.message": "Message",
     "nav.certificate": "Certificate",
     "nav.external": "External wallets",
@@ -1205,6 +1215,7 @@ const I18N = {
     "net.base_mainnet": "Base — Real funds",
     "net.sol_mainnet": "Solana — Real funds",
     "net.zec_mainnet": "Zcash — Real funds",
+    "net.zec_shielded": "Zcash — Shielded funds",
     "net.xmr_mainnet": "Monero — Real funds",
     "wallet.historyExplorerOnly": "No history here for this network: no free public service provides it. You can still see it on the network's explorer.",
     "wallet.historyOpenExplorer": "View on the explorer",
@@ -1217,6 +1228,8 @@ const I18N = {
     "net.hyperevm_mainnet": "HyperEVM — Real funds",
     "wallet.receiveAsset": "Receive {symbol}",
     "assets.manage": "Manage my cryptos",
+    "assets.search": "Search a crypto…",
+    "assets.noMatch": "No crypto matches.",
     "assets.organize": "Organize",
     "organize.sortBy": "Sort:",
     "organize.custom": "My order",
@@ -3165,12 +3178,9 @@ function marketChange24h(coin) {
   return market && Number.isFinite(market.change_24h_percent) ? market.change_24h_percent : null;
 }
 
-// Solde affiché d'une carte, plus les fonds Zcash protégés (bloc à part de la
-// carte Zcash) : valeur en devise et valeur totale les comptent.
+// Solde affiché d'une carte (valeur en devise, valeur totale).
 function cardTotalBalance(card) {
-  const balance = Number.parseFloat(card.querySelector('[data-field="balance"]').textContent);
-  const shielded = Number.parseFloat(card.dataset.shielded ?? "0");
-  return Number.isFinite(shielded) && Number.isFinite(balance) ? balance + shielded : balance;
+  return Number.parseFloat(card.querySelector('[data-field="balance"]').textContent);
 }
 
 function updatePortfolioTotal() {
@@ -3448,6 +3458,8 @@ function addressForCoin(coin, network) {
   // Monero : adresse principale (4…) ; absente d'un profil dérivé avant son
   // ajout, jusqu'au prochain déverrouillage.
   if (coin === "xmr") return profile.addresses.monero ?? "";
+  // Zcash protégé : adresse u1 (récepteur Orchard seul).
+  if (coin === "zecs") return profile.addresses.zcash_shielded ?? "";
   // Jetons Solana (USDC, USDT…) : même adresse propriétaire que SOL (le compte
   // de jetons associé qui les détient réellement est un détail invisible pour
   // l'utilisateur, dérivé côté Rust — voir core/src/sol_spl.rs).
@@ -3471,9 +3483,15 @@ function renderProfileSelect() {
 function renderCardAddress(card) {
   const coin = card.dataset.coin;
   const address = addressForCoin(coin, networkForCard(card));
-  card.querySelector('[data-field="address"]').textContent = address;
+  // Adresse très longue (u1…, Monero) : début et fin seulement sur la carte ;
+  // en entier dans l'infobulle, la fenêtre QR et la copie.
+  const shown = address.length > 64 ? `${address.slice(0, 14)}…${address.slice(-12)}` : address;
   // Copie affichée par le bouton « adresse » d'une carte repliée.
-  card.querySelector('[data-field="collapsed-address"]').textContent = address;
+  for (const field of ["address", "collapsed-address"]) {
+    const el = card.querySelector(`[data-field="${field}"]`);
+    el.textContent = shown;
+    el.title = address.length > 64 ? address : "";
+  }
   updateConvertButton(card);
 }
 
@@ -3761,8 +3779,8 @@ async function refreshBalance(card) {
         balanceEl.textContent = t("wallet.balanceError");
       });
     const pendingPromise = checkPendingTx(card, address, network);
-    const shieldedPromise = coin === "zec" ? refreshShielded(card) : coin === "xmr" ? refreshXmrStatus(card) : Promise.resolve();
-    await Promise.all([balancePromise, pendingPromise, shieldedPromise]);
+    const statusPromise = coin === "zecs" ? refreshShieldedStatus(card) : coin === "xmr" ? refreshXmrStatus(card) : Promise.resolve();
+    await Promise.all([balancePromise, pendingPromise, statusPromise]);
     updateFiatValue(card);
   } finally {
     card.dataset.refreshing = "";
@@ -3778,7 +3796,7 @@ async function refreshBalance(card) {
 // après chaque passage, et montre la part encore bloquée (10 confirmations).
 
 async function refreshXmrStatus(card) {
-  const statusEl = card.querySelector('[data-field="xmr-status"]');
+  const statusEl = card.querySelector('[data-field="coin-status"]');
   if (!statusEl) return;
   try {
     const status = await invoke("xmr_status", { profileIndex: currentProfileIndex });
@@ -3799,37 +3817,33 @@ window.__TAURI__.event.listen("xmr-synced", () => {
 }).catch((e) => console.error(e));
 
 // --- Zcash protégé ------------------------------------------------------------
-// Adresse u1 (récepteur Orchard seul) et solde protégé, lus côté Rust dans la
-// base locale que la synchronisation de fond met à jour (aucun appel réseau
-// ici) ; l'adresse transparente t1 reste celle de la carte (plateformes
-// d'échange).
+// Carte à part (adresse u1, récepteur Orchard seul) : solde et historique lus
+// côté Rust dans la base locale que la synchronisation de fond met à jour.
+// Sa ligne d'état dit si la synchronisation est en cours, ce qui attend une
+// confirmation, ou invite à protéger les ZEC de la carte transparente.
 
-function shieldedAddress() {
-  return currentProfile()?.addresses?.zcash_shielded ?? "";
-}
-
-async function refreshShielded(card) {
-  const balanceEl = card.querySelector('[data-field="shielded-balance"]');
-  const syncEl = card.querySelector('[data-field="shielded-sync"]');
-  // Début et fin de l'adresse (une u1 fait plus de 100 caractères) ;
-  // l'adresse complète est dans le code QR et dans la copie.
-  const address = shieldedAddress();
-  const addressEl = card.querySelector('[data-field="shielded-address"]');
-  addressEl.textContent = address.length > 26 ? `${address.slice(0, 12)}…${address.slice(-10)}` : address;
-  addressEl.title = address;
+async function refreshShieldedStatus(card) {
+  const statusEl = card.querySelector('[data-field="coin-status"]');
   try {
     const status = await invoke("zec_shielded_balance", { profileIndex: currentProfileIndex });
-    const total = Number.parseFloat(status.spendable) + Number.parseFloat(status.pending);
-    balanceEl.textContent = `${formatZecAmount(total)} ZEC`;
-    card.dataset.shielded = String(total);
-    syncEl.textContent = !status.synced
+    const transparent = Number.parseFloat(document.querySelector('.wallet-card[data-coin="zec"] [data-field="balance"]')?.textContent);
+    statusEl.textContent = !status.synced
       ? t("wallet.shieldedSyncing")
       : Number.parseFloat(status.pending) > 0
         ? t("wallet.shieldedPending", { amount: status.pending })
-        : "";
+        : transparent > 0
+          ? t("wallet.shieldSuggestion")
+          : "";
   } catch (e) {
     console.error(e);
-    syncEl.textContent = t("wallet.shieldedSyncing");
+    statusEl.textContent = "";
+  }
+}
+
+function refreshZcashCards() {
+  for (const coin of ["zec", "zecs"]) {
+    const card = document.querySelector(`.wallet-card[data-coin="${coin}"]`);
+    if (card) refreshBalance(card);
   }
 }
 
@@ -3880,8 +3894,7 @@ shieldedConfirmBtn.addEventListener("click", withBusyButton(shieldedConfirmBtn, 
         });
     successEl.textContent = t("send.txSent", { tx: txid });
     successEl.classList.remove("hidden");
-    const card = document.querySelector('.wallet-card[data-coin="zec"]');
-    if (card) refreshBalance(card);
+    refreshZcashCards();
   } catch (e) {
     showError(errorEl, String(e));
   } finally {
@@ -3889,13 +3902,9 @@ shieldedConfirmBtn.addEventListener("click", withBusyButton(shieldedConfirmBtn, 
   }
 }));
 
-function formatZecAmount(value) {
-  return value.toFixed(8).replace(/\.?0+$/, "") || "0";
-}
-
 window.__TAURI__.event.listen("zec-shielded-synced", () => {
-  const card = document.querySelector('.wallet-card[data-coin="zec"]');
-  if (card) refreshShielded(card).then(() => updateFiatValue(card));
+  const card = document.querySelector('.wallet-card[data-coin="zecs"]');
+  if (card) refreshBalance(card);
 }).catch((e) => console.error(e));
 
 // Crypto masquée SANS choix explicite de l'utilisateur, avec des fonds :
@@ -3958,8 +3967,8 @@ function updateBalanceWatch() {
       // les autres toutes les 60 s) — la surveillance lit un solde natif.
       if (usesTokenRegistry(coin, network)) return { address: "" };
       // Zcash : pas de surveillance en direct (solde relu toutes les 15 s).
-      // Monero : solde tenu par la synchronisation de fond (`xmr-synced`).
-      if (coin === "zec" || coin === "xmr") return { address: "" };
+      // Monero, Zcash protégé : solde tenu par la synchronisation de fond.
+      if (coin === "zec" || coin === "xmr" || coin === "zecs") return { address: "" };
       return { id: coin, network: coin === "usdc" ? "usdc_solana" : network, address: addressForCoin(coin, network) };
     })
     .filter((target) => target.address);
@@ -4019,7 +4028,8 @@ function refreshAllBalances() {
 document.querySelectorAll(".wallet-card").forEach((card) => {
   const refreshBtn = card.querySelector('[data-action="refresh"]');
   refreshBtn.addEventListener("click", withThrottledButton(refreshBtn, REFRESH_COOLDOWN_MS, () => refreshBalance(card), { keepLabel: true }));
-  card.querySelector('[data-action="send"]').addEventListener("click", () => openSendModal(card));
+  // Zcash protégé : envoi depuis les fonds protégés (fenêtre dédiée).
+  card.querySelector('[data-action="send"]').addEventListener("click", () => (card.dataset.coin === "zecs" ? openShieldedModal("send") : openSendModal(card)));
   // Boutons QR et copie : ceux de la ligne d'adresse ET ceux de la carte repliée.
   card.querySelectorAll('[data-action="qr"]').forEach((button) => button.addEventListener("click", () => openQrModal(card)));
   // Cliquer l'adresse elle-même l'affiche en entier (même modale que le bouton QR,
@@ -4029,7 +4039,7 @@ document.querySelectorAll(".wallet-card").forEach((card) => {
   card.querySelectorAll('[data-field="address"], [data-field="collapsed-address"]').forEach((el) => el.addEventListener("click", () => openQrModal(card)));
   card.querySelectorAll('[data-action="copy-address"]').forEach((button) =>
     button.addEventListener("click", () => {
-      const address = card.querySelector('[data-field="address"]').textContent;
+      const address = addressForCoin(card.dataset.coin, networkForCard(card));
       if (!address) {
         alert(t("wallet.historyAddressUnavailable"));
         return;
@@ -4047,20 +4057,7 @@ document.querySelectorAll(".wallet-card").forEach((card) => {
   });
   const swapBtn = card.querySelector('[data-action="swap"]');
   if (swapBtn) swapBtn.addEventListener("click", () => openSwapModal(card));
-  card.querySelector('[data-action="copy-shielded"]')?.addEventListener("click", () => {
-    const address = shieldedAddress();
-    if (address) copyText(address, t("wallet.addressCopied"));
-  });
-  card.querySelector('[data-action="qr-shielded"]')?.addEventListener("click", () => {
-    const address = shieldedAddress();
-    if (address) openQrModal(card, address);
-  });
-  card.querySelector('[data-field="shielded-address"]')?.addEventListener("click", () => {
-    const address = shieldedAddress();
-    if (address) openQrModal(card, address);
-  });
   card.querySelector('[data-action="shield"]')?.addEventListener("click", () => openShieldedModal("shield"));
-  card.querySelector('[data-action="send-shielded"]')?.addEventListener("click", () => openShieldedModal("send"));
   // Même historique que l'onglet « Historique », ouvert directement sur cette
   // crypto : plus facile à trouver depuis la carte que l'onglet seul.
   card.querySelector('[data-action="history"]').addEventListener("click", () => openCoinHistory(card.dataset.coin));
@@ -4088,13 +4085,10 @@ const qrModal = document.getElementById("qr-modal");
 // EIP-681 pour Ethereum (montant en wei, réseau par son chain id). Sans
 // montant : l'adresse seule, lisible par toutes les applications.
 // Décimales maximales d'un montant demandé : 18 pour toute monnaie EVM.
-const QR_DECIMALS = new Proxy({ btc: 8, sol: 9 }, { get: (known, coin) => ASSET_BY_COIN[coin]?.unitDecimals ?? known[coin] ?? 18 });
+const QR_DECIMALS = new Proxy({ btc: 8, sol: 9, zec: 8, zecs: 8, xmr: 12 }, { get: (known, coin) => ASSET_BY_COIN[coin]?.unitDecimals ?? known[coin] ?? 18 });
 // Même mint que core/src/sol_spl.rs::usdc_mint_mainnet.
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 let qrCard = null;
-// Adresse affichée par la fenêtre QR à la place de celle de la carte
-// (adresse Zcash protégée) ; `null` : celle de la carte.
-let qrAddressOverride = null;
 let qrRenderToken = 0;
 
 // Montant saisi (« 0,01 » accepté) → décimal normalisé (« 0.01 »), `null` si
@@ -4122,7 +4116,7 @@ function paymentUri(coin, network, address, amount) {
   }
   if (asset?.token && network === "sol_mainnet") return `solana:${address}?amount=${amount}&spl-token=${asset.contracts.sol_mainnet}`;
   if (coin === "btc") return `bitcoin:${address}?amount=${amount}`;
-  if (coin === "zec") return `zcash:${address}?amount=${amount}`;
+  if (coin === "zec" || coin === "zecs") return `zcash:${address}?amount=${amount}`;
   if (coin === "xmr") return `monero:${address}?tx_amount=${amount}`;
   if (coin === "sol") return `solana:${address}?amount=${amount}`;
   if (coin === "usdc") return `solana:${address}?amount=${amount}&spl-token=${USDC_MINT}`;
@@ -4142,7 +4136,7 @@ async function renderQr() {
   if (!card) return;
   const coin = card.dataset.coin;
   const network = networkForCard(card);
-  const address = qrAddressOverride ?? addressForCoin(coin, network);
+  const address = addressForCoin(coin, network);
   const errorEl = document.getElementById("qr-amount-error");
   let amount = null;
   try {
@@ -4158,15 +4152,15 @@ async function renderQr() {
   document.getElementById("qr-container").innerHTML = svg;
 }
 
-async function openQrModal(card, overrideAddress = null) {
-  qrAddressOverride = overrideAddress;
-  const address = overrideAddress ?? addressForCoin(card.dataset.coin, networkForCard(card));
+async function openQrModal(card) {
+  const address = addressForCoin(card.dataset.coin, networkForCard(card));
   if (!address) {
     alert(t("wallet.historyAddressUnavailable"));
     return;
   }
   qrCard = card;
-  setWithCoinIcon(document.getElementById("qr-coin"), card.dataset.coin, ASSET_BY_COIN[card.dataset.coin]?.name ?? "");
+  const asset = ASSET_BY_COIN[card.dataset.coin];
+  setWithCoinIcon(document.getElementById("qr-coin"), card.dataset.coin, asset ? assetName(asset) : "");
   document.getElementById("qr-amount").value = "";
   document.getElementById("qr-amount-unit").textContent = card.querySelector(".balance").textContent.trim().split(/\s+/).pop();
   try {
@@ -4186,7 +4180,6 @@ document.getElementById("qr-amount").addEventListener("input", () => {
 document.getElementById("qr-close").addEventListener("click", () => {
   qrModal.classList.add("hidden");
   qrCard = null;
-  qrAddressOverride = null;
 });
 
 // --- Historique de transactions (onglet dédié, trié par réseau) -------------
@@ -4391,7 +4384,7 @@ function renderReceiveMenu() {
   const items = ASSETS.filter((asset) => asset.coin !== "usdc" && isAssetVisible(asset.coin)).map((asset) => {
     const li = document.createElement("li");
     li.dataset.coin = asset.coin;
-    setWithCoinIcon(li, asset.coin, t("wallet.receiveAsset", { symbol: asset.symbol }));
+    setWithCoinIcon(li, asset.coin, t("wallet.receiveAsset", { symbol: asset.nameKey ? assetName(asset) : asset.symbol }));
     return li;
   });
   list.replaceChildren(...items);
@@ -4411,21 +4404,59 @@ function refreshAssetDisplays() {
 
 // Fenêtre « Gérer mes cryptos ».
 const assetsModal = document.getElementById("assets-modal");
+// Recherche : nom (affiché et d'origine), symbole ; sans tenir compte des
+// majuscules ni des accents (« zcash protege » trouve « Zcash protégé »).
+function normalizeSearch(text) {
+  return text.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase().trim();
+}
+
+const assetsSearch = document.getElementById("assets-search");
+
+function filterAssetsList() {
+  const query = normalizeSearch(assetsSearch.value);
+  let shown = 0;
+  document.querySelectorAll("#assets-list li").forEach((li) => {
+    const match = !query || li.dataset.search.includes(query);
+    li.classList.toggle("hidden", !match);
+    if (match) shown += 1;
+  });
+  document.getElementById("assets-no-match").classList.toggle("hidden", shown > 0);
+}
+
+assetsSearch.addEventListener("input", filterAssetsList);
+// Échap dans une recherche non vide : l'efface (la fenêtre reste ouverte).
+assetsSearch.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && assetsSearch.value) {
+    e.stopPropagation();
+    assetsSearch.value = "";
+    filterAssetsList();
+  }
+});
+
 document.getElementById("manage-assets-btn").addEventListener("click", () => {
   const list = document.getElementById("assets-list");
+  const boxes = new Map();
   list.replaceChildren(
     ...orderedCoins().map((coin) => ASSET_BY_COIN[coin]).map((asset) => {
       const li = document.createElement("li");
+      li.dataset.search = normalizeSearch(`${assetName(asset)} ${asset.name} ${asset.symbol}`);
       const label = document.createElement("label");
       label.className = "asset-choice";
       const icon = Object.assign(document.createElement("img"), { src: asset.icon, alt: "", className: asset.iconRound ? "coin-icon coin-icon-round" : asset.coin === "sol" ? "coin-icon coin-icon-sol" : "coin-icon" });
-      const name = Object.assign(document.createElement("span"), { className: "asset-choice-name", textContent: asset.name });
+      const name = Object.assign(document.createElement("span"), { className: "asset-choice-name", textContent: assetName(asset) });
       const symbol = Object.assign(document.createElement("span"), { className: "muted", textContent: asset.symbol });
       const box = Object.assign(document.createElement("input"), { type: "checkbox", checked: isAssetVisible(asset.coin) });
+      boxes.set(asset.coin, box);
       box.addEventListener("change", () => {
         assetChoices[asset.coin] = box.checked;
         saveAssetChoices();
         refreshAssetDisplays();
+        // Cases qui suivent une autre (Zcash protégé suit Zcash sans choix
+        // propre) : remises à jour.
+        for (const [coin, other] of boxes) {
+          other.checked = isAssetVisible(coin);
+          if (other !== box && other.checked) refreshBalance(document.querySelector(`.wallet-card[data-coin="${coin}"]`));
+        }
         if (box.checked) refreshBalance(document.querySelector(`.wallet-card[data-coin="${asset.coin}"]`));
       });
       label.append(icon, name, symbol, box);
@@ -4433,7 +4464,10 @@ document.getElementById("manage-assets-btn").addEventListener("click", () => {
       return li;
     })
   );
+  assetsSearch.value = "";
+  filterAssetsList();
   assetsModal.classList.remove("hidden");
+  assetsSearch.focus();
 });
 // Fermée par « Terminé », la croix, Échap, ou un clic à côté — seulement si
 // le clic a aussi COMMENCÉ à côté : un geste commencé dans la fenêtre (faire
@@ -4490,7 +4524,15 @@ function saveCardOrder() {
 // « Mon ordre » complet : l'ordre enregistré, puis les cryptos qui n'y sont
 // pas encore (ajoutées depuis), à leur place d'origine.
 function customOrder() {
-  return [...cardOrder.custom, ...DEFAULT_CARD_ORDER.filter((coin) => !cardOrder.custom.includes(coin))];
+  const order = [...cardOrder.custom];
+  // Crypto ajoutée depuis (Zcash protégé…) : juste après celle qui la
+  // précède dans l'ordre d'origine, pas en fin de liste.
+  DEFAULT_CARD_ORDER.forEach((coin, i) => {
+    if (order.includes(coin)) return;
+    const before = DEFAULT_CARD_ORDER.slice(0, i).reverse().find((c) => order.includes(c));
+    order.splice(before ? order.indexOf(before) + 1 : 0, 0, coin);
+  });
+  return order;
 }
 
 // Valeur en devise du solde affiché par la carte (réseau de test : aucune).
@@ -4511,7 +4553,7 @@ function orderedCoins() {
   }
   if (cardOrder.mode === "name") {
     const collator = new Intl.Collator(currentLang);
-    return [...custom].sort((a, b) => collator.compare(ASSET_BY_COIN[a].name, ASSET_BY_COIN[b].name));
+    return [...custom].sort((a, b) => collator.compare(assetName(ASSET_BY_COIN[a]), assetName(ASSET_BY_COIN[b])));
   }
   return custom;
 }

@@ -310,6 +310,11 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("Protection annulée (confirmation refusée).", "Shielding cancelled (confirmation declined)."),
     ("fonds protégés pas encore prêts (synchronisation en cours)", "shielded funds not ready yet (sync in progress)"),
     ("adresse Zcash Sapling seule (zs…) pas prise en charge — demandez une adresse u1… ou t1…", "Sapling-only Zcash address (zs…) not supported — ask for a u1… or t1… address"),
+    ("adresse Zcash protégée invalide (u1… attendue)", "invalid shielded Zcash address (u1… expected)"),
+    ("adresse Zcash protégée inconnue de ce portefeuille", "shielded Zcash address unknown to this wallet"),
+    ("compte Zcash protégé introuvable", "shielded Zcash account not found"),
+    ("identifiant de transaction Zcash invalide", "invalid Zcash transaction id"),
+    ("base Zcash protégée illisible", "unreadable shielded Zcash database"),
     // Monero (core/src/monero.rs)
     ("envoi vers votre propre adresse Monero", "transfer to your own Monero address"),
     ("Monero : synchronisation en cours, réessayez dans un instant", "Monero: sync in progress, try again in a moment"),
@@ -1809,6 +1814,11 @@ async fn get_balance(network: String, address: String, app: tauri::AppHandle) ->
                 Ok(format!("{:.9}", lamports as f64 / 1e9))
             }
             "zec_mainnet" => Ok(pgp_wallet_poc::zcash::format_zec(api::get_zec_balance(&address).t_err()?)),
+            // Base locale (synchronisation de fond) : dépensable + en attente.
+            "zec_shielded" => {
+                let balance = api::zec_shielded_balance(&data_dir(&app)?, shielded_profile(&app, &address)?).t_err()?;
+                Ok(pgp_wallet_poc::zcash::format_zec(balance.spendable.saturating_add(balance.pending)))
+            }
             // État local (synchronisation de fond) : dépensable + bloqué.
             "xmr_mainnet" => {
                 let balance = api::xmr_balance(&data_dir(&app)?, monero_profile(&app, &address)?).t_err()?;
@@ -1927,7 +1937,7 @@ async fn has_pending_tx(network: String, address: String, app: tauri::AppHandle)
             }
             // Pas de lecture de la réserve de transactions : un envoi apparaît
             // à sa confirmation (~75 s).
-            "zec_mainnet" => Ok(false),
+            "zec_mainnet" | "zec_shielded" => Ok(false),
             "xmr_mainnet" => api::has_pending_xmr(&data_dir(&app)?, monero_profile(&app, &address)?).t_err(),
             other => Err(translate_error(&format!("réseau inconnu : {other}"))),
         }
@@ -2080,6 +2090,16 @@ async fn get_tx_history(network: String, address: String, app: tauri::AppHandle)
             let net = btc_network(&network)?;
             let asset = (network == "btc_mainnet").then_some(price_history::Asset::Btc);
             HistoryDto::read(history_dtos(|| history::btc_history(net, &address), asset, 8, |id| format!("{}{}", net.explorer_tx_prefix, id)))
+        }
+        "zec_shielded" => {
+            let profile = shielded_profile(&app, &address)?;
+            let dir = data_dir(&app)?;
+            HistoryDto::read(history_dtos(
+                || api::zec_shielded_history(&dir, profile),
+                Some(price_history::Asset::Pair("ZECUSDT")),
+                8,
+                |id| format!("https://blockchair.com/zcash/transaction/{id}"),
+            ))
         }
         "xmr_mainnet" => {
             let profile = monero_profile(&app, &address)?;
@@ -2368,6 +2388,7 @@ fn network_label(network: &str) -> String {
         "sol_mainnet" => lang("Solana MAINNET — fonds réels", "Solana MAINNET — real funds").to_string(),
         "zec_mainnet" => lang("Zcash MAINNET — fonds réels", "Zcash MAINNET — real funds").to_string(),
         "xmr_mainnet" => lang("Monero MAINNET — fonds réels", "Monero MAINNET — real funds").to_string(),
+        "zec_shielded" => lang("Zcash MAINNET — fonds protégés", "Zcash MAINNET — shielded funds").to_string(),
         other => match wallet_flow::evm_network(other) {
             Some(net) if net.mainnet => format!("{} — {}", net.name, lang("fonds réels", "real funds")),
             Some(net) => format!("{} (testnet)", net.name),
@@ -2382,7 +2403,7 @@ fn network_unit(network: &str) -> &'static str {
     match network {
         "btc_testnet" | "btc_mainnet" => "BTC",
         "sol_devnet" | "sol_mainnet" => "SOL",
-        "zec_mainnet" => "ZEC",
+        "zec_mainnet" | "zec_shielded" => "ZEC",
         "xmr_mainnet" => "XMR",
         other => wallet_flow::evm_network(other).map(|n| n.native_symbol).unwrap_or(""),
     }
@@ -4305,7 +4326,7 @@ fn remember_addresses(app: &tauri::AppHandle, index: u32, addresses: &api::Addre
         cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, addresses.btc_mainnet.clone());
     }
     if let Some(cache) = app.try_state::<ShieldedKeysCache>() {
-        cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, addresses.zcash_shielded_keys.clone());
+        cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, (addresses.zcash_shielded.clone(), addresses.zcash_shielded_keys.clone()));
     }
     if let Some(cache) = app.try_state::<MoneroKeysCache>() {
         cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, (addresses.monero.clone(), addresses.monero_keys.clone()));
@@ -4424,7 +4445,19 @@ fn set_xmr_node(url: String, app: tauri::AppHandle) -> Result<Option<String>, St
 /// Clés de visualisation des comptes Zcash protégés, mémorisées au
 /// déverrouillage (jamais envoyées à l'interface).
 #[derive(Default)]
-struct ShieldedKeysCache(std::sync::Mutex<std::collections::HashMap<u32, pgp_wallet_poc::zcash_shielded::ProfileKeys>>);
+struct ShieldedKeysCache(std::sync::Mutex<std::collections::HashMap<u32, (String, pgp_wallet_poc::zcash_shielded::ProfileKeys)>>);
+
+/// Profil de l'adresse Zcash protégée `address` (carte « Zcash protégé »).
+fn shielded_profile(app: &tauri::AppHandle, address: &str) -> Result<u32, String> {
+    app.state::<ShieldedKeysCache>()
+        .0
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .iter()
+        .find(|(_, (known, _))| known == address)
+        .map(|(index, _)| *index)
+        .ok_or_else(|| translate_error("adresse du profil inconnue — déverrouillez le portefeuille"))
+}
 
 /// Synchronisation Zcash protégée en arrière-plan, une seule à la fois :
 /// comptes manquants créés, chaîne analysée, puis toutes les 2 minutes tant
@@ -4437,7 +4470,7 @@ fn start_shielded_sync(app: &tauri::AppHandle) {
     }
     let app = app.clone();
     std::thread::spawn(move || loop {
-        let keys: Vec<_> = app.state::<ShieldedKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).values().cloned().collect();
+        let keys: Vec<_> = app.state::<ShieldedKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).values().map(|(_, keys)| keys.clone()).collect();
         if !keys.is_empty() {
             match data_dir(&app) {
                 Ok(dir) => match api::sync_zec_shielded(&dir, &keys) {

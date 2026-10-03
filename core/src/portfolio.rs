@@ -164,6 +164,9 @@ enum Source {
     Zec,
     /// Monero : solde et historique complet de l'état local (voir `monero`).
     Xmr,
+    /// Zcash protégé : solde et historique de la base locale (voir
+    /// `zcash_shielded`).
+    ZecShielded,
 }
 
 impl Spec {
@@ -176,7 +179,7 @@ impl Spec {
     fn has_history(&self) -> bool {
         match self.source {
             Source::Evm(net) | Source::Erc20(net, _) => history::evm_history_available(net),
-            Source::Btc | Source::Sol | Source::Spl(_) | Source::Xmr => true,
+            Source::Btc | Source::Sol | Source::Spl(_) | Source::Xmr | Source::ZecShielded => true,
             Source::Zec => false,
         }
     }
@@ -202,6 +205,7 @@ fn spec(network: &str, token: Option<&str>) -> Result<Option<Spec>> {
         "btc_mainnet" => Spec { asset: Asset::Btc, decimals: 8, max_read: BTC_MAX, symbol: "BTC", source: Source::Btc },
         "sol_mainnet" => Spec { asset: Asset::Sol, decimals: 9, max_read: SOL_MAX, symbol: "SOL", source: Source::Sol },
         "zec_mainnet" => Spec { asset: Asset::Pair("ZECUSDT"), decimals: 8, max_read: BTC_MAX, symbol: "ZEC", source: Source::Zec },
+        "zec_shielded" => Spec { asset: Asset::Pair("ZECUSDT"), decimals: 8, max_read: usize::MAX, symbol: "ZEC", source: Source::ZecShielded },
         "xmr_mainnet" => Spec { asset: Asset::Kraken("XMRUSD"), decimals: 12, max_read: usize::MAX, symbol: "XMR", source: Source::Xmr },
         other => match wallet_flow::evm_network(other) {
             Some(net) if net.mainnet => {
@@ -225,6 +229,7 @@ fn fetch_balance(spec: &Spec, address: &str) -> Result<i128> {
         Source::Sol => api::get_sol_balance(address, solana)?.into(),
         Source::Zec => api::get_zec_balance(address)?.into(),
         Source::Xmr => crate::monero::balance_of_address(address)?.into(),
+        Source::ZecShielded => crate::zcash_shielded::balance_of_address(address)?.into(),
         Source::Spl(mint) => api::get_spl_balance(address, &mint, solana)?.into(),
     })
 }
@@ -275,6 +280,7 @@ fn fetch_page(spec: &Spec, address: &str, cursor: Option<&Cursor>) -> Result<Pag
         Source::Zec => Ok(Page { entries: Vec::new(), next: None }),
         // Tout l'historique est local : une seule page.
         Source::Xmr => Ok(Page { entries: crate::monero::history_of_address(address)?, next: None }),
+        Source::ZecShielded => Ok(Page { entries: crate::zcash_shielded::history_of_address(address)?, next: None }),
     }
 }
 

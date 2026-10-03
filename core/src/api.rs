@@ -2637,6 +2637,10 @@ pub fn zec_shielded_balance(data_dir: &Path, profile_index: u32) -> Result<zcash
     zcash_shielded::balance(data_dir, profile_index)
 }
 
+pub fn zec_shielded_history(data_dir: &Path, profile_index: u32) -> Result<Vec<history::TxEntry>> {
+    zcash_shielded::history(data_dir, profile_index)
+}
+
 /// Protège les ZEC de l'adresse t1 du profil : résumé confirmé par
 /// `confirm`, puis seed déverrouillée (mot de passe), signature, diffusion.
 /// `Ok(None)` : confirmation refusée.

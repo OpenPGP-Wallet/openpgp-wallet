@@ -16,7 +16,7 @@
 //! adresse protégée de l'app n'existait avant, donc rien ne peut être manqué, et
 //! une restauration sur un autre appareil retrouve tout sans rescanner la chaîne.
 
-use crate::{derivation, zcash};
+use crate::{derivation, history, zcash};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use std::path::Path;
@@ -126,6 +126,8 @@ pub fn profile_keys(seed: &[u8], profile: u32) -> Result<ProfileKeys> {
 /// Crée (une fois) le compte protégé de chaque profil — appelé après le
 /// déverrouillage, sans la seed (clés déjà dérivées).
 pub fn ensure_accounts(data_dir: &Path, profiles: &[ProfileKeys]) -> Result<()> {
+    let addresses = profiles.iter().map(|keys| Ok((address(&keys.1)?, keys.0))).collect::<Result<_>>()?;
+    *KNOWN.lock().unwrap_or_else(|p| p.into_inner()) = Some((data_dir.to_path_buf(), addresses));
     let mut db = open(data_dir)?;
     let mut missing = Vec::new();
     for keys in profiles {
@@ -191,6 +193,112 @@ pub fn balance(data_dir: &Path, profile: u32) -> Result<ShieldedBalance> {
         scanned_height: Some(u32::from(summary.fully_scanned_height())),
         chain_height: Some(u32::from(summary.chain_tip_height())),
     })
+}
+
+// --- Historique (carte « Zcash protégé ») ------------------------------------------
+
+/// Dossier de la base et adresses protégées connues (adresse u1 → profil),
+/// notés par `ensure_accounts` : la courbe du portefeuille lit solde et
+/// historique par adresse (`balance_of_address`, `history_of_address`).
+static KNOWN: Mutex<Option<(std::path::PathBuf, std::collections::BTreeMap<String, u32>)>> = Mutex::new(None);
+
+/// Adresse protégée de l'app (u1… du réseau principal, récepteur Orchard).
+pub fn parse_shielded_address(address: &str) -> Result<()> {
+    anyhow::ensure!(address.trim().starts_with("u1"), "adresse Zcash protégée invalide (u1… attendue)");
+    let parsed = check_recipient(address)?;
+    anyhow::ensure!(parsed.can_receive_as(PoolType::ORCHARD), "adresse Zcash protégée invalide (u1… attendue)");
+    Ok(())
+}
+
+/// Transactions du compte protégé du profil, la plus récente d'abord :
+/// variation des seuls fonds Orchard (notes reçues moins notes dépensées) —
+/// une protection apparaît reçue ici et envoyée sur la carte transparente ;
+/// un envoi compte ses frais. Lu dans la base locale, aucun appel réseau.
+pub fn history(data_dir: &Path, profile: u32) -> Result<Vec<history::TxEntry>> {
+    let Some(account) = find_account(&open(data_dir)?, profile)? else { return Ok(Vec::new()) };
+    let conn = rusqlite::Connection::open_with_flags(data_dir.join(WALLET_FILE), rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .context("base Zcash protégée illisible")?;
+    let account_id: i64 = conn
+        .query_row("SELECT id FROM accounts WHERE uuid = ?1", [account.expose_uuid().as_bytes().to_vec()], |row| row.get(0))
+        .context("compte Zcash protégé introuvable")?;
+    orchard_history(&conn, account_id)
+}
+
+fn orchard_history(conn: &rusqlite::Connection, account_id: i64) -> Result<Vec<history::TxEntry>> {
+    let tip: Option<u32> = conn.query_row("SELECT MAX(height) FROM blocks", [], |row| row.get(0)).context("base Zcash protégée illisible")?;
+    let mut statement = conn
+        .prepare(
+            "WITH deltas AS (
+                 SELECT rn.transaction_id AS tx, rn.value AS value
+                 FROM orchard_received_notes rn WHERE rn.account_id = ?1
+                 UNION ALL
+                 SELECT s.transaction_id AS tx, -rn.value AS value
+                 FROM orchard_received_note_spends s
+                 JOIN orchard_received_notes rn ON rn.id = s.orchard_received_note_id
+                 WHERE rn.account_id = ?1
+             )
+             SELECT t.txid, t.mined_height, b.time, t.expiry_height, SUM(d.value)
+             FROM deltas d
+             JOIN transactions t ON t.id_tx = d.tx
+             LEFT JOIN blocks b ON b.height = t.mined_height
+             GROUP BY d.tx
+             ORDER BY t.mined_height IS NULL DESC, t.mined_height DESC",
+        )
+        .context("base Zcash protégée illisible")?;
+    let rows = statement
+        .query_map([account_id], |row| {
+            Ok((
+                row.get::<_, Vec<u8>>(0)?,
+                row.get::<_, Option<u32>>(1)?,
+                row.get::<_, Option<i64>>(2)?,
+                row.get::<_, Option<u32>>(3)?,
+                row.get::<_, i64>(4)?,
+            ))
+        })
+        .context("base Zcash protégée illisible")?;
+    let mut entries = Vec::new();
+    for row in rows {
+        let (txid, mined, time, expiry, net) = row.context("base Zcash protégée illisible")?;
+        let txid: [u8; 32] = txid.try_into().map_err(|_| anyhow!("identifiant de transaction Zcash invalide"))?;
+        let expired = mined.is_none() && matches!((expiry, tip), (Some(e), Some(t)) if e > 0 && e <= t);
+        entries.push(history::TxEntry {
+            id: zcash_protocol::TxId::from_bytes(txid).to_string(),
+            timestamp_unix: time,
+            status: match (mined, expired) {
+                (Some(_), _) => history::TxStatus::Confirmed,
+                (None, false) => history::TxStatus::Pending,
+                (None, true) => history::TxStatus::Failed,
+            },
+            net_amount_minor: Some(i128::from(net)),
+            fee_minor: 0,
+            kind: match net {
+                n if n > 0 => history::TxKind::Received,
+                n if n < 0 => history::TxKind::Sent,
+                _ => history::TxKind::Other,
+            },
+        });
+    }
+    Ok(entries)
+}
+
+fn known_profile(address: &str) -> Result<(std::path::PathBuf, u32)> {
+    let known = KNOWN.lock().unwrap_or_else(|p| p.into_inner());
+    let (dir, addresses) = known.as_ref().ok_or_else(|| anyhow!("fonds protégés pas encore prêts (synchronisation en cours)"))?;
+    let profile = addresses.get(address.trim()).ok_or_else(|| anyhow!("adresse Zcash protégée inconnue de ce portefeuille"))?;
+    Ok((dir.clone(), *profile))
+}
+
+/// Fonds protégés de l'adresse (dépensables et en attente) : courbe du
+/// portefeuille.
+pub fn balance_of_address(address: &str) -> Result<u64> {
+    let (dir, profile) = known_profile(address)?;
+    let b = balance(&dir, profile)?;
+    Ok(b.spendable.saturating_add(b.pending))
+}
+
+pub fn history_of_address(address: &str) -> Result<Vec<history::TxEntry>> {
+    let (dir, profile) = known_profile(address)?;
+    history(&dir, profile)
 }
 
 // --- Dépenses : protéger les ZEC transparents, envoyer depuis Orchard -------------
@@ -488,6 +596,29 @@ mod tests {
     use zcash_address::ToAddress as _;
 
     const SEED: [u8; 64] = [5u8; 64];
+
+    /// Requête d'historique exécutée sur une base créée par la bibliothèque
+    /// (schéma réel : tables et colonnes vérifiées) ; vide sans transaction.
+    #[test]
+    fn history_query_matches_the_wallet_schema() {
+        let dir = std::env::temp_dir().join(format!("zec-shielded-history-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        drop(open(&dir).unwrap());
+        let conn = rusqlite::Connection::open(dir.join(WALLET_FILE)).unwrap();
+        assert!(orchard_history(&conn, 1).unwrap().is_empty());
+        assert!(history(&dir, 0).unwrap().is_empty(), "profil sans compte : historique vide");
+        drop(conn);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn shielded_addresses_only() {
+        let ufvk = viewing_key(&SEED, 0).unwrap();
+        assert!(parse_shielded_address(&address(&ufvk).unwrap()).is_ok());
+        assert!(parse_shielded_address("t1Vtnn4Lq8w1tQ8fJg1GsB4s9XzK6QnC2Zo").is_err());
+        assert!(parse_shielded_address("u1pasuneadresse").is_err());
+    }
 
     /// Adresse u1 au seul récepteur Orchard, propre à chaque profil, relue
     /// par la bibliothèque d'adresses officielle.

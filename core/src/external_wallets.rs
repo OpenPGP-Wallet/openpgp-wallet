@@ -93,6 +93,10 @@ pub(crate) fn validate_address(network: &str, address: &str) -> Result<()> {
         "xmr_mainnet" => {
             crate::monero::parse_recipient(address)?;
         }
+        // Zcash protégé (adresse u1 de la carte « Zcash protégé »).
+        "zec_shielded" => {
+            crate::zcash_shielded::parse_shielded_address(address)?;
+        }
         other => anyhow::bail!("réseau inconnu : {other}"),
     }
     Ok(())
