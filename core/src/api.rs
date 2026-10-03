@@ -936,9 +936,12 @@ fn restore_wallet_with(
 /// État local propre à une seed (base Zcash protégée, état Monero) :
 /// supprimé quand le portefeuille de cet appareil change — best-effort, un
 /// fichier encore ouvert est de toute façon écarté au déverrouillage suivant
-/// (`zcash_shielded::forget_other_wallets`, lien des profils Monero).
+/// (`zcash_shielded::forget_other_wallets`, lien des profils Monero). Aussi
+/// les destinataires déjà payés : sinon l'alerte « nouvelle adresse »
+/// disparaîtrait pour un autre portefeuille (au pire, quelques alertes de plus
+/// si c'est le même qui revient).
 fn remove_seed_bound_state(data_dir: &Path) {
-    for file in ["zcash_shielded.sqlite", "zcash_shielded.sqlite-wal", "zcash_shielded.sqlite-shm", "monero_wallet.json"] {
+    for file in ["zcash_shielded.sqlite", "zcash_shielded.sqlite-wal", "zcash_shielded.sqlite-shm", "monero_wallet.json", "sent_recipients.json"] {
         let _ = std::fs::remove_file(data_dir.join(file));
     }
 }
@@ -4960,6 +4963,25 @@ mod tests {
             assert!(!dir.join(file).exists(), "{file} ne doit pas survivre à reset_wallet");
         }
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// L'état propre à une seed (Zcash protégé, Monero, destinataires payés)
+    /// ne survit ni à une réinitialisation ni à une restauration.
+    #[test]
+    fn wallet_change_removes_seed_bound_state() {
+        let dir = std::env::temp_dir().join(format!("pgp_wallet_seed_state_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let files = ["zcash_shielded.sqlite", "monero_wallet.json", "sent_recipients.json"];
+        let plant = || files.iter().for_each(|f| std::fs::write(dir.join(f), b"ancien").unwrap());
+        create_wallet(&dir, "un mot de passe de test bien assez long").expect("création du wallet");
+        plant();
+        reset_wallet_with(&dir, &FakeSealer { fail_enroll: false }).expect("réinitialisation");
+        assert!(files.iter().all(|f| !dir.join(f).exists()), "réinitialisation");
+        plant();
+        remove_seed_bound_state(&dir);
+        assert!(files.iter().all(|f| !dir.join(f).exists()), "restauration (même nettoyage)");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
