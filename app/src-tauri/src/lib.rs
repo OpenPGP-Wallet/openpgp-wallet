@@ -1757,6 +1757,20 @@ fn forget_wallet_connections(app: &tauri::AppHandle) {
     if let Ok(client) = wc_client(app) {
         client.disconnect_all();
     }
+    forget_session(app);
+}
+
+/// Verrouillage (bouton, ou inactivité) : clés de visualisation Zcash protégé
+/// et Monero, adresses mémorisées et demandes de dApps préparées oubliées
+/// jusqu'au prochain déverrouillage — la synchronisation de fond s'arrête
+/// faute de clés, et aucune commande ne répond plus pour un profil. Les
+/// connexions WalletConnect restent (reprises au déverrouillage).
+#[tauri::command]
+fn lock_session(app: tauri::AppHandle) {
+    forget_session(&app);
+}
+
+fn forget_session(app: &tauri::AppHandle) {
     app.state::<WcState>().prepared.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<ProfileAddressCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<ProfileZcashCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
@@ -5088,6 +5102,7 @@ pub fn run() {
             zec_shielded_balance,
             xmr_status,
             set_xmr_sync,
+            lock_session,
             xmr_node,
             set_xmr_node,
             zec_shield,

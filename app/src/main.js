@@ -2613,6 +2613,8 @@ thorAddressConfirmBtn.addEventListener("click", withBusyButton(thorAddressConfir
 
 function lockWallet() {
   if (coinHistoryOpen()) closeCoinHistory();
+  // Côté Rust : clés de visualisation et adresses mémorisées oubliées.
+  invoke("lock_session").catch((e) => console.error(e));
   profilesCache = [];
   currentProfileIndex = 0;
   stopBalanceAutoRefresh();
