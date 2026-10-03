@@ -474,7 +474,7 @@ const I18N = {
     "usb.free": "{mb} Mo libres",
     "backup.disclaimerTitle": "⚠ Une part par appareil, à des endroits différents",
     "backup.disclaimerText":
-      "Mettez chaque part sur un appareil différent, rangé ailleurs. Deux parts réunies donnent accès à tout le portefeuille.",
+      "Mettez chaque part sur un appareil différent, rangé ailleurs. Deux parts réunies donnent accès à tout le portefeuille. Personne — ni un support, ni l'équipe de l'app — ne vous demandera jamais vos parts ou leurs phrases de passe : quiconque le fait cherche à vous voler.",
     "backup.statusTodo": "À sauvegarder",
     "backup.statusDone": "✓ Sauvegardée",
     "backup.shareDownloaded": "✓ Fichier de part téléchargé",
@@ -1047,7 +1047,7 @@ const I18N = {
     "usb.free": "{mb} MB free",
     "backup.disclaimerTitle": "⚠ One share per device, in different places",
     "backup.disclaimerText":
-      "Put each share on a different device, kept somewhere else. Two shares together give access to the whole wallet.",
+      "Put each share on a different device, kept somewhere else. Two shares together give access to the whole wallet. Nobody — no support, no one from the app — will ever ask for your shares or their passphrases: anyone who does is trying to rob you.",
     "backup.statusTodo": "Not saved yet",
     "backup.statusDone": "✓ Saved",
     "backup.shareDownloaded": "✓ Share file downloaded",

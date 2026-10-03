@@ -123,8 +123,9 @@ qui la met en œuvre. **Aucune de ces protections n'a encore été vérifiée pa
 ### 5.6 Ingénierie sociale (A7)
 - L'utilisateur ne voit jamais de phrase de récupération ; les phrases de passe du kit sont affichées une fois,
   pour être rangées hors ligne.
-- *Risque résiduel* : un utilisateur qui remet deux parts et leurs phrases à un faux support perd ses fonds ;
-  aucune aide dans l'app contre ce scénario pour l'instant.
+- Rappel affiché avec le kit : personne ne demandera jamais les parts ni leurs phrases de passe.
+- *Risque résiduel* : un utilisateur qui remet malgré tout deux parts et leurs phrases à un faux support perd
+  ses fonds.
 
 ### 5.7 Contenu injecté dans l'interface (A8)
 - **CSP stricte** (`tauri.conf.json`) et permissions Tauri minimales (`core:default` seul) : pas d'accès fichiers
@@ -149,4 +150,3 @@ qui la met en œuvre. **Aucune de ces protections n'a encore été vérifiée pa
 4. Tests en conditions réelles : dépenses Monero et Zcash protégé, échanges depuis BTC/ZEC, restauration depuis
    clé USB, Ledger/Trezor sur de vrais appareils, signatures WalletConnect.
 5. Compilation reproductible et vérification des mises à jour.
-6. Aide contre l'ingénierie sociale (rappel « personne ne vous demandera jamais votre kit »).
