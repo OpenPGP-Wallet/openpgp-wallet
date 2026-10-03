@@ -508,7 +508,9 @@ const I18N = {
     "restore.submit": "Restaurer",
     "restore.filesRequired": "Les 4 fichiers (2 parts + 2 clés privées) sont requis.",
     "nav.wallet": "Portefeuille",
-    "nav.history": "Historique",
+    "nav.history": "Activité",
+    "coinHistory.back": "← Portefeuille",
+    "coinHistory.title": "Historique {name}",
     "wallet.history": "Historique",
     "wallet.shieldedBalance": "Fonds protégés",
     "wallet.xmrSyncing": "Synchronisation Monero en cours…",
@@ -677,7 +679,7 @@ const I18N = {
     "wallet.restoreProfile": "Restaurer",
     "wallet.deleteProfileForever": "Supprimer définitivement",
     "history.subtitle":
-      "Triées par réseau, dans le réseau actuellement sélectionné pour chaque carte du portefeuille (mainnet ou testnet).",
+      "Toutes vos transactions, crypto par crypto, sur le réseau actuellement sélectionné dans chaque carte du portefeuille (mainnet ou testnet).",
     "history.ethereum": "Ethereum",
     "history.bitcoin": "Bitcoin",
     "history.solana": "Solana",
@@ -1079,7 +1081,9 @@ const I18N = {
     "restore.submit": "Restore",
     "restore.filesRequired": "All 4 files (2 shares + 2 private keys) are required.",
     "nav.wallet": "Wallet",
-    "nav.history": "History",
+    "nav.history": "Activity",
+    "coinHistory.back": "← Wallet",
+    "coinHistory.title": "{name} history",
     "wallet.history": "History",
     "wallet.shieldedBalance": "Shielded funds",
     "wallet.xmrSyncing": "Monero sync in progress…",
@@ -1248,7 +1252,7 @@ const I18N = {
     "wallet.restoreProfile": "Restore",
     "wallet.deleteProfileForever": "Delete permanently",
     "history.subtitle":
-      "Sorted by network, using whichever network is currently selected for each wallet card (mainnet or testnet).",
+      "All your transactions, crypto by crypto, on the network currently selected in each wallet card (mainnet or testnet).",
     "history.ethereum": "Ethereum",
     "history.bitcoin": "Bitcoin",
     "history.solana": "Solana",
@@ -2597,6 +2601,7 @@ thorAddressConfirmBtn.addEventListener("click", withBusyButton(thorAddressConfir
 }));
 
 function lockWallet() {
+  if (coinHistoryCoin != null) closeCoinHistory();
   profilesCache = [];
   currentProfileIndex = 0;
   stopBalanceAutoRefresh();
@@ -2647,14 +2652,20 @@ function fitNavbar() {
   document.documentElement.style.setProperty("--navbar-height", "0px");
 }
 
+// Affiche le panneau `target` (onglet, ou sous-page comme l'historique
+// d'une crypto), seul.
+function showPanel(target) {
+  document.querySelectorAll(".tab-panel").forEach((panel) => {
+    panel.classList.toggle("hidden", panel.dataset.panel !== target);
+  });
+}
+
 document.querySelectorAll(".nav-tab").forEach((tab) => {
   tab.addEventListener("click", () => {
     document.querySelectorAll(".nav-tab").forEach((t) => t.classList.remove("active"));
     tab.classList.add("active");
     const target = tab.dataset.tab;
-    document.querySelectorAll(".tab-panel").forEach((panel) => {
-      panel.classList.toggle("hidden", panel.dataset.panel !== target);
-    });
+    showPanel(target);
     if (target === "history") loadAllHistory();
     if (target === "certificate") loadCertificate();
     if (target === "message") loadRecipients();
@@ -4060,7 +4071,7 @@ document.querySelectorAll(".wallet-card").forEach((card) => {
   card.querySelector('[data-action="send-shielded"]')?.addEventListener("click", () => openShieldedModal("send"));
   // Même historique que l'onglet « Historique », ouvert directement sur cette
   // crypto : plus facile à trouver depuis la carte que l'onglet seul.
-  card.querySelector('[data-action="history"]').addEventListener("click", () => openHistoryFor(card.dataset.coin));
+  card.querySelector('[data-action="history"]').addEventListener("click", () => openCoinHistory(card.dataset.coin));
   const select = card.querySelector(".network-select");
   if (select) {
     // Contrairement à EVM/Solana, changer de réseau Bitcoin change aussi l'adresse
@@ -4287,11 +4298,19 @@ function buildHistoryRow(tx) {
   return row;
 }
 
-async function loadHistorySection(coin) {
+function loadHistorySection(coin) {
+  return renderHistory(coin, document.getElementById(`history-list-${coin}`), document.getElementById(`history-network-${coin}`));
+}
+
+// Historique de `coin` (réseau et adresse de sa carte) dans `container`.
+// Une lecture plus récente dans le même conteneur (autre crypto ouverte entre-
+// temps, Actualiser) l'emporte : une réponse arrivée après elle est ignorée.
+async function renderHistory(coin, container, networkEl) {
   const card = document.querySelector(`.wallet-card[data-coin="${coin}"]`);
-  const container = document.getElementById(`history-list-${coin}`);
-  const networkEl = document.getElementById(`history-network-${coin}`);
   if (!card || !container || !networkEl) return;
+  const load = String((Number(container.dataset.load) || 0) + 1);
+  container.dataset.load = load;
+  const current = () => container.dataset.load === load;
 
   const network = networkForCard(card);
   const address = addressForCoin(coin, network);
@@ -4308,6 +4327,7 @@ async function loadHistorySection(coin) {
     const result = ASSET_BY_COIN[coin]?.token
       ? await invoke("get_token_tx_history", { token: coin, network, address })
       : await invoke("get_tx_history", { network, address });
+    if (!current()) return;
     // Historique indisponible (BNB Chain, HyperEVM sans clé Etherscan, ou
     // offre gratuite refusée) : motif, et lien vers la page de l'adresse sur
     // l'explorateur du réseau.
@@ -4323,6 +4343,7 @@ async function loadHistorySection(coin) {
     }
     entries.forEach((tx) => container.appendChild(buildHistoryRow(tx)));
   } catch (e) {
+    if (!current()) return;
     // textContent, jamais innerHTML : le message d'erreur vient de Rust, qui y
     // recopie le JSON d'erreur renvoyé par le serveur RPC — un serveur
     // malveillant aurait pu y glisser du HTML (faux formulaire, lien de
@@ -4818,18 +4839,63 @@ document.addEventListener("pointercancel", (e) => {
 // constantes déclarées plus bas dans ce fichier).
 setTimeout(applyCardOrder, 0);
 
-// Onglet Historique, défilé jusqu'à la section de `coin` (sous la barre de
-// navigation, qui reste en haut) et brièvement mise en évidence.
-function openHistoryFor(coin) {
-  document.querySelector('.nav-tab[data-tab="history"]').click();
-  const section = document.getElementById(`history-section-${coin}`);
-  if (!section) return;
-  // Barre de navigation sur le côté : rien ne masque le haut de la page.
-  window.scrollTo({ top: section.getBoundingClientRect().top + window.scrollY - 24 });
-  section.classList.remove("history-section-flash");
-  void section.offsetWidth; // relance l'animation si on reclique aussitôt
-  section.classList.add("history-section-flash");
+// --- Historique d'une crypto (page à part) -----------------------------------
+// Bouton « Historique » d'une carte : page dédiée à cette crypto seule (sous-
+// page du portefeuille, « Portefeuille » reste en surbrillance) ; l'onglet
+// « Activité » garde toutes les cryptos. Retour : bouton ou Échap, à la même
+// hauteur du portefeuille qu'avant.
+
+let coinHistoryCoin = null;
+let walletScrollY = 0;
+
+function coinHistoryOpen() {
+  return coinHistoryCoin != null && !document.querySelector('.tab-panel[data-panel="coin-history"]').classList.contains("hidden");
 }
+
+function renderCoinHistoryTitle() {
+  const card = document.querySelector(`.wallet-card[data-coin="${coinHistoryCoin}"]`);
+  if (!card) return;
+  // Nom lu sur la carte, sans l'indentation du HTML : « Bitcoin », « USDC Solana ».
+  const name = card.querySelector("h2").textContent.trim().replace(/\s+/g, " ");
+  setWithCoinIcon(document.getElementById("coin-history-title"), coinHistoryCoin, t("coinHistory.title", { name }));
+}
+
+function loadCoinHistory() {
+  renderCoinHistoryTitle();
+  renderHistory(coinHistoryCoin, document.getElementById("coin-history-list"), document.getElementById("coin-history-network"));
+}
+
+function openCoinHistory(coin) {
+  if (!document.querySelector(`.wallet-card[data-coin="${coin}"]`)) return;
+  if (!coinHistoryOpen()) walletScrollY = window.scrollY;
+  coinHistoryCoin = coin;
+  document.querySelectorAll(".nav-tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.tab === "wallet"));
+  showPanel("coin-history");
+  window.scrollTo({ top: 0 });
+  loadCoinHistory();
+}
+
+function closeCoinHistory() {
+  coinHistoryCoin = null;
+  document.getElementById("coin-history-list").replaceChildren();
+  document.querySelector('.nav-tab[data-tab="wallet"]').click();
+  window.scrollTo({ top: walletScrollY });
+}
+
+document.getElementById("coin-history-back").addEventListener("click", closeCoinHistory);
+document.getElementById("coin-history-refresh").addEventListener("click", () => {
+  if (coinHistoryCoin) loadCoinHistory();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && coinHistoryOpen() && !document.querySelector(".modal-overlay:not(.hidden)")) closeCoinHistory();
+});
+// Nouvelle langue : titre et lignes retraduits (après `applyLanguage`,
+// abonnée plus haut).
+document.querySelectorAll(".lang-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    if (coinHistoryOpen()) loadCoinHistory();
+  });
+});
 
 // --- Send modal ----------------------------------------------------------
 

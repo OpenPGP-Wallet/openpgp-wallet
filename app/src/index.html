@@ -128,7 +128,7 @@
         <span class="nav-brand"><img class="brand-logo" src="/assets/logo.svg" alt="" />OpenPGP Wallet</span>
         <div class="nav-tabs">
           <button class="nav-tab active" data-tab="wallet" data-i18n="nav.wallet">Portefeuille</button>
-          <button class="nav-tab" data-tab="history" data-i18n="nav.history">Historique</button>
+          <button class="nav-tab" data-tab="history" data-i18n="nav.history">Activité</button>
           <button class="nav-tab" data-tab="message" data-i18n="nav.message">Message</button>
           <button class="nav-tab" data-tab="certificate" data-i18n="nav.certificate">Certificat</button>
           <button class="nav-tab" data-tab="external" data-i18n="nav.external">Wallets externes</button>
@@ -651,10 +651,10 @@
 
       <section class="tab-panel hidden" data-panel="history">
         <div class="card wide">
-          <h1 data-i18n="nav.history">Historique</h1>
+          <h1 data-i18n="nav.history">Activité</h1>
           <p class="muted" data-i18n="history.subtitle">
-            Triées par réseau, dans le réseau actuellement sélectionné pour chaque carte du
-            portefeuille (mainnet ou testnet).
+            Toutes vos transactions, crypto par crypto, sur le réseau actuellement sélectionné dans
+            chaque carte du portefeuille (mainnet ou testnet).
           </p>
           <div class="row-buttons">
             <button id="refresh-history-btn" class="secondary" data-i18n="wallet.refresh">Actualiser</button>
@@ -691,6 +691,20 @@
             </div>
             <div id="history-list-usdc" class="history-list"></div>
           </div>
+        </div>
+      </section>
+
+      <!-- Historique d'une seule crypto : page ouverte par le bouton
+           « Historique » de sa carte (sous-page du portefeuille). -->
+      <section class="tab-panel hidden" data-panel="coin-history">
+        <div class="card wide">
+          <button type="button" id="coin-history-back" class="link coin-history-back" data-i18n="coinHistory.back">← Portefeuille</button>
+          <h1 id="coin-history-title" class="coin-history-title"></h1>
+          <p id="coin-history-network" class="muted"></p>
+          <div class="row-buttons">
+            <button id="coin-history-refresh" class="secondary" data-i18n="wallet.refresh">Actualiser</button>
+          </div>
+          <div id="coin-history-list" class="history-list"></div>
         </div>
       </section>
 
