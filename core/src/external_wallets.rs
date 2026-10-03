@@ -88,6 +88,11 @@ pub(crate) fn validate_address(network: &str, address: &str) -> Result<()> {
         "zec_mainnet" => {
             crate::zcash::parse_recipient(address)?;
         }
+        // Monero (adresse du réseau principal) : même raison, pour la carte
+        // Monero.
+        "xmr_mainnet" => {
+            crate::monero::parse_recipient(address)?;
+        }
         other => anyhow::bail!("réseau inconnu : {other}"),
     }
     Ok(())
@@ -209,6 +214,10 @@ mod tests {
         assert!(validate_address("zec_mainnet", &t1).is_ok(), "{t1}");
         assert!(validate_address("zec_mainnet", VALID_EVM_ADDRESS).is_err());
         assert!(validate_address("zec_mainnet", "t1pasuneadresse").is_err());
+        let xmr = "44AFFq5kSiGBoZ4NMDwYtN18obc8AemS33DBLWs3H7otXft3XjrpDtQGv7SqSsaBYBb98uNbr2VBBEt7f2wfn3RVGQBEP3A";
+        assert!(validate_address("xmr_mainnet", xmr).is_ok());
+        assert!(validate_address("xmr_mainnet", &t1).is_err());
+        assert!(validate_address("zec_mainnet", xmr).is_err());
     }
 
     #[test]

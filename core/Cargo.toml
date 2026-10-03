@@ -119,6 +119,14 @@ async-trait = "0.1"
 # (Orchard seul, voir zcash_shielded::NoSapling).
 jubjub = "0.10"
 bls12_381 = "0.8"
+
+# --- Monero ---
+# monero-wallet / monero-oxide (Serai, issus de monero-serai audité) : clés,
+# adresses, recherche des sorties reçues avec la clé de VISUALISATION,
+# transactions CLSAG + Bulletproofs+ ; monero-simple-request-rpc : nœud
+# Monero (public par défaut, modifiable dans Paramètres).
+monero-wallet = "0.2"
+monero-simple-request-rpc = "0.1"
 rand_core = { version = "0.6", features = ["getrandom"] }
 
 # --- WalletConnect v2 (voir core/src/walletconnect/) ---

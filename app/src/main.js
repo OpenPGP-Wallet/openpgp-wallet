@@ -20,6 +20,7 @@ const ASSETS = [
   { coin: "pol", name: "Polygon", symbol: "POL", family: "evm", icon: "/assets/pol.png", gecko: "polygon-ecosystem-token", decimals: 6, chart: "POL", networks: ["polygon_mainnet"] },
   { coin: "hype", name: "Hyperliquid", symbol: "HYPE", family: "evm", icon: "/assets/hype.jpg", iconRound: true, gecko: "hyperliquid", decimals: 6, chart: "HYPE", networks: ["hyperevm_mainnet"] },
   { coin: "zec", name: "Zcash", symbol: "ZEC", family: "zec", icon: "/assets/zec.png", gecko: "zcash", decimals: 8, chart: "ZEC", networks: ["zec_mainnet"] },
+  { coin: "xmr", name: "Monero", symbol: "XMR", family: "xmr", icon: "/assets/xmr.png", gecko: "monero", decimals: 6, chart: "XMR", networks: ["xmr_mainnet"] },
   // Jetons (`token: true`) : contrats et mints relevés dans core/src/tokens.rs —
   // SEUL le registre Rust fait foi pour un envoi (l'interface n'envoie que
   // l'identifiant et le réseau) ; ceux-ci ne servent qu'aux demandes de
@@ -161,7 +162,10 @@ function buildAssetCard(asset) {
         <button type="button" class="qr-btn" data-action="qr" data-i18n-title="wallet.showQr">${ICON_QR}</button>
       </div>
     </div>
-    <p class="fiat-value" data-field="fiat">—</p>
+    <p class="fiat-value" data-field="fiat">—</p>${
+      asset.coin === "xmr" ? `
+    <p class="xmr-status muted" data-field="xmr-status"></p>` : ""
+    }
     <p class="address collapsed-address hidden" data-field="collapsed-address"></p>
     <div class="collapsible-body" id="wallet-body-${asset.coin}">
       <div class="collapsible-inner">
@@ -261,6 +265,10 @@ function applyAssetVisibility() {
     document.querySelector(`.wallet-card[data-coin="${asset.coin}"]`)?.classList.toggle("asset-hidden", !visible);
     document.getElementById(`history-section-${asset.coin}`)?.classList.toggle("asset-hidden", !visible);
   }
+  // Monero : blocs téléchargés et analysés seulement si sa carte est affichée
+  // (ou si des fonds ont déjà été reçus, voir `set_xmr_sync`) — par
+  // `window.__TAURI__` : appelée au chargement, avant `invoke` ci-dessous.
+  window.__TAURI__.core.invoke("set_xmr_sync", { enabled: isAssetVisible("xmr") }).catch((e) => console.error(e));
 }
 applyAssetVisibility();
 
@@ -503,6 +511,8 @@ const I18N = {
     "nav.history": "Historique",
     "wallet.history": "Historique",
     "wallet.shieldedBalance": "Fonds protégés",
+    "wallet.xmrSyncing": "Synchronisation Monero en cours…",
+    "wallet.xmrLocked": "dont {amount} XMR en attente (10 confirmations, ≈ 20 min)",
     "shielded.shield": "Protéger mes ZEC transparents",
     "shielded.send": "Envoyer depuis les fonds protégés",
     "shielded.shieldTitle": "Protéger mes ZEC",
@@ -622,6 +632,7 @@ const I18N = {
     "net.base_mainnet": "Base — Fonds réels",
     "net.sol_mainnet": "Solana — Fonds réels",
     "net.zec_mainnet": "Zcash — Fonds réels",
+    "net.xmr_mainnet": "Monero — Fonds réels",
     "wallet.historyExplorerOnly": "Pas d'historique ici pour ce réseau : aucun service public gratuit ne le fournit. Il reste consultable sur l'explorateur du réseau.",
     "wallet.historyOpenExplorer": "Voir sur l'explorateur",
     "wallet.historyNeedsKey": "Pour voir l'historique de ce réseau ici, ajoutez une clé API Etherscan gratuite dans Paramètres. Il reste consultable sur l'explorateur du réseau.",
@@ -769,6 +780,15 @@ const I18N = {
     "settings.affiliatePassword": "Mot de passe (pour signer l'inscription)",
     "settings.affiliateCopied": "Adresse copiée",
     "settings.affiliateDone": "Transaction envoyée : {tx}. Le nom apparaît ici en quelques secondes.",
+    "settings.xmrNodeTitle": "Nœud Monero",
+    "settings.xmrNodeHint":
+      "L'app lit la chaîne Monero auprès de nœuds publics (Cake Wallet, Stack Wallet…) et analyse les blocs sur cet appareil : le nœud ne sait pas quelles transactions sont les vôtres, mais voit votre adresse IP et les transactions que vous envoyez. Pour plus de confidentialité, indiquez votre propre nœud (https://, ou http:// sur votre réseau local).",
+    "settings.xmrNodeLabel": "Adresse du nœud (https://hôte:port)",
+    "settings.xmrNodeSave": "Utiliser ce nœud",
+    "settings.xmrNodeReset": "Revenir aux nœuds publics",
+    "settings.xmrNodeDefault": "Nœuds publics par défaut.",
+    "settings.xmrNodeCustom": "Nœud utilisé : {node}",
+    "settings.xmrNodeEmpty": "Indiquez d'abord l'adresse du nœud.",
     "settings.etherscanTitle": "Historique HyperEVM et BNB Chain",
     "settings.etherscanHint":
       "Aucun service public sans clé ne fournit l'historique de ces réseaux. Avec une clé API Etherscan gratuite (créée sur etherscan.io, gardée uniquement sur cet appareil), l'historique HyperEVM s'affiche dans l'app ; BNB Chain demande une offre Etherscan payante. Cette clé ne donne accès qu'à des données publiques.",
@@ -1062,6 +1082,8 @@ const I18N = {
     "nav.history": "History",
     "wallet.history": "History",
     "wallet.shieldedBalance": "Shielded funds",
+    "wallet.xmrSyncing": "Monero sync in progress…",
+    "wallet.xmrLocked": "incl. {amount} XMR pending (10 confirmations, ≈ 20 min)",
     "shielded.shield": "Shield my transparent ZEC",
     "shielded.send": "Send from shielded funds",
     "shielded.shieldTitle": "Shield my ZEC",
@@ -1181,6 +1203,7 @@ const I18N = {
     "net.base_mainnet": "Base — Real funds",
     "net.sol_mainnet": "Solana — Real funds",
     "net.zec_mainnet": "Zcash — Real funds",
+    "net.xmr_mainnet": "Monero — Real funds",
     "wallet.historyExplorerOnly": "No history here for this network: no free public service provides it. You can still see it on the network's explorer.",
     "wallet.historyOpenExplorer": "View on the explorer",
     "wallet.historyNeedsKey": "To see this network's history here, add a free Etherscan API key in Settings. You can still see it on the network's explorer.",
@@ -1328,6 +1351,15 @@ const I18N = {
     "settings.affiliatePassword": "Password (to sign the registration)",
     "settings.affiliateCopied": "Address copied",
     "settings.affiliateDone": "Transaction sent: {tx}. The name shows here within a few seconds.",
+    "settings.xmrNodeTitle": "Monero node",
+    "settings.xmrNodeHint":
+      "The app reads the Monero chain from public nodes (Cake Wallet, Stack Wallet…) and scans blocks on this device: the node does not know which transactions are yours, but sees your IP address and the transactions you send. For more privacy, set your own node (https://, or http:// on your local network).",
+    "settings.xmrNodeLabel": "Node address (https://host:port)",
+    "settings.xmrNodeSave": "Use this node",
+    "settings.xmrNodeReset": "Back to public nodes",
+    "settings.xmrNodeDefault": "Default public nodes.",
+    "settings.xmrNodeCustom": "Node in use: {node}",
+    "settings.xmrNodeEmpty": "Enter the node address first.",
     "settings.etherscanTitle": "HyperEVM and BNB Chain history",
     "settings.etherscanHint":
       "No public keyless service provides these networks' history. With a free Etherscan API key (created on etherscan.io, kept only on this device), HyperEVM history shows in the app; BNB Chain requires a paid Etherscan plan. This key only gives access to public data.",
@@ -2437,6 +2469,45 @@ async function registerAffiliateName(chain) {
   }
 }
 
+// --- Nœud Monero ----------------------------------------------------------------
+// Nœuds publics par défaut ; l'utilisateur peut indiquer le sien (validé et
+// gardé côté Rust, core/src/monero.rs).
+
+function renderXmrNode(node) {
+  document.getElementById("xmr-node-status").textContent = node ? t("settings.xmrNodeCustom", { node }) : t("settings.xmrNodeDefault");
+  document.getElementById("xmr-node-reset").classList.toggle("hidden", !node);
+}
+
+function loadXmrNode() {
+  invoke("xmr_node")
+    .then(renderXmrNode)
+    .catch((e) => console.error(e));
+}
+
+async function saveXmrNode(url) {
+  const errorEl = document.getElementById("xmr-node-error");
+  hideError(errorEl);
+  try {
+    renderXmrNode(await invoke("set_xmr_node", { url }));
+    document.getElementById("xmr-node-input").value = "";
+  } catch (e) {
+    showError(errorEl, String(e));
+  }
+}
+
+const xmrNodeSaveBtn = document.getElementById("xmr-node-save");
+xmrNodeSaveBtn.addEventListener("click", withBusyButton(xmrNodeSaveBtn, async () => {
+  const url = document.getElementById("xmr-node-input").value.trim();
+  if (!url) {
+    showError(document.getElementById("xmr-node-error"), t("settings.xmrNodeEmpty"));
+    return;
+  }
+  await saveXmrNode(url);
+}));
+
+const xmrNodeResetBtn = document.getElementById("xmr-node-reset");
+xmrNodeResetBtn.addEventListener("click", withBusyButton(xmrNodeResetBtn, () => saveXmrNode("")));
+
 // --- Clé Etherscan (historiques HyperEVM et BNB Chain) ------------------------
 // Gardée par Rust sur l'appareil (core/src/etherscan_key.rs) ; l'interface ne
 // reçoit jamais que sa forme masquée.
@@ -2595,6 +2666,7 @@ document.querySelectorAll(".nav-tab").forEach((tab) => {
       loadArchivedProfiles();
       loadBiometricSettings();
       loadEtherscanKey();
+      loadXmrNode();
       loadAffiliateNames();
     }
   });
@@ -3370,6 +3442,9 @@ function addressForCoin(coin, network) {
   // Zcash transparent (t1…) ; absente d'un profil dérivé avant son ajout,
   // jusqu'au prochain déverrouillage.
   if (coin === "zec") return profile.addresses.zcash ?? "";
+  // Monero : adresse principale (4…) ; absente d'un profil dérivé avant son
+  // ajout, jusqu'au prochain déverrouillage.
+  if (coin === "xmr") return profile.addresses.monero ?? "";
   // Jetons Solana (USDC, USDT…) : même adresse propriétaire que SOL (le compte
   // de jetons associé qui les détient réellement est un détail invisible pour
   // l'utilisateur, dérivé côté Rust — voir core/src/sol_spl.rs).
@@ -3683,7 +3758,7 @@ async function refreshBalance(card) {
         balanceEl.textContent = t("wallet.balanceError");
       });
     const pendingPromise = checkPendingTx(card, address, network);
-    const shieldedPromise = coin === "zec" ? refreshShielded(card) : Promise.resolve();
+    const shieldedPromise = coin === "zec" ? refreshShielded(card) : coin === "xmr" ? refreshXmrStatus(card) : Promise.resolve();
     await Promise.all([balancePromise, pendingPromise, shieldedPromise]);
     updateFiatValue(card);
   } finally {
@@ -3693,6 +3768,32 @@ async function refreshBalance(card) {
   // signalé entre-temps : relire.
   if (balanceKey(card) !== key || card.dataset.refreshAgain === "1") refreshBalance(card);
 }
+
+// --- Monero --------------------------------------------------------------------
+// Solde tenu par la synchronisation de fond côté Rust (blocs analysés avec la
+// clé de visualisation, voir core/src/monero.rs) : la carte relit l'état local
+// après chaque passage, et montre la part encore bloquée (10 confirmations).
+
+async function refreshXmrStatus(card) {
+  const statusEl = card.querySelector('[data-field="xmr-status"]');
+  if (!statusEl) return;
+  try {
+    const status = await invoke("xmr_status", { profileIndex: currentProfileIndex });
+    statusEl.textContent = !status.synced
+      ? t("wallet.xmrSyncing")
+      : Number.parseFloat(status.locked) > 0
+        ? t("wallet.xmrLocked", { amount: status.locked })
+        : "";
+  } catch (e) {
+    console.error(e);
+    statusEl.textContent = "";
+  }
+}
+
+window.__TAURI__.event.listen("xmr-synced", () => {
+  const card = document.querySelector('.wallet-card[data-coin="xmr"]');
+  if (card) refreshBalance(card);
+}).catch((e) => console.error(e));
 
 // --- Zcash protégé ------------------------------------------------------------
 // Adresse u1 (récepteur Orchard seul) et solde protégé, lus côté Rust dans la
@@ -3854,7 +3955,8 @@ function updateBalanceWatch() {
       // les autres toutes les 60 s) — la surveillance lit un solde natif.
       if (usesTokenRegistry(coin, network)) return { address: "" };
       // Zcash : pas de surveillance en direct (solde relu toutes les 15 s).
-      if (coin === "zec") return { address: "" };
+      // Monero : solde tenu par la synchronisation de fond (`xmr-synced`).
+      if (coin === "zec" || coin === "xmr") return { address: "" };
       return { id: coin, network: coin === "usdc" ? "usdc_solana" : network, address: addressForCoin(coin, network) };
     })
     .filter((target) => target.address);
@@ -4018,6 +4120,7 @@ function paymentUri(coin, network, address, amount) {
   if (asset?.token && network === "sol_mainnet") return `solana:${address}?amount=${amount}&spl-token=${asset.contracts.sol_mainnet}`;
   if (coin === "btc") return `bitcoin:${address}?amount=${amount}`;
   if (coin === "zec") return `zcash:${address}?amount=${amount}`;
+  if (coin === "xmr") return `monero:${address}?tx_amount=${amount}`;
   if (coin === "sol") return `solana:${address}?amount=${amount}`;
   if (coin === "usdc") return `solana:${address}?amount=${amount}&spl-token=${USDC_MINT}`;
   if (ASSET_BY_COIN[coin]?.family === "evm") {

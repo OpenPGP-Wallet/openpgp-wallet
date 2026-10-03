@@ -3746,3 +3746,15 @@ h2 .coin-icon-inline,
   margin-top: 6px;
   font-size: 0.85rem;
 }
+
+/* Monero : part encore bloquée (10 confirmations) ou synchronisation en
+   cours, sous la valeur en monnaie ; masquée en vue liste. */
+.xmr-status {
+  margin: 2px 0 0;
+  font-size: 0.85rem;
+}
+
+.xmr-status:empty,
+:root[data-wallet-list-view="true"] .xmr-status {
+  display: none;
+}

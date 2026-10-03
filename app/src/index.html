@@ -992,6 +992,22 @@
           </div>
 
           <div class="settings-section">
+            <h2 class="section-title" data-i18n="settings.xmrNodeTitle">Nœud Monero</h2>
+            <p class="muted" data-i18n="settings.xmrNodeHint">
+              L'app lit la chaîne Monero auprès de nœuds publics (Cake Wallet, Stack Wallet…) et analyse
+              les blocs sur cet appareil : le nœud ne sait pas quelles transactions sont les vôtres, mais
+              voit votre adresse IP et les transactions que vous envoyez. Pour plus de confidentialité,
+              indiquez votre propre nœud (https://, ou http:// sur votre réseau local).
+            </p>
+            <p id="xmr-node-status" class="muted"></p>
+            <label for="xmr-node-input" data-i18n="settings.xmrNodeLabel">Adresse du nœud (https://hôte:port)</label>
+            <input id="xmr-node-input" type="url" autocomplete="off" spellcheck="false" placeholder="https://" />
+            <p id="xmr-node-error" class="error hidden"></p>
+            <button id="xmr-node-save" class="secondary" data-i18n="settings.xmrNodeSave">Utiliser ce nœud</button>
+            <button id="xmr-node-reset" class="link hidden" data-i18n="settings.xmrNodeReset">Revenir aux nœuds publics</button>
+          </div>
+
+          <div class="settings-section">
             <h2 class="section-title" data-i18n="settings.etherscanTitle">Historique HyperEVM et BNB Chain</h2>
             <p class="muted" data-i18n="settings.etherscanHint">
               Aucun service public sans clé ne fournit l'historique de ces réseaux. Avec une clé API

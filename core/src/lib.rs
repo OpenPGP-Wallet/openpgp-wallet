@@ -41,6 +41,7 @@ pub mod etherscan_key;
 pub mod native_deposit;
 pub mod zcash;
 pub mod zcash_shielded;
+pub mod monero;
 #[cfg(windows)]
 pub mod windows_hello;
 pub mod secure_storage;

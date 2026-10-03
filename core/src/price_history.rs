@@ -76,6 +76,9 @@ pub fn price_asset(symbol: &str) -> Option<Asset> {
         "ASTER" => Asset::Pair("ASTERUSDT"),
         "RENDER" => Asset::Pair("RENDERUSDT"),
         "VVV" => Asset::Kraken("VVVUSD"),
+        // Monero : retiré de Binance en 2024, dont l'API renvoie encore un
+        // cours figé (118,70 $ le 03/10/2026, contre 553 $ chez Kraken).
+        "XMR" => Asset::Kraken("XMRUSD"),
         "USDT" | "USDG" => Asset::Usd,
         // EURC suit l'euro : sa courbe est celle d'EUR/USDT.
         "EURC" => Asset::Eur,

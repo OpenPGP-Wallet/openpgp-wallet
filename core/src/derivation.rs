@@ -143,6 +143,15 @@ pub fn derive_thor_key(seed: &[u8], index: u32) -> Result<(SigningKey, [u8; 20])
     Ok((signing_key, hash160))
 }
 
+/// Clé de base Monero n°`index` : clé BIP32 secp256k1 du chemin
+/// m/44'/128'/{index}'/0/0 — même chemin et même usage que l'app Monero de
+/// Ledger (`monero_init_private_key`) ; la clé de dépense en est tirée par
+/// keccak (voir `monero::spend_key`).
+pub fn derive_monero_base_key(seed: &[u8], index: u32) -> Result<zeroize::Zeroizing<[u8; 32]>> {
+    let key = derive_key_from_path(seed, &format!("m/44'/128'/{index}'/0/0"))?;
+    Ok(zeroize::Zeroizing::new(key.to_bytes().into()))
+}
+
 /// Formatte une adresse THORChain (bech32, préfixe "thor1...") — comme
 /// Bitcoin mais SANS octet de version témoin (pas de SegWit sur Cosmos SDK) :
 /// le hash160 est encodé directement.

@@ -31,3 +31,27 @@ strip = true
 # seules les macros `debug_assert!` le sont).
 [profile.test]
 debug-assertions = false
+
+# Monero : l'analyse des blocs (une multiplication de courbe par transaction)
+# prend ~27 ms par transaction sans optimisation — une journée de blocs
+# (~20 000 transactions) prendrait 10 minutes dans l'app de développement et
+# les tests. Seules les crates de calcul sont optimisées ; l'app livrée l'est
+# déjà entièrement (profil release).
+[profile.dev.package.curve25519-dalek]
+opt-level = 3
+[profile.dev.package.keccak]
+opt-level = 3
+[profile.dev.package.sha3]
+opt-level = 3
+[profile.dev.package.monero-ed25519]
+opt-level = 3
+[profile.dev.package.monero-oxide]
+opt-level = 3
+[profile.dev.package.monero-wallet]
+opt-level = 3
+[profile.dev.package.monero-clsag]
+opt-level = 3
+[profile.dev.package.monero-bulletproofs]
+opt-level = 3
+[profile.dev.package.monero-primitives]
+opt-level = 3

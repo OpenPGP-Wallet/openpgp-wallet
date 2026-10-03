@@ -14,7 +14,7 @@
 //!   perdu — jamais utilisé pour le déverrouillage quotidien.
 
 use crate::{
-    btc_rpc, cow, dapp_requests, derivation, lifi, native_deposit, zcash, zcash_shielded, entropy, eth_rpc, eth_tx, history, jupiter_rpc, memory_guard, pgp_engine, secure_storage, shamir,
+    btc_rpc, cow, dapp_requests, derivation, lifi, monero, native_deposit, zcash, zcash_shielded, entropy, eth_rpc, eth_tx, history, jupiter_rpc, memory_guard, pgp_engine, secure_storage, shamir,
     evm_sign, sol_rpc, sol_spl, sol_tx, thorchain_rpc, tokens, wallet_flow,
 };
 use anyhow::{Context, Result};
@@ -191,6 +191,12 @@ pub struct Addresses {
     /// Clés de visualisation du compte protégé (jamais envoyées à
     /// l'interface) : création du compte et synchronisation sans la seed.
     pub zcash_shielded_keys: zcash_shielded::ProfileKeys,
+    /// Adresse Monero principale (4…), schéma de l'app Monero de Ledger
+    /// (m/44'/128'/{index}'/0/0, voir `monero`).
+    pub monero: String,
+    /// Clés de visualisation Monero (jamais envoyées à l'interface) :
+    /// synchronisation et préparation des envois sans la seed.
+    pub monero_keys: monero::ViewKeys,
 }
 
 const PROFILES_FILE: &str = "profiles.json";
@@ -313,7 +319,10 @@ fn derive_addresses(seed: &[u8], index: u32) -> Result<Addresses> {
     let (_zec_key, zec_hash160) = derivation::derive_zec_key(seed, index)?;
     let (_thor_key, thor_hash160) = derivation::derive_thor_key(seed, index)?;
     let shielded_keys = zcash_shielded::profile_keys(seed, index)?;
+    let monero_keys = monero::view_keys(seed, index)?;
     Ok(Addresses {
+        monero: monero_keys.address()?,
+        monero_keys,
         zcash_shielded: zcash_shielded::address(&shielded_keys.1)?,
         zcash_shielded_keys: shielded_keys,
         thor: derivation::format_thor_address(&thor_hash160)?,
@@ -807,9 +816,20 @@ pub fn unlock_wallet(data_dir: &Path, device_password: &str) -> Result<Vec<Profi
         .into_iter()
         .map(|profile| {
             let addresses = derive_addresses(&seed, profile.index)?;
+            update_monero_key_images(data_dir, &seed, profile.index);
             Ok(ProfileAddresses { profile, addresses: Some(addresses) })
         })
         .collect()
+}
+
+/// Key images Monero des sorties reçues depuis le dernier passage (détection
+/// des dépenses faites ailleurs, voir `monero`), tant que la seed est en
+/// mémoire. Un échec ne bloque pas le déverrouillage : refait au suivant ou
+/// au prochain envoi.
+fn update_monero_key_images(data_dir: &Path, seed: &[u8], profile: u32) {
+    if let Err(e) = monero::update_key_images(data_dir, seed, profile) {
+        eprintln!("Monero : key images non calculées ({e:#})");
+    }
 }
 
 /// Restaure un wallet à partir de 2 parts de sauvegarde (peu importe lesquelles
@@ -1286,6 +1306,7 @@ fn unlock_wallet_biometric_with(data_dir: &Path, sealer: &dyn SecretSealer) -> R
         .into_iter()
         .map(|profile| {
             let addresses = derive_addresses(&seed, profile.index)?;
+            update_monero_key_images(data_dir, &seed, profile.index);
             Ok(ProfileAddresses { profile, addresses: Some(addresses) })
         })
         .collect()
@@ -2549,6 +2570,58 @@ pub fn send_lifi_solana(data_dir: &Path, device_password: &str, quote: &lifi::Li
     let raw = jupiter_rpc::with_recent_blockhash(raw, &rpc.latest_blockhash()?)?;
     let signed = jupiter_rpc::sign_swap_transaction(&raw, &signing_key, &owner)?;
     rpc.send_transaction(&signed)
+}
+
+// --- Monero ----------------------------------------------------------------------
+
+/// Synchronise les comptes Monero jusqu'au bout de la chaîne (appelé en
+/// arrière-plan après le déverrouillage).
+pub fn sync_xmr(data_dir: &Path, keys: &[monero::ViewKeys]) -> Result<()> {
+    monero::sync(data_dir, keys)
+}
+
+pub fn xmr_balance(data_dir: &Path, profile_index: u32) -> Result<monero::Balance> {
+    monero::balance(data_dir, profile_index)
+}
+
+pub fn xmr_history(data_dir: &Path, profile_index: u32) -> Result<Vec<history::TxEntry>> {
+    monero::history(data_dir, profile_index)
+}
+
+pub fn xmr_has_received(data_dir: &Path) -> bool {
+    monero::has_received(data_dir)
+}
+
+pub fn has_pending_xmr(data_dir: &Path, profile_index: u32) -> Result<bool> {
+    monero::has_pending(data_dir, profile_index)
+}
+
+pub fn canonical_xmr_amount(amount: &str) -> Result<String> {
+    Ok(monero::format_xmr(monero::parse_xmr(amount)?))
+}
+
+/// Envoi préparé pour la boîte de confirmation : destinataire vérifié
+/// (jamais soi-même), sorties choisies, leurres tirés, frais calculés —
+/// exactement ce que `send_xmr` signera.
+pub fn xmr_send_plan(data_dir: &Path, keys: &monero::ViewKeys, to: &str, amount: &str) -> Result<monero::SendPlan> {
+    monero::prepare_send(data_dir, keys, to, monero::parse_xmr(amount)?)
+}
+
+/// Signe l'envoi préparé (et confirmé) avec la clé de dépense tirée de la
+/// seed, le diffuse et renvoie l'identifiant de la transaction.
+pub fn send_xmr(data_dir: &Path, device_password: &str, plan: monero::SendPlan) -> Result<String> {
+    let seed = unlock_seed(data_dir, device_password)?;
+    let _seed_lock = memory_guard::lock(&seed);
+    monero::sign_and_send(data_dir, &seed, plan)
+}
+
+/// Nœud Monero choisi dans Paramètres (`None` : nœuds publics par défaut).
+pub fn xmr_node(data_dir: &Path) -> Option<String> {
+    monero::custom_node(data_dir)
+}
+
+pub fn set_xmr_node(data_dir: &Path, url: &str) -> Result<Option<String>> {
+    monero::set_custom_node(data_dir, url)
 }
 
 // --- Zcash protégé (Orchard) ------------------------------------------------------

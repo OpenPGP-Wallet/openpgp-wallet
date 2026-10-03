@@ -310,7 +310,29 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("Protection annulée (confirmation refusée).", "Shielding cancelled (confirmation declined)."),
     ("fonds protégés pas encore prêts (synchronisation en cours)", "shielded funds not ready yet (sync in progress)"),
     ("adresse Zcash Sapling seule (zs…) pas prise en charge — demandez une adresse u1… ou t1…", "Sapling-only Zcash address (zs…) not supported — ask for a u1… or t1… address"),
-    ("adresse Zcash d'un autre réseau (test) — refusée", "Zcash address from another network (test) — refused"),
+    // Monero (core/src/monero.rs)
+    ("envoi vers votre propre adresse Monero", "transfer to your own Monero address"),
+    ("Monero : synchronisation en cours, réessayez dans un instant", "Monero: sync in progress, try again in a moment"),
+    ("Monero : synchronisation pas encore faite, réessayez dans un instant", "Monero: not synced yet, try again in a moment"),
+    ("Monero : synchronisation pas encore lancée", "Monero: sync not started yet"),
+    ("adresse Monero d'un réseau de test (stagenet/testnet) : refusée", "Monero address from a test network (stagenet/testnet): refused"),
+    ("adresse Monero invalide", "invalid Monero address"),
+    ("adresse Monero inconnue de ce portefeuille", "Monero address unknown to this wallet"),
+    ("format d'adresse Monero non standard : refusé", "non-standard Monero address format: refused"),
+    ("adresse de nœud invalide : https://hôte:port attendu", "invalid node address: https://host:port expected"),
+    ("adresse de nœud invalide : https://hôte:port attendu, sans chemin", "invalid node address: https://host:port expected, without a path"),
+    ("adresse de nœud invalide : hôte manquant", "invalid node address: missing host"),
+    ("nœud distant : https:// obligatoire (http:// seulement pour un nœud local)", "remote node: https:// required (http:// only for a local node)"),
+    ("enregistrement du nœud Monero impossible", "could not save the Monero node"),
+    ("suppression du nœud Monero impossible", "could not remove the Monero node"),
+    ("état Monero illisible", "unreadable Monero state"),
+    ("enregistrement de l'état Monero impossible", "could not save the Monero state"),
+    ("sortie Monero illisible", "unreadable Monero output"),
+    ("frais Monero incohérents", "inconsistent Monero fee"),
+    ("clé publique Monero invalide", "invalid Monero public key"),
+    ("clé de visualisation Monero invalide", "invalid Monero view key"),
+    ("démarrage du client Monero impossible", "could not start the Monero client"),
+    ("envoi Monero non préparé", "Monero transfer not prepared"),
     // Clé Etherscan (core/src/etherscan_key.rs, core/src/routescan.rs)
     (
         "clé Etherscan invalide : 34 lettres majuscules et chiffres attendus (à copier depuis etherscan.io/myapikey)",
@@ -636,6 +658,49 @@ fn translate_dynamic_error(msg: &str) -> Option<String> {
             return Some(format!("transaction refused by {network}: {reason}"));
         }
     }
+    if let Some(rest) = msg.strip_prefix("XMR insuffisants pour les frais (") {
+        return Some(format!("insufficient XMR for the fee ({}", rest.replace(") : maximum envoyable ", "): maximum sendable ")));
+    }
+    if let Some(rest) = msg.strip_prefix("XMR insuffisants : ") {
+        let rest = rest
+            .replace(" demandés", " requested")
+            .replace(" disponibles", " available")
+            .replace(" encore bloqués : 10 confirmations, ≈ 20 min", " still locked: 10 confirmations, ≈ 20 min");
+        return Some(format!("insufficient XMR: {rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("aucun nœud Monero joignable (") {
+        return Some(format!("no reachable Monero node ({rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("nœud Monero : ") {
+        return Some(format!("Monero node: {rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("transaction refusée par le nœud Monero : ") {
+        return Some(format!("transaction refused by the Monero node: {rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("diffusion Monero incertaine (") {
+        if let Some(reason) = rest.strip_suffix(") : vérifiez l'historique dans quelques minutes avant de renvoyer") {
+            return Some(format!("uncertain Monero broadcast ({reason}): check the history in a few minutes before sending again"));
+        }
+    }
+    if let Some(rest) = msg.strip_prefix("réseau Monero mis à niveau (version ") {
+        if let Some(version) = rest.strip_suffix(") : mettez l'app à jour avant d'envoyer") {
+            return Some(format!("Monero network upgraded (version {version}): update the app before sending"));
+        }
+    }
+    if let Some(rest) = msg.strip_prefix("signature Monero impossible (") {
+        return Some(format!("Monero signing failed ({rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("envoi Monero impossible (") {
+        return Some(format!("Monero transfer impossible ({rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("clés Monero invalides (") {
+        return Some(format!("invalid Monero keys ({rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("bloc Monero ") {
+        if let Some((number, reason)) = rest.split_once(" illisible (") {
+            return Some(format!("unreadable Monero block {number} ({reason}"));
+        }
+    }
     if let Some(rest) = msg.strip_prefix("rien à protéger pour l'instant (") {
         return Some(format!("nothing to shield for now ({rest}"));
     }
@@ -879,6 +944,7 @@ struct AddressesDto {
     solana: String,
     zcash: String,
     zcash_shielded: String,
+    monero: String,
 }
 
 impl From<api::Addresses> for AddressesDto {
@@ -890,6 +956,7 @@ impl From<api::Addresses> for AddressesDto {
             solana: a.solana,
             zcash: a.zcash,
             zcash_shielded: a.zcash_shielded,
+            monero: a.monero,
         }
     }
 }
@@ -997,7 +1064,14 @@ fn save_bytes_with_dialog(suggested_name: String, content_b64: String, app: taur
 /// aurait laissé un frontend compromis ouvrir n'importe quelle page — un vecteur
 /// de phishing simple, ouvert sans aucun bénéfice fonctionnel puisqu'aucun appel
 /// légitime de cette commande ne cible jamais autre chose que ces domaines.
-const ALLOWED_EXTERNAL_LINK_PREFIXES: [&str; 5] = ["https://explorer.solana.com/", "https://blockstream.info/", "https://explorer.cow.fi/", "https://scan.li.fi/", "https://blockchair.com/zcash/"];
+const ALLOWED_EXTERNAL_LINK_PREFIXES: [&str; 6] = [
+    "https://explorer.solana.com/",
+    "https://blockstream.info/",
+    "https://explorer.cow.fi/",
+    "https://scan.li.fi/",
+    "https://blockchair.com/zcash/",
+    "https://xmrchain.net/",
+];
 
 /// Lien vers un explorateur connu de l'app : Solana, Bitcoin, ou l'explorateur
 /// d'un réseau EVM (origine de `explorer_tx_prefix` : Etherscan, Arbiscan,
@@ -1683,6 +1757,7 @@ fn forget_wallet_connections(app: &tauri::AppHandle) {
     app.state::<ProfileZcashCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<ProfileBtcCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<ShieldedKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    app.state::<MoneroKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     IS_AFFILIATE_WALLET.store(false, Ordering::Relaxed);
 }
 
@@ -1713,7 +1788,7 @@ fn btc_network(network: &str) -> Result<&'static wallet_flow::BtcNetwork, String
 }
 
 #[tauri::command]
-async fn get_balance(network: String, address: String) -> Result<String, String> {
+async fn get_balance(network: String, address: String, app: tauri::AppHandle) -> Result<String, String> {
     run_blocking(move || {
         match network.as_str() {
             n if is_evm(n) => {
@@ -1734,6 +1809,11 @@ async fn get_balance(network: String, address: String) -> Result<String, String>
                 Ok(format!("{:.9}", lamports as f64 / 1e9))
             }
             "zec_mainnet" => Ok(pgp_wallet_poc::zcash::format_zec(api::get_zec_balance(&address).t_err()?)),
+            // État local (synchronisation de fond) : dépensable + bloqué.
+            "xmr_mainnet" => {
+                let balance = api::xmr_balance(&data_dir(&app)?, monero_profile(&app, &address)?).t_err()?;
+                Ok(pgp_wallet_poc::monero::format_xmr(balance.unlocked.saturating_add(balance.locked)))
+            }
             other => Err(translate_error(&format!("réseau inconnu : {other}"))),
         }
     })
@@ -1833,7 +1913,7 @@ async fn estimate_btc_fees(network: String, address: String) -> Result<BtcFeeEst
 /// s'allumer pour ETH — un no-op silencieux, pas un échec, pour ne pas faire
 /// planter le rafraîchissement automatique du solde sur ce réseau.
 #[tauri::command]
-async fn has_pending_tx(network: String, address: String) -> Result<bool, String> {
+async fn has_pending_tx(network: String, address: String, app: tauri::AppHandle) -> Result<bool, String> {
     run_blocking(move || {
         match network.as_str() {
             n if is_evm(n) => Ok(false),
@@ -1848,6 +1928,7 @@ async fn has_pending_tx(network: String, address: String) -> Result<bool, String
             // Pas de lecture de la réserve de transactions : un envoi apparaît
             // à sa confirmation (~75 s).
             "zec_mainnet" => Ok(false),
+            "xmr_mainnet" => api::has_pending_xmr(&data_dir(&app)?, monero_profile(&app, &address)?).t_err(),
             other => Err(translate_error(&format!("réseau inconnu : {other}"))),
         }
     })
@@ -1979,7 +2060,7 @@ impl HistoryDto {
 }
 
 #[tauri::command]
-async fn get_tx_history(network: String, address: String) -> Result<HistoryDto, String> {
+async fn get_tx_history(network: String, address: String, app: tauri::AppHandle) -> Result<HistoryDto, String> {
     run_blocking(move || match network.as_str() {
         n if is_evm(n) => {
             let net = evm_network(&network)?;
@@ -1999,6 +2080,16 @@ async fn get_tx_history(network: String, address: String) -> Result<HistoryDto, 
             let net = btc_network(&network)?;
             let asset = (network == "btc_mainnet").then_some(price_history::Asset::Btc);
             HistoryDto::read(history_dtos(|| history::btc_history(net, &address), asset, 8, |id| format!("{}{}", net.explorer_tx_prefix, id)))
+        }
+        "xmr_mainnet" => {
+            let profile = monero_profile(&app, &address)?;
+            let dir = data_dir(&app)?;
+            HistoryDto::read(history_dtos(
+                || api::xmr_history(&dir, profile),
+                Some(price_history::Asset::Kraken("XMRUSD")),
+                12,
+                |id| format!("https://xmrchain.net/tx/{id}"),
+            ))
         }
         "zec_mainnet" => HistoryDto::read(history_dtos(
             || history::zec_history(&address),
@@ -2276,6 +2367,7 @@ fn network_label(network: &str) -> String {
         "sol_devnet" => lang("Solana devnet", "Solana devnet").to_string(),
         "sol_mainnet" => lang("Solana MAINNET — fonds réels", "Solana MAINNET — real funds").to_string(),
         "zec_mainnet" => lang("Zcash MAINNET — fonds réels", "Zcash MAINNET — real funds").to_string(),
+        "xmr_mainnet" => lang("Monero MAINNET — fonds réels", "Monero MAINNET — real funds").to_string(),
         other => match wallet_flow::evm_network(other) {
             Some(net) if net.mainnet => format!("{} — {}", net.name, lang("fonds réels", "real funds")),
             Some(net) => format!("{} (testnet)", net.name),
@@ -2291,6 +2383,7 @@ fn network_unit(network: &str) -> &'static str {
         "btc_testnet" | "btc_mainnet" => "BTC",
         "sol_devnet" | "sol_mainnet" => "SOL",
         "zec_mainnet" => "ZEC",
+        "xmr_mainnet" => "XMR",
         other => wallet_flow::evm_network(other).map(|n| n.native_symbol).unwrap_or(""),
     }
 }
@@ -2488,7 +2581,8 @@ async fn send_transaction(
             .get(&profile_index)
             .map(|(evm, _)| evm.clone());
         let from_zec = app.state::<ProfileZcashCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).cloned();
-        let send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &from_label, None, from_evm.as_deref(), from_zec.as_deref())?;
+        let from_xmr = app.state::<MoneroKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).map(|(_, keys)| keys.clone());
+        let mut send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &from_label, None, from_evm.as_deref(), from_zec.as_deref(), from_xmr.as_ref())?;
 
         let result = match network.as_str() {
             n if is_evm(n) => {
@@ -2509,6 +2603,16 @@ async fn send_transaction(
                 let shown_fee = send.zec_fee.ok_or_else(|| "frais Zcash manquants".to_string())?;
                 api::send_zec(&dir, &password, &send.to, &send.amount, shown_fee, profile_index).t_err()
             }
+            // Exactement l'envoi préparé et affiché (sorties, leurres, frais).
+            "xmr_mainnet" => match send.xmr_plan.take() {
+                Some(plan) => {
+                    let sent = api::send_xmr(&dir, &password, plan).t_err();
+                    // Envoi marqué en attente dans l'état : solde relu aussitôt.
+                    XMR_SYNC_KICK.store(true, Ordering::SeqCst);
+                    sent
+                }
+                None => Err(translate_error("envoi Monero non préparé")),
+            },
             other => Err(translate_error(&format!("réseau inconnu : {other}"))),
         };
         // Destinataire mémorisé SEULEMENT après une diffusion réussie (voir
@@ -2540,6 +2644,8 @@ struct ConfirmedSend {
     fee_sat: Option<u64>,
     /// Frais Zcash affichés (plafond à l'envoi).
     zec_fee: Option<u64>,
+    /// Envoi Monero préparé (sorties, leurres, frais) : signé tel qu'affiché.
+    xmr_plan: Option<pgp_wallet_poc::monero::SendPlan>,
 }
 
 /// Validation, avertissements et boîte de confirmation native, communs aux
@@ -2557,6 +2663,7 @@ fn confirm_send(
     device_note: Option<&str>,
     from_evm: Option<&str>,
     from_zec: Option<&str>,
+    from_xmr: Option<&pgp_wallet_poc::monero::ViewKeys>,
 ) -> Result<ConfirmedSend, String> {
     // Réseau validé AVANT la boîte de confirmation (22ᵉ passage) : un réseau
     // inconnu était jusqu'ici affiché tel quel (texte libre du frontend) dans
@@ -2568,10 +2675,15 @@ fn confirm_send(
         "btc_testnet" | "btc_mainnet" => "btc",
         "sol_devnet" | "sol_mainnet" => "sol",
         "zec_mainnet" => "zec",
+        "xmr_mainnet" => "xmr",
         other => return Err(translate_error(&format!("réseau inconnu : {other}"))),
     };
     let to = canonical_address_input(to)?;
-    let amount = if coin == "zec" { api::canonical_zec_amount(amount).t_err()? } else { api::canonical_amount(coin, amount).t_err()? };
+    let amount = match coin {
+        "zec" => api::canonical_zec_amount(amount).t_err()?,
+        "xmr" => api::canonical_xmr_amount(amount).t_err()?,
+        _ => api::canonical_amount(coin, amount).t_err()?,
+    };
 
     // Frais affichés dans la boîte de dialogue native (voir sa doc : "montre
     // exactement ce que le backend a compris") : choisis par l'utilisateur pour
@@ -2593,6 +2705,16 @@ fn confirm_send(
         }
         _ => None,
     };
+    // Monero : destinataire vérifié, sorties choisies, leurres tirés et frais
+    // calculés MAINTENANT (clés de visualisation, sans la seed) ; c'est cet
+    // envoi-là, inchangé, qui sera signé.
+    let xmr_plan = match coin {
+        "xmr" => {
+            let keys = from_xmr.ok_or_else(|| translate_error("adresse du profil inconnue — déverrouillez le portefeuille"))?;
+            Some(api::xmr_send_plan(dir, keys, &to, &amount).t_err()?)
+        }
+        _ => None,
+    };
     // Adresse refusée AVANT la confirmation si elle est mal formée (EVM/BTC :
     // jusqu'ici seulement au moment de signer) ou, pour Solana, si ce n'est
     // pas un portefeuille (voir `api::check_solana_recipient`). Puis état de
@@ -2609,6 +2731,9 @@ fn confirm_send(
         }
         // Adresse déjà vérifiée par la préparation de l'envoi.
         "zec" => api::zec_recipient_activity(&to).ok(),
+        // Adresse vérifiée par la préparation ; aucune activité lisible
+        // (adresses et montants invisibles sur la chaîne Monero).
+        "xmr" => None,
         _ => {
             let net = sol_network(network)?;
             api::check_solana_recipient(&to, net).t_err()?;
@@ -2634,6 +2759,19 @@ Change returned to your address: {change} ZEC")));
             }
             line
         }),
+        "xmr" => xmr_plan.as_ref().map(|plan| {
+            let mut line = format!("{} : {} XMR", lang("Frais", "Fee"), pgp_wallet_poc::monero::format_xmr(plan.fee));
+            if plan.change > 0 {
+                let change = pgp_wallet_poc::monero::format_xmr(plan.change);
+                line.push_str(lang(
+                    &format!("
+Monnaie rendue à votre adresse : {change} XMR (dépensable après 10 confirmations, ≈ 20 min)"),
+                    &format!("
+Change returned to your address: {change} XMR (spendable after 10 confirmations, ≈ 20 min)"),
+                ));
+            }
+            line
+        }),
         _ => evm_fee.map(|fee| evm_fee_line_for(fee, network_unit(network))),
     };
     let fee_line = fee_and_device_note(fee_line, device_note);
@@ -2643,7 +2781,7 @@ Change returned to your address: {change} ZEC")));
     if !confirm_transaction_native(app, network, &to, &amount_line, from_label, fee_line.as_deref(), warning.as_deref(), None) {
         return Err(translate_error("Virement annulé (confirmation refusée)."));
     }
-    Ok(ConfirmedSend { to, amount, evm_fee, fee_sat, zec_fee: zec_plan.map(|plan| plan.fee) })
+    Ok(ConfirmedSend { to, amount, evm_fee, fee_sat, zec_fee: zec_plan.map(|plan| plan.fee), xmr_plan })
 }
 
 // --- Comptes Ledger / Trezor (core/src/hardware.rs) ----------------------------
@@ -2744,7 +2882,7 @@ async fn hardware_send(id: u32, to: String, amount: String, fee_sat: Option<u64>
         } else {
             format!("Signature sur le {device} : vérifiez sur SON écran que le destinataire et le montant sont identiques, puis confirmez-y.")
         };
-        let send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &format!("{device} — {}", account.label), Some(&note), Some(&account.address), None)?;
+        let send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &format!("{device} — {}", account.label), Some(&note), Some(&account.address), None, None)?;
         let result = match network.as_str() {
             n if is_evm(n) => {
                 let fee = send.evm_fee.ok_or_else(|| "frais EVM manquants".to_string())?;
@@ -4169,7 +4307,118 @@ fn remember_addresses(app: &tauri::AppHandle, index: u32, addresses: &api::Addre
     if let Some(cache) = app.try_state::<ShieldedKeysCache>() {
         cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, addresses.zcash_shielded_keys.clone());
     }
+    if let Some(cache) = app.try_state::<MoneroKeysCache>() {
+        cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, (addresses.monero.clone(), addresses.monero_keys.clone()));
+    }
     start_shielded_sync(app);
+    start_monero_sync(app);
+}
+
+/// Adresse et clés de visualisation Monero de chaque profil, mémorisées au
+/// déverrouillage (jamais envoyées à l'interface) : synchronisation de fond
+/// et préparation des envois avant la boîte de confirmation.
+#[derive(Default)]
+struct MoneroKeysCache(std::sync::Mutex<std::collections::HashMap<u32, (String, pgp_wallet_poc::monero::ViewKeys)>>);
+
+/// Profil de l'adresse Monero `address` (les commandes génériques de la carte
+/// reçoivent une adresse).
+fn monero_profile(app: &tauri::AppHandle, address: &str) -> Result<u32, String> {
+    app.state::<MoneroKeysCache>()
+        .0
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .iter()
+        .find(|(_, (known, _))| known == address)
+        .map(|(index, _)| *index)
+        .ok_or_else(|| translate_error("adresse du profil inconnue — déverrouillez le portefeuille"))
+}
+
+/// Carte Monero affichée (`set_xmr_sync`) : sans elle, et sans fonds déjà
+/// reçus, aucun bloc n'est téléchargé (~15 Mo par jour de chaîne).
+static XMR_SYNC_WANTED: AtomicBool = AtomicBool::new(false);
+/// Passage demandé tout de suite (carte activée, envoi diffusé).
+static XMR_SYNC_KICK: AtomicBool = AtomicBool::new(false);
+
+/// Synchronisation Monero en arrière-plan, une seule à la fois : blocs
+/// analysés jusqu'au bout de la chaîne, puis toutes les 2 minutes (un bloc
+/// toutes les 2 minutes en moyenne) tant que l'app est ouverte. L'interface
+/// est prévenue après chaque passage (`xmr-synced`) ; un échec réseau est
+/// retenté au passage suivant.
+fn start_monero_sync(app: &tauri::AppHandle) {
+    static RUNNING: AtomicBool = AtomicBool::new(false);
+    if RUNNING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let app = app.clone();
+    std::thread::spawn(move || loop {
+        let keys: Vec<_> = app.state::<MoneroKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).values().map(|(_, keys)| keys.clone()).collect();
+        let wanted = XMR_SYNC_WANTED.load(Ordering::Relaxed) || data_dir(&app).is_ok_and(|dir| api::xmr_has_received(&dir));
+        if wanted && !keys.is_empty() {
+            match data_dir(&app) {
+                Ok(dir) => match api::sync_xmr(&dir, &keys) {
+                    Ok(()) => {
+                        let _ = app.emit("xmr-synced", ());
+                    }
+                    Err(e) => eprintln!("Monero : {e:#}"),
+                },
+                Err(e) => eprintln!("Monero : {e}"),
+            }
+        }
+        for _ in 0..120 {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            if XMR_SYNC_KICK.swap(false, Ordering::SeqCst) {
+                break;
+            }
+        }
+    });
+}
+
+/// Carte Monero affichée ou non (choix de l'utilisateur) : la synchronisation
+/// de fond ne tourne que pour elle (ou si des fonds ont déjà été reçus).
+#[tauri::command]
+fn set_xmr_sync(enabled: bool) {
+    let was = XMR_SYNC_WANTED.swap(enabled, Ordering::SeqCst);
+    if enabled && !was {
+        XMR_SYNC_KICK.store(true, Ordering::SeqCst);
+    }
+}
+
+#[derive(Serialize)]
+struct MoneroStatusDto {
+    unlocked: String,
+    locked: String,
+    /// Chaîne entièrement analysée (le solde est à jour).
+    synced: bool,
+}
+
+/// Solde Monero détaillé du profil (état local, aucun appel réseau) : la
+/// carte montre la part encore bloquée et l'état de la synchronisation.
+#[tauri::command]
+async fn xmr_status(profile_index: u32, app: tauri::AppHandle) -> Result<MoneroStatusDto, String> {
+    run_blocking(move || {
+        let balance = api::xmr_balance(&data_dir(&app)?, profile_index).t_err()?;
+        Ok(MoneroStatusDto {
+            unlocked: pgp_wallet_poc::monero::format_xmr(balance.unlocked),
+            locked: pgp_wallet_poc::monero::format_xmr(balance.locked),
+            synced: balance.synced,
+        })
+    })
+    .await
+}
+
+/// Nœud Monero choisi dans Paramètres (`None` : nœuds publics par défaut).
+#[tauri::command]
+fn xmr_node(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    Ok(api::xmr_node(&data_dir(&app)?))
+}
+
+/// Enregistre le nœud Monero (vide : retour aux nœuds publics), utilisé dès
+/// la synchronisation suivante.
+#[tauri::command]
+fn set_xmr_node(url: String, app: tauri::AppHandle) -> Result<Option<String>, String> {
+    let node = api::set_xmr_node(&data_dir(&app)?, &url).t_err()?;
+    XMR_SYNC_KICK.store(true, Ordering::SeqCst);
+    Ok(node)
 }
 
 /// Clés de visualisation des comptes Zcash protégés, mémorisées au
@@ -4757,6 +5006,7 @@ pub fn run() {
         .manage(ProfileZcashCache::default())
         .manage(ProfileBtcCache::default())
         .manage(ShieldedKeysCache::default())
+        .manage(MoneroKeysCache::default())
         .manage(WcState::default())
         .manage(BalanceWatchState::default())
         .manage(UsbRestoreState::default())
@@ -4800,6 +5050,10 @@ pub fn run() {
             affiliate_names_status,
             register_affiliate_name,
             zec_shielded_balance,
+            xmr_status,
+            set_xmr_sync,
+            xmr_node,
+            set_xmr_node,
             zec_shield,
             zec_send_shielded,
             unlock_wallet,
