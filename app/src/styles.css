@@ -1837,6 +1837,9 @@ h2 .coin-icon-inline,
    au dépliage. */
 .collapsible-inner {
   min-height: 0;
+  /* Élément de grille : sans ceci, sa largeur minimale est celle de son
+     contenu (une adresse u1 sur une ligne élargissait toute la carte). */
+  min-width: 0;
   visibility: visible;
   transition: visibility 0s;
 }
@@ -3686,4 +3689,52 @@ h2 .coin-icon-inline,
   align-items: center;
   gap: 8px;
   margin-top: 8px;
+}
+
+/* Zcash protégé : solde et adresse u1 dans la carte Zcash, sur leur propre
+   ligne entre l'adresse t1 et les actions (vue cartes) ; masqué en vue liste
+   (colonnes alignées). */
+.zec-shielded {
+  flex: 1 1 100%;
+  order: 0;
+  /* Sans ces deux lignes, l'adresse u1 (sur une ligne) imposait sa largeur à
+     toute la carte. */
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  background: var(--accent-soft);
+}
+
+.zec-shielded-balance {
+  margin: 0 0 6px;
+  font-size: 0.9rem;
+}
+
+.zec-shielded-address {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.zec-shielded-address .address {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.zec-shielded-address .qr-btn {
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+}
+
+:root[data-wallet-list-view="true"] .zec-shielded {
+  display: none;
 }

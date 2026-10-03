@@ -14,7 +14,7 @@
 //!   perdu — jamais utilisé pour le déverrouillage quotidien.
 
 use crate::{
-    btc_rpc, cow, dapp_requests, derivation, lifi, native_deposit, zcash, entropy, eth_rpc, eth_tx, history, jupiter_rpc, memory_guard, pgp_engine, secure_storage, shamir,
+    btc_rpc, cow, dapp_requests, derivation, lifi, native_deposit, zcash, zcash_shielded, entropy, eth_rpc, eth_tx, history, jupiter_rpc, memory_guard, pgp_engine, secure_storage, shamir,
     evm_sign, sol_rpc, sol_spl, sol_tx, thorchain_rpc, tokens, wallet_flow,
 };
 use anyhow::{Context, Result};
@@ -185,6 +185,12 @@ pub struct Addresses {
     /// Adresse THORChain (thor1…), chemin m/44'/931'/0'/0/{index} : celle du
     /// profil principal du développeur est l'adresse d'affiliation de l'app.
     pub thor: String,
+    /// Adresse Zcash protégée (u1…, récepteur Orchard seul) du compte ZIP-32
+    /// n°{index}.
+    pub zcash_shielded: String,
+    /// Clés de visualisation du compte protégé (jamais envoyées à
+    /// l'interface) : création du compte et synchronisation sans la seed.
+    pub zcash_shielded_keys: zcash_shielded::ProfileKeys,
 }
 
 const PROFILES_FILE: &str = "profiles.json";
@@ -306,7 +312,10 @@ fn derive_addresses(seed: &[u8], index: u32) -> Result<Addresses> {
     let sol_key = derivation::derive_solana_key(seed, index);
     let (_zec_key, zec_hash160) = derivation::derive_zec_key(seed, index)?;
     let (_thor_key, thor_hash160) = derivation::derive_thor_key(seed, index)?;
+    let shielded_keys = zcash_shielded::profile_keys(seed, index)?;
     Ok(Addresses {
+        zcash_shielded: zcash_shielded::address(&shielded_keys.1)?,
+        zcash_shielded_keys: shielded_keys,
         thor: derivation::format_thor_address(&thor_hash160)?,
         zcash: zcash::p2pkh_address(&zec_hash160),
         evm: derivation::format_address(&evm_address),
@@ -2540,6 +2549,19 @@ pub fn send_lifi_solana(data_dir: &Path, device_password: &str, quote: &lifi::Li
     let raw = jupiter_rpc::with_recent_blockhash(raw, &rpc.latest_blockhash()?)?;
     let signed = jupiter_rpc::sign_swap_transaction(&raw, &signing_key, &owner)?;
     rpc.send_transaction(&signed)
+}
+
+// --- Zcash protégé (Orchard) ------------------------------------------------------
+
+/// Crée les comptes protégés manquants puis synchronise jusqu'au bout de la
+/// chaîne (appelé en arrière-plan après le déverrouillage).
+pub fn sync_zec_shielded(data_dir: &Path, keys: &[zcash_shielded::ProfileKeys]) -> Result<()> {
+    zcash_shielded::ensure_accounts(data_dir, keys)?;
+    zcash_shielded::sync(data_dir)
+}
+
+pub fn zec_shielded_balance(data_dir: &Path, profile_index: u32) -> Result<zcash_shielded::ShieldedBalance> {
+    zcash_shielded::balance(data_dir, profile_index)
 }
 
 // --- Zcash (adresses transparentes) ---------------------------------------------

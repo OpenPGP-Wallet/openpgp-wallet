@@ -864,6 +864,7 @@ struct AddressesDto {
     btc_mainnet: String,
     solana: String,
     zcash: String,
+    zcash_shielded: String,
 }
 
 impl From<api::Addresses> for AddressesDto {
@@ -874,6 +875,7 @@ impl From<api::Addresses> for AddressesDto {
             btc_mainnet: a.btc_mainnet,
             solana: a.solana,
             zcash: a.zcash,
+            zcash_shielded: a.zcash_shielded,
         }
     }
 }
@@ -1666,6 +1668,7 @@ fn forget_wallet_connections(app: &tauri::AppHandle) {
     app.state::<ProfileAddressCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<ProfileZcashCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<ProfileBtcCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    app.state::<ShieldedKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     IS_AFFILIATE_WALLET.store(false, Ordering::Relaxed);
 }
 
@@ -4149,6 +4152,66 @@ fn remember_addresses(app: &tauri::AppHandle, index: u32, addresses: &api::Addre
     if let Some(cache) = app.try_state::<ProfileBtcCache>() {
         cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, addresses.btc_mainnet.clone());
     }
+    if let Some(cache) = app.try_state::<ShieldedKeysCache>() {
+        cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, addresses.zcash_shielded_keys.clone());
+    }
+    start_shielded_sync(app);
+}
+
+/// Clés de visualisation des comptes Zcash protégés, mémorisées au
+/// déverrouillage (jamais envoyées à l'interface).
+#[derive(Default)]
+struct ShieldedKeysCache(std::sync::Mutex<std::collections::HashMap<u32, pgp_wallet_poc::zcash_shielded::ProfileKeys>>);
+
+/// Synchronisation Zcash protégée en arrière-plan, une seule à la fois :
+/// comptes manquants créés, chaîne analysée, puis toutes les 2 minutes tant
+/// que l'app est ouverte. L'interface est prévenue après chaque passage
+/// (`zec-shielded-synced`) ; un échec réseau est retenté au passage suivant.
+fn start_shielded_sync(app: &tauri::AppHandle) {
+    static RUNNING: AtomicBool = AtomicBool::new(false);
+    if RUNNING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let app = app.clone();
+    std::thread::spawn(move || loop {
+        let keys: Vec<_> = app.state::<ShieldedKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).values().cloned().collect();
+        if !keys.is_empty() {
+            match data_dir(&app) {
+                Ok(dir) => match api::sync_zec_shielded(&dir, &keys) {
+                    Ok(()) => {
+                        let _ = app.emit("zec-shielded-synced", ());
+                    }
+                    Err(e) => eprintln!("Zcash protégé : {e:#}"),
+                },
+                Err(e) => eprintln!("Zcash protégé : {e}"),
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_secs(120));
+    });
+}
+
+#[derive(Serialize)]
+struct ShieldedBalanceDto {
+    spendable: String,
+    pending: String,
+    /// Chaîne entièrement analysée (le solde est à jour).
+    synced: bool,
+}
+
+/// Solde Zcash protégé du profil (lu dans la base locale, aucun appel réseau).
+#[tauri::command]
+async fn zec_shielded_balance(profile_index: u32, app: tauri::AppHandle) -> Result<ShieldedBalanceDto, String> {
+    run_blocking(move || {
+        let dir = data_dir(&app)?;
+        let balance = api::zec_shielded_balance(&dir, profile_index).t_err()?;
+        let synced = matches!((balance.scanned_height, balance.chain_height), (Some(s), Some(c)) if s + 2 >= c);
+        Ok(ShieldedBalanceDto {
+            spendable: pgp_wallet_poc::zcash::format_zec(balance.spendable),
+            pending: pgp_wallet_poc::zcash::format_zec(balance.pending),
+            synced,
+        })
+    })
+    .await
 }
 
 fn wc_client(app: &tauri::AppHandle) -> Result<std::sync::Arc<pgp_wallet_poc::walletconnect::WalletConnect>, String> {
@@ -4613,6 +4676,7 @@ pub fn run() {
         .manage(ProfileAddressCache::default())
         .manage(ProfileZcashCache::default())
         .manage(ProfileBtcCache::default())
+        .manage(ShieldedKeysCache::default())
         .manage(WcState::default())
         .manage(BalanceWatchState::default())
         .manage(UsbRestoreState::default())
@@ -4655,6 +4719,7 @@ pub fn run() {
             get_thor_fee_address,
             affiliate_names_status,
             register_affiliate_name,
+            zec_shielded_balance,
             unlock_wallet,
             biometric_unlock_available,
             biometric_unlock_enrolled,

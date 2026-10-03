@@ -101,6 +101,21 @@ secp256k1 = "0.29"
 sapling-crypto = { version = "0.7", default-features = false }
 orchard = { version = "0.15", default-features = false }
 zcash_script = "0.4"
+# Zcash protégé (Orchard) : pile officielle des portefeuilles légers (celle de
+# Zashi) — synchronisation par les serveurs lightwalletd, base de portefeuille
+# SQLite (clés de VISUALISATION seulement : la clé de dépense est dérivée de la
+# seed au moment de signer), import de l'adresse t1 existante de chaque profil
+# pour la protéger. rusqlite « bundled » : SQLite compilé avec l'app (Windows
+# n'en fournit pas).
+zcash_client_backend = { version = "0.24", default-features = false, features = ["orchard", "sync", "transparent-inputs", "transparent-key-import"] }
+zcash_client_sqlite = { version = "0.22", default-features = false, features = ["orchard", "multicore", "transparent-inputs", "transparent-key-import"] }
+zcash_keys = { version = "0.16", features = ["orchard", "transparent-inputs"] }
+rusqlite = { version = "0.37", features = ["bundled"] }
+# zip32 : index de compte et empreinte de seed ; async-trait : cache de blocs
+# de la synchronisation ; rand_core : générateur système exigé par la base.
+zip32 = "0.2"
+async-trait = "0.1"
+rand_core = { version = "0.6", features = ["getrandom"] }
 
 # --- WalletConnect v2 (voir core/src/walletconnect/) ---
 # Protocole implémenté en Rust plutôt que via le SDK JavaScript officiel (choix de

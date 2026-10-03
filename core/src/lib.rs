@@ -40,6 +40,7 @@ pub mod lifi;
 pub mod etherscan_key;
 pub mod native_deposit;
 pub mod zcash;
+pub mod zcash_shielded;
 #[cfg(windows)]
 pub mod windows_hello;
 pub mod secure_storage;

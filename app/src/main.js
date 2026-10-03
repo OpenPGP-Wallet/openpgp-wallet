@@ -170,7 +170,18 @@ function buildAssetCard(asset) {
           <button class="qr-btn" data-action="copy-address" data-i18n-title="wallet.copyAddress">${ICON_COPY}</button>
           <button class="qr-btn" data-action="qr" data-i18n-title="wallet.showQr">${ICON_QR}</button>
           <button class="convert-btn hidden" data-action="swap" data-i18n-title="wallet.convertHint">${ICON_CONVERT}<span data-i18n="wallet.convert">Convertir</span></button>
-        </div>
+        </div>${
+          asset.coin === "zec"
+            ? `<div class="zec-shielded">
+          <p class="zec-shielded-balance"><span data-i18n="wallet.shieldedBalance">Fonds protégés</span> <strong data-field="shielded-balance">…</strong> <span class="muted" data-field="shielded-sync"></span></p>
+          <div class="zec-shielded-address">
+            <p class="address" data-field="shielded-address"></p>
+            <button class="qr-btn" data-action="copy-shielded" data-i18n-title="wallet.copyShielded">${ICON_COPY}</button>
+            <button class="qr-btn" data-action="qr-shielded" data-i18n-title="wallet.showShieldedQr">${ICON_QR}</button>
+          </div>
+        </div>`
+            : ""
+        }
         <div class="row-buttons">
           <button class="secondary" data-action="refresh" data-i18n="wallet.refresh" data-i18n-title="wallet.refresh">Actualiser</button>
           <button class="secondary receive-action" data-action="qr" data-i18n="wallet.receive">Recevoir</button>
@@ -487,6 +498,11 @@ const I18N = {
     "nav.wallet": "Portefeuille",
     "nav.history": "Historique",
     "wallet.history": "Historique",
+    "wallet.shieldedBalance": "Fonds protégés",
+    "wallet.shieldedSyncing": "(synchronisation…)",
+    "wallet.shieldedPending": "(dont {amount} en attente de confirmation)",
+    "wallet.copyShielded": "Copier l'adresse protégée",
+    "wallet.showShieldedQr": "Code QR de l'adresse protégée",
     "nav.message": "Message",
     "nav.certificate": "Certificat",
     "nav.external": "Wallets externes",
@@ -1034,6 +1050,11 @@ const I18N = {
     "nav.wallet": "Wallet",
     "nav.history": "History",
     "wallet.history": "History",
+    "wallet.shieldedBalance": "Shielded funds",
+    "wallet.shieldedSyncing": "(syncing…)",
+    "wallet.shieldedPending": "({amount} awaiting confirmation)",
+    "wallet.copyShielded": "Copy the shielded address",
+    "wallet.showShieldedQr": "QR code of the shielded address",
     "nav.message": "Message",
     "nav.certificate": "Certificate",
     "nav.external": "External wallets",
@@ -3051,6 +3072,14 @@ function marketChange24h(coin) {
   return market && Number.isFinite(market.change_24h_percent) ? market.change_24h_percent : null;
 }
 
+// Solde affiché d'une carte, plus les fonds Zcash protégés (bloc à part de la
+// carte Zcash) : valeur en devise et valeur totale les comptent.
+function cardTotalBalance(card) {
+  const balance = Number.parseFloat(card.querySelector('[data-field="balance"]').textContent);
+  const shielded = Number.parseFloat(card.dataset.shielded ?? "0");
+  return Number.isFinite(shielded) && Number.isFinite(balance) ? balance + shielded : balance;
+}
+
 function updatePortfolioTotal() {
   const totalEl = document.getElementById("portfolio-total");
   const changeEl = document.getElementById("portfolio-change");
@@ -3061,7 +3090,7 @@ function updatePortfolioTotal() {
   let known = false;
   document.querySelectorAll(".wallet-card:not(.asset-hidden)").forEach((card) => {
     if (!networkForCard(card).endsWith("mainnet")) return;
-    const balance = Number.parseFloat(card.querySelector('[data-field="balance"]').textContent);
+    const balance = cardTotalBalance(card);
     const price = priceForCoin(card.dataset.coin);
     if (!Number.isFinite(balance) || price == null) return;
     known = true;
@@ -3093,7 +3122,7 @@ function updateFiatValue(card) {
   const fiatEl = card.querySelector('[data-field="fiat"]');
   if (!fiatEl) return;
   const price = priceForCoin(card.dataset.coin);
-  const balance = Number.parseFloat(card.querySelector('[data-field="balance"]').textContent);
+  const balance = cardTotalBalance(card);
   if (price == null || Number.isNaN(balance)) {
     fiatEl.textContent = "—";
     return;
@@ -3636,7 +3665,8 @@ async function refreshBalance(card) {
         balanceEl.textContent = t("wallet.balanceError");
       });
     const pendingPromise = checkPendingTx(card, address, network);
-    await Promise.all([balancePromise, pendingPromise]);
+    const shieldedPromise = coin === "zec" ? refreshShielded(card) : Promise.resolve();
+    await Promise.all([balancePromise, pendingPromise, shieldedPromise]);
     updateFiatValue(card);
   } finally {
     card.dataset.refreshing = "";
@@ -3645,6 +3675,50 @@ async function refreshBalance(card) {
   // signalé entre-temps : relire.
   if (balanceKey(card) !== key || card.dataset.refreshAgain === "1") refreshBalance(card);
 }
+
+// --- Zcash protégé ------------------------------------------------------------
+// Adresse u1 (récepteur Orchard seul) et solde protégé, lus côté Rust dans la
+// base locale que la synchronisation de fond met à jour (aucun appel réseau
+// ici) ; l'adresse transparente t1 reste celle de la carte (plateformes
+// d'échange).
+
+function shieldedAddress() {
+  return currentProfile()?.addresses?.zcash_shielded ?? "";
+}
+
+async function refreshShielded(card) {
+  const balanceEl = card.querySelector('[data-field="shielded-balance"]');
+  const syncEl = card.querySelector('[data-field="shielded-sync"]');
+  // Début et fin de l'adresse (une u1 fait plus de 100 caractères) ;
+  // l'adresse complète est dans le code QR et dans la copie.
+  const address = shieldedAddress();
+  const addressEl = card.querySelector('[data-field="shielded-address"]');
+  addressEl.textContent = address.length > 26 ? `${address.slice(0, 12)}…${address.slice(-10)}` : address;
+  addressEl.title = address;
+  try {
+    const status = await invoke("zec_shielded_balance", { profileIndex: currentProfileIndex });
+    const total = Number.parseFloat(status.spendable) + Number.parseFloat(status.pending);
+    balanceEl.textContent = `${formatZecAmount(total)} ZEC`;
+    card.dataset.shielded = String(total);
+    syncEl.textContent = !status.synced
+      ? t("wallet.shieldedSyncing")
+      : Number.parseFloat(status.pending) > 0
+        ? t("wallet.shieldedPending", { amount: status.pending })
+        : "";
+  } catch (e) {
+    console.error(e);
+    syncEl.textContent = t("wallet.shieldedSyncing");
+  }
+}
+
+function formatZecAmount(value) {
+  return value.toFixed(8).replace(/\.?0+$/, "") || "0";
+}
+
+window.__TAURI__.event.listen("zec-shielded-synced", () => {
+  const card = document.querySelector('.wallet-card[data-coin="zec"]');
+  if (card) refreshShielded(card).then(() => updateFiatValue(card));
+}).catch((e) => console.error(e));
 
 // Crypto masquée SANS choix explicite de l'utilisateur, avec des fonds :
 // affichée (et retenue comme telle). Une crypto masquée volontairement le reste.
@@ -3794,6 +3868,18 @@ document.querySelectorAll(".wallet-card").forEach((card) => {
   });
   const swapBtn = card.querySelector('[data-action="swap"]');
   if (swapBtn) swapBtn.addEventListener("click", () => openSwapModal(card));
+  card.querySelector('[data-action="copy-shielded"]')?.addEventListener("click", () => {
+    const address = shieldedAddress();
+    if (address) copyText(address, t("wallet.addressCopied"));
+  });
+  card.querySelector('[data-action="qr-shielded"]')?.addEventListener("click", () => {
+    const address = shieldedAddress();
+    if (address) openQrModal(card, address);
+  });
+  card.querySelector('[data-field="shielded-address"]')?.addEventListener("click", () => {
+    const address = shieldedAddress();
+    if (address) openQrModal(card, address);
+  });
   // Même historique que l'onglet « Historique », ouvert directement sur cette
   // crypto : plus facile à trouver depuis la carte que l'onglet seul.
   card.querySelector('[data-action="history"]').addEventListener("click", () => openHistoryFor(card.dataset.coin));
@@ -3825,6 +3911,9 @@ const QR_DECIMALS = new Proxy({ btc: 8, sol: 9 }, { get: (known, coin) => ASSET_
 // Même mint que core/src/sol_spl.rs::usdc_mint_mainnet.
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 let qrCard = null;
+// Adresse affichée par la fenêtre QR à la place de celle de la carte
+// (adresse Zcash protégée) ; `null` : celle de la carte.
+let qrAddressOverride = null;
 let qrRenderToken = 0;
 
 // Montant saisi (« 0,01 » accepté) → décimal normalisé (« 0.01 »), `null` si
@@ -3871,7 +3960,7 @@ async function renderQr() {
   if (!card) return;
   const coin = card.dataset.coin;
   const network = networkForCard(card);
-  const address = addressForCoin(coin, network);
+  const address = qrAddressOverride ?? addressForCoin(coin, network);
   const errorEl = document.getElementById("qr-amount-error");
   let amount = null;
   try {
@@ -3887,8 +3976,9 @@ async function renderQr() {
   document.getElementById("qr-container").innerHTML = svg;
 }
 
-async function openQrModal(card) {
-  const address = addressForCoin(card.dataset.coin, networkForCard(card));
+async function openQrModal(card, overrideAddress = null) {
+  qrAddressOverride = overrideAddress;
+  const address = overrideAddress ?? addressForCoin(card.dataset.coin, networkForCard(card));
   if (!address) {
     alert(t("wallet.historyAddressUnavailable"));
     return;
@@ -3914,6 +4004,7 @@ document.getElementById("qr-amount").addEventListener("input", () => {
 document.getElementById("qr-close").addEventListener("click", () => {
   qrModal.classList.add("hidden");
   qrCard = null;
+  qrAddressOverride = null;
 });
 
 // --- Historique de transactions (onglet dédié, trié par réseau) -------------
