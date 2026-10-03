@@ -188,6 +188,12 @@ struct State {
 
 #[derive(Serialize, Deserialize)]
 struct ProfileState {
+    /// Clé publique de dépense (hex) des sorties gardées : un état écrit pour
+    /// un AUTRE portefeuille (réinitialisation puis création ou restauration
+    /// sur cet appareil) est oublié au lieu d'être mélangé (voir
+    /// `bind_profile`). `None` : état d'avant ce champ.
+    #[serde(default)]
+    spend_public: Option<String>,
     /// Prochain bloc à analyser pour ce profil.
     next_block: usize,
     #[serde(default)]
@@ -197,8 +203,21 @@ struct ProfileState {
 }
 
 impl ProfileState {
-    fn new() -> Self {
-        Self { next_block: BIRTHDAY_HEIGHT, outputs: Vec::new(), sends: Vec::new() }
+    fn new(spend_public: &[u8; 32]) -> Self {
+        Self { spend_public: Some(hex::encode(spend_public)), next_block: BIRTHDAY_HEIGHT, outputs: Vec::new(), sends: Vec::new() }
+    }
+}
+
+/// État du profil lié à SES clés : créé s'il manque, remplacé s'il a été
+/// écrit pour un autre portefeuille, marqué s'il date d'avant le lien.
+fn bind_profile(state: &mut State, profile: u32, spend_public: &[u8; 32]) {
+    let expected = hex::encode(spend_public);
+    match state.profiles.get_mut(&profile) {
+        Some(p) if p.spend_public.as_deref() == Some(expected.as_str()) => {}
+        Some(p) if p.spend_public.is_none() => p.spend_public = Some(expected),
+        _ => {
+            state.profiles.insert(profile, ProfileState::new(spend_public));
+        }
     }
 }
 
@@ -398,7 +417,7 @@ pub fn sync(data_dir: &Path, keys: &[ViewKeys]) -> Result<()> {
             let _guard = lock();
             let mut state = load(data_dir)?;
             for k in keys {
-                state.profiles.entry(k.profile).or_insert_with(ProfileState::new);
+                bind_profile(&mut state, k.profile, &k.spend_public);
             }
             state.tip = tip;
             expire_pending(&mut state, now());
@@ -560,11 +579,21 @@ fn mark_spent(state: &mut State, image: &str, tx: &str, block: Option<usize>, ti
 pub fn update_key_images(data_dir: &Path, seed: &[u8], profile: u32) -> Result<()> {
     let _guard = lock();
     let mut state = load(data_dir)?;
-    let Some(state_profile) = state.profiles.get_mut(&profile) else { return Ok(()) };
-    if state_profile.outputs.iter().all(|o| o.key_image.is_some()) {
+    if !state.profiles.contains_key(&profile) {
         return Ok(());
     }
+    // Déverrouillage : état d'un autre portefeuille oublié avant tout affichage.
     let spend = spend_key(seed, profile)?;
+    let spend_public = keys_from_spend(profile, &spend).spend_public;
+    let before = state.profiles.get(&profile).and_then(|p| p.spend_public.clone());
+    bind_profile(&mut state, profile, &spend_public);
+    let Some(state_profile) = state.profiles.get_mut(&profile) else { return Ok(()) };
+    if state_profile.outputs.iter().all(|o| o.key_image.is_some()) {
+        if state_profile.spend_public != before {
+            save(data_dir, &state)?;
+        }
+        return Ok(());
+    }
     let mut rescan_from = state_profile.next_block;
     for output in state_profile.outputs.iter_mut().filter(|o| o.key_image.is_none()) {
         let decoded = decode_output(&output.output)?;
@@ -947,6 +976,27 @@ mod tests {
         Received { output: String::new(), tx: tx.into(), key: format!("k{tx}"), block, time: 1, amount, key_image: Some(format!("i{tx}")), spent }
     }
 
+    /// Un état écrit pour un autre portefeuille est remplacé, jamais mélangé ;
+    /// le sien est gardé ; un état d'avant le lien est adopté.
+    #[test]
+    fn profile_state_is_bound_to_its_wallet() {
+        let mine = view_keys(&seed(), 0).unwrap().spend_public;
+        let other = view_keys(&[9u8; 64], 0).unwrap().spend_public;
+        let mut state = State::default();
+        bind_profile(&mut state, 0, &other);
+        state.profiles.get_mut(&0).unwrap().outputs.push(received("old", 10, 99, None));
+        bind_profile(&mut state, 0, &other);
+        assert_eq!(state.profiles[&0].outputs.len(), 1, "même portefeuille : gardé");
+        bind_profile(&mut state, 0, &mine);
+        assert!(state.profiles[&0].outputs.is_empty(), "autre portefeuille : oublié");
+        assert_eq!(state.profiles[&0].next_block, BIRTHDAY_HEIGHT);
+        state.profiles.get_mut(&0).unwrap().spend_public = None;
+        state.profiles.get_mut(&0).unwrap().outputs.push(received("legacy", 10, 5, None));
+        bind_profile(&mut state, 0, &mine);
+        assert_eq!(state.profiles[&0].outputs.len(), 1, "état d'avant le lien : adopté");
+        assert_eq!(state.profiles[&0].spend_public.as_deref(), Some(hex::encode(mine).as_str()));
+    }
+
     #[test]
     fn reorg_rolls_back_outputs_and_spends() {
         let mut state = State { tip: 120, recent: (100..=120).map(|n| (n, format!("h{n}"))).collect(), profiles: BTreeMap::new() };
@@ -954,6 +1004,7 @@ mod tests {
         state.profiles.insert(
             0,
             ProfileState {
+                spend_public: None,
                 next_block: 121,
                 outputs: vec![received("a", 90, 5, Some(spent_late)), received("b", 112, 7, None)],
                 sends: vec![Sent { tx: "s".into(), to: String::new(), amount: 1, fee: 1, change: 3, time: 2, block: Some(115) }],
@@ -976,6 +1027,7 @@ mod tests {
         state.profiles.insert(
             0,
             ProfileState {
+                spend_public: None,
                 next_block: 201,
                 outputs: vec![
                     received("old", 150, 10, None),

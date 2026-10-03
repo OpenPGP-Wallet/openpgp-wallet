@@ -810,6 +810,7 @@ pub fn create_wallet(data_dir: &Path, device_password: &str) -> Result<CreateWal
 pub fn unlock_wallet(data_dir: &Path, device_password: &str) -> Result<Vec<ProfileAddresses>> {
     let seed = unlock_seed(data_dir, device_password)?;
     let _seed_lock = memory_guard::lock(&seed);
+    forget_other_shielded_wallets(data_dir, &seed);
     // Seuls les profils actifs : un profil archivé (voir `archive_profile`) ne doit
     // plus apparaître nulle part tant qu'il n'a pas été explicitement désarchivé.
     list_profiles(data_dir)
@@ -820,6 +821,14 @@ pub fn unlock_wallet(data_dir: &Path, device_password: &str) -> Result<Vec<Profi
             Ok(ProfileAddresses { profile, addresses: Some(addresses) })
         })
         .collect()
+}
+
+/// Comptes Zcash protégés d'un autre portefeuille (même appareil) écartés
+/// avant tout affichage ; un échec est retenté au déverrouillage suivant.
+fn forget_other_shielded_wallets(data_dir: &Path, seed: &[u8]) {
+    if let Err(e) = zcash_shielded::forget_other_wallets(data_dir, seed) {
+        eprintln!("Zcash protégé : {e:#}");
+    }
 }
 
 /// Key images Monero des sorties reçues depuis le dernier passage (détection
@@ -911,6 +920,7 @@ fn restore_wallet_with(
     ] {
         let _ = std::fs::remove_file(data_dir.join(file));
     }
+    remove_seed_bound_state(data_dir);
 
     // Prouver la possession de 2 parts de sauvegarde est une preuve d'identité bien
     // plus forte qu'un mot de passe ; un éventuel verrou anti-brute-force accumulé
@@ -921,6 +931,16 @@ fn restore_wallet_with(
     // `recovered` est effacée automatiquement à la fin de la fonction (Drop de
     // `Zeroizing`), même en cas de retour anticipé sur une des lignes `?` ci-dessus.
     Ok(addresses)
+}
+
+/// État local propre à une seed (base Zcash protégée, état Monero) :
+/// supprimé quand le portefeuille de cet appareil change — best-effort, un
+/// fichier encore ouvert est de toute façon écarté au déverrouillage suivant
+/// (`zcash_shielded::forget_other_wallets`, lien des profils Monero).
+fn remove_seed_bound_state(data_dir: &Path) {
+    for file in ["zcash_shielded.sqlite", "zcash_shielded.sqlite-wal", "zcash_shielded.sqlite-shm", "monero_wallet.json"] {
+        let _ = std::fs::remove_file(data_dir.join(file));
+    }
 }
 
 pub fn device_vault_exists(data_dir: &Path) -> bool {
@@ -987,6 +1007,7 @@ pub fn reset_wallet(data_dir: &Path) -> Result<()> {
 /// prompt Windows Hello pendant `cargo test`.
 fn reset_wallet_with(data_dir: &Path, sealer: &dyn SecretSealer) -> Result<()> {
     try_remove_existing_biometric_enrollment(data_dir, sealer);
+    remove_seed_bound_state(data_dir);
     for file in [
         DEVICE_PUBKEY_FILE,
         DEVICE_VAULT_FILE,
@@ -1302,6 +1323,7 @@ pub fn unlock_wallet_biometric(data_dir: &Path) -> Result<Vec<ProfileAddresses>>
 fn unlock_wallet_biometric_with(data_dir: &Path, sealer: &dyn SecretSealer) -> Result<Vec<ProfileAddresses>> {
     let seed = unlock_seed_biometric(data_dir, sealer)?;
     let _seed_lock = memory_guard::lock(&seed);
+    forget_other_shielded_wallets(data_dir, &seed);
     list_profiles(data_dir)
         .into_iter()
         .map(|profile| {

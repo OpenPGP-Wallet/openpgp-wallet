@@ -154,6 +154,26 @@ pub fn ensure_accounts(data_dir: &Path, profiles: &[ProfileKeys]) -> Result<()> 
     Ok(())
 }
 
+/// Supprime de la base les comptes d'un AUTRE portefeuille (autre seed :
+/// réinitialisation puis création ou restauration sur cet appareil) — jamais
+/// leur solde ni leur historique montrés pour celui-ci (les comptes sont
+/// retrouvés par leur seul numéro, voir `find_account`). Appelé au
+/// déverrouillage, avant tout affichage.
+pub fn forget_other_wallets(data_dir: &Path, seed: &[u8]) -> Result<()> {
+    if !data_dir.join(WALLET_FILE).exists() {
+        return Ok(());
+    }
+    let fingerprint = zip32::fingerprint::SeedFingerprint::from_seed(seed).context("seed trop courte pour Zcash")?;
+    let mut db = open(data_dir)?;
+    for id in db.get_account_ids()? {
+        let Some(account) = db.get_account(id)? else { continue };
+        if !account.source().key_derivation().is_some_and(|d| d.seed_fingerprint() == &fingerprint) {
+            db.delete_account(id).map_err(|e| anyhow!("compte Zcash protégé d'un autre portefeuille : suppression impossible ({e})"))?;
+        }
+    }
+    Ok(())
+}
+
 /// Synchronise tous les comptes protégés jusqu'au bout de la chaîne.
 pub fn sync(data_dir: &Path) -> Result<()> {
     let mut db = open(data_dir)?;
@@ -609,6 +629,31 @@ mod tests {
         assert!(orchard_history(&conn, 1).unwrap().is_empty());
         assert!(history(&dir, 0).unwrap().is_empty(), "profil sans compte : historique vide");
         drop(conn);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Comptes d'un autre portefeuille (autre seed, même appareil) supprimés
+    /// au déverrouillage ; ceux du portefeuille courant gardés. Hors ligne :
+    /// naissance de compte fabriquée (aucun appel lightwalletd).
+    #[test]
+    fn accounts_of_another_wallet_are_forgotten() {
+        use zcash_client_backend::data_api::chain::ChainState;
+        let dir = std::env::temp_dir().join(format!("zec-shielded-forget-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let birthday = AccountBirthday::from_parts(ChainState::empty(BlockHeight::from_u32(BIRTHDAY_HEIGHT - 1), zcash_primitives::block::BlockHash([0; 32])), None);
+        let import = |seed: &[u8]| {
+            let mut db = open(&dir).unwrap();
+            let (profile, ufvk, _, fp) = profile_keys(seed, 0).unwrap();
+            let purpose = AccountPurpose::Spending { derivation: Some(Zip32Derivation::new(fp, account_index(profile).unwrap())) };
+            db.import_account_ufvk("test", &ufvk, &birthday, purpose, None).unwrap();
+        };
+        import(&SEED);
+        forget_other_wallets(&dir, &SEED).unwrap();
+        assert!(find_account(&open(&dir).unwrap(), 0).unwrap().is_some(), "compte du portefeuille courant gardé");
+        let other = [8u8; 64];
+        forget_other_wallets(&dir, &other).unwrap();
+        assert!(find_account(&open(&dir).unwrap(), 0).unwrap().is_none(), "compte d'un autre portefeuille supprimé");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
