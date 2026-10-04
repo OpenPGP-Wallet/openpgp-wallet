@@ -3861,6 +3861,7 @@ fn own_address_on(app: &tauri::AppHandle, network: &str, profile_index: u32) -> 
         "btc_mainnet" => from_cache(&app.state::<ProfileBtcCache>().0),
         "doge_mainnet" => from_cache(&app.state::<ProfileDogeCache>().0),
         "zec_mainnet" => from_cache(&app.state::<ProfileZcashCache>().0),
+        "tron_mainnet" => from_cache(&app.state::<ProfileTronCache>().0),
         other => Err(translate_error(&format!("réseau inconnu : {other}"))),
     }
 }
@@ -3916,6 +3917,7 @@ enum SwapkitDeposit {
     Btc(u64),
     Doge(u64),
     Zec(u64),
+    Trx(u64),
 }
 
 fn prepare_swapkit_deposit(from: &pgp_wallet_poc::swapkit::Asset, source: &str, deposit: &str, amount: &str) -> Result<(SwapkitDeposit, String), String> {
@@ -3973,6 +3975,11 @@ fn prepare_swapkit_deposit(from: &pgp_wallet_poc::swapkit::Asset, source: &str, 
         "zec_mainnet" => {
             let plan = api::zec_send_plan(source, deposit, amount).t_err()?;
             Ok((SwapkitDeposit::Zec(plan.fee), format!("{} : {} ZEC (ZIP-317)", lang("Frais réseau", "Network fee"), pgp_wallet_poc::zcash::format_zec(plan.fee))))
+        }
+        "tron_mainnet" => {
+            let plan = api::trx_send_plan(source, deposit, amount).t_err()?;
+            let fee = pgp_wallet_poc::tron::format_trx(plan.fee_max);
+            Ok((SwapkitDeposit::Trx(plan.fee_max), lang(&format!("Frais réseau : jusqu'à {fee} TRX"), &format!("Network fee: up to {fee} TRX")).to_string()))
         }
         other => Err(translate_error(&format!("réseau inconnu : {other}"))),
     }
@@ -4098,6 +4105,7 @@ async fn swapkit_swap_transaction(
             SwapkitDeposit::Btc(fee_sat) => api::send_btc(&dir, &password, btc_network("btc_mainnet")?, &deposit.address, &amount, fee_sat, profile_index),
             SwapkitDeposit::Doge(fee) => api::send_doge(&dir, &password, &deposit.address, &amount, fee, profile_index),
             SwapkitDeposit::Zec(fee) => api::send_zec(&dir, &password, &deposit.address, &amount, fee, profile_index),
+            SwapkitDeposit::Trx(fee) => api::send_trx(&dir, &password, &deposit.address, &amount, fee, profile_index),
         };
         Ok(SwapkitSentDto {
             tx_hash: sent.t_err()?,

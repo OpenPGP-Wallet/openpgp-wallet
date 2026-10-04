@@ -114,7 +114,7 @@ const fn asset(
     Asset { coin, network, symbol, swapkit, decimals, near, chainflip }
 }
 
-pub const ASSETS: [Asset; 16] = [
+pub const ASSETS: [Asset; 17] = [
     asset("btc", "btc_mainnet", "BTC", "BTC.BTC", 8, Some("nep141:btc.omft.near"), Some(("BTC", "Bitcoin"))),
     asset("evm", "evm_mainnet", "ETH", "ETH.ETH", 18, Some("nep141:eth.omft.near"), Some(("ETH", "Ethereum"))),
     asset("evm", "arbitrum_mainnet", "ETH", "ARB.ETH", 18, Some("nep141:arb.omft.near"), Some(("ETH", "Arbitrum"))),
@@ -179,6 +179,7 @@ pub const ASSETS: [Asset; 16] = [
     ),
     asset("doge", "doge_mainnet", "DOGE", "DOGE.DOGE", 8, Some("nep141:doge.omft.near"), None),
     asset("zec", "zec_mainnet", "ZEC", "ZEC.ZEC", 8, Some("nep141:zec.omft.near"), None),
+    asset("trx", "tron_mainnet", "TRX", "TRON.TRX", 6, Some("nep141:tron.omft.near"), None),
 ];
 
 pub fn find(coin: &str, network: &str) -> Option<&'static Asset> {
