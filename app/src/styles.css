@@ -2477,6 +2477,18 @@ h2 .coin-icon-inline,
   animation: modal-in 0.18s ease-out;
 }
 
+/* Fenêtres d'envoi et d'échange (et leurs aperçus) : plus larges, pour que
+   montants, frais, adresses et fournisseurs tiennent sur une ligne. Elles
+   rétrécissent avec la fenêtre (largeur 100 %, marges de .modal-overlay). */
+#send-modal > .modal,
+#send-preview-modal > .modal,
+#swap-modal > .modal,
+#swap-preview-modal > .modal,
+#shielded-modal > .modal,
+#ledger-send-modal > .modal {
+  max-width: 620px;
+}
+
 @keyframes modal-in {
   from {
     opacity: 0;
