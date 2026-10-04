@@ -60,6 +60,9 @@ qui la met en œuvre. **Aucune de ces protections n'a encore été vérifiée pa
 - **Mot de passe fort** exigé à la création (12 caractères minimum, indicateur de force).
 - **Limitation des essais** de déverrouillage : 5 essais libres, puis attente croissante de 5 s à 300 s, état
   persistant (`api::enforce_unlock_lockout`).
+- **Changement de portefeuille sur l'appareil** (réinitialisation, restauration) : l'état propre à l'ancienne
+  seed (base Zcash protégée, état Monero, destinataires déjà payés) est supprimé, et au déverrouillage les
+  comptes Zcash d'une autre empreinte de seed et l'état Monero d'une autre clé sont écartés avant tout affichage.
 - **Kit Shamir 2-sur-3** : une part seule ne révèle rien ; chaque part a sa propre phrase de passe ; deux parts
   refusées sur une même clé USB (`usb_backup.rs`).
 - *Risque résiduel* : un mot de passe faible reste attaquable par force brute hors ligne si la clé privée de
@@ -77,6 +80,8 @@ qui la met en œuvre. **Aucune de ces protections n'a encore été vérifiée pa
   (`lookalike_warning`) et d'adresse jamais utilisée sur la chaîne.
 - **Windows Hello** possible à la place du mot de passe pour le déverrouillage (pas de frappe à capturer).
 - **Portefeuilles matériels** (Ledger, Trezor) : la clé ne quitte jamais l'appareil, revue à l'écran.
+- **Solde vérifié avant la boîte de confirmation** pour tous les envois : un envoi impossible n'est jamais
+  présenté à la confirmation.
 - *Risque résiduel* : un malware capable de lire la mémoire au moment d'une signature, ou de capturer le mot de
   passe, obtient la seed ; un remplacement d'adresse dans le presse-papiers n'est détecté que s'il ressemble à
   une adresse déjà payée. Aucun portefeuille logiciel ne protège totalement contre A2 (raison d'être des
