@@ -27,6 +27,7 @@ const ASSETS = [
   { coin: "doge", name: "Dogecoin", symbol: "DOGE", family: "doge", icon: "/assets/doge.png", gecko: "dogecoin", decimals: 8, chart: "DOGE", networks: ["doge_mainnet"] },
   { coin: "trx", name: "Tron", symbol: "TRX", family: "trx", icon: "/assets/trx.png", gecko: "tron", decimals: 6, chart: "TRX", networks: ["tron_mainnet"] },
   { coin: "xrp", name: "XRP", symbol: "XRP", family: "xrp", icon: "/assets/xrp.svg", gecko: "ripple", decimals: 6, chart: "XRP", networks: ["xrp_mainnet"] },
+  { coin: "xlm", name: "Stellar", symbol: "XLM", family: "xlm", icon: "/assets/xlm.jpg", iconRound: true, gecko: "stellar", decimals: 7, chart: "XLM", networks: ["xlm_mainnet"] },
   // Jetons (`token: true`) : contrats et mints relevés dans core/src/tokens.rs —
   // SEUL le registre Rust fait foi pour un envoi (l'interface n'envoie que
   // l'identifiant et le réseau) ; ceux-ci ne servent qu'aux demandes de
@@ -654,6 +655,7 @@ const I18N = {
     "net.doge_mainnet": "Dogecoin — Fonds réels",
     "net.tron_mainnet": "Tron — Fonds réels",
     "net.xrp_mainnet": "XRP Ledger — Fonds réels",
+    "net.xlm_mainnet": "Stellar — Fonds réels",
     "wallet.historyExplorerOnly": "Pas d'historique ici pour ce réseau : aucun service public gratuit ne le fournit. Il reste consultable sur l'explorateur du réseau.",
     "wallet.historyOpenExplorer": "Voir sur l'explorateur",
     "wallet.historyNeedsKey": "Pour voir l'historique de ce réseau ici, ajoutez une clé API Etherscan gratuite dans Paramètres. Il reste consultable sur l'explorateur du réseau.",
@@ -851,6 +853,10 @@ const I18N = {
     "send.destinationTagNone": "aucun",
     "send.destinationTagShort": "Tag de destination",
     "send.destinationTagInvalid": "Tag de destination : un nombre entier de 0 à 4294967295.",
+    "send.memo": "Mémo (facultatif)",
+    "send.memoHint": "Exigé par les plateformes d'échange : recopiez exactement celui qu'elles indiquent (chiffres ou texte, 28 caractères au plus). Sans mémo, les fonds peuvent y être perdus.",
+    "send.memoShort": "Mémo",
+    "send.memoInvalid": "Mémo : 28 caractères au plus, lettres, chiffres et ponctuation sans accents.",
     "send.amount": "Montant",
     "send.amountFiat": "Montant dans la devise affichée",
     "send.percentMax": "Max",
@@ -1260,6 +1266,7 @@ const I18N = {
     "net.doge_mainnet": "Dogecoin — Real funds",
     "net.tron_mainnet": "Tron — Real funds",
     "net.xrp_mainnet": "XRP Ledger — Real funds",
+    "net.xlm_mainnet": "Stellar — Real funds",
     "wallet.historyExplorerOnly": "No history here for this network: no free public service provides it. You can still see it on the network's explorer.",
     "wallet.historyOpenExplorer": "View on the explorer",
     "wallet.historyNeedsKey": "To see this network's history here, add a free Etherscan API key in Settings. You can still see it on the network's explorer.",
@@ -1457,6 +1464,10 @@ const I18N = {
     "send.destinationTagNone": "none",
     "send.destinationTagShort": "Destination tag",
     "send.destinationTagInvalid": "Destination tag: a whole number from 0 to 4294967295.",
+    "send.memo": "Memo (optional)",
+    "send.memoHint": "Required by exchanges: copy exactly the one they show (digits or text, 28 characters at most). Without a memo, funds sent there may be lost.",
+    "send.memoShort": "Memo",
+    "send.memoInvalid": "Memo: 28 characters at most, unaccented letters, digits and punctuation.",
     "send.amount": "Amount",
     "send.amountFiat": "Amount in the display currency",
     "send.percentMax": "Max",
@@ -3565,6 +3576,8 @@ function addressOfProfile(profile, coin, network) {
   if (coin === "trx") return profile.addresses.tron ?? "";
   // XRP (r…) ; absente d'un profil dérivé avant son ajout.
   if (coin === "xrp") return profile.addresses.xrp ?? "";
+  // Stellar (G…) ; absente d'un profil dérivé avant son ajout.
+  if (coin === "xlm") return profile.addresses.stellar ?? "";
   // Zcash protégé : adresse u1 (récepteur Orchard seul).
   if (coin === "zecs") return profile.addresses.zcash_shielded ?? "";
   // Jetons Solana (USDC, USDT…) : même adresse propriétaire que SOL (le compte
@@ -4298,7 +4311,7 @@ const qrModal = document.getElementById("qr-modal");
 // EIP-681 pour Ethereum (montant en wei, réseau par son chain id). Sans
 // montant : l'adresse seule, lisible par toutes les applications.
 // Décimales maximales d'un montant demandé : 18 pour toute monnaie EVM.
-const QR_DECIMALS = new Proxy({ btc: 8, sol: 9, zec: 8, zecs: 8, xmr: 12, doge: 8, trx: 6, xrp: 6 }, { get: (known, coin) => ASSET_BY_COIN[coin]?.unitDecimals ?? known[coin] ?? 18 });
+const QR_DECIMALS = new Proxy({ btc: 8, sol: 9, zec: 8, zecs: 8, xmr: 12, doge: 8, trx: 6, xrp: 6, xlm: 7 }, { get: (known, coin) => ASSET_BY_COIN[coin]?.unitDecimals ?? known[coin] ?? 18 });
 // Même mint que core/src/sol_spl.rs::usdc_mint_mainnet.
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 let qrCard = null;
@@ -5371,7 +5384,8 @@ function openSendModal(card) {
   document.getElementById("send-to").value = "";
   document.getElementById("send-amount").value = "";
   document.getElementById("send-tag").value = "";
-  document.getElementById("send-tag-block").classList.toggle("hidden", card.dataset.coin !== "xrp");
+  document.getElementById("send-tag-block").classList.toggle("hidden", !NOTE_COINS.has(card.dataset.coin));
+  setNoteLabels(card.dataset.coin);
   sendFiatInput.value = "";
   document.getElementById("send-password").value = "";
   hideError(document.getElementById("send-error"));
@@ -5460,17 +5474,41 @@ document.getElementById("send-cancel").addEventListener("click", () => {
   sendContext = null;
 });
 
-// Tag de destination saisi (XRP seulement), `null` si vide.
-function sendDestinationTag() {
-  if (sendContext?.coin !== "xrp") return null;
+// Complément du destinataire exigé par les plateformes d'échange : tag de
+// destination (XRP, chiffres) ou mémo (Stellar, texte ASCII court).
+const NOTE_COINS = new Set(["xrp", "xlm"]);
+
+// Libellés du champ, de sa consigne et de la ligne d'aperçu selon la crypto
+// (clés i18n changées aussi, pour un changement de langue fenêtre ouverte).
+function setNoteLabels(coin) {
+  const memo = coin === "xlm";
+  const input = document.getElementById("send-tag");
+  input.inputMode = memo ? "text" : "numeric";
+  input.maxLength = memo ? 28 : 10;
+  for (const [selector, tagKey, memoKey] of [
+    ['label[for="send-tag"]', "send.destinationTag", "send.memo"],
+    ["#send-tag-block .tag-hint", "send.destinationTagHint", "send.memoHint"],
+    ["#send-preview-tag-row .send-preview-label", "send.destinationTagShort", "send.memoShort"],
+  ]) {
+    const el = document.querySelector(selector);
+    el.dataset.i18n = memo ? memoKey : tagKey;
+    el.textContent = t(el.dataset.i18n);
+  }
+}
+
+// Valeur saisie pour la crypto de la fenêtre, `null` si vide ou autre crypto.
+function sendNote(coin) {
+  if (sendContext?.coin !== coin) return null;
   const value = document.getElementById("send-tag").value.trim();
   return value === "" ? null : value;
 }
+const sendDestinationTag = () => sendNote("xrp");
+const sendMemo = () => sendNote("xlm");
 
-// Chiffres seulement (collage compris).
+// XRP : chiffres seulement ; Stellar : ASCII imprimable (collage compris).
 document.getElementById("send-tag").addEventListener("input", (event) => {
-  const digits = event.target.value.replace(/\D/g, "").slice(0, 10);
-  if (digits !== event.target.value) event.target.value = digits;
+  const filtered = sendContext?.coin === "xlm" ? event.target.value.replace(/[^\x20-\x7e]/g, "").slice(0, 28) : event.target.value.replace(/\D/g, "").slice(0, 10);
+  if (filtered !== event.target.value) event.target.value = filtered;
 });
 
 function networkLabelForCard(card) {
@@ -5508,13 +5546,19 @@ sendConfirmBtn.addEventListener("click", () => {
     showError(errorEl, t("send.destinationTagInvalid"));
     return;
   }
+  const memo = sendMemo();
+  if (memo !== null && !/^[\x20-\x7e]{1,28}$/.test(memo)) {
+    showError(errorEl, t("send.memoInvalid"));
+    return;
+  }
 
   document.getElementById("send-preview-network").textContent = networkLabelForCard(sendContext.card);
   document.getElementById("send-preview-from").textContent = document.getElementById("send-from-profile").textContent;
   document.getElementById("send-preview-to").textContent = to;
-  // XRP : tag toujours montré (« aucun » compris), comme dans la boîte native.
-  document.getElementById("send-preview-tag-row").classList.toggle("hidden", sendContext.coin !== "xrp");
-  document.getElementById("send-preview-tag").textContent = tag ?? t("send.destinationTagNone");
+  // XRP, Stellar : tag ou mémo toujours montré (« aucun » compris), comme
+  // dans la boîte native.
+  document.getElementById("send-preview-tag-row").classList.toggle("hidden", !NOTE_COINS.has(sendContext.coin));
+  document.getElementById("send-preview-tag").textContent = tag ?? memo ?? t("send.destinationTagNone");
   const rate = sendRate();
   const approx = rate ? ` (${formatUsdApprox(Number(amount) * rate.price)})` : "";
   const maxNote = sendContext.max ? t("send.maxSuffix") : "";
@@ -5584,6 +5628,7 @@ sendPreviewConfirmBtn.addEventListener("click", withBusyButton(sendPreviewConfir
           profileIndex: sendContext.profileIndex,
           max: sendContext.max,
           destinationTag: sendDestinationTag(),
+          memo: sendMemo(),
         });
     successEl.textContent = t("send.txSent", { tx: txResult });
     successEl.classList.remove("hidden");

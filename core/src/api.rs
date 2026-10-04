@@ -14,7 +14,7 @@
 //!   perdu — jamais utilisé pour le déverrouillage quotidien.
 
 use crate::{
-    btc_rpc, cow, dapp_requests, derivation, doge, lifi, tron, xrp, monero, native_deposit, wallet_birthday, zcash, zcash_shielded, entropy, eth_rpc, eth_tx, history, jupiter_rpc, memory_guard, pgp_engine, secure_storage, shamir,
+    btc_rpc, cow, dapp_requests, derivation, doge, lifi, tron, xrp, stellar, monero, native_deposit, wallet_birthday, zcash, zcash_shielded, entropy, eth_rpc, eth_tx, history, jupiter_rpc, memory_guard, pgp_engine, secure_storage, shamir,
     evm_sign, sol_rpc, sol_spl, sol_tx, thorchain_rpc, tokens, wallet_flow,
 };
 use anyhow::{Context, Result};
@@ -188,6 +188,8 @@ pub struct Addresses {
     pub tron: String,
     /// Adresse XRP (r…), chemin m/44'/144'/0'/0/{index}.
     pub xrp: String,
+    /// Adresse Stellar (G…), chemin SEP-0005 m/44'/148'/{index}'.
+    pub stellar: String,
     /// Adresse THORChain (thor1…), chemin m/44'/931'/0'/0/{index} : celle du
     /// profil principal du développeur est l'adresse d'affiliation de l'app.
     pub thor: String,
@@ -326,6 +328,7 @@ fn derive_addresses(seed: &[u8], index: u32) -> Result<Addresses> {
     let (_doge_key, doge_hash160) = derivation::derive_doge_key(seed, index)?;
     let (_tron_key, tron_address) = derivation::derive_tron_key(seed, index)?;
     let (_xrp_key, xrp_account) = derivation::derive_xrp_key(seed, index)?;
+    let stellar_key = derivation::derive_stellar_key(seed, index);
     let (_thor_key, thor_hash160) = derivation::derive_thor_key(seed, index)?;
     let shielded_keys = zcash_shielded::profile_keys(seed, index)?;
     let monero_keys = monero::view_keys(seed, index)?;
@@ -339,6 +342,7 @@ fn derive_addresses(seed: &[u8], index: u32) -> Result<Addresses> {
         doge: doge::p2pkh_address(&doge_hash160),
         tron: tron::encode_address(&tron_address),
         xrp: xrp::encode_address(&xrp_account),
+        stellar: stellar::encode_address(&stellar_key.verifying_key().to_bytes()),
         evm: derivation::format_address(&evm_address),
         btc_testnet: derivation::format_btc_testnet_address(&btc_testnet_hash160)?,
         btc_mainnet: derivation::format_btc_mainnet_address(&btc_mainnet_hash160)?,
@@ -3106,6 +3110,64 @@ pub fn send_xrp(data_dir: &Path, device_password: &str, to: &str, amount: &str, 
 /// Bouton « Max » : solde moins la réserve et les frais.
 pub fn xrp_max(from: &str) -> Result<String> {
     Ok(xrp::format_xrp(xrp::max_xrp(from)?))
+}
+
+// --- Stellar (XLM) -------------------------------------------------------------------
+
+pub fn get_xlm_balance(address: &str) -> Result<i64> {
+    stellar::balance(&stellar::MAINNET, address)
+}
+
+/// État d'une adresse Stellar destinataire, pour les avertissements de la boîte.
+pub fn xlm_recipient_activity(to: &str) -> Result<RecipientActivity> {
+    Ok(match stellar::address_activity(&stellar::MAINNET, to)? {
+        (true, _) => RecipientActivity::Funded,
+        (false, true) => RecipientActivity::Empty,
+        (false, false) => RecipientActivity::Unused,
+    })
+}
+
+/// Forme canonique d'un montant en XLM (7 décimales), affichée ET signée.
+pub fn canonical_xlm_amount(amount: &str) -> Result<String> {
+    Ok(tokens::format_amount(tokens::parse_amount(amount, stellar::DECIMALS)?, stellar::DECIMALS))
+}
+
+fn xlm_units(amount: &str) -> Result<i64> {
+    i64::try_from(tokens::parse_amount(amount, stellar::DECIMALS)?).context("montant hors limites")
+}
+
+/// Mémo saisi (vide = aucun) : identifiant numérique ou texte ASCII court.
+pub fn parse_stellar_memo(memo: Option<&str>) -> Result<stellar::Memo> {
+    stellar::parse_memo(memo)
+}
+
+/// Envoi préparé pour la boîte de confirmation : réserve du réseau,
+/// création d'un destinataire neuf, mémo exigé, frais.
+pub fn xlm_send_plan(from_address: &str, to: &str, amount: &str, memo: &stellar::Memo) -> Result<stellar::XlmPlan> {
+    stellar::plan(&stellar::MAINNET, from_address, to, xlm_units(amount)?, memo)
+}
+
+/// Envoi de XLM : contrôles refaits, signé avec l'offre de frais revérifiée
+/// à l'instant (jamais supérieure à celle affichée, `shown_fee`), puis diffusé.
+pub fn send_xlm(data_dir: &Path, device_password: &str, to: &str, amount: &str, memo: stellar::Memo, shown_fee: u32, profile_index: u32) -> Result<String> {
+    let recipient = stellar::parse_address(to)?;
+    let units = xlm_units(amount)?;
+    let seed = unlock_seed(data_dir, device_password)?;
+    let _seed_lock = memory_guard::lock(&seed);
+    let key = derivation::derive_stellar_key(&seed, profile_index);
+    let plan = stellar::plan(&stellar::MAINNET, &stellar::encode_address(&key.verifying_key().to_bytes()), to, units, &memo)?;
+    anyhow::ensure!(
+        plan.fee <= shown_fee,
+        "les frais Stellar ont augmenté depuis la confirmation ({} au lieu de {} XLM) — relancez l'envoi",
+        stellar::format_xlm(i64::from(plan.fee)),
+        stellar::format_xlm(i64::from(shown_fee))
+    );
+    stellar::send(&stellar::MAINNET, &key, &recipient, &plan, memo)
+}
+
+/// Bouton « Max » : solde moins la réserve et les frais.
+pub fn xlm_max(from: &str) -> Result<String> {
+    Ok(stellar::format_xlm(stellar::max_amount(&stellar::MAINNET, from)?))
 }
 
 // --- Dogecoin -----------------------------------------------------------------------

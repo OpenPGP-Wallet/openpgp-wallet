@@ -268,7 +268,7 @@ pub(crate) fn is_swap_method(method: &str) -> bool {
     method == "depositWithExpiry" || method.to_ascii_lowercase().contains("swap")
 }
 
-fn parse_iso8601_utc(s: &str) -> Option<i64> {
+pub(crate) fn parse_iso8601_utc(s: &str) -> Option<i64> {
     let date_part = s.get(0..10)?;
     let time_part = s.get(11..19)?;
     let mut date = date_part.split('-');

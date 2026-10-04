@@ -211,6 +211,34 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("tag de destination invalide (nombre entier de 0 à 4294967295)", "invalid destination tag (whole number from 0 to 4294967295)"),
     ("tag de destination : réservé aux envois XRP", "destination tag: only for XRP transfers"),
     ("frais XRP manquants", "XRP fee missing"),
+    // Stellar (core/src/stellar.rs, core/src/api.rs)
+    ("serveur Stellar injoignable", "Stellar server unreachable"),
+    ("réponse du serveur Stellar illisible", "unreadable Stellar server response"),
+    ("montant Stellar illisible", "unreadable Stellar amount"),
+    ("ceci est une clé secrète Stellar (S…), pas une adresse : ne la communiquez jamais", "this is a Stellar SECRET key (S…), not an address: never share it"),
+    (
+        "adresse Stellar « M… » (muxée) non prise en charge : demandez l'adresse G… et le mémo",
+        "Stellar \"M…\" (muxed) address not supported: ask for the G… address and the memo",
+    ),
+    ("adresse Stellar invalide", "invalid Stellar address"),
+    ("adresse Stellar invalide (somme de contrôle)", "invalid Stellar address (checksum)"),
+    ("mémo Stellar trop long (28 caractères au plus)", "Stellar memo too long (28 characters at most)"),
+    ("mémo Stellar invalide (lettres, chiffres et ponctuation ASCII seulement)", "invalid Stellar memo (ASCII letters, digits and punctuation only)"),
+    ("solde Stellar illisible", "unreadable Stellar balance"),
+    ("séquence Stellar illisible", "unreadable Stellar sequence"),
+    ("registre Stellar illisible", "unreadable Stellar ledger"),
+    ("réserve Stellar illisible", "unreadable Stellar reserve"),
+    ("frais Stellar illisibles", "unreadable Stellar fee"),
+    ("envoi vers votre propre adresse Stellar", "sending to your own Stellar address"),
+    ("compte Stellar pas encore activé : il doit d'abord recevoir au moins 1 XLM", "Stellar account not activated yet: it must first receive at least 1 XLM"),
+    ("ce destinataire exige un mémo (plateforme d'échange) : renseignez-le", "this recipient requires a memo (exchange): fill it in"),
+    ("XLM insuffisants : tout le solde est bloqué par la réserve du réseau", "insufficient XLM: the whole balance is locked by the network reserve"),
+    ("frais du réseau Stellar anormalement élevés — envoi refusé", "abnormally high Stellar network fee — transfer refused"),
+    ("le serveur Stellar a renvoyé un autre identifiant de transaction", "the Stellar server returned another transaction ID"),
+    ("transaction Stellar refusée : échouée dans le registre", "Stellar transaction refused: failed in the ledger"),
+    ("frais Stellar manquants", "Stellar fee missing"),
+    ("mémo : réservé aux envois Stellar", "memo: only for Stellar transfers"),
+    ("tag de destination et mémo : un seul des deux", "destination tag and memo: only one of the two"),
     ("montant nul", "zero amount"),
     ("montant hors limites", "amount out of range"),
     // SwapKit (core/src/swapkit.rs)
@@ -778,6 +806,32 @@ fn translate_dynamic_error(msg: &str) -> Option<String> {
     if let Some(detail) = msg.strip_prefix("les frais XRP ont augmenté depuis la confirmation (").and_then(|rest| rest.strip_suffix(") — relancez l'envoi")) {
         return Some(format!("XRP fees increased since the confirmation ({}) — start again", detail.replace(" au lieu de ", " instead of ")));
     }
+    if let Some(rest) = msg.strip_prefix("XLM insuffisants : ") {
+        return Some(format!(
+            "insufficient XLM: {}",
+            rest.replace(" XLM envoyables (", " XLM sendable (")
+                .replace(" XLM restent bloqués par la réserve du réseau), ", " XLM stay locked by the network reserve), ")
+                .replace(" XLM de frais demandés", " XLM in fees requested")
+        ));
+    }
+    if let Some(rest) = msg.strip_prefix("ce destinataire n'est pas encore activé : envoyez-lui au moins ").and_then(|r| r.strip_suffix(" XLM (réserve du réseau)")) {
+        return Some(format!("this recipient is not activated yet: send it at least {rest} XLM (network reserve)"));
+    }
+    if let Some(rest) = msg.strip_prefix("frais du réseau Stellar anormalement élevés (").and_then(|r| r.strip_suffix(" XLM) — réessayez plus tard")) {
+        return Some(format!("abnormally high Stellar network fee ({rest} XLM) — try again later"));
+    }
+    if let Some(rest) = msg.strip_prefix("transaction Stellar refusée : ") {
+        return Some(format!("Stellar transaction refused: {rest}"));
+    }
+    if let Some(hash) = msg.strip_prefix("réseau Stellar lent : transaction ").and_then(|r| r.strip_suffix(" envoyée mais pas encore confirmée — vérifiez l'historique avant de renvoyer")) {
+        return Some(format!("slow Stellar network: transaction {hash} sent but not confirmed yet — check the history before sending again"));
+    }
+    if let Some(rest) = msg.strip_prefix("serveur Stellar : réponse ") {
+        return Some(format!("Stellar server: response {rest}"));
+    }
+    if let Some(detail) = msg.strip_prefix("les frais Stellar ont augmenté depuis la confirmation (").and_then(|rest| rest.strip_suffix(") — relancez l'envoi")) {
+        return Some(format!("Stellar fees increased since the confirmation ({}) — start again", detail.replace(" au lieu de ", " instead of ")));
+    }
     if let Some(rest) = msg.strip_prefix("DOGE insuffisants : ") {
         return Some(format!(
             "insufficient DOGE: {}",
@@ -1164,6 +1218,7 @@ struct AddressesDto {
     doge: String,
     tron: String,
     xrp: String,
+    stellar: String,
 }
 
 impl From<api::Addresses> for AddressesDto {
@@ -1179,6 +1234,7 @@ impl From<api::Addresses> for AddressesDto {
             doge: a.doge,
             tron: a.tron,
             xrp: a.xrp,
+            stellar: a.stellar,
         }
     }
 }
@@ -1286,7 +1342,7 @@ fn save_bytes_with_dialog(suggested_name: String, content_b64: String, app: taur
 /// aurait laissé un frontend compromis ouvrir n'importe quelle page — un vecteur
 /// de phishing simple, ouvert sans aucun bénéfice fonctionnel puisqu'aucun appel
 /// légitime de cette commande ne cible jamais autre chose que ces domaines.
-const ALLOWED_EXTERNAL_LINK_PREFIXES: [&str; 9] = [
+const ALLOWED_EXTERNAL_LINK_PREFIXES: [&str; 10] = [
     "https://explorer.solana.com/",
     "https://blockstream.info/",
     "https://explorer.cow.fi/",
@@ -1296,6 +1352,7 @@ const ALLOWED_EXTERNAL_LINK_PREFIXES: [&str; 9] = [
     "https://blockchair.com/dogecoin/",
     "https://tronscan.org/",
     "https://livenet.xrpl.org/",
+    "https://stellar.expert/explorer/public/",
 ];
 
 /// Lien vers un explorateur connu de l'app : Solana, Bitcoin, ou l'explorateur
@@ -2003,6 +2060,7 @@ fn forget_session(app: &tauri::AppHandle) {
     app.state::<ProfileBtcTestnetCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<ProfileTronCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<ProfileXrpCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    app.state::<ProfileStellarCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<ShieldedKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<MoneroKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     IS_AFFILIATE_WALLET.store(false, Ordering::Relaxed);
@@ -2059,6 +2117,7 @@ async fn get_balance(network: String, address: String, app: tauri::AppHandle) ->
             "doge_mainnet" => Ok(pgp_wallet_poc::doge::format_doge(api::get_doge_balance(&address).t_err()?)),
             "tron_mainnet" => Ok(pgp_wallet_poc::tron::format_trx(api::get_trx_balance(&address).t_err()?)),
             "xrp_mainnet" => Ok(pgp_wallet_poc::xrp::format_xrp(api::get_xrp_balance(&address).t_err()?)),
+            "xlm_mainnet" => Ok(pgp_wallet_poc::stellar::format_xlm(api::get_xlm_balance(&address).t_err()?)),
             // Base locale (synchronisation de fond) : dépensable + en attente.
             "zec_shielded" => {
                 let balance = api::zec_shielded_balance(&data_dir(&app)?, shielded_profile(&app, &address)?).t_err()?;
@@ -2190,7 +2249,7 @@ async fn has_pending_tx(network: String, address: String, app: tauri::AppHandle)
             // Un bloc toutes les 3 s : un envoi est confirmé avant la relecture.
             "tron_mainnet" => Ok(false),
             // Registre validé toutes les 3 à 5 s : idem.
-            "xrp_mainnet" => Ok(false),
+            "xrp_mainnet" | "xlm_mainnet" => Ok(false),
             "xmr_mainnet" => api::has_pending_xmr(&data_dir(&app)?, monero_profile(&app, &address)?).t_err(),
             other => Err(translate_error(&format!("réseau inconnu : {other}"))),
         }
@@ -2387,6 +2446,12 @@ async fn get_tx_history(network: String, address: String, app: tauri::AppHandle)
             Some(price_history::Asset::Pair("XRPUSDT")),
             6,
             |id| format!("https://livenet.xrpl.org/transactions/{id}"),
+        )),
+        "xlm_mainnet" => HistoryDto::read(history_dtos(
+            || pgp_wallet_poc::stellar::history(&pgp_wallet_poc::stellar::MAINNET, &address, HISTORY_LIMIT as usize),
+            Some(price_history::Asset::Pair("XLMUSDT")),
+            7,
+            |id| format!("https://stellar.expert/explorer/public/tx/{id}"),
         )),
         "sol_devnet" | "sol_mainnet" => {
             let net = sol_network(&network)?;
@@ -2667,6 +2732,7 @@ fn network_label(network: &str) -> String {
         "doge_mainnet" => lang("Dogecoin MAINNET — fonds réels", "Dogecoin MAINNET — real funds").to_string(),
         "tron_mainnet" => lang("Tron MAINNET — fonds réels", "Tron MAINNET — real funds").to_string(),
         "xrp_mainnet" => lang("XRP Ledger MAINNET — fonds réels", "XRP Ledger MAINNET — real funds").to_string(),
+        "xlm_mainnet" => lang("Stellar MAINNET — fonds réels", "Stellar MAINNET — real funds").to_string(),
         "xmr_mainnet" => lang("Monero MAINNET — fonds réels", "Monero MAINNET — real funds").to_string(),
         "zec_shielded" => lang("Zcash MAINNET — fonds protégés", "Zcash MAINNET — shielded funds").to_string(),
         other => match wallet_flow::evm_network(other) {
@@ -2688,6 +2754,7 @@ fn network_unit(network: &str) -> &'static str {
         "doge_mainnet" => "DOGE",
         "tron_mainnet" => "TRX",
         "xrp_mainnet" => "XRP",
+        "xlm_mainnet" => "XLM",
         other => wallet_flow::evm_network(other).map(|n| n.native_symbol).unwrap_or(""),
     }
 }
@@ -2803,6 +2870,7 @@ fn recipient_warning_lines(first_send: bool, coin: &str, activity: Option<api::R
         "doge" => ("aucun DOGE", "no DOGE"),
         "trx" => ("aucun TRX", "no TRX"),
         "xrp" => ("aucun XRP", "no XRP"),
+        "xlm" => ("aucun XLM", "no XLM"),
         "sol" => ("aucun SOL", "no SOL"),
         _ => ("aucun fonds", "no funds"),
     };
@@ -2882,6 +2950,7 @@ fn own_profile_label(app: &tauri::AppHandle, dir: &std::path::Path, network: &st
         "doge_mainnet" => in_cache(&app.state::<ProfileDogeCache>().0, exact),
         "tron_mainnet" => in_cache(&app.state::<ProfileTronCache>().0, exact),
         "xrp_mainnet" => in_cache(&app.state::<ProfileXrpCache>().0, exact),
+        "xlm_mainnet" => in_cache(&app.state::<ProfileStellarCache>().0, exact),
         "xmr_mainnet" => {
             app.state::<MoneroKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).iter().find(|(_, (address, _))| address == to).map(|(index, _)| *index)
         }
@@ -2934,11 +3003,17 @@ async fn send_transaction(
     profile_index: u32,
     max: Option<bool>,
     destination_tag: Option<String>,
+    memo: Option<String>,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
     run_blocking(move || {
         let password = Zeroizing::new(password);
-        let destination_tag = api::parse_destination_tag(destination_tag.as_deref()).t_err()?;
+        let note = match (api::parse_destination_tag(destination_tag.as_deref()).t_err()?, api::parse_stellar_memo(memo.as_deref()).t_err()?) {
+            (None, StellarMemo::None) => None,
+            (Some(tag), StellarMemo::None) => Some(DestinationNote::XrpTag(tag)),
+            (None, memo) => Some(DestinationNote::StellarMemo(memo)),
+            (Some(_), _) => return Err(translate_error("tag de destination et mémo : un seul des deux")),
+        };
         let dir = data_dir(&app)?;
         let from_label = api::list_profiles(&dir)
             .into_iter()
@@ -2965,6 +3040,7 @@ async fn send_transaction(
         };
         let from_tron = app.state::<ProfileTronCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).cloned();
         let from_xrp = app.state::<ProfileXrpCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).cloned();
+        let from_stellar = app.state::<ProfileStellarCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).cloned();
         let from = SendFrom {
             evm: from_evm.as_deref(),
             sol: from_sol.as_deref(),
@@ -2974,8 +3050,9 @@ async fn send_transaction(
             btc: from_btc.as_deref(),
             tron: from_tron.as_deref(),
             xrp: from_xrp.as_deref(),
+            stellar: from_stellar.as_deref(),
         };
-        let mut send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &from_label, None, from, max.unwrap_or(false), destination_tag)?;
+        let mut send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &from_label, None, from, max.unwrap_or(false), note)?;
         send_grace_period(&app)?;
 
         let result = match network.as_str() {
@@ -3007,7 +3084,11 @@ async fn send_transaction(
             }
             "xrp_mainnet" => {
                 let shown_fee = send.xrp_fee.ok_or_else(|| translate_error("frais XRP manquants"))?;
-                api::send_xrp(&dir, &password, &send.to, &send.amount, send.destination_tag, shown_fee, profile_index).t_err()
+                api::send_xrp(&dir, &password, &send.to, &send.amount, send.xrp_tag(), shown_fee, profile_index).t_err()
+            }
+            "xlm_mainnet" => {
+                let shown_fee = send.xlm_fee.ok_or_else(|| translate_error("frais Stellar manquants"))?;
+                api::send_xlm(&dir, &password, &send.to, &send.amount, send.stellar_memo(), shown_fee, profile_index).t_err()
             }
             // Exactement l'envoi préparé et affiché (sorties, leurres, frais).
             "xmr_mainnet" => match send.xmr_plan.take() {
@@ -3111,6 +3192,7 @@ async fn max_send_amount(network: String, token: Option<String>, profile_index: 
             "doge_mainnet" => api::doge_max(&cached(&app.state::<ProfileDogeCache>().0)?).t_err(),
             "tron_mainnet" => api::trx_max(&cached(&app.state::<ProfileTronCache>().0)?, None).t_err(),
             "xrp_mainnet" => api::xrp_max(&cached(&app.state::<ProfileXrpCache>().0)?).t_err(),
+            "xlm_mainnet" => api::xlm_max(&cached(&app.state::<ProfileStellarCache>().0)?).t_err(),
             "xmr_mainnet" => {
                 let keys = app.state::<MoneroKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).map(|(_, keys)| keys.clone()).ok_or_else(unknown)?;
                 Ok(pgp_wallet_poc::monero::format_xmr(api::xmr_send_plan_max(&dir, &keys, None).t_err()?.amount))
@@ -3159,8 +3241,36 @@ struct ConfirmedSend {
     trx_fee: Option<u64>,
     /// Frais XRP affichés (plafond à l'envoi).
     xrp_fee: Option<u64>,
-    /// Tag de destination XRP affiché dans la boîte, signé tel quel.
-    destination_tag: Option<u32>,
+    /// Frais Stellar (offre) affichés (plafond à l'envoi).
+    xlm_fee: Option<u32>,
+    /// Tag (XRP) ou mémo (Stellar) affiché dans la boîte, signé tel quel.
+    note: Option<DestinationNote>,
+}
+
+/// Complément du destinataire exigé par les plateformes d'échange : tag de
+/// destination (XRP) ou mémo (Stellar).
+#[derive(Clone, Debug)]
+enum DestinationNote {
+    XrpTag(u32),
+    StellarMemo(StellarMemo),
+}
+
+use pgp_wallet_poc::stellar::Memo as StellarMemo;
+
+impl ConfirmedSend {
+    fn xrp_tag(&self) -> Option<u32> {
+        match self.note {
+            Some(DestinationNote::XrpTag(tag)) => Some(tag),
+            _ => None,
+        }
+    }
+
+    fn stellar_memo(&self) -> StellarMemo {
+        match &self.note {
+            Some(DestinationNote::StellarMemo(memo)) => memo.clone(),
+            _ => StellarMemo::None,
+        }
+    }
 }
 
 /// Adresses (et clés de visualisation Monero) du compte qui envoie, connues
@@ -3175,6 +3285,7 @@ struct SendFrom<'a> {
     btc: Option<&'a str>,
     tron: Option<&'a str>,
     xrp: Option<&'a str>,
+    stellar: Option<&'a str>,
 }
 
 /// Validation, avertissements et boîte de confirmation native, communs aux
@@ -3192,7 +3303,7 @@ fn confirm_send(
     device_note: Option<&str>,
     from: SendFrom<'_>,
     max: bool,
-    destination_tag: Option<u32>,
+    note: Option<DestinationNote>,
 ) -> Result<ConfirmedSend, String> {
     // Réseau validé AVANT la boîte de confirmation (22ᵉ passage) : un réseau
     // inconnu était jusqu'ici affiché tel quel (texte libre du frontend) dans
@@ -3208,11 +3319,22 @@ fn confirm_send(
         "doge_mainnet" => "doge",
         "tron_mainnet" => "trx",
         "xrp_mainnet" => "xrp",
+        "xlm_mainnet" => "xlm",
         other => return Err(translate_error(&format!("réseau inconnu : {other}"))),
     };
-    if destination_tag.is_some() && coin != "xrp" {
-        return Err(translate_error("tag de destination : réservé aux envois XRP"));
+    match (&note, coin) {
+        (Some(DestinationNote::XrpTag(_)), c) if c != "xrp" => return Err(translate_error("tag de destination : réservé aux envois XRP")),
+        (Some(DestinationNote::StellarMemo(_)), c) if c != "xlm" => return Err(translate_error("mémo : réservé aux envois Stellar")),
+        _ => {}
     }
+    let destination_tag = match note {
+        Some(DestinationNote::XrpTag(tag)) => Some(tag),
+        _ => None,
+    };
+    let memo = match &note {
+        Some(DestinationNote::StellarMemo(memo)) => memo.clone(),
+        _ => StellarMemo::None,
+    };
     let to = canonical_address_input(to)?;
     let unknown_profile = || translate_error("adresse du profil inconnue — déverrouillez le portefeuille");
     // « Max » : montant recalculé MAINTENANT (solde moins les frais du moment,
@@ -3236,6 +3358,7 @@ fn confirm_send(
             "doge" => api::doge_max(from.doge.ok_or_else(unknown_profile)?).t_err()?,
             "trx" => api::trx_max(from.tron.ok_or_else(unknown_profile)?, Some(&to)).t_err()?,
             "xrp" => api::xrp_max(from.xrp.ok_or_else(unknown_profile)?).t_err()?,
+            "xlm" => api::xlm_max(from.stellar.ok_or_else(unknown_profile)?).t_err()?,
             _ => {
                 let plan = api::xmr_send_plan_max(dir, from.xmr.ok_or_else(unknown_profile)?, Some(&to)).t_err()?;
                 let amount = pgp_wallet_poc::monero::format_xmr(plan.amount);
@@ -3251,6 +3374,7 @@ fn confirm_send(
         "doge" => api::canonical_doge_amount(&amount).t_err()?,
         "trx" => api::canonical_trx_amount(&amount).t_err()?,
         "xrp" => api::canonical_xrp_amount(&amount).t_err()?,
+        "xlm" => api::canonical_xlm_amount(&amount).t_err()?,
         "xmr" => api::canonical_xmr_amount(&amount).t_err()?,
         _ => api::canonical_amount(coin, &amount).t_err()?,
     };
@@ -3311,6 +3435,12 @@ fn confirm_send(
         "xrp" => Some(api::xrp_send_plan(from.xrp.ok_or_else(unknown_profile)?, &to, &amount, destination_tag).t_err()?),
         _ => None,
     };
+    // Stellar : réserve du réseau, création d'un destinataire neuf, mémo
+    // exigé par le destinataire (SEP-29) et frais vérifiés MAINTENANT.
+    let xlm_plan = match coin {
+        "xlm" => Some(api::xlm_send_plan(from.stellar.ok_or_else(unknown_profile)?, &to, &amount, &memo).t_err()?),
+        _ => None,
+    };
     // Monero : destinataire vérifié, sorties choisies, leurres tirés et frais
     // calculés MAINTENANT (clés de visualisation, sans la seed) ; c'est cet
     // envoi-là, inchangé, qui sera signé.
@@ -3340,6 +3470,7 @@ fn confirm_send(
         "doge" => api::doge_recipient_activity(&to).ok(),
         "trx" => api::trx_recipient_activity(&to).ok(),
         "xrp" => api::xrp_recipient_activity(&to).ok(),
+        "xlm" => api::xlm_recipient_activity(&to).ok(),
         // Adresse vérifiée par la préparation ; aucune activité lisible
         // (adresses et montants invisibles sur la chaîne Monero).
         "xmr" => None,
@@ -3396,6 +3527,18 @@ Change returned to your address: {change} ZEC")));
             }
             line
         }),
+        "xlm" => xlm_plan.map(|plan| {
+            let (fee, reserve) = (pgp_wallet_poc::stellar::format_xlm(i64::from(plan.fee)), pgp_wallet_poc::stellar::format_xlm(plan.reserve));
+            let mut line = lang(
+                &format!("Frais : jusqu'à {fee} XLM (seul le nécessaire est prélevé)\nRéserve du réseau : {reserve} XLM restent bloqués sur votre compte"),
+                &format!("Fee: up to {fee} XLM (only what is needed is charged)\nNetwork reserve: {reserve} XLM stay locked on your account"),
+            )
+            .to_string();
+            if plan.creates {
+                line.push_str(lang("\nCe paiement crée le compte destinataire (encore jamais utilisé)", "\nThis payment creates the recipient account (never used yet)"));
+            }
+            line
+        }),
         "xmr" => xmr_plan.as_ref().map(|plan| {
             let mut line = format!("{} : {} XMR", lang("Frais", "Fee"), pgp_wallet_poc::monero::format_xmr(plan.fee));
             if plan.change > 0 {
@@ -3423,6 +3566,13 @@ Change returned to your address: {change} XMR (spendable after 10 confirmations,
     let to_line = match (coin, destination_tag) {
         ("xrp", Some(tag)) => format!("{to}\n{} {tag}", lang("Tag de destination :", "Destination tag:")),
         ("xrp", None) => format!("{to}\n{}", lang("Tag de destination : aucun", "Destination tag: none")),
+        // Stellar : mémo TOUJOURS montré, avec son type (ASCII imprimable
+        // seulement, voir `stellar::parse_memo`).
+        ("xlm", _) => match &memo {
+            StellarMemo::None => format!("{to}\n{}", lang("Mémo : aucun", "Memo: none")),
+            StellarMemo::Id(id) => format!("{to}\n{} {id}", lang("Mémo (identifiant) :", "Memo (ID):")),
+            StellarMemo::Text(text) => format!("{to}\n{} \"{text}\"", lang("Mémo (texte) :", "Memo (text):")),
+        },
         _ => to.clone(),
     };
     if !confirm_transaction_native(app, network, &to_line, &amount_line, from_label, fee_line.as_deref(), warning.as_deref(), None) {
@@ -3438,7 +3588,8 @@ Change returned to your address: {change} XMR (spendable after 10 confirmations,
         doge_fee: doge_plan.map(|plan| plan.fee),
         trx_fee: trx_plan.map(|plan| plan.fee_max),
         xrp_fee: xrp_plan.map(|plan| plan.fee),
-        destination_tag,
+        xlm_fee: xlm_plan.map(|plan| plan.fee),
+        note,
     })
 }
 
@@ -5321,6 +5472,10 @@ struct ProfileTronCache(std::sync::Mutex<std::collections::HashMap<u32, String>>
 #[derive(Default)]
 struct ProfileXrpCache(std::sync::Mutex<std::collections::HashMap<u32, String>>);
 
+/// Adresse Stellar de chaque profil (préparation d'un envoi avant la boîte).
+#[derive(Default)]
+struct ProfileStellarCache(std::sync::Mutex<std::collections::HashMap<u32, String>>);
+
 /// Adresse Bitcoin testnet de chaque profil (bouton « Max » d'un envoi testnet).
 #[derive(Default)]
 struct ProfileBtcTestnetCache(std::sync::Mutex<std::collections::HashMap<u32, String>>);
@@ -5369,6 +5524,9 @@ fn remember_addresses(app: &tauri::AppHandle, index: u32, addresses: &api::Addre
     }
     if let Some(cache) = app.try_state::<ProfileXrpCache>() {
         cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, addresses.xrp.clone());
+    }
+    if let Some(cache) = app.try_state::<ProfileStellarCache>() {
+        cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, addresses.stellar.clone());
     }
     if let Some(cache) = app.try_state::<ShieldedKeysCache>() {
         cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, (addresses.zcash_shielded.clone(), addresses.zcash_shielded_keys.clone()));
@@ -6150,6 +6308,7 @@ pub fn run() {
         .manage(ProfileBtcTestnetCache::default())
         .manage(ProfileTronCache::default())
         .manage(ProfileXrpCache::default())
+        .manage(ProfileStellarCache::default())
         .manage(ProfileDogeCache::default())
         .manage(ProfileBtcCache::default())
         .manage(ShieldedKeysCache::default())
@@ -6418,7 +6577,7 @@ mod tests {
         }
 
         // Chaque avertissement tient sur un seul paragraphe (mise en page de la boîte).
-        for coin in ["evm", "btc", "sol", "usdc", "zec", "doge", "trx", "xrp", "xmr", "zecs"] {
+        for coin in ["evm", "btc", "sol", "usdc", "zec", "doge", "trx", "xrp", "xlm", "xmr", "zecs"] {
             for activity in [Some(Unused), Some(Empty), None] {
                 assert!(recipient_warning_lines(true, coin, activity).iter().all(|l| !l.contains('\n')));
             }
@@ -6606,6 +6765,58 @@ mod tests {
             "XRP fees increased since the confirmation (0.000020 instead of 0.000010 XRP) — start again"
         );
         assert_eq!(translate_dynamic_error("frais du réseau XRP anormalement élevés (0.002000 XRP) — réessayez plus tard").unwrap(), "abnormally high XRP network fee (0.002000 XRP) — try again later");
+    }
+
+    /// Messages d'erreur Stellar : présents dans le code, traduits (fixes et variables).
+    #[test]
+    fn stellar_error_messages_have_a_translation() {
+        let sources = [include_str!("../../../core/src/stellar.rs"), include_str!("../../../core/src/api.rs"), include_str!("lib.rs")];
+        for message in [
+            "serveur Stellar injoignable",
+            "réponse du serveur Stellar illisible",
+            "montant Stellar illisible",
+            "ceci est une clé secrète Stellar (S…), pas une adresse : ne la communiquez jamais",
+            "adresse Stellar « M… » (muxée) non prise en charge : demandez l'adresse G… et le mémo",
+            "adresse Stellar invalide",
+            "adresse Stellar invalide (somme de contrôle)",
+            "mémo Stellar trop long (28 caractères au plus)",
+            "mémo Stellar invalide (lettres, chiffres et ponctuation ASCII seulement)",
+            "solde Stellar illisible",
+            "séquence Stellar illisible",
+            "registre Stellar illisible",
+            "réserve Stellar illisible",
+            "frais Stellar illisibles",
+            "envoi vers votre propre adresse Stellar",
+            "compte Stellar pas encore activé : il doit d'abord recevoir au moins 1 XLM",
+            "ce destinataire exige un mémo (plateforme d'échange) : renseignez-le",
+            "XLM insuffisants : tout le solde est bloqué par la réserve du réseau",
+            "frais du réseau Stellar anormalement élevés — envoi refusé",
+            "le serveur Stellar a renvoyé un autre identifiant de transaction",
+            "transaction Stellar refusée : échouée dans le registre",
+            "frais Stellar manquants",
+            "mémo : réservé aux envois Stellar",
+            "tag de destination et mémo : un seul des deux",
+        ] {
+            assert!(sources.iter().any(|s| s.contains(&format!("\"{message}\""))), "message absent du code : {message}");
+            assert!(EXACT_ERROR_TRANSLATIONS.iter().any(|(fr, _)| *fr == message), "sans traduction : {message}");
+        }
+        assert_eq!(
+            translate_dynamic_error("XLM insuffisants : 0.5000000 XLM envoyables (1.0000000 XLM restent bloqués par la réserve du réseau), 2.0000000 XLM + 0.0018460 XLM de frais demandés").unwrap(),
+            "insufficient XLM: 0.5000000 XLM sendable (1.0000000 XLM stay locked by the network reserve), 2.0000000 XLM + 0.0018460 XLM in fees requested"
+        );
+        assert_eq!(
+            translate_dynamic_error("ce destinataire n'est pas encore activé : envoyez-lui au moins 1.0000000 XLM (réserve du réseau)").unwrap(),
+            "this recipient is not activated yet: send it at least 1.0000000 XLM (network reserve)"
+        );
+        assert_eq!(translate_dynamic_error("transaction Stellar refusée : tx_failed op_underfunded").unwrap(), "Stellar transaction refused: tx_failed op_underfunded");
+        assert_eq!(
+            translate_dynamic_error("réseau Stellar lent : transaction ab12 envoyée mais pas encore confirmée — vérifiez l'historique avant de renvoyer").unwrap(),
+            "slow Stellar network: transaction ab12 sent but not confirmed yet — check the history before sending again"
+        );
+        assert_eq!(
+            translate_dynamic_error("les frais Stellar ont augmenté depuis la confirmation (0.0020000 au lieu de 0.0018460 XLM) — relancez l'envoi").unwrap(),
+            "Stellar fees increased since the confirmation (0.0020000 instead of 0.0018460 XLM) — start again"
+        );
     }
 
     /// Messages d'erreur Dogecoin : présents dans le code (fixes), tous traduits

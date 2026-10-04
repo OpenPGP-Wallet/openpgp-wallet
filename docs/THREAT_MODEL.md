@@ -11,7 +11,7 @@ qui la met en œuvre. **Aucune de ces protections n'a encore été vérifiée pa
   interface web locale (`app/src`).
 - Portefeuille non dépositaire multi-réseaux : Bitcoin, réseaux EVM (Ethereum, L2, BNB Chain, Avalanche,
   Polygon, HyperEVM), Solana, Zcash (transparent et protégé Orchard), Monero, Dogecoin, Tron (TRX et USDT
-  TRC-20), XRP Ledger, jetons du registre (`tokens.rs`).
+  TRC-20), XRP Ledger, Stellar, jetons du registre (`tokens.rs`).
 - Hors périmètre : la version iOS (non démarrée), les services tiers eux-mêmes (nœuds, agrégateurs d'échange),
   le système d'exploitation et le matériel.
 
@@ -133,6 +133,13 @@ qui la met en œuvre. **Aucune de ces protections n'a encore été vérifiée pa
   d'échange) refusé sans tag, destinataire « paiements autorisés seulement » refusé s'il n'a pas autorisé
   l'expéditeur ; adresses « X » refusées. Le tag est toujours affiché dans la boîte native (« aucun » compris) ;
   frais plafonnés (0,001 XRP), validité limitée à ~1 min (`LastLedgerSequence`).
+- **Stellar** : transactions XDR encodées et signées localement (octets identiques à la bibliothèque officielle
+  de la SDF ; création de compte et paiement avec mémo acceptés de bout en bout sur le réseau de test,
+  signature altérée refusée `tx_bad_auth`). Avant la boîte : réserve jamais envoyable, destinataire neuf CRÉÉ
+  avec au moins 1 XLM, destinataire exigeant un mémo (SEP-29) refusé sans mémo ; adresses muxées (M…)
+  refusées, clé secrète (S…) collée par erreur signalée. Mémo toujours affiché avec son type dans la boîte
+  native ; mémo texte limité à l'ASCII imprimable (aucun caractère invisible ou de retournement). Offre de
+  frais plafonnée (0,1 XLM), validité de 3 min calée sur l'heure du dernier registre (pas l'horloge locale).
 - *Risques résiduels* : un nœud malveillant peut afficher de faux soldes ou un faux historique (portefeuille
   léger) ; un nœud Monero ou Zcash malveillant peut affaiblir la confidentialité d'un envoi ; les nœuds publics
   voient l'adresse IP et les adresses interrogées ; un agrégateur peut proposer un mauvais cours (le minimum de

@@ -105,6 +105,10 @@ pub(crate) fn validate_address(network: &str, address: &str) -> Result<()> {
         "xrp_mainnet" => {
             crate::xrp::parse_address(address)?;
         }
+        // Stellar (G…).
+        "xlm_mainnet" => {
+            crate::stellar::parse_address(address)?;
+        }
         // Zcash protégé (adresse u1 de la carte « Zcash protégé »).
         "zec_shielded" => {
             crate::zcash_shielded::parse_shielded_address(address)?;
