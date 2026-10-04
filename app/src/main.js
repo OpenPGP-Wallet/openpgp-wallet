@@ -793,6 +793,11 @@ const I18N = {
     "settings.affiliatePassword": "Mot de passe (pour signer l'inscription)",
     "settings.affiliateCopied": "Adresse copiée",
     "settings.affiliateDone": "Transaction envoyée : {tx}. Le nom apparaît ici en quelques secondes.",
+    "settings.rescanTitle": "Réanalyser les fonds privés",
+    "settings.rescanHint":
+      "Monero et Zcash protégé sont analysés à partir de la création de ce portefeuille sur cet appareil. Si des fonds plus anciens n'apparaissent pas (portefeuille venu d'une autre app), relancez l'analyse depuis le début — elle peut prendre longtemps.",
+    "settings.rescanButton": "Réanalyser depuis le début",
+    "settings.rescanStarted": "Réanalyse lancée : les soldes Monero et Zcash protégé se mettront à jour au fil de l'analyse.",
     "settings.xmrNodeTitle": "Nœud Monero",
     "settings.xmrNodeHint":
       "L'app lit la chaîne Monero auprès de nœuds publics (Cake Wallet, Stack Wallet…) et analyse les blocs sur cet appareil : le nœud ne sait pas quelles transactions sont les vôtres, mais voit votre adresse IP et les transactions que vous envoyez. Pour plus de confidentialité, indiquez votre propre nœud (https://, ou http:// sur votre réseau local).",
@@ -1366,6 +1371,11 @@ const I18N = {
     "settings.affiliatePassword": "Password (to sign the registration)",
     "settings.affiliateCopied": "Address copied",
     "settings.affiliateDone": "Transaction sent: {tx}. The name shows here within a few seconds.",
+    "settings.rescanTitle": "Rescan private funds",
+    "settings.rescanHint":
+      "Monero and shielded Zcash are scanned from when this wallet was created on this device. If older funds don't show up (wallet coming from another app), restart the scan from the beginning — it can take a long time.",
+    "settings.rescanButton": "Rescan from the beginning",
+    "settings.rescanStarted": "Rescan started: Monero and shielded Zcash balances will update as the scan progresses.",
     "settings.xmrNodeTitle": "Monero node",
     "settings.xmrNodeHint":
       "The app reads the Monero chain from public nodes (Cake Wallet, Stack Wallet…) and scans blocks on this device: the node does not know which transactions are yours, but sees your IP address and the transactions you send. For more privacy, set your own node (https://, or http:// on your local network).",
@@ -2518,6 +2528,23 @@ xmrNodeSaveBtn.addEventListener("click", withBusyButton(xmrNodeSaveBtn, async ()
     return;
   }
   await saveXmrNode(url);
+}));
+
+// Réanalyse complète des fonds privés (Monero, Zcash protégé) : soldes mis à
+// jour au fil de la synchronisation de fond.
+const rescanPrivateBtn = document.getElementById("rescan-private-funds");
+rescanPrivateBtn.addEventListener("click", withBusyButton(rescanPrivateBtn, async () => {
+  const status = document.getElementById("rescan-private-status");
+  const errorEl = document.getElementById("rescan-private-error");
+  status.classList.add("hidden");
+  hideError(errorEl);
+  try {
+    await invoke("rescan_private_funds");
+    status.textContent = t("settings.rescanStarted");
+    status.classList.remove("hidden");
+  } catch (e) {
+    showError(errorEl, String(e));
+  }
 }));
 
 const xmrNodeResetBtn = document.getElementById("xmr-node-reset");

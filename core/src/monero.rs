@@ -26,7 +26,7 @@
 //! sont alors relus. Fuite de ce fichier = historique Monero visible, jamais
 //! de fonds perdus.
 
-use crate::{derivation, history, tokens};
+use crate::{derivation, history, tokens, wallet_birthday};
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use monero_simple_request_rpc::prelude::MoneroDaemon;
 use monero_simple_request_rpc::SimpleRequestTransport;
@@ -203,20 +203,21 @@ struct ProfileState {
 }
 
 impl ProfileState {
-    fn new(spend_public: &[u8; 32]) -> Self {
-        Self { spend_public: Some(hex::encode(spend_public)), next_block: BIRTHDAY_HEIGHT, outputs: Vec::new(), sends: Vec::new() }
+    fn new(spend_public: &[u8; 32], start: usize) -> Self {
+        Self { spend_public: Some(hex::encode(spend_public)), next_block: start, outputs: Vec::new(), sends: Vec::new() }
     }
 }
 
-/// État du profil lié à SES clés : créé s'il manque, remplacé s'il a été
-/// écrit pour un autre portefeuille, marqué s'il date d'avant le lien.
-fn bind_profile(state: &mut State, profile: u32, spend_public: &[u8; 32]) {
+/// État du profil lié à SES clés : créé s'il manque (analyse à partir de
+/// `start`), remplacé s'il a été écrit pour un autre portefeuille, marqué s'il
+/// date d'avant le lien.
+fn bind_profile(state: &mut State, profile: u32, spend_public: &[u8; 32], start: usize) {
     let expected = hex::encode(spend_public);
     match state.profiles.get_mut(&profile) {
         Some(p) if p.spend_public.as_deref() == Some(expected.as_str()) => {}
         Some(p) if p.spend_public.is_none() => p.spend_public = Some(expected),
         _ => {
-            state.profiles.insert(profile, ProfileState::new(spend_public));
+            state.profiles.insert(profile, ProfileState::new(spend_public, start));
         }
     }
 }
@@ -416,8 +417,19 @@ pub fn sync(data_dir: &Path, keys: &[ViewKeys]) -> Result<()> {
 
             let _guard = lock();
             let mut state = load(data_dir)?;
+            // Nouveau profil : analyse depuis peu avant la création du
+            // portefeuille (naissance fixe si elle est inconnue) ; jamais au-delà
+            // de la chaîne connue (horloge faussée).
+            // (Nom distinct de `start`, le premier bloc de CE lot : les confondre
+            // faisait tourner la boucle à vide.)
+            let new_profile_start = wallet_birthday::start_height(data_dir, tip as u64, 120, BIRTHDAY_HEIGHT as u64) as usize;
             for k in keys {
-                bind_profile(&mut state, k.profile, &k.spend_public);
+                bind_profile(&mut state, k.profile, &k.spend_public, new_profile_start);
+                if let Some(p) = state.profiles.get_mut(&k.profile) {
+                    if p.next_block > tip + 1 {
+                        p.next_block = new_profile_start;
+                    }
+                }
             }
             state.tip = tip;
             expire_pending(&mut state, now());
@@ -586,7 +598,9 @@ pub fn update_key_images(data_dir: &Path, seed: &[u8], profile: u32) -> Result<(
     let spend = spend_key(seed, profile)?;
     let spend_public = keys_from_spend(profile, &spend).spend_public;
     let before = state.profiles.get(&profile).and_then(|p| p.spend_public.clone());
-    bind_profile(&mut state, profile, &spend_public);
+    // Autre portefeuille (restauration) : naissance fixe, les fonds peuvent
+    // être anciens.
+    bind_profile(&mut state, profile, &spend_public, BIRTHDAY_HEIGHT);
     let Some(state_profile) = state.profiles.get_mut(&profile) else { return Ok(()) };
     if state_profile.outputs.iter().all(|o| o.key_image.is_some()) {
         if state_profile.spend_public != before {
@@ -708,6 +722,17 @@ pub fn history_of_address(address: &str) -> Result<Vec<history::TxEntry>> {
 /// continue même carte Monero masquée (dépenses à suivre).
 pub fn has_received(data_dir: &Path) -> bool {
     load(data_dir).is_ok_and(|state| state.profiles.values().any(|p| !p.outputs.is_empty()))
+}
+
+/// « Réanalyser depuis le début » : tous les profils relus depuis la naissance
+/// fixe (sorties déjà connues gardées, jamais comptées deux fois).
+pub fn rescan_from_birthday(data_dir: &Path) -> Result<()> {
+    let _guard = lock();
+    let mut state = load(data_dir)?;
+    for p in state.profiles.values_mut() {
+        p.next_block = BIRTHDAY_HEIGHT;
+    }
+    save(data_dir, &state)
 }
 
 /// Envoi diffusé pas encore miné (la carte se rafraîchit plus souvent).
@@ -983,16 +1008,16 @@ mod tests {
         let mine = view_keys(&seed(), 0).unwrap().spend_public;
         let other = view_keys(&[9u8; 64], 0).unwrap().spend_public;
         let mut state = State::default();
-        bind_profile(&mut state, 0, &other);
+        bind_profile(&mut state, 0, &other, BIRTHDAY_HEIGHT);
         state.profiles.get_mut(&0).unwrap().outputs.push(received("old", 10, 99, None));
-        bind_profile(&mut state, 0, &other);
+        bind_profile(&mut state, 0, &other, BIRTHDAY_HEIGHT);
         assert_eq!(state.profiles[&0].outputs.len(), 1, "même portefeuille : gardé");
-        bind_profile(&mut state, 0, &mine);
+        bind_profile(&mut state, 0, &mine, BIRTHDAY_HEIGHT + 500);
         assert!(state.profiles[&0].outputs.is_empty(), "autre portefeuille : oublié");
-        assert_eq!(state.profiles[&0].next_block, BIRTHDAY_HEIGHT);
+        assert_eq!(state.profiles[&0].next_block, BIRTHDAY_HEIGHT + 500, "nouvel état : analyse depuis le début demandé");
         state.profiles.get_mut(&0).unwrap().spend_public = None;
         state.profiles.get_mut(&0).unwrap().outputs.push(received("legacy", 10, 5, None));
-        bind_profile(&mut state, 0, &mine);
+        bind_profile(&mut state, 0, &mine, BIRTHDAY_HEIGHT);
         assert_eq!(state.profiles[&0].outputs.len(), 1, "état d'avant le lien : adopté");
         assert_eq!(state.profiles[&0].spend_public.as_deref(), Some(hex::encode(mine).as_str()));
     }

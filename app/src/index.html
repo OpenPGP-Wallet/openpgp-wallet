@@ -1008,6 +1008,18 @@
           </div>
 
           <div class="settings-section">
+            <h2 class="section-title" data-i18n="settings.rescanTitle">Réanalyser les fonds privés</h2>
+            <p class="muted" data-i18n="settings.rescanHint">
+              Monero et Zcash protégé sont analysés à partir de la création de ce portefeuille sur cet
+              appareil. Si des fonds plus anciens n'apparaissent pas (portefeuille venu d'une autre app),
+              relancez l'analyse depuis le début — elle peut prendre longtemps.
+            </p>
+            <p id="rescan-private-status" class="success hidden"></p>
+            <p id="rescan-private-error" class="error hidden"></p>
+            <button id="rescan-private-funds" class="secondary" data-i18n="settings.rescanButton">Réanalyser depuis le début</button>
+          </div>
+
+          <div class="settings-section">
             <h2 class="section-title" data-i18n="settings.etherscanTitle">Historique HyperEVM et BNB Chain</h2>
             <p class="muted" data-i18n="settings.etherscanHint">
               Aucun service public sans clé ne fournit l'historique de ces réseaux. Avec une clé API

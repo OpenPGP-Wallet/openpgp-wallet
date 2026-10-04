@@ -14,7 +14,7 @@
 //!   perdu — jamais utilisé pour le déverrouillage quotidien.
 
 use crate::{
-    btc_rpc, cow, dapp_requests, derivation, lifi, monero, native_deposit, zcash, zcash_shielded, entropy, eth_rpc, eth_tx, history, jupiter_rpc, memory_guard, pgp_engine, secure_storage, shamir,
+    btc_rpc, cow, dapp_requests, derivation, lifi, monero, native_deposit, wallet_birthday, zcash, zcash_shielded, entropy, eth_rpc, eth_tx, history, jupiter_rpc, memory_guard, pgp_engine, secure_storage, shamir,
     evm_sign, sol_rpc, sol_spl, sol_tx, thorchain_rpc, tokens, wallet_flow,
 };
 use anyhow::{Context, Result};
@@ -770,6 +770,9 @@ pub fn create_wallet(data_dir: &Path, device_password: &str) -> Result<CreateWal
     };
     let addresses = derive_addresses(&master_entropy, default_profile.index)?;
     save_profiles(data_dir, std::slice::from_ref(&default_profile))?;
+    // Entropie neuve : aucun fonds ne peut être plus ancien — synchronisations
+    // des cryptos privées depuis peu avant maintenant (voir `wallet_birthday`).
+    wallet_birthday::record_created(data_dir)?;
 
     // 1. Coffre local de l'appareil.
     let (device_pub, device_priv) = generate_pgp_identity("device", device_password)?;
@@ -941,6 +944,7 @@ fn restore_wallet_with(
 /// disparaîtrait pour un autre portefeuille (au pire, quelques alertes de plus
 /// si c'est le même qui revient).
 fn remove_seed_bound_state(data_dir: &Path) {
+    wallet_birthday::forget(data_dir);
     for file in ["zcash_shielded.sqlite", "zcash_shielded.sqlite-wal", "zcash_shielded.sqlite-shm", "monero_wallet.json", "sent_recipients.json"] {
         let _ = std::fs::remove_file(data_dir.join(file));
     }
@@ -2693,6 +2697,15 @@ pub fn send_xmr(data_dir: &Path, device_password: &str, plan: monero::SendPlan) 
     let seed = unlock_seed(data_dir, device_password)?;
     let _seed_lock = memory_guard::lock(&seed);
     monero::sign_and_send(data_dir, &seed, plan)
+}
+
+/// « Réanalyser depuis le début » (Paramètres) : Monero et Zcash protégé relus
+/// depuis la naissance fixe de l'app — pour des fonds plus anciens que la
+/// création du portefeuille sur cet appareil (portefeuille importé autrement).
+pub fn rescan_private_funds(data_dir: &Path) -> Result<()> {
+    wallet_birthday::forget(data_dir);
+    monero::rescan_from_birthday(data_dir)?;
+    zcash_shielded::request_rescan(data_dir)
 }
 
 /// Nœud Monero choisi dans Paramètres (`None` : nœuds publics par défaut).

@@ -16,7 +16,7 @@
 //! adresse protégée de l'app n'existait avant, donc rien ne peut être manqué, et
 //! une restauration sur un autre appareil retrouve tout sans rescanner la chaîne.
 
-use crate::{derivation, history, zcash};
+use crate::{derivation, history, wallet_birthday, zcash};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use std::path::Path;
@@ -36,6 +36,9 @@ use zcash_protocol::consensus::{BlockHeight, MainNetwork};
 /// le 03/10/2026).
 pub const BIRTHDAY_HEIGHT: u32 = 3_504_000;
 const WALLET_FILE: &str = "zcash_shielded.sqlite";
+/// Réanalyse depuis la naissance fixe demandée (traitée par la
+/// synchronisation suivante, qui tient la base).
+const RESCAN_FILE: &str = "zcash_shielded_rescan";
 /// Blocs téléchargés puis analysés par lot.
 const SYNC_BATCH: u32 = 1_000;
 
@@ -100,11 +103,20 @@ fn runtime() -> Result<tokio::runtime::Runtime> {
     tokio::runtime::Builder::new_current_thread().enable_all().build().context("démarrage du client Zcash impossible")
 }
 
-/// Naissance des comptes : état des arbres de commitments juste avant
+/// Naissance des comptes : état des arbres de commitments juste avant le
+/// premier bloc à analyser — peu avant la création du portefeuille quand elle
+/// est connue (voir `wallet_birthday`, ~75 s par bloc), sinon
 /// `BIRTHDAY_HEIGHT`.
-async fn birthday(client: &mut CompactTxStreamerClient<tonic::transport::Channel>) -> Result<AccountBirthday> {
+async fn birthday(data_dir: &Path, client: &mut CompactTxStreamerClient<tonic::transport::Channel>) -> Result<AccountBirthday> {
+    let tip = client
+        .get_latest_block(zcash_client_backend::proto::service::ChainSpec {})
+        .await
+        .map_err(|e| anyhow!("hauteur de la chaîne Zcash illisible : {}", e.message()))?
+        .into_inner()
+        .height;
+    let start = wallet_birthday::start_height(data_dir, tip, 75, u64::from(BIRTHDAY_HEIGHT));
     let state = client
-        .get_tree_state(BlockId { height: u64::from(BIRTHDAY_HEIGHT - 1), hash: vec![] })
+        .get_tree_state(BlockId { height: start - 1, hash: vec![] })
         .await
         .map_err(|e| anyhow!("état de la chaîne Zcash illisible : {}", e.message()))?
         .into_inner();
@@ -129,6 +141,15 @@ pub fn ensure_accounts(data_dir: &Path, profiles: &[ProfileKeys]) -> Result<()> 
     let addresses = profiles.iter().map(|keys| Ok((address(&keys.1)?, keys.0))).collect::<Result<_>>()?;
     *KNOWN.lock().unwrap_or_else(|p| p.into_inner()) = Some((data_dir.to_path_buf(), addresses));
     let mut db = open(data_dir)?;
+    // « Réanalyser depuis le début » : comptes supprimés puis recréés
+    // ci-dessous depuis la naissance fixe (date de création oubliée).
+    let rescan = data_dir.join(RESCAN_FILE);
+    if rescan.exists() {
+        for id in db.get_account_ids()? {
+            db.delete_account(id).map_err(|e| anyhow!("réanalyse Zcash protégée : suppression impossible ({e})"))?;
+        }
+        std::fs::remove_file(&rescan).context("réanalyse Zcash protégée : demande illisible")?;
+    }
     let mut missing = Vec::new();
     for keys in profiles {
         if find_account(&db, keys.0)?.is_none() {
@@ -138,7 +159,7 @@ pub fn ensure_accounts(data_dir: &Path, profiles: &[ProfileKeys]) -> Result<()> 
     if missing.is_empty() {
         return Ok(());
     }
-    let birthday = runtime()?.block_on(async { birthday(&mut client().await?).await })?;
+    let birthday = runtime()?.block_on(async { birthday(data_dir, &mut client().await?).await })?;
     for (profile, ufvk, t1_pubkey, seed_fp) in missing {
         let purpose = AccountPurpose::Spending { derivation: Some(Zip32Derivation::new(*seed_fp, account_index(*profile)?)) };
         let account = db
@@ -172,6 +193,12 @@ pub fn forget_other_wallets(data_dir: &Path, seed: &[u8]) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Demande une réanalyse complète (Paramètres) : à la prochaine
+/// synchronisation, comptes recréés depuis la naissance fixe.
+pub fn request_rescan(data_dir: &Path) -> Result<()> {
+    std::fs::write(data_dir.join(RESCAN_FILE), b"1").context("réanalyse Zcash protégée : demande impossible")
 }
 
 /// Synchronise tous les comptes protégés jusqu'au bout de la chaîne.
@@ -654,6 +681,29 @@ mod tests {
         let other = [8u8; 64];
         forget_other_wallets(&dir, &other).unwrap();
         assert!(find_account(&open(&dir).unwrap(), 0).unwrap().is_none(), "compte d'un autre portefeuille supprimé");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Réel : portefeuille créé à l'instant → naissance des comptes ~3 jours
+    /// avant le dernier bloc (au lieu de BIRTHDAY_HEIGHT) ; restauration →
+    /// naissance fixe. `cargo test -- --ignored real_birthday --nocapture`
+    #[test]
+    #[ignore]
+    fn real_birthday_follows_wallet_creation() {
+        let dir = std::env::temp_dir().join(format!("zec-birthday-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let fixed = runtime().unwrap().block_on(async { birthday(&dir, &mut client().await.unwrap()).await }).unwrap();
+        assert_eq!(u32::from(fixed.height()), BIRTHDAY_HEIGHT);
+        wallet_birthday::record_created(&dir).unwrap();
+        let fresh = runtime().unwrap().block_on(async { birthday(&dir, &mut client().await.unwrap()).await }).unwrap();
+        let tip = runtime().unwrap().block_on(async {
+            client().await.unwrap().get_latest_block(zcash_client_backend::proto::service::ChainSpec {}).await.unwrap().into_inner().height
+        });
+        println!("dernier bloc {tip} ; naissance fixe {} ; portefeuille neuf {}", u32::from(fixed.height()), u32::from(fresh.height()));
+        // 3 jours de marge à ~75 s par bloc, jamais avant la naissance fixe.
+        let expected = (tip - 3 * 86_400 / 75).max(u64::from(BIRTHDAY_HEIGHT));
+        assert!(u64::from(u32::from(fresh.height())).abs_diff(expected) <= 2, "attendu ~{expected}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

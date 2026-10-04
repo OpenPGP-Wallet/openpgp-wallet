@@ -329,6 +329,7 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("adresse de nœud invalide : hôte manquant", "invalid node address: missing host"),
     ("nœud distant : https:// obligatoire (http:// seulement pour un nœud local)", "remote node: https:// required (http:// only for a local node)"),
     ("enregistrement du nœud Monero impossible", "could not save the Monero node"),
+    ("réanalyse Zcash protégée : demande impossible", "shielded Zcash rescan: request failed"),
     ("suppression du nœud Monero impossible", "could not remove the Monero node"),
     ("état Monero illisible", "unreadable Monero state"),
     ("enregistrement de l'état Monero impossible", "could not save the Monero state"),
@@ -4478,6 +4479,16 @@ fn xmr_node(app: tauri::AppHandle) -> Result<Option<String>, String> {
     Ok(api::xmr_node(&data_dir(&app)?))
 }
 
+/// « Réanalyser depuis le début » (Paramètres) : Monero et Zcash protégé
+/// relus depuis la naissance fixe de l'app (fonds plus anciens que la création
+/// du portefeuille sur cet appareil).
+#[tauri::command]
+fn rescan_private_funds(app: tauri::AppHandle) -> Result<(), String> {
+    api::rescan_private_funds(&data_dir(&app)?).t_err()?;
+    XMR_SYNC_KICK.store(true, Ordering::SeqCst);
+    Ok(())
+}
+
 /// Enregistre le nœud Monero (vide : retour aux nœuds publics), utilisé dès
 /// la synchronisation suivante.
 #[tauri::command]
@@ -5152,6 +5163,7 @@ pub fn run() {
             zec_shielded_balance,
             xmr_status,
             set_xmr_sync,
+            rescan_private_funds,
             lock_session,
             xmr_node,
             set_xmr_node,

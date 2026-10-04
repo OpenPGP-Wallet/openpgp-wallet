@@ -532,7 +532,7 @@ mod tests {
         }
     }
 
-    /// Devis EthFlow réel puis \`createOrder\` SIMULÉ (eth_call, rien n'est
+    /// Devis EthFlow réel puis `createOrder` SIMULÉ (eth_call, rien n'est
     /// envoyé) depuis une adresse publique bien pourvue : le contrat accepte
     /// l'appel et calcule lui-même l'empreinte de l'ordre, identique à la nôtre.
     #[test]

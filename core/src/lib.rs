@@ -42,6 +42,7 @@ pub mod native_deposit;
 pub mod zcash;
 pub mod zcash_shielded;
 pub mod monero;
+pub mod wallet_birthday;
 #[cfg(test)]
 mod robustness_tests;
 #[cfg(windows)]
