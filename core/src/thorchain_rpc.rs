@@ -87,8 +87,11 @@ const fn erc20(coin: &'static str, network: &'static str, symbol: &'static str, 
     ThorAsset { coin, network, symbol, asset, short_code: None, decimals, contract: Some(contract) }
 }
 
-pub const ASSETS: [ThorAsset; 11] = [
+pub const ASSETS: [ThorAsset; 12] = [
     native("btc", "btc_mainnet", "BTC", "BTC.BTC", "b", 8),
+    // Dogecoin (« d », relevé sur un vrai devis le 04/10/2026 : memo
+    // `=:d:D…`) : en destination seulement (voir `swap_routes::BUY_ONLY`).
+    native("doge", "doge_mainnet", "DOGE", "DOGE.DOGE", "d", 8),
     native("evm", "evm_mainnet", "ETH", "ETH.ETH", "e", 18),
     native("evm", "base_mainnet", "ETH", "BASE.ETH", "f", 18),
     native("sol", "sol_mainnet", "SOL", "SOL.SOL", "o", 9),
@@ -214,10 +217,10 @@ fn chain_of(asset: &str) -> &str {
 }
 
 /// Chaînes de départ dont le memo voyage dans une sortie OP_RETURN, limitée
-/// à 80 octets : Bitcoin, et Zcash sur Maya (relevé le 03/10/2026 : memo de
-/// 102 octets avec l'affilié `maya1…` complet, refusé).
+/// à 80 octets : Bitcoin, Dogecoin, et Zcash sur Maya (relevé le 03/10/2026 :
+/// memo de 102 octets avec l'affilié `maya1…` complet, refusé).
 fn memo_in_op_return(asset: &str) -> bool {
-    matches!(chain_of(asset), "BTC" | "ZEC")
+    matches!(chain_of(asset), "BTC" | "ZEC" | "DOGE")
 }
 
 /// Nom du réseau d'une chaîne, pour les messages.
@@ -231,6 +234,7 @@ fn chain_label(chain: &str) -> &str {
         "AVAX" => "Avalanche",
         "BSC" => "BNB Chain",
         "ZEC" => "Zcash",
+        "DOGE" => "Dogecoin",
         other => other,
     }
 }
@@ -1038,6 +1042,25 @@ mod tests {
             println!("{from} -> {to} : {} (routeur {:?})", quote.memo, quote.router);
             assert!(quote.router.is_some());
             MAYA.verify_swap_memo(&quote.memo, to, dest, quote.expected_amount_out).unwrap_or_else(|e| panic!("memo {from} -> {to} : {e:#}"));
+        }
+    }
+
+    /// Devis RÉELS sur THORChain vers Dogecoin (lecture seule) : memo vérifié
+    /// (code court « d », adresse D… exacte, minimum de sortie).
+    /// `cargo test -- --ignored thorchain_quotes_to_dogecoin --nocapture`
+    #[test]
+    #[ignore]
+    fn thorchain_quotes_to_dogecoin() {
+        let doge = crate::doge::p2pkh_address(&[0x11; 20]);
+        for (from, amount) in [("ETH.ETH", 10_000_000u64), ("BTC.BTC", 1_000_000), ("BSC.BNB", 10_000_000)] {
+            let quote = THORCHAIN.quote_swap(from, "DOGE.DOGE", amount, &doge).unwrap_or_else(|e| panic!("{from} -> DOGE : {e:#}"));
+            println!("{from} -> DOGE : {} ({} DOGE attendus)", quote.memo, quote.expected_amount_out as f64 / 1e8);
+            assert!(quote.memo.contains(&format!(":d:{doge}")), "{}", quote.memo);
+            // Même vérification que l'app : affilié du devis (aucun depuis Bitcoin).
+            THORCHAIN.verify_memo(&quote.memo, quote.affiliate.as_deref(), "DOGE.DOGE", &doge, quote.expected_amount_out).unwrap_or_else(|e| panic!("memo {from} -> DOGE : {e:#}"));
+            // Une autre adresse Dogecoin dans le memo : refusée.
+            let other = crate::doge::p2pkh_address(&[0x22; 20]);
+            assert!(THORCHAIN.verify_memo(&quote.memo, quote.affiliate.as_deref(), "DOGE.DOGE", &other, quote.expected_amount_out).is_err());
         }
     }
 

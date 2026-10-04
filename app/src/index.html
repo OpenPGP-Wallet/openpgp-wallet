@@ -1054,6 +1054,18 @@
         <div id="shielded-send-fields">
           <label for="shielded-to" data-i18n="send.toAddress">Adresse destinataire</label>
           <input id="shielded-to" type="text" spellcheck="false" autocomplete="off" />
+          <div id="shielded-picker" class="hidden">
+            <div class="custom-select dropdown">
+              <select id="shielded-picker-select">
+                <option value="" data-i18n="shielded.pickProfile">— Vers un autre de vos profils —</option>
+              </select>
+              <button type="button" class="custom-select-trigger">
+                <span class="custom-select-label"></span>
+                <span class="select-arrow"></span>
+              </button>
+              <ul class="custom-select-options"></ul>
+            </div>
+          </div>
           <div class="label-row">
             <label for="shielded-amount" data-i18n="send.amount">Montant</label>
             <button id="shielded-max" type="button" class="secondary max-btn" data-i18n="send.percentMax">Max</button>

@@ -54,8 +54,13 @@ const JUPITER: [SwapAsset; 5] = [
 /// `protocol` relie-t-il `from` à `to` ? Depuis Bitcoin ou Zcash aussi :
 /// sans nom court d'affiliation, sans frais pour l'app (voir
 /// `thorchain_rpc::CrossChain::charges_affiliate`).
+/// Réseaux reçus par échange mais pas encore vendus : l'app ne construit pas
+/// encore le dépôt depuis ce réseau (Dogecoin : memo en sortie OP_RETURN). Ils
+/// ne servent pas non plus d'intermédiaire.
+const BUY_ONLY: [&str; 1] = ["doge_mainnet"];
+
 fn links(protocol: &thorchain_rpc::CrossChain, from: SwapAsset, to: SwapAsset) -> bool {
-    protocol.asset(from.coin, from.network).is_some() && protocol.asset(to.coin, to.network).is_some()
+    !BUY_ONLY.contains(&from.network) && protocol.asset(from.coin, from.network).is_some() && protocol.asset(to.coin, to.network).is_some()
 }
 
 /// Frais d'affiliation de l'app (points de base) d'un échange depuis `from`
@@ -325,6 +330,21 @@ mod tests {
     /// ZEC via Maya, dans les deux sens ; depuis ZEC sans frais pour l'app
     /// (pas de MAYAName) ; vers une crypto que Maya n'a pas, en deux étapes
     /// par une monnaie de réseau rapide (ETH), jamais par Bitcoin.
+    #[test]
+    fn doge_is_bought_through_thorchain_but_not_sold_yet() {
+        let doge = a("doge", "doge_mainnet");
+        let eth = a("evm", "evm_mainnet");
+        assert_eq!(direct(eth, doge), Some(Protocol::Thorchain));
+        assert_eq!(direct(a("btc", "btc_mainnet"), doge), Some(Protocol::Thorchain));
+        assert!(direct_all(doge, eth).is_empty(), "départ DOGE pas encore construit");
+        for to in assets().into_iter().filter(|t| *t != doge) {
+            assert!(route(doge, to).is_none(), "route depuis DOGE : {to:?}");
+            if let Some(route) = route(to, doge) {
+                assert!(route.via.is_none_or(|(via, _)| via.network != "doge_mainnet"));
+            }
+        }
+    }
+
     #[test]
     fn zec_swaps_both_ways_through_maya() {
         let zec = a("zec", "zec_mainnet");

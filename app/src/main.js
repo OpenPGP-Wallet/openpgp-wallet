@@ -585,6 +585,7 @@ const I18N = {
     "send.pickPlaceholder": "— Carnet d'adresses ou autre profil —",
     "send.pickBook": "Carnet d'adresses",
     "send.pickProfiles": "Mes profils",
+    "shielded.pickProfile": "— Vers un autre de vos profils —",
     "nav.walletconnect": "WalletConnect",
     "wc.title": "Applications connectées (WalletConnect)",
     "wc.subtitle": "Connectez ce portefeuille à un site (dApp) : sur le site, choisissez WalletConnect, copiez le lien de connexion (« wc:… ») et collez-le ici. Chaque signature demandée par un site exigera votre mot de passe et une confirmation de Windows.",
@@ -1174,6 +1175,7 @@ const I18N = {
     "send.pickPlaceholder": "— Address book or another profile —",
     "send.pickBook": "Address book",
     "send.pickProfiles": "My profiles",
+    "shielded.pickProfile": "— To another of your profiles —",
     "nav.walletconnect": "WalletConnect",
     "wc.title": "Connected apps (WalletConnect)",
     "wc.subtitle": "Connect this wallet to a site (dApp): on the site, choose WalletConnect, copy the connection link (\"wc:…\") and paste it here. Every signature a site asks for will require your password and a Windows confirmation.",
@@ -3917,6 +3919,38 @@ function refreshZcashCards() {
 // Rust à partir de la transaction proposée, montre montant et frais.
 let shieldedMode = "send";
 
+// Autres profils proposés comme destinataires (leur adresse protégée u1),
+// comme sous le carnet d'adresses de l'envoi ordinaire ; la boîte native nomme
+// le profil reconnu d'après les adresses dérivées côté Rust.
+function refreshShieldedPicker() {
+  const wrapper = document.getElementById("shielded-picker");
+  const select = document.getElementById("shielded-picker-select");
+  const profiles = profilesCache
+    .filter((profile) => profile.index !== currentProfileIndex)
+    .map((profile) => ({ profile, address: addressOfProfile(profile, "zecs", "zec_shielded") }))
+    .filter(({ address }) => address);
+  select.replaceChildren(Object.assign(document.createElement("option"), { value: "", textContent: t("shielded.pickProfile") }));
+  if (profiles.length) {
+    const optgroup = Object.assign(document.createElement("optgroup"), { label: t("send.pickProfiles") });
+    optgroup.append(
+      ...profiles.map(({ profile, address }) =>
+        Object.assign(document.createElement("option"), { value: String(profile.index), textContent: `${profile.label} — ${address.slice(0, 10)}…${address.slice(-8)}` })
+      )
+    );
+    select.appendChild(optgroup);
+  }
+  syncCustomSelect(select);
+  wrapper.classList.toggle("hidden", profiles.length === 0);
+}
+
+document.getElementById("shielded-picker-select").addEventListener("change", (e) => {
+  const profile = profilesCache.find((p) => String(p.index) === e.target.value);
+  const address = addressOfProfile(profile, "zecs", "zec_shielded");
+  if (address) document.getElementById("shielded-to").value = address;
+  e.target.value = "";
+  syncCustomSelect(e.target);
+});
+
 function openShieldedModal(mode) {
   shieldedMode = mode;
   const title = document.getElementById("shielded-modal-title");
@@ -3926,6 +3960,7 @@ function openShieldedModal(mode) {
   document.getElementById("shielded-send-fields").classList.toggle("hidden", mode === "shield");
   for (const id of ["shielded-to", "shielded-amount", "shielded-password"]) document.getElementById(id).value = "";
   shieldedMax = false;
+  if (mode === "send") refreshShieldedPicker();
   hideError(document.getElementById("shielded-error"));
   document.getElementById("shielded-success").classList.add("hidden");
   document.getElementById("shielded-modal").classList.remove("hidden");

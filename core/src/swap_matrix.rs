@@ -63,11 +63,17 @@ fn zec_dest() -> String {
     zcash::p2pkh_address(&hash160)
 }
 
+fn doge_dest() -> String {
+    let (_, hash160) = derivation::derive_doge_key(&[3u8; 64], 0).unwrap();
+    crate::doge::p2pkh_address(&hash160)
+}
+
 fn destination(network: &str) -> String {
     match network {
         "btc_mainnet" => BTC_DEST.to_string(),
         "sol_mainnet" => SOL_FUNDED.to_string(),
         "zec_mainnet" => zec_dest(),
+        "doge_mainnet" => doge_dest(),
         _ => EVM_DEST.to_string(),
     }
 }
@@ -83,6 +89,7 @@ fn gecko(coin: &str) -> &'static str {
         "pol" => "polygon-ecosystem-token",
         "hype" => "hyperliquid",
         "zec" => "zcash",
+        "doge" => "dogecoin",
         "usdt" => "tether",
         "link" => "chainlink",
         "dai" => "dai",
@@ -122,7 +129,7 @@ fn decimals(asset: SwapAsset) -> u8 {
         return deployment.decimals;
     }
     match asset.network {
-        "btc_mainnet" | "zec_mainnet" => 8,
+        "btc_mainnet" | "zec_mainnet" | "doge_mainnet" => 8,
         "sol_mainnet" => 9,
         _ => 18,
     }

@@ -173,6 +173,7 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("aucun serveur Zcash joignable", "no Zcash server reachable"),
     // Délai d'annulation et bouton « Max »
     ("Virement annulé pendant le délai d'annulation.", "Transfer cancelled during the cancellation delay."),
+    ("Échange annulé pendant le délai d'annulation.", "Swap cancelled during the cancellation delay."),
     ("ZEC insuffisants pour couvrir les frais du réseau", "not enough ZEC to cover the network fee"),
     ("ZEC protégés insuffisants pour couvrir les frais du réseau", "not enough shielded ZEC to cover the network fee"),
     ("DOGE insuffisants pour couvrir les frais du réseau", "not enough DOGE to cover the network fee"),
@@ -2838,6 +2839,15 @@ struct SendCountdownDto {
 /// Attend la fin du délai d'annulation (ou la décision de l'utilisateur).
 /// `Err` si l'envoi est annulé.
 fn send_grace_period(app: &tauri::AppHandle) -> Result<(), String> {
+    grace_period(app, "Virement annulé pendant le délai d'annulation.")
+}
+
+/// Même délai pour un échange, après sa boîte de confirmation.
+fn swap_grace_period(app: &tauri::AppHandle) -> Result<(), String> {
+    grace_period(app, "Échange annulé pendant le délai d'annulation.")
+}
+
+fn grace_period(app: &tauri::AppHandle, cancelled: &str) -> Result<(), String> {
     static NEXT_ID: AtomicU64 = AtomicU64::new(1);
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let (sender, receiver) = std::sync::mpsc::channel();
@@ -2847,7 +2857,7 @@ fn send_grace_period(app: &tauri::AppHandle) -> Result<(), String> {
     app.state::<SendGrace>().0.lock().unwrap_or_else(|p| p.into_inner()).remove(&id);
     let _ = app.emit("send-countdown-end", id);
     match decision {
-        Ok(false) => Err(translate_error("Virement annulé pendant le délai d'annulation.")),
+        Ok(false) => Err(translate_error(cancelled)),
         // Délai écoulé, ou « Envoyer maintenant ».
         _ => Ok(()),
     }
@@ -3508,6 +3518,7 @@ fn confirm_swap_native(
     network_fee_line: Option<&str>,
     approval_line: Option<&str>,
     affiliate: bool,
+    own_destination: Option<&str>,
 ) -> bool {
     let network_fee_line = network_fee_line.map(|f| format!("{f}\n")).unwrap_or_default();
     // Depuis Bitcoin ou Zcash sans nom court : aucun frais pour l'app (voir
@@ -3523,8 +3534,16 @@ fn confirm_swap_native(
         (None, true) => format!("Actual destination: {pay_to}\n"),
         (None, false) => format!("Destination réelle : {pay_to}\n"),
     };
+    // Adresse d'un profil de ce portefeuille (adresses dérivées côté Rust) :
+    // nommé, à la place de « vérifiez qu'il s'agit bien de votre adresse ».
     let arrival_line = if final_destination.is_empty() {
         String::new()
+    } else if let Some(label) = own_destination {
+        if english {
+            format!("Funds will arrive at: {final_destination}\n(your profile \"{label}\" — an address of this wallet)\n")
+        } else {
+            format!("Les fonds arriveront sur : {final_destination}\n(votre profil « {label} » — adresse de ce portefeuille)\n")
+        }
     } else if english {
         format!("Funds will arrive at: {final_destination}\n(verify this is really your own address)\n")
     } else {
@@ -3631,6 +3650,7 @@ async fn swap_transaction(
         };
 
         let router_for_source = if evm_net.is_some() { quote.router.as_deref() } else { None };
+        let own_destination = own_profile_label(&app, &dir, to.network, &destination);
         if !confirm_swap_native(
             &app,
             protocol.name,
@@ -3644,9 +3664,11 @@ async fn swap_transaction(
             network_fee_line.as_deref(),
             approval_line.as_deref(),
             quote.affiliate.is_some(),
+            own_destination.as_deref(),
         ) {
             return Err(translate_error("Échange annulé (confirmation refusée)."));
         }
+        swap_grace_period(&app)?;
 
         // Devis RE-lu après la confirmation (la boîte native bloque un temps
         // arbitraire, pendant lequel le vault peut tourner), mais refusé s'il ne
@@ -3771,6 +3793,7 @@ async fn jupiter_swap_transaction(
         if !confirm_jupiter_swap_native(&app, &from_label, &amount_line, &expected_out, api::jupiter_symbol(&to_coin).t_err()?, quote.fee_mint.is_some()) {
             return Err(translate_error("Échange annulé (confirmation refusée)."));
         }
+        swap_grace_period(&app)?;
 
         // `out_amount` = la sortie AFFICHÉE ci-dessus : la transaction réellement
         // signée devra la livrer (au glissement près), vérifié par simulation.
@@ -3972,6 +3995,7 @@ async fn cow_swap_transaction(
         ) {
             return Err(translate_error("Échange annulé (confirmation refusée)."));
         }
+        swap_grace_period(&app)?;
 
         // Monnaie du réseau : transaction EthFlow ; jeton : ordre signé.
         let uid = if sell.native {
@@ -4217,6 +4241,7 @@ async fn lifi_swap_transaction(
         ) {
             return Err(translate_error("Échange annulé (confirmation refusée)."));
         }
+        swap_grace_period(&app)?;
 
         // Nouveau devis sur le même pont (la transaction d'un pont expire
         // vite), refusé s'il ne correspond plus à ce qui a été affiché.
@@ -5414,6 +5439,13 @@ async fn wc_approve_request(request_id: u64, password: String, app: tauri::AppHa
         let account = if request.chain.starts_with("solana:") { session.solana_address.clone() } else { session.evm_address.clone() };
         let (text, danger) = describe_prepared(&prepared, &session.peer, &label, &account);
         if !confirm_dapp_request_native(&app, &text, danger) {
+            let _ = client.respond(request_id, Err((5000, "User rejected.".to_string())));
+            return Ok(false);
+        }
+        // Transaction (fonds qui partent) : même délai d'annulation qu'un envoi ;
+        // annulée, elle est refusée à la dApp.
+        let moves_funds = matches!(prepared, dapp_requests::Prepared::EvmTransaction { .. } | dapp_requests::Prepared::SolanaTransaction { .. });
+        if moves_funds && send_grace_period(&app).is_err() {
             let _ = client.respond(request_id, Err((5000, "User rejected.".to_string())));
             return Ok(false);
         }
