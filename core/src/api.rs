@@ -1579,6 +1579,32 @@ pub fn evm_l1_fee(network: &wallet_flow::EvmNetwork, to: &[u8; 20], value: u128,
 /// Frais d'un virement natif de `amount` (texte, 18 décimales) vers `to` : voir
 /// `evm_fee_for_confirmation`. `from` : adresse d'envoi, nécessaire seulement
 /// là où la limite de gas est estimée (Arbitrum).
+/// Solde suffisant pour un virement EVM (montant + frais maximum affichés),
+/// vérifié AVANT la boîte de confirmation — jusqu'ici seulement après :
+/// l'utilisateur confirmait un envoi refusé juste ensuite, avec un message en
+/// wei. Montants dans l'unité du réseau (ETH, BNB…).
+pub fn ensure_evm_transfer_funds(network: &wallet_flow::EvmNetwork, from: &str, amount: &str, fee: EvmFee) -> Result<()> {
+    let value = wallet_flow::parse_eth_to_wei(amount)?;
+    let gas = fee.max_total()?;
+    let needed = value.checked_add(gas).context("montant + frais dépasse la capacité représentable")?;
+    let balance = get_evm_balance(from, network)?;
+    let unit = |wei: u128| format!("{} {}", tokens::format_amount(wei, 18), network.native_symbol);
+    anyhow::ensure!(needed <= balance, "fonds insuffisants : {} disponibles, {} + {} de frais requis", unit(balance), unit(value), unit(gas));
+    Ok(())
+}
+
+/// Même vérification pour un virement SOL (montant + frais de base), avant la
+/// boîte de confirmation.
+pub fn ensure_sol_transfer_funds(network: &wallet_flow::SolNetwork, from: &str, amount: &str) -> Result<()> {
+    const SOL_FEE_LAMPORTS: u64 = 5_000;
+    let lamports = wallet_flow::parse_sol_to_lamports(amount)?;
+    let needed = lamports.checked_add(SOL_FEE_LAMPORTS).context("montant + frais dépasse la capacité représentable")?;
+    let balance = get_sol_balance(from, network)?;
+    let unit = |l: u64| format!("{} SOL", tokens::format_amount(u128::from(l), 9));
+    anyhow::ensure!(needed <= balance, "fonds insuffisants : {} disponibles, {} + {} de frais requis", unit(balance), unit(lamports), unit(SOL_FEE_LAMPORTS));
+    Ok(())
+}
+
 pub fn evm_transfer_fee_for_confirmation(network: &wallet_flow::EvmNetwork, from: Option<&str>, to: &str, amount: &str) -> Result<EvmFee> {
     let to = wallet_flow::parse_evm_address(to)?;
     let value = wallet_flow::parse_eth_to_wei(amount)?;

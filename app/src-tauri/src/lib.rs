@@ -2628,7 +2628,8 @@ async fn send_transaction(
             .map(|(evm, _)| evm.clone());
         let from_zec = app.state::<ProfileZcashCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).cloned();
         let from_xmr = app.state::<MoneroKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).map(|(_, keys)| keys.clone());
-        let mut send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &from_label, None, from_evm.as_deref(), from_zec.as_deref(), from_xmr.as_ref())?;
+        let from_sol = app.state::<ProfileAddressCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).map(|(_, sol)| sol.clone());
+        let mut send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &from_label, None, from_evm.as_deref(), from_sol.as_deref(), from_zec.as_deref(), from_xmr.as_ref())?;
 
         let result = match network.as_str() {
             n if is_evm(n) => {
@@ -2708,6 +2709,7 @@ fn confirm_send(
     from_label: &str,
     device_note: Option<&str>,
     from_evm: Option<&str>,
+    from_sol: Option<&str>,
     from_zec: Option<&str>,
     from_xmr: Option<&pgp_wallet_poc::monero::ViewKeys>,
 ) -> Result<ConfirmedSend, String> {
@@ -2742,6 +2744,13 @@ fn confirm_send(
         "evm" => Some(api::evm_transfer_fee_for_confirmation(evm_network(network)?, from_evm, &to, &amount).t_err()?),
         _ => None,
     };
+    // Solde suffisant (montant + frais) vérifié AVANT la boîte : jamais
+    // confirmer un envoi refusé juste après.
+    match (coin, evm_fee, from_evm, from_sol) {
+        ("evm", Some(fee), Some(from), _) => api::ensure_evm_transfer_funds(evm_network(network)?, from, &amount, fee).t_err()?,
+        ("sol", _, _, Some(from)) => api::ensure_sol_transfer_funds(sol_network(network)?, from, &amount).t_err()?,
+        _ => {}
+    }
     // Zcash : destinataire vérifié, sorties choisies et frais ZIP-317
     // calculés MAINTENANT, affichés, puis jamais dépassés à l'envoi.
     let zec_plan = match coin {
@@ -2928,7 +2937,7 @@ async fn hardware_send(id: u32, to: String, amount: String, fee_sat: Option<u64>
         } else {
             format!("Signature sur le {device} : vérifiez sur SON écran que le destinataire et le montant sont identiques, puis confirmez-y.")
         };
-        let send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &format!("{device} — {}", account.label), Some(&note), Some(&account.address), None, None)?;
+        let send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &format!("{device} — {}", account.label), Some(&note), Some(&account.address), Some(&account.address), None, None)?;
         let result = match network.as_str() {
             n if is_evm(n) => {
                 let fee = send.evm_fee.ok_or_else(|| "frais EVM manquants".to_string())?;
