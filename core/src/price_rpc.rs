@@ -146,6 +146,7 @@ pub const MARKET_IDS: &[&str] = &[
     "hyperliquid",
     "zcash",
     "monero",
+    "dogecoin",
     // Jetons (core/src/tokens.rs).
     "tether",
     "chainlink",

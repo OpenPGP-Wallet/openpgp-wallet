@@ -171,6 +171,28 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("adresse Zcash d'un autre réseau (test) — refusée", "Zcash address from another network (test) — refused"),
     ("envoi vers votre propre adresse Zcash", "sending to your own Zcash address"),
     ("aucun serveur Zcash joignable", "no Zcash server reachable"),
+    // Dogecoin (core/src/doge.rs, core/src/api.rs)
+    ("service Dogecoin injoignable", "Dogecoin service unreachable"),
+    ("réponse du service Dogecoin illisible", "unreadable Dogecoin service response"),
+    ("adresse Dogecoin invalide", "invalid Dogecoin address"),
+    ("adresse Dogecoin invalide (somme de contrôle)", "invalid Dogecoin address (checksum)"),
+    ("adresse Dogecoin invalide (autre réseau ou autre crypto)", "invalid Dogecoin address (another network or another crypto)"),
+    ("adresse Dogecoin du profil invalide", "invalid Dogecoin address for this profile"),
+    ("envoi vers votre propre adresse Dogecoin", "sending to your own Dogecoin address"),
+    ("montant trop petit : 0,01 DOGE au moins", "amount too small: at least 0.01 DOGE"),
+    ("transaction Dogecoin tronquée", "truncated Dogecoin transaction"),
+    ("transaction Dogecoin invalide", "invalid Dogecoin transaction"),
+    ("transaction Dogecoin invalide (octets en trop)", "invalid Dogecoin transaction (trailing bytes)"),
+    ("transaction Dogecoin illisible", "unreadable Dogecoin transaction"),
+    ("transaction Dogecoin introuvable", "Dogecoin transaction not found"),
+    ("identifiant de transaction Dogecoin invalide", "invalid Dogecoin transaction id"),
+    (
+        "transaction d'origine falsifiée (hash différent de son identifiant) — envoi refusé",
+        "falsified source transaction (hash different from its id) — transfer refused",
+    ),
+    ("sortie Dogecoin introuvable dans sa transaction d'origine", "Dogecoin output not found in its source transaction"),
+    ("sortie Dogecoin qui n'appartient pas à votre adresse — envoi refusé", "Dogecoin output that does not belong to your address — transfer refused"),
+    ("montant d'une sortie Dogecoin annoncé faux par le service — envoi refusé", "Dogecoin output amount misreported by the service — transfer refused"),
     // LI.FI (core/src/lifi.rs, core/src/api.rs)
     (
         "limite de devis LI.FI atteinte (75 toutes les 2 heures sans compte) — réessayez plus tard",
@@ -587,6 +609,21 @@ fn translate_dynamic_error(msg: &str) -> Option<String> {
     if let Some(rest) = msg.strip_prefix("ZEC insuffisants : ") {
         return Some(format!("insufficient ZEC: {rest}"));
     }
+    if let Some(rest) = msg.strip_prefix("DOGE insuffisants : ") {
+        return Some(format!(
+            "insufficient DOGE: {}",
+            rest.replace(" demandés + frais, ", " requested + fees, ").replace(" disponibles (confirmés)", " available (confirmed)")
+        ));
+    }
+    if let Some(rest) = msg.strip_prefix("transaction Dogecoin refusée : ") {
+        return Some(format!("Dogecoin transaction refused: {rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("service Dogecoin : réponse ") {
+        return Some(format!("Dogecoin service: response {rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("signature Dogecoin impossible (") {
+        return Some(format!("Dogecoin signature failed ({rest}"));
+    }
     if let Some((name, rest)) = msg.split_once(" a suspendu les échanges") {
         if let Some(place) = rest.strip_suffix(" pour le moment (incident ou maintenance de son côté) — réessayez plus tard ou choisissez un autre fournisseur") {
             let place = place.strip_prefix(" sur ").map(|p| format!(" on {}", p.replace(" et ", " and "))).unwrap_or_default();
@@ -649,6 +686,9 @@ fn translate_dynamic_error(msg: &str) -> Option<String> {
         .and_then(|rest| rest.strip_suffix(") — relancez l'échange").or_else(|| rest.strip_suffix(") — relancez l'envoi")))
     {
         return Some(format!("Zcash fees increased since the confirmation ({}) — start again", detail.replace(" au lieu de ", " instead of ")));
+    }
+    if let Some(detail) = msg.strip_prefix("les frais Dogecoin ont augmenté depuis la confirmation (").and_then(|rest| rest.strip_suffix(") — relancez l'envoi")) {
+        return Some(format!("Dogecoin fees increased since the confirmation ({}) — start again", detail.replace(" au lieu de ", " instead of ")));
     }
     if let Some(rest) = msg.strip_prefix("solde insuffisant sur l'adresse d'affiliation ") {
         return Some(format!(
@@ -952,6 +992,7 @@ struct AddressesDto {
     zcash: String,
     zcash_shielded: String,
     monero: String,
+    doge: String,
 }
 
 impl From<api::Addresses> for AddressesDto {
@@ -964,6 +1005,7 @@ impl From<api::Addresses> for AddressesDto {
             zcash: a.zcash,
             zcash_shielded: a.zcash_shielded,
             monero: a.monero,
+            doge: a.doge,
         }
     }
 }
@@ -1071,13 +1113,14 @@ fn save_bytes_with_dialog(suggested_name: String, content_b64: String, app: taur
 /// aurait laissé un frontend compromis ouvrir n'importe quelle page — un vecteur
 /// de phishing simple, ouvert sans aucun bénéfice fonctionnel puisqu'aucun appel
 /// légitime de cette commande ne cible jamais autre chose que ces domaines.
-const ALLOWED_EXTERNAL_LINK_PREFIXES: [&str; 6] = [
+const ALLOWED_EXTERNAL_LINK_PREFIXES: [&str; 7] = [
     "https://explorer.solana.com/",
     "https://blockstream.info/",
     "https://explorer.cow.fi/",
     "https://scan.li.fi/",
     "https://blockchair.com/zcash/",
     "https://xmrchain.net/",
+    "https://blockchair.com/dogecoin/",
 ];
 
 /// Lien vers un explorateur connu de l'app : Solana, Bitcoin, ou l'explorateur
@@ -1777,6 +1820,7 @@ fn forget_session(app: &tauri::AppHandle) {
     app.state::<ProfileAddressCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<ProfileZcashCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<ProfileBtcCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    app.state::<ProfileDogeCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<ShieldedKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<MoneroKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     IS_AFFILIATE_WALLET.store(false, Ordering::Relaxed);
@@ -1830,6 +1874,7 @@ async fn get_balance(network: String, address: String, app: tauri::AppHandle) ->
                 Ok(format!("{:.9}", lamports as f64 / 1e9))
             }
             "zec_mainnet" => Ok(pgp_wallet_poc::zcash::format_zec(api::get_zec_balance(&address).t_err()?)),
+            "doge_mainnet" => Ok(pgp_wallet_poc::doge::format_doge(api::get_doge_balance(&address).t_err()?)),
             // Base locale (synchronisation de fond) : dépensable + en attente.
             "zec_shielded" => {
                 let balance = api::zec_shielded_balance(&data_dir(&app)?, shielded_profile(&app, &address)?).t_err()?;
@@ -1957,6 +2002,7 @@ async fn has_pending_tx(network: String, address: String, app: tauri::AppHandle)
             // Pas de lecture de la réserve de transactions : un envoi apparaît
             // à sa confirmation (~75 s).
             "zec_mainnet" | "zec_shielded" => Ok(false),
+            "doge_mainnet" => api::has_pending_doge(&address).t_err(),
             "xmr_mainnet" => api::has_pending_xmr(&data_dir(&app)?, monero_profile(&app, &address)?).t_err(),
             other => Err(translate_error(&format!("réseau inconnu : {other}"))),
         }
@@ -2135,6 +2181,12 @@ async fn get_tx_history(network: String, address: String, app: tauri::AppHandle)
             Some(price_history::Asset::Pair("ZECUSDT")),
             8,
             |id| format!("https://blockchair.com/zcash/transaction/{id}"),
+        )),
+        "doge_mainnet" => HistoryDto::read(history_dtos(
+            || pgp_wallet_poc::doge::history(&address, HISTORY_LIMIT as usize),
+            Some(price_history::Asset::Pair("DOGEUSDT")),
+            8,
+            |id| format!("https://blockchair.com/dogecoin/transaction/{id}"),
         )),
         "sol_devnet" | "sol_mainnet" => {
             let net = sol_network(&network)?;
@@ -2406,6 +2458,7 @@ fn network_label(network: &str) -> String {
         "sol_devnet" => lang("Solana devnet", "Solana devnet").to_string(),
         "sol_mainnet" => lang("Solana MAINNET — fonds réels", "Solana MAINNET — real funds").to_string(),
         "zec_mainnet" => lang("Zcash MAINNET — fonds réels", "Zcash MAINNET — real funds").to_string(),
+        "doge_mainnet" => lang("Dogecoin MAINNET — fonds réels", "Dogecoin MAINNET — real funds").to_string(),
         "xmr_mainnet" => lang("Monero MAINNET — fonds réels", "Monero MAINNET — real funds").to_string(),
         "zec_shielded" => lang("Zcash MAINNET — fonds protégés", "Zcash MAINNET — shielded funds").to_string(),
         other => match wallet_flow::evm_network(other) {
@@ -2424,6 +2477,7 @@ fn network_unit(network: &str) -> &'static str {
         "sol_devnet" | "sol_mainnet" => "SOL",
         "zec_mainnet" | "zec_shielded" => "ZEC",
         "xmr_mainnet" => "XMR",
+        "doge_mainnet" => "DOGE",
         other => wallet_flow::evm_network(other).map(|n| n.native_symbol).unwrap_or(""),
     }
 }
@@ -2536,6 +2590,7 @@ fn recipient_warning_lines(first_send: bool, coin: &str, activity: Option<api::R
         "btc" => ("aucun BTC", "no BTC"),
         "usdc" => ("ni SOL ni USDC", "neither SOL nor USDC"),
         "zec" => ("aucun ZEC", "no ZEC"),
+        "doge" => ("aucun DOGE", "no DOGE"),
         "sol" => ("aucun SOL", "no SOL"),
         _ => ("aucun fonds", "no funds"),
     };
@@ -2631,7 +2686,15 @@ async fn send_transaction(
         let from_zec = app.state::<ProfileZcashCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).cloned();
         let from_xmr = app.state::<MoneroKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).map(|(_, keys)| keys.clone());
         let from_sol = app.state::<ProfileAddressCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).map(|(_, sol)| sol.clone());
-        let mut send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &from_label, None, from_evm.as_deref(), from_sol.as_deref(), from_zec.as_deref(), from_xmr.as_ref())?;
+        let from_doge = app.state::<ProfileDogeCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).cloned();
+        let from = SendFrom {
+            evm: from_evm.as_deref(),
+            sol: from_sol.as_deref(),
+            zec: from_zec.as_deref(),
+            xmr: from_xmr.as_ref(),
+            doge: from_doge.as_deref(),
+        };
+        let mut send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &from_label, None, from)?;
 
         let result = match network.as_str() {
             n if is_evm(n) => {
@@ -2651,6 +2714,10 @@ async fn send_transaction(
             "zec_mainnet" => {
                 let shown_fee = send.zec_fee.ok_or_else(|| "frais Zcash manquants".to_string())?;
                 api::send_zec(&dir, &password, &send.to, &send.amount, shown_fee, profile_index).t_err()
+            }
+            "doge_mainnet" => {
+                let shown_fee = send.doge_fee.ok_or_else(|| "frais Dogecoin manquants".to_string())?;
+                api::send_doge(&dir, &password, &send.to, &send.amount, shown_fee, profile_index).t_err()
             }
             // Exactement l'envoi préparé et affiché (sorties, leurres, frais).
             "xmr_mainnet" => match send.xmr_plan.take() {
@@ -2695,6 +2762,19 @@ struct ConfirmedSend {
     zec_fee: Option<u64>,
     /// Envoi Monero préparé (sorties, leurres, frais) : signé tel qu'affiché.
     xmr_plan: Option<pgp_wallet_poc::monero::SendPlan>,
+    /// Frais Dogecoin affichés (plafond à l'envoi).
+    doge_fee: Option<u64>,
+}
+
+/// Adresses (et clés de visualisation Monero) du compte qui envoie, connues
+/// sans mot de passe : préparation de l'envoi AVANT la boîte de confirmation.
+#[derive(Default)]
+struct SendFrom<'a> {
+    evm: Option<&'a str>,
+    sol: Option<&'a str>,
+    zec: Option<&'a str>,
+    xmr: Option<&'a pgp_wallet_poc::monero::ViewKeys>,
+    doge: Option<&'a str>,
 }
 
 /// Validation, avertissements et boîte de confirmation native, communs aux
@@ -2710,10 +2790,7 @@ fn confirm_send(
     fee_sat: Option<u64>,
     from_label: &str,
     device_note: Option<&str>,
-    from_evm: Option<&str>,
-    from_sol: Option<&str>,
-    from_zec: Option<&str>,
-    from_xmr: Option<&pgp_wallet_poc::monero::ViewKeys>,
+    from: SendFrom<'_>,
 ) -> Result<ConfirmedSend, String> {
     // Réseau validé AVANT la boîte de confirmation (22ᵉ passage) : un réseau
     // inconnu était jusqu'ici affiché tel quel (texte libre du frontend) dans
@@ -2726,11 +2803,13 @@ fn confirm_send(
         "sol_devnet" | "sol_mainnet" => "sol",
         "zec_mainnet" => "zec",
         "xmr_mainnet" => "xmr",
+        "doge_mainnet" => "doge",
         other => return Err(translate_error(&format!("réseau inconnu : {other}"))),
     };
     let to = canonical_address_input(to)?;
     let amount = match coin {
         "zec" => api::canonical_zec_amount(amount).t_err()?,
+        "doge" => api::canonical_doge_amount(amount).t_err()?,
         "xmr" => api::canonical_xmr_amount(amount).t_err()?,
         _ => api::canonical_amount(coin, amount).t_err()?,
     };
@@ -2743,12 +2822,12 @@ fn confirm_send(
     // Frais EVM complets (prix, limite de gas — estimée là où elle n'est pas
     // fixe —, frais de publication OP Stack), affichés puis signés tels quels.
     let evm_fee = match coin {
-        "evm" => Some(api::evm_transfer_fee_for_confirmation(evm_network(network)?, from_evm, &to, &amount).t_err()?),
+        "evm" => Some(api::evm_transfer_fee_for_confirmation(evm_network(network)?, from.evm, &to, &amount).t_err()?),
         _ => None,
     };
     // Solde suffisant (montant + frais) vérifié AVANT la boîte : jamais
     // confirmer un envoi refusé juste après.
-    match (coin, evm_fee, from_evm, from_sol) {
+    match (coin, evm_fee, from.evm, from.sol) {
         ("evm", Some(fee), Some(from), _) => api::ensure_evm_transfer_funds(evm_network(network)?, from, &amount, fee).t_err()?,
         ("sol", _, _, Some(from)) => api::ensure_sol_transfer_funds(sol_network(network)?, from, &amount).t_err()?,
         _ => {}
@@ -2757,8 +2836,18 @@ fn confirm_send(
     // calculés MAINTENANT, affichés, puis jamais dépassés à l'envoi.
     let zec_plan = match coin {
         "zec" => {
-            let from = from_zec.ok_or_else(|| translate_error("adresse du profil inconnue — déverrouillez le portefeuille"))?;
+            let from = from.zec.ok_or_else(|| translate_error("adresse du profil inconnue — déverrouillez le portefeuille"))?;
             Some(api::zec_send_plan(from, &to, &amount).t_err()?)
+        }
+        _ => None,
+    };
+    // Dogecoin : destinataire vérifié, sorties choisies et vérifiées sur leurs
+    // transactions d'origine (montants), frais calculés MAINTENANT, affichés,
+    // puis jamais dépassés à l'envoi.
+    let doge_plan = match coin {
+        "doge" => {
+            let from = from.doge.ok_or_else(|| translate_error("adresse du profil inconnue — déverrouillez le portefeuille"))?;
+            Some(api::doge_send_plan(from, &to, &amount).t_err()?)
         }
         _ => None,
     };
@@ -2767,7 +2856,7 @@ fn confirm_send(
     // envoi-là, inchangé, qui sera signé.
     let xmr_plan = match coin {
         "xmr" => {
-            let keys = from_xmr.ok_or_else(|| translate_error("adresse du profil inconnue — déverrouillez le portefeuille"))?;
+            let keys = from.xmr.ok_or_else(|| translate_error("adresse du profil inconnue — déverrouillez le portefeuille"))?;
             Some(api::xmr_send_plan(dir, keys, &to, &amount).t_err()?)
         }
         _ => None,
@@ -2788,6 +2877,7 @@ fn confirm_send(
         }
         // Adresse déjà vérifiée par la préparation de l'envoi.
         "zec" => api::zec_recipient_activity(&to).ok(),
+        "doge" => api::doge_recipient_activity(&to).ok(),
         // Adresse vérifiée par la préparation ; aucune activité lisible
         // (adresses et montants invisibles sur la chaîne Monero).
         "xmr" => None,
@@ -2816,6 +2906,14 @@ Change returned to your address: {change} ZEC")));
             }
             line
         }),
+        "doge" => doge_plan.as_ref().map(|plan| {
+            let mut line = format!("{} : {} DOGE", lang("Frais", "Fee"), pgp_wallet_poc::doge::format_doge(plan.fee));
+            if plan.change > 0 {
+                let change = pgp_wallet_poc::doge::format_doge(plan.change);
+                line.push_str(lang(&format!("\nMonnaie rendue à votre adresse : {change} DOGE"), &format!("\nChange returned to your address: {change} DOGE")));
+            }
+            line
+        }),
         "xmr" => xmr_plan.as_ref().map(|plan| {
             let mut line = format!("{} : {} XMR", lang("Frais", "Fee"), pgp_wallet_poc::monero::format_xmr(plan.fee));
             if plan.change > 0 {
@@ -2838,7 +2936,7 @@ Change returned to your address: {change} XMR (spendable after 10 confirmations,
     if !confirm_transaction_native(app, network, &to, &amount_line, from_label, fee_line.as_deref(), warning.as_deref(), None) {
         return Err(translate_error("Virement annulé (confirmation refusée)."));
     }
-    Ok(ConfirmedSend { to, amount, evm_fee, fee_sat, zec_fee: zec_plan.map(|plan| plan.fee), xmr_plan })
+    Ok(ConfirmedSend { to, amount, evm_fee, fee_sat, zec_fee: zec_plan.map(|plan| plan.fee), xmr_plan, doge_fee: doge_plan.map(|plan| plan.fee) })
 }
 
 // --- Comptes Ledger / Trezor (core/src/hardware.rs) ----------------------------
@@ -2939,7 +3037,8 @@ async fn hardware_send(id: u32, to: String, amount: String, fee_sat: Option<u64>
         } else {
             format!("Signature sur le {device} : vérifiez sur SON écran que le destinataire et le montant sont identiques, puis confirmez-y.")
         };
-        let send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &format!("{device} — {}", account.label), Some(&note), Some(&account.address), Some(&account.address), None, None)?;
+        let from = SendFrom { evm: Some(&account.address), sol: Some(&account.address), ..SendFrom::default() };
+        let send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &format!("{device} — {}", account.label), Some(&note), from)?;
         let result = match network.as_str() {
             n if is_evm(n) => {
                 let fee = send.evm_fee.ok_or_else(|| "frais EVM manquants".to_string())?;
@@ -4344,6 +4443,12 @@ struct ProfileAddressCache(std::sync::Mutex<std::collections::HashMap<u32, (Stri
 #[derive(Default)]
 struct ProfileZcashCache(std::sync::Mutex<std::collections::HashMap<u32, String>>);
 
+/// Adresse Dogecoin de chaque profil, mémorisée au même moment : préparer un
+/// envoi DOGE (sorties vérifiées, frais) demande l'adresse de départ AVANT la
+/// boîte de confirmation.
+#[derive(Default)]
+struct ProfileDogeCache(std::sync::Mutex<std::collections::HashMap<u32, String>>);
+
 /// Adresse Bitcoin (réseau principal) de chaque profil, mémorisée au même
 /// moment : un échange LI.FI depuis Bitcoin demande un devis (PSBT construite
 /// sur ses sorties) AVANT la boîte de confirmation.
@@ -4370,6 +4475,9 @@ fn remember_addresses(app: &tauri::AppHandle, index: u32, addresses: &api::Addre
     }
     if let Some(cache) = app.try_state::<ProfileBtcCache>() {
         cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, addresses.btc_mainnet.clone());
+    }
+    if let Some(cache) = app.try_state::<ProfileDogeCache>() {
+        cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, addresses.doge.clone());
     }
     if let Some(cache) = app.try_state::<ShieldedKeysCache>() {
         cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, (addresses.zcash_shielded.clone(), addresses.zcash_shielded_keys.clone()));
@@ -5115,6 +5223,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(ProfileAddressCache::default())
         .manage(ProfileZcashCache::default())
+        .manage(ProfileDogeCache::default())
         .manage(ProfileBtcCache::default())
         .manage(ShieldedKeysCache::default())
         .manage(MoneroKeysCache::default())
@@ -5366,6 +5475,7 @@ mod tests {
 
         // Zcash transparent : l'actif absent est ZEC (pas SOL).
         assert!(recipient_warning_lines(false, "zec", Some(Empty))[0].contains("aucun ZEC"));
+        assert!(recipient_warning_lines(false, "doge", Some(Empty))[0].contains("aucun DOGE"));
 
         // Monero, Zcash protégé : rien n'est lisible sur la chaîne — seule
         // l'alerte « nouvelle adresse », jamais une fausse panne réseau.
@@ -5376,7 +5486,7 @@ mod tests {
         }
 
         // Chaque avertissement tient sur un seul paragraphe (mise en page de la boîte).
-        for coin in ["evm", "btc", "sol", "usdc", "zec", "xmr", "zecs"] {
+        for coin in ["evm", "btc", "sol", "usdc", "zec", "doge", "xmr", "zecs"] {
             for activity in [Some(Unused), Some(Empty), None] {
                 assert!(recipient_warning_lines(true, coin, activity).iter().all(|l| !l.contains('\n')));
             }
@@ -5478,6 +5588,49 @@ mod tests {
         assert_eq!(translate_dynamic_error("devis Maya refusé : amount less than dust threshold").unwrap(), "Maya quote refused: amount less than dust threshold");
         for fr in ["la transaction LI.FI envoie plus que le montant affiché — refusé", "adresse de dépôt Maya invalide", "PSBT LI.FI illisible"] {
             assert!(EXACT_ERROR_TRANSLATIONS.iter().any(|(text, _)| *text == fr), "{fr}");
+        }
+    }
+
+    /// Messages d'erreur Dogecoin : présents dans le code (fixes), tous traduits
+    /// (fixes et variables).
+    #[test]
+    fn dogecoin_error_messages_all_have_a_translation() {
+        let sources = [include_str!("../../../core/src/doge.rs"), include_str!("../../../core/src/api.rs")];
+        for message in [
+            "service Dogecoin injoignable",
+            "réponse du service Dogecoin illisible",
+            "adresse Dogecoin invalide",
+            "adresse Dogecoin invalide (somme de contrôle)",
+            "adresse Dogecoin invalide (autre réseau ou autre crypto)",
+            "adresse Dogecoin du profil invalide",
+            "envoi vers votre propre adresse Dogecoin",
+            "montant trop petit : 0,01 DOGE au moins",
+            "transaction Dogecoin tronquée",
+            "transaction Dogecoin invalide",
+            "transaction Dogecoin invalide (octets en trop)",
+            "transaction Dogecoin illisible",
+            "transaction Dogecoin introuvable",
+            "identifiant de transaction Dogecoin invalide",
+            "transaction d'origine falsifiée (hash différent de son identifiant) — envoi refusé",
+            "sortie Dogecoin introuvable dans sa transaction d'origine",
+            "sortie Dogecoin qui n'appartient pas à votre adresse — envoi refusé",
+            "montant d'une sortie Dogecoin annoncé faux par le service — envoi refusé",
+        ] {
+            assert!(sources.iter().any(|s| s.contains(&format!("\"{message}\""))), "message absent du code : {message}");
+            assert!(EXACT_ERROR_TRANSLATIONS.iter().any(|(fr, _)| *fr == message), "sans traduction : {message}");
+        }
+        assert_eq!(
+            translate_dynamic_error("DOGE insuffisants : 12.00000000 DOGE demandés + frais, 3.50000000 DOGE disponibles (confirmés)").unwrap(),
+            "insufficient DOGE: 12.00000000 DOGE requested + fees, 3.50000000 DOGE available (confirmed)"
+        );
+        assert_eq!(
+            translate_dynamic_error("les frais Dogecoin ont augmenté depuis la confirmation (0.12000000 au lieu de 0.11000000 DOGE) — relancez l'envoi").unwrap(),
+            "Dogecoin fees increased since the confirmation (0.12000000 instead of 0.11000000 DOGE) — start again"
+        );
+        assert_eq!(translate_dynamic_error("transaction Dogecoin refusée : Missing inputs").unwrap(), "Dogecoin transaction refused: Missing inputs");
+        assert_eq!(translate_dynamic_error("service Dogecoin : réponse 429 Too Many Requests").unwrap(), "Dogecoin service: response 429 Too Many Requests");
+        for prefix in ["DOGE insuffisants : ", "les frais Dogecoin ont augmenté depuis la confirmation (", "transaction Dogecoin refusée : ", "service Dogecoin : réponse ", "signature Dogecoin impossible ("] {
+            assert!(sources.iter().any(|s| s.contains(prefix)), "préfixe absent du code : {prefix}");
         }
     }
 

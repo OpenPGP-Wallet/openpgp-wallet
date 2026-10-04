@@ -58,6 +58,9 @@ pub struct PortfolioHistory {
 /// Esplora.
 const EVM_MAX: usize = 1000;
 const BTC_MAX: usize = 1000;
+/// Transactions Dogecoin lues pour la courbe (heure de chaque bloc demandée
+/// une fois au service, puis gardée).
+const DOGE_MAX: usize = 100;
 /// Transactions confirmées par page Esplora.
 const BTC_PAGE: usize = 25;
 /// Chaque transaction Solana demande une requête de détail, que le nœud
@@ -167,6 +170,8 @@ enum Source {
     /// Zcash protégé : solde et historique de la base locale (voir
     /// `zcash_shielded`).
     ZecShielded,
+    /// Dogecoin : historique récent, en une page (voir `DOGE_MAX`).
+    Doge,
 }
 
 impl Spec {
@@ -179,7 +184,7 @@ impl Spec {
     fn has_history(&self) -> bool {
         match self.source {
             Source::Evm(net) | Source::Erc20(net, _) => history::evm_history_available(net),
-            Source::Btc | Source::Sol | Source::Spl(_) | Source::Xmr | Source::ZecShielded => true,
+            Source::Btc | Source::Sol | Source::Spl(_) | Source::Xmr | Source::ZecShielded | Source::Doge => true,
             Source::Zec => false,
         }
     }
@@ -207,6 +212,7 @@ fn spec(network: &str, token: Option<&str>) -> Result<Option<Spec>> {
         "zec_mainnet" => Spec { asset: Asset::Pair("ZECUSDT"), decimals: 8, max_read: BTC_MAX, symbol: "ZEC", source: Source::Zec },
         "zec_shielded" => Spec { asset: Asset::Pair("ZECUSDT"), decimals: 8, max_read: usize::MAX, symbol: "ZEC", source: Source::ZecShielded },
         "xmr_mainnet" => Spec { asset: Asset::Kraken("XMRUSD"), decimals: 12, max_read: usize::MAX, symbol: "XMR", source: Source::Xmr },
+        "doge_mainnet" => Spec { asset: Asset::Pair("DOGEUSDT"), decimals: 8, max_read: DOGE_MAX, symbol: "DOGE", source: Source::Doge },
         other => match wallet_flow::evm_network(other) {
             Some(net) if net.mainnet => {
                 let Some(asset) = price_history::price_asset(net.native_symbol) else { return Ok(None) };
@@ -230,6 +236,7 @@ fn fetch_balance(spec: &Spec, address: &str) -> Result<i128> {
         Source::Zec => api::get_zec_balance(address)?.into(),
         Source::Xmr => crate::monero::balance_of_address(address)?.into(),
         Source::ZecShielded => crate::zcash_shielded::balance_of_address(address)?.into(),
+        Source::Doge => api::get_doge_balance(address)?.into(),
         Source::Spl(mint) => api::get_spl_balance(address, &mint, solana)?.into(),
     })
 }
@@ -281,6 +288,8 @@ fn fetch_page(spec: &Spec, address: &str, cursor: Option<&Cursor>) -> Result<Pag
         // Tout l'historique est local : une seule page.
         Source::Xmr => Ok(Page { entries: crate::monero::history_of_address(address)?, next: None }),
         Source::ZecShielded => Ok(Page { entries: crate::zcash_shielded::history_of_address(address)?, next: None }),
+        // Une page : les `DOGE_MAX` transactions les plus récentes.
+        Source::Doge => Ok(Page { entries: crate::doge::history(address, DOGE_MAX)?, next: None }),
     }
 }
 

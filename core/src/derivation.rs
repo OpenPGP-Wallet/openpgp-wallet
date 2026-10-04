@@ -106,6 +106,16 @@ pub fn derive_zec_key(seed: &[u8], index: u32) -> Result<(SigningKey, [u8; 20])>
     Ok((signing_key, hash160))
 }
 
+/// Dérive la clé Dogecoin n°`index` (chemin BIP44 m/44'/3'/0'/0/{index},
+/// coin_type 3' = Dogecoin dans SLIP-0044 — celui de Ledger, Trezor et
+/// Dogecoin Core) et retourne le hash160 de la clé publique compressée
+/// (adresse P2PKH D…, voir `doge::p2pkh_address`).
+pub fn derive_doge_key(seed: &[u8], index: u32) -> Result<(SigningKey, [u8; 20])> {
+    let signing_key = derive_key_from_path(seed, &format!("m/44'/3'/0'/0/{index}"))?;
+    let hash160 = btc_hash160_from_key(&signing_key);
+    Ok((signing_key, hash160))
+}
+
 fn btc_hash160_from_key(signing_key: &SigningKey) -> [u8; 20] {
     let compressed = signing_key.verifying_key().to_encoded_point(true);
     let sha256 = Sha256::digest(compressed.as_bytes());

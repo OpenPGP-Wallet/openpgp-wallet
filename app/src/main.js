@@ -24,6 +24,7 @@ const ASSETS = [
   // la carte transparente (t1). `nameKey` : nom traduit (voir `assetName`).
   { coin: "zecs", name: "Zcash protégé", nameKey: "coin.zecsName", symbol: "ZEC", family: "zecs", icon: "/assets/zec-shielded.svg", gecko: "zcash", decimals: 8, chart: "ZEC", networks: ["zec_shielded"] },
   { coin: "xmr", name: "Monero", symbol: "XMR", family: "xmr", icon: "/assets/xmr.png", gecko: "monero", decimals: 6, chart: "XMR", networks: ["xmr_mainnet"] },
+  { coin: "doge", name: "Dogecoin", symbol: "DOGE", family: "doge", icon: "/assets/doge.png", gecko: "dogecoin", decimals: 8, chart: "DOGE", networks: ["doge_mainnet"] },
   // Jetons (`token: true`) : contrats et mints relevés dans core/src/tokens.rs —
   // SEUL le registre Rust fait foi pour un envoi (l'interface n'envoie que
   // l'identifiant et le réseau) ; ceux-ci ne servent qu'aux demandes de
@@ -644,6 +645,7 @@ const I18N = {
     "net.zec_mainnet": "Zcash — Fonds réels",
     "net.zec_shielded": "Zcash — Fonds protégés",
     "net.xmr_mainnet": "Monero — Fonds réels",
+    "net.doge_mainnet": "Dogecoin — Fonds réels",
     "wallet.historyExplorerOnly": "Pas d'historique ici pour ce réseau : aucun service public gratuit ne le fournit. Il reste consultable sur l'explorateur du réseau.",
     "wallet.historyOpenExplorer": "Voir sur l'explorateur",
     "wallet.historyNeedsKey": "Pour voir l'historique de ce réseau ici, ajoutez une clé API Etherscan gratuite dans Paramètres. Il reste consultable sur l'explorateur du réseau.",
@@ -1222,6 +1224,7 @@ const I18N = {
     "net.zec_mainnet": "Zcash — Real funds",
     "net.zec_shielded": "Zcash — Shielded funds",
     "net.xmr_mainnet": "Monero — Real funds",
+    "net.doge_mainnet": "Dogecoin — Real funds",
     "wallet.historyExplorerOnly": "No history here for this network: no free public service provides it. You can still see it on the network's explorer.",
     "wallet.historyOpenExplorer": "View on the explorer",
     "wallet.historyNeedsKey": "To see this network's history here, add a free Etherscan API key in Settings. You can still see it on the network's explorer.",
@@ -3487,6 +3490,9 @@ function addressForCoin(coin, network) {
   // Monero : adresse principale (4…) ; absente d'un profil dérivé avant son
   // ajout, jusqu'au prochain déverrouillage.
   if (coin === "xmr") return profile.addresses.monero ?? "";
+  // Dogecoin (D…) ; absente d'un profil dérivé avant son ajout, jusqu'au
+  // prochain déverrouillage.
+  if (coin === "doge") return profile.addresses.doge ?? "";
   // Zcash protégé : adresse u1 (récepteur Orchard seul).
   if (coin === "zecs") return profile.addresses.zcash_shielded ?? "";
   // Jetons Solana (USDC, USDT…) : même adresse propriétaire que SOL (le compte
@@ -3996,9 +4002,10 @@ function updateBalanceWatch() {
       // Jetons du registre : contrat ou mint lus côté Rust (seul l'identifiant
       // part d'ici).
       if (usesTokenRegistry(coin, network)) return { id: coin, network, address: addressForCoin(coin, network), token: coin };
-      // Zcash : pas de surveillance en direct (solde relu toutes les 60 s).
-      // Monero, Zcash protégé : solde tenu par la synchronisation de fond.
-      if (coin === "zec" || coin === "xmr" || coin === "zecs") return { address: "" };
+      // Zcash, Dogecoin : pas de surveillance en direct (solde relu toutes les
+      // 60 s, plus souvent pendant un envoi en attente). Monero, Zcash
+      // protégé : solde tenu par la synchronisation de fond.
+      if (coin === "zec" || coin === "doge" || coin === "xmr" || coin === "zecs") return { address: "" };
       return { id: coin, network: coin === "usdc" ? "usdc_solana" : network, address: addressForCoin(coin, network) };
     })
     .filter((target) => target.address);
@@ -4115,7 +4122,7 @@ const qrModal = document.getElementById("qr-modal");
 // EIP-681 pour Ethereum (montant en wei, réseau par son chain id). Sans
 // montant : l'adresse seule, lisible par toutes les applications.
 // Décimales maximales d'un montant demandé : 18 pour toute monnaie EVM.
-const QR_DECIMALS = new Proxy({ btc: 8, sol: 9, zec: 8, zecs: 8, xmr: 12 }, { get: (known, coin) => ASSET_BY_COIN[coin]?.unitDecimals ?? known[coin] ?? 18 });
+const QR_DECIMALS = new Proxy({ btc: 8, sol: 9, zec: 8, zecs: 8, xmr: 12, doge: 8 }, { get: (known, coin) => ASSET_BY_COIN[coin]?.unitDecimals ?? known[coin] ?? 18 });
 // Même mint que core/src/sol_spl.rs::usdc_mint_mainnet.
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 let qrCard = null;
@@ -4148,6 +4155,7 @@ function paymentUri(coin, network, address, amount) {
   if (coin === "btc") return `bitcoin:${address}?amount=${amount}`;
   if (coin === "zec" || coin === "zecs") return `zcash:${address}?amount=${amount}`;
   if (coin === "xmr") return `monero:${address}?tx_amount=${amount}`;
+  if (coin === "doge") return `dogecoin:${address}?amount=${amount}`;
   if (coin === "sol") return `solana:${address}?amount=${amount}`;
   if (coin === "usdc") return `solana:${address}?amount=${amount}&spl-token=${USDC_MINT}`;
   if (ASSET_BY_COIN[coin]?.family === "evm") {

@@ -14,7 +14,7 @@
 //!   perdu — jamais utilisé pour le déverrouillage quotidien.
 
 use crate::{
-    btc_rpc, cow, dapp_requests, derivation, lifi, monero, native_deposit, wallet_birthday, zcash, zcash_shielded, entropy, eth_rpc, eth_tx, history, jupiter_rpc, memory_guard, pgp_engine, secure_storage, shamir,
+    btc_rpc, cow, dapp_requests, derivation, doge, lifi, monero, native_deposit, wallet_birthday, zcash, zcash_shielded, entropy, eth_rpc, eth_tx, history, jupiter_rpc, memory_guard, pgp_engine, secure_storage, shamir,
     evm_sign, sol_rpc, sol_spl, sol_tx, thorchain_rpc, tokens, wallet_flow,
 };
 use anyhow::{Context, Result};
@@ -182,6 +182,8 @@ pub struct Addresses {
     pub solana: String,
     /// Adresse Zcash transparente (t1…), chemin m/44'/133'/0'/0/{index}.
     pub zcash: String,
+    /// Adresse Dogecoin (D…), chemin m/44'/3'/0'/0/{index}.
+    pub doge: String,
     /// Adresse THORChain (thor1…), chemin m/44'/931'/0'/0/{index} : celle du
     /// profil principal du développeur est l'adresse d'affiliation de l'app.
     pub thor: String,
@@ -317,6 +319,7 @@ fn derive_addresses(seed: &[u8], index: u32) -> Result<Addresses> {
     let (_btc_mainnet_key, btc_mainnet_hash160) = derivation::derive_btc_mainnet_key(seed, index)?;
     let sol_key = derivation::derive_solana_key(seed, index);
     let (_zec_key, zec_hash160) = derivation::derive_zec_key(seed, index)?;
+    let (_doge_key, doge_hash160) = derivation::derive_doge_key(seed, index)?;
     let (_thor_key, thor_hash160) = derivation::derive_thor_key(seed, index)?;
     let shielded_keys = zcash_shielded::profile_keys(seed, index)?;
     let monero_keys = monero::view_keys(seed, index)?;
@@ -327,6 +330,7 @@ fn derive_addresses(seed: &[u8], index: u32) -> Result<Addresses> {
         zcash_shielded_keys: shielded_keys,
         thor: derivation::format_thor_address(&thor_hash160)?,
         zcash: zcash::p2pkh_address(&zec_hash160),
+        doge: doge::p2pkh_address(&doge_hash160),
         evm: derivation::format_address(&evm_address),
         btc_testnet: derivation::format_btc_testnet_address(&btc_testnet_hash160)?,
         btc_mainnet: derivation::format_btc_mainnet_address(&btc_mainnet_hash160)?,
@@ -2856,6 +2860,66 @@ pub fn send_swap_zec(data_dir: &Path, device_password: &str, quote: &thorchain_r
     let branch = zcash::branch_for(target, chain.branch_id)?;
     let signed = zcash::build_signed(&plan, &key, &hash160, &vault, target, branch)?;
     zcash::broadcast(&signed.raw, &signed.txid)
+}
+
+// --- Dogecoin -----------------------------------------------------------------------
+
+pub fn get_doge_balance(address: &str) -> Result<u64> {
+    doge::balance(address)
+}
+
+pub fn has_pending_doge(address: &str) -> Result<bool> {
+    doge::has_pending(address)
+}
+
+/// État d'une adresse Dogecoin destinataire, pour les avertissements de la boîte.
+pub fn doge_recipient_activity(to: &str) -> Result<RecipientActivity> {
+    doge::parse_recipient(to)?;
+    Ok(match doge::address_activity(to.trim())? {
+        (true, _) => RecipientActivity::Funded,
+        (false, true) => RecipientActivity::Empty,
+        (false, false) => RecipientActivity::Unused,
+    })
+}
+
+/// Forme canonique d'un montant en DOGE (8 décimales), affichée ET signée.
+pub fn canonical_doge_amount(amount: &str) -> Result<String> {
+    Ok(tokens::format_amount(tokens::parse_amount(amount, doge::DECIMALS)?, doge::DECIMALS))
+}
+
+/// Envoi préparé pour la boîte de confirmation : destinataire vérifié (jamais
+/// soi-même), sorties choisies puis vérifiées sur leurs transactions
+/// d'origine, frais au taux du moment, monnaie rendue.
+pub fn doge_send_plan(from_address: &str, to: &str, amount: &str) -> Result<doge::SendPlan> {
+    let own = match doge::parse_recipient(from_address)? {
+        doge::Recipient::P2pkh(hash) => hash,
+        doge::Recipient::P2sh(_) => anyhow::bail!("adresse Dogecoin du profil invalide"),
+    };
+    let recipient = doge::parse_recipient(to)?;
+    anyhow::ensure!(recipient != doge::Recipient::P2pkh(own), "envoi vers votre propre adresse Dogecoin");
+    let units = u64::try_from(tokens::parse_amount(amount, doge::DECIMALS)?).context("montant hors limites")?;
+    doge::plan(&own, units)
+}
+
+/// Envoi Dogecoin : sorties relues et revérifiées, frais jamais supérieurs à
+/// ceux affichés (`shown_fee`), transaction construite et signée ici, puis
+/// diffusée.
+pub fn send_doge(data_dir: &Path, device_password: &str, to: &str, amount: &str, shown_fee: u64, profile_index: u32) -> Result<String> {
+    let recipient = doge::parse_recipient(to)?;
+    let units = u64::try_from(tokens::parse_amount(amount, doge::DECIMALS)?).context("montant hors limites")?;
+    let seed = unlock_seed(data_dir, device_password)?;
+    let _seed_lock = memory_guard::lock(&seed);
+    let (key, hash160) = derivation::derive_doge_key(&seed, profile_index)?;
+    anyhow::ensure!(recipient != doge::Recipient::P2pkh(hash160), "envoi vers votre propre adresse Dogecoin");
+    let plan = doge::plan(&hash160, units)?;
+    anyhow::ensure!(
+        plan.fee <= shown_fee,
+        "les frais Dogecoin ont augmenté depuis la confirmation ({} au lieu de {} DOGE) — relancez l'envoi",
+        doge::format_doge(plan.fee),
+        doge::format_doge(shown_fee)
+    );
+    let signed = doge::build_signed(&plan, &key, &hash160, &recipient)?;
+    doge::broadcast(&signed)
 }
 
 pub struct BtcFeeEstimate {

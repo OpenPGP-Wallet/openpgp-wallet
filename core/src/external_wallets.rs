@@ -93,6 +93,10 @@ pub(crate) fn validate_address(network: &str, address: &str) -> Result<()> {
         "xmr_mainnet" => {
             crate::monero::parse_recipient(address)?;
         }
+        // Dogecoin (D…, ou P2SH).
+        "doge_mainnet" => {
+            crate::doge::parse_recipient(address)?;
+        }
         // Zcash protégé (adresse u1 de la carte « Zcash protégé »).
         "zec_shielded" => {
             crate::zcash_shielded::parse_shielded_address(address)?;
@@ -218,6 +222,8 @@ mod tests {
         assert!(validate_address("zec_mainnet", &t1).is_ok(), "{t1}");
         assert!(validate_address("zec_mainnet", VALID_EVM_ADDRESS).is_err());
         assert!(validate_address("zec_mainnet", "t1pasuneadresse").is_err());
+        assert!(validate_address("doge_mainnet", "DH5yaieqoZN36fDVciNyRueRGvGLR3mr7L").is_ok());
+        assert!(validate_address("doge_mainnet", &t1).is_err());
         let xmr = "44AFFq5kSiGBoZ4NMDwYtN18obc8AemS33DBLWs3H7otXft3XjrpDtQGv7SqSsaBYBb98uNbr2VBBEt7f2wfn3RVGQBEP3A";
         assert!(validate_address("xmr_mainnet", xmr).is_ok());
         assert!(validate_address("xmr_mainnet", &t1).is_err());

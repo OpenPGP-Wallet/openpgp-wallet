@@ -43,6 +43,7 @@ pub mod zcash;
 pub mod zcash_shielded;
 pub mod monero;
 pub mod wallet_birthday;
+pub mod doge;
 #[cfg(test)]
 mod robustness_tests;
 #[cfg(windows)]

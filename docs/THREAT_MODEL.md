@@ -10,7 +10,8 @@ qui la met en œuvre. **Aucune de ces protections n'a encore été vérifiée pa
 - Application de bureau Tauri v2 pour Windows : cœur Rust (`core/`), pont de commandes (`app/src-tauri`),
   interface web locale (`app/src`).
 - Portefeuille non dépositaire multi-réseaux : Bitcoin, réseaux EVM (Ethereum, L2, BNB Chain, Avalanche,
-  Polygon, HyperEVM), Solana, Zcash (transparent et protégé Orchard), Monero, jetons du registre (`tokens.rs`).
+  Polygon, HyperEVM), Solana, Zcash (transparent et protégé Orchard), Monero, Dogecoin, jetons du registre
+  (`tokens.rs`).
 - Hors périmètre : la version iOS (non démarrée), les services tiers eux-mêmes (nœuds, agrégateurs d'échange),
   le système d'exploitation et le matériel.
 
@@ -105,6 +106,10 @@ qui la met en œuvre. **Aucune de ces protections n'a encore été vérifiée pa
 - **Monero** : blocs analysés localement (le nœud ne sait pas quelles sorties sont à soi) ; la sélection des
   leurres refuse un nœud qui ment sur la sortie dépensée ; réorganisations détectées.
 - **Zcash protégé** : blocs compacts déchiffrés localement (lightwalletd ne voit que des demandes de blocs).
+- **Dogecoin** : la signature historique (sans SegWit) n'engage pas le montant des entrées — un service qui
+  mentirait sur la valeur d'une sortie ferait partir la différence en frais. Chaque entrée est relue dans sa
+  transaction d'origine brute, dont le hash recalculé doit égaler l'identifiant : montant et script vérifiés
+  avant signature (`doge::verify_inputs`) ; frais bornés (0,01 à 5 DOGE/ko), affichés puis jamais dépassés.
 - *Risques résiduels* : un nœud malveillant peut afficher de faux soldes ou un faux historique (portefeuille
   léger) ; un nœud Monero ou Zcash malveillant peut affaiblir la confidentialité d'un envoi ; les nœuds publics
   voient l'adresse IP et les adresses interrogées ; un agrégateur peut proposer un mauvais cours (le minimum de
@@ -152,6 +157,6 @@ qui la met en œuvre. **Aucune de ces protections n'a encore été vérifiée pa
 2. Audit de sécurité par un prestataire indépendant.
 3. Chiffrement des fichiers d'état locaux (Zcash protégé, Monero, carnet d'adresses) par une clé dérivée du
    coffre, pour la confidentialité face à A1.
-4. Tests en conditions réelles : dépenses Monero et Zcash protégé, échanges depuis BTC/ZEC, restauration depuis
+4. Tests en conditions réelles : dépenses Monero, Zcash protégé et Dogecoin, échanges depuis BTC/ZEC, restauration depuis
    clé USB, Ledger/Trezor sur de vrais appareils, signatures WalletConnect.
 5. Compilation reproductible et vérification des mises à jour.
