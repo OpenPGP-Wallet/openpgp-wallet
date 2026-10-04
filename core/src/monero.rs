@@ -755,17 +755,9 @@ pub struct SendPlan {
     tx: SignableTransaction,
 }
 
-/// Prépare un envoi de `amount` piconeros vers `to` depuis le profil de
-/// `keys` (sans la clé de dépense : rien n'est signé ici).
-pub fn prepare_send(data_dir: &Path, keys: &ViewKeys, to: &str, amount: u64) -> Result<SendPlan> {
-    let recipient = parse_recipient(to)?;
-    let pair = keys.pair()?;
-    ensure!(
-        recipient.spend() != pair.spend() || recipient.view() != pair.view(),
-        "envoi vers votre propre adresse Monero"
-    );
-    ensure!(amount > 0, "montant nul");
-
+/// Sorties dépensables du profil (les plus grosses d'abord), leur total et le
+/// montant encore bloqué ; refus tant que la synchronisation n'est pas à jour.
+fn spendable(data_dir: &Path, keys: &ViewKeys) -> Result<(Vec<Received>, u64, u64)> {
     let (outputs, synced, locked) = {
         let state = load(data_dir)?;
         let p = state.profiles.get(&keys.profile).ok_or_else(|| anyhow!("Monero : synchronisation pas encore faite, réessayez dans un instant"))?;
@@ -777,6 +769,85 @@ pub fn prepare_send(data_dir: &Path, keys: &ViewKeys, to: &str, amount: u64) -> 
     };
     ensure!(synced, "Monero : synchronisation en cours, réessayez dans un instant");
     let total: u64 = outputs.iter().map(|o| o.amount).sum();
+    Ok((outputs, total, locked))
+}
+
+/// Destinataire vérifié : adresse du réseau principal, jamais la sienne.
+fn checked_recipient(keys: &ViewKeys, to: &str) -> Result<MoneroAddress> {
+    let recipient = parse_recipient(to)?;
+    let pair = keys.pair()?;
+    ensure!(
+        recipient.spend() != pair.spend() || recipient.view() != pair.view(),
+        "envoi vers votre propre adresse Monero"
+    );
+    Ok(recipient)
+}
+
+/// Prépare l'envoi de TOUT le solde dépensable, frais déduits, vers `to`
+/// (`None` : une adresse tirée au hasard, pour connaître le montant — les
+/// frais ne dépendent que du nombre d'entrées et de sorties). Toutes les
+/// sorties sont dépensées ; monnaie nulle.
+pub fn prepare_send_max(data_dir: &Path, keys: &ViewKeys, to: Option<&str>) -> Result<SendPlan> {
+    let recipient = match to {
+        Some(to) => checked_recipient(keys, to)?,
+        None => {
+            let mut random = Zeroizing::new([0u8; 32]);
+            OsRng.fill_bytes(random.as_mut());
+            parse_recipient(&keys_from_spend(keys.profile, &Scalar::hash(&random[..])).address()?)?
+        }
+    };
+    let pair = keys.pair()?;
+    let (outputs, total, locked) = spendable(data_dir, keys)?;
+    ensure!(total > 0, "{}", insufficient(1, total, locked));
+    runtime()?.block_on(async {
+        let (rpc, tip) = connect(data_dir).await?;
+        let header = ProvidesBlockchain::block_by_number(&rpc, tip).await.map_err(node_err)?.header;
+        ensure!(
+            header.hardfork_version == KNOWN_HARDFORK,
+            "réseau Monero mis à niveau (version {}) : mettez l'app à jour avant d'envoyer",
+            header.hardfork_version
+        );
+        let fee_rate = rpc.fee_rate(FeePriority::Unimportant, MAX_FEE_PER_WEIGHT).await.map_err(node_err)?;
+        let mut inputs = Vec::new();
+        for output in &outputs {
+            inputs.push(OutputWithDecoys::new(&mut OsRng, &rpc, RING_LEN, tip, decode_output(&output.output)?).await.map_err(node_err)?);
+        }
+        let build = |amount: u64| {
+            let mut outgoing_view_key = Zeroizing::new([0u8; 32]);
+            OsRng.fill_bytes(outgoing_view_key.as_mut());
+            SignableTransaction::new(
+                RctType::ClsagBulletproofPlus,
+                outgoing_view_key,
+                inputs.clone(),
+                vec![(recipient, amount)],
+                Change::new(pair.clone(), None),
+                Vec::new(),
+                fee_rate,
+            )
+        };
+        // Frais de cette forme de transaction (toutes les entrées, deux
+        // sorties), puis le montant qui les laisse exactement.
+        let fee = match build(1) {
+            Ok(tx) => tx.necessary_fee(),
+            Err(SendError::NotEnoughFunds { necessary_fee, .. }) => {
+                bail!("XMR insuffisants pour les frais ({} XMR)", format_xmr(necessary_fee.unwrap_or(0)))
+            }
+            Err(e) => bail!("envoi Monero impossible ({e})"),
+        };
+        let amount = total.checked_sub(fee).filter(|a| *a > 0).ok_or_else(|| anyhow!("XMR insuffisants pour les frais ({} XMR)", format_xmr(fee)))?;
+        let tx = build(amount).map_err(|e| anyhow!("envoi Monero impossible ({e})"))?;
+        ensure!(tx.necessary_fee() == fee, "frais Monero incohérents");
+        Ok(SendPlan { profile: keys.profile, to: recipient.to_string(), amount, fee, change: 0, tx })
+    })
+}
+
+/// Prépare un envoi de `amount` piconeros vers `to` depuis le profil de
+/// `keys` (sans la clé de dépense : rien n'est signé ici).
+pub fn prepare_send(data_dir: &Path, keys: &ViewKeys, to: &str, amount: u64) -> Result<SendPlan> {
+    let recipient = checked_recipient(keys, to)?;
+    let pair = keys.pair()?;
+    ensure!(amount > 0, "montant nul");
+    let (outputs, total, locked) = spendable(data_dir, keys)?;
     ensure!(amount <= total, "{}", insufficient(amount, total, locked));
 
     runtime()?.block_on(async {

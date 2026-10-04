@@ -354,8 +354,9 @@ pub fn history_of_address(address: &str) -> Result<Vec<history::TxEntry>> {
 // confirmé dans une boîte native, puis CETTE proposition est signée avec la
 // clé dérivée de la seed (mot de passe) et diffusée par lightwalletd.
 
-use zcash_client_backend::data_api::wallet::input_selection::{GreedyInputSelector, SpendPolicy};
-use zcash_client_backend::data_api::wallet::{create_proposed_transactions, propose_shielding, propose_transfer, SpendingKeys};
+use zcash_client_backend::data_api::wallet::input_selection::{GreedyInputSelector, LockedInputPolicy, SpendPolicy};
+use zcash_client_backend::data_api::wallet::{create_proposed_transactions, propose_send_max_transfer, propose_shielding, propose_transfer, SpendingKeys};
+use zcash_client_backend::data_api::MaxSpendMode;
 use zcash_client_backend::data_api::CoinbaseFilter;
 use zcash_client_backend::fees::{zip317::SingleOutputChangeStrategy, DustOutputPolicy, StandardFeeRule};
 use zcash_client_backend::proposal::Proposal;
@@ -559,6 +560,67 @@ pub fn send(
         None,
     )
     .map_err(|e| insufficient(&e.to_string()).unwrap_or_else(|| anyhow!("envoi Zcash protégé impossible ({e})")))?;
+    let summary = SpendSummary { amount, fee: proposal_fee(&proposal), recipient: to.trim().to_string() };
+    if !confirm(&summary) {
+        return Ok(None);
+    }
+    let seed = seed()?;
+    create_and_broadcast(&mut db, &proposal, &spending_keys(&seed, profile)?).map(Some)
+}
+
+/// Proposition d'envoi de TOUS les fonds protégés dépensables (frais déduits par
+/// la sélection des entrées de la bibliothèque, seule à les connaître) et le
+/// montant qu'elle envoie.
+fn max_proposal(db: &mut Db, account: AccountUuid, recipient: zcash_address::ZcashAddress) -> Result<(Proposal<StandardFeeRule, zcash_client_sqlite::ReceivedNoteId>, u64)> {
+    let proposal = propose_send_max_transfer::<_, _, _, std::convert::Infallible>(
+        db,
+        &MainNetwork,
+        account,
+        &[ShieldedPool::Orchard],
+        &StandardFeeRule::Zip317,
+        recipient,
+        None,
+        MaxSpendMode::MaxSpendable,
+        ConfirmationsPolicy::default(),
+        &LockedInputPolicy::Exclude,
+        None,
+    )
+    .map_err(|e| insufficient(&e.to_string()).unwrap_or_else(|| anyhow!("envoi Zcash protégé impossible ({e})")))?;
+    let amount = proposal
+        .steps()
+        .first()
+        .transaction_request()
+        .total()
+        .ok()
+        .flatten()
+        .map(u64::from)
+        .filter(|amount| *amount > 0)
+        .context("ZEC protégés insuffisants pour couvrir les frais du réseau")?;
+    Ok((proposal, amount))
+}
+
+/// Montant maximal envoyable depuis les fonds protégés du profil (vers `to`,
+/// ou vers sa propre adresse pour une estimation : mêmes frais Orchard).
+pub fn max_amount(data_dir: &Path, profile: u32, to: &str) -> Result<u64> {
+    let recipient = check_recipient(to)?;
+    let mut db = open(data_dir)?;
+    let account = find_account(&db, profile)?.context("fonds protégés pas encore prêts (synchronisation en cours)")?;
+    Ok(max_proposal(&mut db, account, recipient)?.1)
+}
+
+/// Envoie TOUS les fonds protégés dépensables du profil vers `to`, frais
+/// déduits : mêmes étapes que `send`.
+pub fn send_max(
+    data_dir: &Path,
+    profile: u32,
+    to: &str,
+    confirm: impl FnOnce(&SpendSummary) -> bool,
+    seed: impl FnOnce() -> Result<zeroize::Zeroizing<Vec<u8>>>,
+) -> Result<Option<String>> {
+    let recipient = check_recipient(to)?;
+    let mut db = open(data_dir)?;
+    let account = find_account(&db, profile)?.context("fonds protégés pas encore prêts (synchronisation en cours)")?;
+    let (proposal, amount) = max_proposal(&mut db, account, recipient)?;
     let summary = SpendSummary { amount, fee: proposal_fee(&proposal), recipient: to.trim().to_string() };
     if !confirm(&summary) {
         return Ok(None);

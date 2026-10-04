@@ -1054,7 +1054,10 @@
         <div id="shielded-send-fields">
           <label for="shielded-to" data-i18n="send.toAddress">Adresse destinataire</label>
           <input id="shielded-to" type="text" spellcheck="false" autocomplete="off" />
-          <label for="shielded-amount" data-i18n="send.amount">Montant</label>
+          <div class="label-row">
+            <label for="shielded-amount" data-i18n="send.amount">Montant</label>
+            <button id="shielded-max" type="button" class="secondary max-btn" data-i18n="send.percentMax">Max</button>
+          </div>
           <input id="shielded-amount" type="text" inputmode="decimal" autocomplete="off" placeholder="0.1" />
         </div>
         <label for="shielded-password" data-i18n="shielded.password">Mot de passe</label>
@@ -1064,6 +1067,19 @@
         <div class="modal-actions">
           <button id="shielded-confirm" class="primary" data-i18n="send.previewConfirm">Continuer</button>
           <button id="shielded-cancel" class="link" data-i18n="common.cancel">Annuler</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Délai d'annulation d'un envoi (après la confirmation de Windows) -->
+    <div id="send-countdown-modal" class="modal-overlay hidden" role="alertdialog" aria-labelledby="send-countdown-title" aria-describedby="send-countdown-text">
+      <div class="modal">
+        <h2 id="send-countdown-title" data-i18n="countdown.title">Envoi dans quelques secondes</h2>
+        <p id="send-countdown-text" class="muted"></p>
+        <div class="countdown-bar"><div id="send-countdown-progress"></div></div>
+        <div class="row-buttons">
+          <button id="send-countdown-confirm" type="button" class="primary" data-i18n="countdown.sendNow">Confirmer maintenant</button>
+          <button id="send-countdown-cancel" type="button" class="secondary" data-i18n="countdown.cancel">Annuler l'envoi</button>
         </div>
       </div>
     </div>

@@ -1642,6 +1642,82 @@ pub fn ensure_sol_transfer_funds(network: &wallet_flow::SolNetwork, from: &str, 
     Ok(())
 }
 
+// --- Montant maximal envoyable (bouton « Max ») ------------------------------------
+// Solde moins les frais du réseau, avec les mêmes règles de frais que l'envoi
+// lui-même : recalculé au moment de la boîte de confirmation, pour que le
+// montant affiché (et signé) reste exact si les frais ont bougé.
+
+/// Frais estimés d'un virement EVM maximal : gas d'un virement nul vers `to`
+/// (le montant ne change pas le gas d'un virement natif ; une estimation avec
+/// tout le solde échouerait faute de quoi payer le gas).
+pub fn evm_max_fee(network: &wallet_flow::EvmNetwork, from: Option<&str>, to: &str) -> Result<EvmFee> {
+    evm_transfer_fee_for_confirmation(network, from, to, "0")
+}
+
+/// Monnaie EVM : solde moins gas × prix, moins les frais de publication sur
+/// Ethereum (OP Stack) majorés d'un quart — ils sont facturés au bloc et
+/// peuvent monter un peu d'ici là ; le reste, minuscule, demeure.
+pub fn evm_max_native(network: &wallet_flow::EvmNetwork, from: &str, fee: EvmFee) -> Result<String> {
+    let margin = fee.l1_fee / 4;
+    let reserved = fee.max_total()?.checked_add(margin).context("frais de gas dépassant la capacité représentable")?;
+    let balance = get_evm_balance(from, network)?;
+    let max = balance.checked_sub(reserved).filter(|max| *max > 0).with_context(|| {
+        format!("{} insuffisants pour couvrir les frais du réseau ({} {})", network.native_symbol, tokens::format_amount(reserved, 18), network.native_symbol)
+    })?;
+    Ok(tokens::format_amount(max, 18))
+}
+
+/// SOL : solde moins les frais d'une signature (un compte vidé à zéro est
+/// permis).
+pub fn sol_max(network: &wallet_flow::SolNetwork, from: &str) -> Result<String> {
+    const SOL_FEE_LAMPORTS: u64 = 5_000;
+    let max = get_sol_balance(from, network)?.checked_sub(SOL_FEE_LAMPORTS).filter(|max| *max > 0).context("SOL insuffisants pour couvrir les frais du réseau")?;
+    Ok(tokens::format_amount(u128::from(max), 9))
+}
+
+/// Bitcoin : toutes les sorties (comme `send_btc`) couvrent montant et frais
+/// choisis — vérifié avant la boîte de confirmation.
+pub fn ensure_btc_transfer_funds(network: &wallet_flow::BtcNetwork, address: &str, amount: &str, fee_sat: u64) -> Result<()> {
+    let total: u64 = btc_rpc::EsploraClient::new(network.esplora_base).utxos(address)?.iter().map(|u| u.value_sat).sum();
+    btc_change(total, wallet_flow::parse_btc_to_sat(amount)?, fee_sat).map(|_| ())
+}
+
+/// Bitcoin : toutes les sorties (comme `send_btc`) moins les frais choisis.
+pub fn btc_max(network: &wallet_flow::BtcNetwork, address: &str, fee_sat: u64) -> Result<String> {
+    let total: u64 = btc_rpc::EsploraClient::new(network.esplora_base).utxos(address)?.iter().map(|u| u.value_sat).sum();
+    let max = total.checked_sub(fee_sat).filter(|max| *max > 1_000).context("BTC insuffisants pour couvrir les frais choisis")?;
+    Ok(tokens::format_amount(u128::from(max), 8))
+}
+
+/// Jeton (registre, USDC Solana compris) : tout le solde du jeton, les frais
+/// étant payés dans la monnaie du réseau.
+pub fn token_max(token_id: &str, network: &str, owner: &str) -> Result<String> {
+    let (balance, decimals) = if token_id == "usdc" && network == "sol_mainnet" {
+        (u128::from(get_spl_balance(owner, &sol_spl::usdc_mint_mainnet(), &wallet_flow::SOLANA_MAINNET)?), 6)
+    } else {
+        get_token_balance(token_id, network, owner)?
+    };
+    anyhow::ensure!(balance > 0, "aucun jeton à envoyer");
+    Ok(tokens::format_amount(balance, decimals))
+}
+
+/// Zcash transparent : sorties choisies au mieux, frais ZIP-317 déduits.
+pub fn zec_max(from: &str) -> Result<String> {
+    Ok(zcash::format_zec(zcash::max_amount(&zcash::utxos(from)?)?))
+}
+
+/// Dogecoin : sorties confirmées choisies au mieux, frais du moment déduits.
+pub fn doge_max(from: &str) -> Result<String> {
+    let doge::Recipient::P2pkh(own) = doge::parse_recipient(from)? else { anyhow::bail!("adresse Dogecoin du profil invalide") };
+    Ok(doge::format_doge(doge::max_send(&own)?))
+}
+
+/// Zcash protégé : montant de la proposition « tout envoyer » de la
+/// bibliothèque (vers `to`, ou sa propre adresse pour une estimation).
+pub fn zec_shielded_max(data_dir: &Path, profile_index: u32, to: &str) -> Result<String> {
+    Ok(zcash::format_zec(zcash_shielded::max_amount(data_dir, profile_index, to)?))
+}
+
 pub fn evm_transfer_fee_for_confirmation(network: &wallet_flow::EvmNetwork, from: Option<&str>, to: &str, amount: &str) -> Result<EvmFee> {
     let to = wallet_flow::parse_evm_address(to)?;
     let value = wallet_flow::parse_eth_to_wei(amount)?;
@@ -2695,6 +2771,12 @@ pub fn xmr_send_plan(data_dir: &Path, keys: &monero::ViewKeys, to: &str, amount:
     monero::prepare_send(data_dir, keys, to, monero::parse_xmr(amount)?)
 }
 
+/// Envoi de tout le solde Monero dépensable, frais déduits (`to` absent :
+/// estimation du montant pour le bouton « Max »).
+pub fn xmr_send_plan_max(data_dir: &Path, keys: &monero::ViewKeys, to: Option<&str>) -> Result<monero::SendPlan> {
+    monero::prepare_send_max(data_dir, keys, to)
+}
+
 /// Signe l'envoi préparé (et confirmé) avec la clé de dépense tirée de la
 /// seed, le diffuse et renvoie l'identifiant de la transaction.
 pub fn send_xmr(data_dir: &Path, device_password: &str, plan: monero::SendPlan) -> Result<String> {
@@ -2756,6 +2838,17 @@ pub fn send_zec_shielded(
 ) -> Result<Option<String>> {
     let units = u64::try_from(tokens::parse_amount(amount, 8)?).context("montant hors limites")?;
     zcash_shielded::send(data_dir, profile_index, to, units, confirm, || unlock_seed(data_dir, device_password))
+}
+
+/// Envoi de tous les fonds protégés dépensables, frais déduits.
+pub fn send_zec_shielded_max(
+    data_dir: &Path,
+    device_password: &str,
+    profile_index: u32,
+    to: &str,
+    confirm: impl FnOnce(&zcash_shielded::SpendSummary) -> bool,
+) -> Result<Option<String>> {
+    zcash_shielded::send_max(data_dir, profile_index, to, confirm, || unlock_seed(data_dir, device_password))
 }
 
 // --- Zcash (adresses transparentes) ---------------------------------------------
@@ -4559,6 +4652,36 @@ mod swap_matrix;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Réel (lecture seule) : « Max » sur des adresses publiques pourvues —
+    /// sous le solde, de l'écart des frais du réseau seulement.
+    /// `cargo test -- --ignored real_max_amounts --nocapture`
+    #[test]
+    #[ignore]
+    fn real_max_amounts_on_funded_addresses() {
+        let parse = |s: &str, d: u8| tokens::parse_amount(s, d).unwrap();
+        // Dogecoin : adresse aux 1 000+ sorties (plafond de 600 entrées).
+        let doge = doge_max("DH5yaieqoZN36fDVciNyRueRGvGLR3mr7L").unwrap();
+        let doge_balance = doge::balance("DH5yaieqoZN36fDVciNyRueRGvGLR3mr7L").unwrap();
+        println!("DOGE : max {doge} sur {}", doge::format_doge(doge_balance));
+        assert!(parse(&doge, 8) < u128::from(doge_balance));
+        // Ethereum : gas d'un virement déduit (réseau principal : pas de frais L1).
+        let evm = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
+        let net = wallet_flow::evm_network("evm_mainnet").unwrap();
+        let fee = evm_max_fee(net, Some(evm), evm).unwrap();
+        let max = parse(&evm_max_native(net, evm, fee).unwrap(), 18);
+        let balance = get_evm_balance(evm, net).unwrap();
+        println!("ETH : max {} sur {}, frais {}", tokens::format_amount(max, 18), tokens::format_amount(balance, 18), tokens::format_amount(fee.max_total().unwrap(), 18));
+        assert_eq!(balance - max, fee.max_total().unwrap(), "solde stable entre les deux lectures attendu");
+        // Jeton : tout le solde.
+        let usdt = token_max("usdt", "evm_mainnet", "0x28C6c06298d514Db089934071355E5743bf21d60").unwrap();
+        println!("USDT : max {usdt}");
+        // Solana : une signature de frais.
+        let sol_account = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+        let sol = parse(&sol_max(&wallet_flow::SOLANA_MAINNET, sol_account).unwrap(), 9);
+        assert_eq!(u128::from(get_sol_balance(sol_account, &wallet_flow::SOLANA_MAINNET).unwrap()) - sol, 5_000);
+        println!("SOL : max {}", tokens::format_amount(sol, 9));
+    }
 
     /// 23ᵉ passage : un envoi en attente (variation nette négative, monnaie
     /// rendue déduite) compte tout de suite ; une réception non confirmée est

@@ -34,6 +34,9 @@ const DUST: u64 = 1_000_000;
 const MIN_FEE_PER_KB: u64 = 1_000_000;
 const MAX_FEE_PER_KB: u64 = 500_000_000;
 const SIGHASH_ALL: u32 = 1;
+/// Entrées au plus par transaction : au-delà de ~100 ko, une transaction
+/// n'est plus relayée par les nœuds (148 octets par entrée P2PKH).
+const MAX_INPUTS: usize = 600;
 
 /// Montant en DOGE, 8 décimales (« 12.50000000 »).
 pub fn format_doge(koinus: u64) -> String {
@@ -259,10 +262,11 @@ fn fee_for(size: u64, fee_per_kb: u64) -> u64 {
 pub fn plan_send(mut utxos: Vec<Utxo>, amount: u64, fee_per_kb: u64) -> Result<SendPlan> {
     ensure!(amount >= DUST, "montant trop petit : 0,01 DOGE au moins");
     utxos.sort_by_key(|u| std::cmp::Reverse(u.value));
-    let available = utxos.iter().fold(0u64, |sum, u| sum.saturating_add(u.value));
+    // Annoncé en cas de refus : le plus grand montant envoyable.
+    let sendable = max_amount(&utxos, fee_per_kb).unwrap_or(0);
     let mut inputs = Vec::new();
     let mut total = 0u64;
-    for utxo in utxos {
+    for utxo in utxos.into_iter().take(MAX_INPUTS) {
         total = total.checked_add(utxo.value).context("montant hors limites")?;
         inputs.push(utxo);
         let with_change = fee_for(estimated_size(inputs.len(), 2), fee_per_kb);
@@ -276,7 +280,22 @@ pub fn plan_send(mut utxos: Vec<Utxo>, amount: u64, fee_per_kb: u64) -> Result<S
             return Ok(SendPlan { inputs, amount, fee: total - amount, change: 0 });
         }
     }
-    bail!("DOGE insuffisants : {} DOGE demandés + frais, {} DOGE disponibles (confirmés)", format_doge(amount), format_doge(available))
+    bail!("DOGE insuffisants : {} DOGE demandés, {} DOGE envoyables au plus (frais déduits)", format_doge(amount), format_doge(sendable))
+}
+
+/// Plus grand montant envoyable en une sortie, sans monnaie, au taux
+/// `fee_per_kb` : meilleur choix des k plus grosses sorties (une sortie plus
+/// petite que ce qu'elle coûte en frais est laissée de côté).
+pub fn max_amount(utxos: &[Utxo], fee_per_kb: u64) -> Result<u64> {
+    let mut values: Vec<u64> = utxos.iter().map(|u| u.value).collect();
+    values.sort_unstable_by(|a, b| b.cmp(a));
+    let (mut total, mut best) = (0u64, 0u64);
+    for (index, value) in values.iter().take(MAX_INPUTS).enumerate() {
+        total = total.saturating_add(*value);
+        best = best.max(total.saturating_sub(fee_for(estimated_size(index + 1, 1), fee_per_kb)));
+    }
+    ensure!(best >= DUST, "DOGE insuffisants pour couvrir les frais du réseau");
+    Ok(best)
 }
 
 pub struct Signed {
@@ -375,6 +394,14 @@ pub fn balance(address: &str) -> Result<u64> {
     Ok(u64::try_from(totals.confirmed.saturating_add(totals.unconfirmed)).unwrap_or(0).saturating_sub(being_spent))
 }
 
+/// Lecture comparée par la surveillance en direct (`balance_watch`) : totaux
+/// confirmé et en attente — tout envoi ou réception les change dès sa
+/// diffusion, puis à son bloc.
+pub fn watch_reading(address: &str) -> Result<String> {
+    let totals = totals(address)?;
+    Ok(format!("{}:{}", totals.confirmed, totals.unconfirmed))
+}
+
 /// Envoi ou réception pas encore miné (la carte se rafraîchit plus souvent).
 pub fn has_pending(address: &str) -> Result<bool> {
     Ok(totals(address)?.unconfirmed != 0 || coins(address)?.iter().any(|c| c.mint_height <= 0 || c.spent_height == SPEND_PENDING))
@@ -469,6 +496,12 @@ pub fn plan(own_hash160: &[u8; 20], amount: u64) -> Result<SendPlan> {
     let plan = plan_send(utxos(&p2pkh_address(own_hash160))?, amount, fee_per_kb()?)?;
     verify_inputs(&plan.inputs, own_hash160)?;
     Ok(plan)
+}
+
+/// Maximum envoyable depuis `own_hash160` : sorties confirmées, taux du
+/// moment.
+pub fn max_send(own_hash160: &[u8; 20]) -> Result<u64> {
+    max_amount(&utxos(&p2pkh_address(own_hash160))?, fee_per_kb()?)
 }
 
 /// Diffuse la transaction ; renvoie son identifiant.
@@ -685,6 +718,22 @@ mod tests {
         let huge = plan_send(vec![utxo(u64::MAX), utxo(u64::MAX)], 100_000_000, rate).unwrap();
         assert_eq!((huge.inputs.len(), huge.amount + huge.fee + huge.change), (1, u64::MAX), "plan cohérent");
         assert!(plan_send(vec![utxo(u64::MAX - 5), utxo(u64::MAX - 5)], u64::MAX - 1, rate).unwrap_err().to_string().contains("hors limites"));
+    }
+
+    #[test]
+    fn max_amount_leaves_exactly_the_fee_and_skips_uneconomic_outputs() {
+        let rate = 1_000_000;
+        let utxos = vec![utxo(300_000_000), utxo(200_000_000)];
+        let max = max_amount(&utxos, rate).unwrap();
+        assert_eq!(max, 500_000_000 - fee_for(estimated_size(2, 1), rate));
+        // Le plan de ce montant prend tout, sans monnaie, frais exacts.
+        let plan = plan_send(utxos, max, rate).unwrap();
+        assert_eq!((plan.inputs.len(), plan.change, plan.fee), (2, 0, fee_for(estimated_size(2, 1), rate)));
+        // Une sortie minuscule coûte plus qu'elle n'apporte : ignorée.
+        let with_dust = vec![utxo(300_000_000), utxo(1_000)];
+        assert_eq!(max_amount(&with_dust, rate).unwrap(), 300_000_000 - fee_for(estimated_size(1, 1), rate));
+        assert!(max_amount(&[utxo(100_000)], rate).is_err(), "rien d'envoyable");
+        assert!(max_amount(&[], rate).is_err());
     }
 
     #[test]

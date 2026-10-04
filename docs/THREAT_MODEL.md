@@ -81,8 +81,15 @@ qui la met en œuvre. **Aucune de ces protections n'a encore été vérifiée pa
   (`lookalike_warning`) et d'adresse jamais utilisée sur la chaîne.
 - **Windows Hello** possible à la place du mot de passe pour le déverrouillage (pas de frappe à capturer).
 - **Portefeuilles matériels** (Ledger, Trezor) : la clé ne quitte jamais l'appareil, revue à l'écran.
-- **Solde vérifié avant la boîte de confirmation** pour tous les envois : un envoi impossible n'est jamais
-  présenté à la confirmation.
+- **Solde vérifié avant la boîte de confirmation** pour tous les envois du portefeuille (Bitcoin compris depuis
+  la v2.10) : un envoi impossible n'est jamais présenté à la confirmation.
+- **Délai d'annulation de 5 s** après la boîte native, avant toute signature, imposé côté Rust
+  (`send_grace_period`) : l'interface peut seulement l'écourter ou annuler ; la seed n'est déverrouillée
+  qu'après ; un verrouillage annule les envois en attente.
+- **Destinataire reconnu** : quand l'adresse est celle d'un autre profil du portefeuille (adresses dérivées au
+  déverrouillage, jamais fournies par l'interface), la boîte native nomme ce profil.
+- **« Max »** recalculé côté Rust au moment de la boîte (solde moins les frais du moment), affiché « maximum,
+  frais déduits » puis signé tel quel : un drapeau falsifié par l'interface ne change que le montant montré.
 - *Risque résiduel* : un malware capable de lire la mémoire au moment d'une signature, ou de capturer le mot de
   passe, obtient la seed ; un remplacement d'adresse dans le presse-papiers n'est détecté que s'il ressemble à
   une adresse déjà payée. Aucun portefeuille logiciel ne protège totalement contre A2 (raison d'être des

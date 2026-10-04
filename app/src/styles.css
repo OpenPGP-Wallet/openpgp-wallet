@@ -456,6 +456,67 @@ input[type="radio"] {
   font-weight: 600;
 }
 
+/* Libellé et bouton sur une même ligne (« Montant » … « Max »). */
+.label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.label-row .max-btn {
+  width: auto;
+  margin: 8px 0 0;
+  padding: 3px 10px;
+  font-size: 0.8rem;
+}
+
+/* Délai d'annulation d'un envoi : barre qui se vide en 5 s (`SEND_GRACE`). */
+.countdown-bar {
+  height: 6px;
+  margin: 14px 0 18px;
+  border-radius: 3px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.countdown-bar > div {
+  height: 100%;
+  background: var(--accent);
+  transform-origin: left center;
+}
+
+.countdown-bar > div.running {
+  animation: countdown-shrink 5s linear forwards;
+}
+
+@keyframes countdown-shrink {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .countdown-bar > div.running {
+    animation: none;
+  }
+}
+
+/* Intertitre d'un groupe d'options (<optgroup>) : ni cliquable ni survolé. */
+.custom-select-options li.custom-select-group {
+  padding: 10px 11px 4px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  cursor: default;
+  pointer-events: none;
+}
+
 .profile-bar .dropdown,
 .wallet-card .custom-select {
   display: inline-block;

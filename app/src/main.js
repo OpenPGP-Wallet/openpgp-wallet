@@ -582,6 +582,9 @@ const I18N = {
     "addressBook.remove": "Supprimer",
     "addressBook.empty": "Aucune adresse enregistrée pour l'instant — ajoutez-en une avec le bouton ci-dessus.",
     "addressBook.pickPlaceholder": "— Choisir depuis le carnet d'adresses —",
+    "send.pickPlaceholder": "— Carnet d'adresses ou autre profil —",
+    "send.pickBook": "Carnet d'adresses",
+    "send.pickProfiles": "Mes profils",
     "nav.walletconnect": "WalletConnect",
     "wc.title": "Applications connectées (WalletConnect)",
     "wc.subtitle": "Connectez ce portefeuille à un site (dApp) : sur le site, choisissez WalletConnect, copiez le lien de connexion (« wc:… ») et collez-le ici. Chaque signature demandée par un site exigera votre mot de passe et une confirmation de Windows.",
@@ -841,6 +844,13 @@ const I18N = {
     "send.amount": "Montant",
     "send.amountFiat": "Montant dans la devise affichée",
     "send.percentMax": "Max",
+    "send.maxHint": "frais déduits",
+    "send.maxComputing": "calcul…",
+    "send.maxSuffix": " (maximum, frais déduits)",
+    "countdown.title": "Envoi dans quelques secondes",
+    "countdown.text": "Envoi définitif dans {seconds} s — vous pouvez encore l'annuler.",
+    "countdown.sendNow": "Confirmer maintenant",
+    "countdown.cancel": "Annuler l'envoi",
     "send.percentUnavailable": "Pourcentages indisponibles (solde non chargé).",
     "send.feeSpeed": "Vitesse d'envoi (frais réseau)",
     "send.passwordToConfirm": "Mot de passe (pour valider la transaction)",
@@ -1161,6 +1171,9 @@ const I18N = {
     "addressBook.remove": "Remove",
     "addressBook.empty": "No saved address yet — add one with the button above.",
     "addressBook.pickPlaceholder": "— Choose from the address book —",
+    "send.pickPlaceholder": "— Address book or another profile —",
+    "send.pickBook": "Address book",
+    "send.pickProfiles": "My profiles",
     "nav.walletconnect": "WalletConnect",
     "wc.title": "Connected apps (WalletConnect)",
     "wc.subtitle": "Connect this wallet to a site (dApp): on the site, choose WalletConnect, copy the connection link (\"wc:…\") and paste it here. Every signature a site asks for will require your password and a Windows confirmation.",
@@ -1420,6 +1433,13 @@ const I18N = {
     "send.amount": "Amount",
     "send.amountFiat": "Amount in the display currency",
     "send.percentMax": "Max",
+    "send.maxHint": "fees deducted",
+    "send.maxComputing": "computing…",
+    "send.maxSuffix": " (maximum, fees deducted)",
+    "countdown.title": "Sending in a few seconds",
+    "countdown.text": "Final send in {seconds} s — you can still cancel it.",
+    "countdown.sendNow": "Confirm now",
+    "countdown.cancel": "Cancel the transfer",
     "send.percentUnavailable": "Percentages unavailable (balance not loaded).",
     "send.feeSpeed": "Sending speed (network fee)",
     "send.passwordToConfirm": "Password (to confirm the transaction)",
@@ -1735,7 +1755,13 @@ function syncCustomSelect(select) {
   const label = wrapper.querySelector(".custom-select-label");
   const list = wrapper.querySelector(".custom-select-options");
   list.innerHTML = "";
+  let group = null;
   Array.from(select.options).forEach((option) => {
+    const parent = option.parentElement;
+    if (parent.tagName === "OPTGROUP" && parent !== group) {
+      list.appendChild(Object.assign(document.createElement("li"), { className: "custom-select-group", textContent: parent.label }));
+    }
+    group = parent.tagName === "OPTGROUP" ? parent : null;
     const li = document.createElement("li");
     // Option d'une crypto (`data-coin`) : son logo devant le nom.
     if (option.dataset.coin) setWithCoinIcon(li, option.dataset.coin, option.textContent);
@@ -1798,7 +1824,7 @@ function initCustomSelect(wrapper) {
 
   list.addEventListener("click", (e) => {
     const li = e.target.closest("li");
-    if (!li) return;
+    if (!li || li.classList.contains("custom-select-group")) return;
     if (select.value !== li.dataset.value) {
       select.value = li.dataset.value;
       // Synthétique : déclenche exactement les mêmes gestionnaires "change" que si
@@ -3475,7 +3501,11 @@ function currentProfile() {
 // EVM/Solana où la même adresse sert sur toutes les variantes du réseau — pour ces
 // deux-là, le paramètre est ignoré.
 function addressForCoin(coin, network) {
-  const profile = currentProfile();
+  return addressOfProfile(currentProfile(), coin, network);
+}
+
+// Adresse de `profile` pour une crypto et un réseau (celle de sa carte).
+function addressOfProfile(profile, coin, network) {
   // `addresses` est absent quand le profil a été créé sans mot de passe (voir
   // add-profile-confirm) : l'adresse n'est pas encore dérivée, elle apparaîtra
   // au prochain déverrouillage complet (voir core/src/api.rs::create_profile).
@@ -3895,6 +3925,7 @@ function openShieldedModal(mode) {
   document.getElementById("shielded-modal-hint").textContent = t(mode === "shield" ? "shielded.shieldHint" : "shielded.sendHint");
   document.getElementById("shielded-send-fields").classList.toggle("hidden", mode === "shield");
   for (const id of ["shielded-to", "shielded-amount", "shielded-password"]) document.getElementById(id).value = "";
+  shieldedMax = false;
   hideError(document.getElementById("shielded-error"));
   document.getElementById("shielded-success").classList.add("hidden");
   document.getElementById("shielded-modal").classList.remove("hidden");
@@ -3906,6 +3937,23 @@ document.getElementById("shielded-cancel").addEventListener("click", () => {
 });
 
 restrictToAmount(document.getElementById("shielded-amount"));
+// « Max » : tous les fonds protégés dépensables, frais déduits (proposition de
+// la bibliothèque Zcash), recalculé à l'envoi.
+let shieldedMax = false;
+document.getElementById("shielded-amount").addEventListener("input", () => {
+  shieldedMax = false;
+});
+const shieldedMaxBtn = document.getElementById("shielded-max");
+shieldedMaxBtn.addEventListener("click", withBusyButton(shieldedMaxBtn, async () => {
+  const errorEl = document.getElementById("shielded-error");
+  hideError(errorEl);
+  try {
+    document.getElementById("shielded-amount").value = await invoke("max_send_amount", { network: "zec_shielded", token: null, profileIndex: currentProfileIndex, feeSat: null });
+    shieldedMax = true;
+  } catch (e) {
+    showError(errorEl, String(e));
+  }
+}));
 
 const shieldedConfirmBtn = document.getElementById("shielded-confirm");
 shieldedConfirmBtn.addEventListener("click", withBusyButton(shieldedConfirmBtn, async () => {
@@ -3926,6 +3974,7 @@ shieldedConfirmBtn.addEventListener("click", withBusyButton(shieldedConfirmBtn, 
           profileIndex: currentProfileIndex,
           to: document.getElementById("shielded-to").value.trim(),
           amount: document.getElementById("shielded-amount").value.trim().replace(",", "."),
+          max: shieldedMax,
         });
     successEl.textContent = t("send.txSent", { tx: txid });
     successEl.classList.remove("hidden");
@@ -3991,9 +4040,11 @@ function announceReceived(card, network, amount) {
 // Surveillance en direct (voir core/src/balance_watch.rs) : dès qu'un envoi ou
 // une réception change le solde d'une carte affichée, Rust le signale
 // ("balance-changed") et la carte est relue aussitôt — Solana/USDC poussés par
-// le nœud (~1 s), Ethereum relu toutes les 6 s, Bitcoin toutes les 10 s (mempool
-// compris), jetons du registre (ERC-20 toutes les 12 s, Solana poussés). Le
-// rafraîchissement toutes les 60 s reste en filet de sécurité.
+// le nœud (~1 s), Ethereum relu toutes les 6 s, Bitcoin et Dogecoin toutes les
+// 10 s (transactions en attente comprises), Zcash transparent toutes les 20 s,
+// jetons du registre (ERC-20 toutes les 12 s, Solana poussés). Monero et Zcash
+// protégé : synchronisation de fond toutes les 30 s. Le rafraîchissement
+// toutes les 60 s reste en filet de sécurité.
 function updateBalanceWatch() {
   const targets = [...document.querySelectorAll(".wallet-card:not(.asset-hidden)")]
     .map((card) => {
@@ -4002,15 +4053,65 @@ function updateBalanceWatch() {
       // Jetons du registre : contrat ou mint lus côté Rust (seul l'identifiant
       // part d'ici).
       if (usesTokenRegistry(coin, network)) return { id: coin, network, address: addressForCoin(coin, network), token: coin };
-      // Zcash, Dogecoin : pas de surveillance en direct (solde relu toutes les
-      // 60 s, plus souvent pendant un envoi en attente). Monero, Zcash
-      // protégé : solde tenu par la synchronisation de fond.
-      if (coin === "zec" || coin === "doge" || coin === "xmr" || coin === "zecs") return { address: "" };
+      // Monero, Zcash protégé : solde tenu par la synchronisation de fond
+      // (événements `xmr-synced`, `zec-shielded-synced`).
+      if (coin === "xmr" || coin === "zecs") return { address: "" };
       return { id: coin, network: coin === "usdc" ? "usdc_solana" : network, address: addressForCoin(coin, network) };
     })
     .filter((target) => target.address);
   invoke("watch_balances", { targets }).catch((e) => console.error(e));
 }
+
+// Délai d'annulation d'un envoi (Rust : `send_grace_period`), après la
+// confirmation de Windows et avant la signature : compte à rebours,
+// « Confirmer maintenant » ou « Annuler l'envoi ». Sans réponse, l'envoi part
+// à la fin du délai — c'est Rust qui attend, ces boutons ne font que
+// l'écourter ou l'annuler.
+const countdownModal = document.getElementById("send-countdown-modal");
+let sendCountdown = null;
+
+function closeSendCountdown() {
+  if (!sendCountdown) return;
+  clearInterval(sendCountdown.timer);
+  sendCountdown = null;
+  countdownModal.classList.add("hidden");
+  document.getElementById("send-countdown-progress").classList.remove("running");
+}
+
+function resolveSendCountdown(send) {
+  if (!sendCountdown) return;
+  invoke("resolve_send_countdown", { id: sendCountdown.id, send }).catch((e) => console.error(e));
+  closeSendCountdown();
+}
+
+window.__TAURI__.event.listen("send-countdown", (event) => {
+  closeSendCountdown();
+  const { id, seconds } = event.payload;
+  const end = Date.now() + seconds * 1000;
+  const text = document.getElementById("send-countdown-text");
+  const tick = () => {
+    text.textContent = t("countdown.text", { seconds: Math.max(0, Math.ceil((end - Date.now()) / 1000)) });
+  };
+  tick();
+  sendCountdown = { id, timer: setInterval(tick, 200) };
+  const progress = document.getElementById("send-countdown-progress");
+  progress.classList.remove("running");
+  void progress.offsetWidth; // relance l'animation
+  progress.classList.add("running");
+  countdownModal.classList.remove("hidden");
+  // Annuler par défaut : une touche Entrée ne confirme jamais par mégarde.
+  document.getElementById("send-countdown-cancel").focus();
+});
+
+window.__TAURI__.event.listen("send-countdown-end", (event) => {
+  if (sendCountdown?.id === event.payload) closeSendCountdown();
+});
+
+document.getElementById("send-countdown-confirm").addEventListener("click", () => resolveSendCountdown(true));
+document.getElementById("send-countdown-cancel").addEventListener("click", () => resolveSendCountdown(false));
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && sendCountdown) resolveSendCountdown(false);
+});
 
 window.__TAURI__.event.listen("balance-changed", (event) => {
   const card = document.querySelector(`.wallet-card[data-coin="${event.payload}"]`);
@@ -5037,6 +5138,12 @@ function setSendCryptoAmount(value) {
 
 restrictToAmount(sendAmountInput, syncSendFiatFromCrypto);
 restrictToAmount(sendFiatInput, syncSendCryptoFromFiat);
+// Montant tapé à la main : ce n'est plus le maximum.
+for (const input of [sendAmountInput, sendFiatInput]) {
+  input.addEventListener("input", () => {
+    if (sendContext) sendContext.max = false;
+  });
+}
 
 // Unités à droite des deux champs, champ en devise activé ou non.
 function renderSendAmountUnits() {
@@ -5097,13 +5204,41 @@ function renderQuickAmounts() {
 
 // Pourcentages du solde actuellement affiché sur la carte (pas un nouvel appel
 // réseau : réutilise `[data-field="balance"]`, déjà tenu à jour par
-// refreshBalance). Pas de déduction de frais réseau pour "Max" (100 %) : les
-// frais sont estimés différemment par réseau (sat/vB pour Bitcoin, gas pour
-// EVM, frais fixe pour Solana) et le backend refuse déjà clairement l'envoi
-// AVANT toute diffusion si le solde restant ne couvre pas les frais (voir
-// api.rs::send_sol/send_btc/send_evm/send_usdc) — pas la peine de deviner ici
-// un montant de frais qu'on ne peut pas garantir exact.
+// refreshBalance). « Max » : le plus grand montant ENVOYABLE, frais du réseau
+// déduits, calculé côté Rust (`max_send_amount`) avec les mêmes règles que
+// l'envoi — puis recalculé à la confirmation (`max: true`), si bien que le
+// montant affiché dans la boîte de Windows reste exact si les frais bougent.
 const QUICK_PERCENTAGES = [25, 50, 100];
+
+// Jeton du registre (ou USDC) envoyé depuis la carte : son identifiant, sinon
+// `null` (monnaie du réseau).
+function sendTokenId(coin, network) {
+  return usesTokenRegistry(coin, network) || coin === "usdc" ? coin : null;
+}
+
+async function fillMaxAmount(btn) {
+  if (!sendContext) return;
+  const context = sendContext;
+  const network = networkForCard(context.card);
+  const cryptoSpan = btn?.querySelector(".quick-amount-crypto");
+  if (cryptoSpan) cryptoSpan.textContent = t("send.maxComputing");
+  hideError(document.getElementById("send-error"));
+  try {
+    const amount = await invoke("max_send_amount", {
+      network,
+      token: sendTokenId(context.coin, network),
+      profileIndex: context.profileIndex,
+      feeSat: context.coin === "btc" ? context.feeSat : null,
+    });
+    if (sendContext !== context) return;
+    setSendCryptoAmount(amount);
+    context.max = true;
+    if (cryptoSpan) cryptoSpan.textContent = `${amount} ${COIN_SYMBOL[context.coin]}`;
+  } catch (e) {
+    if (cryptoSpan) cryptoSpan.textContent = t("send.maxHint");
+    showError(document.getElementById("send-error"), String(e));
+  }
+}
 
 function renderQuickPercentages() {
   const container = document.getElementById("send-quick-percentages");
@@ -5128,11 +5263,16 @@ function renderQuickPercentages() {
     percentSpan.textContent = percent === 100 ? t("send.percentMax") : `${percent}%`;
     const cryptoSpan = document.createElement("span");
     cryptoSpan.className = "quick-amount-crypto";
-    cryptoSpan.textContent = `≈ ${cryptoAmount} ${symbol}`;
+    cryptoSpan.textContent = percent === 100 ? t("send.maxHint") : `≈ ${cryptoAmount} ${symbol}`;
     btn.appendChild(percentSpan);
     btn.appendChild(cryptoSpan);
     btn.addEventListener("click", () => {
+      if (percent === 100) {
+        fillMaxAmount(btn);
+        return;
+      }
       setSendCryptoAmount(cryptoAmount);
+      sendContext.max = false;
     });
     container.appendChild(btn);
   });
@@ -5145,7 +5285,7 @@ function openSendModal(card) {
   // valeur explicitement évite de dépendre de cet effet de bord d'affichage pour une
   // garantie de sécurité (quel profil signe la transaction).
   const profile = currentProfile();
-  sendContext = { coin: card.dataset.coin, card, profileIndex: profile ? profile.index : currentProfileIndex };
+  sendContext = { coin: card.dataset.coin, card, profileIndex: profile ? profile.index : currentProfileIndex, max: false };
   const network = networkForCard(card);
   // Nom lu sur la carte, sans l'indentation du HTML (le titre contient le
   // bouton de repli) : « Bitcoin », « USDC Solana ».
@@ -5164,7 +5304,7 @@ function openSendModal(card) {
   renderQuickPercentages();
   loadBtcFeeOptions(card, network);
   sendModal.classList.remove("hidden");
-  loadAddressBook().then(() => refreshSendAddressBookPicker(card.dataset.coin));
+  loadAddressBook().then(() => refreshSendAddressBookPicker(card.dataset.coin, network, sendContext.profileIndex));
 }
 
 // Bitcoin est le seul réseau où les frais sont un choix explicite de l'utilisateur
@@ -5219,6 +5359,8 @@ async function loadBtcFeeOptions(card, network) {
         container.querySelectorAll(".fee-option-btn").forEach((b) => b.classList.remove("selected"));
         btn.classList.add("selected");
         sendContext.feeSat = sat;
+        // Maximum dépendant des frais choisis : recalculé.
+        if (sendContext.max) fillMaxAmount(document.querySelector("#send-quick-percentages .quick-amount-btn:last-child"));
       });
 
       // "Moyen" présélectionné : compromis raisonnable par défaut, l'utilisateur
@@ -5277,7 +5419,8 @@ sendConfirmBtn.addEventListener("click", () => {
   document.getElementById("send-preview-to").textContent = to;
   const rate = sendRate();
   const approx = rate ? ` (${formatUsdApprox(Number(amount) * rate.price)})` : "";
-  setWithCoinIcon(document.getElementById("send-preview-amount"), sendContext.coin, `${amount} ${COIN_SYMBOL[sendContext.coin]}${approx}`);
+  const maxNote = sendContext.max ? t("send.maxSuffix") : "";
+  setWithCoinIcon(document.getElementById("send-preview-amount"), sendContext.coin, `${amount} ${COIN_SYMBOL[sendContext.coin]}${maxNote}${approx}`);
 
   const feeRow = document.getElementById("send-preview-fee-row");
   const selectedFeeBtn = document.querySelector("#send-fee-options .fee-option-btn.selected");
@@ -5331,9 +5474,9 @@ sendPreviewConfirmBtn.addEventListener("click", withBusyButton(sendPreviewConfir
     // Jetons du registre : identifiant et réseau seulement (contrat, décimales
     // et boîte de confirmation côté Rust).
     const txResult = usesTokenRegistry(sendContext.coin, network)
-      ? await invoke("send_token_transaction", { token: sendContext.coin, network, password, to, amount, profileIndex: sendContext.profileIndex })
+      ? await invoke("send_token_transaction", { token: sendContext.coin, network, password, to, amount, profileIndex: sendContext.profileIndex, max: sendContext.max })
       : sendContext.coin === "usdc"
-      ? await invoke("send_usdc_transaction", { password, to, amount, profileIndex: sendContext.profileIndex })
+      ? await invoke("send_usdc_transaction", { password, to, amount, profileIndex: sendContext.profileIndex, max: sendContext.max })
       : await invoke("send_transaction", {
           network,
           password,
@@ -5341,6 +5484,7 @@ sendPreviewConfirmBtn.addEventListener("click", withBusyButton(sendPreviewConfir
           amount,
           feeSat: sendContext.coin === "btc" ? sendContext.feeSat : null,
           profileIndex: sendContext.profileIndex,
+          max: sendContext.max,
         });
     successEl.textContent = t("send.txSent", { tx: txResult });
     successEl.classList.remove("hidden");
@@ -6775,26 +6919,50 @@ addAddressBookConfirmBtn.addEventListener("click", withBusyButton(addAddressBook
 // externes, voir externalWalletCoin), masqué s'il n'y a aucune entrée
 // compatible pour ce coin. Choisir une entrée remplit juste le champ adresse,
 // le sélecteur repart ensuite sur son placeholder (action, pas un état persistant).
-function refreshSendAddressBookPicker(coin) {
+// Destinataires proposés à l'envoi : contacts du carnet, puis les AUTRES
+// profils de ce portefeuille (leur adresse pour la même crypto et le même
+// réseau). La boîte de confirmation native nomme le profil reconnu, d'après
+// les adresses dérivées côté Rust — jamais d'après ce menu.
+function refreshSendAddressBookPicker(coin, network, sourceProfileIndex) {
   const wrapper = document.getElementById("send-address-book-picker");
   const select = document.getElementById("send-address-book-select");
   const matches = addressBookCache.filter((entry) => externalWalletCoin(entry.network) === coin);
+  const profiles = profilesCache
+    .filter((profile) => profile.index !== sourceProfileIndex)
+    .map((profile) => ({ profile, address: addressOfProfile(profile, coin, network) }))
+    .filter(({ address }) => address);
 
-  select.innerHTML = `<option value="" data-i18n="addressBook.pickPlaceholder">${t("addressBook.pickPlaceholder")}</option>`;
-  matches.forEach((entry) => {
-    const opt = document.createElement("option");
-    opt.value = String(entry.id);
-    opt.textContent = `${entry.label} — ${entry.address}`;
-    select.appendChild(opt);
-  });
+  select.replaceChildren(Object.assign(document.createElement("option"), { value: "", textContent: t(profiles.length ? "send.pickPlaceholder" : "addressBook.pickPlaceholder") }));
+  const group = (labelKey, items) => {
+    if (items.length === 0) return;
+    const optgroup = Object.assign(document.createElement("optgroup"), { label: t(labelKey) });
+    optgroup.append(...items);
+    select.appendChild(optgroup);
+  };
+  group(
+    "send.pickBook",
+    matches.map((entry) => Object.assign(document.createElement("option"), { value: `book:${entry.id}`, textContent: `${entry.label} — ${entry.address}` }))
+  );
+  group(
+    "send.pickProfiles",
+    profiles.map(({ profile, address }) => {
+      const shown = address.length > 24 ? `${address.slice(0, 10)}…${address.slice(-8)}` : address;
+      return Object.assign(document.createElement("option"), { value: `profile:${profile.index}`, textContent: `${profile.label} — ${shown}` });
+    })
+  );
   syncCustomSelect(select);
-  wrapper.classList.toggle("hidden", matches.length === 0);
+  wrapper.classList.toggle("hidden", matches.length === 0 && profiles.length === 0);
 }
 
 document.getElementById("send-address-book-select").addEventListener("change", (e) => {
-  const entry = addressBookCache.find((entry) => String(entry.id) === e.target.value);
-  if (entry) {
-    document.getElementById("send-to").value = entry.address;
+  const [kind, id] = e.target.value.split(":");
+  if (kind === "book") {
+    const entry = addressBookCache.find((entry) => String(entry.id) === id);
+    if (entry) document.getElementById("send-to").value = entry.address;
+  } else if (kind === "profile" && sendContext) {
+    const profile = profilesCache.find((p) => String(p.index) === id);
+    const address = addressOfProfile(profile, sendContext.coin, networkForCard(sendContext.card));
+    if (address) document.getElementById("send-to").value = address;
   }
   e.target.value = "";
   syncCustomSelect(e.target);

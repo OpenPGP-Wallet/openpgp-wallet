@@ -40,6 +40,9 @@ const GRACE_ACTIONS: u64 = 2;
 const DUST_CHANGE: u64 = 5_000;
 /// Validité d'une transaction : 40 blocs (~50 min) après la hauteur visée.
 const EXPIRY_DELTA: u32 = 40;
+/// Entrées au plus par transaction : au-delà de ~100 ko, une transaction
+/// n'est plus relayée par les nœuds (148 octets par entrée P2PKH).
+const MAX_INPUTS: usize = 600;
 /// Transactions lues au plus pour l'historique.
 pub const HISTORY_LIMIT: usize = 50;
 
@@ -527,7 +530,7 @@ fn plan(mut utxos: Vec<Utxo>, amount: u64, memo: Option<Vec<u8>>) -> Result<Send
     let memo_len = memo.as_ref().map(Vec::len);
     let mut inputs = Vec::new();
     let mut total: u64 = 0;
-    for utxo in utxos {
+    for utxo in utxos.into_iter().take(MAX_INPUTS) {
         total = total.checked_add(utxo.value).context("montant hors limites")?;
         inputs.push(utxo);
         let fee_with_change = zip317_fee_with_memo(inputs.len(), 2, memo_len);
@@ -545,6 +548,21 @@ fn plan(mut utxos: Vec<Utxo>, amount: u64, memo: Option<Vec<u8>>) -> Result<Send
         format_zec(available),
         format_zec(amount)
     )
+}
+
+/// Plus grand montant envoyable en une sortie, sans monnaie : meilleur choix
+/// des k plus grosses sorties (chacune ajoute des frais ZIP-317 ; une sortie
+/// plus petite que ce qu'elle coûte est laissée de côté).
+pub fn max_amount(utxos: &[Utxo]) -> Result<u64> {
+    let mut values: Vec<u64> = utxos.iter().map(|u| u.value).collect();
+    values.sort_unstable_by(|a, b| b.cmp(a));
+    let (mut total, mut best) = (0u64, 0u64);
+    for (index, value) in values.iter().take(MAX_INPUTS).enumerate() {
+        total = total.saturating_add(*value);
+        best = best.max(total.saturating_sub(zip317_fee(index + 1, 1)));
+    }
+    ensure!(best > 0, "ZEC insuffisants pour couvrir les frais du réseau");
+    Ok(best)
 }
 
 pub fn format_zec(zat: u64) -> String {
@@ -749,6 +767,20 @@ mod tests {
 
     fn utxo(value: u64, tag: u8, hash160: &[u8; 20]) -> Utxo {
         Utxo { txid: [tag; 32], index: 1, script: p2pkh_script(hash160), value, height: 100 }
+    }
+
+    #[test]
+    fn max_amount_leaves_exactly_the_zip317_fee() {
+        let h = [7u8; 20];
+        let utxos = vec![utxo(300_000, 1, &h), utxo(200_000, 2, &h), utxo(100_000, 3, &h)];
+        let max = max_amount(&utxos).unwrap();
+        assert_eq!(max, 600_000 - zip317_fee(3, 1));
+        let plan = plan_send(utxos, max).unwrap();
+        assert_eq!((plan.inputs.len(), plan.change, plan.fee), (3, 0, zip317_fee(3, 1)));
+        // Sortie plus petite que les frais qu'elle ajoute : laissée de côté.
+        let with_dust = vec![utxo(300_000, 1, &h), utxo(200_000, 2, &h), utxo(3_000, 3, &h)];
+        assert_eq!(max_amount(&with_dust).unwrap(), 500_000 - zip317_fee(2, 1));
+        assert!(max_amount(&[utxo(9_000, 1, &h)]).is_err(), "moins que les frais minimaux");
     }
 
     /// Notre dérivation (m/44'/133'/0'/0/i) donne la même clé que celle de la

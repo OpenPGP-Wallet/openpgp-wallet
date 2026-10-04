@@ -13,6 +13,10 @@
 //! - Jetons du registre (`tokens.rs`) : ERC-20 relus toutes les 12 s (un
 //!   bloc Ethereum ; plusieurs jetons affichés ne doivent pas saturer les nœuds
 //!   publics), jetons Solana poussés comme l'USDC (compte de jetons associé).
+//! - Dogecoin : totaux de l'adresse (confirmé + en attente) relus toutes les
+//!   10 s — un envoi ou une réception se voit avant le bloc suivant (~1 min).
+//! - Zcash transparent : solde relu toutes les 20 s (un bloc toutes les 75 s ;
+//!   lightwalletd ne compte que les transactions minées).
 //!
 //! Rien de nouveau n'est envoyé à personne : les mêmes adresses publiques, aux
 //! mêmes fournisseurs que les lectures de solde. La surveillance s'arrête quand
@@ -61,6 +65,8 @@ const MAX_TARGETS: usize = 64;
 const EVM_INTERVAL: Duration = Duration::from_secs(6);
 const BTC_INTERVAL: Duration = Duration::from_secs(10);
 const TOKEN_INTERVAL: Duration = Duration::from_secs(12);
+const DOGE_INTERVAL: Duration = Duration::from_secs(10);
+const ZEC_INTERVAL: Duration = Duration::from_secs(20);
 const HEARTBEAT: Duration = Duration::from_secs(30);
 const MAX_BACKOFF_SECS: u64 = 60;
 
@@ -69,6 +75,8 @@ enum Polled {
     Btc(&'static wallet_flow::BtcNetwork, String),
     /// Jeton ERC-20 : réseau, contrat, détenteur.
     Erc20(&'static wallet_flow::EvmNetwork, &'static str, String),
+    Doge(String),
+    Zec(String),
 }
 
 impl Polled {
@@ -77,6 +85,8 @@ impl Polled {
             Polled::Evm(..) => EVM_INTERVAL,
             Polled::Btc(..) => BTC_INTERVAL,
             Polled::Erc20(..) => TOKEN_INTERVAL,
+            Polled::Doge(..) => DOGE_INTERVAL,
+            Polled::Zec(..) => ZEC_INTERVAL,
         }
     }
 }
@@ -115,6 +125,8 @@ pub fn start(targets: Vec<Target>, notify: Notify) -> Result<BalanceWatch> {
             }
             "btc_mainnet" => polled.push((target.id, Polled::Btc(&wallet_flow::BTC_MAINNET, address))),
             "btc_testnet" => polled.push((target.id, Polled::Btc(&wallet_flow::BTC_TESTNET, address))),
+            "doge_mainnet" => polled.push((target.id, Polled::Doge(address))),
+            "zec_mainnet" => polled.push((target.id, Polled::Zec(address))),
             other => match wallet_flow::evm_network(other) {
                 // Tous les réseaux EVM (Ethereum, L2, BNB Chain…) : solde relu.
                 Some(net) => polled.push((target.id, Polled::Evm(net, address))),
@@ -266,7 +278,8 @@ fn watch_solana(rpc: &str, accounts: &[(String, String)], stop: &AtomicBool, not
     }
 }
 
-/// Lecture comparée d'une adresse relue périodiquement (Ethereum, Bitcoin).
+/// Lecture comparée d'une adresse relue périodiquement (EVM, Bitcoin, jetons
+/// ERC-20, Dogecoin, Zcash transparent).
 fn read(polled: &Polled) -> Result<String> {
     Ok(match polled {
         Polled::Evm(network, address) => api::get_evm_balance(address, network)?.to_string(),
@@ -275,6 +288,8 @@ fn read(polled: &Polled) -> Result<String> {
             format!("{}:{}", stats.tx_count, stats.balance_sat)
         }
         Polled::Erc20(network, contract, address) => api::get_erc20_balance(network, contract, address)?.to_string(),
+        Polled::Doge(address) => crate::doge::watch_reading(address)?,
+        Polled::Zec(address) => crate::zcash::balance(address)?.to_string(),
     })
 }
 
@@ -328,6 +343,8 @@ mod tests {
         let target = |network: &str, address: &str| Target { id: "x".into(), network: network.into(), address: address.into(), token: None };
         assert!(start(vec![target("sol_mainnet", "pas une adresse")], notify.clone()).is_err());
         assert!(start(vec![target("dogecoin", "D123")], notify.clone()).is_err());
+        assert!(start(vec![target("doge_mainnet", "D123")], notify.clone()).is_err(), "adresse Dogecoin invalide");
+        assert!(start(vec![target("zec_mainnet", "0x34deb5AF3e37BD0495dDc1bb1C53c14d7CE064c3")], notify.clone()).is_err(), "adresse EVM sur Zcash");
         // Jeton inconnu, ou absent de ce réseau : refusé avant tout démarrage.
         let token = |network: &str, address: &str, id: &str| Target { id: "x".into(), network: network.into(), address: address.into(), token: Some(id.into()) };
         let evm = "0x34deb5AF3e37BD0495dDc1bb1C53c14d7CE064c3";
@@ -339,7 +356,8 @@ mod tests {
     }
 
     /// Nœuds RÉELS, adresses très actives : chaque réseau doit signaler un
-    /// changement en moins de 2 minutes. Solana : le compte de l'horloge du
+    /// changement en moins de 5 minutes (Dogecoin : blocs parfois espacés de
+    /// plusieurs minutes, une adresse ne change pas à chaque bloc). Solana : le compte de l'horloge du
     /// réseau (change à chaque slot, ~400 ms — jamais inactif, contrairement à
     /// un portefeuille) ; avec `WATCH_SOL_ADDRESS` (un portefeuille actif), le
     /// changement signalé doit aussi se voir dans son solde lu à part.
@@ -363,13 +381,16 @@ mod tests {
                 target("btc", "btc_mainnet", "bc1qm34lsc65zpw79lxes69zkqmk6ee3ewf0j77s3h"),
                 // Jeton ERC-20 : USDT du même portefeuille d'échange.
                 Target { token: Some("usdt".into()), ..target("usdt", "evm_mainnet", "0x28C6c06298d514Db089934071355E5743bf21d60") },
+                // Dogecoin : adresse la plus active de 4 blocs récents (relevée
+                // le 04/10/2026).
+                target("doge", "doge_mainnet", "D6Dz1pzn2AcwSfz1Sat6Re54pghrFxcRa8"),
             ],
             notify,
         )
         .unwrap();
-        while started.elapsed() < Duration::from_secs(120) {
+        while started.elapsed() < Duration::from_secs(300) {
             let ids: Vec<String> = seen.lock().unwrap().iter().map(|(id, _)| id.clone()).collect();
-            if ["sol", "eth", "btc", "usdt"].iter().all(|id| ids.iter().any(|seen| seen == id)) {
+            if ["sol", "eth", "btc", "usdt", "doge"].iter().all(|id| ids.iter().any(|seen| seen == id)) {
                 break;
             }
             std::thread::sleep(Duration::from_millis(500));
@@ -379,7 +400,7 @@ mod tests {
             println!("{id} après {:?}", at.duration_since(started));
         }
         let ids: Vec<String> = seen.lock().unwrap().iter().map(|(id, _)| id.clone()).collect();
-        for id in ["sol", "eth", "btc", "usdt"] {
+        for id in ["sol", "eth", "btc", "usdt", "doge"] {
             assert!(ids.iter().any(|seen| seen == id), "aucun changement signalé pour {id}");
         }
         let after = api::get_sol_balance(sol, &wallet_flow::SOLANA_MAINNET).unwrap();

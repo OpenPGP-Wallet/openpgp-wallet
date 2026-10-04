@@ -8,7 +8,7 @@ use base64::Engine;
 use pgp_wallet_poc::{address_book, api, cow, dapp_requests, external_wallets, hardware, history, messaging, price_history, price_rpc, sent_recipients, wallet_flow};
 use serde::Serialize;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tauri::{Emitter, Manager};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_opener::OpenerExt;
@@ -171,6 +171,14 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("adresse Zcash d'un autre réseau (test) — refusée", "Zcash address from another network (test) — refused"),
     ("envoi vers votre propre adresse Zcash", "sending to your own Zcash address"),
     ("aucun serveur Zcash joignable", "no Zcash server reachable"),
+    // Délai d'annulation et bouton « Max »
+    ("Virement annulé pendant le délai d'annulation.", "Transfer cancelled during the cancellation delay."),
+    ("ZEC insuffisants pour couvrir les frais du réseau", "not enough ZEC to cover the network fee"),
+    ("ZEC protégés insuffisants pour couvrir les frais du réseau", "not enough shielded ZEC to cover the network fee"),
+    ("DOGE insuffisants pour couvrir les frais du réseau", "not enough DOGE to cover the network fee"),
+    ("SOL insuffisants pour couvrir les frais du réseau", "not enough SOL to cover the network fee"),
+    ("BTC insuffisants pour couvrir les frais choisis", "not enough BTC to cover the chosen fee"),
+    ("aucun jeton à envoyer", "no tokens to send"),
     // Dogecoin (core/src/doge.rs, core/src/api.rs)
     ("service Dogecoin injoignable", "Dogecoin service unreachable"),
     ("réponse du service Dogecoin illisible", "unreadable Dogecoin service response"),
@@ -612,7 +620,7 @@ fn translate_dynamic_error(msg: &str) -> Option<String> {
     if let Some(rest) = msg.strip_prefix("DOGE insuffisants : ") {
         return Some(format!(
             "insufficient DOGE: {}",
-            rest.replace(" demandés + frais, ", " requested + fees, ").replace(" disponibles (confirmés)", " available (confirmed)")
+            rest.replace(" demandés, ", " requested, ").replace(" envoyables au plus (frais déduits)", " sendable at most (fees deducted)")
         ));
     }
     if let Some(rest) = msg.strip_prefix("transaction Dogecoin refusée : ") {
@@ -1816,11 +1824,16 @@ fn lock_session(app: tauri::AppHandle) {
 }
 
 fn forget_session(app: &tauri::AppHandle) {
+    // Envois encore dans leur délai d'annulation : annulés.
+    for sender in app.state::<SendGrace>().0.lock().unwrap_or_else(|p| p.into_inner()).values() {
+        let _ = sender.send(false);
+    }
     app.state::<WcState>().prepared.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<ProfileAddressCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<ProfileZcashCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<ProfileBtcCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<ProfileDogeCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    app.state::<ProfileBtcTestnetCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<ShieldedKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<MoneroKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     IS_AFFILIATE_WALLET.store(false, Ordering::Relaxed);
@@ -2627,11 +2640,64 @@ fn recipient_warning_lines(first_send: bool, coin: &str, activity: Option<api::R
 }
 
 /// Tous les avertissements d'un envoi, dans l'ordre de gravité : sosie d'un
-/// contact du carnet, puis nouvelle adresse, puis état on-chain.
-fn send_warnings(dir: &std::path::Path, network: &str, coin: &str, to: &str, activity: Option<api::RecipientActivity>) -> Option<String> {
+/// contact du carnet, puis nouvelle adresse, puis état on-chain. Adresse d'un
+/// profil de ce portefeuille : le profil est nommé à la place des deux
+/// derniers (ni « nouvelle adresse » ni « jamais servi » à craindre).
+fn send_warnings(app: &tauri::AppHandle, dir: &std::path::Path, network: &str, coin: &str, to: &str, activity: Option<api::RecipientActivity>) -> Option<String> {
     let mut lines: Vec<String> = lookalike_warning(dir, to).into_iter().collect();
-    lines.extend(recipient_warning_lines(!sent_recipients::has_sent_to(dir, network, to), coin, activity));
+    match own_profile_label(app, dir, network, to) {
+        Some(label) => lines.push(own_profile_line(&label)),
+        None => lines.extend(recipient_warning_lines(!sent_recipients::has_sent_to(dir, network, to), coin, activity)),
+    }
     (!lines.is_empty()).then(|| lines.join("\n\n"))
+}
+
+fn own_profile_line(label: &str) -> String {
+    if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
+        format!("Recognized recipient: your profile \"{label}\" (an address of this wallet).")
+    } else {
+        format!("Destinataire reconnu : votre profil « {label} » (adresse de ce portefeuille).")
+    }
+}
+
+/// Profil de ce portefeuille dont `to` est l'adresse sur `network`, d'après
+/// les adresses dérivées de la seed au déverrouillage (caches Rust) — jamais
+/// d'après l'interface. Nom nettoyé pour la boîte native.
+fn own_profile_label(app: &tauri::AppHandle, dir: &std::path::Path, network: &str, to: &str) -> Option<String> {
+    let to = to.trim();
+    let in_cache = |cache: &std::sync::Mutex<std::collections::HashMap<u32, String>>, same: fn(&str, &str) -> bool| {
+        cache.lock().unwrap_or_else(|p| p.into_inner()).iter().find(|(_, address)| same(address, to)).map(|(index, _)| *index)
+    };
+    let exact = |a: &str, b: &str| a == b;
+    // Hexadécimal (EVM) et bech32 (Bitcoin, u1) : insensibles à la casse.
+    let any_case = |a: &str, b: &str| a.eq_ignore_ascii_case(b);
+    let index = match network {
+        n if is_evm(n) => {
+            app.state::<ProfileAddressCache>().0.lock().unwrap_or_else(|p| p.into_inner()).iter().find(|(_, (evm, _))| evm.eq_ignore_ascii_case(to)).map(|(index, _)| *index)
+        }
+        "sol_mainnet" | "sol_devnet" | "usdc_solana" => {
+            app.state::<ProfileAddressCache>().0.lock().unwrap_or_else(|p| p.into_inner()).iter().find(|(_, (_, sol))| sol == to).map(|(index, _)| *index)
+        }
+        "btc_mainnet" => in_cache(&app.state::<ProfileBtcCache>().0, any_case),
+        "zec_mainnet" => in_cache(&app.state::<ProfileZcashCache>().0, exact),
+        "doge_mainnet" => in_cache(&app.state::<ProfileDogeCache>().0, exact),
+        "xmr_mainnet" => {
+            app.state::<MoneroKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).iter().find(|(_, (address, _))| address == to).map(|(index, _)| *index)
+        }
+        // Depuis les fonds protégés : vers une adresse u1, ou t1, d'un profil.
+        "zec_shielded" => app
+            .state::<ShieldedKeysCache>()
+            .0
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .iter()
+            .find(|(_, (address, _))| address.eq_ignore_ascii_case(to))
+            .map(|(index, _)| *index)
+            .or_else(|| in_cache(&app.state::<ProfileZcashCache>().0, exact)),
+        _ => None,
+    }?;
+    let label = api::list_profiles(dir).into_iter().find(|p| p.index == index)?.label;
+    Some(dialog_label(&label))
 }
 
 /// Ligne de frais d'un envoi EVM, dans la monnaie de frais du réseau (`symbol`) :
@@ -2657,6 +2723,7 @@ fn evm_fee_line_for(fee: api::EvmFee, symbol: &str) -> String {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 async fn send_transaction(
     network: String,
     password: String,
@@ -2664,6 +2731,7 @@ async fn send_transaction(
     amount: String,
     fee_sat: Option<u64>,
     profile_index: u32,
+    max: Option<bool>,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
     run_blocking(move || {
@@ -2687,14 +2755,21 @@ async fn send_transaction(
         let from_xmr = app.state::<MoneroKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).map(|(_, keys)| keys.clone());
         let from_sol = app.state::<ProfileAddressCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).map(|(_, sol)| sol.clone());
         let from_doge = app.state::<ProfileDogeCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).cloned();
+        let from_btc = match network.as_str() {
+            "btc_mainnet" => app.state::<ProfileBtcCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).cloned(),
+            "btc_testnet" => app.state::<ProfileBtcTestnetCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).cloned(),
+            _ => None,
+        };
         let from = SendFrom {
             evm: from_evm.as_deref(),
             sol: from_sol.as_deref(),
             zec: from_zec.as_deref(),
             xmr: from_xmr.as_ref(),
             doge: from_doge.as_deref(),
+            btc: from_btc.as_deref(),
         };
-        let mut send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &from_label, None, from)?;
+        let mut send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &from_label, None, from, max.unwrap_or(false))?;
+        send_grace_period(&app)?;
 
         let result = match network.as_str() {
             n if is_evm(n) => {
@@ -2742,6 +2817,92 @@ async fn send_transaction(
     .await
 }
 
+/// Délai laissé, APRÈS la boîte de confirmation native et AVANT la signature,
+/// pour annuler un envoi : l'interface affiche un compte à rebours avec
+/// « Envoyer maintenant » et « Annuler ». Sans réponse, l'envoi part au bout
+/// du délai. Imposé ici : l'interface ne peut que l'écourter ou annuler,
+/// jamais l'éviter ; la seed n'est déverrouillée qu'après.
+const SEND_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Envois en attente de leur délai : identifiant → canal de la décision
+/// (`true` : envoyer maintenant, `false` : annuler).
+#[derive(Default)]
+struct SendGrace(std::sync::Mutex<std::collections::HashMap<u64, std::sync::mpsc::Sender<bool>>>);
+
+#[derive(Clone, Serialize)]
+struct SendCountdownDto {
+    id: u64,
+    seconds: u64,
+}
+
+/// Attend la fin du délai d'annulation (ou la décision de l'utilisateur).
+/// `Err` si l'envoi est annulé.
+fn send_grace_period(app: &tauri::AppHandle) -> Result<(), String> {
+    static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    let (sender, receiver) = std::sync::mpsc::channel();
+    app.state::<SendGrace>().0.lock().unwrap_or_else(|p| p.into_inner()).insert(id, sender);
+    let _ = app.emit("send-countdown", SendCountdownDto { id, seconds: SEND_GRACE.as_secs() });
+    let decision = receiver.recv_timeout(SEND_GRACE);
+    app.state::<SendGrace>().0.lock().unwrap_or_else(|p| p.into_inner()).remove(&id);
+    let _ = app.emit("send-countdown-end", id);
+    match decision {
+        Ok(false) => Err(translate_error("Virement annulé pendant le délai d'annulation.")),
+        // Délai écoulé, ou « Envoyer maintenant ».
+        _ => Ok(()),
+    }
+}
+
+/// Montant maximal envoyable (bouton « Max ») depuis le profil, frais du
+/// moment déduits ; `token` : un jeton du registre (USDC compris), tout son
+/// solde. Aperçu seulement : il est recalculé à la confirmation.
+#[tauri::command]
+async fn max_send_amount(network: String, token: Option<String>, profile_index: u32, fee_sat: Option<u64>, app: tauri::AppHandle) -> Result<String, String> {
+    run_blocking(move || {
+        let dir = data_dir(&app)?;
+        let unknown = || translate_error("adresse du profil inconnue — déverrouillez le portefeuille");
+        let cached = |cache: &std::sync::Mutex<std::collections::HashMap<u32, String>>| cache.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).cloned().ok_or_else(unknown);
+        let (evm, sol) = app.state::<ProfileAddressCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).cloned().ok_or_else(unknown)?;
+        if let Some(token) = token {
+            let owner = if is_evm(&network) { evm } else { sol };
+            return api::token_max(&token, &network, &owner).t_err();
+        }
+        match network.as_str() {
+            n if is_evm(n) => {
+                let net = evm_network(n)?;
+                let fee = api::evm_max_fee(net, Some(&evm), &evm).t_err()?;
+                api::evm_max_native(net, &evm, fee).t_err()
+            }
+            "sol_devnet" | "sol_mainnet" => api::sol_max(sol_network(&network)?, &sol).t_err(),
+            "btc_mainnet" | "btc_testnet" => {
+                let address = if network == "btc_mainnet" { cached(&app.state::<ProfileBtcCache>().0)? } else { cached(&app.state::<ProfileBtcTestnetCache>().0)? };
+                let fee_sat = fee_sat.ok_or_else(|| "frais Bitcoin manquants (choisis une vitesse d'envoi)".to_string())?;
+                api::btc_max(btc_network(&network)?, &address, fee_sat).t_err()
+            }
+            "zec_mainnet" => api::zec_max(&cached(&app.state::<ProfileZcashCache>().0)?).t_err(),
+            "doge_mainnet" => api::doge_max(&cached(&app.state::<ProfileDogeCache>().0)?).t_err(),
+            "xmr_mainnet" => {
+                let keys = app.state::<MoneroKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).map(|(_, keys)| keys.clone()).ok_or_else(unknown)?;
+                Ok(pgp_wallet_poc::monero::format_xmr(api::xmr_send_plan_max(&dir, &keys, None).t_err()?.amount))
+            }
+            "zec_shielded" => {
+                let address = app.state::<ShieldedKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).map(|(address, _)| address.clone()).ok_or_else(unknown)?;
+                api::zec_shielded_max(&dir, profile_index, &address).t_err()
+            }
+            other => Err(translate_error(&format!("réseau inconnu : {other}"))),
+        }
+    })
+    .await
+}
+
+/// Décision de l'utilisateur pendant le délai d'annulation d'un envoi.
+#[tauri::command]
+fn resolve_send_countdown(id: u64, send: bool, state: tauri::State<SendGrace>) {
+    if let Some(sender) = state.0.lock().unwrap_or_else(|p| p.into_inner()).get(&id) {
+        let _ = sender.send(send);
+    }
+}
+
 /// Ligne de frais suivie, après une ligne vide, de la consigne de l'appareil
 /// (la ligne de frais est déjà précédée d'un retour à la ligne dans la boîte).
 fn fee_and_device_note(fee_line: Option<String>, device_note: Option<&str>) -> Option<String> {
@@ -2775,6 +2936,7 @@ struct SendFrom<'a> {
     zec: Option<&'a str>,
     xmr: Option<&'a pgp_wallet_poc::monero::ViewKeys>,
     doge: Option<&'a str>,
+    btc: Option<&'a str>,
 }
 
 /// Validation, avertissements et boîte de confirmation native, communs aux
@@ -2791,6 +2953,7 @@ fn confirm_send(
     from_label: &str,
     device_note: Option<&str>,
     from: SendFrom<'_>,
+    max: bool,
 ) -> Result<ConfirmedSend, String> {
     // Réseau validé AVANT la boîte de confirmation (22ᵉ passage) : un réseau
     // inconnu était jusqu'ici affiché tel quel (texte libre du frontend) dans
@@ -2807,11 +2970,41 @@ fn confirm_send(
         other => return Err(translate_error(&format!("réseau inconnu : {other}"))),
     };
     let to = canonical_address_input(to)?;
+    let unknown_profile = || translate_error("adresse du profil inconnue — déverrouillez le portefeuille");
+    // « Max » : montant recalculé MAINTENANT (solde moins les frais du moment,
+    // mêmes règles que l'envoi), affiché dans la boîte puis signé tel quel.
+    let mut evm_fee = None;
+    let mut xmr_plan = None;
+    let amount = if max {
+        match coin {
+            "evm" => {
+                let net = evm_network(network)?;
+                let fee = api::evm_max_fee(net, from.evm, &to).t_err()?;
+                evm_fee = Some(fee);
+                api::evm_max_native(net, from.evm.ok_or_else(unknown_profile)?, fee).t_err()?
+            }
+            "sol" => api::sol_max(sol_network(network)?, from.sol.ok_or_else(unknown_profile)?).t_err()?,
+            "btc" => {
+                let fee_sat = fee_sat.ok_or_else(|| "frais Bitcoin manquants (choisis une vitesse d'envoi)".to_string())?;
+                api::btc_max(btc_network(network)?, from.btc.ok_or_else(unknown_profile)?, fee_sat).t_err()?
+            }
+            "zec" => api::zec_max(from.zec.ok_or_else(unknown_profile)?).t_err()?,
+            "doge" => api::doge_max(from.doge.ok_or_else(unknown_profile)?).t_err()?,
+            _ => {
+                let plan = api::xmr_send_plan_max(dir, from.xmr.ok_or_else(unknown_profile)?, Some(&to)).t_err()?;
+                let amount = pgp_wallet_poc::monero::format_xmr(plan.amount);
+                xmr_plan = Some(plan);
+                amount
+            }
+        }
+    } else {
+        amount.to_string()
+    };
     let amount = match coin {
-        "zec" => api::canonical_zec_amount(amount).t_err()?,
-        "doge" => api::canonical_doge_amount(amount).t_err()?,
-        "xmr" => api::canonical_xmr_amount(amount).t_err()?,
-        _ => api::canonical_amount(coin, amount).t_err()?,
+        "zec" => api::canonical_zec_amount(&amount).t_err()?,
+        "doge" => api::canonical_doge_amount(&amount).t_err()?,
+        "xmr" => api::canonical_xmr_amount(&amount).t_err()?,
+        _ => api::canonical_amount(coin, &amount).t_err()?,
     };
 
     // Frais affichés dans la boîte de dialogue native (voir sa doc : "montre
@@ -2821,9 +3014,9 @@ fn confirm_send(
     // affiché (voir `api::evm_gas_price_for_confirmation`).
     // Frais EVM complets (prix, limite de gas — estimée là où elle n'est pas
     // fixe —, frais de publication OP Stack), affichés puis signés tels quels.
-    let evm_fee = match coin {
-        "evm" => Some(api::evm_transfer_fee_for_confirmation(evm_network(network)?, from.evm, &to, &amount).t_err()?),
-        _ => None,
+    let evm_fee = match (coin, evm_fee) {
+        ("evm", None) => Some(api::evm_transfer_fee_for_confirmation(evm_network(network)?, from.evm, &to, &amount).t_err()?),
+        (_, fee) => fee,
     };
     // Solde suffisant (montant + frais) vérifié AVANT la boîte : jamais
     // confirmer un envoi refusé juste après.
@@ -2831,6 +3024,11 @@ fn confirm_send(
         ("evm", Some(fee), Some(from), _) => api::ensure_evm_transfer_funds(evm_network(network)?, from, &amount, fee).t_err()?,
         ("sol", _, _, Some(from)) => api::ensure_sol_transfer_funds(sol_network(network)?, from, &amount).t_err()?,
         _ => {}
+    }
+    // Bitcoin (portefeuille) : toutes les sorties couvrent montant et frais
+    // choisis. Comptes matériels : leurs adresses sont relues par l'appareil.
+    if let ("btc", Some(from), Some(fee)) = (coin, from.btc, fee_sat) {
+        api::ensure_btc_transfer_funds(btc_network(network)?, from, &amount, fee).t_err()?;
     }
     // Zcash : destinataire vérifié, sorties choisies et frais ZIP-317
     // calculés MAINTENANT, affichés, puis jamais dépassés à l'envoi.
@@ -2854,12 +3052,12 @@ fn confirm_send(
     // Monero : destinataire vérifié, sorties choisies, leurres tirés et frais
     // calculés MAINTENANT (clés de visualisation, sans la seed) ; c'est cet
     // envoi-là, inchangé, qui sera signé.
-    let xmr_plan = match coin {
-        "xmr" => {
-            let keys = from.xmr.ok_or_else(|| translate_error("adresse du profil inconnue — déverrouillez le portefeuille"))?;
+    let xmr_plan = match (coin, xmr_plan) {
+        ("xmr", None) => {
+            let keys = from.xmr.ok_or_else(unknown_profile)?;
             Some(api::xmr_send_plan(dir, keys, &to, &amount).t_err()?)
         }
-        _ => None,
+        (_, plan) => plan,
     };
     // Adresse refusée AVANT la confirmation si elle est mal formée (EVM/BTC :
     // jusqu'ici seulement au moment de signer) ou, pour Solana, si ce n'est
@@ -2931,8 +3129,11 @@ Change returned to your address: {change} XMR (spendable after 10 confirmations,
     };
     let fee_line = fee_and_device_note(fee_line, device_note);
 
-    let warning = send_warnings(dir, network, coin, &to, activity);
-    let amount_line = format!("{amount} {}", network_unit(network));
+    let warning = send_warnings(app, dir, network, coin, &to, activity);
+    let mut amount_line = format!("{amount} {}", network_unit(network));
+    if max {
+        amount_line.push_str(lang(" (maximum, frais déduits)", " (maximum, fees deducted)"));
+    }
     if !confirm_transaction_native(app, network, &to, &amount_line, from_label, fee_line.as_deref(), warning.as_deref(), None) {
         return Err(translate_error("Virement annulé (confirmation refusée)."));
     }
@@ -3038,7 +3239,8 @@ async fn hardware_send(id: u32, to: String, amount: String, fee_sat: Option<u64>
             format!("Signature sur le {device} : vérifiez sur SON écran que le destinataire et le montant sont identiques, puis confirmez-y.")
         };
         let from = SendFrom { evm: Some(&account.address), sol: Some(&account.address), ..SendFrom::default() };
-        let send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &format!("{device} — {}", account.label), Some(&note), from)?;
+        let send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &format!("{device} — {}", account.label), Some(&note), from, false)?;
+        send_grace_period(&app)?;
         let result = match network.as_str() {
             n if is_evm(n) => {
                 let fee = send.evm_fee.ok_or_else(|| "frais EVM manquants".to_string())?;
@@ -4052,7 +4254,7 @@ async fn cow_order_status(network: String, uid: String) -> Result<String, String
 }
 
 #[tauri::command]
-async fn send_usdc_transaction(password: String, to: String, amount: String, profile_index: u32, app: tauri::AppHandle) -> Result<String, String> {
+async fn send_usdc_transaction(password: String, to: String, amount: String, profile_index: u32, max: Option<bool>, app: tauri::AppHandle) -> Result<String, String> {
     run_blocking(move || {
         let password = Zeroizing::new(password);
         let dir = data_dir(&app)?;
@@ -4060,6 +4262,13 @@ async fn send_usdc_transaction(password: String, to: String, amount: String, pro
         let net = sol_network(network)?;
         // Formes canoniques, affichées ET signées (voir `send_transaction`).
         let to = canonical_address_input(&to)?;
+        let from_sol = app.state::<ProfileAddressCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).map(|(_, sol)| sol.clone());
+        // « Max » : tout le solde USDC (les frais sont payés en SOL).
+        let amount = match (max.unwrap_or(false), &from_sol) {
+            (true, Some(from)) => api::token_max("usdc", network, from).t_err()?,
+            (true, None) => return Err(translate_error("adresse du profil inconnue — déverrouillez le portefeuille")),
+            (false, _) => amount,
+        };
         let amount = api::canonical_amount("usdc", &amount).t_err()?;
 
         let from_label = api::list_profiles(&dir)
@@ -4081,10 +4290,11 @@ async fn send_usdc_transaction(password: String, to: String, amount: String, pro
         let amount_line = format!("{amount} USDC");
         // Même journal que les envois SOL (même réseau, même portefeuille
         // destinataire) : avoir déjà payé cette adresse en SOL compte.
-        let warning = send_warnings(&dir, network, "usdc", &to, api::usdc_recipient_activity(&to, net).ok());
+        let warning = send_warnings(&app, &dir, network, "usdc", &to, api::usdc_recipient_activity(&to, net).ok());
         if !confirm_transaction_native(&app, network, &to, &amount_line, &from_label, rent_line.as_deref(), warning.as_deref(), None) {
             return Err(translate_error("Virement annulé (confirmation refusée)."));
         }
+        send_grace_period(&app)?;
 
         let result = api::send_usdc(&dir, &password, net, &to, &amount, profile_index).t_err();
         if result.is_ok() {
@@ -4118,6 +4328,7 @@ async fn send_token_transaction(
     to: String,
     amount: String,
     profile_index: u32,
+    max: Option<bool>,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
     run_blocking(move || {
@@ -4125,6 +4336,21 @@ async fn send_token_transaction(
         let dir = data_dir(&app)?;
         let (info, deployment) = pgp_wallet_poc::tokens::find(&token, &network).ok_or_else(|| translate_error("jeton non pris en charge sur ce réseau"))?;
         let to = canonical_address_input(&to)?;
+        // « Max » : tout le solde du jeton (les frais sont payés dans la
+        // monnaie du réseau).
+        let amount = if max.unwrap_or(false) {
+            let owner = app
+                .state::<ProfileAddressCache>()
+                .0
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .get(&profile_index)
+                .map(|(evm, sol)| if is_evm(&network) { evm.clone() } else { sol.clone() })
+                .ok_or_else(|| translate_error("adresse du profil inconnue — déverrouillez le portefeuille"))?;
+            api::token_max(&token, &network, &owner).t_err()?
+        } else {
+            amount
+        };
         let amount = api::canonical_token_amount(&token, &network, &amount).t_err()?;
         let from_label = api::list_profiles(&dir)
             .into_iter()
@@ -4153,11 +4379,12 @@ async fn send_token_transaction(
                     &format!("Token: {} ({}) — contract {}", info.name, info.symbol, dialog_address(contract)),
                 )
                 .to_string();
-                let warning = send_warnings(&dir, &network, "evm", &to, api::evm_recipient_activity(&to, net).ok());
+                let warning = send_warnings(&app, &dir, &network, "evm", &to, api::evm_recipient_activity(&to, net).ok());
                 let fee_line = evm_fee_line_for(fee, net.native_symbol);
                 if !confirm_transaction_native(&app, &network, &to, &amount_line, &from_label, Some(&fee_line), warning.as_deref(), Some(&token_line)) {
                     return Err(translate_error("Virement annulé (confirmation refusée)."));
                 }
+                send_grace_period(&app)?;
                 api::send_erc20(&dir, &password, &token, &network, &to, &amount, fee, profile_index).t_err()
             }
             pgp_wallet_poc::tokens::TokenKind::Spl { mint } => {
@@ -4171,7 +4398,7 @@ async fn send_token_transaction(
                     &format!("Token: {} ({}) — mint {mint}", info.name, info.symbol),
                 )
                 .to_string();
-                let warning = send_warnings(&dir, &network, "sol", &to, api::sol_recipient_activity(&to, net).ok());
+                let warning = send_warnings(&app, &dir, &network, "sol", &to, api::sol_recipient_activity(&to, net).ok());
                 // Compte de jetons du destinataire à créer : coût annoncé avant.
                 let rent_line = api::registered_spl_mint(&token)
                     .ok()
@@ -4187,6 +4414,7 @@ async fn send_token_transaction(
                 if !confirm_transaction_native(&app, &network, &to, &amount_line, &from_label, rent_line.as_deref(), warning.as_deref(), Some(&token_line)) {
                     return Err(translate_error("Virement annulé (confirmation refusée)."));
                 }
+                send_grace_period(&app)?;
                 api::send_registered_spl(&dir, &password, &token, &to, &amount, profile_index).t_err()
             }
         };
@@ -4443,6 +4671,10 @@ struct ProfileAddressCache(std::sync::Mutex<std::collections::HashMap<u32, (Stri
 #[derive(Default)]
 struct ProfileZcashCache(std::sync::Mutex<std::collections::HashMap<u32, String>>);
 
+/// Adresse Bitcoin testnet de chaque profil (bouton « Max » d'un envoi testnet).
+#[derive(Default)]
+struct ProfileBtcTestnetCache(std::sync::Mutex<std::collections::HashMap<u32, String>>);
+
 /// Adresse Dogecoin de chaque profil, mémorisée au même moment : préparer un
 /// envoi DOGE (sorties vérifiées, frais) demande l'adresse de départ AVANT la
 /// boîte de confirmation.
@@ -4478,6 +4710,9 @@ fn remember_addresses(app: &tauri::AppHandle, index: u32, addresses: &api::Addre
     }
     if let Some(cache) = app.try_state::<ProfileDogeCache>() {
         cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, addresses.doge.clone());
+    }
+    if let Some(cache) = app.try_state::<ProfileBtcTestnetCache>() {
+        cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, addresses.btc_testnet.clone());
     }
     if let Some(cache) = app.try_state::<ShieldedKeysCache>() {
         cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, (addresses.zcash_shielded.clone(), addresses.zcash_shielded_keys.clone()));
@@ -4515,8 +4750,9 @@ static XMR_SYNC_WANTED: AtomicBool = AtomicBool::new(false);
 static XMR_SYNC_KICK: AtomicBool = AtomicBool::new(false);
 
 /// Synchronisation Monero en arrière-plan, une seule à la fois : blocs
-/// analysés jusqu'au bout de la chaîne, puis toutes les 2 minutes (un bloc
-/// toutes les 2 minutes en moyenne) tant que l'app est ouverte. L'interface
+/// analysés jusqu'au bout de la chaîne, puis toutes les 30 s (un bloc toutes
+/// les 2 minutes en moyenne : une réception apparaît peu après son bloc ; un
+/// passage sans nouveau bloc ne coûte qu'une lecture de hauteur). L'interface
 /// est prévenue après chaque passage (`xmr-synced`) ; un échec réseau est
 /// retenté au passage suivant.
 fn start_monero_sync(app: &tauri::AppHandle) {
@@ -4539,7 +4775,7 @@ fn start_monero_sync(app: &tauri::AppHandle) {
                 Err(e) => eprintln!("Monero : {e}"),
             }
         }
-        for _ in 0..120 {
+        for _ in 0..30 {
             std::thread::sleep(std::time::Duration::from_secs(1));
             if XMR_SYNC_KICK.swap(false, Ordering::SeqCst) {
                 break;
@@ -4633,9 +4869,13 @@ fn shielded_profile(app: &tauri::AppHandle, address: &str) -> Result<u32, String
         .ok_or_else(|| translate_error("adresse du profil inconnue — déverrouillez le portefeuille"))
 }
 
+/// Passage de synchronisation Zcash protégée demandé tout de suite (envoi ou
+/// protection diffusés).
+static ZECS_SYNC_KICK: AtomicBool = AtomicBool::new(false);
+
 /// Synchronisation Zcash protégée en arrière-plan, une seule à la fois :
-/// comptes manquants créés, chaîne analysée, puis toutes les 2 minutes tant
-/// que l'app est ouverte. L'interface est prévenue après chaque passage
+/// comptes manquants créés, chaîne analysée, puis toutes les 30 s (un bloc
+/// toutes les 75 s) tant que l'app est ouverte. L'interface est prévenue après chaque passage
 /// (`zec-shielded-synced`) ; un échec réseau est retenté au passage suivant.
 fn start_shielded_sync(app: &tauri::AppHandle) {
     static RUNNING: AtomicBool = AtomicBool::new(false);
@@ -4656,7 +4896,12 @@ fn start_shielded_sync(app: &tauri::AppHandle) {
                 Err(e) => eprintln!("Zcash protégé : {e}"),
             }
         }
-        std::thread::sleep(std::time::Duration::from_secs(120));
+        for _ in 0..30 {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            if ZECS_SYNC_KICK.swap(false, Ordering::SeqCst) {
+                break;
+            }
+        }
     });
 }
 
@@ -4698,7 +4943,11 @@ async fn zec_shield(password: String, profile_index: u32, app: tauri::AppHandle)
             shielded_dialog(&app, ("Confirmer la protection", "Confirm shielding"), message)
         };
         match api::shield_zec(&dir, &password, profile_index, &t1, confirm).t_err()? {
-            Some(txid) => Ok(txid),
+            Some(txid) => {
+                // Note en attente dans la base : soldes relus aussitôt.
+                ZECS_SYNC_KICK.store(true, Ordering::SeqCst);
+                Ok(txid)
+            }
             None => Err(translate_error("Protection annulée (confirmation refusée).")),
         }
     })
@@ -4708,36 +4957,47 @@ async fn zec_shield(password: String, profile_index: u32, app: tauri::AppHandle)
 /// Envoie depuis les fonds Zcash protégés du profil, après une boîte de
 /// confirmation native (destinataire, montant, frais).
 #[tauri::command]
-async fn zec_send_shielded(password: String, profile_index: u32, to: String, amount: String, app: tauri::AppHandle) -> Result<String, String> {
+async fn zec_send_shielded(password: String, profile_index: u32, to: String, amount: String, max: Option<bool>, app: tauri::AppHandle) -> Result<String, String> {
     run_blocking(move || {
         let password = Zeroizing::new(password);
         let dir = data_dir(&app)?;
         let to = canonical_address_input(&to)?;
-        let amount = api::canonical_zec_amount(&amount).t_err()?;
+        let max = max.unwrap_or(false);
+        // « Max » : montant fixé par la proposition « tout envoyer », affiché
+        // dans la boîte (`SpendSummary`).
+        let amount = if max { String::new() } else { api::canonical_zec_amount(&amount).t_err()? };
         let from_label = api::list_profiles(&dir).into_iter().find(|p| p.index == profile_index).map(|p| p.label).unwrap_or_else(|| format!("profil #{profile_index}"));
         let from_label = dialog_label(&from_label);
         // Comme les autres envois : adresse ressemblante, jamais payée, et —
         // vers une adresse transparente — état sur la chaîne.
         let warning = if to.starts_with('t') {
-            send_warnings(&dir, "zec_shielded", "zec", &to, api::zec_recipient_activity(&to).ok())
+            send_warnings(&app, &dir, "zec_shielded", "zec", &to, api::zec_recipient_activity(&to).ok())
         } else {
-            send_warnings(&dir, "zec_shielded", "zecs", &to, None)
+            send_warnings(&app, &dir, "zec_shielded", "zecs", &to, None)
         };
         let warning = warning.map(|w| format!("{w}\n\n")).unwrap_or_default();
         let confirm = |s: &pgp_wallet_poc::zcash_shielded::SpendSummary| {
             let (amount, fee) = (pgp_wallet_poc::zcash::format_zec(s.amount), pgp_wallet_poc::zcash::format_zec(s.fee));
             let to = &s.recipient;
+            let max_note = if max { lang(" (maximum, frais déduits)", " (maximum, fees deducted)") } else { "" };
             let message = if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
-                format!("{warning}Send from your shielded ZEC\n\nFrom profile: {from_label}\nTo: {to}\nAmount: {amount} ZEC\nNetwork fee: {fee} ZEC (ZIP-317)\n\nThis is irreversible.\n\nConfirm this transfer?")
+                format!("{warning}Send from your shielded ZEC\n\nFrom profile: {from_label}\nTo: {to}\nAmount: {amount} ZEC{max_note}\nNetwork fee: {fee} ZEC (ZIP-317)\n\nThis is irreversible.\n\nConfirm this transfer?")
             } else {
-                format!("{warning}Envoi depuis vos ZEC protégés\n\nDepuis le profil : {from_label}\nVers : {to}\nMontant : {amount} ZEC\nFrais réseau : {fee} ZEC (ZIP-317)\n\nC'est irréversible.\n\nConfirmer cet envoi ?")
+                format!("{warning}Envoi depuis vos ZEC protégés\n\nDepuis le profil : {from_label}\nVers : {to}\nMontant : {amount} ZEC{max_note}\nFrais réseau : {fee} ZEC (ZIP-317)\n\nC'est irréversible.\n\nConfirmer cet envoi ?")
             };
-            shielded_dialog(&app, ("Confirmer l'envoi", "Confirm the transfer"), message)
+            // Puis le délai d'annulation, avant la signature.
+            shielded_dialog(&app, ("Confirmer l'envoi", "Confirm the transfer"), message) && send_grace_period(&app).is_ok()
         };
-        match api::send_zec_shielded(&dir, &password, profile_index, &to, &amount, confirm).t_err()? {
+        let sent = if max {
+            api::send_zec_shielded_max(&dir, &password, profile_index, &to, confirm)
+        } else {
+            api::send_zec_shielded(&dir, &password, profile_index, &to, &amount, confirm)
+        };
+        match sent.t_err()? {
             Some(txid) => {
                 // Destinataire mémorisé après une diffusion réussie seulement.
                 let _ = sent_recipients::record_sent(&dir, "zec_shielded", &to);
+                ZECS_SYNC_KICK.store(true, Ordering::SeqCst);
                 Ok(txid)
             }
             None => Err(translate_error("Envoi annulé (confirmation refusée).")),
@@ -5223,6 +5483,8 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(ProfileAddressCache::default())
         .manage(ProfileZcashCache::default())
+        .manage(SendGrace::default())
+        .manage(ProfileBtcTestnetCache::default())
         .manage(ProfileDogeCache::default())
         .manage(ProfileBtcCache::default())
         .manage(ShieldedKeysCache::default())
@@ -5311,6 +5573,8 @@ pub fn run() {
             get_crypto_prices,
             get_market_prices,
             send_transaction,
+            resolve_send_countdown,
+            max_send_amount,
             send_usdc_transaction,
             get_swap_quote,
             swap_transaction,
@@ -5620,8 +5884,8 @@ mod tests {
             assert!(EXACT_ERROR_TRANSLATIONS.iter().any(|(fr, _)| *fr == message), "sans traduction : {message}");
         }
         assert_eq!(
-            translate_dynamic_error("DOGE insuffisants : 12.00000000 DOGE demandés + frais, 3.50000000 DOGE disponibles (confirmés)").unwrap(),
-            "insufficient DOGE: 12.00000000 DOGE requested + fees, 3.50000000 DOGE available (confirmed)"
+            translate_dynamic_error("DOGE insuffisants : 12.00000000 DOGE demandés, 3.49885600 DOGE envoyables au plus (frais déduits)").unwrap(),
+            "insufficient DOGE: 12.00000000 DOGE requested, 3.49885600 DOGE sendable at most (fees deducted)"
         );
         assert_eq!(
             translate_dynamic_error("les frais Dogecoin ont augmenté depuis la confirmation (0.12000000 au lieu de 0.11000000 DOGE) — relancez l'envoi").unwrap(),
