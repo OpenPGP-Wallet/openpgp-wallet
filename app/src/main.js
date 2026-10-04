@@ -325,6 +325,8 @@ function applyTheme(theme) {
     } else {
       delete document.documentElement.dataset.theme;
     }
+    // Barre de titre et contour de la fenêtre Windows assortis au thème.
+    invoke("set_window_frame", { theme: VALID_THEMES.includes(theme) ? theme : "default" }).catch(() => {});
   });
 }
 

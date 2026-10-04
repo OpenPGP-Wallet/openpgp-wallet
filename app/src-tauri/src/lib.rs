@@ -3168,6 +3168,42 @@ fn evm_fee_line_for(fee: api::EvmFee, symbol: &str) -> String {
     line
 }
 
+/// Barre de titre et contour de la fenêtre aux couleurs du thème de l'app.
+#[tauri::command]
+fn set_window_frame(theme: String, window: tauri::WebviewWindow) {
+    apply_window_frame(&window, &theme);
+}
+
+/// Mode sombre de Windows (barre de titre et boutons Fermer, Agrandir…) pour
+/// les thèmes sombres ; sur Windows 11, barre de titre et contour exactement
+/// de la couleur du fond de l'app (sans effet, et sans erreur, sur Windows 10).
+fn apply_window_frame(window: &tauri::WebviewWindow, theme: &str) {
+    // Fond de chaque thème (styles.css, `--bg`), en 0xRRGGBB.
+    let (dark, background) = match theme {
+        "light" => (false, 0xf3f3f3u32),
+        "purple" => (true, 0x140f1f),
+        "orange" => (true, 0x1a120a),
+        "dark" => (true, 0x000000),
+        _ => (true, 0x0b0d10),
+    };
+    let _ = window.set_theme(Some(if dark { tauri::Theme::Dark } else { tauri::Theme::Light }));
+    #[cfg(windows)]
+    if let Ok(hwnd) = window.hwnd() {
+        use windows::Win32::Foundation::{COLORREF, HWND};
+        use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR};
+        // COLORREF : 0x00BBGGRR.
+        let colorref = |rgb: u32| COLORREF(((rgb & 0xff) << 16) | (rgb & 0xff00) | ((rgb >> 16) & 0xff));
+        let hwnd = HWND(hwnd.0 as _);
+        let text = if dark { 0xf4f5f7 } else { 0x111111 };
+        for (attribute, rgb) in [(DWMWA_CAPTION_COLOR, background), (DWMWA_BORDER_COLOR, background), (DWMWA_TEXT_COLOR, text)] {
+            let color = colorref(rgb);
+            // SAFETY : fenêtre vivante (tenue par `window`), pointeur vers un
+            // COLORREF local de la taille annoncée.
+            let _ = unsafe { DwmSetWindowAttribute(hwnd, attribute, std::ptr::from_ref(&color).cast(), std::mem::size_of::<COLORREF>() as u32) };
+        }
+    }
+}
+
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 async fn send_transaction(
@@ -6640,6 +6676,11 @@ pub fn run() {
         .manage(BalanceWatchState::default())
         .manage(UsbRestoreState::default())
         .setup(|app| {
+            // Cadre sombre dès l'ouverture (thème par défaut) ; l'interface
+            // applique ensuite le thème choisi (`set_window_frame`).
+            if let Some(window) = app.get_webview_window("main") {
+                apply_window_frame(&window, "default");
+            }
             if let Ok(dir) = app.path().app_data_dir() {
                 let _ = std::fs::create_dir_all(&dir);
                 install_panic_hook(dir.clone());
@@ -6668,6 +6709,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             set_ui_language,
+            set_window_frame,
             save_bytes_with_dialog,
             open_external_link,
             generate_qr_svg,

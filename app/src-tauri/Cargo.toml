@@ -41,3 +41,8 @@ base64 = "0.22"
 # y compris sur un retour anticipé/panic — mêmes buffers sensibles que core/, qui
 # utilise déjà zeroize pour l'entropie/seed.
 zeroize = "1.7"
+
+# Barre de titre et contour de la fenêtre aux couleurs du thème (DWM, Windows
+# 11) : même version que celle du cœur, aucune bibliothèque de plus.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm"] }
