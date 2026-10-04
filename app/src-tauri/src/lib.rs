@@ -186,6 +186,33 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("énergie du transfert Tron inconnue", "Tron transfer energy unknown"),
     ("frais du transfert Tron anormalement élevés — envoi refusé", "abnormally high Tron transfer fee — transfer refused"),
     ("jeton TRC-20 attendu", "TRC-20 token expected"),
+    // XRP Ledger (core/src/xrp.rs, core/src/api.rs)
+    ("nœud XRP injoignable", "XRP node unreachable"),
+    ("réponse du nœud XRP illisible", "unreadable XRP node response"),
+    (
+        "adresse XRP « X » non prise en charge : demandez l'adresse classique r… et le tag de destination",
+        "XRP \"X\" address not supported: ask for the classic r… address and the destination tag",
+    ),
+    ("adresse XRP invalide", "invalid XRP address"),
+    ("adresse XRP invalide (somme de contrôle)", "invalid XRP address (checksum)"),
+    ("solde XRP illisible", "unreadable XRP balance"),
+    ("séquence XRP illisible", "unreadable XRP sequence"),
+    ("réserve XRP illisible", "unreadable XRP reserve"),
+    ("registre XRP illisible", "unreadable XRP ledger"),
+    ("frais XRP illisibles", "unreadable XRP fee"),
+    ("envoi vers votre propre adresse XRP", "sending to your own XRP address"),
+    ("compte XRP pas encore activé : il doit d'abord recevoir au moins 1 XRP", "XRP account not activated yet: it must first receive at least 1 XRP"),
+    ("compte XRP pas encore activé", "XRP account not activated yet"),
+    ("ce destinataire exige un tag de destination (plateforme d'échange) : renseignez-le", "this recipient requires a destination tag (exchange): fill it in"),
+    ("ce destinataire n'accepte que les paiements qu'il a autorisés, et pas le vôtre", "this recipient only accepts payments it has authorized, and not yours"),
+    ("XRP insuffisants : tout le solde est bloqué par la réserve du réseau", "insufficient XRP: the whole balance is locked by the network reserve"),
+    ("frais du réseau XRP anormalement élevés — envoi refusé", "abnormally high XRP network fee — transfer refused"),
+    ("clé XRP invalide", "invalid XRP key"),
+    ("tag de destination invalide (nombre entier de 0 à 4294967295)", "invalid destination tag (whole number from 0 to 4294967295)"),
+    ("tag de destination : réservé aux envois XRP", "destination tag: only for XRP transfers"),
+    ("frais XRP manquants", "XRP fee missing"),
+    ("montant nul", "zero amount"),
+    ("montant hors limites", "amount out of range"),
     // SwapKit (core/src/swapkit.rs)
     ("SwapKit non configuré", "SwapKit is not configured"),
     ("SwapKit injoignable", "SwapKit unreachable"),
@@ -725,6 +752,32 @@ fn translate_dynamic_error(msg: &str) -> Option<String> {
     if let Some(detail) = msg.strip_prefix("les frais Tron ont augmenté depuis la confirmation (").and_then(|rest| rest.strip_suffix(") — relancez l'envoi")) {
         return Some(format!("Tron fees increased since the confirmation ({}) — start again", detail.replace(" au lieu de ", " instead of ")));
     }
+    if let Some(rest) = msg.strip_prefix("XRP insuffisants : ") {
+        return Some(format!(
+            "insufficient XRP: {}",
+            rest.replace(" XRP envoyables (", " XRP sendable (")
+                .replace(" XRP restent bloqués par la réserve du réseau), ", " XRP stay locked by the network reserve), ")
+                .replace(" XRP de frais demandés", " XRP in fees requested")
+        ));
+    }
+    if let Some(rest) = msg.strip_prefix("ce destinataire n'est pas encore activé : envoyez-lui au moins ").and_then(|r| r.strip_suffix(" XRP (réserve du réseau)")) {
+        return Some(format!("this recipient is not activated yet: send it at least {rest} XRP (network reserve)"));
+    }
+    if let Some(rest) = msg.strip_prefix("frais du réseau XRP anormalement élevés (").and_then(|r| r.strip_suffix(" XRP) — réessayez plus tard")) {
+        return Some(format!("abnormally high XRP network fee ({rest} XRP) — try again later"));
+    }
+    if let Some(rest) = msg.strip_prefix("transaction XRP refusée : ") {
+        return Some(format!("XRP transaction refused: {}", rest.replace(" — frais du réseau prélevés (identifiant ", " — network fee charged (ID ")));
+    }
+    if let Some(rest) = msg.strip_prefix("nœud XRP : réponse ") {
+        return Some(format!("XRP node: response {rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("signature XRP impossible (") {
+        return Some(format!("XRP signature impossible ({rest}"));
+    }
+    if let Some(detail) = msg.strip_prefix("les frais XRP ont augmenté depuis la confirmation (").and_then(|rest| rest.strip_suffix(") — relancez l'envoi")) {
+        return Some(format!("XRP fees increased since the confirmation ({}) — start again", detail.replace(" au lieu de ", " instead of ")));
+    }
     if let Some(rest) = msg.strip_prefix("DOGE insuffisants : ") {
         return Some(format!(
             "insufficient DOGE: {}",
@@ -1110,6 +1163,7 @@ struct AddressesDto {
     monero: String,
     doge: String,
     tron: String,
+    xrp: String,
 }
 
 impl From<api::Addresses> for AddressesDto {
@@ -1124,6 +1178,7 @@ impl From<api::Addresses> for AddressesDto {
             monero: a.monero,
             doge: a.doge,
             tron: a.tron,
+            xrp: a.xrp,
         }
     }
 }
@@ -1231,7 +1286,7 @@ fn save_bytes_with_dialog(suggested_name: String, content_b64: String, app: taur
 /// aurait laissé un frontend compromis ouvrir n'importe quelle page — un vecteur
 /// de phishing simple, ouvert sans aucun bénéfice fonctionnel puisqu'aucun appel
 /// légitime de cette commande ne cible jamais autre chose que ces domaines.
-const ALLOWED_EXTERNAL_LINK_PREFIXES: [&str; 8] = [
+const ALLOWED_EXTERNAL_LINK_PREFIXES: [&str; 9] = [
     "https://explorer.solana.com/",
     "https://blockstream.info/",
     "https://explorer.cow.fi/",
@@ -1240,6 +1295,7 @@ const ALLOWED_EXTERNAL_LINK_PREFIXES: [&str; 8] = [
     "https://xmrchain.net/",
     "https://blockchair.com/dogecoin/",
     "https://tronscan.org/",
+    "https://livenet.xrpl.org/",
 ];
 
 /// Lien vers un explorateur connu de l'app : Solana, Bitcoin, ou l'explorateur
@@ -1946,6 +2002,7 @@ fn forget_session(app: &tauri::AppHandle) {
     app.state::<ProfileDogeCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<ProfileBtcTestnetCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<ProfileTronCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    app.state::<ProfileXrpCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<ShieldedKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<MoneroKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     IS_AFFILIATE_WALLET.store(false, Ordering::Relaxed);
@@ -2001,6 +2058,7 @@ async fn get_balance(network: String, address: String, app: tauri::AppHandle) ->
             "zec_mainnet" => Ok(pgp_wallet_poc::zcash::format_zec(api::get_zec_balance(&address).t_err()?)),
             "doge_mainnet" => Ok(pgp_wallet_poc::doge::format_doge(api::get_doge_balance(&address).t_err()?)),
             "tron_mainnet" => Ok(pgp_wallet_poc::tron::format_trx(api::get_trx_balance(&address).t_err()?)),
+            "xrp_mainnet" => Ok(pgp_wallet_poc::xrp::format_xrp(api::get_xrp_balance(&address).t_err()?)),
             // Base locale (synchronisation de fond) : dépensable + en attente.
             "zec_shielded" => {
                 let balance = api::zec_shielded_balance(&data_dir(&app)?, shielded_profile(&app, &address)?).t_err()?;
@@ -2131,6 +2189,8 @@ async fn has_pending_tx(network: String, address: String, app: tauri::AppHandle)
             "doge_mainnet" => api::has_pending_doge(&address).t_err(),
             // Un bloc toutes les 3 s : un envoi est confirmé avant la relecture.
             "tron_mainnet" => Ok(false),
+            // Registre validé toutes les 3 à 5 s : idem.
+            "xrp_mainnet" => Ok(false),
             "xmr_mainnet" => api::has_pending_xmr(&data_dir(&app)?, monero_profile(&app, &address)?).t_err(),
             other => Err(translate_error(&format!("réseau inconnu : {other}"))),
         }
@@ -2321,6 +2381,12 @@ async fn get_tx_history(network: String, address: String, app: tauri::AppHandle)
             Some(price_history::Asset::Pair("TRXUSDT")),
             6,
             |id| format!("https://tronscan.org/#/transaction/{id}"),
+        )),
+        "xrp_mainnet" => HistoryDto::read(history_dtos(
+            || pgp_wallet_poc::xrp::history(&address, HISTORY_LIMIT as usize),
+            Some(price_history::Asset::Pair("XRPUSDT")),
+            6,
+            |id| format!("https://livenet.xrpl.org/transactions/{id}"),
         )),
         "sol_devnet" | "sol_mainnet" => {
             let net = sol_network(&network)?;
@@ -2600,6 +2666,7 @@ fn network_label(network: &str) -> String {
         "zec_mainnet" => lang("Zcash MAINNET — fonds réels", "Zcash MAINNET — real funds").to_string(),
         "doge_mainnet" => lang("Dogecoin MAINNET — fonds réels", "Dogecoin MAINNET — real funds").to_string(),
         "tron_mainnet" => lang("Tron MAINNET — fonds réels", "Tron MAINNET — real funds").to_string(),
+        "xrp_mainnet" => lang("XRP Ledger MAINNET — fonds réels", "XRP Ledger MAINNET — real funds").to_string(),
         "xmr_mainnet" => lang("Monero MAINNET — fonds réels", "Monero MAINNET — real funds").to_string(),
         "zec_shielded" => lang("Zcash MAINNET — fonds protégés", "Zcash MAINNET — shielded funds").to_string(),
         other => match wallet_flow::evm_network(other) {
@@ -2620,6 +2687,7 @@ fn network_unit(network: &str) -> &'static str {
         "xmr_mainnet" => "XMR",
         "doge_mainnet" => "DOGE",
         "tron_mainnet" => "TRX",
+        "xrp_mainnet" => "XRP",
         other => wallet_flow::evm_network(other).map(|n| n.native_symbol).unwrap_or(""),
     }
 }
@@ -2734,6 +2802,7 @@ fn recipient_warning_lines(first_send: bool, coin: &str, activity: Option<api::R
         "zec" => ("aucun ZEC", "no ZEC"),
         "doge" => ("aucun DOGE", "no DOGE"),
         "trx" => ("aucun TRX", "no TRX"),
+        "xrp" => ("aucun XRP", "no XRP"),
         "sol" => ("aucun SOL", "no SOL"),
         _ => ("aucun fonds", "no funds"),
     };
@@ -2812,6 +2881,7 @@ fn own_profile_label(app: &tauri::AppHandle, dir: &std::path::Path, network: &st
         "zec_mainnet" => in_cache(&app.state::<ProfileZcashCache>().0, exact),
         "doge_mainnet" => in_cache(&app.state::<ProfileDogeCache>().0, exact),
         "tron_mainnet" => in_cache(&app.state::<ProfileTronCache>().0, exact),
+        "xrp_mainnet" => in_cache(&app.state::<ProfileXrpCache>().0, exact),
         "xmr_mainnet" => {
             app.state::<MoneroKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).iter().find(|(_, (address, _))| address == to).map(|(index, _)| *index)
         }
@@ -2863,10 +2933,12 @@ async fn send_transaction(
     fee_sat: Option<u64>,
     profile_index: u32,
     max: Option<bool>,
+    destination_tag: Option<String>,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
     run_blocking(move || {
         let password = Zeroizing::new(password);
+        let destination_tag = api::parse_destination_tag(destination_tag.as_deref()).t_err()?;
         let dir = data_dir(&app)?;
         let from_label = api::list_profiles(&dir)
             .into_iter()
@@ -2892,6 +2964,7 @@ async fn send_transaction(
             _ => None,
         };
         let from_tron = app.state::<ProfileTronCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).cloned();
+        let from_xrp = app.state::<ProfileXrpCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).cloned();
         let from = SendFrom {
             evm: from_evm.as_deref(),
             sol: from_sol.as_deref(),
@@ -2900,8 +2973,9 @@ async fn send_transaction(
             doge: from_doge.as_deref(),
             btc: from_btc.as_deref(),
             tron: from_tron.as_deref(),
+            xrp: from_xrp.as_deref(),
         };
-        let mut send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &from_label, None, from, max.unwrap_or(false))?;
+        let mut send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &from_label, None, from, max.unwrap_or(false), destination_tag)?;
         send_grace_period(&app)?;
 
         let result = match network.as_str() {
@@ -2930,6 +3004,10 @@ async fn send_transaction(
             "tron_mainnet" => {
                 let shown_fee = send.trx_fee.ok_or_else(|| "frais Tron manquants".to_string())?;
                 api::send_trx(&dir, &password, &send.to, &send.amount, shown_fee, profile_index).t_err()
+            }
+            "xrp_mainnet" => {
+                let shown_fee = send.xrp_fee.ok_or_else(|| translate_error("frais XRP manquants"))?;
+                api::send_xrp(&dir, &password, &send.to, &send.amount, send.destination_tag, shown_fee, profile_index).t_err()
             }
             // Exactement l'envoi préparé et affiché (sorties, leurres, frais).
             "xmr_mainnet" => match send.xmr_plan.take() {
@@ -3032,6 +3110,7 @@ async fn max_send_amount(network: String, token: Option<String>, profile_index: 
             "zec_mainnet" => api::zec_max(&cached(&app.state::<ProfileZcashCache>().0)?).t_err(),
             "doge_mainnet" => api::doge_max(&cached(&app.state::<ProfileDogeCache>().0)?).t_err(),
             "tron_mainnet" => api::trx_max(&cached(&app.state::<ProfileTronCache>().0)?, None).t_err(),
+            "xrp_mainnet" => api::xrp_max(&cached(&app.state::<ProfileXrpCache>().0)?).t_err(),
             "xmr_mainnet" => {
                 let keys = app.state::<MoneroKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).map(|(_, keys)| keys.clone()).ok_or_else(unknown)?;
                 Ok(pgp_wallet_poc::monero::format_xmr(api::xmr_send_plan_max(&dir, &keys, None).t_err()?.amount))
@@ -3078,6 +3157,10 @@ struct ConfirmedSend {
     doge_fee: Option<u64>,
     /// Frais Tron maximum affichés (plafond à l'envoi).
     trx_fee: Option<u64>,
+    /// Frais XRP affichés (plafond à l'envoi).
+    xrp_fee: Option<u64>,
+    /// Tag de destination XRP affiché dans la boîte, signé tel quel.
+    destination_tag: Option<u32>,
 }
 
 /// Adresses (et clés de visualisation Monero) du compte qui envoie, connues
@@ -3091,6 +3174,7 @@ struct SendFrom<'a> {
     doge: Option<&'a str>,
     btc: Option<&'a str>,
     tron: Option<&'a str>,
+    xrp: Option<&'a str>,
 }
 
 /// Validation, avertissements et boîte de confirmation native, communs aux
@@ -3108,6 +3192,7 @@ fn confirm_send(
     device_note: Option<&str>,
     from: SendFrom<'_>,
     max: bool,
+    destination_tag: Option<u32>,
 ) -> Result<ConfirmedSend, String> {
     // Réseau validé AVANT la boîte de confirmation (22ᵉ passage) : un réseau
     // inconnu était jusqu'ici affiché tel quel (texte libre du frontend) dans
@@ -3122,8 +3207,12 @@ fn confirm_send(
         "xmr_mainnet" => "xmr",
         "doge_mainnet" => "doge",
         "tron_mainnet" => "trx",
+        "xrp_mainnet" => "xrp",
         other => return Err(translate_error(&format!("réseau inconnu : {other}"))),
     };
+    if destination_tag.is_some() && coin != "xrp" {
+        return Err(translate_error("tag de destination : réservé aux envois XRP"));
+    }
     let to = canonical_address_input(to)?;
     let unknown_profile = || translate_error("adresse du profil inconnue — déverrouillez le portefeuille");
     // « Max » : montant recalculé MAINTENANT (solde moins les frais du moment,
@@ -3146,6 +3235,7 @@ fn confirm_send(
             "zec" => api::zec_max(from.zec.ok_or_else(unknown_profile)?).t_err()?,
             "doge" => api::doge_max(from.doge.ok_or_else(unknown_profile)?).t_err()?,
             "trx" => api::trx_max(from.tron.ok_or_else(unknown_profile)?, Some(&to)).t_err()?,
+            "xrp" => api::xrp_max(from.xrp.ok_or_else(unknown_profile)?).t_err()?,
             _ => {
                 let plan = api::xmr_send_plan_max(dir, from.xmr.ok_or_else(unknown_profile)?, Some(&to)).t_err()?;
                 let amount = pgp_wallet_poc::monero::format_xmr(plan.amount);
@@ -3160,6 +3250,7 @@ fn confirm_send(
         "zec" => api::canonical_zec_amount(&amount).t_err()?,
         "doge" => api::canonical_doge_amount(&amount).t_err()?,
         "trx" => api::canonical_trx_amount(&amount).t_err()?,
+        "xrp" => api::canonical_xrp_amount(&amount).t_err()?,
         "xmr" => api::canonical_xmr_amount(&amount).t_err()?,
         _ => api::canonical_amount(coin, &amount).t_err()?,
     };
@@ -3213,6 +3304,13 @@ fn confirm_send(
         "trx" => Some(api::trx_send_plan(from.tron.ok_or_else(unknown_profile)?, &to, &amount).t_err()?),
         _ => None,
     };
+    // XRP : réserve du réseau, activation d'un destinataire neuf, tag exigé
+    // par le destinataire et frais vérifiés MAINTENANT, affichés, puis jamais
+    // dépassés à l'envoi.
+    let xrp_plan = match coin {
+        "xrp" => Some(api::xrp_send_plan(from.xrp.ok_or_else(unknown_profile)?, &to, &amount, destination_tag).t_err()?),
+        _ => None,
+    };
     // Monero : destinataire vérifié, sorties choisies, leurres tirés et frais
     // calculés MAINTENANT (clés de visualisation, sans la seed) ; c'est cet
     // envoi-là, inchangé, qui sera signé.
@@ -3241,6 +3339,7 @@ fn confirm_send(
         "zec" => api::zec_recipient_activity(&to).ok(),
         "doge" => api::doge_recipient_activity(&to).ok(),
         "trx" => api::trx_recipient_activity(&to).ok(),
+        "xrp" => api::xrp_recipient_activity(&to).ok(),
         // Adresse vérifiée par la préparation ; aucune activité lisible
         // (adresses et montants invisibles sur la chaîne Monero).
         "xmr" => None,
@@ -3285,6 +3384,18 @@ Change returned to your address: {change} ZEC")));
             }
             line
         }),
+        "xrp" => xrp_plan.map(|plan| {
+            let (fee, reserve) = (pgp_wallet_poc::xrp::format_xrp(plan.fee), pgp_wallet_poc::xrp::format_xrp(plan.reserve));
+            let mut line = lang(
+                &format!("Frais : {fee} XRP\nRéserve du réseau : {reserve} XRP restent bloqués sur votre compte"),
+                &format!("Fee: {fee} XRP\nNetwork reserve: {reserve} XRP stay locked on your account"),
+            )
+            .to_string();
+            if plan.activates {
+                line.push_str(lang("\nCe paiement active le compte destinataire (encore jamais utilisé)", "\nThis payment activates the recipient account (never used yet)"));
+            }
+            line
+        }),
         "xmr" => xmr_plan.as_ref().map(|plan| {
             let mut line = format!("{} : {} XMR", lang("Frais", "Fee"), pgp_wallet_poc::monero::format_xmr(plan.fee));
             if plan.change > 0 {
@@ -3307,10 +3418,28 @@ Change returned to your address: {change} XMR (spendable after 10 confirmations,
     if max {
         amount_line.push_str(lang(" (maximum, frais déduits)", " (maximum, fees deducted)"));
     }
-    if !confirm_transaction_native(app, network, &to, &amount_line, from_label, fee_line.as_deref(), warning.as_deref(), None) {
+    // XRP : tag de destination TOUJOURS montré (« aucun » compris), sous le
+    // destinataire — un tag oublié pour une plateforme d'échange se voit.
+    let to_line = match (coin, destination_tag) {
+        ("xrp", Some(tag)) => format!("{to}\n{} {tag}", lang("Tag de destination :", "Destination tag:")),
+        ("xrp", None) => format!("{to}\n{}", lang("Tag de destination : aucun", "Destination tag: none")),
+        _ => to.clone(),
+    };
+    if !confirm_transaction_native(app, network, &to_line, &amount_line, from_label, fee_line.as_deref(), warning.as_deref(), None) {
         return Err(translate_error("Virement annulé (confirmation refusée)."));
     }
-    Ok(ConfirmedSend { to, amount, evm_fee, fee_sat, zec_fee: zec_plan.map(|plan| plan.fee), xmr_plan, doge_fee: doge_plan.map(|plan| plan.fee), trx_fee: trx_plan.map(|plan| plan.fee_max) })
+    Ok(ConfirmedSend {
+        to,
+        amount,
+        evm_fee,
+        fee_sat,
+        zec_fee: zec_plan.map(|plan| plan.fee),
+        xmr_plan,
+        doge_fee: doge_plan.map(|plan| plan.fee),
+        trx_fee: trx_plan.map(|plan| plan.fee_max),
+        xrp_fee: xrp_plan.map(|plan| plan.fee),
+        destination_tag,
+    })
 }
 
 // --- Comptes Ledger / Trezor (core/src/hardware.rs) ----------------------------
@@ -3412,7 +3541,7 @@ async fn hardware_send(id: u32, to: String, amount: String, fee_sat: Option<u64>
             format!("Signature sur le {device} : vérifiez sur SON écran que le destinataire et le montant sont identiques, puis confirmez-y.")
         };
         let from = SendFrom { evm: Some(&account.address), sol: Some(&account.address), ..SendFrom::default() };
-        let send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &format!("{device} — {}", account.label), Some(&note), from, false)?;
+        let send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &format!("{device} — {}", account.label), Some(&note), from, false, None)?;
         send_grace_period(&app)?;
         let result = match network.as_str() {
             n if is_evm(n) => {
@@ -3887,6 +4016,7 @@ fn own_address_on(app: &tauri::AppHandle, network: &str, profile_index: u32) -> 
         "doge_mainnet" => from_cache(&app.state::<ProfileDogeCache>().0),
         "zec_mainnet" => from_cache(&app.state::<ProfileZcashCache>().0),
         "tron_mainnet" => from_cache(&app.state::<ProfileTronCache>().0),
+        "xrp_mainnet" => from_cache(&app.state::<ProfileXrpCache>().0),
         other => Err(translate_error(&format!("réseau inconnu : {other}"))),
     }
 }
@@ -3943,6 +4073,7 @@ enum SwapkitDeposit {
     Doge(u64),
     Zec(u64),
     Trx(u64),
+    Xrp(u64),
 }
 
 fn prepare_swapkit_deposit(from: &pgp_wallet_poc::swapkit::Asset, source: &str, deposit: &str, amount: &str) -> Result<(SwapkitDeposit, String), String> {
@@ -4005,6 +4136,13 @@ fn prepare_swapkit_deposit(from: &pgp_wallet_poc::swapkit::Asset, source: &str, 
             let plan = api::trx_send_plan(source, deposit, amount).t_err()?;
             let fee = pgp_wallet_poc::tron::format_trx(plan.fee_max);
             Ok((SwapkitDeposit::Trx(plan.fee_max), lang(&format!("Frais réseau : jusqu'à {fee} TRX"), &format!("Network fee: up to {fee} TRX")).to_string()))
+        }
+        // Adresse de dépôt r… simple, sans tag : un dépôt qui en exigerait un
+        // est refusé par la préparation (drapeau du compte relu).
+        "xrp_mainnet" => {
+            let plan = api::xrp_send_plan(source, deposit, amount, None).t_err()?;
+            let fee = pgp_wallet_poc::xrp::format_xrp(plan.fee);
+            Ok((SwapkitDeposit::Xrp(plan.fee), lang(&format!("Frais réseau : {fee} XRP"), &format!("Network fee: {fee} XRP")).to_string()))
         }
         other => Err(translate_error(&format!("réseau inconnu : {other}"))),
     }
@@ -4131,6 +4269,7 @@ async fn swapkit_swap_transaction(
             SwapkitDeposit::Doge(fee) => api::send_doge(&dir, &password, &deposit.address, &amount, fee, profile_index),
             SwapkitDeposit::Zec(fee) => api::send_zec(&dir, &password, &deposit.address, &amount, fee, profile_index),
             SwapkitDeposit::Trx(fee) => api::send_trx(&dir, &password, &deposit.address, &amount, fee, profile_index),
+            SwapkitDeposit::Xrp(fee) => api::send_xrp(&dir, &password, &deposit.address, &amount, None, fee, profile_index),
         };
         Ok(SwapkitSentDto {
             tx_hash: sent.t_err()?,
@@ -5178,6 +5317,10 @@ struct ProfileZcashCache(std::sync::Mutex<std::collections::HashMap<u32, String>
 #[derive(Default)]
 struct ProfileTronCache(std::sync::Mutex<std::collections::HashMap<u32, String>>);
 
+/// Adresse XRP de chaque profil (préparation d'un envoi avant la boîte).
+#[derive(Default)]
+struct ProfileXrpCache(std::sync::Mutex<std::collections::HashMap<u32, String>>);
+
 /// Adresse Bitcoin testnet de chaque profil (bouton « Max » d'un envoi testnet).
 #[derive(Default)]
 struct ProfileBtcTestnetCache(std::sync::Mutex<std::collections::HashMap<u32, String>>);
@@ -5223,6 +5366,9 @@ fn remember_addresses(app: &tauri::AppHandle, index: u32, addresses: &api::Addre
     }
     if let Some(cache) = app.try_state::<ProfileTronCache>() {
         cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, addresses.tron.clone());
+    }
+    if let Some(cache) = app.try_state::<ProfileXrpCache>() {
+        cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, addresses.xrp.clone());
     }
     if let Some(cache) = app.try_state::<ShieldedKeysCache>() {
         cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, (addresses.zcash_shielded.clone(), addresses.zcash_shielded_keys.clone()));
@@ -6003,6 +6149,7 @@ pub fn run() {
         .manage(SendGrace::default())
         .manage(ProfileBtcTestnetCache::default())
         .manage(ProfileTronCache::default())
+        .manage(ProfileXrpCache::default())
         .manage(ProfileDogeCache::default())
         .manage(ProfileBtcCache::default())
         .manage(ShieldedKeysCache::default())
@@ -6271,7 +6418,7 @@ mod tests {
         }
 
         // Chaque avertissement tient sur un seul paragraphe (mise en page de la boîte).
-        for coin in ["evm", "btc", "sol", "usdc", "zec", "doge", "trx", "xmr", "zecs"] {
+        for coin in ["evm", "btc", "sol", "usdc", "zec", "doge", "trx", "xrp", "xmr", "zecs"] {
             for activity in [Some(Unused), Some(Empty), None] {
                 assert!(recipient_warning_lines(true, coin, activity).iter().all(|l| !l.contains('\n')));
             }
@@ -6408,6 +6555,57 @@ mod tests {
             "insufficient TRX: 1.000000 TRX available, 2.000000 TRX + 0.270000 TRX in fees required"
         );
         assert_eq!(translate_dynamic_error("transaction Tron refusée : CONTRACT_VALIDATE_ERROR x").unwrap(), "Tron transaction refused: CONTRACT_VALIDATE_ERROR x");
+    }
+
+    /// Messages d'erreur XRP : présents dans le code, traduits (fixes et variables).
+    #[test]
+    fn xrp_error_messages_have_a_translation() {
+        let sources = [include_str!("../../../core/src/xrp.rs"), include_str!("../../../core/src/api.rs"), include_str!("lib.rs")];
+        for message in [
+            "nœud XRP injoignable",
+            "réponse du nœud XRP illisible",
+            "adresse XRP « X » non prise en charge : demandez l'adresse classique r… et le tag de destination",
+            "adresse XRP invalide",
+            "adresse XRP invalide (somme de contrôle)",
+            "solde XRP illisible",
+            "séquence XRP illisible",
+            "réserve XRP illisible",
+            "registre XRP illisible",
+            "frais XRP illisibles",
+            "envoi vers votre propre adresse XRP",
+            "compte XRP pas encore activé : il doit d'abord recevoir au moins 1 XRP",
+            "compte XRP pas encore activé",
+            "ce destinataire exige un tag de destination (plateforme d'échange) : renseignez-le",
+            "ce destinataire n'accepte que les paiements qu'il a autorisés, et pas le vôtre",
+            "XRP insuffisants : tout le solde est bloqué par la réserve du réseau",
+            "frais du réseau XRP anormalement élevés — envoi refusé",
+            "clé XRP invalide",
+            "tag de destination invalide (nombre entier de 0 à 4294967295)",
+            "tag de destination : réservé aux envois XRP",
+            "frais XRP manquants",
+            "montant nul",
+        ] {
+            assert!(sources.iter().any(|s| s.contains(&format!("\"{message}\""))), "message absent du code : {message}");
+            assert!(EXACT_ERROR_TRANSLATIONS.iter().any(|(fr, _)| *fr == message), "sans traduction : {message}");
+        }
+        assert_eq!(
+            translate_dynamic_error("XRP insuffisants : 0.500000 XRP envoyables (1.000000 XRP restent bloqués par la réserve du réseau), 2.000000 XRP + 0.000010 XRP de frais demandés").unwrap(),
+            "insufficient XRP: 0.500000 XRP sendable (1.000000 XRP stay locked by the network reserve), 2.000000 XRP + 0.000010 XRP in fees requested"
+        );
+        assert_eq!(
+            translate_dynamic_error("ce destinataire n'est pas encore activé : envoyez-lui au moins 1.000000 XRP (réserve du réseau)").unwrap(),
+            "this recipient is not activated yet: send it at least 1.000000 XRP (network reserve)"
+        );
+        assert_eq!(translate_dynamic_error("transaction XRP refusée : terNO_ACCOUNT x").unwrap(), "XRP transaction refused: terNO_ACCOUNT x");
+        assert_eq!(
+            translate_dynamic_error("transaction XRP refusée : tecNO_DST_INSUF_XRP x — frais du réseau prélevés (identifiant AB12)").unwrap(),
+            "XRP transaction refused: tecNO_DST_INSUF_XRP x — network fee charged (ID AB12)"
+        );
+        assert_eq!(
+            translate_dynamic_error("les frais XRP ont augmenté depuis la confirmation (0.000020 au lieu de 0.000010 XRP) — relancez l'envoi").unwrap(),
+            "XRP fees increased since the confirmation (0.000020 instead of 0.000010 XRP) — start again"
+        );
+        assert_eq!(translate_dynamic_error("frais du réseau XRP anormalement élevés (0.002000 XRP) — réessayez plus tard").unwrap(), "abnormally high XRP network fee (0.002000 XRP) — try again later");
     }
 
     /// Messages d'erreur Dogecoin : présents dans le code (fixes), tous traduits

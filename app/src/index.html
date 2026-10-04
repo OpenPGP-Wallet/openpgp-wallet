@@ -1118,6 +1118,11 @@
             <ul class="custom-select-options"></ul>
           </div>
         </div>
+        <div id="send-tag-block" class="hidden">
+          <label for="send-tag" data-i18n="send.destinationTag">Tag de destination (facultatif)</label>
+          <input id="send-tag" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" maxlength="10" />
+          <p class="muted tag-hint" data-i18n="send.destinationTagHint">Exigé par les plateformes d'échange : recopiez exactement celui qu'elles indiquent. Sans tag, les fonds peuvent y être perdus.</p>
+        </div>
         <label data-i18n="send.amount">Montant</label>
         <div class="amount-pair">
           <div class="amount-field">
@@ -1170,6 +1175,10 @@
           <div class="send-preview-row">
             <span class="send-preview-label" data-i18n="send.toAddress">Adresse destinataire</span>
             <span id="send-preview-to" class="send-preview-value mono"></span>
+          </div>
+          <div id="send-preview-tag-row" class="send-preview-row hidden">
+            <span class="send-preview-label" data-i18n="send.destinationTagShort">Tag de destination</span>
+            <span id="send-preview-tag" class="send-preview-value mono"></span>
           </div>
           <div class="send-preview-row">
             <span class="send-preview-label" data-i18n="send.amount">Montant</span>

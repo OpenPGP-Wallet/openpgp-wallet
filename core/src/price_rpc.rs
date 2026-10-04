@@ -148,6 +148,7 @@ pub const MARKET_IDS: &[&str] = &[
     "monero",
     "dogecoin",
     "tron",
+    "ripple",
     // Jetons (core/src/tokens.rs).
     "tether",
     "chainlink",

@@ -657,6 +657,12 @@ button.link:hover {
   font-size: 0.8rem;
 }
 
+/* Consigne sous le tag de destination XRP. */
+.tag-hint {
+  margin: 6px 0 0;
+  font-size: 0.8rem;
+}
+
 .strength-hint.strength-faible {
   color: var(--danger);
 }

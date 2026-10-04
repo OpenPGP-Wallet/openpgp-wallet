@@ -26,6 +26,7 @@ const ASSETS = [
   { coin: "xmr", name: "Monero", symbol: "XMR", family: "xmr", icon: "/assets/xmr.png", gecko: "monero", decimals: 6, chart: "XMR", networks: ["xmr_mainnet"] },
   { coin: "doge", name: "Dogecoin", symbol: "DOGE", family: "doge", icon: "/assets/doge.png", gecko: "dogecoin", decimals: 8, chart: "DOGE", networks: ["doge_mainnet"] },
   { coin: "trx", name: "Tron", symbol: "TRX", family: "trx", icon: "/assets/trx.png", gecko: "tron", decimals: 6, chart: "TRX", networks: ["tron_mainnet"] },
+  { coin: "xrp", name: "XRP", symbol: "XRP", family: "xrp", icon: "/assets/xrp.svg", gecko: "ripple", decimals: 6, chart: "XRP", networks: ["xrp_mainnet"] },
   // Jetons (`token: true`) : contrats et mints relevés dans core/src/tokens.rs —
   // SEUL le registre Rust fait foi pour un envoi (l'interface n'envoie que
   // l'identifiant et le réseau) ; ceux-ci ne servent qu'aux demandes de
@@ -652,6 +653,7 @@ const I18N = {
     "net.xmr_mainnet": "Monero — Fonds réels",
     "net.doge_mainnet": "Dogecoin — Fonds réels",
     "net.tron_mainnet": "Tron — Fonds réels",
+    "net.xrp_mainnet": "XRP Ledger — Fonds réels",
     "wallet.historyExplorerOnly": "Pas d'historique ici pour ce réseau : aucun service public gratuit ne le fournit. Il reste consultable sur l'explorateur du réseau.",
     "wallet.historyOpenExplorer": "Voir sur l'explorateur",
     "wallet.historyNeedsKey": "Pour voir l'historique de ce réseau ici, ajoutez une clé API Etherscan gratuite dans Paramètres. Il reste consultable sur l'explorateur du réseau.",
@@ -844,6 +846,11 @@ const I18N = {
     "send.fromProfile": "Depuis le profil : <strong id=\"send-from-profile\"></strong>",
     "send.mainnetWarning": "⚠ Réseau MAINNET — ceci dépense de vrais fonds, irréversible.",
     "send.toAddress": "Adresse destinataire",
+    "send.destinationTag": "Tag de destination (facultatif)",
+    "send.destinationTagHint": "Exigé par les plateformes d'échange : recopiez exactement celui qu'elles indiquent. Sans tag, les fonds peuvent y être perdus.",
+    "send.destinationTagNone": "aucun",
+    "send.destinationTagShort": "Tag de destination",
+    "send.destinationTagInvalid": "Tag de destination : un nombre entier de 0 à 4294967295.",
     "send.amount": "Montant",
     "send.amountFiat": "Montant dans la devise affichée",
     "send.percentMax": "Max",
@@ -855,6 +862,7 @@ const I18N = {
     "countdown.sendNow": "Confirmer maintenant",
     "countdown.cancel": "Annuler l'envoi",
     "send.percentUnavailable": "Pourcentages indisponibles (solde non chargé).",
+    "send.percentZero": "Solde à zéro : rien à envoyer pour l'instant.",
     "send.feeSpeed": "Vitesse d'envoi (frais réseau)",
     "send.passwordToConfirm": "Mot de passe (pour valider la transaction)",
     "send.confirm": "Confirmer l'envoi",
@@ -1251,6 +1259,7 @@ const I18N = {
     "net.xmr_mainnet": "Monero — Real funds",
     "net.doge_mainnet": "Dogecoin — Real funds",
     "net.tron_mainnet": "Tron — Real funds",
+    "net.xrp_mainnet": "XRP Ledger — Real funds",
     "wallet.historyExplorerOnly": "No history here for this network: no free public service provides it. You can still see it on the network's explorer.",
     "wallet.historyOpenExplorer": "View on the explorer",
     "wallet.historyNeedsKey": "To see this network's history here, add a free Etherscan API key in Settings. You can still see it on the network's explorer.",
@@ -1443,6 +1452,11 @@ const I18N = {
     "send.fromProfile": "From profile: <strong id=\"send-from-profile\"></strong>",
     "send.mainnetWarning": "⚠ MAINNET network — this spends real funds, irreversible.",
     "send.toAddress": "Recipient address",
+    "send.destinationTag": "Destination tag (optional)",
+    "send.destinationTagHint": "Required by exchanges: copy exactly the one they show. Without a tag, funds sent there may be lost.",
+    "send.destinationTagNone": "none",
+    "send.destinationTagShort": "Destination tag",
+    "send.destinationTagInvalid": "Destination tag: a whole number from 0 to 4294967295.",
     "send.amount": "Amount",
     "send.amountFiat": "Amount in the display currency",
     "send.percentMax": "Max",
@@ -1454,6 +1468,7 @@ const I18N = {
     "countdown.sendNow": "Confirm now",
     "countdown.cancel": "Cancel the transfer",
     "send.percentUnavailable": "Percentages unavailable (balance not loaded).",
+    "send.percentZero": "Zero balance: nothing to send yet.",
     "send.feeSpeed": "Sending speed (network fee)",
     "send.passwordToConfirm": "Password (to confirm the transaction)",
     "send.confirm": "Confirm send",
@@ -3548,6 +3563,8 @@ function addressOfProfile(profile, coin, network) {
   if (coin === "doge") return profile.addresses.doge ?? "";
   // Tron (T…) ; absente d'un profil dérivé avant son ajout.
   if (coin === "trx") return profile.addresses.tron ?? "";
+  // XRP (r…) ; absente d'un profil dérivé avant son ajout.
+  if (coin === "xrp") return profile.addresses.xrp ?? "";
   // Zcash protégé : adresse u1 (récepteur Orchard seul).
   if (coin === "zecs") return profile.addresses.zcash_shielded ?? "";
   // Jetons Solana (USDC, USDT…) : même adresse propriétaire que SOL (le compte
@@ -4281,7 +4298,7 @@ const qrModal = document.getElementById("qr-modal");
 // EIP-681 pour Ethereum (montant en wei, réseau par son chain id). Sans
 // montant : l'adresse seule, lisible par toutes les applications.
 // Décimales maximales d'un montant demandé : 18 pour toute monnaie EVM.
-const QR_DECIMALS = new Proxy({ btc: 8, sol: 9, zec: 8, zecs: 8, xmr: 12, doge: 8, trx: 6 }, { get: (known, coin) => ASSET_BY_COIN[coin]?.unitDecimals ?? known[coin] ?? 18 });
+const QR_DECIMALS = new Proxy({ btc: 8, sol: 9, zec: 8, zecs: 8, xmr: 12, doge: 8, trx: 6, xrp: 6 }, { get: (known, coin) => ASSET_BY_COIN[coin]?.unitDecimals ?? known[coin] ?? 18 });
 // Même mint que core/src/sol_spl.rs::usdc_mint_mainnet.
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 let qrCard = null;
@@ -5307,7 +5324,7 @@ function renderQuickPercentages() {
   const symbol = COIN_SYMBOL[sendContext.coin];
 
   if (!Number.isFinite(balance) || balance <= 0) {
-    container.innerHTML = `<p class="muted quick-amounts-hint">${t("send.percentUnavailable")}</p>`;
+    container.innerHTML = `<p class="muted quick-amounts-hint">${t(Number.isFinite(balance) ? "send.percentZero" : "send.percentUnavailable")}</p>`;
     return;
   }
 
@@ -5353,6 +5370,8 @@ function openSendModal(card) {
   document.getElementById("send-mainnet-warning").classList.toggle("hidden", !network.endsWith("mainnet"));
   document.getElementById("send-to").value = "";
   document.getElementById("send-amount").value = "";
+  document.getElementById("send-tag").value = "";
+  document.getElementById("send-tag-block").classList.toggle("hidden", card.dataset.coin !== "xrp");
   sendFiatInput.value = "";
   document.getElementById("send-password").value = "";
   hideError(document.getElementById("send-error"));
@@ -5441,6 +5460,19 @@ document.getElementById("send-cancel").addEventListener("click", () => {
   sendContext = null;
 });
 
+// Tag de destination saisi (XRP seulement), `null` si vide.
+function sendDestinationTag() {
+  if (sendContext?.coin !== "xrp") return null;
+  const value = document.getElementById("send-tag").value.trim();
+  return value === "" ? null : value;
+}
+
+// Chiffres seulement (collage compris).
+document.getElementById("send-tag").addEventListener("input", (event) => {
+  const digits = event.target.value.replace(/\D/g, "").slice(0, 10);
+  if (digits !== event.target.value) event.target.value = digits;
+});
+
 function networkLabelForCard(card) {
   var label = card.querySelector(".custom-select-label") || card.querySelector(".network-fixed-label");
   return label ? label.textContent.trim() : networkForCard(card);
@@ -5471,10 +5503,18 @@ sendConfirmBtn.addEventListener("click", () => {
     showError(errorEl, t("wallet.btcFeesNotLoaded"));
     return;
   }
+  const tag = sendDestinationTag();
+  if (tag !== null && !(/^\d{1,10}$/.test(tag) && Number(tag) <= 4294967295)) {
+    showError(errorEl, t("send.destinationTagInvalid"));
+    return;
+  }
 
   document.getElementById("send-preview-network").textContent = networkLabelForCard(sendContext.card);
   document.getElementById("send-preview-from").textContent = document.getElementById("send-from-profile").textContent;
   document.getElementById("send-preview-to").textContent = to;
+  // XRP : tag toujours montré (« aucun » compris), comme dans la boîte native.
+  document.getElementById("send-preview-tag-row").classList.toggle("hidden", sendContext.coin !== "xrp");
+  document.getElementById("send-preview-tag").textContent = tag ?? t("send.destinationTagNone");
   const rate = sendRate();
   const approx = rate ? ` (${formatUsdApprox(Number(amount) * rate.price)})` : "";
   const maxNote = sendContext.max ? t("send.maxSuffix") : "";
@@ -5543,6 +5583,7 @@ sendPreviewConfirmBtn.addEventListener("click", withBusyButton(sendPreviewConfir
           feeSat: sendContext.coin === "btc" ? sendContext.feeSat : null,
           profileIndex: sendContext.profileIndex,
           max: sendContext.max,
+          destinationTag: sendDestinationTag(),
         });
     successEl.textContent = t("send.txSent", { tx: txResult });
     successEl.classList.remove("hidden");

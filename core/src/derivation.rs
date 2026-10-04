@@ -125,6 +125,15 @@ pub fn derive_tron_key(seed: &[u8], index: u32) -> Result<(SigningKey, crate::tr
     Ok((signing_key, address))
 }
 
+/// Dérive la clé XRP n°`index` (chemin BIP44 m/44'/144'/0'/0/{index},
+/// coin_type 144' = XRP dans SLIP-0044 — celui de Ledger et Xaman) et retourne
+/// l'identifiant de compte (hash160 de la clé compressée ; voir `xrp`).
+pub fn derive_xrp_key(seed: &[u8], index: u32) -> Result<(SigningKey, crate::xrp::AccountId)> {
+    let signing_key = derive_key_from_path(seed, &format!("m/44'/144'/0'/0/{index}"))?;
+    let account = btc_hash160_from_key(&signing_key);
+    Ok((signing_key, account))
+}
+
 fn btc_hash160_from_key(signing_key: &SigningKey) -> [u8; 20] {
     let compressed = signing_key.verifying_key().to_encoded_point(true);
     let sha256 = Sha256::digest(compressed.as_bytes());

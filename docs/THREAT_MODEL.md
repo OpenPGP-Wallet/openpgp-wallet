@@ -11,7 +11,7 @@ qui la met en œuvre. **Aucune de ces protections n'a encore été vérifiée pa
   interface web locale (`app/src`).
 - Portefeuille non dépositaire multi-réseaux : Bitcoin, réseaux EVM (Ethereum, L2, BNB Chain, Avalanche,
   Polygon, HyperEVM), Solana, Zcash (transparent et protégé Orchard), Monero, Dogecoin, Tron (TRX et USDT
-  TRC-20), jetons du registre (`tokens.rs`).
+  TRC-20), XRP Ledger, jetons du registre (`tokens.rs`).
 - Hors périmètre : la version iOS (non démarrée), les services tiers eux-mêmes (nœuds, agrégateurs d'échange),
   le système d'exploitation et le matériel.
 
@@ -126,6 +126,13 @@ qui la met en œuvre. **Aucune de ces protections n'a encore été vérifiée pa
   java-tron) ; un transfert de jeton TRC-20 est d'abord SIMULÉ depuis le compte de l'utilisateur et doit émettre
   exactement le transfert voulu (émetteur, destinataire, montant) ; frais maximum affichés, `fee_limit` signé et
   plafonné (100 TRX).
+- **XRP Ledger** : paiements sérialisés et signés localement (format binaire canonique vérifié contre les
+  bibliothèques officielles de Ripple ; signature acceptée par un nœud réel, version altérée refusée). Règles
+  du réseau appliquées AVANT la boîte : réserve (1 XRP + 0,2 par objet) jamais envoyable, destinataire neuf
+  activé seulement avec au moins la réserve de base, destinataire exigeant un tag de destination (plateformes
+  d'échange) refusé sans tag, destinataire « paiements autorisés seulement » refusé s'il n'a pas autorisé
+  l'expéditeur ; adresses « X » refusées. Le tag est toujours affiché dans la boîte native (« aucun » compris) ;
+  frais plafonnés (0,001 XRP), validité limitée à ~1 min (`LastLedgerSequence`).
 - *Risques résiduels* : un nœud malveillant peut afficher de faux soldes ou un faux historique (portefeuille
   léger) ; un nœud Monero ou Zcash malveillant peut affaiblir la confidentialité d'un envoi ; les nœuds publics
   voient l'adresse IP et les adresses interrogées ; un agrégateur peut proposer un mauvais cours (le minimum de

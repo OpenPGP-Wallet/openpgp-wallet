@@ -69,6 +69,7 @@ const TOKEN_INTERVAL: Duration = Duration::from_secs(12);
 const DOGE_INTERVAL: Duration = Duration::from_secs(10);
 const ZEC_INTERVAL: Duration = Duration::from_secs(20);
 const TRON_INTERVAL: Duration = Duration::from_secs(10);
+const XRP_INTERVAL: Duration = Duration::from_secs(8);
 const HEARTBEAT: Duration = Duration::from_secs(30);
 const MAX_BACKOFF_SECS: u64 = 60;
 
@@ -82,6 +83,7 @@ enum Polled {
     Tron(String),
     /// Jeton TRC-20 : contrat, détenteur.
     Trc20(&'static str, String),
+    Xrp(String),
 }
 
 impl Polled {
@@ -93,6 +95,7 @@ impl Polled {
             Polled::Doge(..) => DOGE_INTERVAL,
             Polled::Zec(..) => ZEC_INTERVAL,
             Polled::Tron(..) | Polled::Trc20(..) => TRON_INTERVAL,
+            Polled::Xrp(..) => XRP_INTERVAL,
         }
     }
 }
@@ -135,6 +138,7 @@ pub fn start(targets: Vec<Target>, notify: Notify) -> Result<BalanceWatch> {
             "doge_mainnet" => polled.push((target.id, Polled::Doge(address))),
             "zec_mainnet" => polled.push((target.id, Polled::Zec(address))),
             "tron_mainnet" => polled.push((target.id, Polled::Tron(address))),
+            "xrp_mainnet" => polled.push((target.id, Polled::Xrp(address))),
             other => match wallet_flow::evm_network(other) {
                 // Tous les réseaux EVM (Ethereum, L2, BNB Chain…) : solde relu.
                 Some(net) => polled.push((target.id, Polled::Evm(net, address))),
@@ -300,6 +304,7 @@ fn read(polled: &Polled) -> Result<String> {
         Polled::Zec(address) => crate::zcash::balance(address)?.to_string(),
         Polled::Tron(address) => crate::tron::balance(address)?.to_string(),
         Polled::Trc20(contract, address) => crate::tron::trc20_balance(address, contract)?.to_string(),
+        Polled::Xrp(address) => crate::xrp::balance(address)?.to_string(),
     })
 }
 

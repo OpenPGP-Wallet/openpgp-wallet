@@ -114,7 +114,7 @@ const fn asset(
     Asset { coin, network, symbol, swapkit, decimals, near, chainflip }
 }
 
-pub const ASSETS: [Asset; 17] = [
+pub const ASSETS: [Asset; 18] = [
     asset("btc", "btc_mainnet", "BTC", "BTC.BTC", 8, Some("nep141:btc.omft.near"), Some(("BTC", "Bitcoin"))),
     asset("evm", "evm_mainnet", "ETH", "ETH.ETH", 18, Some("nep141:eth.omft.near"), Some(("ETH", "Ethereum"))),
     asset("evm", "arbitrum_mainnet", "ETH", "ARB.ETH", 18, Some("nep141:arb.omft.near"), Some(("ETH", "Arbitrum"))),
@@ -180,6 +180,7 @@ pub const ASSETS: [Asset; 17] = [
     asset("doge", "doge_mainnet", "DOGE", "DOGE.DOGE", 8, Some("nep141:doge.omft.near"), None),
     asset("zec", "zec_mainnet", "ZEC", "ZEC.ZEC", 8, Some("nep141:zec.omft.near"), None),
     asset("trx", "tron_mainnet", "TRX", "TRON.TRX", 6, Some("nep141:tron.omft.near"), None),
+    asset("xrp", "xrp_mainnet", "XRP", "XRP.XRP", 6, Some("nep141:xrp.omft.near"), None),
 ];
 
 pub fn find(coin: &str, network: &str) -> Option<&'static Asset> {
@@ -694,5 +695,25 @@ mod tests {
             // Autre adresse d'arrivée que celle du canal : refusé.
             assert!(verify(&deposit, eth(), sol(), amount, EVM, "So11111111111111111111111111111111111111112").is_err());
         }
+    }
+
+    /// Réel : dépôt XRP → ETH ouvert chez NEAR Intents (aucun fonds envoyé) —
+    /// adresse r… simple, sans tag ni memo, confirmée par NEAR.
+    /// `cargo test -- --ignored real_swapkit_xrp --nocapture`
+    #[test]
+    #[ignore]
+    fn real_swapkit_xrp_deposit() {
+        assert!(enabled(), "clé SwapKit absente de partner-keys.env");
+        let xrp = find("xrp", "xrp_mainnet").unwrap();
+        // Compte sans tag exigé (NEAR refuse ceux qui en exigent un).
+        let source = "rMQ98K56yXJbDGv49ZSmW51sLn94Xe1mu1";
+        let amount = 20_000_000;
+        let routes = quote(xrp, eth(), amount, source, EVM).unwrap();
+        let route = routes.iter().find(|r| r.provider == Provider::Near).expect("pas de route NEAR");
+        let deposit = open_deposit(route, xrp, eth(), source, EVM).unwrap();
+        crate::xrp::parse_address(&deposit.address).unwrap();
+        let verified = verify(&deposit, xrp, eth(), amount, source, EVM).unwrap();
+        println!("dépôt {} ; minimum {} ETH ; commissions {} pb", deposit.address, verified.min_out as f64 / 1e18, verified.fees_bps);
+        assert_eq!(status(Provider::Near, &deposit.channel_id, &deposit.address).unwrap(), SwapState::AwaitingDeposit);
     }
 }

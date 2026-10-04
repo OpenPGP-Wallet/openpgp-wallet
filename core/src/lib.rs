@@ -46,6 +46,7 @@ pub mod wallet_birthday;
 pub mod doge;
 pub mod swapkit;
 pub mod tron;
+pub mod xrp;
 #[cfg(test)]
 mod robustness_tests;
 #[cfg(windows)]
