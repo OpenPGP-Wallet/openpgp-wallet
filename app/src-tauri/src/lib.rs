@@ -775,7 +775,8 @@ fn translate_dynamic_error(msg: &str) -> Option<String> {
             .replace("sat confirmés disponibles", "confirmed sat available")
             .replace("disponibles", "available")
             .replace("de frais de gas requis", "gas fee required")
-            .replace("de frais requis", "fee required");
+            .replace("de frais requis", "fee required")
+            .replace(" requis", " required");
         return Some(format!("insufficient funds: {translated}"));
     }
     if let Some(rest) =
@@ -3971,6 +3972,10 @@ async fn send_usdc_transaction(password: String, to: String, amount: String, pro
         // portefeuille (voir `api::check_solana_recipient`) — le cas type étant
         // l'adresse d'un compte de jetons copiée depuis un explorateur.
         api::check_solana_recipient(&to, net).t_err()?;
+        // Solde suffisant vérifié AVANT la boîte de confirmation.
+        if let Some(from) = app.state::<ProfileAddressCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).map(|(_, sol)| sol.clone()) {
+            api::ensure_token_funds("usdc", network, &from, &amount).t_err()?;
+        }
 
         let rent_line = describe_possible_ata_rent(net, &to);
         let amount_line = format!("{amount} USDC");
@@ -4040,6 +4045,9 @@ async fn send_token_transaction(
                     .map(|(evm, _)| evm.clone())
                     .ok_or_else(|| translate_error("adresse d'envoi inconnue : déverrouillez le portefeuille"))?;
                 let fee = api::erc20_fee_for_confirmation(&token, &network, &from_evm, &to, &amount).t_err()?;
+                // Jeton ET gas suffisants, vérifiés AVANT la boîte de confirmation.
+                api::ensure_token_funds(&token, &network, &from_evm, &amount).t_err()?;
+                api::ensure_evm_gas_funds(net, &from_evm, fee).t_err()?;
                 let token_line = lang(
                     &format!("Jeton : {} ({}) — contrat {}", info.name, info.symbol, dialog_address(contract)),
                     &format!("Token: {} ({}) — contract {}", info.name, info.symbol, dialog_address(contract)),
@@ -4055,6 +4063,9 @@ async fn send_token_transaction(
             pgp_wallet_poc::tokens::TokenKind::Spl { mint } => {
                 let net = sol_network(&network)?;
                 api::check_solana_recipient(&to, net).t_err()?;
+                if let Some(from) = app.state::<ProfileAddressCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).map(|(_, sol)| sol.clone()) {
+                    api::ensure_token_funds(&token, &network, &from, &amount).t_err()?;
+                }
                 let token_line = lang(
                     &format!("Jeton : {} ({}) — mint {mint}", info.name, info.symbol),
                     &format!("Token: {} ({}) — mint {mint}", info.name, info.symbol),

@@ -1593,6 +1593,35 @@ pub fn ensure_evm_transfer_funds(network: &wallet_flow::EvmNetwork, from: &str, 
     Ok(())
 }
 
+/// Solde de jeton suffisant pour un virement (registre `tokens.rs`, USDC
+/// compris), vérifié avant la boîte de confirmation.
+pub fn ensure_token_funds(token_id: &str, network: &str, owner: &str, amount: &str) -> Result<()> {
+    let (balance, decimals) = if token_id == "usdc" && network == "sol_mainnet" {
+        (u128::from(get_spl_balance(owner, &sol_spl::usdc_mint_mainnet(), &wallet_flow::SOLANA_MAINNET)?), 6)
+    } else {
+        get_token_balance(token_id, network, owner)?
+    };
+    let wanted = tokens::parse_amount(amount, decimals)?;
+    let symbol = tokens::find(token_id, network).map_or_else(|| token_id.to_uppercase(), |(t, _)| t.symbol.to_string());
+    anyhow::ensure!(
+        wanted <= balance,
+        "fonds insuffisants : {} {symbol} disponibles, {} {symbol} requis",
+        tokens::format_amount(balance, decimals),
+        tokens::format_amount(wanted, decimals)
+    );
+    Ok(())
+}
+
+/// Monnaie du réseau suffisante pour le gas d'un virement de jeton ERC-20,
+/// vérifiée avant la boîte de confirmation.
+pub fn ensure_evm_gas_funds(network: &wallet_flow::EvmNetwork, from: &str, fee: EvmFee) -> Result<()> {
+    let gas = fee.max_total()?;
+    let balance = get_evm_balance(from, network)?;
+    let unit = |wei: u128| format!("{} {}", tokens::format_amount(wei, 18), network.native_symbol);
+    anyhow::ensure!(gas <= balance, "fonds insuffisants : {} disponibles, {} de frais de gas requis", unit(balance), unit(gas));
+    Ok(())
+}
+
 /// Même vérification pour un virement SOL (montant + frais de base), avant la
 /// boîte de confirmation.
 pub fn ensure_sol_transfer_funds(network: &wallet_flow::SolNetwork, from: &str, amount: &str) -> Result<()> {
