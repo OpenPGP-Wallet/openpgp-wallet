@@ -4,7 +4,7 @@
 //! ce que l'interface propose (« Convertir ») et de ce que les commandes
 //! d'échange acceptent (chaque étape est une paire directe).
 
-use crate::{cow, lifi, thorchain_rpc, tokens};
+use crate::{cow, lifi, swapkit, thorchain_rpc, tokens};
 use serde::{Deserialize, Serialize};
 
 /// Une crypto de l'app sur un réseau (identifiant de carte, réseau).
@@ -28,6 +28,9 @@ pub enum Protocol {
     /// Entre deux écosystèmes : agrégateur LI.FI, transaction construite par
     /// LI.FI et vérifiée avant signature (voir `core/src/lifi.rs`).
     Lifi,
+    /// Agrégateur SwapKit : NEAR Intents ou Chainflip, dépôt confirmé par le
+    /// fournisseur lui-même avant signature (voir `core/src/swapkit.rs`).
+    Swapkit,
 }
 
 impl Protocol {
@@ -37,7 +40,7 @@ impl Protocol {
         match self {
             Protocol::Thorchain => Some(&thorchain_rpc::THORCHAIN),
             Protocol::Maya => Some(&thorchain_rpc::MAYA),
-            Protocol::Jupiter | Protocol::Cow | Protocol::Lifi => None,
+            Protocol::Jupiter | Protocol::Cow | Protocol::Lifi | Protocol::Swapkit => None,
         }
     }
 }
@@ -79,6 +82,9 @@ pub fn affiliate_fee_bps(protocol: Protocol, from: SwapAsset) -> u32 {
         Protocol::Jupiter => crate::jupiter_rpc::AFFILIATE_FEE_BPS,
         Protocol::Cow => cow::PARTNER_FEE_BPS,
         Protocol::Lifi => (lifi::FEE * 10_000.0).round() as u32,
+        // Commission de SwapKit (l'app n'en touche pas encore, voir
+        // `swapkit::AFFILIATE_FEE_BPS`).
+        Protocol::Swapkit => swapkit::SERVICE_FEE_BPS + swapkit::AFFILIATE_FEE_BPS,
     }
 }
 
@@ -98,6 +104,13 @@ fn cow_enabled() -> bool {
 /// LI.FI n'est proposé qu'une fois le nom d'intégrateur renseigné.
 fn lifi_enabled() -> bool {
     lifi::INTEGRATOR.is_some()
+}
+
+/// SwapKit : proposé avec une clé d'API (lue à la compilation). Jamais dans
+/// les tests de ce module, qui ne doivent pas dépendre de sa présence (les
+/// paires SwapKit sont testées dans `swapkit`).
+fn swapkit_enabled() -> bool {
+    cfg!(not(test)) && swapkit::enabled()
 }
 
 /// Tous les protocoles qui relient directement `from` à `to`, du préféré au
@@ -133,6 +146,10 @@ pub fn direct_all(from: SwapAsset, to: SwapAsset) -> Vec<Protocol> {
             all.push(Protocol::Lifi);
         }
     }
+    // En dernier : une option de plus, comparée sur son devis.
+    if swapkit_enabled() && swapkit::links((from.coin, from.network), (to.coin, to.network)) {
+        all.push(Protocol::Swapkit);
+    }
     all
 }
 
@@ -147,7 +164,8 @@ pub fn assets() -> Vec<SwapAsset> {
     let cross_chain = thorchain_rpc::ASSETS.iter().chain(thorchain_rpc::MAYA_ASSETS.iter()).map(|a| SwapAsset { coin: a.coin, network: a.network });
     let cow_assets = cow::tradable().into_iter().filter(|_| cow_enabled()).map(|(coin, network)| SwapAsset { coin, network });
     let lifi_assets = lifi::tradable().into_iter().filter(|_| lifi_enabled()).map(|(coin, network)| SwapAsset { coin, network });
-    for asset in cross_chain.chain(JUPITER).chain(cow_assets).chain(lifi_assets) {
+    let swapkit_assets = swapkit::tradable().into_iter().filter(|_| swapkit_enabled()).map(|(coin, network)| SwapAsset { coin, network });
+    for asset in cross_chain.chain(JUPITER).chain(cow_assets).chain(lifi_assets).chain(swapkit_assets) {
         if !all.contains(&asset) {
             all.push(asset);
         }

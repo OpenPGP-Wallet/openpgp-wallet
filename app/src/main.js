@@ -875,6 +875,8 @@ const I18N = {
     "swap.providerOption": "{name} — frais {fee}",
     "swap.providerRecommended": "{name} — frais {fee} (recommandé)",
     "swap.providerHalted": "{name} — suspendu en ce moment",
+    "swap.previewSwapkitRoute": "Fournisseur (via SwapKit)",
+    "swap.swapkitRoute": "{provider} — frais SwapKit {fee} %, ~{minutes} min",
     "swap.twoStepHint":
       "Pas de route directe : l'échange se fait en 2 étapes. 1) {from} → {via} ({first}), reçu sur votre propre adresse. 2) Dès que {via} est arrivé, l'app vous propose {via} → {to} ({second}), avec une seconde confirmation.",
     "swap.previewRoute": "Étape 1 sur 2 : vers {via} ({first}). Ensuite, {via} → {to} ({second}) vous sera proposé dès l'arrivée de {via}.",
@@ -1465,6 +1467,8 @@ const I18N = {
     "swap.providerOption": "{name} — {fee} fee",
     "swap.providerRecommended": "{name} — {fee} fee (recommended)",
     "swap.providerHalted": "{name} — paused right now",
+    "swap.previewSwapkitRoute": "Provider (via SwapKit)",
+    "swap.swapkitRoute": "{provider} — SwapKit fee {fee}%, ~{minutes} min",
     "swap.twoStepHint":
       "No direct route: the swap takes 2 steps. 1) {from} → {via} ({first}), received on your own address. 2) As soon as the {via} arrives, the app offers {via} → {to} ({second}), with a second confirmation.",
     "swap.previewRoute": "Step 1 of 2: to {via} ({first}). Then {via} → {to} ({second}) will be offered as soon as the {via} arrives.",
@@ -5611,7 +5615,7 @@ function selectedSwapPair() {
 // Frais d'affiliation par défaut de chaque fournisseur, en % (voir
 // core/src/cow.rs et core/src/thorchain_rpc.rs), quand Rust n'en déclare pas
 // pour la paire.
-const SWAP_PROVIDER_FEE_PERCENT = { thorchain: 0.8, maya: 0.8, jupiter: 0.8, cow: 1, lifi: 0.8 };
+const SWAP_PROVIDER_FEE_PERCENT = { thorchain: 0.8, maya: 0.8, jupiter: 0.8, cow: 1, lifi: 0.8, swapkit: 0.15 };
 
 function swapProviderFeePercent(pair, protocol) {
   const bps = pair?.feesBps?.[protocol];
@@ -5658,7 +5662,7 @@ function onSwapTargetChange() {
   updateSwapDestination();
 }
 
-const SWAP_PROTOCOL_NAMES = { thorchain: "THORChain", maya: "Maya", jupiter: "Jupiter", cow: "CoW", lifi: "LI.FI" };
+const SWAP_PROTOCOL_NAMES = { thorchain: "THORChain", maya: "Maya", jupiter: "Jupiter", cow: "CoW", lifi: "LI.FI", swapkit: "SwapKit" };
 
 // Au-delà de ce coût estimé (frais et écart au cours du marché), l'aperçu
 // avertit avant de continuer.
@@ -5949,6 +5953,25 @@ swapQuoteBtn.addEventListener("click", withBusyButton(swapQuoteBtn, async () => 
       minRow.classList.remove("hidden");
       destRow.classList.remove("hidden");
       feeRow.classList.remove("hidden");
+    } else if (step.protocol === "swapkit") {
+      // SwapKit : meilleur devis de NEAR Intents et de Chainflip ; le dépôt
+      // n'est ouvert, puis confirmé par le fournisseur lui-même, qu'à la
+      // confirmation.
+      const quote = await invoke("get_swapkit_quote", { fromCoin, fromNetwork, toCoin, toNetwork, amount, destination, profileIndex: swapContext.profileIndex });
+      const symbol = COIN_SYMBOL[toCoin] || toCoin.toUpperCase();
+      receivingText = `≈ ${quote.expected_out} ${symbol}`;
+      receivedAmount = Number.parseFloat(quote.expected_out);
+      document.getElementById("swap-preview-min").textContent = `${quote.min_out} ${symbol}`;
+      document.getElementById("swap-preview-fees-label").textContent = t("swap.previewSwapkitRoute");
+      document.getElementById("swap-preview-fees").textContent = t("swap.swapkitRoute", {
+        provider: quote.provider,
+        fee: (quote.fee_bps / 100).toLocaleString(chartLocale(), { minimumFractionDigits: 2 }),
+        minutes: Math.max(1, Math.ceil(quote.duration_secs / 60)),
+      });
+      document.getElementById("swap-preview-destination").textContent = destination;
+      minRow.classList.remove("hidden");
+      destRow.classList.remove("hidden");
+      feeRow.classList.remove("hidden");
     } else if (step.protocol === "jupiter") {
       const outAmount = await invoke("get_jupiter_quote", { fromCoin, toCoin, amount });
       receivingText = `≈ ${outAmount} ${COIN_SYMBOL[toCoin] || toCoin.toUpperCase()}`;
@@ -6052,6 +6075,10 @@ swapPreviewConfirmBtn.addEventListener("click", withBusyButton(swapPreviewConfir
     } else if (step.protocol === "lifi") {
       const transfer = await invoke("lifi_swap_transaction", { password, fromCoin, fromNetwork, toCoin, toNetwork, amount, destination, profileIndex });
       trackLifiTransfer(successEl, transfer);
+    } else if (step.protocol === "swapkit") {
+      const txResult = await invoke("swapkit_swap_transaction", { password, fromCoin, fromNetwork, toCoin, toNetwork, amount, destination, profileIndex });
+      successEl.textContent = t("send.txSent", { tx: txResult });
+      successEl.classList.remove("hidden");
     } else {
       const txResult = step.protocol === "jupiter"
         ? await invoke("jupiter_swap_transaction", { password, fromCoin, toCoin, amount, profileIndex })

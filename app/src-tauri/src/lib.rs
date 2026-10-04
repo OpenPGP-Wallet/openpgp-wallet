@@ -171,6 +171,27 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("adresse Zcash d'un autre réseau (test) — refusée", "Zcash address from another network (test) — refused"),
     ("envoi vers votre propre adresse Zcash", "sending to your own Zcash address"),
     ("aucun serveur Zcash joignable", "no Zcash server reachable"),
+    // SwapKit (core/src/swapkit.rs)
+    ("SwapKit non configuré", "SwapKit is not configured"),
+    ("SwapKit injoignable", "SwapKit unreachable"),
+    ("échange non disponible via SwapKit entre ces deux cryptos", "swap not available via SwapKit between these two cryptos"),
+    ("dépôt SwapKit d'un type inattendu — échange refusé", "unexpected SwapKit deposit type — swap refused"),
+    ("dépôt SwapKit avec memo, non pris en charge — échange refusé", "SwapKit deposit with a memo, not supported — swap refused"),
+    ("SwapKit a changé les cryptos de l'échange — échange refusé", "SwapKit changed the cryptos of the swap — swap refused"),
+    ("SwapKit a changé les adresses de l'échange — échange refusé", "SwapKit changed the addresses of the swap — swap refused"),
+    ("adresse de dépôt SwapKit absente", "SwapKit deposit address missing"),
+    ("adresse de dépôt SwapKit invalide", "invalid SwapKit deposit address"),
+    ("identifiant du dépôt absent", "deposit identifier missing"),
+    ("identifiant du dépôt invalide", "invalid deposit identifier"),
+    ("réception SwapKit absente", "SwapKit expected amount missing"),
+    ("minimum SwapKit absent", "SwapKit minimum missing"),
+    ("route SwapKit sans identifiant", "SwapKit route without an identifier"),
+    ("montant SwapKit hors limites", "SwapKit amount out of range"),
+    ("NEAR Intents injoignable", "NEAR Intents unreachable"),
+    ("réponse NEAR Intents illisible", "unreadable NEAR Intents response"),
+    ("Chainflip injoignable", "Chainflip unreachable"),
+    ("réponse Chainflip illisible", "unreadable Chainflip response"),
+    ("canal Chainflip introuvable auprès de Chainflip — échange refusé", "Chainflip channel not found at Chainflip — swap refused"),
     // Délai d'annulation et bouton « Max »
     ("Virement annulé pendant le délai d'annulation.", "Transfer cancelled during the cancellation delay."),
     ("Échange annulé pendant le délai d'annulation.", "Swap cancelled during the cancellation delay."),
@@ -617,6 +638,47 @@ fn translate_dynamic_error(msg: &str) -> Option<String> {
     }
     if let Some(rest) = msg.strip_prefix("ZEC insuffisants : ") {
         return Some(format!("insufficient ZEC: {rest}"));
+    }
+    // « NEAR Intents ne confirme pas votre adresse d'arrivée — échange refusé »
+    for provider in ["NEAR Intents", "Chainflip"] {
+        if let Some(what) = msg.strip_prefix(&format!("{provider} ne confirme pas ")).and_then(|rest| rest.strip_suffix(" — échange refusé")) {
+            let what = match what {
+                "un dépôt en attente" => "a pending deposit",
+                "l'adresse de dépôt" => "the deposit address",
+                "les cryptos de l'échange" => "the cryptos of the swap",
+                "le montant" => "the amount",
+                "le type de dépôt" => "the deposit type",
+                "votre adresse d'arrivée" => "your destination address",
+                "votre adresse de remboursement" => "your refund address",
+                "le minimum de réception" => "the minimum received",
+                "le minimum de réception annoncé" => "the announced minimum received",
+                "l'échéance" | "l'échéance du canal" => "the deadline",
+                "une échéance assez lointaine" => "a deadline far enough away",
+                "des commissions raisonnables" => "reasonable fees",
+                "ces cryptos" => "these cryptos",
+                "un canal en attente de dépôt" => "a channel waiting for a deposit",
+                "le canal" => "the channel",
+                "le prix minimum" => "the minimum price",
+                "un canal encore ouvert" => "an open channel",
+                other => other,
+            };
+            return Some(format!("{provider} does not confirm {what} — swap refused"));
+        }
+    }
+    if let Some(rest) = msg.strip_prefix("SwapKit a refusé la demande : ") {
+        return Some(format!("SwapKit refused the request: {rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("aucune route SwapKit pour cet échange") {
+        return Some(format!("no SwapKit route for this swap{rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("réponse SwapKit illisible (") {
+        return Some(format!("unreadable SwapKit response ({rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("montant SwapKit illisible (") {
+        return Some(format!("unreadable SwapKit amount ({rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("SwapKit a changé de fournisseur (") {
+        return Some(format!("SwapKit changed provider ({}", rest.replace("— échange refusé", "— swap refused")));
     }
     if let Some(rest) = msg.strip_prefix("DOGE insuffisants : ") {
         return Some(format!(
@@ -3693,6 +3755,261 @@ async fn swap_transaction(
     .await
 }
 
+// --- Échange via SwapKit (NEAR Intents, Chainflip) ------------------------------
+// Voir core/src/swapkit.rs : SwapKit ouvre un dépôt, que le fournisseur
+// lui-même confirme (adresse, cryptos, montant, arrivée et remboursement chez
+// l'utilisateur, minimum, échéance) avant la boîte native ; le dépôt est un
+// virement ordinaire construit et signé ici.
+
+fn swapkit_pair(
+    from_coin: &str,
+    from_network: &str,
+    to_coin: &str,
+    to_network: &str,
+) -> Result<(&'static pgp_wallet_poc::swapkit::Asset, &'static pgp_wallet_poc::swapkit::Asset), String> {
+    use pgp_wallet_poc::swapkit;
+    if !provider_links(pgp_wallet_poc::swap_routes::Protocol::Swapkit, from_coin, from_network, to_coin, to_network) {
+        return Err(translate_error("échange non disponible entre ces deux cryptos"));
+    }
+    swapkit::find(from_coin, from_network).zip(swapkit::find(to_coin, to_network)).ok_or_else(|| translate_error("échange non disponible entre ces deux cryptos"))
+}
+
+/// Adresse du profil sur le réseau de départ (remboursement d'un échange
+/// manqué), d'après les adresses dérivées au déverrouillage.
+fn own_address_on(app: &tauri::AppHandle, network: &str, profile_index: u32) -> Result<String, String> {
+    let unknown = || translate_error("adresse du profil inconnue — déverrouillez le portefeuille");
+    let from_cache = |cache: &std::sync::Mutex<std::collections::HashMap<u32, String>>| cache.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).cloned().ok_or_else(unknown);
+    match network {
+        n if is_evm(n) => app.state::<ProfileAddressCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).map(|(evm, _)| evm.clone()).ok_or_else(unknown),
+        "sol_mainnet" => app.state::<ProfileAddressCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).map(|(_, sol)| sol.clone()).ok_or_else(unknown),
+        "btc_mainnet" => from_cache(&app.state::<ProfileBtcCache>().0),
+        "doge_mainnet" => from_cache(&app.state::<ProfileDogeCache>().0),
+        "zec_mainnet" => from_cache(&app.state::<ProfileZcashCache>().0),
+        other => Err(translate_error(&format!("réseau inconnu : {other}"))),
+    }
+}
+
+#[derive(Serialize)]
+struct SwapkitQuoteDto {
+    provider: &'static str,
+    expected_out: String,
+    min_out: String,
+    duration_secs: u64,
+    fee_bps: u32,
+}
+
+/// Aperçu : meilleur devis de NEAR Intents et Chainflip via SwapKit (le dépôt
+/// n'est ouvert, puis vérifié, qu'à la confirmation).
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn get_swapkit_quote(
+    from_coin: String,
+    from_network: String,
+    to_coin: String,
+    to_network: String,
+    amount: String,
+    destination: String,
+    profile_index: u32,
+    app: tauri::AppHandle,
+) -> Result<SwapkitQuoteDto, String> {
+    run_blocking(move || {
+        let (from, to) = swapkit_pair(&from_coin, &from_network, &to_coin, &to_network)?;
+        let units = pgp_wallet_poc::tokens::parse_amount(&amount, from.decimals).t_err()?;
+        let destination = canonical_address_input(&destination)?;
+        let source = own_address_on(&app, from.network, profile_index)?;
+        let routes = pgp_wallet_poc::swapkit::quote(from, to, units, &source, &destination).t_err()?;
+        let best = &routes[0];
+        Ok(SwapkitQuoteDto {
+            provider: best.provider.name(),
+            expected_out: pgp_wallet_poc::tokens::format_amount(best.expected_out, to.decimals),
+            min_out: pgp_wallet_poc::tokens::format_amount(best.min_out, to.decimals),
+            duration_secs: best.total_secs,
+            fee_bps: pgp_wallet_poc::swapkit::SERVICE_FEE_BPS + pgp_wallet_poc::swapkit::AFFILIATE_FEE_BPS,
+        })
+    })
+    .await
+}
+
+/// Dépôt d'un échange SwapKit, préparé AVANT la boîte : frais affichés puis
+/// jamais dépassés, solde vérifié.
+enum SwapkitDeposit {
+    Evm(api::EvmFee),
+    Erc20(api::EvmFee),
+    Sol,
+    Spl,
+    Btc(u64),
+    Doge(u64),
+    Zec(u64),
+}
+
+fn prepare_swapkit_deposit(from: &pgp_wallet_poc::swapkit::Asset, source: &str, deposit: &str, amount: &str) -> Result<(SwapkitDeposit, String), String> {
+    let native = pgp_wallet_poc::tokens::find(from.coin, from.network).is_none();
+    match from.network {
+        n if is_evm(n) => {
+            let net = evm_network(n)?;
+            api::validate_evm_recipient(deposit).t_err()?;
+            if native {
+                let fee = api::evm_transfer_fee_for_confirmation(net, Some(source), deposit, amount).t_err()?;
+                api::ensure_evm_transfer_funds(net, source, amount, fee).t_err()?;
+                Ok((SwapkitDeposit::Evm(fee), evm_fee_line_for(fee, net.native_symbol)))
+            } else {
+                let fee = api::erc20_fee_for_confirmation(from.coin, n, source, deposit, amount).t_err()?;
+                api::ensure_token_funds(from.coin, n, source, amount).t_err()?;
+                api::ensure_evm_gas_funds(net, source, fee).t_err()?;
+                Ok((SwapkitDeposit::Erc20(fee), evm_fee_line_for(fee, net.native_symbol)))
+            }
+        }
+        "sol_mainnet" => {
+            let net = sol_network("sol_mainnet")?;
+            api::check_solana_recipient(deposit, net).t_err()?;
+            if native {
+                api::ensure_sol_transfer_funds(net, source, amount).t_err()?;
+                Ok((SwapkitDeposit::Sol, lang("Frais réseau : 0,000005 SOL", "Network fee: 0.000005 SOL").to_string()))
+            } else {
+                api::ensure_token_funds(from.coin, "sol_mainnet", source, amount).t_err()?;
+                let mint = if from.coin == "usdc" { Ok(pgp_wallet_poc::sol_spl::usdc_mint_mainnet()) } else { api::registered_spl_mint(from.coin) };
+                let rent = mint.ok().and_then(|mint| api::spl_ata_rent_lamports_if_missing(deposit, &mint, net).ok().flatten());
+                let line = match rent {
+                    Some(lamports) => {
+                        let sol = lamports as f64 / 1e9;
+                        lang(
+                            &format!("Frais réseau : 0,000005 SOL, plus ≈ {sol:.6} SOL de création du compte de jetons de l'adresse de dépôt"),
+                            &format!("Network fee: 0.000005 SOL, plus ≈ {sol:.6} SOL to create the deposit address's token account"),
+                        )
+                        .to_string()
+                    }
+                    None => lang("Frais réseau : 0,000005 SOL", "Network fee: 0.000005 SOL").to_string(),
+                };
+                Ok((SwapkitDeposit::Spl, line))
+            }
+        }
+        "btc_mainnet" => {
+            let net = btc_network("btc_mainnet")?;
+            api::validate_btc_recipient(deposit, net).t_err()?;
+            let fee_sat = api::estimate_btc_fees(source, net).t_err()?.medium_sat;
+            api::ensure_btc_transfer_funds(net, source, amount, fee_sat).t_err()?;
+            Ok((SwapkitDeposit::Btc(fee_sat), format!("{} : {fee_sat} sat", lang("Frais réseau", "Network fee"))))
+        }
+        "doge_mainnet" => {
+            let plan = api::doge_send_plan(source, deposit, amount).t_err()?;
+            Ok((SwapkitDeposit::Doge(plan.fee), format!("{} : {} DOGE", lang("Frais réseau", "Network fee"), pgp_wallet_poc::doge::format_doge(plan.fee))))
+        }
+        "zec_mainnet" => {
+            let plan = api::zec_send_plan(source, deposit, amount).t_err()?;
+            Ok((SwapkitDeposit::Zec(plan.fee), format!("{} : {} ZEC (ZIP-317)", lang("Frais réseau", "Network fee"), pgp_wallet_poc::zcash::format_zec(plan.fee))))
+        }
+        other => Err(translate_error(&format!("réseau inconnu : {other}"))),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn confirm_swapkit_native(
+    app: &tauri::AppHandle,
+    provider: &str,
+    from_label: &str,
+    amount_line: &str,
+    expected_line: &str,
+    min_line: &str,
+    deposit: &str,
+    destination: &str,
+    own_destination: Option<&str>,
+    refund: &str,
+    fee_line: &str,
+    minutes_left: i64,
+) -> bool {
+    let from_label = dialog_label(from_label);
+    let english = UI_LANG_IS_ENGLISH.load(Ordering::Relaxed);
+    let arrival = match (own_destination, english) {
+        (Some(label), true) => format!("Funds will arrive at: {destination}\n(your profile \"{label}\" — an address of this wallet)"),
+        (Some(label), false) => format!("Les fonds arriveront sur : {destination}\n(votre profil « {label} » — adresse de ce portefeuille)"),
+        (None, true) => format!("Funds will arrive at: {destination}\n(verify this is really your own address)"),
+        (None, false) => format!("Les fonds arriveront sur : {destination}\n(vérifiez qu'il s'agit bien de votre propre adresse)"),
+    };
+    let fee_percent = format!("{:.2}", f64::from(pgp_wallet_poc::swapkit::SERVICE_FEE_BPS + pgp_wallet_poc::swapkit::AFFILIATE_FEE_BPS) / 100.0);
+    let message = if english {
+        format!(
+            "Swap via {provider} (through SwapKit — external protocols, not audited by this app)\n\nFrom profile: {from_label}\nSending: {amount_line}\nExpected to receive: ~{expected_line}\nGuaranteed minimum: {min_line} (confirmed by {provider} itself)\nDeposit to: {deposit} ({provider} deposit address, valid ~{minutes_left} min)\n{arrival}\nRefund if the swap fails: {refund}\n{fee_line}\nSwapKit fee {fee_percent}%; {provider}'s own fees are included in the amount received.\nThis is irreversible.\n\nConfirm this swap?"
+        )
+    } else {
+        format!(
+            "Échange via {provider} (par SwapKit — protocoles externes, non audités par cette app)\n\nDepuis le profil : {from_label}\nEnvoi : {amount_line}\nRéception attendue : ~{expected_line}\nMinimum garanti : {min_line} (confirmé par {provider} lui-même)\nDépôt vers : {deposit} (adresse de dépôt de {provider}, valable ~{minutes_left} min)\n{arrival}\nRemboursement si l'échange échoue : {refund}\n{fee_line}\nFrais de SwapKit {fee_percent} % ; frais propres à {provider} déjà déduits de la réception.\nC'est irréversible.\n\nConfirmer cet échange ?"
+        )
+    };
+    app.dialog()
+        .message(message)
+        .title(lang("Confirmer l'échange", "Confirm the swap"))
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancel)
+        .blocking_show()
+}
+
+/// Échange via SwapKit : devis, dépôt ouvert puis CONFIRMÉ par le fournisseur,
+/// boîte native, délai d'annulation, puis virement vers l'adresse de dépôt.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn swapkit_swap_transaction(
+    password: String,
+    from_coin: String,
+    from_network: String,
+    to_coin: String,
+    to_network: String,
+    amount: String,
+    destination: String,
+    profile_index: u32,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    use pgp_wallet_poc::{swapkit, tokens};
+    run_blocking(move || {
+        let password = Zeroizing::new(password);
+        let dir = data_dir(&app)?;
+        let (from, to) = swapkit_pair(&from_coin, &from_network, &to_coin, &to_network)?;
+        let units = tokens::parse_amount(&amount, from.decimals).t_err()?;
+        let amount = tokens::format_amount(units, from.decimals);
+        let destination = canonical_address_input(&destination)?;
+        let source = own_address_on(&app, from.network, profile_index)?;
+        let from_label = api::list_profiles(&dir).into_iter().find(|p| p.index == profile_index).map(|p| p.label).unwrap_or_else(|| format!("profil #{profile_index}"));
+
+        let routes = swapkit::quote(from, to, units, &source, &destination).t_err()?;
+        let route = &routes[0];
+        let deposit = swapkit::open_deposit(route, from, to, &source, &destination).t_err()?;
+        let verified = swapkit::verify(&deposit, from, to, units, &source, &destination).t_err()?;
+        let (prepared, fee_line) = prepare_swapkit_deposit(from, &source, &deposit.address, &amount)?;
+
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+        let own_destination = own_profile_label(&app, &dir, to.network, &destination);
+        if !confirm_swapkit_native(
+            &app,
+            deposit.provider.name(),
+            &from_label,
+            &format!("{amount} {}", from.symbol),
+            &format!("{} {}", tokens::format_amount(deposit.expected_out, to.decimals), to.symbol),
+            &format!("{} {}", tokens::format_amount(verified.min_out, to.decimals), to.symbol),
+            &deposit.address,
+            &destination,
+            own_destination.as_deref(),
+            &source,
+            &fee_line,
+            (verified.deadline - now) / 60,
+        ) {
+            return Err(translate_error("Échange annulé (confirmation refusée)."));
+        }
+        swap_grace_period(&app)?;
+
+        let sent = match prepared {
+            SwapkitDeposit::Evm(fee) => api::send_evm(&dir, &password, evm_network(from.network)?, &deposit.address, &amount, fee, profile_index),
+            SwapkitDeposit::Erc20(fee) => api::send_erc20(&dir, &password, from.coin, from.network, &deposit.address, &amount, fee, profile_index),
+            SwapkitDeposit::Sol => api::send_sol(&dir, &password, sol_network("sol_mainnet")?, &deposit.address, &amount, profile_index),
+            SwapkitDeposit::Spl if from.coin == "usdc" => api::send_usdc(&dir, &password, sol_network("sol_mainnet")?, &deposit.address, &amount, profile_index),
+            SwapkitDeposit::Spl => api::send_registered_spl(&dir, &password, from.coin, &deposit.address, &amount, profile_index),
+            SwapkitDeposit::Btc(fee_sat) => api::send_btc(&dir, &password, btc_network("btc_mainnet")?, &deposit.address, &amount, fee_sat, profile_index),
+            SwapkitDeposit::Doge(fee) => api::send_doge(&dir, &password, &deposit.address, &amount, fee, profile_index),
+            SwapkitDeposit::Zec(fee) => api::send_zec(&dir, &password, &deposit.address, &amount, fee, profile_index),
+        };
+        sent.t_err()
+    })
+    .await
+}
+
 // --- Swap (Jupiter) ----------------------------------------------------------
 // Même chaîne uniquement (SOL <-> USDC), contrairement au swap cross-chain
 // THORChain ci-dessus — voir core/src/jupiter_rpc.rs pour le contexte
@@ -5606,6 +5923,8 @@ pub fn run() {
             get_market_prices,
             send_transaction,
             resolve_send_countdown,
+            get_swapkit_quote,
+            swapkit_swap_transaction,
             max_send_amount,
             send_usdc_transaction,
             get_swap_quote,

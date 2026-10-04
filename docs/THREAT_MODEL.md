@@ -109,7 +109,12 @@ qui la met en œuvre. **Aucune de ces protections n'a encore été vérifiée pa
   - LI.FI : seules les routes dont le destinataire est vérifiable sont gardées ; transaction Bitcoin préparée
     par LI.FI vérifiée sortie par sortie (fonds de l'utilisateur seulement, un seul dépôt, monnaie rendue à
     soi, frais bornés — `lifi.rs`) ;
-  - CoW, Jupiter : ordre et transaction relus avant signature (`cow.rs`, `jupiter_rpc.rs`).
+  - CoW, Jupiter : ordre et transaction relus avant signature (`cow.rs`, `jupiter_rpc.rs`) ;
+  - SwapKit (NEAR Intents, Chainflip) : le dépôt ouvert par SwapKit est confirmé par l'API officielle du
+    fournisseur, indépendante de SwapKit (adresse de dépôt, cryptos, montant, arrivée et remboursement sur les
+    adresses de l'utilisateur, minimum, échéance, commissions bornées) ; le dépôt est un virement construit et
+    signé par l'app (`swapkit.rs`). Risque résiduel : compromission simultanée de SwapKit et du fournisseur ;
+    une fois déposés, les fonds dépendent de l'exécution par le fournisseur (remboursement prévu sinon).
 - **Monero** : blocs analysés localement (le nœud ne sait pas quelles sorties sont à soi) ; la sélection des
   leurres refuse un nœud qui ment sur la sortie dépensée ; réorganisations détectées.
 - **Zcash protégé** : blocs compacts déchiffrés localement (lightwalletd ne voit que des demandes de blocs).

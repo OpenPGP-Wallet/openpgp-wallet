@@ -187,6 +187,17 @@ fn quote(protocol: Protocol, from: SwapAsset, to: SwapAsset, amount: &str) -> Re
             let q = lifi::quote(from.network, &f, to.network, &t, units(from, amount), sender, &destination(to.network), &lifi_initial_deny(from.network, to.network), None)?;
             Ok((q.to_amount, t.decimals))
         }
+        Protocol::Swapkit => {
+            let (f, t) = crate::swapkit::find(from.coin, from.network).zip(crate::swapkit::find(to.coin, to.network)).context("paire SwapKit")?;
+            let sender = match from.network {
+                "sol_mainnet" => SOL_FUNDED.to_string(),
+                "btc_mainnet" => BTC_FUNDED.to_string(),
+                "doge_mainnet" | "zec_mainnet" => destination(from.network),
+                _ => EVM_FUNDED.to_string(),
+            };
+            let routes = crate::swapkit::quote(f, t, units(from, amount), &sender, &destination(to.network))?;
+            Ok((routes[0].expected_out, t.decimals))
+        }
     }
 }
 
