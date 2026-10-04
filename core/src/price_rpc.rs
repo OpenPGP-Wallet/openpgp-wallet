@@ -147,6 +147,7 @@ pub const MARKET_IDS: &[&str] = &[
     "zcash",
     "monero",
     "dogecoin",
+    "tron",
     // Jetons (core/src/tokens.rs).
     "tether",
     "chainlink",

@@ -65,6 +65,7 @@ pub fn price_asset(symbol: &str) -> Option<Asset> {
         "HYPE" => Asset::Pair("HYPEUSDT"),
         "ZEC" => Asset::Pair("ZECUSDT"),
         "DOGE" => Asset::Pair("DOGEUSDT"),
+        "TRX" => Asset::Pair("TRXUSDT"),
         "LINK" => Asset::Pair("LINKUSDT"),
         "DAI" => Asset::Pair("DAIUSDT"),
         "USDE" => Asset::Pair("USDEUSDT"),

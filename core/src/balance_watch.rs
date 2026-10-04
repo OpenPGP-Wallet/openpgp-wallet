@@ -17,6 +17,7 @@
 //!   10 s — un envoi ou une réception se voit avant le bloc suivant (~1 min).
 //! - Zcash transparent : solde relu toutes les 20 s (un bloc toutes les 75 s ;
 //!   lightwalletd ne compte que les transactions minées).
+//! - Tron : solde relu toutes les 10 s (un bloc toutes les 3 s).
 //!
 //! Rien de nouveau n'est envoyé à personne : les mêmes adresses publiques, aux
 //! mêmes fournisseurs que les lectures de solde. La surveillance s'arrête quand
@@ -67,6 +68,7 @@ const BTC_INTERVAL: Duration = Duration::from_secs(10);
 const TOKEN_INTERVAL: Duration = Duration::from_secs(12);
 const DOGE_INTERVAL: Duration = Duration::from_secs(10);
 const ZEC_INTERVAL: Duration = Duration::from_secs(20);
+const TRON_INTERVAL: Duration = Duration::from_secs(10);
 const HEARTBEAT: Duration = Duration::from_secs(30);
 const MAX_BACKOFF_SECS: u64 = 60;
 
@@ -77,6 +79,7 @@ enum Polled {
     Erc20(&'static wallet_flow::EvmNetwork, &'static str, String),
     Doge(String),
     Zec(String),
+    Tron(String),
 }
 
 impl Polled {
@@ -87,6 +90,7 @@ impl Polled {
             Polled::Erc20(..) => TOKEN_INTERVAL,
             Polled::Doge(..) => DOGE_INTERVAL,
             Polled::Zec(..) => ZEC_INTERVAL,
+            Polled::Tron(..) => TRON_INTERVAL,
         }
     }
 }
@@ -127,6 +131,7 @@ pub fn start(targets: Vec<Target>, notify: Notify) -> Result<BalanceWatch> {
             "btc_testnet" => polled.push((target.id, Polled::Btc(&wallet_flow::BTC_TESTNET, address))),
             "doge_mainnet" => polled.push((target.id, Polled::Doge(address))),
             "zec_mainnet" => polled.push((target.id, Polled::Zec(address))),
+            "tron_mainnet" => polled.push((target.id, Polled::Tron(address))),
             other => match wallet_flow::evm_network(other) {
                 // Tous les réseaux EVM (Ethereum, L2, BNB Chain…) : solde relu.
                 Some(net) => polled.push((target.id, Polled::Evm(net, address))),
@@ -290,6 +295,7 @@ fn read(polled: &Polled) -> Result<String> {
         Polled::Erc20(network, contract, address) => api::get_erc20_balance(network, contract, address)?.to_string(),
         Polled::Doge(address) => crate::doge::watch_reading(address)?,
         Polled::Zec(address) => crate::zcash::balance(address)?.to_string(),
+        Polled::Tron(address) => crate::tron::balance(address)?.to_string(),
     })
 }
 

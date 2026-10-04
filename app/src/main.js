@@ -25,6 +25,7 @@ const ASSETS = [
   { coin: "zecs", name: "Zcash protégé", nameKey: "coin.zecsName", symbol: "ZEC", family: "zecs", icon: "/assets/zec-shielded.svg", gecko: "zcash", decimals: 8, chart: "ZEC", networks: ["zec_shielded"] },
   { coin: "xmr", name: "Monero", symbol: "XMR", family: "xmr", icon: "/assets/xmr.png", gecko: "monero", decimals: 6, chart: "XMR", networks: ["xmr_mainnet"] },
   { coin: "doge", name: "Dogecoin", symbol: "DOGE", family: "doge", icon: "/assets/doge.png", gecko: "dogecoin", decimals: 8, chart: "DOGE", networks: ["doge_mainnet"] },
+  { coin: "trx", name: "Tron", symbol: "TRX", family: "trx", icon: "/assets/trx.png", gecko: "tron", decimals: 6, chart: "TRX", networks: ["tron_mainnet"] },
   // Jetons (`token: true`) : contrats et mints relevés dans core/src/tokens.rs —
   // SEUL le registre Rust fait foi pour un envoi (l'interface n'envoie que
   // l'identifiant et le réseau) ; ceux-ci ne servent qu'aux demandes de
@@ -650,6 +651,7 @@ const I18N = {
     "net.zec_shielded": "Zcash — Fonds protégés",
     "net.xmr_mainnet": "Monero — Fonds réels",
     "net.doge_mainnet": "Dogecoin — Fonds réels",
+    "net.tron_mainnet": "Tron — Fonds réels",
     "wallet.historyExplorerOnly": "Pas d'historique ici pour ce réseau : aucun service public gratuit ne le fournit. Il reste consultable sur l'explorateur du réseau.",
     "wallet.historyOpenExplorer": "Voir sur l'explorateur",
     "wallet.historyNeedsKey": "Pour voir l'historique de ce réseau ici, ajoutez une clé API Etherscan gratuite dans Paramètres. Il reste consultable sur l'explorateur du réseau.",
@@ -1248,6 +1250,7 @@ const I18N = {
     "net.zec_shielded": "Zcash — Shielded funds",
     "net.xmr_mainnet": "Monero — Real funds",
     "net.doge_mainnet": "Dogecoin — Real funds",
+    "net.tron_mainnet": "Tron — Real funds",
     "wallet.historyExplorerOnly": "No history here for this network: no free public service provides it. You can still see it on the network's explorer.",
     "wallet.historyOpenExplorer": "View on the explorer",
     "wallet.historyNeedsKey": "To see this network's history here, add a free Etherscan API key in Settings. You can still see it on the network's explorer.",
@@ -3541,6 +3544,8 @@ function addressOfProfile(profile, coin, network) {
   // Dogecoin (D…) ; absente d'un profil dérivé avant son ajout, jusqu'au
   // prochain déverrouillage.
   if (coin === "doge") return profile.addresses.doge ?? "";
+  // Tron (T…) ; absente d'un profil dérivé avant son ajout.
+  if (coin === "trx") return profile.addresses.tron ?? "";
   // Zcash protégé : adresse u1 (récepteur Orchard seul).
   if (coin === "zecs") return profile.addresses.zcash_shielded ?? "";
   // Jetons Solana (USDC, USDT…) : même adresse propriétaire que SOL (le compte
@@ -4274,7 +4279,7 @@ const qrModal = document.getElementById("qr-modal");
 // EIP-681 pour Ethereum (montant en wei, réseau par son chain id). Sans
 // montant : l'adresse seule, lisible par toutes les applications.
 // Décimales maximales d'un montant demandé : 18 pour toute monnaie EVM.
-const QR_DECIMALS = new Proxy({ btc: 8, sol: 9, zec: 8, zecs: 8, xmr: 12, doge: 8 }, { get: (known, coin) => ASSET_BY_COIN[coin]?.unitDecimals ?? known[coin] ?? 18 });
+const QR_DECIMALS = new Proxy({ btc: 8, sol: 9, zec: 8, zecs: 8, xmr: 12, doge: 8, trx: 6 }, { get: (known, coin) => ASSET_BY_COIN[coin]?.unitDecimals ?? known[coin] ?? 18 });
 // Même mint que core/src/sol_spl.rs::usdc_mint_mainnet.
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 let qrCard = null;

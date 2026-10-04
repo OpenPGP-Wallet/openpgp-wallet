@@ -116,6 +116,15 @@ pub fn derive_doge_key(seed: &[u8], index: u32) -> Result<(SigningKey, [u8; 20])
     Ok((signing_key, hash160))
 }
 
+/// Dérive la clé Tron n°`index` (chemin BIP44 m/44'/195'/0'/0/{index},
+/// coin_type 195' = Tron dans SLIP-0044 — celui de Ledger, Trezor et TronLink)
+/// et retourne l'adresse (21 octets, préfixe 0x41 ; voir `tron::address_of`).
+pub fn derive_tron_key(seed: &[u8], index: u32) -> Result<(SigningKey, crate::tron::Address)> {
+    let signing_key = derive_key_from_path(seed, &format!("m/44'/195'/0'/0/{index}"))?;
+    let address = crate::tron::address_of(&signing_key);
+    Ok((signing_key, address))
+}
+
 fn btc_hash160_from_key(signing_key: &SigningKey) -> [u8; 20] {
     let compressed = signing_key.verifying_key().to_encoded_point(true);
     let sha256 = Sha256::digest(compressed.as_bytes());

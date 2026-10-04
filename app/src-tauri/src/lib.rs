@@ -171,6 +171,15 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("adresse Zcash d'un autre réseau (test) — refusée", "Zcash address from another network (test) — refused"),
     ("envoi vers votre propre adresse Zcash", "sending to your own Zcash address"),
     ("aucun serveur Zcash joignable", "no Zcash server reachable"),
+    // Tron (core/src/tron.rs, core/src/api.rs)
+    ("nœud Tron injoignable", "Tron node unreachable"),
+    ("réponse du nœud Tron illisible", "unreadable Tron node response"),
+    ("adresse Tron invalide", "invalid Tron address"),
+    ("adresse Tron invalide (somme de contrôle)", "invalid Tron address (checksum)"),
+    ("adresse Tron invalide (autre réseau)", "invalid Tron address (another network)"),
+    ("envoi vers votre propre adresse Tron", "sending to your own Tron address"),
+    ("bloc Tron illisible", "unreadable Tron block"),
+    ("TRX insuffisants pour couvrir les frais du réseau", "not enough TRX to cover the network fee"),
     // SwapKit (core/src/swapkit.rs)
     ("SwapKit non configuré", "SwapKit is not configured"),
     ("SwapKit injoignable", "SwapKit unreachable"),
@@ -680,6 +689,27 @@ fn translate_dynamic_error(msg: &str) -> Option<String> {
     if let Some(rest) = msg.strip_prefix("SwapKit a changé de fournisseur (") {
         return Some(format!("SwapKit changed provider ({}", rest.replace("— échange refusé", "— swap refused")));
     }
+    if let Some(rest) = msg.strip_prefix("TRX insuffisants : ") {
+        return Some(format!(
+            "insufficient TRX: {}",
+            rest.replace(" disponibles, ", " available, ").replace(" de frais requis", " in fees required")
+        ));
+    }
+    if let Some(rest) = msg.strip_prefix("transaction Tron refusée : ") {
+        return Some(format!("Tron transaction refused: {rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("nœud Tron : réponse ") {
+        return Some(format!("Tron node: response {rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("nœud Tron : ") {
+        return Some(format!("Tron node: {rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("paramètre Tron ").and_then(|r| r.strip_suffix(" introuvable")) {
+        return Some(format!("Tron parameter {rest} not found"));
+    }
+    if let Some(detail) = msg.strip_prefix("les frais Tron ont augmenté depuis la confirmation (").and_then(|rest| rest.strip_suffix(") — relancez l'envoi")) {
+        return Some(format!("Tron fees increased since the confirmation ({}) — start again", detail.replace(" au lieu de ", " instead of ")));
+    }
     if let Some(rest) = msg.strip_prefix("DOGE insuffisants : ") {
         return Some(format!(
             "insufficient DOGE: {}",
@@ -1064,6 +1094,7 @@ struct AddressesDto {
     zcash_shielded: String,
     monero: String,
     doge: String,
+    tron: String,
 }
 
 impl From<api::Addresses> for AddressesDto {
@@ -1077,6 +1108,7 @@ impl From<api::Addresses> for AddressesDto {
             zcash_shielded: a.zcash_shielded,
             monero: a.monero,
             doge: a.doge,
+            tron: a.tron,
         }
     }
 }
@@ -1184,7 +1216,7 @@ fn save_bytes_with_dialog(suggested_name: String, content_b64: String, app: taur
 /// aurait laissé un frontend compromis ouvrir n'importe quelle page — un vecteur
 /// de phishing simple, ouvert sans aucun bénéfice fonctionnel puisqu'aucun appel
 /// légitime de cette commande ne cible jamais autre chose que ces domaines.
-const ALLOWED_EXTERNAL_LINK_PREFIXES: [&str; 7] = [
+const ALLOWED_EXTERNAL_LINK_PREFIXES: [&str; 8] = [
     "https://explorer.solana.com/",
     "https://blockstream.info/",
     "https://explorer.cow.fi/",
@@ -1192,6 +1224,7 @@ const ALLOWED_EXTERNAL_LINK_PREFIXES: [&str; 7] = [
     "https://blockchair.com/zcash/",
     "https://xmrchain.net/",
     "https://blockchair.com/dogecoin/",
+    "https://tronscan.org/",
 ];
 
 /// Lien vers un explorateur connu de l'app : Solana, Bitcoin, ou l'explorateur
@@ -1897,6 +1930,7 @@ fn forget_session(app: &tauri::AppHandle) {
     app.state::<ProfileBtcCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<ProfileDogeCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<ProfileBtcTestnetCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    app.state::<ProfileTronCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<ShieldedKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<MoneroKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     IS_AFFILIATE_WALLET.store(false, Ordering::Relaxed);
@@ -1951,6 +1985,7 @@ async fn get_balance(network: String, address: String, app: tauri::AppHandle) ->
             }
             "zec_mainnet" => Ok(pgp_wallet_poc::zcash::format_zec(api::get_zec_balance(&address).t_err()?)),
             "doge_mainnet" => Ok(pgp_wallet_poc::doge::format_doge(api::get_doge_balance(&address).t_err()?)),
+            "tron_mainnet" => Ok(pgp_wallet_poc::tron::format_trx(api::get_trx_balance(&address).t_err()?)),
             // Base locale (synchronisation de fond) : dépensable + en attente.
             "zec_shielded" => {
                 let balance = api::zec_shielded_balance(&data_dir(&app)?, shielded_profile(&app, &address)?).t_err()?;
@@ -2079,6 +2114,8 @@ async fn has_pending_tx(network: String, address: String, app: tauri::AppHandle)
             // à sa confirmation (~75 s).
             "zec_mainnet" | "zec_shielded" => Ok(false),
             "doge_mainnet" => api::has_pending_doge(&address).t_err(),
+            // Un bloc toutes les 3 s : un envoi est confirmé avant la relecture.
+            "tron_mainnet" => Ok(false),
             "xmr_mainnet" => api::has_pending_xmr(&data_dir(&app)?, monero_profile(&app, &address)?).t_err(),
             other => Err(translate_error(&format!("réseau inconnu : {other}"))),
         }
@@ -2263,6 +2300,12 @@ async fn get_tx_history(network: String, address: String, app: tauri::AppHandle)
             Some(price_history::Asset::Pair("DOGEUSDT")),
             8,
             |id| format!("https://blockchair.com/dogecoin/transaction/{id}"),
+        )),
+        "tron_mainnet" => HistoryDto::read(history_dtos(
+            || pgp_wallet_poc::tron::history(&address, HISTORY_LIMIT as usize),
+            Some(price_history::Asset::Pair("TRXUSDT")),
+            6,
+            |id| format!("https://tronscan.org/#/transaction/{id}"),
         )),
         "sol_devnet" | "sol_mainnet" => {
             let net = sol_network(&network)?;
@@ -2535,6 +2578,7 @@ fn network_label(network: &str) -> String {
         "sol_mainnet" => lang("Solana MAINNET — fonds réels", "Solana MAINNET — real funds").to_string(),
         "zec_mainnet" => lang("Zcash MAINNET — fonds réels", "Zcash MAINNET — real funds").to_string(),
         "doge_mainnet" => lang("Dogecoin MAINNET — fonds réels", "Dogecoin MAINNET — real funds").to_string(),
+        "tron_mainnet" => lang("Tron MAINNET — fonds réels", "Tron MAINNET — real funds").to_string(),
         "xmr_mainnet" => lang("Monero MAINNET — fonds réels", "Monero MAINNET — real funds").to_string(),
         "zec_shielded" => lang("Zcash MAINNET — fonds protégés", "Zcash MAINNET — shielded funds").to_string(),
         other => match wallet_flow::evm_network(other) {
@@ -2554,6 +2598,7 @@ fn network_unit(network: &str) -> &'static str {
         "zec_mainnet" | "zec_shielded" => "ZEC",
         "xmr_mainnet" => "XMR",
         "doge_mainnet" => "DOGE",
+        "tron_mainnet" => "TRX",
         other => wallet_flow::evm_network(other).map(|n| n.native_symbol).unwrap_or(""),
     }
 }
@@ -2667,6 +2712,7 @@ fn recipient_warning_lines(first_send: bool, coin: &str, activity: Option<api::R
         "usdc" => ("ni SOL ni USDC", "neither SOL nor USDC"),
         "zec" => ("aucun ZEC", "no ZEC"),
         "doge" => ("aucun DOGE", "no DOGE"),
+        "trx" => ("aucun TRX", "no TRX"),
         "sol" => ("aucun SOL", "no SOL"),
         _ => ("aucun fonds", "no funds"),
     };
@@ -2744,6 +2790,7 @@ fn own_profile_label(app: &tauri::AppHandle, dir: &std::path::Path, network: &st
         "btc_mainnet" => in_cache(&app.state::<ProfileBtcCache>().0, any_case),
         "zec_mainnet" => in_cache(&app.state::<ProfileZcashCache>().0, exact),
         "doge_mainnet" => in_cache(&app.state::<ProfileDogeCache>().0, exact),
+        "tron_mainnet" => in_cache(&app.state::<ProfileTronCache>().0, exact),
         "xmr_mainnet" => {
             app.state::<MoneroKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).iter().find(|(_, (address, _))| address == to).map(|(index, _)| *index)
         }
@@ -2823,6 +2870,7 @@ async fn send_transaction(
             "btc_testnet" => app.state::<ProfileBtcTestnetCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).cloned(),
             _ => None,
         };
+        let from_tron = app.state::<ProfileTronCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).cloned();
         let from = SendFrom {
             evm: from_evm.as_deref(),
             sol: from_sol.as_deref(),
@@ -2830,6 +2878,7 @@ async fn send_transaction(
             xmr: from_xmr.as_ref(),
             doge: from_doge.as_deref(),
             btc: from_btc.as_deref(),
+            tron: from_tron.as_deref(),
         };
         let mut send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &from_label, None, from, max.unwrap_or(false))?;
         send_grace_period(&app)?;
@@ -2856,6 +2905,10 @@ async fn send_transaction(
             "doge_mainnet" => {
                 let shown_fee = send.doge_fee.ok_or_else(|| "frais Dogecoin manquants".to_string())?;
                 api::send_doge(&dir, &password, &send.to, &send.amount, shown_fee, profile_index).t_err()
+            }
+            "tron_mainnet" => {
+                let shown_fee = send.trx_fee.ok_or_else(|| "frais Tron manquants".to_string())?;
+                api::send_trx(&dir, &password, &send.to, &send.amount, shown_fee, profile_index).t_err()
             }
             // Exactement l'envoi préparé et affiché (sorties, leurres, frais).
             "xmr_mainnet" => match send.xmr_plan.take() {
@@ -2953,6 +3006,7 @@ async fn max_send_amount(network: String, token: Option<String>, profile_index: 
             }
             "zec_mainnet" => api::zec_max(&cached(&app.state::<ProfileZcashCache>().0)?).t_err(),
             "doge_mainnet" => api::doge_max(&cached(&app.state::<ProfileDogeCache>().0)?).t_err(),
+            "tron_mainnet" => api::trx_max(&cached(&app.state::<ProfileTronCache>().0)?, None).t_err(),
             "xmr_mainnet" => {
                 let keys = app.state::<MoneroKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).map(|(_, keys)| keys.clone()).ok_or_else(unknown)?;
                 Ok(pgp_wallet_poc::monero::format_xmr(api::xmr_send_plan_max(&dir, &keys, None).t_err()?.amount))
@@ -2997,6 +3051,8 @@ struct ConfirmedSend {
     xmr_plan: Option<pgp_wallet_poc::monero::SendPlan>,
     /// Frais Dogecoin affichés (plafond à l'envoi).
     doge_fee: Option<u64>,
+    /// Frais Tron maximum affichés (plafond à l'envoi).
+    trx_fee: Option<u64>,
 }
 
 /// Adresses (et clés de visualisation Monero) du compte qui envoie, connues
@@ -3009,6 +3065,7 @@ struct SendFrom<'a> {
     xmr: Option<&'a pgp_wallet_poc::monero::ViewKeys>,
     doge: Option<&'a str>,
     btc: Option<&'a str>,
+    tron: Option<&'a str>,
 }
 
 /// Validation, avertissements et boîte de confirmation native, communs aux
@@ -3039,6 +3096,7 @@ fn confirm_send(
         "zec_mainnet" => "zec",
         "xmr_mainnet" => "xmr",
         "doge_mainnet" => "doge",
+        "tron_mainnet" => "trx",
         other => return Err(translate_error(&format!("réseau inconnu : {other}"))),
     };
     let to = canonical_address_input(to)?;
@@ -3062,6 +3120,7 @@ fn confirm_send(
             }
             "zec" => api::zec_max(from.zec.ok_or_else(unknown_profile)?).t_err()?,
             "doge" => api::doge_max(from.doge.ok_or_else(unknown_profile)?).t_err()?,
+            "trx" => api::trx_max(from.tron.ok_or_else(unknown_profile)?, Some(&to)).t_err()?,
             _ => {
                 let plan = api::xmr_send_plan_max(dir, from.xmr.ok_or_else(unknown_profile)?, Some(&to)).t_err()?;
                 let amount = pgp_wallet_poc::monero::format_xmr(plan.amount);
@@ -3075,6 +3134,7 @@ fn confirm_send(
     let amount = match coin {
         "zec" => api::canonical_zec_amount(&amount).t_err()?,
         "doge" => api::canonical_doge_amount(&amount).t_err()?,
+        "trx" => api::canonical_trx_amount(&amount).t_err()?,
         "xmr" => api::canonical_xmr_amount(&amount).t_err()?,
         _ => api::canonical_amount(coin, &amount).t_err()?,
     };
@@ -3121,6 +3181,13 @@ fn confirm_send(
         }
         _ => None,
     };
+    // Tron : destinataire vérifié, frais maximum (bande passante, activation
+    // d'un compte inexistant) et solde vérifiés MAINTENANT, affichés, puis
+    // jamais dépassés à l'envoi.
+    let trx_plan = match coin {
+        "trx" => Some(api::trx_send_plan(from.tron.ok_or_else(unknown_profile)?, &to, &amount).t_err()?),
+        _ => None,
+    };
     // Monero : destinataire vérifié, sorties choisies, leurres tirés et frais
     // calculés MAINTENANT (clés de visualisation, sans la seed) ; c'est cet
     // envoi-là, inchangé, qui sera signé.
@@ -3148,6 +3215,7 @@ fn confirm_send(
         // Adresse déjà vérifiée par la préparation de l'envoi.
         "zec" => api::zec_recipient_activity(&to).ok(),
         "doge" => api::doge_recipient_activity(&to).ok(),
+        "trx" => api::trx_recipient_activity(&to).ok(),
         // Adresse vérifiée par la préparation ; aucune activité lisible
         // (adresses et montants invisibles sur la chaîne Monero).
         "xmr" => None,
@@ -3184,6 +3252,14 @@ Change returned to your address: {change} ZEC")));
             }
             line
         }),
+        "trx" => trx_plan.map(|plan| {
+            let fee = pgp_wallet_poc::tron::format_trx(plan.fee_max);
+            let mut line = lang(&format!("Frais : jusqu'à {fee} TRX"), &format!("Fee: up to {fee} TRX")).to_string();
+            if plan.new_account {
+                line.push_str(lang(", dont 1,1 TRX d'activation du compte destinataire (encore jamais utilisé)", ", including 1.1 TRX to activate the recipient account (never used yet)"));
+            }
+            line
+        }),
         "xmr" => xmr_plan.as_ref().map(|plan| {
             let mut line = format!("{} : {} XMR", lang("Frais", "Fee"), pgp_wallet_poc::monero::format_xmr(plan.fee));
             if plan.change > 0 {
@@ -3209,7 +3285,7 @@ Change returned to your address: {change} XMR (spendable after 10 confirmations,
     if !confirm_transaction_native(app, network, &to, &amount_line, from_label, fee_line.as_deref(), warning.as_deref(), None) {
         return Err(translate_error("Virement annulé (confirmation refusée)."));
     }
-    Ok(ConfirmedSend { to, amount, evm_fee, fee_sat, zec_fee: zec_plan.map(|plan| plan.fee), xmr_plan, doge_fee: doge_plan.map(|plan| plan.fee) })
+    Ok(ConfirmedSend { to, amount, evm_fee, fee_sat, zec_fee: zec_plan.map(|plan| plan.fee), xmr_plan, doge_fee: doge_plan.map(|plan| plan.fee), trx_fee: trx_plan.map(|plan| plan.fee_max) })
 }
 
 // --- Comptes Ledger / Trezor (core/src/hardware.rs) ----------------------------
@@ -5037,6 +5113,10 @@ struct ProfileAddressCache(std::sync::Mutex<std::collections::HashMap<u32, (Stri
 #[derive(Default)]
 struct ProfileZcashCache(std::sync::Mutex<std::collections::HashMap<u32, String>>);
 
+/// Adresse Tron de chaque profil (préparation d'un envoi avant la boîte).
+#[derive(Default)]
+struct ProfileTronCache(std::sync::Mutex<std::collections::HashMap<u32, String>>);
+
 /// Adresse Bitcoin testnet de chaque profil (bouton « Max » d'un envoi testnet).
 #[derive(Default)]
 struct ProfileBtcTestnetCache(std::sync::Mutex<std::collections::HashMap<u32, String>>);
@@ -5079,6 +5159,9 @@ fn remember_addresses(app: &tauri::AppHandle, index: u32, addresses: &api::Addre
     }
     if let Some(cache) = app.try_state::<ProfileBtcTestnetCache>() {
         cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, addresses.btc_testnet.clone());
+    }
+    if let Some(cache) = app.try_state::<ProfileTronCache>() {
+        cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, addresses.tron.clone());
     }
     if let Some(cache) = app.try_state::<ShieldedKeysCache>() {
         cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, (addresses.zcash_shielded.clone(), addresses.zcash_shielded_keys.clone()));
@@ -5858,6 +5941,7 @@ pub fn run() {
         .manage(ProfileZcashCache::default())
         .manage(SendGrace::default())
         .manage(ProfileBtcTestnetCache::default())
+        .manage(ProfileTronCache::default())
         .manage(ProfileDogeCache::default())
         .manage(ProfileBtcCache::default())
         .manage(ShieldedKeysCache::default())
@@ -6126,7 +6210,7 @@ mod tests {
         }
 
         // Chaque avertissement tient sur un seul paragraphe (mise en page de la boîte).
-        for coin in ["evm", "btc", "sol", "usdc", "zec", "doge", "xmr", "zecs"] {
+        for coin in ["evm", "btc", "sol", "usdc", "zec", "doge", "trx", "xmr", "zecs"] {
             for activity in [Some(Unused), Some(Empty), None] {
                 assert!(recipient_warning_lines(true, coin, activity).iter().all(|l| !l.contains('\n')));
             }
@@ -6229,6 +6313,40 @@ mod tests {
         for fr in ["la transaction LI.FI envoie plus que le montant affiché — refusé", "adresse de dépôt Maya invalide", "PSBT LI.FI illisible"] {
             assert!(EXACT_ERROR_TRANSLATIONS.iter().any(|(text, _)| *text == fr), "{fr}");
         }
+    }
+
+    /// Messages d'erreur Tron et SwapKit : présents dans le code, traduits.
+    #[test]
+    fn tron_and_swapkit_error_messages_have_a_translation() {
+        let sources = [include_str!("../../../core/src/tron.rs"), include_str!("../../../core/src/swapkit.rs"), include_str!("../../../core/src/api.rs")];
+        for message in [
+            "nœud Tron injoignable",
+            "réponse du nœud Tron illisible",
+            "adresse Tron invalide",
+            "adresse Tron invalide (somme de contrôle)",
+            "adresse Tron invalide (autre réseau)",
+            "envoi vers votre propre adresse Tron",
+            "bloc Tron illisible",
+            "TRX insuffisants pour couvrir les frais du réseau",
+            "SwapKit injoignable",
+            "échange non disponible via SwapKit entre ces deux cryptos",
+            "dépôt SwapKit avec memo, non pris en charge — échange refusé",
+            "SwapKit a changé les adresses de l'échange — échange refusé",
+            "canal Chainflip introuvable auprès de Chainflip — échange refusé",
+        ] {
+            assert!(sources.iter().any(|s| s.contains(&format!("\"{message}\""))), "message absent du code : {message}");
+            assert!(EXACT_ERROR_TRANSLATIONS.iter().any(|(fr, _)| *fr == message), "sans traduction : {message}");
+        }
+        assert_eq!(
+            translate_dynamic_error("NEAR Intents ne confirme pas votre adresse d'arrivée — échange refusé").unwrap(),
+            "NEAR Intents does not confirm your destination address — swap refused"
+        );
+        assert_eq!(translate_dynamic_error("Chainflip ne confirme pas le prix minimum — échange refusé").unwrap(), "Chainflip does not confirm the minimum price — swap refused");
+        assert_eq!(
+            translate_dynamic_error("TRX insuffisants : 1.000000 TRX disponibles, 2.000000 TRX + 0.270000 TRX de frais requis").unwrap(),
+            "insufficient TRX: 1.000000 TRX available, 2.000000 TRX + 0.270000 TRX in fees required"
+        );
+        assert_eq!(translate_dynamic_error("transaction Tron refusée : CONTRACT_VALIDATE_ERROR x").unwrap(), "Tron transaction refused: CONTRACT_VALIDATE_ERROR x");
     }
 
     /// Messages d'erreur Dogecoin : présents dans le code (fixes), tous traduits

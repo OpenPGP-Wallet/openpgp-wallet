@@ -61,6 +61,8 @@ const BTC_MAX: usize = 1000;
 /// Transactions Dogecoin lues pour la courbe (heure de chaque bloc demandée
 /// une fois au service, puis gardée).
 const DOGE_MAX: usize = 100;
+/// Virements de TRX lus pour la courbe (une page TronGrid).
+const TRON_MAX: usize = 50;
 /// Transactions confirmées par page Esplora.
 const BTC_PAGE: usize = 25;
 /// Chaque transaction Solana demande une requête de détail, que le nœud
@@ -172,6 +174,8 @@ enum Source {
     ZecShielded,
     /// Dogecoin : historique récent, en une page (voir `DOGE_MAX`).
     Doge,
+    /// Tron : virements de TRX récents, en une page (voir `TRON_MAX`).
+    Tron,
 }
 
 impl Spec {
@@ -184,7 +188,7 @@ impl Spec {
     fn has_history(&self) -> bool {
         match self.source {
             Source::Evm(net) | Source::Erc20(net, _) => history::evm_history_available(net),
-            Source::Btc | Source::Sol | Source::Spl(_) | Source::Xmr | Source::ZecShielded | Source::Doge => true,
+            Source::Btc | Source::Sol | Source::Spl(_) | Source::Xmr | Source::ZecShielded | Source::Doge | Source::Tron => true,
             Source::Zec => false,
         }
     }
@@ -213,6 +217,7 @@ fn spec(network: &str, token: Option<&str>) -> Result<Option<Spec>> {
         "zec_shielded" => Spec { asset: Asset::Pair("ZECUSDT"), decimals: 8, max_read: usize::MAX, symbol: "ZEC", source: Source::ZecShielded },
         "xmr_mainnet" => Spec { asset: Asset::Kraken("XMRUSD"), decimals: 12, max_read: usize::MAX, symbol: "XMR", source: Source::Xmr },
         "doge_mainnet" => Spec { asset: Asset::Pair("DOGEUSDT"), decimals: 8, max_read: DOGE_MAX, symbol: "DOGE", source: Source::Doge },
+        "tron_mainnet" => Spec { asset: Asset::Pair("TRXUSDT"), decimals: 6, max_read: TRON_MAX, symbol: "TRX", source: Source::Tron },
         other => match wallet_flow::evm_network(other) {
             Some(net) if net.mainnet => {
                 let Some(asset) = price_history::price_asset(net.native_symbol) else { return Ok(None) };
@@ -237,6 +242,7 @@ fn fetch_balance(spec: &Spec, address: &str) -> Result<i128> {
         Source::Xmr => crate::monero::balance_of_address(address)?.into(),
         Source::ZecShielded => crate::zcash_shielded::balance_of_address(address)?.into(),
         Source::Doge => api::get_doge_balance(address)?.into(),
+        Source::Tron => api::get_trx_balance(address)?.into(),
         Source::Spl(mint) => api::get_spl_balance(address, &mint, solana)?.into(),
     })
 }
@@ -290,6 +296,7 @@ fn fetch_page(spec: &Spec, address: &str, cursor: Option<&Cursor>) -> Result<Pag
         Source::ZecShielded => Ok(Page { entries: crate::zcash_shielded::history_of_address(address)?, next: None }),
         // Une page : les `DOGE_MAX` transactions les plus récentes.
         Source::Doge => Ok(Page { entries: crate::doge::history(address, DOGE_MAX)?, next: None }),
+        Source::Tron => Ok(Page { entries: crate::tron::history(address, TRON_MAX)?, next: None }),
     }
 }
 

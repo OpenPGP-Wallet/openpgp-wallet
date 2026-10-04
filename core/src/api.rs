@@ -14,7 +14,7 @@
 //!   perdu — jamais utilisé pour le déverrouillage quotidien.
 
 use crate::{
-    btc_rpc, cow, dapp_requests, derivation, doge, lifi, monero, native_deposit, wallet_birthday, zcash, zcash_shielded, entropy, eth_rpc, eth_tx, history, jupiter_rpc, memory_guard, pgp_engine, secure_storage, shamir,
+    btc_rpc, cow, dapp_requests, derivation, doge, lifi, tron, monero, native_deposit, wallet_birthday, zcash, zcash_shielded, entropy, eth_rpc, eth_tx, history, jupiter_rpc, memory_guard, pgp_engine, secure_storage, shamir,
     evm_sign, sol_rpc, sol_spl, sol_tx, thorchain_rpc, tokens, wallet_flow,
 };
 use anyhow::{Context, Result};
@@ -184,6 +184,8 @@ pub struct Addresses {
     pub zcash: String,
     /// Adresse Dogecoin (D…), chemin m/44'/3'/0'/0/{index}.
     pub doge: String,
+    /// Adresse Tron (T…), chemin m/44'/195'/0'/0/{index}.
+    pub tron: String,
     /// Adresse THORChain (thor1…), chemin m/44'/931'/0'/0/{index} : celle du
     /// profil principal du développeur est l'adresse d'affiliation de l'app.
     pub thor: String,
@@ -320,6 +322,7 @@ fn derive_addresses(seed: &[u8], index: u32) -> Result<Addresses> {
     let sol_key = derivation::derive_solana_key(seed, index);
     let (_zec_key, zec_hash160) = derivation::derive_zec_key(seed, index)?;
     let (_doge_key, doge_hash160) = derivation::derive_doge_key(seed, index)?;
+    let (_tron_key, tron_address) = derivation::derive_tron_key(seed, index)?;
     let (_thor_key, thor_hash160) = derivation::derive_thor_key(seed, index)?;
     let shielded_keys = zcash_shielded::profile_keys(seed, index)?;
     let monero_keys = monero::view_keys(seed, index)?;
@@ -331,6 +334,7 @@ fn derive_addresses(seed: &[u8], index: u32) -> Result<Addresses> {
         thor: derivation::format_thor_address(&thor_hash160)?,
         zcash: zcash::p2pkh_address(&zec_hash160),
         doge: doge::p2pkh_address(&doge_hash160),
+        tron: tron::encode_address(&tron_address),
         evm: derivation::format_address(&evm_address),
         btc_testnet: derivation::format_btc_testnet_address(&btc_testnet_hash160)?,
         btc_mainnet: derivation::format_btc_mainnet_address(&btc_mainnet_hash160)?,
@@ -2953,6 +2957,60 @@ pub fn send_swap_zec(data_dir: &Path, device_password: &str, quote: &thorchain_r
     let branch = zcash::branch_for(target, chain.branch_id)?;
     let signed = zcash::build_signed(&plan, &key, &hash160, &vault, target, branch)?;
     zcash::broadcast(&signed.raw, &signed.txid)
+}
+
+// --- Tron (TRX) ----------------------------------------------------------------------
+
+pub fn get_trx_balance(address: &str) -> Result<u64> {
+    tron::balance(address)
+}
+
+/// État d'une adresse Tron destinataire, pour les avertissements de la boîte.
+pub fn trx_recipient_activity(to: &str) -> Result<RecipientActivity> {
+    Ok(match tron::address_activity(to)? {
+        (true, _) => RecipientActivity::Funded,
+        (false, true) => RecipientActivity::Empty,
+        (false, false) => RecipientActivity::Unused,
+    })
+}
+
+/// Forme canonique d'un montant en TRX (6 décimales), affichée ET signée.
+pub fn canonical_trx_amount(amount: &str) -> Result<String> {
+    Ok(tokens::format_amount(tokens::parse_amount(amount, tron::DECIMALS)?, tron::DECIMALS))
+}
+
+fn trx_units(amount: &str) -> Result<u64> {
+    u64::try_from(tokens::parse_amount(amount, tron::DECIMALS)?).context("montant hors limites")
+}
+
+/// Envoi préparé pour la boîte de confirmation : destinataire vérifié
+/// (jamais soi-même), frais maximum (bande passante, activation d'un compte
+/// inexistant), solde suffisant.
+pub fn trx_send_plan(from_address: &str, to: &str, amount: &str) -> Result<tron::TrxPlan> {
+    tron::plan_trx(from_address, to, trx_units(amount)?)
+}
+
+/// Envoi de TRX : frais jamais supérieurs à ceux affichés (`shown_fee`),
+/// transaction construite et signée ici, puis diffusée.
+pub fn send_trx(data_dir: &Path, device_password: &str, to: &str, amount: &str, shown_fee: u64, profile_index: u32) -> Result<String> {
+    let recipient = tron::parse_address(to)?;
+    let units = trx_units(amount)?;
+    let seed = unlock_seed(data_dir, device_password)?;
+    let _seed_lock = memory_guard::lock(&seed);
+    let (key, address) = derivation::derive_tron_key(&seed, profile_index)?;
+    let plan = tron::plan_trx(&tron::encode_address(&address), to, units)?;
+    anyhow::ensure!(
+        plan.fee_max <= shown_fee,
+        "les frais Tron ont augmenté depuis la confirmation ({} au lieu de {} TRX) — relancez l'envoi",
+        tron::format_trx(plan.fee_max),
+        tron::format_trx(shown_fee)
+    );
+    tron::send_trx(&key, &recipient, units)
+}
+
+/// Bouton « Max » : solde moins les frais maximum (vers `to` s'il est connu).
+pub fn trx_max(from: &str, to: Option<&str>) -> Result<String> {
+    Ok(tron::format_trx(tron::max_trx(from, to)?))
 }
 
 // --- Dogecoin -----------------------------------------------------------------------
