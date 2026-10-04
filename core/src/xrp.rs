@@ -26,8 +26,14 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256, Sha512};
 use std::sync::OnceLock;
 
-/// Nœuds publics (JSON-RPC), dans l'ordre.
-const NODES: [&str; 3] = ["https://xrplcluster.com", "https://s1.ripple.com:51234", "https://s2.ripple.com:51234"];
+/// Réseau XRP : nœuds publics (JSON-RPC), dans l'ordre.
+pub struct Network {
+    nodes: &'static [&'static str],
+}
+
+pub const MAINNET: Network = Network { nodes: &["https://xrplcluster.com", "https://s1.ripple.com:51234", "https://s2.ripple.com:51234"] };
+#[cfg(test)]
+const TESTNET: Network = Network { nodes: &["https://s.altnet.rippletest.net:51234"] };
 pub const DECIMALS: u8 = 6;
 /// Plafond des frais acceptés (0,001 XRP ; 0,00001 au repos).
 const MAX_FEE_DROPS: u64 = 1_000;
@@ -51,9 +57,9 @@ fn client() -> &'static reqwest::blocking::Client {
     })
 }
 
-fn rpc(method: &str, params: Value) -> Result<Value> {
+fn rpc(net: &Network, method: &str, params: Value) -> Result<Value> {
     let mut last = anyhow!("nœud XRP injoignable");
-    for node in NODES {
+    for &node in net.nodes {
         let attempt = (|| -> Result<Value> {
             let response = client().post(node).json(&json!({ "method": method, "params": [params] })).send().context("nœud XRP injoignable")?;
             let status = response.status();
@@ -213,9 +219,9 @@ struct AccountState {
     flags: u64,
 }
 
-fn account_state(address: &str) -> Result<Option<AccountState>> {
+fn account_state(net: &Network, address: &str) -> Result<Option<AccountState>> {
     parse_address(address)?;
-    let result = rpc("account_info", json!({ "account": address.trim(), "ledger_index": "validated" }))?;
+    let result = rpc(net, "account_info", json!({ "account": address.trim(), "ledger_index": "validated" }))?;
     if result["error"].as_str() == Some("actNotFound") {
         return Ok(None);
     }
@@ -229,16 +235,16 @@ fn account_state(address: &str) -> Result<Option<AccountState>> {
     }))
 }
 
-struct Network {
+struct LedgerState {
     base_reserve: u64,
     owner_reserve: u64,
     validated_ledger: u32,
 }
 
-fn network() -> Result<Network> {
-    let state = rpc("server_state", json!({}))?;
+fn ledger_state(net: &Network) -> Result<LedgerState> {
+    let state = rpc(net, "server_state", json!({}))?;
     let ledger = &state["state"]["validated_ledger"];
-    Ok(Network {
+    Ok(LedgerState {
         base_reserve: ledger["reserve_base"].as_u64().context("réserve XRP illisible")?,
         owner_reserve: ledger["reserve_inc"].as_u64().context("réserve XRP illisible")?,
         validated_ledger: ledger["seq"].as_u64().and_then(|s| u32::try_from(s).ok()).context("registre XRP illisible")?,
@@ -246,21 +252,21 @@ fn network() -> Result<Network> {
 }
 
 /// Frais du moment (drops), plafonnés.
-fn current_fee() -> Result<u64> {
-    let result = rpc("fee", json!({}))?;
+fn current_fee(net: &Network) -> Result<u64> {
+    let result = rpc(net, "fee", json!({}))?;
     let fee = result["drops"]["open_ledger_fee"].as_str().and_then(|f| f.parse::<u64>().ok()).context("frais XRP illisibles")?.max(10);
     ensure!(fee <= MAX_FEE_DROPS, "frais du réseau XRP anormalement élevés ({} XRP) — réessayez plus tard", format_xrp(fee));
     Ok(fee)
 }
 
 /// Solde total (drops), réserve comprise ; 0 pour un compte non activé.
-pub fn balance(address: &str) -> Result<u64> {
-    Ok(account_state(address)?.map_or(0, |a| a.balance))
+pub fn balance(net: &Network, address: &str) -> Result<u64> {
+    Ok(account_state(net, address)?.map_or(0, |a| a.balance))
 }
 
 /// Activité d'une adresse destinataire : (détient des XRP, a déjà servi).
-pub fn address_activity(address: &str) -> Result<(bool, bool)> {
-    Ok(match account_state(address)? {
+pub fn address_activity(net: &Network, address: &str) -> Result<(bool, bool)> {
+    Ok(match account_state(net, address)? {
         Some(a) => (a.balance > 0, true),
         None => (false, false),
     })
@@ -278,13 +284,13 @@ pub struct XrpPlan {
 }
 
 /// Contrôles du réseau (réserve, activation, tag exigé) et frais.
-pub fn plan_xrp(from: &str, to: &str, amount: u64, destination_tag: Option<u32>) -> Result<XrpPlan> {
+pub fn plan_xrp(net: &Network, from: &str, to: &str, amount: u64, destination_tag: Option<u32>) -> Result<XrpPlan> {
     ensure!(amount > 0, "montant nul");
     ensure!(parse_address(from)? != parse_address(to)?, "envoi vers votre propre adresse XRP");
-    let net = network()?;
-    let sender = account_state(from)?.context("compte XRP pas encore activé : il doit d'abord recevoir au moins 1 XRP")?;
-    let reserve = net.base_reserve + net.owner_reserve * sender.owner_count;
-    let fee = current_fee()?;
+    let ledger = ledger_state(net)?;
+    let sender = account_state(net, from)?.context("compte XRP pas encore activé : il doit d'abord recevoir au moins 1 XRP")?;
+    let reserve = ledger.base_reserve + ledger.owner_reserve * sender.owner_count;
+    let fee = current_fee(net)?;
     let spendable = sender.balance.saturating_sub(reserve);
     ensure!(
         amount.checked_add(fee).is_some_and(|need| need <= spendable),
@@ -294,18 +300,18 @@ pub fn plan_xrp(from: &str, to: &str, amount: u64, destination_tag: Option<u32>)
         format_xrp(amount),
         format_xrp(fee)
     );
-    let destination = account_state(to)?;
+    let destination = account_state(net, to)?;
     if destination.is_none() {
         ensure!(
-            amount >= net.base_reserve,
+            amount >= ledger.base_reserve,
             "ce destinataire n'est pas encore activé : envoyez-lui au moins {} XRP (réserve du réseau)",
-            format_xrp(net.base_reserve)
+            format_xrp(ledger.base_reserve)
         );
     }
     if let Some(d) = &destination {
         ensure!(destination_tag.is_some() || d.flags & LSF_REQUIRE_DEST_TAG == 0, "ce destinataire exige un tag de destination (plateforme d'échange) : renseignez-le");
         if d.flags & LSF_DEPOSIT_AUTH != 0 {
-            let result = rpc("deposit_authorized", json!({ "source_account": from.trim(), "destination_account": to.trim(), "ledger_index": "validated" }))?;
+            let result = rpc(net, "deposit_authorized", json!({ "source_account": from.trim(), "destination_account": to.trim(), "ledger_index": "validated" }))?;
             ensure!(result["deposit_authorized"].as_bool() == Some(true), "ce destinataire n'accepte que les paiements qu'il a autorisés, et pas le vôtre");
         }
     }
@@ -313,19 +319,19 @@ pub fn plan_xrp(from: &str, to: &str, amount: u64, destination_tag: Option<u32>)
 }
 
 /// Plus grand montant envoyable : solde moins la réserve et les frais.
-pub fn max_xrp(from: &str) -> Result<u64> {
-    let net = network()?;
-    let sender = account_state(from)?.context("compte XRP pas encore activé : il doit d'abord recevoir au moins 1 XRP")?;
-    let reserve = net.base_reserve + net.owner_reserve * sender.owner_count;
-    sender.balance.saturating_sub(reserve).checked_sub(current_fee()?).filter(|m| *m > 0).context("XRP insuffisants : tout le solde est bloqué par la réserve du réseau")
+pub fn max_xrp(net: &Network, from: &str) -> Result<u64> {
+    let ledger = ledger_state(net)?;
+    let sender = account_state(net, from)?.context("compte XRP pas encore activé : il doit d'abord recevoir au moins 1 XRP")?;
+    let reserve = ledger.base_reserve + ledger.owner_reserve * sender.owner_count;
+    sender.balance.saturating_sub(reserve).checked_sub(current_fee(net)?).filter(|m| *m > 0).context("XRP insuffisants : tout le solde est bloqué par la réserve du réseau")
 }
 
 /// Construit, signe et diffuse un paiement ; renvoie son identifiant.
-pub fn send_xrp(key: &SigningKey, to: &AccountId, amount: u64, fee: u64, destination_tag: Option<u32>) -> Result<String> {
+pub fn send_xrp(net: &Network, key: &SigningKey, to: &AccountId, amount: u64, fee: u64, destination_tag: Option<u32>) -> Result<String> {
     ensure!(fee <= MAX_FEE_DROPS, "frais du réseau XRP anormalement élevés — envoi refusé");
     let account = account_id(key);
-    let state = account_state(&encode_address(&account))?.context("compte XRP pas encore activé")?;
-    let net = network()?;
+    let state = account_state(net, &encode_address(&account))?.context("compte XRP pas encore activé")?;
+    let ledger = ledger_state(net)?;
     let payment = Payment {
         account,
         destination: *to,
@@ -333,15 +339,15 @@ pub fn send_xrp(key: &SigningKey, to: &AccountId, amount: u64, fee: u64, destina
         fee,
         sequence: state.sequence,
         destination_tag,
-        last_ledger_sequence: net.validated_ledger + LEDGER_MARGIN,
+        last_ledger_sequence: ledger.validated_ledger + LEDGER_MARGIN,
         signing_pub_key: key.verifying_key().to_encoded_point(true).as_bytes().try_into().map_err(|_| anyhow!("clé XRP invalide"))?,
     };
     let signed = sign(&payment, key)?;
-    submit(&signed)
+    submit(net, &signed)
 }
 
-pub fn submit(signed: &Signed) -> Result<String> {
-    let result = rpc("submit", json!({ "tx_blob": hex::encode_upper(&signed.blob) }))?;
+pub fn submit(net: &Network, signed: &Signed) -> Result<String> {
+    let result = rpc(net, "submit", json!({ "tx_blob": hex::encode_upper(&signed.blob) }))?;
     let engine = result["engine_result"].as_str().unwrap_or("");
     // Accepté (ou mis en file d'attente) par le réseau.
     if engine == "tesSUCCESS" || engine == "terQUEUED" {
@@ -360,9 +366,9 @@ pub fn submit(signed: &Signed) -> Result<String> {
 // --- Historique ----------------------------------------------------------------------------
 
 /// Paiements en XRP de l'adresse, les plus récents d'abord.
-pub fn history(address: &str, limit: usize) -> Result<Vec<history::TxEntry>> {
+pub fn history(net: &Network, address: &str, limit: usize) -> Result<Vec<history::TxEntry>> {
     parse_address(address)?;
-    let result = rpc("account_tx", json!({ "account": address.trim(), "limit": limit.clamp(1, 50), "ledger_index_min": -1, "ledger_index_max": -1 }))?;
+    let result = rpc(net, "account_tx", json!({ "account": address.trim(), "limit": limit.clamp(1, 50), "ledger_index_min": -1, "ledger_index_max": -1 }))?;
     if result["error"].as_str() == Some("actNotFound") {
         return Ok(Vec::new());
     }
@@ -466,10 +472,10 @@ mod tests {
     #[ignore]
     fn real_xrp_reads_and_signature() {
         let rich = "rEb8TK3gBgk5auZkwc6sHnwrGVJH8DuaLh";
-        println!("solde {} XRP", format_xrp(balance(rich).unwrap()));
-        let net = network().unwrap();
-        println!("réserve {} + {} XRP, registre {}, frais {} drops", format_xrp(net.base_reserve), format_xrp(net.owner_reserve), net.validated_ledger, current_fee().unwrap());
-        println!("{} paiements récents", history(rich, 10).unwrap().len());
+        println!("solde {} XRP", format_xrp(balance(&MAINNET, rich).unwrap()));
+        let net = ledger_state(&MAINNET).unwrap();
+        println!("réserve {} + {} XRP, registre {}, frais {} drops", format_xrp(net.base_reserve), format_xrp(net.owner_reserve), net.validated_ledger, current_fee(&MAINNET).unwrap());
+        println!("{} paiements récents", history(&MAINNET, rich, 10).unwrap().len());
         let key = SigningKey::from_slice(&[0x5a; 32]).unwrap();
         let account = account_id(&key);
         let payment = Payment {
@@ -483,27 +489,73 @@ mod tests {
             signing_pub_key: key.verifying_key().to_encoded_point(true).as_bytes().try_into().unwrap(),
         };
         let signed = sign(&payment, &key).unwrap();
-        let error = submit(&signed).unwrap_err().to_string();
+        let error = submit(&MAINNET, &signed).unwrap_err().to_string();
         println!("{error}");
         assert!(error.contains("terNO_ACCOUNT"), "{error}");
         // Contre-épreuve : même transaction, signature altérée → refusée AVANT.
         let mut blob = signed.blob.clone();
         let at = blob.windows(2).position(|w| w[0] == 0x74 && (70..=72).contains(&w[1])).unwrap();
         blob[at + 10] ^= 1;
-        let error = submit(&Signed { blob, hash: signed.hash.clone() }).unwrap_err().to_string();
+        let error = submit(&MAINNET, &Signed { blob, hash: signed.hash.clone() }).unwrap_err().to_string();
         println!("{error}");
         assert!(!error.contains("terNO_ACCOUNT") && error.to_lowercase().contains("signature"), "{error}");
-        assert!(plan_xrp(&encode_address(&account), rich, 1_000_000, None).unwrap_err().to_string().contains("pas encore activé"));
+        assert!(plan_xrp(&MAINNET, &encode_address(&account), rich, 1_000_000, None).unwrap_err().to_string().contains("pas encore activé"));
         // Règles du réseau, depuis un compte pourvu (lecture seule).
         let funded = "rMQ98K56yXJbDGv49ZSmW51sLn94Xe1mu1";
-        let error = plan_xrp(funded, rich, 1_000_000, None).unwrap_err().to_string();
+        let error = plan_xrp(&MAINNET, funded, rich, 1_000_000, None).unwrap_err().to_string();
         assert!(error.contains("exige un tag"), "{error}");
-        let plan = plan_xrp(funded, rich, 1_000_000, Some(7)).unwrap();
+        let plan = plan_xrp(&MAINNET, funded, rich, 1_000_000, Some(7)).unwrap();
         assert!(!plan.activates && plan.fee >= 10 && plan.reserve >= 1_000_000, "{plan:?}");
         let fresh = encode_address(&account);
-        let error = plan_xrp(funded, &fresh, 999_999, None).unwrap_err().to_string();
+        let error = plan_xrp(&MAINNET, funded, &fresh, 999_999, None).unwrap_err().to_string();
         assert!(error.contains("au moins 1.000000 XRP"), "{error}");
-        assert!(plan_xrp(funded, &fresh, 1_000_000, None).unwrap().activates);
-        assert!(max_xrp(funded).unwrap() > 0);
+        assert!(plan_xrp(&MAINNET, funded, &fresh, 1_000_000, None).unwrap().activates);
+        assert!(max_xrp(&MAINNET, funded).unwrap() > 0);
+    }
+
+    /// Réel, réseau de test (robinet gratuit de Ripple) : paiement qui ACTIVE
+    /// un compte neuf, puis paiement avec tag de destination, signés ici et
+    /// validés par le réseau. `cargo test -- --ignored real_xrp_testnet --nocapture`
+    #[test]
+    #[ignore]
+    fn real_xrp_testnet_end_to_end() {
+        let random_key = || {
+            let mut seed = [0u8; 32];
+            getrandom::getrandom(&mut seed).unwrap();
+            SigningKey::from_slice(&seed).unwrap()
+        };
+        let alice = random_key();
+        let alice_address = encode_address(&account_id(&alice));
+        let funded = client().post("https://faucet.altnet.rippletest.net/accounts").json(&json!({ "destination": alice_address })).send().unwrap();
+        println!("robinet : {}", funded.status());
+        let wait_balance = |address: &str, expected: Option<u64>| -> u64 {
+            for _ in 0..30 {
+                let value = balance(&TESTNET, address).unwrap();
+                if expected.map_or(value > 0, |e| value == e) {
+                    return value;
+                }
+                std::thread::sleep(std::time::Duration::from_secs(2));
+            }
+            panic!("solde de {address} jamais arrivé");
+        };
+        wait_balance(&alice_address, None);
+        let bob = random_key();
+        let bob_account = account_id(&bob);
+        let bob_address = encode_address(&bob_account);
+        assert!(plan_xrp(&TESTNET, &alice_address, &bob_address, 500_000, None).unwrap_err().to_string().contains("au moins"));
+        let first = plan_xrp(&TESTNET, &alice_address, &bob_address, 2_000_000, None).unwrap();
+        assert!(first.activates, "{first:?}");
+        let activated = send_xrp(&TESTNET, &alice, &bob_account, first.amount, first.fee, None).unwrap();
+        println!("activation : {activated}");
+        assert_eq!(wait_balance(&bob_address, Some(2_000_000)), 2_000_000);
+        let second = plan_xrp(&TESTNET, &alice_address, &bob_address, 250_000, Some(12345)).unwrap();
+        assert!(!second.activates);
+        let paid = send_xrp(&TESTNET, &alice, &bob_account, second.amount, second.fee, Some(12345)).unwrap();
+        println!("paiement : {paid}");
+        assert_eq!(wait_balance(&bob_address, Some(2_250_000)), 2_250_000);
+        let tx = rpc(&TESTNET, "tx", json!({ "transaction": paid })).unwrap();
+        assert_eq!((tx["DestinationTag"].as_u64(), tx["meta"]["TransactionResult"].as_str()), (Some(12345), Some("tesSUCCESS")), "{tx}");
+        let received = history(&TESTNET, &bob_address, 10).unwrap();
+        assert!(received.iter().filter(|e| e.kind == history::TxKind::Received).count() >= 2);
     }
 }

@@ -320,7 +320,7 @@ fn read(polled: &Polled) -> Result<String> {
         Polled::Zec(address) => crate::zcash::balance(address)?.to_string(),
         Polled::Tron(address) => crate::tron::balance(address)?.to_string(),
         Polled::Trc20(contract, address) => crate::tron::trc20_balance(address, contract)?.to_string(),
-        Polled::Xrp(address) => crate::xrp::balance(address)?.to_string(),
+        Polled::Xrp(address) => crate::xrp::balance(&crate::xrp::MAINNET, address)?.to_string(),
         Polled::Xlm(address) => crate::stellar::balance(&crate::stellar::MAINNET, address)?.to_string(),
         Polled::Near(address) => crate::near::balance(&crate::near::MAINNET, address)?.to_string(),
         Polled::Ada(address) => crate::cardano::balance(address)?.to_string(),

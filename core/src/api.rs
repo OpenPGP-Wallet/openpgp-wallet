@@ -3064,12 +3064,12 @@ pub fn trx_max(from: &str, to: Option<&str>) -> Result<String> {
 // --- XRP Ledger ------------------------------------------------------------------------
 
 pub fn get_xrp_balance(address: &str) -> Result<u64> {
-    xrp::balance(address)
+    xrp::balance(&xrp::MAINNET, address)
 }
 
 /// État d'une adresse XRP destinataire, pour les avertissements de la boîte.
 pub fn xrp_recipient_activity(to: &str) -> Result<RecipientActivity> {
-    Ok(match xrp::address_activity(to)? {
+    Ok(match xrp::address_activity(&xrp::MAINNET, to)? {
         (true, _) => RecipientActivity::Funded,
         (false, true) => RecipientActivity::Empty,
         (false, false) => RecipientActivity::Unused,
@@ -3096,7 +3096,7 @@ pub fn parse_destination_tag(tag: Option<&str>) -> Result<Option<u32>> {
 /// Envoi préparé pour la boîte de confirmation : réserve du réseau,
 /// activation d'un destinataire neuf, tag exigé, frais.
 pub fn xrp_send_plan(from_address: &str, to: &str, amount: &str, destination_tag: Option<u32>) -> Result<xrp::XrpPlan> {
-    xrp::plan_xrp(from_address, to, xrp_units(amount)?, destination_tag)
+    xrp::plan_xrp(&xrp::MAINNET, from_address, to, xrp_units(amount)?, destination_tag)
 }
 
 /// Envoi de XRP : contrôles refaits, signé avec les frais revérifiés à
@@ -3107,19 +3107,19 @@ pub fn send_xrp(data_dir: &Path, device_password: &str, to: &str, amount: &str, 
     let seed = unlock_seed(data_dir, device_password)?;
     let _seed_lock = memory_guard::lock(&seed);
     let (key, account) = derivation::derive_xrp_key(&seed, profile_index)?;
-    let plan = xrp::plan_xrp(&xrp::encode_address(&account), to, units, destination_tag)?;
+    let plan = xrp::plan_xrp(&xrp::MAINNET, &xrp::encode_address(&account), to, units, destination_tag)?;
     anyhow::ensure!(
         plan.fee <= shown_fee,
         "les frais XRP ont augmenté depuis la confirmation ({} au lieu de {} XRP) — relancez l'envoi",
         xrp::format_xrp(plan.fee),
         xrp::format_xrp(shown_fee)
     );
-    xrp::send_xrp(&key, &recipient, units, plan.fee, destination_tag)
+    xrp::send_xrp(&xrp::MAINNET, &key, &recipient, units, plan.fee, destination_tag)
 }
 
 /// Bouton « Max » : solde moins la réserve et les frais.
 pub fn xrp_max(from: &str) -> Result<String> {
-    Ok(xrp::format_xrp(xrp::max_xrp(from)?))
+    Ok(xrp::format_xrp(xrp::max_xrp(&xrp::MAINNET, from)?))
 }
 
 // --- Stellar (XLM) -------------------------------------------------------------------

@@ -2588,7 +2588,7 @@ async fn get_tx_history(network: String, address: String, app: tauri::AppHandle)
             |id| format!("https://tronscan.org/#/transaction/{id}"),
         )),
         "xrp_mainnet" => HistoryDto::read(history_dtos(
-            || pgp_wallet_poc::xrp::history(&address, HISTORY_LIMIT as usize),
+            || pgp_wallet_poc::xrp::history(&pgp_wallet_poc::xrp::MAINNET, &address, HISTORY_LIMIT as usize),
             Some(price_history::Asset::Pair("XRPUSDT")),
             6,
             |id| format!("https://livenet.xrpl.org/transactions/{id}"),

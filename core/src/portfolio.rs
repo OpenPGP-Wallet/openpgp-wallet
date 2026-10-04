@@ -327,7 +327,7 @@ fn fetch_page(spec: &Spec, address: &str, cursor: Option<&Cursor>) -> Result<Pag
         Source::Doge => Ok(Page { entries: crate::doge::history(address, DOGE_MAX)?, next: None }),
         Source::Tron => Ok(Page { entries: crate::tron::history(address, TRON_MAX)?, next: None }),
         Source::Trc20(contract) => Ok(Page { entries: crate::tron::trc20_history(address, contract, TRON_MAX)?, next: None }),
-        Source::Xrp => Ok(Page { entries: crate::xrp::history(address, XRP_MAX)?, next: None }),
+        Source::Xrp => Ok(Page { entries: crate::xrp::history(&crate::xrp::MAINNET, address, XRP_MAX)?, next: None }),
         Source::Xlm => Ok(Page { entries: crate::stellar::history(&crate::stellar::MAINNET, address, XLM_MAX)?, next: None }),
         Source::Near => Ok(Page { entries: crate::near::history(&crate::near::MAINNET, address, NEAR_MAX)?, next: None }),
         Source::Ada => Ok(Page { entries: crate::cardano::history(address, ADA_MAX)?, next: None }),
