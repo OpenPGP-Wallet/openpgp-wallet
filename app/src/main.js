@@ -3753,7 +3753,7 @@ async function refreshBalance(card) {
     const balanceEl = card.querySelector('[data-field="balance"]');
     // Solde déjà affiché pour ce réseau et cette adresse : il reste pendant la
     // lecture, et après un échec passager. Le remplacer par « … » à chaque
-    // actualisation (toutes les 15 s) faisait clignoter tous les soldes et, en
+    // actualisation périodique faisait clignoter tous les soldes et, en
     // vue liste, bouger toutes les lignes (colonne ajustée à « … »). Autre
     // réseau ou autre profil : l'ancien solde ne vaut plus rien.
     const shown = card.dataset.balanceKey === key;
@@ -3960,7 +3960,7 @@ function announceReceived(card, network, amount) {
 // ("balance-changed") et la carte est relue aussitôt — Solana/USDC poussés par
 // le nœud (~1 s), Ethereum relu toutes les 6 s, Bitcoin toutes les 10 s (mempool
 // compris), jetons du registre (ERC-20 toutes les 12 s, Solana poussés). Le
-// rafraîchissement toutes les 15 s reste en filet de sécurité.
+// rafraîchissement toutes les 60 s reste en filet de sécurité.
 function updateBalanceWatch() {
   const targets = [...document.querySelectorAll(".wallet-card:not(.asset-hidden)")]
     .map((card) => {
@@ -3969,7 +3969,7 @@ function updateBalanceWatch() {
       // Jetons du registre : contrat ou mint lus côté Rust (seul l'identifiant
       // part d'ici).
       if (usesTokenRegistry(coin, network)) return { id: coin, network, address: addressForCoin(coin, network), token: coin };
-      // Zcash : pas de surveillance en direct (solde relu toutes les 15 s).
+      // Zcash : pas de surveillance en direct (solde relu toutes les 60 s).
       // Monero, Zcash protégé : solde tenu par la synchronisation de fond.
       if (coin === "zec" || coin === "xmr" || coin === "zecs") return { address: "" };
       return { id: coin, network: coin === "usdc" ? "usdc_solana" : network, address: addressForCoin(coin, network) };
