@@ -3008,6 +3008,36 @@ pub fn send_trx(data_dir: &Path, device_password: &str, to: &str, amount: &str, 
     tron::send_trx(&key, &recipient, units)
 }
 
+/// Transfert d'un jeton TRC-20 du registre, préparé pour la boîte : énergie
+/// simulée, frais maximum, solde de jeton et TRX vérifiés.
+pub fn trc20_send_plan(token_id: &str, from_address: &str, to: &str, amount: &str) -> Result<(tron::Trc20Plan, &'static str)> {
+    let (_, deployment) = registered_token(token_id, "tron_mainnet")?;
+    let tokens::TokenKind::Trc20 { contract } = deployment.kind else { anyhow::bail!("jeton TRC-20 attendu") };
+    let units = tokens::parse_amount(amount, deployment.decimals)?;
+    ensure_token_funds(token_id, "tron_mainnet", from_address, amount)?;
+    Ok((tron::plan_trc20(from_address, contract, to, units)?, contract))
+}
+
+/// Envoi d'un jeton TRC-20 : frais jamais supérieurs à ceux affichés
+/// (`shown_fee`), transaction signée ici avec le `fee_limit` recalculé.
+pub fn send_trc20(data_dir: &Path, device_password: &str, token_id: &str, to: &str, amount: &str, shown_fee: u64, profile_index: u32) -> Result<String> {
+    let (_, deployment) = registered_token(token_id, "tron_mainnet")?;
+    let tokens::TokenKind::Trc20 { contract } = deployment.kind else { anyhow::bail!("jeton TRC-20 attendu") };
+    let recipient = tron::parse_address(to)?;
+    let units = tokens::parse_amount(amount, deployment.decimals)?;
+    let seed = unlock_seed(data_dir, device_password)?;
+    let _seed_lock = memory_guard::lock(&seed);
+    let (key, address) = derivation::derive_tron_key(&seed, profile_index)?;
+    let plan = tron::plan_trc20(&tron::encode_address(&address), contract, to, units)?;
+    anyhow::ensure!(
+        plan.fee_max <= shown_fee,
+        "les frais Tron ont augmenté depuis la confirmation ({} au lieu de {} TRX) — relancez l'envoi",
+        tron::format_trx(plan.fee_max),
+        tron::format_trx(shown_fee)
+    );
+    tron::send_trc20(&key, &tron::parse_address(contract)?, &recipient, units, plan.fee_limit)
+}
+
 /// Bouton « Max » : solde moins les frais maximum (vers `to` s'il est connu).
 pub fn trx_max(from: &str, to: Option<&str>) -> Result<String> {
     Ok(tron::format_trx(tron::max_trx(from, to)?))
@@ -4489,6 +4519,7 @@ pub fn get_token_balance(token_id: &str, network: &str, owner: &str) -> Result<(
             let mint = sol_spl_mint(mint)?;
             u128::from(get_spl_balance(owner, &mint, &wallet_flow::SOLANA_MAINNET)?)
         }
+        tokens::TokenKind::Trc20 { contract } => tron::trc20_balance(owner, contract)?,
     };
     Ok((units, deployment.decimals))
 }
@@ -5645,6 +5676,11 @@ mod tests {
                         assert_eq!(decimals[31], d.decimals, "{} sur {}", token.id, d.network);
                     }
                     tokens::TokenKind::Spl { mint } => mints.push((token, d, mint.to_string())),
+                    tokens::TokenKind::Trc20 { contract } => {
+                        let decimals = tron::trc20_decimals(contract).unwrap();
+                        println!("{:>7} {:>17} TRC-20 {} décimales", token.symbol, d.network, decimals);
+                        assert_eq!(decimals, d.decimals, "{} sur {}", token.id, d.network);
+                    }
                 }
             }
         }

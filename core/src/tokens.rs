@@ -1,5 +1,5 @@
 //! Jetons que l'app sait afficher et envoyer : ERC-20 sur les réseaux EVM, SPL
-//! (programme SPL Token classique) sur Solana.
+//! (programme SPL Token classique) sur Solana, TRC-20 sur Tron.
 //!
 //! Registre FIXÉ ICI, côté Rust : l'interface ne désigne un jeton que par son
 //! identifiant et un réseau, jamais par une adresse de contrat — un frontend
@@ -20,6 +20,8 @@ pub enum TokenKind {
     Erc20 { contract: &'static str },
     /// Mint SPL Token (base58).
     Spl { mint: &'static str },
+    /// Contrat TRC-20 sur Tron (adresse T…).
+    Trc20 { contract: &'static str },
 }
 
 #[derive(Debug)]
@@ -47,12 +49,21 @@ const fn spl(mint: &'static str, decimals: u8) -> Deployment {
     Deployment { network: "sol_mainnet", kind: TokenKind::Spl { mint }, decimals }
 }
 
+const fn trc20(contract: &'static str, decimals: u8) -> Deployment {
+    Deployment { network: "tron_mainnet", kind: TokenKind::Trc20 { contract }, decimals }
+}
+
 pub const TOKENS: &[Token] = &[
     Token {
         id: "usdt",
         symbol: "USDT",
         name: "Tether",
-        deployments: &[erc20("evm_mainnet", "0xdac17f958d2ee523a2206206994597c13d831ec7", 6), spl("Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", 6)],
+        // USDT sur Tron : contrat officiel de Tether (CoinGecko, Tronscan).
+        deployments: &[
+            erc20("evm_mainnet", "0xdac17f958d2ee523a2206206994597c13d831ec7", 6),
+            spl("Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", 6),
+            trc20("TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t", 6),
+        ],
     },
     Token {
         id: "usdc",
@@ -209,6 +220,10 @@ mod tests {
                     TokenKind::Spl { mint } => {
                         assert_eq!(d.network, "sol_mainnet", "{}", token.id);
                         assert_eq!(bs58::decode(mint).into_vec().map(|b| b.len()).ok(), Some(32), "{} : {mint}", token.id);
+                    }
+                    TokenKind::Trc20 { contract } => {
+                        assert_eq!(d.network, "tron_mainnet", "{}", token.id);
+                        assert!(crate::tron::parse_address(contract).is_ok(), "{} : {contract}", token.id);
                     }
                 }
                 assert!(d.decimals <= 18, "{}", token.id);

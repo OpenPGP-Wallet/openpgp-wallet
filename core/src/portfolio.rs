@@ -176,6 +176,8 @@ enum Source {
     Doge,
     /// Tron : virements de TRX récents, en une page (voir `TRON_MAX`).
     Tron,
+    /// Jeton TRC-20 (contrat) : transferts récents, en une page.
+    Trc20(&'static str),
 }
 
 impl Spec {
@@ -188,7 +190,7 @@ impl Spec {
     fn has_history(&self) -> bool {
         match self.source {
             Source::Evm(net) | Source::Erc20(net, _) => history::evm_history_available(net),
-            Source::Btc | Source::Sol | Source::Spl(_) | Source::Xmr | Source::ZecShielded | Source::Doge | Source::Tron => true,
+            Source::Btc | Source::Sol | Source::Spl(_) | Source::Xmr | Source::ZecShielded | Source::Doge | Source::Tron | Source::Trc20(_) => true,
             Source::Zec => false,
         }
     }
@@ -207,6 +209,7 @@ fn spec(network: &str, token: Option<&str>) -> Result<Option<Spec>> {
                 let net = wallet_flow::evm_network(network).ok_or_else(|| anyhow!("réseau inconnu : {network}"))?;
                 (Source::Erc20(net, contract), EVM_MAX)
             }
+            TokenKind::Trc20 { contract } => (Source::Trc20(contract), TRON_MAX),
         };
         return Ok(Some(Spec { asset, decimals: i32::from(deployment.decimals), max_read, symbol: token.symbol, source }));
     }
@@ -243,6 +246,7 @@ fn fetch_balance(spec: &Spec, address: &str) -> Result<i128> {
         Source::ZecShielded => crate::zcash_shielded::balance_of_address(address)?.into(),
         Source::Doge => api::get_doge_balance(address)?.into(),
         Source::Tron => api::get_trx_balance(address)?.into(),
+        Source::Trc20(contract) => i128::try_from(crate::tron::trc20_balance(address, contract)?).map_err(|_| anyhow!("solde hors limites"))?,
         Source::Spl(mint) => api::get_spl_balance(address, &mint, solana)?.into(),
     })
 }
@@ -297,6 +301,7 @@ fn fetch_page(spec: &Spec, address: &str, cursor: Option<&Cursor>) -> Result<Pag
         // Une page : les `DOGE_MAX` transactions les plus récentes.
         Source::Doge => Ok(Page { entries: crate::doge::history(address, DOGE_MAX)?, next: None }),
         Source::Tron => Ok(Page { entries: crate::tron::history(address, TRON_MAX)?, next: None }),
+        Source::Trc20(contract) => Ok(Page { entries: crate::tron::trc20_history(address, contract, TRON_MAX)?, next: None }),
     }
 }
 

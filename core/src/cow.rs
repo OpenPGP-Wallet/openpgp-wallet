@@ -119,7 +119,7 @@ pub fn token(coin: &str, network: &str) -> Option<CowToken> {
     if let Some((info, deployment)) = tokens::find(coin, network) {
         return match deployment.kind {
             tokens::TokenKind::Erc20 { contract } => Some(CowToken { address: contract.to_string(), decimals: deployment.decimals, symbol: info.symbol, native: false }),
-            tokens::TokenKind::Spl { .. } => None,
+            tokens::TokenKind::Spl { .. } | tokens::TokenKind::Trc20 { .. } => None,
         };
     }
     let net = wallet_flow::evm_network(network)?;

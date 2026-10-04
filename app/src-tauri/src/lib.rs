@@ -180,6 +180,12 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("envoi vers votre propre adresse Tron", "sending to your own Tron address"),
     ("bloc Tron illisible", "unreadable Tron block"),
     ("TRX insuffisants pour couvrir les frais du réseau", "not enough TRX to cover the network fee"),
+    ("transfert de jeton Tron refusé en simulation (solde de jeton insuffisant ?)", "Tron token transfer refused in simulation (not enough tokens?)"),
+    ("appel du contrat Tron refusé par le nœud", "Tron contract call refused by the node"),
+    ("réponse du contrat Tron illisible", "unreadable Tron contract response"),
+    ("énergie du transfert Tron inconnue", "Tron transfer energy unknown"),
+    ("frais du transfert Tron anormalement élevés — envoi refusé", "abnormally high Tron transfer fee — transfer refused"),
+    ("jeton TRC-20 attendu", "TRC-20 token expected"),
     // SwapKit (core/src/swapkit.rs)
     ("SwapKit non configuré", "SwapKit is not configured"),
     ("SwapKit injoignable", "SwapKit unreachable"),
@@ -688,6 +694,15 @@ fn translate_dynamic_error(msg: &str) -> Option<String> {
     }
     if let Some(rest) = msg.strip_prefix("SwapKit a changé de fournisseur (") {
         return Some(format!("SwapKit changed provider ({}", rest.replace("— échange refusé", "— swap refused")));
+    }
+    if let Some(rest) = msg.strip_prefix("TRX insuffisants pour les frais du transfert : ") {
+        return Some(format!(
+            "not enough TRX for the transfer fee: {}",
+            rest.replace(" disponibles, jusqu'à ", " available, up to ").replace(" nécessaires", " needed")
+        ));
+    }
+    if let Some(rest) = msg.strip_prefix("frais du transfert Tron anormalement élevés (").and_then(|r| r.strip_suffix(") — envoi refusé")) {
+        return Some(format!("abnormally high Tron transfer fee ({rest}) — transfer refused"));
     }
     if let Some(rest) = msg.strip_prefix("TRX insuffisants : ") {
         return Some(format!(
@@ -2365,6 +2380,12 @@ async fn get_token_tx_history(token: String, network: String, address: String) -
                     )
                 })
             }
+            pgp_wallet_poc::tokens::TokenKind::Trc20 { contract } => HistoryDto::read(history_dtos(
+                || pgp_wallet_poc::tron::trc20_history(&address, contract, HISTORY_LIMIT as usize),
+                asset,
+                decimals,
+                |id| format!("https://tronscan.org/#/transaction/{id}"),
+            )),
             pgp_wallet_poc::tokens::TokenKind::Spl { .. } => {
                 let net = sol_network(&network)?;
                 let mint = api::registered_spl_mint(&token).t_err()?;
@@ -2989,7 +3010,11 @@ async fn max_send_amount(network: String, token: Option<String>, profile_index: 
         let cached = |cache: &std::sync::Mutex<std::collections::HashMap<u32, String>>| cache.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).cloned().ok_or_else(unknown);
         let (evm, sol) = app.state::<ProfileAddressCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).cloned().ok_or_else(unknown)?;
         if let Some(token) = token {
-            let owner = if is_evm(&network) { evm } else { sol };
+            let owner = match network.as_str() {
+                n if is_evm(n) => evm,
+                "tron_mainnet" => cached(&app.state::<ProfileTronCache>().0)?,
+                _ => sol,
+            };
             return api::token_max(&token, &network, &owner).t_err();
         }
         match network.as_str() {
@@ -4789,14 +4814,12 @@ async fn send_token_transaction(
         // « Max » : tout le solde du jeton (les frais sont payés dans la
         // monnaie du réseau).
         let amount = if max.unwrap_or(false) {
-            let owner = app
-                .state::<ProfileAddressCache>()
-                .0
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .get(&profile_index)
-                .map(|(evm, sol)| if is_evm(&network) { evm.clone() } else { sol.clone() })
-                .ok_or_else(|| translate_error("adresse du profil inconnue — déverrouillez le portefeuille"))?;
+            let owner = if network == "tron_mainnet" {
+                app.state::<ProfileTronCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).cloned()
+            } else {
+                app.state::<ProfileAddressCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).map(|(evm, sol)| if is_evm(&network) { evm.clone() } else { sol.clone() })
+            }
+            .ok_or_else(|| translate_error("adresse du profil inconnue — déverrouillez le portefeuille"))?;
             api::token_max(&token, &network, &owner).t_err()?
         } else {
             amount
@@ -4836,6 +4859,36 @@ async fn send_token_transaction(
                 }
                 send_grace_period(&app)?;
                 api::send_erc20(&dir, &password, &token, &network, &to, &amount, fee, profile_index).t_err()
+            }
+            pgp_wallet_poc::tokens::TokenKind::Trc20 { contract } => {
+                let from_tron = app
+                    .state::<ProfileTronCache>()
+                    .0
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .get(&profile_index)
+                    .cloned()
+                    .ok_or_else(|| translate_error("adresse du profil inconnue — déverrouillez le portefeuille"))?;
+                // Jeton ET TRX des frais vérifiés, transfert simulé (il doit
+                // émettre exactement ce transfert) AVANT la boîte.
+                let (plan, _) = api::trc20_send_plan(&token, &from_tron, &to, &amount).t_err()?;
+                let token_line = lang(
+                    &format!("Jeton : {} ({}) — contrat {contract}", info.name, info.symbol),
+                    &format!("Token: {} ({}) — contract {contract}", info.name, info.symbol),
+                )
+                .to_string();
+                let warning = send_warnings(&app, &dir, &network, "trx", &to, api::trx_recipient_activity(&to).ok());
+                let (fee, limit) = (pgp_wallet_poc::tron::format_trx(plan.fee_max), pgp_wallet_poc::tron::format_trx(plan.fee_limit));
+                let fee_line = lang(
+                    &format!("Frais : jusqu'à {fee} TRX (énergie et bande passante ; le réseau ne peut pas brûler plus de {limit} TRX)"),
+                    &format!("Fee: up to {fee} TRX (energy and bandwidth; the network cannot burn more than {limit} TRX)"),
+                )
+                .to_string();
+                if !confirm_transaction_native(&app, &network, &to, &amount_line, &from_label, Some(&fee_line), warning.as_deref(), Some(&token_line)) {
+                    return Err(translate_error("Virement annulé (confirmation refusée)."));
+                }
+                send_grace_period(&app)?;
+                api::send_trc20(&dir, &password, &token, &to, &amount, plan.fee_max, profile_index).t_err()
             }
             pgp_wallet_poc::tokens::TokenKind::Spl { mint } => {
                 let net = sol_network(&network)?;
@@ -6439,6 +6492,7 @@ mod tests {
         let address_of = |kind: TokenKind| match kind {
             TokenKind::Erc20 { contract } => contract,
             TokenKind::Spl { mint } => mint,
+            TokenKind::Trc20 { contract } => contract,
         };
         for token in TOKENS {
             let marker = format!("coin: \"{}\"", token.id);

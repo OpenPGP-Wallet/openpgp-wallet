@@ -80,6 +80,8 @@ enum Polled {
     Doge(String),
     Zec(String),
     Tron(String),
+    /// Jeton TRC-20 : contrat, détenteur.
+    Trc20(&'static str, String),
 }
 
 impl Polled {
@@ -90,7 +92,7 @@ impl Polled {
             Polled::Erc20(..) => TOKEN_INTERVAL,
             Polled::Doge(..) => DOGE_INTERVAL,
             Polled::Zec(..) => ZEC_INTERVAL,
-            Polled::Tron(..) => TRON_INTERVAL,
+            Polled::Tron(..) | Polled::Trc20(..) => TRON_INTERVAL,
         }
     }
 }
@@ -112,6 +114,7 @@ pub fn start(targets: Vec<Target>, notify: Notify) -> Result<BalanceWatch> {
                     let net = wallet_flow::evm_network(&target.network).ok_or_else(|| anyhow!("réseau inconnu : {}", target.network))?;
                     polled.push((target.id, Polled::Erc20(net, contract, address)));
                 }
+                TokenKind::Trc20 { contract } => polled.push((target.id, Polled::Trc20(contract, address))),
                 TokenKind::Spl { .. } => {
                     ensure!(target.network == "sol_mainnet", "jeton Solana hors du réseau principal : {token}");
                     let account = api::spl_token_account(&address, &api::registered_spl_mint(token)?)?;
@@ -296,6 +299,7 @@ fn read(polled: &Polled) -> Result<String> {
         Polled::Doge(address) => crate::doge::watch_reading(address)?,
         Polled::Zec(address) => crate::zcash::balance(address)?.to_string(),
         Polled::Tron(address) => crate::tron::balance(address)?.to_string(),
+        Polled::Trc20(contract, address) => crate::tron::trc20_balance(address, contract)?.to_string(),
     })
 }
 

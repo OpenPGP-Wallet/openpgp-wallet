@@ -12,6 +12,13 @@
 //! quota quotidien, sinon brûlée à `getTransactionFee` sun par octet) ;
 //! vers un compte encore inexistant, s'ajoutent l'activation (1 TRX) et sa
 //! bande passante (0,1 TRX). Le maximum est affiché, puis jamais dépassé.
+//!
+//! Jetons TRC-20 (USDT) : solde lu par appel en lecture seule du contrat ;
+//! transfert = appel `transfer(address,uint256)` encodé ici, dont l'énergie
+//! est estimée en simulant l'appel depuis le compte de l'utilisateur. Frais
+//! en TRX : l'énergie non couverte par celle mise en jeu (`getEnergyFee` sun
+//! par unité, avec marge), plus la bande passante ; `fee_limit` borne ce que
+//! le réseau peut brûler.
 
 use crate::{btc_tx, evm_sign, history};
 use anyhow::{anyhow, bail, ensure, Context, Result};
@@ -35,6 +42,10 @@ const NEW_ACCOUNT_FEE: u64 = 1_100_000;
 const RESULT_BYTES: u64 = 64;
 /// Validité d'une transaction construite (le nœud refuse au-delà de 24 h).
 const EXPIRATION_MS: i64 = 10 * 60 * 1000;
+/// Plafond de `fee_limit` d'un transfert de jeton : au-delà, refus (un
+/// transfert d'USDT coûte ~65 000 à ~130 000 unités d'énergie, soit 6,5 à 13
+/// TRX au prix relevé le 04/10/2026).
+const MAX_TOKEN_FEE_LIMIT: u64 = 100_000_000;
 
 fn client() -> &'static reqwest::blocking::Client {
     static CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
@@ -155,6 +166,38 @@ pub fn transfer_raw(owner: &Address, to: &Address, amount: u64, block: &BlockRef
     raw
 }
 
+/// Données d'appel de `transfer(address,uint256)` (ABI Solidity).
+fn transfer_call_data(to: &Address, amount: u128) -> Vec<u8> {
+    let mut data = vec![0xa9, 0x05, 0x9c, 0xbb];
+    data.extend_from_slice(&[0u8; 12]);
+    data.extend_from_slice(&to[1..]);
+    data.extend_from_slice(&[0u8; 16]);
+    data.extend_from_slice(&amount.to_be_bytes());
+    data
+}
+
+/// `raw_data` d'un appel de contrat (TriggerSmartContract) sans TRX joint.
+pub fn trigger_raw(owner: &Address, contract: &Address, data: &[u8], fee_limit: u64, block: &BlockRef, expiration: i64, timestamp: i64) -> Vec<u8> {
+    let mut trigger = Vec::new();
+    field_bytes(&mut trigger, 1, owner);
+    field_bytes(&mut trigger, 2, contract);
+    field_bytes(&mut trigger, 4, data);
+    let mut any = Vec::new();
+    field_bytes(&mut any, 1, b"type.googleapis.com/protocol.TriggerSmartContract");
+    field_bytes(&mut any, 2, &trigger);
+    let mut contract_msg = Vec::new();
+    field_varint(&mut contract_msg, 1, 31); // TriggerSmartContract
+    field_bytes(&mut contract_msg, 2, &any);
+    let mut raw = Vec::new();
+    field_bytes(&mut raw, 1, &block.ref_block_bytes);
+    field_bytes(&mut raw, 4, &block.ref_block_hash);
+    field_varint(&mut raw, 8, expiration as u64);
+    field_bytes(&mut raw, 11, &contract_msg);
+    field_varint(&mut raw, 14, timestamp as u64);
+    field_varint(&mut raw, 18, fee_limit);
+    raw
+}
+
 pub struct Signed {
     pub txid: String,
     /// Transaction sérialisée (`raw_data` et signature), pour `broadcasthex`.
@@ -269,6 +312,156 @@ pub fn max_trx(from: &str, to: Option<&str>) -> Result<u64> {
     balance(from)?.checked_sub(fee).filter(|max| *max > 0).context("TRX insuffisants pour couvrir les frais du réseau")
 }
 
+// --- Jetons TRC-20 ------------------------------------------------------------------
+
+/// Appel en lecture seule d'un contrat, simulé par le nœud depuis `owner`.
+fn constant_call(owner: &str, contract: &str, selector: &str, parameter: &[u8]) -> Result<Value> {
+    let reply = post(
+        "/wallet/triggerconstantcontract",
+        json!({ "owner_address": owner, "contract_address": contract, "function_selector": selector, "parameter": hex::encode(parameter), "visible": true }),
+    )?;
+    ensure!(reply["result"]["result"].as_bool() == Some(true), "appel du contrat Tron refusé par le nœud");
+    Ok(reply)
+}
+
+fn word_u128(hex_word: &str) -> Result<u128> {
+    let bytes = hex::decode(hex_word).context("réponse du contrat Tron illisible")?;
+    ensure!(bytes.len() == 32 && bytes[..16].iter().all(|b| *b == 0), "réponse du contrat Tron illisible");
+    Ok(u128::from_be_bytes(bytes[16..].try_into().map_err(|_| anyhow!("réponse du contrat Tron illisible"))?))
+}
+
+/// Décimales d'un contrat TRC-20 (vérification du registre).
+pub fn trc20_decimals(contract: &str) -> Result<u8> {
+    let reply = constant_call(contract, contract, "decimals()", &[])?;
+    u8::try_from(word_u128(reply["constant_result"][0].as_str().context("réponse du contrat Tron illisible")?)?).context("décimales invalides")
+}
+
+/// Solde d'un jeton TRC-20 (unités du jeton).
+pub fn trc20_balance(owner: &str, contract: &str) -> Result<u128> {
+    let address = parse_address(owner)?;
+    parse_address(contract)?;
+    let mut parameter = vec![0u8; 12];
+    parameter.extend_from_slice(&address[1..]);
+    let reply = constant_call(owner, contract, "balanceOf(address)", &parameter)?;
+    word_u128(reply["constant_result"][0].as_str().context("réponse du contrat Tron illisible")?)
+}
+
+/// Transfert de jeton préparé : frais maximum affichés (sun) et plafond
+/// d'énergie brûlable signé dans la transaction.
+#[derive(Clone, Copy, Debug)]
+pub struct Trc20Plan {
+    pub amount: u128,
+    pub fee_limit: u64,
+    pub fee_max: u64,
+}
+
+/// Énergie encore disponible (mise en jeu) du compte.
+fn available_energy(address: &str) -> Result<u64> {
+    let resource = post("/wallet/getaccountresource", json!({ "address": address, "visible": true }))?;
+    Ok(resource["EnergyLimit"].as_u64().unwrap_or(0).saturating_sub(resource["EnergyUsed"].as_u64().unwrap_or(0)))
+}
+
+/// Taille comptée (octets) d'un transfert de jeton signé.
+fn trigger_size() -> u64 {
+    let block = BlockRef { ref_block_bytes: [0; 2], ref_block_hash: [0; 8], timestamp: 0 };
+    let data = transfer_call_data(&[ADDRESS_PREFIX; 21], u128::MAX);
+    let raw = trigger_raw(&[ADDRESS_PREFIX; 21], &[ADDRESS_PREFIX; 21], &data, u64::MAX >> 1, &block, i64::MAX >> 1, i64::MAX >> 1);
+    raw.len() as u64 + 65 + 6 + RESULT_BYTES
+}
+
+/// Événement `Transfer(address,address,uint256)` (sujet 0, Keccak-256).
+const TRANSFER_TOPIC: &str = "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+
+/// Le transfert simulé émet exactement UN événement `Transfer` : de
+/// `owner` vers `to`, du montant demandé. (L'USDT de Tether ne renvoie pas
+/// de booléen : l'événement est la preuve de l'effet.)
+fn simulated_transfer_matches(logs: &Value, owner: &Address, to: &Address, amount: u128) -> bool {
+    let word = |address: &Address| format!("{}{}", "0".repeat(24), hex::encode(&address[1..]));
+    let transfers: Vec<&Value> = logs.as_array().map(|l| l.iter().filter(|log| log["topics"][0].as_str() == Some(TRANSFER_TOPIC)).collect()).unwrap_or_default();
+    let [log] = transfers.as_slice() else { return false };
+    log["topics"][1].as_str().is_some_and(|t| t.eq_ignore_ascii_case(&word(owner)))
+        && log["topics"][2].as_str().is_some_and(|t| t.eq_ignore_ascii_case(&word(to)))
+        && log["data"].as_str().is_some_and(|d| word_u128(d).is_ok_and(|v| v == amount))
+}
+
+/// Frais d'un transfert de `amount` unités du jeton `contract` de `owner`
+/// vers `to` : transfert simulé (il doit émettre exactement ce transfert —
+/// solde de jeton suffisant), énergie avec marge de 20 %, énergie mise en jeu
+/// déduite ; TRX suffisants pour les payer.
+pub fn plan_trc20(owner: &str, contract: &str, to: &str, amount: u128) -> Result<Trc20Plan> {
+    ensure!(amount > 0, "montant nul");
+    let recipient = parse_address(to)?;
+    let sender = parse_address(owner)?;
+    ensure!(sender != recipient, "envoi vers votre propre adresse Tron");
+    let simulated = constant_call(owner, contract, "transfer(address,uint256)", &transfer_call_data(&recipient, amount)[4..])
+        .map_err(|_| anyhow!("transfert de jeton Tron refusé en simulation (solde de jeton insuffisant ?)"))?;
+    ensure!(
+        simulated_transfer_matches(&simulated["logs"], &sender, &recipient, amount),
+        "transfert de jeton Tron refusé en simulation (solde de jeton insuffisant ?)"
+    );
+    let energy = simulated["energy_used"].as_u64().filter(|e| *e > 0).context("énergie du transfert Tron inconnue")?;
+    let energy_fee = chain_parameter("getEnergyFee")?;
+    let with_margin = energy.saturating_mul(12).div_ceil(10);
+    let fee_limit = with_margin.saturating_mul(energy_fee);
+    ensure!(fee_limit <= MAX_TOKEN_FEE_LIMIT, "frais du transfert Tron anormalement élevés ({} TRX) — envoi refusé", format_trx(fee_limit));
+    let burned_energy = with_margin.saturating_sub(available_energy(owner)?).saturating_mul(energy_fee);
+    let bytes = trigger_size();
+    let bandwidth_fee = if available_bandwidth(owner)? >= bytes { 0 } else { bytes * chain_parameter("getTransactionFee")? };
+    let fee_max = burned_energy + bandwidth_fee;
+    let trx = balance(owner)?;
+    ensure!(
+        fee_max <= trx,
+        "TRX insuffisants pour les frais du transfert : {} TRX disponibles, jusqu'à {} TRX nécessaires",
+        format_trx(trx),
+        format_trx(fee_max)
+    );
+    Ok(Trc20Plan { amount, fee_limit, fee_max })
+}
+
+/// Construit, signe et diffuse un transfert de jeton ; renvoie son identifiant.
+pub fn send_trc20(key: &SigningKey, contract: &Address, to: &Address, amount: u128, fee_limit: u64) -> Result<String> {
+    ensure!(fee_limit <= MAX_TOKEN_FEE_LIMIT, "frais du transfert Tron anormalement élevés — envoi refusé");
+    let block = latest_block()?;
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(block.timestamp);
+    let raw = trigger_raw(&address_of(key), contract, &transfer_call_data(to, amount), fee_limit, &block, block.timestamp + EXPIRATION_MS, now);
+    broadcast(&sign(&raw, key)?)
+}
+
+/// Transferts d'un jeton TRC-20 de l'adresse, les plus récents d'abord.
+pub fn trc20_history(address: &str, contract: &str, limit: usize) -> Result<Vec<history::TxEntry>> {
+    parse_address(address)?;
+    parse_address(contract)?;
+    let url = format!("{TRONGRID}/v1/accounts/{}/transactions/trc20?limit={}&contract_address={}", address.trim(), limit.clamp(1, 50), contract.trim());
+    let reply: Value = client().get(url).send().context("nœud Tron injoignable")?.json().context("réponse du nœud Tron illisible")?;
+    let mut entries = Vec::new();
+    for tx in reply["data"].as_array().map(Vec::as_slice).unwrap_or_default() {
+        let (Some(id), Some(value)) = (tx["transaction_id"].as_str(), tx["value"].as_str().and_then(|v| v.parse::<i128>().ok())) else { continue };
+        if id.len() != 64 || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
+            continue;
+        }
+        let outgoing = tx["from"].as_str() == Some(address.trim());
+        let incoming = tx["to"].as_str() == Some(address.trim());
+        let net = match (outgoing, incoming) {
+            (true, false) => -value,
+            (false, true) => value,
+            _ => 0,
+        };
+        entries.push(history::TxEntry {
+            id: id.to_string(),
+            timestamp_unix: tx["block_timestamp"].as_i64().map(|ms| ms / 1000),
+            status: history::TxStatus::Confirmed,
+            net_amount_minor: Some(net),
+            fee_minor: 0,
+            kind: match net {
+                n if n > 0 => history::TxKind::Received,
+                n if n < 0 => history::TxKind::Sent,
+                _ => history::TxKind::Other,
+            },
+        });
+    }
+    Ok(entries)
+}
+
 /// Construit, signe et diffuse un virement ; renvoie son identifiant.
 pub fn send_trx(key: &SigningKey, to: &Address, amount: u64) -> Result<String> {
     let block = latest_block()?;
@@ -371,6 +564,57 @@ mod tests {
         let recovered = VerifyingKey::recover_from_prehash(&digest, &Signature::from_slice(&signature[..64]).unwrap(), RecoveryId::from_byte(signature[64] - 27).unwrap()).unwrap();
         assert_eq!(recovered, *key.verifying_key());
         assert!(transfer_size() > 200 && transfer_size() < 400, "{}", transfer_size());
+    }
+
+    #[test]
+    fn token_transfers_are_encoded_like_the_abi() {
+        let to = parse_address("TUEZSdKsoDHQMeZwihtdoBiN46zxhGWYdH").unwrap();
+        let data = transfer_call_data(&to, 1_500_000);
+        assert_eq!(hex::encode(&data), "a9059cbb000000000000000000000000c8599111f29c1e1e061265b4af93ea1f274ad78a000000000000000000000000000000000000000000000000000000000016e360");
+        assert_eq!(word_u128("000000000000000000000000000000000000000000000000000000000016e360").unwrap(), 1_500_000);
+        assert!(word_u128("ff00000000000000000000000000000000000000000000000000000000000001").is_err(), "au-delà de 128 bits");
+        assert!(trigger_size() > 300 && trigger_size() < 500, "{}", trigger_size());
+        // Événement simulé réel (04/10/2026) : exactement ce transfert.
+        let owner = parse_address("TNXoiAJ3dct8Fjg4M9fkLFh9S2v9TXc32G").unwrap();
+        let logs: Value = serde_json::from_str(r#"[{"topics":["ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef","00000000000000000000000089cbcb2372e1c2fbc00f24895a406a0c722c89f3","000000000000000000000000c8599111f29c1e1e061265b4af93ea1f274ad78a"],"data":"00000000000000000000000000000000000000000000000000000000000f4240"}]"#).unwrap();
+        assert!(simulated_transfer_matches(&logs, &owner, &to, 1_000_000));
+        assert!(!simulated_transfer_matches(&logs, &owner, &to, 999_999), "autre montant");
+        assert!(!simulated_transfer_matches(&logs, &to, &owner, 1_000_000), "sens inversé");
+        assert!(!simulated_transfer_matches(&json!([]), &owner, &to, 1_000_000), "aucun transfert");
+        let twice = json!([logs[0], logs[0]]);
+        assert!(!simulated_transfer_matches(&twice, &owner, &to, 1_000_000), "deux transferts");
+    }
+
+    /// Réel : USDT TRC-20 — encodage de l'appel identique à celui du nœud,
+    /// solde lu par le contrat, énergie d'un transfert simulée depuis une
+    /// adresse pourvue.
+    /// `cargo test -- --ignored real_trc20 --nocapture`
+    #[test]
+    #[ignore]
+    fn real_trc20_encoding_balance_and_fee() {
+        let usdt = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t";
+        let owner = "TNXoiAJ3dct8Fjg4M9fkLFh9S2v9TXc32G";
+        let to = "TUEZSdKsoDHQMeZwihtdoBiN46zxhGWYdH";
+        let held = trc20_balance(owner, usdt).unwrap();
+        println!("USDT détenus : {}", held as f64 / 1e6);
+        let data = transfer_call_data(&parse_address(to).unwrap(), 1_000_000);
+        let built = post(
+            "/wallet/triggersmartcontract",
+            json!({ "owner_address": owner, "contract_address": usdt, "function_selector": "transfer(address,uint256)", "parameter": hex::encode(&data[4..]), "fee_limit": 30_000_000, "visible": true }),
+        )
+        .unwrap();
+        let tx = &built["transaction"];
+        let raw = &tx["raw_data"];
+        let bytes = |k: &str| hex::decode(raw[k].as_str().unwrap()).unwrap();
+        let block = BlockRef { ref_block_bytes: bytes("ref_block_bytes").try_into().unwrap(), ref_block_hash: bytes("ref_block_hash").try_into().unwrap(), timestamp: 0 };
+        let ours = trigger_raw(&parse_address(owner).unwrap(), &parse_address(usdt).unwrap(), &data, 30_000_000, &block, raw["expiration"].as_i64().unwrap(), raw["timestamp"].as_i64().unwrap());
+        assert_eq!(hex::encode(&ours), tx["raw_data_hex"].as_str().unwrap(), "encodage identique au nœud");
+        let plan = plan_trc20(owner, usdt, to, 1_000_000).unwrap();
+        println!("frais max {} TRX, fee_limit {} TRX", format_trx(plan.fee_max), format_trx(plan.fee_limit));
+        let entries = trc20_history(owner, usdt, 5).unwrap();
+        println!("{} transferts USDT récents", entries.len());
+        // Compte sans USDT : refus en simulation, avant toute boîte.
+        assert!(plan_trc20("TUEZSdKsoDHQMeZwihtdoBiN46zxhGWYdH", usdt, owner, 1_000_000_000_000).is_err());
     }
 
     /// Réel : l'encodage local de `raw_data` est identique, octet pour octet,

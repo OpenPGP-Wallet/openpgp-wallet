@@ -30,7 +30,7 @@ const ASSETS = [
   // SEUL le registre Rust fait foi pour un envoi (l'interface n'envoie que
   // l'identifiant et le réseau) ; ceux-ci ne servent qu'aux demandes de
   // paiement (QR). Test `frontend_token_contracts_match_the_registry` (lib.rs).
-  { coin: "usdt", name: "Tether", symbol: "USDT", token: true, icon: "/assets/usdt.png", gecko: "tether", decimals: 6, unitDecimals: 6, chart: null, networks: ["evm_mainnet", "sol_mainnet"], contracts: { evm_mainnet: "0xdac17f958d2ee523a2206206994597c13d831ec7", sol_mainnet: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB" } },
+  { coin: "usdt", name: "Tether", symbol: "USDT", token: true, icon: "/assets/usdt.png", gecko: "tether", decimals: 6, unitDecimals: 6, chart: null, networks: ["evm_mainnet", "sol_mainnet", "tron_mainnet"], contracts: { evm_mainnet: "0xdac17f958d2ee523a2206206994597c13d831ec7", sol_mainnet: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", tron_mainnet: "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t" } },
   { coin: "link", name: "Chainlink", symbol: "LINK", token: true, icon: "/assets/link.png", gecko: "chainlink", decimals: 6, unitDecimals: 18, chart: "LINK", networks: ["evm_mainnet", "arbitrum_mainnet", "base_mainnet"], contracts: { evm_mainnet: "0x514910771af9ca656af840dff83e8264ecf986ca", arbitrum_mainnet: "0xf97f4df75117a78c1a5a0dbb814af92458539fb4", base_mainnet: "0x88fb150bdc53a65fe94dea0c9ba0a6daf8c6e196" } },
   { coin: "dai", name: "Dai", symbol: "DAI", token: true, icon: "/assets/dai.png", gecko: "dai", decimals: 6, unitDecimals: 18, chart: "DAI", networks: ["evm_mainnet"], contracts: { evm_mainnet: "0x6b175474e89094c44da98b954eedeac495271d0f" } },
   { coin: "usde", name: "Ethena USDe", symbol: "USDe", token: true, icon: "/assets/usde.png", gecko: "ethena-usde", decimals: 6, unitDecimals: 18, chart: "USDE", networks: ["evm_mainnet"], contracts: { evm_mainnet: "0x4c9edd5852cd905f086c759e8383e09bff1e68b3" } },
@@ -3534,6 +3534,8 @@ function addressOfProfile(profile, coin, network) {
   // Même adresse sur tous les réseaux EVM (Ethereum, L2, BNB Chain…), jetons
   // compris.
   if (isEvmNetwork(network)) return profile.addresses.evm;
+  // Tron : TRX et jetons TRC-20 (USDT) à la même adresse T….
+  if (network === "tron_mainnet") return profile.addresses.tron ?? "";
   if (coin === "btc") return network === "btc_mainnet" ? profile.addresses.btc_mainnet : profile.addresses.btc_testnet;
   // Zcash transparent (t1…) ; absente d'un profil dérivé avant son ajout,
   // jusqu'au prochain déverrouillage.
