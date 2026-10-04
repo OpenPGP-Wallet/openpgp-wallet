@@ -28,6 +28,8 @@ const ASSETS = [
   { coin: "trx", name: "Tron", symbol: "TRX", family: "trx", icon: "/assets/trx.png", gecko: "tron", decimals: 6, chart: "TRX", networks: ["tron_mainnet"] },
   { coin: "xrp", name: "XRP", symbol: "XRP", family: "xrp", icon: "/assets/xrp.svg", gecko: "ripple", decimals: 6, chart: "XRP", networks: ["xrp_mainnet"] },
   { coin: "xlm", name: "Stellar", symbol: "XLM", family: "xlm", icon: "/assets/xlm.jpg", iconRound: true, gecko: "stellar", decimals: 7, chart: "XLM", networks: ["xlm_mainnet"] },
+  // NEAR : 24 décimales sur la chaîne ; 6 suffisent à la saisie (Max renvoie le montant exact).
+  { coin: "near", name: "NEAR", symbol: "NEAR", family: "near", icon: "/assets/near.jpg", iconRound: true, gecko: "near", decimals: 6, chart: "NEAR", networks: ["near_mainnet"] },
   // Jetons (`token: true`) : contrats et mints relevés dans core/src/tokens.rs —
   // SEUL le registre Rust fait foi pour un envoi (l'interface n'envoie que
   // l'identifiant et le réseau) ; ceux-ci ne servent qu'aux demandes de
@@ -656,6 +658,7 @@ const I18N = {
     "net.tron_mainnet": "Tron — Fonds réels",
     "net.xrp_mainnet": "XRP Ledger — Fonds réels",
     "net.xlm_mainnet": "Stellar — Fonds réels",
+    "net.near_mainnet": "NEAR — Fonds réels",
     "wallet.historyExplorerOnly": "Pas d'historique ici pour ce réseau : aucun service public gratuit ne le fournit. Il reste consultable sur l'explorateur du réseau.",
     "wallet.historyOpenExplorer": "Voir sur l'explorateur",
     "wallet.historyNeedsKey": "Pour voir l'historique de ce réseau ici, ajoutez une clé API Etherscan gratuite dans Paramètres. Il reste consultable sur l'explorateur du réseau.",
@@ -1267,6 +1270,7 @@ const I18N = {
     "net.tron_mainnet": "Tron — Real funds",
     "net.xrp_mainnet": "XRP Ledger — Real funds",
     "net.xlm_mainnet": "Stellar — Real funds",
+    "net.near_mainnet": "NEAR — Real funds",
     "wallet.historyExplorerOnly": "No history here for this network: no free public service provides it. You can still see it on the network's explorer.",
     "wallet.historyOpenExplorer": "View on the explorer",
     "wallet.historyNeedsKey": "To see this network's history here, add a free Etherscan API key in Settings. You can still see it on the network's explorer.",
@@ -3578,6 +3582,8 @@ function addressOfProfile(profile, coin, network) {
   if (coin === "xrp") return profile.addresses.xrp ?? "";
   // Stellar (G…) ; absente d'un profil dérivé avant son ajout.
   if (coin === "xlm") return profile.addresses.stellar ?? "";
+  // NEAR : compte implicite (64 hex) ; absent d'un profil dérivé avant son ajout.
+  if (coin === "near") return profile.addresses.near ?? "";
   // Zcash protégé : adresse u1 (récepteur Orchard seul).
   if (coin === "zecs") return profile.addresses.zcash_shielded ?? "";
   // Jetons Solana (USDC, USDT…) : même adresse propriétaire que SOL (le compte
@@ -4311,7 +4317,7 @@ const qrModal = document.getElementById("qr-modal");
 // EIP-681 pour Ethereum (montant en wei, réseau par son chain id). Sans
 // montant : l'adresse seule, lisible par toutes les applications.
 // Décimales maximales d'un montant demandé : 18 pour toute monnaie EVM.
-const QR_DECIMALS = new Proxy({ btc: 8, sol: 9, zec: 8, zecs: 8, xmr: 12, doge: 8, trx: 6, xrp: 6, xlm: 7 }, { get: (known, coin) => ASSET_BY_COIN[coin]?.unitDecimals ?? known[coin] ?? 18 });
+const QR_DECIMALS = new Proxy({ btc: 8, sol: 9, zec: 8, zecs: 8, xmr: 12, doge: 8, trx: 6, xrp: 6, xlm: 7, near: 24 }, { get: (known, coin) => ASSET_BY_COIN[coin]?.unitDecimals ?? known[coin] ?? 18 });
 // Même mint que core/src/sol_spl.rs::usdc_mint_mainnet.
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 let qrCard = null;

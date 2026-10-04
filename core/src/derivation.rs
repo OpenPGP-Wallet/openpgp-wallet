@@ -263,6 +263,22 @@ pub fn derive_stellar_key(seed: &[u8], account_index: u32) -> ed25519_dalek::Sig
     signing_key
 }
 
+/// Dérive la clé NEAR n°`account_index` (m/44'/397'/{account_index}', chemin
+/// entièrement durci de near-seed-phrase, celui des portefeuilles NEAR) ; son
+/// compte implicite est la clé publique en hexadécimal (voir `near`).
+pub fn derive_near_key(seed: &[u8], account_index: u32) -> ed25519_dalek::SigningKey {
+    let (mut key, mut chain_code) = slip10_ed25519_master(seed);
+    for index in [44u32, 397, account_index] {
+        let (k, cc) = slip10_ed25519_child(&key, &chain_code, index);
+        key = k;
+        chain_code = cc;
+    }
+    let signing_key = ed25519_dalek::SigningKey::from_bytes(&key);
+    key.zeroize();
+    chain_code.zeroize();
+    signing_key
+}
+
 /// Décode une adresse Bitcoin testnet P2WPKH (bech32) en hash160 (20 octets).
 pub fn parse_btc_testnet_address(address: &str) -> Result<[u8; 20]> {
     p2wpkh_hash160(decode_segwit(address, "tb", "testnet")?)

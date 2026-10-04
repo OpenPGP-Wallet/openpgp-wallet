@@ -11,7 +11,7 @@ qui la met en œuvre. **Aucune de ces protections n'a encore été vérifiée pa
   interface web locale (`app/src`).
 - Portefeuille non dépositaire multi-réseaux : Bitcoin, réseaux EVM (Ethereum, L2, BNB Chain, Avalanche,
   Polygon, HyperEVM), Solana, Zcash (transparent et protégé Orchard), Monero, Dogecoin, Tron (TRX et USDT
-  TRC-20), XRP Ledger, Stellar, jetons du registre (`tokens.rs`).
+  TRC-20), XRP Ledger, Stellar, NEAR, jetons du registre (`tokens.rs`).
 - Hors périmètre : la version iOS (non démarrée), les services tiers eux-mêmes (nœuds, agrégateurs d'échange),
   le système d'exploitation et le matériel.
 
@@ -140,6 +140,13 @@ qui la met en œuvre. **Aucune de ces protections n'a encore été vérifiée pa
   refusées, clé secrète (S…) collée par erreur signalée. Mémo toujours affiché avec son type dans la boîte
   native ; mémo texte limité à l'ASCII imprimable (aucun caractère invisible ou de retournement). Offre de
   frais plafonnée (0,1 XLM), validité de 3 min calée sur l'heure du dernier registre (pas l'horloge locale).
+- **NEAR** : virements sérialisés (Borsh) et signés localement (octets identiques à la bibliothèque
+  officielle ; création d'un compte implicite et renvoi exécutés de bout en bout sur le réseau de test, frais
+  réels exacts au yoctoNEAR, signature altérée refusée `InvalidSignature`). Avant la boîte : stockage du compte
+  jamais envoyable, compte implicite neuf créé avec au moins son stockage, compte nommé inexistant refusé,
+  adresse Ethereum (0x…) refusée avec consigne. Frais : la retenue du réseau (gaz d'exécution au prix d'achat
+  minimal, + 20 %) est le maximum affiché et vérifié ; les frais réels, bien plus bas, sont affichés à côté.
+  Délai dépassé du nœud : « envoyée mais pas encore confirmée », jamais « refusée ».
 - *Risques résiduels* : un nœud malveillant peut afficher de faux soldes ou un faux historique (portefeuille
   léger) ; un nœud Monero ou Zcash malveillant peut affaiblir la confidentialité d'un envoi ; les nœuds publics
   voient l'adresse IP et les adresses interrogées ; un agrégateur peut proposer un mauvais cours (le minimum de

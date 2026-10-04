@@ -14,7 +14,7 @@
 //!   perdu — jamais utilisé pour le déverrouillage quotidien.
 
 use crate::{
-    btc_rpc, cow, dapp_requests, derivation, doge, lifi, tron, xrp, stellar, monero, native_deposit, wallet_birthday, zcash, zcash_shielded, entropy, eth_rpc, eth_tx, history, jupiter_rpc, memory_guard, pgp_engine, secure_storage, shamir,
+    btc_rpc, cow, dapp_requests, derivation, doge, lifi, tron, xrp, stellar, near, monero, native_deposit, wallet_birthday, zcash, zcash_shielded, entropy, eth_rpc, eth_tx, history, jupiter_rpc, memory_guard, pgp_engine, secure_storage, shamir,
     evm_sign, sol_rpc, sol_spl, sol_tx, thorchain_rpc, tokens, wallet_flow,
 };
 use anyhow::{Context, Result};
@@ -190,6 +190,8 @@ pub struct Addresses {
     pub xrp: String,
     /// Adresse Stellar (G…), chemin SEP-0005 m/44'/148'/{index}'.
     pub stellar: String,
+    /// Compte NEAR implicite (64 hex), chemin m/44'/397'/{index}'.
+    pub near: String,
     /// Adresse THORChain (thor1…), chemin m/44'/931'/0'/0/{index} : celle du
     /// profil principal du développeur est l'adresse d'affiliation de l'app.
     pub thor: String,
@@ -329,6 +331,7 @@ fn derive_addresses(seed: &[u8], index: u32) -> Result<Addresses> {
     let (_tron_key, tron_address) = derivation::derive_tron_key(seed, index)?;
     let (_xrp_key, xrp_account) = derivation::derive_xrp_key(seed, index)?;
     let stellar_key = derivation::derive_stellar_key(seed, index);
+    let near_key = derivation::derive_near_key(seed, index);
     let (_thor_key, thor_hash160) = derivation::derive_thor_key(seed, index)?;
     let shielded_keys = zcash_shielded::profile_keys(seed, index)?;
     let monero_keys = monero::view_keys(seed, index)?;
@@ -343,6 +346,7 @@ fn derive_addresses(seed: &[u8], index: u32) -> Result<Addresses> {
         tron: tron::encode_address(&tron_address),
         xrp: xrp::encode_address(&xrp_account),
         stellar: stellar::encode_address(&stellar_key.verifying_key().to_bytes()),
+        near: near::implicit_account(&near_key),
         evm: derivation::format_address(&evm_address),
         btc_testnet: derivation::format_btc_testnet_address(&btc_testnet_hash160)?,
         btc_mainnet: derivation::format_btc_mainnet_address(&btc_mainnet_hash160)?,
@@ -3168,6 +3172,54 @@ pub fn send_xlm(data_dir: &Path, device_password: &str, to: &str, amount: &str, 
 /// Bouton « Max » : solde moins la réserve et les frais.
 pub fn xlm_max(from: &str) -> Result<String> {
     Ok(stellar::format_xlm(stellar::max_amount(&stellar::MAINNET, from)?))
+}
+
+// --- NEAR ----------------------------------------------------------------------------
+
+pub fn get_near_balance(account: &str) -> Result<u128> {
+    near::balance(&near::MAINNET, account)
+}
+
+/// État d'un compte NEAR destinataire, pour les avertissements de la boîte.
+pub fn near_recipient_activity(to: &str) -> Result<RecipientActivity> {
+    Ok(match near::address_activity(&near::MAINNET, to)? {
+        (true, _) => RecipientActivity::Funded,
+        (false, true) => RecipientActivity::Empty,
+        (false, false) => RecipientActivity::Unused,
+    })
+}
+
+/// Forme canonique d'un montant en NEAR (24 décimales au plus), affichée ET signée.
+pub fn canonical_near_amount(amount: &str) -> Result<String> {
+    Ok(tokens::format_amount(tokens::parse_amount(amount, near::DECIMALS)?, near::DECIMALS))
+}
+
+/// Envoi préparé pour la boîte de confirmation : stockage du compte,
+/// création d'un compte implicite neuf, compte nommé existant, frais.
+pub fn near_send_plan(from_account: &str, to: &str, amount: &str) -> Result<near::NearPlan> {
+    near::plan(&near::MAINNET, from_account, to, tokens::parse_amount(amount, near::DECIMALS)?)
+}
+
+/// Envoi de NEAR : contrôles refaits, frais jamais supérieurs au maximum
+/// affiché (`shown_fee`), virement signé ici puis diffusé.
+pub fn send_near(data_dir: &Path, device_password: &str, to: &str, amount: &str, shown_fee: u128, profile_index: u32) -> Result<String> {
+    let units = tokens::parse_amount(amount, near::DECIMALS)?;
+    let seed = unlock_seed(data_dir, device_password)?;
+    let _seed_lock = memory_guard::lock(&seed);
+    let key = derivation::derive_near_key(&seed, profile_index);
+    let plan = near::plan(&near::MAINNET, &near::implicit_account(&key), to, units)?;
+    anyhow::ensure!(
+        plan.fee <= shown_fee,
+        "les frais NEAR ont augmenté depuis la confirmation ({} au lieu de {} NEAR) — relancez l'envoi",
+        near::format_near_exact(plan.fee),
+        near::format_near_exact(shown_fee)
+    );
+    near::send(&near::MAINNET, &key, to, &plan)
+}
+
+/// Bouton « Max » : solde moins le stockage et les frais (vers `to` s'il est connu).
+pub fn near_max(from: &str, to: Option<&str>) -> Result<String> {
+    Ok(near::format_near_exact(near::max_amount(&near::MAINNET, from, to)?))
 }
 
 // --- Dogecoin -----------------------------------------------------------------------

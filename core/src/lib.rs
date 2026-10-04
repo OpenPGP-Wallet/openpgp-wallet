@@ -48,6 +48,7 @@ pub mod swapkit;
 pub mod tron;
 pub mod xrp;
 pub mod stellar;
+pub mod near;
 #[cfg(test)]
 mod robustness_tests;
 #[cfg(windows)]

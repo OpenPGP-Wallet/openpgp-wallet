@@ -109,6 +109,10 @@ pub(crate) fn validate_address(network: &str, address: &str) -> Result<()> {
         "xlm_mainnet" => {
             crate::stellar::parse_address(address)?;
         }
+        // NEAR (compte implicite ou nommé).
+        "near_mainnet" => {
+            crate::near::parse_account(address)?;
+        }
         // Zcash protégé (adresse u1 de la carte « Zcash protégé »).
         "zec_shielded" => {
             crate::zcash_shielded::parse_shielded_address(address)?;

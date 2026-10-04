@@ -239,6 +239,27 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("frais Stellar manquants", "Stellar fee missing"),
     ("mémo : réservé aux envois Stellar", "memo: only for Stellar transfers"),
     ("tag de destination et mémo : un seul des deux", "destination tag and memo: only one of the two"),
+    // NEAR (core/src/near.rs, core/src/api.rs)
+    ("nœud NEAR injoignable", "NEAR node unreachable"),
+    ("réponse du nœud NEAR illisible", "unreadable NEAR node response"),
+    ("montant NEAR illisible", "unreadable NEAR amount"),
+    ("adresse Ethereum : pour envoyer sur Ethereum, utilisez la carte Ethereum (pas NEAR)", "Ethereum address: to send on Ethereum, use the Ethereum card (not NEAR)"),
+    ("adresse NEAR invalide (minuscules seulement)", "invalid NEAR address (lowercase only)"),
+    ("adresse NEAR invalide", "invalid NEAR address"),
+    ("solde NEAR illisible", "unreadable NEAR balance"),
+    ("configuration NEAR illisible", "unreadable NEAR configuration"),
+    ("prix du gaz NEAR illisible", "unreadable NEAR gas price"),
+    ("compte NEAR pas encore activé : il doit d'abord recevoir des NEAR", "NEAR account not activated yet: it must first receive some NEAR"),
+    ("envoi vers votre propre adresse NEAR", "sending to your own NEAR address"),
+    ("ce compte NEAR n'existe pas : vérifiez l'adresse", "this NEAR account does not exist: check the address"),
+    ("NEAR insuffisants pour couvrir les frais du réseau", "not enough NEAR to cover the network fee"),
+    ("clé d'accès NEAR illisible", "unreadable NEAR access key"),
+    ("bloc NEAR illisible", "unreadable NEAR block"),
+    ("transaction NEAR : état inattendu", "NEAR transaction: unexpected status"),
+    ("le nœud NEAR a renvoyé un autre identifiant de transaction", "the NEAR node returned another transaction ID"),
+    ("index NEAR injoignable", "NEAR index unreachable"),
+    ("réponse de l'index NEAR illisible", "unreadable NEAR index response"),
+    ("frais NEAR manquants", "NEAR fee missing"),
     ("montant nul", "zero amount"),
     ("montant hors limites", "amount out of range"),
     // SwapKit (core/src/swapkit.rs)
@@ -832,6 +853,35 @@ fn translate_dynamic_error(msg: &str) -> Option<String> {
     if let Some(detail) = msg.strip_prefix("les frais Stellar ont augmenté depuis la confirmation (").and_then(|rest| rest.strip_suffix(") — relancez l'envoi")) {
         return Some(format!("Stellar fees increased since the confirmation ({}) — start again", detail.replace(" au lieu de ", " instead of ")));
     }
+    if let Some(rest) = msg.strip_prefix("NEAR insuffisants : ") {
+        return Some(format!(
+            "insufficient NEAR: {}",
+            rest.replace(" NEAR envoyables (", " NEAR sendable (")
+                .replace(" NEAR restent réservés au stockage du compte), ", " NEAR stay reserved for the account storage), ")
+                .replace(" NEAR de frais demandés", " NEAR in fees requested")
+        ));
+    }
+    if let Some(rest) = msg.strip_prefix("ce destinataire n'est pas encore activé : envoyez-lui au moins ").and_then(|r| r.strip_suffix(" NEAR (stockage du compte)")) {
+        return Some(format!("this recipient is not activated yet: send it at least {rest} NEAR (account storage)"));
+    }
+    if let Some(rest) = msg.strip_prefix("frais du réseau NEAR anormalement élevés (").and_then(|r| r.strip_suffix(" NEAR) — réessayez plus tard")) {
+        return Some(format!("abnormally high NEAR network fee ({rest} NEAR) — try again later"));
+    }
+    if let Some(rest) = msg.strip_prefix("transaction NEAR refusée : ") {
+        return Some(format!("NEAR transaction refused: {rest}"));
+    }
+    if let Some(hash) = msg.strip_prefix("réseau NEAR lent : transaction ").and_then(|r| r.strip_suffix(" envoyée mais pas encore confirmée — vérifiez l'historique avant de renvoyer")) {
+        return Some(format!("slow NEAR network: transaction {hash} sent but not confirmed yet — check the history before sending again"));
+    }
+    if let Some(rest) = msg.strip_prefix("nœud NEAR : réponse ") {
+        return Some(format!("NEAR node: response {rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("nœud NEAR : ") {
+        return Some(format!("NEAR node: {rest}"));
+    }
+    if let Some(detail) = msg.strip_prefix("les frais NEAR ont augmenté depuis la confirmation (").and_then(|rest| rest.strip_suffix(") — relancez l'envoi")) {
+        return Some(format!("NEAR fees increased since the confirmation ({}) — start again", detail.replace(" au lieu de ", " instead of ")));
+    }
     if let Some(rest) = msg.strip_prefix("DOGE insuffisants : ") {
         return Some(format!(
             "insufficient DOGE: {}",
@@ -1219,6 +1269,7 @@ struct AddressesDto {
     tron: String,
     xrp: String,
     stellar: String,
+    near: String,
 }
 
 impl From<api::Addresses> for AddressesDto {
@@ -1235,6 +1286,7 @@ impl From<api::Addresses> for AddressesDto {
             tron: a.tron,
             xrp: a.xrp,
             stellar: a.stellar,
+            near: a.near,
         }
     }
 }
@@ -1342,7 +1394,7 @@ fn save_bytes_with_dialog(suggested_name: String, content_b64: String, app: taur
 /// aurait laissé un frontend compromis ouvrir n'importe quelle page — un vecteur
 /// de phishing simple, ouvert sans aucun bénéfice fonctionnel puisqu'aucun appel
 /// légitime de cette commande ne cible jamais autre chose que ces domaines.
-const ALLOWED_EXTERNAL_LINK_PREFIXES: [&str; 10] = [
+const ALLOWED_EXTERNAL_LINK_PREFIXES: [&str; 11] = [
     "https://explorer.solana.com/",
     "https://blockstream.info/",
     "https://explorer.cow.fi/",
@@ -1353,6 +1405,7 @@ const ALLOWED_EXTERNAL_LINK_PREFIXES: [&str; 10] = [
     "https://tronscan.org/",
     "https://livenet.xrpl.org/",
     "https://stellar.expert/explorer/public/",
+    "https://nearblocks.io/txns/",
 ];
 
 /// Lien vers un explorateur connu de l'app : Solana, Bitcoin, ou l'explorateur
@@ -2061,6 +2114,7 @@ fn forget_session(app: &tauri::AppHandle) {
     app.state::<ProfileTronCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<ProfileXrpCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<ProfileStellarCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    app.state::<ProfileNearCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<ShieldedKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<MoneroKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     IS_AFFILIATE_WALLET.store(false, Ordering::Relaxed);
@@ -2118,6 +2172,7 @@ async fn get_balance(network: String, address: String, app: tauri::AppHandle) ->
             "tron_mainnet" => Ok(pgp_wallet_poc::tron::format_trx(api::get_trx_balance(&address).t_err()?)),
             "xrp_mainnet" => Ok(pgp_wallet_poc::xrp::format_xrp(api::get_xrp_balance(&address).t_err()?)),
             "xlm_mainnet" => Ok(pgp_wallet_poc::stellar::format_xlm(api::get_xlm_balance(&address).t_err()?)),
+            "near_mainnet" => Ok(pgp_wallet_poc::near::format_near(api::get_near_balance(&address).t_err()?)),
             // Base locale (synchronisation de fond) : dépensable + en attente.
             "zec_shielded" => {
                 let balance = api::zec_shielded_balance(&data_dir(&app)?, shielded_profile(&app, &address)?).t_err()?;
@@ -2249,7 +2304,7 @@ async fn has_pending_tx(network: String, address: String, app: tauri::AppHandle)
             // Un bloc toutes les 3 s : un envoi est confirmé avant la relecture.
             "tron_mainnet" => Ok(false),
             // Registre validé toutes les 3 à 5 s : idem.
-            "xrp_mainnet" | "xlm_mainnet" => Ok(false),
+            "xrp_mainnet" | "xlm_mainnet" | "near_mainnet" => Ok(false),
             "xmr_mainnet" => api::has_pending_xmr(&data_dir(&app)?, monero_profile(&app, &address)?).t_err(),
             other => Err(translate_error(&format!("réseau inconnu : {other}"))),
         }
@@ -2452,6 +2507,12 @@ async fn get_tx_history(network: String, address: String, app: tauri::AppHandle)
             Some(price_history::Asset::Pair("XLMUSDT")),
             7,
             |id| format!("https://stellar.expert/explorer/public/tx/{id}"),
+        )),
+        "near_mainnet" => HistoryDto::read(history_dtos(
+            || pgp_wallet_poc::near::history(&pgp_wallet_poc::near::MAINNET, &address, HISTORY_LIMIT as usize),
+            Some(price_history::Asset::Pair("NEARUSDT")),
+            24,
+            |id| format!("https://nearblocks.io/txns/{id}"),
         )),
         "sol_devnet" | "sol_mainnet" => {
             let net = sol_network(&network)?;
@@ -2733,6 +2794,7 @@ fn network_label(network: &str) -> String {
         "tron_mainnet" => lang("Tron MAINNET — fonds réels", "Tron MAINNET — real funds").to_string(),
         "xrp_mainnet" => lang("XRP Ledger MAINNET — fonds réels", "XRP Ledger MAINNET — real funds").to_string(),
         "xlm_mainnet" => lang("Stellar MAINNET — fonds réels", "Stellar MAINNET — real funds").to_string(),
+        "near_mainnet" => lang("NEAR MAINNET — fonds réels", "NEAR MAINNET — real funds").to_string(),
         "xmr_mainnet" => lang("Monero MAINNET — fonds réels", "Monero MAINNET — real funds").to_string(),
         "zec_shielded" => lang("Zcash MAINNET — fonds protégés", "Zcash MAINNET — shielded funds").to_string(),
         other => match wallet_flow::evm_network(other) {
@@ -2755,6 +2817,7 @@ fn network_unit(network: &str) -> &'static str {
         "tron_mainnet" => "TRX",
         "xrp_mainnet" => "XRP",
         "xlm_mainnet" => "XLM",
+        "near_mainnet" => "NEAR",
         other => wallet_flow::evm_network(other).map(|n| n.native_symbol).unwrap_or(""),
     }
 }
@@ -2871,6 +2934,7 @@ fn recipient_warning_lines(first_send: bool, coin: &str, activity: Option<api::R
         "trx" => ("aucun TRX", "no TRX"),
         "xrp" => ("aucun XRP", "no XRP"),
         "xlm" => ("aucun XLM", "no XLM"),
+        "near" => ("aucun NEAR", "no NEAR"),
         "sol" => ("aucun SOL", "no SOL"),
         _ => ("aucun fonds", "no funds"),
     };
@@ -2951,6 +3015,7 @@ fn own_profile_label(app: &tauri::AppHandle, dir: &std::path::Path, network: &st
         "tron_mainnet" => in_cache(&app.state::<ProfileTronCache>().0, exact),
         "xrp_mainnet" => in_cache(&app.state::<ProfileXrpCache>().0, exact),
         "xlm_mainnet" => in_cache(&app.state::<ProfileStellarCache>().0, exact),
+        "near_mainnet" => in_cache(&app.state::<ProfileNearCache>().0, exact),
         "xmr_mainnet" => {
             app.state::<MoneroKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).iter().find(|(_, (address, _))| address == to).map(|(index, _)| *index)
         }
@@ -3041,6 +3106,7 @@ async fn send_transaction(
         let from_tron = app.state::<ProfileTronCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).cloned();
         let from_xrp = app.state::<ProfileXrpCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).cloned();
         let from_stellar = app.state::<ProfileStellarCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).cloned();
+        let from_near = app.state::<ProfileNearCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).cloned();
         let from = SendFrom {
             evm: from_evm.as_deref(),
             sol: from_sol.as_deref(),
@@ -3051,6 +3117,7 @@ async fn send_transaction(
             tron: from_tron.as_deref(),
             xrp: from_xrp.as_deref(),
             stellar: from_stellar.as_deref(),
+            near: from_near.as_deref(),
         };
         let mut send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &from_label, None, from, max.unwrap_or(false), note)?;
         send_grace_period(&app)?;
@@ -3089,6 +3156,10 @@ async fn send_transaction(
             "xlm_mainnet" => {
                 let shown_fee = send.xlm_fee.ok_or_else(|| translate_error("frais Stellar manquants"))?;
                 api::send_xlm(&dir, &password, &send.to, &send.amount, send.stellar_memo(), shown_fee, profile_index).t_err()
+            }
+            "near_mainnet" => {
+                let shown_fee = send.near_fee.ok_or_else(|| translate_error("frais NEAR manquants"))?;
+                api::send_near(&dir, &password, &send.to, &send.amount, shown_fee, profile_index).t_err()
             }
             // Exactement l'envoi préparé et affiché (sorties, leurres, frais).
             "xmr_mainnet" => match send.xmr_plan.take() {
@@ -3193,6 +3264,7 @@ async fn max_send_amount(network: String, token: Option<String>, profile_index: 
             "tron_mainnet" => api::trx_max(&cached(&app.state::<ProfileTronCache>().0)?, None).t_err(),
             "xrp_mainnet" => api::xrp_max(&cached(&app.state::<ProfileXrpCache>().0)?).t_err(),
             "xlm_mainnet" => api::xlm_max(&cached(&app.state::<ProfileStellarCache>().0)?).t_err(),
+            "near_mainnet" => api::near_max(&cached(&app.state::<ProfileNearCache>().0)?, None).t_err(),
             "xmr_mainnet" => {
                 let keys = app.state::<MoneroKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).map(|(_, keys)| keys.clone()).ok_or_else(unknown)?;
                 Ok(pgp_wallet_poc::monero::format_xmr(api::xmr_send_plan_max(&dir, &keys, None).t_err()?.amount))
@@ -3243,6 +3315,8 @@ struct ConfirmedSend {
     xrp_fee: Option<u64>,
     /// Frais Stellar (offre) affichés (plafond à l'envoi).
     xlm_fee: Option<u32>,
+    /// Frais NEAR maximum (retenue) affichés (plafond à l'envoi).
+    near_fee: Option<u128>,
     /// Tag (XRP) ou mémo (Stellar) affiché dans la boîte, signé tel quel.
     note: Option<DestinationNote>,
 }
@@ -3286,6 +3360,7 @@ struct SendFrom<'a> {
     tron: Option<&'a str>,
     xrp: Option<&'a str>,
     stellar: Option<&'a str>,
+    near: Option<&'a str>,
 }
 
 /// Validation, avertissements et boîte de confirmation native, communs aux
@@ -3320,6 +3395,7 @@ fn confirm_send(
         "tron_mainnet" => "trx",
         "xrp_mainnet" => "xrp",
         "xlm_mainnet" => "xlm",
+        "near_mainnet" => "near",
         other => return Err(translate_error(&format!("réseau inconnu : {other}"))),
     };
     match (&note, coin) {
@@ -3359,6 +3435,7 @@ fn confirm_send(
             "trx" => api::trx_max(from.tron.ok_or_else(unknown_profile)?, Some(&to)).t_err()?,
             "xrp" => api::xrp_max(from.xrp.ok_or_else(unknown_profile)?).t_err()?,
             "xlm" => api::xlm_max(from.stellar.ok_or_else(unknown_profile)?).t_err()?,
+            "near" => api::near_max(from.near.ok_or_else(unknown_profile)?, Some(&to)).t_err()?,
             _ => {
                 let plan = api::xmr_send_plan_max(dir, from.xmr.ok_or_else(unknown_profile)?, Some(&to)).t_err()?;
                 let amount = pgp_wallet_poc::monero::format_xmr(plan.amount);
@@ -3375,6 +3452,7 @@ fn confirm_send(
         "trx" => api::canonical_trx_amount(&amount).t_err()?,
         "xrp" => api::canonical_xrp_amount(&amount).t_err()?,
         "xlm" => api::canonical_xlm_amount(&amount).t_err()?,
+        "near" => api::canonical_near_amount(&amount).t_err()?,
         "xmr" => api::canonical_xmr_amount(&amount).t_err()?,
         _ => api::canonical_amount(coin, &amount).t_err()?,
     };
@@ -3441,6 +3519,12 @@ fn confirm_send(
         "xlm" => Some(api::xlm_send_plan(from.stellar.ok_or_else(unknown_profile)?, &to, &amount, &memo).t_err()?),
         _ => None,
     };
+    // NEAR : stockage du compte, création d'un compte implicite neuf, compte
+    // nommé existant et frais (retenue maximale) vérifiés MAINTENANT.
+    let near_plan = match coin {
+        "near" => Some(api::near_send_plan(from.near.ok_or_else(unknown_profile)?, &to, &amount).t_err()?),
+        _ => None,
+    };
     // Monero : destinataire vérifié, sorties choisies, leurres tirés et frais
     // calculés MAINTENANT (clés de visualisation, sans la seed) ; c'est cet
     // envoi-là, inchangé, qui sera signé.
@@ -3471,6 +3555,7 @@ fn confirm_send(
         "trx" => api::trx_recipient_activity(&to).ok(),
         "xrp" => api::xrp_recipient_activity(&to).ok(),
         "xlm" => api::xlm_recipient_activity(&to).ok(),
+        "near" => api::near_recipient_activity(&to).ok(),
         // Adresse vérifiée par la préparation ; aucune activité lisible
         // (adresses et montants invisibles sur la chaîne Monero).
         "xmr" => None,
@@ -3539,6 +3624,19 @@ Change returned to your address: {change} ZEC")));
             }
             line
         }),
+        "near" => near_plan.map(|plan| {
+            use pgp_wallet_poc::near::format_near_exact;
+            let (actual, held, reserved) = (format_near_exact(plan.fee_actual), format_near_exact(plan.fee), format_near_exact(plan.reserved));
+            let mut line = lang(
+                &format!("Frais : environ {actual} NEAR (jusqu'à {held} NEAR retenus le temps de l'exécution, le surplus revient en quelques secondes)\nStockage du compte : {reserved} NEAR restent réservés"),
+                &format!("Fee: about {actual} NEAR (up to {held} NEAR held during execution, the surplus comes back within seconds)\nAccount storage: {reserved} NEAR stay reserved"),
+            )
+            .to_string();
+            if plan.creates {
+                line.push_str(lang("\nCe virement crée le compte destinataire (encore jamais utilisé)", "\nThis transfer creates the recipient account (never used yet)"));
+            }
+            line
+        }),
         "xmr" => xmr_plan.as_ref().map(|plan| {
             let mut line = format!("{} : {} XMR", lang("Frais", "Fee"), pgp_wallet_poc::monero::format_xmr(plan.fee));
             if plan.change > 0 {
@@ -3589,6 +3687,7 @@ Change returned to your address: {change} XMR (spendable after 10 confirmations,
         trx_fee: trx_plan.map(|plan| plan.fee_max),
         xrp_fee: xrp_plan.map(|plan| plan.fee),
         xlm_fee: xlm_plan.map(|plan| plan.fee),
+        near_fee: near_plan.map(|plan| plan.fee),
         note,
     })
 }
@@ -4168,6 +4267,7 @@ fn own_address_on(app: &tauri::AppHandle, network: &str, profile_index: u32) -> 
         "zec_mainnet" => from_cache(&app.state::<ProfileZcashCache>().0),
         "tron_mainnet" => from_cache(&app.state::<ProfileTronCache>().0),
         "xrp_mainnet" => from_cache(&app.state::<ProfileXrpCache>().0),
+        "near_mainnet" => from_cache(&app.state::<ProfileNearCache>().0),
         other => Err(translate_error(&format!("réseau inconnu : {other}"))),
     }
 }
@@ -4204,8 +4304,10 @@ async fn get_swapkit_quote(
         let best = &routes[0];
         Ok(SwapkitQuoteDto {
             provider: best.provider.name(),
-            expected_out: pgp_wallet_poc::tokens::format_amount(best.expected_out, to.decimals),
-            min_out: pgp_wallet_poc::tokens::format_amount(best.min_out, to.decimals),
+            // 8 décimales au plus, TRONQUÉES : le minimum affiché ne dépasse
+            // jamais le minimum garanti (NEAR : 24 décimales sur la chaîne).
+            expected_out: pgp_wallet_poc::tokens::format_balance(best.expected_out, to.decimals, 8),
+            min_out: pgp_wallet_poc::tokens::format_balance(best.min_out, to.decimals, 8),
             duration_secs: best.total_secs,
             fee_bps: pgp_wallet_poc::swapkit::SERVICE_FEE_BPS + pgp_wallet_poc::swapkit::AFFILIATE_FEE_BPS,
         })
@@ -4225,6 +4327,7 @@ enum SwapkitDeposit {
     Zec(u64),
     Trx(u64),
     Xrp(u64),
+    Near(u128),
 }
 
 fn prepare_swapkit_deposit(from: &pgp_wallet_poc::swapkit::Asset, source: &str, deposit: &str, amount: &str) -> Result<(SwapkitDeposit, String), String> {
@@ -4294,6 +4397,15 @@ fn prepare_swapkit_deposit(from: &pgp_wallet_poc::swapkit::Asset, source: &str, 
             let plan = api::xrp_send_plan(source, deposit, amount, None).t_err()?;
             let fee = pgp_wallet_poc::xrp::format_xrp(plan.fee);
             Ok((SwapkitDeposit::Xrp(plan.fee), lang(&format!("Frais réseau : {fee} XRP"), &format!("Network fee: {fee} XRP")).to_string()))
+        }
+        // Simple virement vers le compte implicite de dépôt.
+        "near_mainnet" => {
+            let plan = api::near_send_plan(source, deposit, amount).t_err()?;
+            let (actual, held) = (pgp_wallet_poc::near::format_near_exact(plan.fee_actual), pgp_wallet_poc::near::format_near_exact(plan.fee));
+            Ok((
+                SwapkitDeposit::Near(plan.fee),
+                lang(&format!("Frais réseau : environ {actual} NEAR (jusqu'à {held} NEAR retenus un instant)"), &format!("Network fee: about {actual} NEAR (up to {held} NEAR held briefly)")).to_string(),
+            ))
         }
         other => Err(translate_error(&format!("réseau inconnu : {other}"))),
     }
@@ -4397,8 +4509,8 @@ async fn swapkit_swap_transaction(
             deposit.provider.name(),
             &from_label,
             &format!("{amount} {}", from.symbol),
-            &format!("{} {}", tokens::format_amount(deposit.expected_out, to.decimals), to.symbol),
-            &format!("{} {}", tokens::format_amount(verified.min_out, to.decimals), to.symbol),
+            &format!("{} {}", tokens::format_balance(deposit.expected_out, to.decimals, 8), to.symbol),
+            &format!("{} {}", tokens::format_balance(verified.min_out, to.decimals, 8), to.symbol),
             &deposit.address,
             &destination,
             own_destination.as_deref(),
@@ -4421,6 +4533,7 @@ async fn swapkit_swap_transaction(
             SwapkitDeposit::Zec(fee) => api::send_zec(&dir, &password, &deposit.address, &amount, fee, profile_index),
             SwapkitDeposit::Trx(fee) => api::send_trx(&dir, &password, &deposit.address, &amount, fee, profile_index),
             SwapkitDeposit::Xrp(fee) => api::send_xrp(&dir, &password, &deposit.address, &amount, None, fee, profile_index),
+            SwapkitDeposit::Near(fee) => api::send_near(&dir, &password, &deposit.address, &amount, fee, profile_index),
         };
         Ok(SwapkitSentDto {
             tx_hash: sent.t_err()?,
@@ -5476,6 +5589,10 @@ struct ProfileXrpCache(std::sync::Mutex<std::collections::HashMap<u32, String>>)
 #[derive(Default)]
 struct ProfileStellarCache(std::sync::Mutex<std::collections::HashMap<u32, String>>);
 
+/// Compte NEAR implicite de chaque profil (préparation d'un envoi avant la boîte).
+#[derive(Default)]
+struct ProfileNearCache(std::sync::Mutex<std::collections::HashMap<u32, String>>);
+
 /// Adresse Bitcoin testnet de chaque profil (bouton « Max » d'un envoi testnet).
 #[derive(Default)]
 struct ProfileBtcTestnetCache(std::sync::Mutex<std::collections::HashMap<u32, String>>);
@@ -5527,6 +5644,9 @@ fn remember_addresses(app: &tauri::AppHandle, index: u32, addresses: &api::Addre
     }
     if let Some(cache) = app.try_state::<ProfileStellarCache>() {
         cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, addresses.stellar.clone());
+    }
+    if let Some(cache) = app.try_state::<ProfileNearCache>() {
+        cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, addresses.near.clone());
     }
     if let Some(cache) = app.try_state::<ShieldedKeysCache>() {
         cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, (addresses.zcash_shielded.clone(), addresses.zcash_shielded_keys.clone()));
@@ -6309,6 +6429,7 @@ pub fn run() {
         .manage(ProfileTronCache::default())
         .manage(ProfileXrpCache::default())
         .manage(ProfileStellarCache::default())
+        .manage(ProfileNearCache::default())
         .manage(ProfileDogeCache::default())
         .manage(ProfileBtcCache::default())
         .manage(ShieldedKeysCache::default())
@@ -6577,7 +6698,7 @@ mod tests {
         }
 
         // Chaque avertissement tient sur un seul paragraphe (mise en page de la boîte).
-        for coin in ["evm", "btc", "sol", "usdc", "zec", "doge", "trx", "xrp", "xlm", "xmr", "zecs"] {
+        for coin in ["evm", "btc", "sol", "usdc", "zec", "doge", "trx", "xrp", "xlm", "near", "xmr", "zecs"] {
             for activity in [Some(Unused), Some(Empty), None] {
                 assert!(recipient_warning_lines(true, coin, activity).iter().all(|l| !l.contains('\n')));
             }
@@ -6816,6 +6937,50 @@ mod tests {
         assert_eq!(
             translate_dynamic_error("les frais Stellar ont augmenté depuis la confirmation (0.0020000 au lieu de 0.0018460 XLM) — relancez l'envoi").unwrap(),
             "Stellar fees increased since the confirmation (0.0020000 instead of 0.0018460 XLM) — start again"
+        );
+    }
+
+    /// Messages d'erreur NEAR : présents dans le code, traduits (fixes et variables).
+    #[test]
+    fn near_error_messages_have_a_translation() {
+        let sources = [include_str!("../../../core/src/near.rs"), include_str!("../../../core/src/api.rs"), include_str!("lib.rs")];
+        for message in [
+            "nœud NEAR injoignable",
+            "réponse du nœud NEAR illisible",
+            "montant NEAR illisible",
+            "adresse Ethereum : pour envoyer sur Ethereum, utilisez la carte Ethereum (pas NEAR)",
+            "adresse NEAR invalide (minuscules seulement)",
+            "adresse NEAR invalide",
+            "solde NEAR illisible",
+            "configuration NEAR illisible",
+            "prix du gaz NEAR illisible",
+            "compte NEAR pas encore activé : il doit d'abord recevoir des NEAR",
+            "envoi vers votre propre adresse NEAR",
+            "ce compte NEAR n'existe pas : vérifiez l'adresse",
+            "NEAR insuffisants pour couvrir les frais du réseau",
+            "clé d'accès NEAR illisible",
+            "bloc NEAR illisible",
+            "transaction NEAR : état inattendu",
+            "le nœud NEAR a renvoyé un autre identifiant de transaction",
+            "index NEAR injoignable",
+            "réponse de l'index NEAR illisible",
+            "frais NEAR manquants",
+        ] {
+            assert!(sources.iter().any(|s| s.contains(&format!("\"{message}\""))), "message absent du code : {message}");
+            assert!(EXACT_ERROR_TRANSLATIONS.iter().any(|(fr, _)| *fr == message), "sans traduction : {message}");
+        }
+        assert_eq!(
+            translate_dynamic_error("NEAR insuffisants : 0.5 NEAR envoyables (0.00182 NEAR restent réservés au stockage du compte), 2 NEAR + 0.0005 NEAR de frais demandés").unwrap(),
+            "insufficient NEAR: 0.5 NEAR sendable (0.00182 NEAR stay reserved for the account storage), 2 NEAR + 0.0005 NEAR in fees requested"
+        );
+        assert_eq!(
+            translate_dynamic_error("ce destinataire n'est pas encore activé : envoyez-lui au moins 0.00182 NEAR (stockage du compte)").unwrap(),
+            "this recipient is not activated yet: send it at least 0.00182 NEAR (account storage)"
+        );
+        assert_eq!(translate_dynamic_error("transaction NEAR refusée : INVALID_TRANSACTION x").unwrap(), "NEAR transaction refused: INVALID_TRANSACTION x");
+        assert_eq!(
+            translate_dynamic_error("les frais NEAR ont augmenté depuis la confirmation (0.0006 au lieu de 0.0005 NEAR) — relancez l'envoi").unwrap(),
+            "NEAR fees increased since the confirmation (0.0006 instead of 0.0005 NEAR) — start again"
         );
     }
 

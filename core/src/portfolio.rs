@@ -65,6 +65,7 @@ const DOGE_MAX: usize = 100;
 const TRON_MAX: usize = 50;
 const XRP_MAX: usize = 50;
 const XLM_MAX: usize = 50;
+const NEAR_MAX: usize = 25;
 /// Transactions confirmées par page Esplora.
 const BTC_PAGE: usize = 25;
 /// Chaque transaction Solana demande une requête de détail, que le nœud
@@ -184,6 +185,8 @@ enum Source {
     Xrp,
     /// Stellar : paiements récents, en une page (voir `XLM_MAX`).
     Xlm,
+    /// NEAR : virements récents, en une page (voir `NEAR_MAX`).
+    Near,
 }
 
 impl Spec {
@@ -196,7 +199,7 @@ impl Spec {
     fn has_history(&self) -> bool {
         match self.source {
             Source::Evm(net) | Source::Erc20(net, _) => history::evm_history_available(net),
-            Source::Btc | Source::Sol | Source::Spl(_) | Source::Xmr | Source::ZecShielded | Source::Doge | Source::Tron | Source::Trc20(_) | Source::Xrp | Source::Xlm => true,
+            Source::Btc | Source::Sol | Source::Spl(_) | Source::Xmr | Source::ZecShielded | Source::Doge | Source::Tron | Source::Trc20(_) | Source::Xrp | Source::Xlm | Source::Near => true,
             Source::Zec => false,
         }
     }
@@ -229,6 +232,7 @@ fn spec(network: &str, token: Option<&str>) -> Result<Option<Spec>> {
         "tron_mainnet" => Spec { asset: Asset::Pair("TRXUSDT"), decimals: 6, max_read: TRON_MAX, symbol: "TRX", source: Source::Tron },
         "xrp_mainnet" => Spec { asset: Asset::Pair("XRPUSDT"), decimals: 6, max_read: XRP_MAX, symbol: "XRP", source: Source::Xrp },
         "xlm_mainnet" => Spec { asset: Asset::Pair("XLMUSDT"), decimals: 7, max_read: XLM_MAX, symbol: "XLM", source: Source::Xlm },
+        "near_mainnet" => Spec { asset: Asset::Pair("NEARUSDT"), decimals: 24, max_read: NEAR_MAX, symbol: "NEAR", source: Source::Near },
         other => match wallet_flow::evm_network(other) {
             Some(net) if net.mainnet => {
                 let Some(asset) = price_history::price_asset(net.native_symbol) else { return Ok(None) };
@@ -256,6 +260,7 @@ fn fetch_balance(spec: &Spec, address: &str) -> Result<i128> {
         Source::Tron => api::get_trx_balance(address)?.into(),
         Source::Xrp => api::get_xrp_balance(address)?.into(),
         Source::Xlm => api::get_xlm_balance(address)?.into(),
+        Source::Near => i128::try_from(api::get_near_balance(address)?).map_err(|_| anyhow!("solde hors limites"))?,
         Source::Trc20(contract) => i128::try_from(crate::tron::trc20_balance(address, contract)?).map_err(|_| anyhow!("solde hors limites"))?,
         Source::Spl(mint) => api::get_spl_balance(address, &mint, solana)?.into(),
     })
@@ -314,6 +319,7 @@ fn fetch_page(spec: &Spec, address: &str, cursor: Option<&Cursor>) -> Result<Pag
         Source::Trc20(contract) => Ok(Page { entries: crate::tron::trc20_history(address, contract, TRON_MAX)?, next: None }),
         Source::Xrp => Ok(Page { entries: crate::xrp::history(address, XRP_MAX)?, next: None }),
         Source::Xlm => Ok(Page { entries: crate::stellar::history(&crate::stellar::MAINNET, address, XLM_MAX)?, next: None }),
+        Source::Near => Ok(Page { entries: crate::near::history(&crate::near::MAINNET, address, NEAR_MAX)?, next: None }),
     }
 }
 

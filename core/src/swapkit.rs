@@ -114,7 +114,7 @@ const fn asset(
     Asset { coin, network, symbol, swapkit, decimals, near, chainflip }
 }
 
-pub const ASSETS: [Asset; 18] = [
+pub const ASSETS: [Asset; 19] = [
     asset("btc", "btc_mainnet", "BTC", "BTC.BTC", 8, Some("nep141:btc.omft.near"), Some(("BTC", "Bitcoin"))),
     asset("evm", "evm_mainnet", "ETH", "ETH.ETH", 18, Some("nep141:eth.omft.near"), Some(("ETH", "Ethereum"))),
     asset("evm", "arbitrum_mainnet", "ETH", "ARB.ETH", 18, Some("nep141:arb.omft.near"), Some(("ETH", "Arbitrum"))),
@@ -181,6 +181,7 @@ pub const ASSETS: [Asset; 18] = [
     asset("zec", "zec_mainnet", "ZEC", "ZEC.ZEC", 8, Some("nep141:zec.omft.near"), None),
     asset("trx", "tron_mainnet", "TRX", "TRON.TRX", 6, Some("nep141:tron.omft.near"), None),
     asset("xrp", "xrp_mainnet", "XRP", "XRP.XRP", 6, Some("nep141:xrp.omft.near"), None),
+    asset("near", "near_mainnet", "NEAR", "NEAR.NEAR", 24, Some("nep141:wrap.near"), None),
 ];
 
 pub fn find(coin: &str, network: &str) -> Option<&'static Asset> {
@@ -695,6 +696,28 @@ mod tests {
             // Autre adresse d'arrivée que celle du canal : refusé.
             assert!(verify(&deposit, eth(), sol(), amount, EVM, "So11111111111111111111111111111111111111112").is_err());
         }
+    }
+
+    /// Réel : dépôt NEAR → ETH ouvert chez NEAR Intents (aucun fonds envoyé)
+    /// — simple virement vers un compte implicite, confirmé par NEAR.
+    /// `cargo test -- --ignored real_swapkit_near --nocapture`
+    #[test]
+    #[ignore]
+    fn real_swapkit_near_deposit() {
+        assert!(enabled(), "clé SwapKit absente de partner-keys.env");
+        let near = find("near", "near_mainnet").unwrap();
+        let source = "5510e2b44cae6eb807e3e0e45d579dda058c274abcba15e5cb84636f5d1ee412";
+        let amount = 10_000_000_000_000_000_000_000_000;
+        let routes = quote(near, eth(), amount, source, EVM).unwrap();
+        let route = routes.iter().find(|r| r.provider == Provider::Near).expect("pas de route NEAR");
+        let deposit = open_deposit(route, near, eth(), source, EVM).unwrap();
+        crate::near::parse_account(&deposit.address).unwrap();
+        let verified = verify(&deposit, near, eth(), amount, source, EVM).unwrap();
+        println!("NEAR → ETH : dépôt {} ; minimum {} ETH ; commissions {} pb", deposit.address, verified.min_out as f64 / 1e18, verified.fees_bps);
+        assert_eq!(status(Provider::Near, &deposit.channel_id, &deposit.address).unwrap(), SwapState::AwaitingDeposit);
+        // Sens inverse : arrivée sur le compte implicite.
+        let back = quote(eth(), near, 50_000_000_000_000_000, EVM, source).unwrap();
+        assert!(back.iter().any(|r| r.provider == Provider::Near));
     }
 
     /// Réel : dépôt XRP → ETH ouvert chez NEAR Intents (aucun fonds envoyé) —
