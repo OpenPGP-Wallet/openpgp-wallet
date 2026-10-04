@@ -157,6 +157,6 @@ qui la met en œuvre. **Aucune de ces protections n'a encore été vérifiée pa
 2. Audit de sécurité par un prestataire indépendant.
 3. Chiffrement des fichiers d'état locaux (Zcash protégé, Monero, carnet d'adresses) par une clé dérivée du
    coffre, pour la confidentialité face à A1.
-4. Tests en conditions réelles : dépenses Monero, Zcash protégé et Dogecoin, échanges depuis BTC/ZEC, restauration depuis
+4. Tests en conditions réelles : dépenses Monero et Zcash protégé, échanges depuis BTC/ZEC, restauration depuis
    clé USB, Ledger/Trezor sur de vrais appareils, signatures WalletConnect.
 5. Compilation reproductible et vérification des mises à jour.
