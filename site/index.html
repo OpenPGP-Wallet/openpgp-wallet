@@ -3,8 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>OpenPGP Wallet — Aperçu interactif (privé)</title>
-<meta name="robots" content="noindex, nofollow">
+<title>OpenPGP Wallet — portefeuille crypto sans phrase de récupération</title>
+<meta name="description" content="OpenPGP Wallet : portefeuille crypto non-custodial multi-réseau pour Windows, sans phrase de récupération à noter. Projet en cours de développement.">
+<link rel="alternate" hreflang="fr" href="index.html">
+<link rel="alternate" hreflang="en" href="en.html">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -80,6 +82,8 @@
   .btn-ghost { border: 1px solid var(--line-2); color: var(--text); }
   .btn-ghost:hover { border-color: #3d4450; background: rgba(255, 255, 255, 0.03); }
   .btn-sm { height: 40px; padding: 0 16px; font-size: 15px; border-radius: 10px; }
+  .lang-switch { height: 40px; padding: 0 14px; display: inline-flex; align-items: center; border: 1px solid var(--line-2); border-radius: 10px; color: var(--muted); font-weight: 600; font-size: 14px; letter-spacing: 0.04em; transition: color 0.2s, border-color 0.2s; }
+  .lang-switch:hover { color: var(--text); border-color: #3d4450; }
   .icon-btn { width: 40px; height: 40px; display: inline-grid; place-items: center; border: 1px solid var(--line-2); border-radius: 10px; color: var(--muted); transition: color 0.2s, border-color 0.2s; flex-shrink: 0; }
   .icon-btn:hover { color: var(--text); border-color: #3d4450; }
 
@@ -289,6 +293,12 @@
     .stat + .stat { border-left: 0; border-top: 1px solid var(--line); }
     .panel { padding: 24px; }
     .btn { height: 50px; font-size: 16px; }
+    /* Rien ne dépasse de l'écran : sur-titres sur plusieurs lignes, pastille
+       d'état plus compacte ; le choix de langue reste visible. */
+    .eyebrow { flex-wrap: wrap; font-size: 12px; letter-spacing: 0.1em; gap: 8px; }
+    .lock-status { max-width: 100%; padding: 8px 14px; font-size: 13px; }
+    .lang-switch { display: inline-flex; height: 36px; padding: 0 12px; }
+    html, body { overflow-x: hidden; }
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -317,14 +327,8 @@
     <a href="#sec-howitworks">Comment ça marche</a>
   </nav>
   <div class="nav-actions">
-    <span class="badge-private">APERÇU PRIVÉ<span class="badge-extra"> · NON PUBLIC</span></span>
-    <a class="icon-btn" href="https://github.com/KHADEVS/pgp-wallet-poc" aria-label="Voir le code sur GitHub">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2C6.48 2 2 6.58 2 12.25c0 4.53 2.87 8.37 6.84 9.73.5.1.68-.22.68-.49 0-.24-.01-.87-.01-1.71-2.78.62-3.37-1.37-3.37-1.37-.45-1.18-1.11-1.49-1.11-1.49-.91-.64.07-.63.07-.63 1 .07 1.53 1.06 1.53 1.06.89 1.56 2.34 1.11 2.91.85.09-.66.35-1.11.63-1.37-2.22-.26-4.56-1.14-4.56-5.07 0-1.12.39-2.03 1.03-2.75-.1-.26-.45-1.31.1-2.72 0 0 .84-.28 2.75 1.05a9.32 9.32 0 0 1 5 0c1.91-1.33 2.75-1.05 2.75-1.05.55 1.41.2 2.46.1 2.72.64.72 1.03 1.63 1.03 2.75 0 3.94-2.34 4.8-4.57 5.06.36.32.68.95.68 1.92 0 1.39-.01 2.51-.01 2.85 0 .27.18.6.69.49A10.26 10.26 0 0 0 22 12.25C22 6.58 17.52 2 12 2Z"/></svg>
-    </a>
-    <a class="btn btn-primary btn-sm" href="https://github.com/KHADEVS/pgp-wallet-poc/releases/latest/download/OpenPGP-Wallet.exe">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>
-      Télécharger
-    </a>
+    <span class="badge-private">EN DÉVELOPPEMENT<span class="badge-extra"> · PREUVE DE CONCEPT</span></span>
+    <a class="lang-switch" href="en.html" hreflang="en" lang="en" aria-label="English version">EN</a>
   </div>
 </header>
 
@@ -353,11 +357,8 @@
           <div class="pgp-armor" aria-hidden="true">-----END PGP MESSAGE-----</div>
         </div>
         <div class="cta">
-          <a class="btn btn-primary" href="https://github.com/KHADEVS/pgp-wallet-poc/releases/latest/download/OpenPGP-Wallet.exe">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>
-            Télécharger pour Windows
-          </a>
-          <a class="btn btn-ghost" href="#sec-howitworks">Comment ça marche</a>
+          <a class="btn btn-primary" href="#sec-howitworks">Comment ça marche</a>
+          <a class="btn btn-ghost" href="#sec-status">Où en est le projet</a>
         </div>
       </div>
 
@@ -395,7 +396,7 @@
     <div class="strip-inner">
       <div class="stat"><div class="stat-k">0</div><div class="stat-l">phrase de récupération à noter, à voir ou à saisir</div></div>
       <div class="stat"><div class="stat-k">2 sur 3</div><div class="stat-l">parts de sauvegarde Shamir suffisent pour tout restaurer</div></div>
-      <div class="stat"><div class="stat-k">10</div><div class="stat-l">réseaux, dérivés d'une seule clé maîtresse</div></div>
+      <div class="stat"><div class="stat-k">12</div><div class="stat-l">réseaux, dérivés d'une seule clé maîtresse</div></div>
       <div class="stat"><div class="stat-k">OS</div><div class="stat-l">chaque envoi confirmé par Windows, pas par une page web</div></div>
     </div>
   </section>
@@ -435,7 +436,7 @@
       <div class="feature-copy">
         <span class="eyebrow"><span class="num">02</span> Multi-réseau</span>
         <h2>Une seule clé, toutes vos adresses.</h2>
-        <p class="lead">Bitcoin, Ethereum et ses réseaux Arbitrum et Base, Solana, BNB Chain, Avalanche, Polygon, HyperEVM et Zcash — avec leurs jetons (USDC, USDT, LINK…), tous dérivés de la même entropie maître. Un tableau de bord, un seul secret à protéger.</p>
+        <p class="lead">Bitcoin, Ethereum et ses réseaux Arbitrum et Base, Solana, BNB Chain, Avalanche, Polygon, HyperEVM, Zcash (transparent et protégé), Monero et Dogecoin — avec leurs jetons (USDC, USDT, LINK…), tous dérivés de la même entropie maître. Un tableau de bord, un seul secret à protéger.</p>
       </div>
       <div class="feature-visual">
         <div class="panel list">
@@ -446,6 +447,8 @@
             <div class="coin-row reveal" style="--d: 0.35s"><img class="coin-logo sol" src="assets/sol.png" alt="" width="36" height="36"><div><div class="coin-name">Solana</div><div class="coin-net">Solana</div></div><span class="coin-amount">12.4 SOL</span></div>
             <div class="coin-row reveal" style="--d: 0.50s"><img class="coin-logo" src="assets/usdc.png" alt="" width="36" height="36"><div><div class="coin-name">USDC</div><div class="coin-net">Base</div></div><span class="coin-amount">250.00 USDC</span></div>
             <div class="coin-row reveal" style="--d: 0.65s"><img class="coin-logo" src="assets/zec.png" alt="" width="36" height="36"><div><div class="coin-name">Zcash</div><div class="coin-net">Zcash</div></div><span class="coin-amount">1.20 ZEC</span></div>
+            <div class="coin-row reveal" style="--d: 0.80s"><img class="coin-logo" src="assets/xmr.png" alt="" width="36" height="36"><div><div class="coin-name">Monero</div><div class="coin-net">Monero</div></div><span class="coin-amount">3.50 XMR</span></div>
+            <div class="coin-row reveal" style="--d: 0.95s"><img class="coin-logo" src="assets/doge.png" alt="" width="36" height="36"><div><div class="coin-name">Dogecoin</div><div class="coin-net">Dogecoin</div></div><span class="coin-amount">420.00 DOGE</span></div>
           </div>
         </div>
       </div>
@@ -539,6 +542,8 @@
           <div class="sec-item reveal" style="--d: 0.35s"><span class="sec-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>Checksum EIP-55 contre une adresse Ethereum mal recopiée</div>
           <div class="sec-item reveal" style="--d: 0.50s"><span class="sec-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>Liste blanche de domaines pour tout lien ouvert hors de l'app</div>
           <div class="sec-item reveal" style="--d: 0.65s"><span class="sec-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>Verrouillage automatique après 10 minutes d'inactivité</div>
+          <div class="sec-item reveal" style="--d: 0.80s"><span class="sec-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>Alerte quand une adresse imite celle d'un contact (empoisonnement d'adresse)</div>
+          <div class="sec-item reveal" style="--d: 0.95s"><span class="sec-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>5 secondes pour annuler un envoi après sa confirmation, avant toute signature</div>
         </div>
       </div>
     </div>
@@ -551,8 +556,9 @@
       <h2>Preuve de concept fonctionnelle. Pas encore prête pour de vrais fonds d'un inconnu.</h2>
       <div class="roadmap">
         <div class="step reveal" style="--d: 0.05s"><span class="step-badge done">✓</span>Phase 1 — PoC cryptographique CLI, terminée</div>
-        <div class="step reveal" style="--d: 0.25s"><span class="step-badge doing">●</span>Phase 2 — Interface graphique, en cours</div>
+        <div class="step reveal" style="--d: 0.25s"><span class="step-badge doing">●</span>Phase 2 — Application Windows fonctionnelle (envois, échanges, Ledger et Trezor, WalletConnect, Monero, Zcash protégé), en cours de finition</div>
         <div class="step reveal" style="--d: 0.45s"><span class="step-badge todo">○</span>Signature de code, publication open-source et audit indépendant — aucun des trois n'est encore fait</div>
+        <div class="step reveal" style="--d: 0.65s"><span class="step-badge todo">○</span>Version téléchargeable publique — à venir, pas avant ces trois étapes</div>
       </div>
     </div>
   </section>
@@ -584,11 +590,11 @@
         <div class="group-title">B — Dérivation et signature</div>
         <div class="item">
           <h3>4. Dérivation multi-réseaux (HD)</h3>
-          <p>Depuis la même entropie maître : Ethereum et Bitcoin via BIP32/secp256k1 (<code>m/44'/60'/0'/0/i</code> et <code>m/44'/0'/0'/0/i</code>), Solana via SLIP-0010/ed25519 avec un chemin entièrement durci (<code>m/44'/501'/i'/0'</code>), Zcash transparent via <code>m/44'/133'/0'/0/i</code>. Une même adresse sert sur tous les réseaux compatibles Ethereum (Arbitrum, Base, BNB Chain, Avalanche, Polygon, HyperEVM). Un "profil" supplémentaire n'est qu'un index de dérivation de plus sur la même entropie — aucun changement du modèle de sécurité entre 1 profil et 50.</p>
+          <p>Depuis la même entropie maître : Ethereum et Bitcoin via BIP32/secp256k1 (<code>m/44'/60'/0'/0/i</code> et <code>m/44'/0'/0'/0/i</code>), Solana via SLIP-0010/ed25519 avec un chemin entièrement durci (<code>m/44'/501'/i'/0'</code>), Zcash transparent via <code>m/44'/133'/0'/0/i</code> et protégé (Orchard) via ZIP-32, Dogecoin via <code>m/44'/3'/0'/0/i</code>, Monero selon le schéma de Ledger (<code>m/44'/128'/i'/0/0</code>). Une même adresse sert sur tous les réseaux compatibles Ethereum (Arbitrum, Base, BNB Chain, Avalanche, Polygon, HyperEVM). Un "profil" supplémentaire n'est qu'un index de dérivation de plus sur la même entropie — aucun changement du modèle de sécurité entre 1 profil et 50.</p>
         </div>
         <div class="item">
           <h3>5. Construction et signature des transactions</h3>
-          <p>Construites "from scratch" pour Bitcoin, les réseaux compatibles Ethereum et Solana, sans SDK lourd type <code>rust-bitcoin</code> ou <code>solana-sdk</code> ; Zcash passe par la bibliothèque officielle de ses développeurs (librustzcash). Nonces déterministes (RFC 6979) pour les signatures ECDSA, empêchant l'extraction de clé privée par réutilisation de nonce — la faille qui a coûté sa clé racine à la PlayStation 3. Signatures vérifiées en interne contre une normalisation "low-S" par une suite de 2000 tests.</p>
+          <p>Construites "from scratch" pour Bitcoin, Dogecoin, les réseaux compatibles Ethereum et Solana, sans SDK lourd type <code>rust-bitcoin</code> ou <code>solana-sdk</code> — pour Dogecoin, chaque montant dépensé est en plus revérifié dans sa transaction d'origine ; Zcash passe par la bibliothèque officielle de ses développeurs (librustzcash), Monero par monero-oxide. Nonces déterministes (RFC 6979) pour les signatures ECDSA, empêchant l'extraction de clé privée par réutilisation de nonce — la faille qui a coûté sa clé racine à la PlayStation 3. Signatures vérifiées en interne contre une normalisation "low-S" par une suite de 2000 tests.</p>
         </div>
       </div>
 
@@ -624,7 +630,7 @@
         </div>
         <div class="item">
           <h3>12. Confirmation native avant tout envoi</h3>
-          <p>Réseau, destinataire, montant, frais et profil source s'affichent dans une boîte de dialogue de l'OS, jamais une modale HTML — un frontend compromis ne peut ni la falsifier ni la faire disparaître silencieusement.</p>
+          <p>Réseau, destinataire, montant, frais et profil source s'affichent dans une boîte de dialogue de l'OS, jamais une modale HTML — un frontend compromis ne peut ni la falsifier ni la faire disparaître silencieusement. Elle est suivie d'un délai de 5 secondes pour annuler, imposé côté Rust, avant toute signature.</p>
         </div>
       </div>
 
@@ -646,7 +652,7 @@
 
 <footer class="footer">
   <span class="brand" style="font-size: 17px;">OpenPGP Wallet</span>
-  <span>Document interne, aperçu privé. Ne pas partager publiquement.</span>
+  <span>Projet en cours de développement — preuve de concept, non auditée. N'y confiez pas de fonds importants. · <a href="en.html" hreflang="en" lang="en">English</a></span>
 </footer>
 
 <script>
