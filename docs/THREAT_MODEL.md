@@ -10,8 +10,8 @@ qui la met en œuvre. **Aucune de ces protections n'a encore été vérifiée pa
 - Application de bureau Tauri v2 pour Windows : cœur Rust (`core/`), pont de commandes (`app/src-tauri`),
   interface web locale (`app/src`).
 - Portefeuille non dépositaire multi-réseaux : Bitcoin, réseaux EVM (Ethereum, L2, BNB Chain, Avalanche,
-  Polygon, HyperEVM), Solana, Zcash (transparent et protégé Orchard), Monero, Dogecoin, jetons du registre
-  (`tokens.rs`).
+  Polygon, HyperEVM), Solana, Zcash (transparent et protégé Orchard), Monero, Dogecoin, Tron (TRX et USDT
+  TRC-20), jetons du registre (`tokens.rs`).
 - Hors périmètre : la version iOS (non démarrée), les services tiers eux-mêmes (nœuds, agrégateurs d'échange),
   le système d'exploitation et le matériel.
 
@@ -122,6 +122,10 @@ qui la met en œuvre. **Aucune de ces protections n'a encore été vérifiée pa
   mentirait sur la valeur d'une sortie ferait partir la différence en frais. Chaque entrée est relue dans sa
   transaction d'origine brute, dont le hash recalculé doit égaler l'identifiant : montant et script vérifiés
   avant signature (`doge::verify_inputs`) ; frais bornés (0,01 à 5 DOGE/ko), affichés puis jamais dépassés.
+- **Tron** : transactions encodées et signées localement (encodage comparé octet pour octet à celui d'un nœud
+  java-tron) ; un transfert de jeton TRC-20 est d'abord SIMULÉ depuis le compte de l'utilisateur et doit émettre
+  exactement le transfert voulu (émetteur, destinataire, montant) ; frais maximum affichés, `fee_limit` signé et
+  plafonné (100 TRX).
 - *Risques résiduels* : un nœud malveillant peut afficher de faux soldes ou un faux historique (portefeuille
   léger) ; un nœud Monero ou Zcash malveillant peut affaiblir la confidentialité d'un envoi ; les nœuds publics
   voient l'adresse IP et les adresses interrogées ; un agrégateur peut proposer un mauvais cours (le minimum de
