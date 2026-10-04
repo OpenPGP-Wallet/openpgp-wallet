@@ -260,6 +260,25 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("index NEAR injoignable", "NEAR index unreachable"),
     ("réponse de l'index NEAR illisible", "unreadable NEAR index response"),
     ("frais NEAR manquants", "NEAR fee missing"),
+    // Cardano (core/src/cardano.rs, core/src/api.rs)
+    ("service Cardano injoignable", "Cardano service unreachable"),
+    ("réponse du service Cardano illisible", "unreadable Cardano service response"),
+    ("montant Cardano illisible", "unreadable Cardano amount"),
+    ("adresse de mise en jeu Cardano (stake1…), pas une adresse de paiement", "Cardano staking address (stake1…), not a payment address"),
+    ("adresse Cardano d'un réseau de test — refusée", "Cardano address from a test network — refused"),
+    ("ancienne adresse Cardano (Byron) non prise en charge : demandez une adresse addr1…", "old Cardano address (Byron) not supported: ask for an addr1… address"),
+    ("adresse Cardano invalide", "invalid Cardano address"),
+    ("adresse Cardano d'un autre réseau — refusée", "Cardano address from another network — refused"),
+    ("adresse de contrat Cardano (script) : envoi refusé, les fonds pourraient y rester bloqués", "Cardano contract (script) address: transfer refused, funds could stay locked there"),
+    ("paramètres Cardano illisibles", "unreadable Cardano parameters"),
+    ("état du réseau Cardano illisible", "unreadable Cardano network state"),
+    ("sortie Cardano illisible", "unreadable Cardano output"),
+    ("envoi vers votre propre adresse Cardano", "sending to your own Cardano address"),
+    ("aucun ADA envoyable sur cette adresse", "no sendable ADA on this address"),
+    ("ADA insuffisants pour couvrir les frais et le minimum d'une sortie", "not enough ADA to cover the fee and the minimum of an output"),
+    ("les frais Cardano ont changé depuis la confirmation — relancez l'envoi", "Cardano fees changed since the confirmation — start again"),
+    ("le service Cardano a renvoyé un autre identifiant de transaction", "the Cardano service returned another transaction ID"),
+    ("frais Cardano manquants", "Cardano fee missing"),
     ("montant nul", "zero amount"),
     ("montant hors limites", "amount out of range"),
     // SwapKit (core/src/swapkit.rs)
@@ -882,6 +901,29 @@ fn translate_dynamic_error(msg: &str) -> Option<String> {
     if let Some(detail) = msg.strip_prefix("les frais NEAR ont augmenté depuis la confirmation (").and_then(|rest| rest.strip_suffix(") — relancez l'envoi")) {
         return Some(format!("NEAR fees increased since the confirmation ({}) — start again", detail.replace(" au lieu de ", " instead of ")));
     }
+    if let Some(rest) = msg.strip_prefix("ADA insuffisants : ") {
+        return Some(format!(
+            "insufficient ADA: {}",
+            rest.replace(" ADA dépensables, ", " ADA spendable, ")
+                .replace(" ADA + frais demandés, et la monnaie rendue doit porter au moins ", " ADA + fees requested, and the change must carry at least ")
+                .replace(" ADA — envoyez le maximum ou un montant plus petit", " ADA — send the maximum or a smaller amount")
+        ));
+    }
+    if let Some(rest) = msg.strip_prefix("montant trop petit : chaque envoi Cardano porte au moins ").and_then(|r| r.strip_suffix(" ADA (minimum du réseau)")) {
+        return Some(format!("amount too small: every Cardano transfer carries at least {rest} ADA (network minimum)"));
+    }
+    if let Some(rest) = msg.strip_prefix("frais Cardano anormalement élevés (").and_then(|r| r.strip_suffix(" ADA) — envoi refusé")) {
+        return Some(format!("abnormally high Cardano fee ({rest} ADA) — transfer refused"));
+    }
+    if let Some(rest) = msg.strip_prefix("transaction Cardano refusée : ") {
+        return Some(format!("Cardano transaction refused: {rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("service Cardano : réponse ") {
+        return Some(format!("Cardano service: response {rest}"));
+    }
+    if let Some(detail) = msg.strip_prefix("les frais Cardano ont augmenté depuis la confirmation (").and_then(|rest| rest.strip_suffix(") — relancez l'envoi")) {
+        return Some(format!("Cardano fees increased since the confirmation ({}) — start again", detail.replace(" au lieu de ", " instead of ")));
+    }
     if let Some(rest) = msg.strip_prefix("DOGE insuffisants : ") {
         return Some(format!(
             "insufficient DOGE: {}",
@@ -1270,6 +1312,7 @@ struct AddressesDto {
     xrp: String,
     stellar: String,
     near: String,
+    cardano: String,
 }
 
 impl From<api::Addresses> for AddressesDto {
@@ -1287,6 +1330,7 @@ impl From<api::Addresses> for AddressesDto {
             xrp: a.xrp,
             stellar: a.stellar,
             near: a.near,
+            cardano: a.cardano,
         }
     }
 }
@@ -1394,7 +1438,7 @@ fn save_bytes_with_dialog(suggested_name: String, content_b64: String, app: taur
 /// aurait laissé un frontend compromis ouvrir n'importe quelle page — un vecteur
 /// de phishing simple, ouvert sans aucun bénéfice fonctionnel puisqu'aucun appel
 /// légitime de cette commande ne cible jamais autre chose que ces domaines.
-const ALLOWED_EXTERNAL_LINK_PREFIXES: [&str; 11] = [
+const ALLOWED_EXTERNAL_LINK_PREFIXES: [&str; 12] = [
     "https://explorer.solana.com/",
     "https://blockstream.info/",
     "https://explorer.cow.fi/",
@@ -1406,6 +1450,7 @@ const ALLOWED_EXTERNAL_LINK_PREFIXES: [&str; 11] = [
     "https://livenet.xrpl.org/",
     "https://stellar.expert/explorer/public/",
     "https://nearblocks.io/txns/",
+    "https://cardanoscan.io/transaction/",
 ];
 
 /// Lien vers un explorateur connu de l'app : Solana, Bitcoin, ou l'explorateur
@@ -2115,6 +2160,7 @@ fn forget_session(app: &tauri::AppHandle) {
     app.state::<ProfileXrpCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<ProfileStellarCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<ProfileNearCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    app.state::<ProfileCardanoCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<ShieldedKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<MoneroKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     IS_AFFILIATE_WALLET.store(false, Ordering::Relaxed);
@@ -2173,6 +2219,7 @@ async fn get_balance(network: String, address: String, app: tauri::AppHandle) ->
             "xrp_mainnet" => Ok(pgp_wallet_poc::xrp::format_xrp(api::get_xrp_balance(&address).t_err()?)),
             "xlm_mainnet" => Ok(pgp_wallet_poc::stellar::format_xlm(api::get_xlm_balance(&address).t_err()?)),
             "near_mainnet" => Ok(pgp_wallet_poc::near::format_near(api::get_near_balance(&address).t_err()?)),
+            "ada_mainnet" => Ok(pgp_wallet_poc::cardano::format_ada(api::get_ada_balance(&address).t_err()?)),
             // Base locale (synchronisation de fond) : dépensable + en attente.
             "zec_shielded" => {
                 let balance = api::zec_shielded_balance(&data_dir(&app)?, shielded_profile(&app, &address)?).t_err()?;
@@ -2305,6 +2352,8 @@ async fn has_pending_tx(network: String, address: String, app: tauri::AppHandle)
             "tron_mainnet" => Ok(false),
             // Registre validé toutes les 3 à 5 s : idem.
             "xrp_mainnet" | "xlm_mainnet" | "near_mainnet" => Ok(false),
+            // Un bloc toutes les 20 s ; l'envoi apparaît à sa confirmation.
+            "ada_mainnet" => Ok(false),
             "xmr_mainnet" => api::has_pending_xmr(&data_dir(&app)?, monero_profile(&app, &address)?).t_err(),
             other => Err(translate_error(&format!("réseau inconnu : {other}"))),
         }
@@ -2513,6 +2562,12 @@ async fn get_tx_history(network: String, address: String, app: tauri::AppHandle)
             Some(price_history::Asset::Pair("NEARUSDT")),
             24,
             |id| format!("https://nearblocks.io/txns/{id}"),
+        )),
+        "ada_mainnet" => HistoryDto::read(history_dtos(
+            || pgp_wallet_poc::cardano::history(&address, HISTORY_LIMIT as usize),
+            Some(price_history::Asset::Pair("ADAUSDT")),
+            6,
+            |id| format!("https://cardanoscan.io/transaction/{id}"),
         )),
         "sol_devnet" | "sol_mainnet" => {
             let net = sol_network(&network)?;
@@ -2795,6 +2850,7 @@ fn network_label(network: &str) -> String {
         "xrp_mainnet" => lang("XRP Ledger MAINNET — fonds réels", "XRP Ledger MAINNET — real funds").to_string(),
         "xlm_mainnet" => lang("Stellar MAINNET — fonds réels", "Stellar MAINNET — real funds").to_string(),
         "near_mainnet" => lang("NEAR MAINNET — fonds réels", "NEAR MAINNET — real funds").to_string(),
+        "ada_mainnet" => lang("Cardano MAINNET — fonds réels", "Cardano MAINNET — real funds").to_string(),
         "xmr_mainnet" => lang("Monero MAINNET — fonds réels", "Monero MAINNET — real funds").to_string(),
         "zec_shielded" => lang("Zcash MAINNET — fonds protégés", "Zcash MAINNET — shielded funds").to_string(),
         other => match wallet_flow::evm_network(other) {
@@ -2818,6 +2874,7 @@ fn network_unit(network: &str) -> &'static str {
         "xrp_mainnet" => "XRP",
         "xlm_mainnet" => "XLM",
         "near_mainnet" => "NEAR",
+        "ada_mainnet" => "ADA",
         other => wallet_flow::evm_network(other).map(|n| n.native_symbol).unwrap_or(""),
     }
 }
@@ -2935,6 +2992,7 @@ fn recipient_warning_lines(first_send: bool, coin: &str, activity: Option<api::R
         "xrp" => ("aucun XRP", "no XRP"),
         "xlm" => ("aucun XLM", "no XLM"),
         "near" => ("aucun NEAR", "no NEAR"),
+        "ada" => ("aucun ADA", "no ADA"),
         "sol" => ("aucun SOL", "no SOL"),
         _ => ("aucun fonds", "no funds"),
     };
@@ -3016,6 +3074,7 @@ fn own_profile_label(app: &tauri::AppHandle, dir: &std::path::Path, network: &st
         "xrp_mainnet" => in_cache(&app.state::<ProfileXrpCache>().0, exact),
         "xlm_mainnet" => in_cache(&app.state::<ProfileStellarCache>().0, exact),
         "near_mainnet" => in_cache(&app.state::<ProfileNearCache>().0, exact),
+        "ada_mainnet" => in_cache(&app.state::<ProfileCardanoCache>().0, exact),
         "xmr_mainnet" => {
             app.state::<MoneroKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).iter().find(|(_, (address, _))| address == to).map(|(index, _)| *index)
         }
@@ -3107,6 +3166,7 @@ async fn send_transaction(
         let from_xrp = app.state::<ProfileXrpCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).cloned();
         let from_stellar = app.state::<ProfileStellarCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).cloned();
         let from_near = app.state::<ProfileNearCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).cloned();
+        let from_cardano = app.state::<ProfileCardanoCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).cloned();
         let from = SendFrom {
             evm: from_evm.as_deref(),
             sol: from_sol.as_deref(),
@@ -3118,6 +3178,7 @@ async fn send_transaction(
             xrp: from_xrp.as_deref(),
             stellar: from_stellar.as_deref(),
             near: from_near.as_deref(),
+            cardano: from_cardano.as_deref(),
         };
         let mut send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &from_label, None, from, max.unwrap_or(false), note)?;
         send_grace_period(&app)?;
@@ -3160,6 +3221,10 @@ async fn send_transaction(
             "near_mainnet" => {
                 let shown_fee = send.near_fee.ok_or_else(|| translate_error("frais NEAR manquants"))?;
                 api::send_near(&dir, &password, &send.to, &send.amount, shown_fee, profile_index).t_err()
+            }
+            "ada_mainnet" => {
+                let shown_fee = send.ada_fee.ok_or_else(|| translate_error("frais Cardano manquants"))?;
+                api::send_ada(&dir, &password, &send.to, &send.amount, shown_fee, profile_index).t_err()
             }
             // Exactement l'envoi préparé et affiché (sorties, leurres, frais).
             "xmr_mainnet" => match send.xmr_plan.take() {
@@ -3265,6 +3330,7 @@ async fn max_send_amount(network: String, token: Option<String>, profile_index: 
             "xrp_mainnet" => api::xrp_max(&cached(&app.state::<ProfileXrpCache>().0)?).t_err(),
             "xlm_mainnet" => api::xlm_max(&cached(&app.state::<ProfileStellarCache>().0)?).t_err(),
             "near_mainnet" => api::near_max(&cached(&app.state::<ProfileNearCache>().0)?, None).t_err(),
+            "ada_mainnet" => api::ada_max(&cached(&app.state::<ProfileCardanoCache>().0)?, None).t_err(),
             "xmr_mainnet" => {
                 let keys = app.state::<MoneroKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).map(|(_, keys)| keys.clone()).ok_or_else(unknown)?;
                 Ok(pgp_wallet_poc::monero::format_xmr(api::xmr_send_plan_max(&dir, &keys, None).t_err()?.amount))
@@ -3317,6 +3383,8 @@ struct ConfirmedSend {
     xlm_fee: Option<u32>,
     /// Frais NEAR maximum (retenue) affichés (plafond à l'envoi).
     near_fee: Option<u128>,
+    /// Frais Cardano affichés (plafond à l'envoi).
+    ada_fee: Option<u64>,
     /// Tag (XRP) ou mémo (Stellar) affiché dans la boîte, signé tel quel.
     note: Option<DestinationNote>,
 }
@@ -3361,6 +3429,7 @@ struct SendFrom<'a> {
     xrp: Option<&'a str>,
     stellar: Option<&'a str>,
     near: Option<&'a str>,
+    cardano: Option<&'a str>,
 }
 
 /// Validation, avertissements et boîte de confirmation native, communs aux
@@ -3396,6 +3465,7 @@ fn confirm_send(
         "xrp_mainnet" => "xrp",
         "xlm_mainnet" => "xlm",
         "near_mainnet" => "near",
+        "ada_mainnet" => "ada",
         other => return Err(translate_error(&format!("réseau inconnu : {other}"))),
     };
     match (&note, coin) {
@@ -3436,6 +3506,7 @@ fn confirm_send(
             "xrp" => api::xrp_max(from.xrp.ok_or_else(unknown_profile)?).t_err()?,
             "xlm" => api::xlm_max(from.stellar.ok_or_else(unknown_profile)?).t_err()?,
             "near" => api::near_max(from.near.ok_or_else(unknown_profile)?, Some(&to)).t_err()?,
+            "ada" => api::ada_max(from.cardano.ok_or_else(unknown_profile)?, Some(&to)).t_err()?,
             _ => {
                 let plan = api::xmr_send_plan_max(dir, from.xmr.ok_or_else(unknown_profile)?, Some(&to)).t_err()?;
                 let amount = pgp_wallet_poc::monero::format_xmr(plan.amount);
@@ -3453,6 +3524,7 @@ fn confirm_send(
         "xrp" => api::canonical_xrp_amount(&amount).t_err()?,
         "xlm" => api::canonical_xlm_amount(&amount).t_err()?,
         "near" => api::canonical_near_amount(&amount).t_err()?,
+        "ada" => api::canonical_ada_amount(&amount).t_err()?,
         "xmr" => api::canonical_xmr_amount(&amount).t_err()?,
         _ => api::canonical_amount(coin, &amount).t_err()?,
     };
@@ -3525,6 +3597,12 @@ fn confirm_send(
         "near" => Some(api::near_send_plan(from.near.ok_or_else(unknown_profile)?, &to, &amount).t_err()?),
         _ => None,
     };
+    // Cardano : sorties choisies (ADA seul), frais exacts, monnaie rendue et
+    // minimum d'une sortie calculés MAINTENANT, affichés, jamais dépassés.
+    let ada_plan = match coin {
+        "ada" => Some(api::ada_send_plan(from.cardano.ok_or_else(unknown_profile)?, &to, &amount).t_err()?),
+        _ => None,
+    };
     // Monero : destinataire vérifié, sorties choisies, leurres tirés et frais
     // calculés MAINTENANT (clés de visualisation, sans la seed) ; c'est cet
     // envoi-là, inchangé, qui sera signé.
@@ -3556,6 +3634,7 @@ fn confirm_send(
         "xrp" => api::xrp_recipient_activity(&to).ok(),
         "xlm" => api::xlm_recipient_activity(&to).ok(),
         "near" => api::near_recipient_activity(&to).ok(),
+        "ada" => api::ada_recipient_activity(&to).ok(),
         // Adresse vérifiée par la préparation ; aucune activité lisible
         // (adresses et montants invisibles sur la chaîne Monero).
         "xmr" => None,
@@ -3637,6 +3716,14 @@ Change returned to your address: {change} ZEC")));
             }
             line
         }),
+        "ada" => ada_plan.as_ref().map(|plan| {
+            let mut line = format!("{} : {} ADA", lang("Frais", "Fee"), pgp_wallet_poc::cardano::format_ada(plan.fee));
+            if plan.change > 0 {
+                let change = pgp_wallet_poc::cardano::format_ada(plan.change);
+                line.push_str(lang(&format!("\nMonnaie rendue à votre adresse : {change} ADA"), &format!("\nChange returned to your address: {change} ADA")));
+            }
+            line
+        }),
         "xmr" => xmr_plan.as_ref().map(|plan| {
             let mut line = format!("{} : {} XMR", lang("Frais", "Fee"), pgp_wallet_poc::monero::format_xmr(plan.fee));
             if plan.change > 0 {
@@ -3688,6 +3775,7 @@ Change returned to your address: {change} XMR (spendable after 10 confirmations,
         xrp_fee: xrp_plan.map(|plan| plan.fee),
         xlm_fee: xlm_plan.map(|plan| plan.fee),
         near_fee: near_plan.map(|plan| plan.fee),
+        ada_fee: ada_plan.map(|plan| plan.fee),
         note,
     })
 }
@@ -4268,6 +4356,7 @@ fn own_address_on(app: &tauri::AppHandle, network: &str, profile_index: u32) -> 
         "tron_mainnet" => from_cache(&app.state::<ProfileTronCache>().0),
         "xrp_mainnet" => from_cache(&app.state::<ProfileXrpCache>().0),
         "near_mainnet" => from_cache(&app.state::<ProfileNearCache>().0),
+        "ada_mainnet" => from_cache(&app.state::<ProfileCardanoCache>().0),
         other => Err(translate_error(&format!("réseau inconnu : {other}"))),
     }
 }
@@ -4328,6 +4417,7 @@ enum SwapkitDeposit {
     Trx(u64),
     Xrp(u64),
     Near(u128),
+    Ada(u64),
 }
 
 fn prepare_swapkit_deposit(from: &pgp_wallet_poc::swapkit::Asset, source: &str, deposit: &str, amount: &str) -> Result<(SwapkitDeposit, String), String> {
@@ -4397,6 +4487,11 @@ fn prepare_swapkit_deposit(from: &pgp_wallet_poc::swapkit::Asset, source: &str, 
             let plan = api::xrp_send_plan(source, deposit, amount, None).t_err()?;
             let fee = pgp_wallet_poc::xrp::format_xrp(plan.fee);
             Ok((SwapkitDeposit::Xrp(plan.fee), lang(&format!("Frais réseau : {fee} XRP"), &format!("Network fee: {fee} XRP")).to_string()))
+        }
+        // Adresse de dépôt à clé de paiement (un contrat serait refusé).
+        "ada_mainnet" => {
+            let plan = api::ada_send_plan(source, deposit, amount).t_err()?;
+            Ok((SwapkitDeposit::Ada(plan.fee), format!("{} : {} ADA", lang("Frais réseau", "Network fee"), pgp_wallet_poc::cardano::format_ada(plan.fee))))
         }
         // Simple virement vers le compte implicite de dépôt.
         "near_mainnet" => {
@@ -4534,6 +4629,7 @@ async fn swapkit_swap_transaction(
             SwapkitDeposit::Trx(fee) => api::send_trx(&dir, &password, &deposit.address, &amount, fee, profile_index),
             SwapkitDeposit::Xrp(fee) => api::send_xrp(&dir, &password, &deposit.address, &amount, None, fee, profile_index),
             SwapkitDeposit::Near(fee) => api::send_near(&dir, &password, &deposit.address, &amount, fee, profile_index),
+            SwapkitDeposit::Ada(fee) => api::send_ada(&dir, &password, &deposit.address, &amount, fee, profile_index),
         };
         Ok(SwapkitSentDto {
             tx_hash: sent.t_err()?,
@@ -5593,6 +5689,10 @@ struct ProfileStellarCache(std::sync::Mutex<std::collections::HashMap<u32, Strin
 #[derive(Default)]
 struct ProfileNearCache(std::sync::Mutex<std::collections::HashMap<u32, String>>);
 
+/// Adresse Cardano de chaque profil (préparation d'un envoi avant la boîte).
+#[derive(Default)]
+struct ProfileCardanoCache(std::sync::Mutex<std::collections::HashMap<u32, String>>);
+
 /// Adresse Bitcoin testnet de chaque profil (bouton « Max » d'un envoi testnet).
 #[derive(Default)]
 struct ProfileBtcTestnetCache(std::sync::Mutex<std::collections::HashMap<u32, String>>);
@@ -5647,6 +5747,9 @@ fn remember_addresses(app: &tauri::AppHandle, index: u32, addresses: &api::Addre
     }
     if let Some(cache) = app.try_state::<ProfileNearCache>() {
         cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, addresses.near.clone());
+    }
+    if let Some(cache) = app.try_state::<ProfileCardanoCache>() {
+        cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, addresses.cardano.clone());
     }
     if let Some(cache) = app.try_state::<ShieldedKeysCache>() {
         cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, (addresses.zcash_shielded.clone(), addresses.zcash_shielded_keys.clone()));
@@ -6430,6 +6533,7 @@ pub fn run() {
         .manage(ProfileXrpCache::default())
         .manage(ProfileStellarCache::default())
         .manage(ProfileNearCache::default())
+        .manage(ProfileCardanoCache::default())
         .manage(ProfileDogeCache::default())
         .manage(ProfileBtcCache::default())
         .manage(ShieldedKeysCache::default())
@@ -6698,7 +6802,7 @@ mod tests {
         }
 
         // Chaque avertissement tient sur un seul paragraphe (mise en page de la boîte).
-        for coin in ["evm", "btc", "sol", "usdc", "zec", "doge", "trx", "xrp", "xlm", "near", "xmr", "zecs"] {
+        for coin in ["evm", "btc", "sol", "usdc", "zec", "doge", "trx", "xrp", "xlm", "near", "ada", "xmr", "zecs"] {
             for activity in [Some(Unused), Some(Empty), None] {
                 assert!(recipient_warning_lines(true, coin, activity).iter().all(|l| !l.contains('\n')));
             }
@@ -6981,6 +7085,48 @@ mod tests {
         assert_eq!(
             translate_dynamic_error("les frais NEAR ont augmenté depuis la confirmation (0.0006 au lieu de 0.0005 NEAR) — relancez l'envoi").unwrap(),
             "NEAR fees increased since the confirmation (0.0006 instead of 0.0005 NEAR) — start again"
+        );
+    }
+
+    /// Messages d'erreur Cardano : présents dans le code, traduits (fixes et variables).
+    #[test]
+    fn cardano_error_messages_have_a_translation() {
+        let sources = [include_str!("../../../core/src/cardano.rs"), include_str!("../../../core/src/api.rs"), include_str!("lib.rs")];
+        for message in [
+            "service Cardano injoignable",
+            "réponse du service Cardano illisible",
+            "montant Cardano illisible",
+            "adresse de mise en jeu Cardano (stake1…), pas une adresse de paiement",
+            "adresse Cardano d'un réseau de test — refusée",
+            "ancienne adresse Cardano (Byron) non prise en charge : demandez une adresse addr1…",
+            "adresse Cardano invalide",
+            "adresse Cardano d'un autre réseau — refusée",
+            "adresse de contrat Cardano (script) : envoi refusé, les fonds pourraient y rester bloqués",
+            "paramètres Cardano illisibles",
+            "état du réseau Cardano illisible",
+            "sortie Cardano illisible",
+            "envoi vers votre propre adresse Cardano",
+            "aucun ADA envoyable sur cette adresse",
+            "ADA insuffisants pour couvrir les frais et le minimum d'une sortie",
+            "les frais Cardano ont changé depuis la confirmation — relancez l'envoi",
+            "le service Cardano a renvoyé un autre identifiant de transaction",
+            "frais Cardano manquants",
+        ] {
+            assert!(sources.iter().any(|s| s.contains(&format!("\"{message}\""))), "message absent du code : {message}");
+            assert!(EXACT_ERROR_TRANSLATIONS.iter().any(|(fr, _)| *fr == message), "sans traduction : {message}");
+        }
+        assert_eq!(
+            translate_dynamic_error("ADA insuffisants : 5.000000 ADA dépensables, 4.500000 ADA + frais demandés, et la monnaie rendue doit porter au moins 0.986990 ADA — envoyez le maximum ou un montant plus petit").unwrap(),
+            "insufficient ADA: 5.000000 ADA spendable, 4.500000 ADA + fees requested, and the change must carry at least 0.986990 ADA — send the maximum or a smaller amount"
+        );
+        assert_eq!(
+            translate_dynamic_error("montant trop petit : chaque envoi Cardano porte au moins 0.986990 ADA (minimum du réseau)").unwrap(),
+            "amount too small: every Cardano transfer carries at least 0.986990 ADA (network minimum)"
+        );
+        assert_eq!(translate_dynamic_error("transaction Cardano refusée : x").unwrap(), "Cardano transaction refused: x");
+        assert_eq!(
+            translate_dynamic_error("les frais Cardano ont augmenté depuis la confirmation (0.180000 au lieu de 0.170000 ADA) — relancez l'envoi").unwrap(),
+            "Cardano fees increased since the confirmation (0.180000 instead of 0.170000 ADA) — start again"
         );
     }
 

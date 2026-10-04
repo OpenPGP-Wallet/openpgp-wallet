@@ -4571,6 +4571,7 @@ dependencies = [
  "bip32 0.5.3",
  "bip39",
  "blahaj",
+ "blake2b_simd",
  "bls12_381",
  "bs58",
  "chacha20poly1305",

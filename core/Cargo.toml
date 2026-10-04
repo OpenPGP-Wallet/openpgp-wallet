@@ -76,6 +76,7 @@ base64 = "0.22"
 # "from scratch" du reste de ce module (agencement d'octets, pas de
 # cryptographie sur courbe).
 curve25519-dalek = "4.1.3"
+blake2b_simd = "1"
 
 # --- Zcash (adresses transparentes t1) ---
 # Bibliothèques officielles librustzcash (Zcash Foundation / ECC) plutôt qu'un

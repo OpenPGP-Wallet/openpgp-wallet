@@ -114,7 +114,7 @@ const fn asset(
     Asset { coin, network, symbol, swapkit, decimals, near, chainflip }
 }
 
-pub const ASSETS: [Asset; 19] = [
+pub const ASSETS: [Asset; 20] = [
     asset("btc", "btc_mainnet", "BTC", "BTC.BTC", 8, Some("nep141:btc.omft.near"), Some(("BTC", "Bitcoin"))),
     asset("evm", "evm_mainnet", "ETH", "ETH.ETH", 18, Some("nep141:eth.omft.near"), Some(("ETH", "Ethereum"))),
     asset("evm", "arbitrum_mainnet", "ETH", "ARB.ETH", 18, Some("nep141:arb.omft.near"), Some(("ETH", "Arbitrum"))),
@@ -182,6 +182,7 @@ pub const ASSETS: [Asset; 19] = [
     asset("trx", "tron_mainnet", "TRX", "TRON.TRX", 6, Some("nep141:tron.omft.near"), None),
     asset("xrp", "xrp_mainnet", "XRP", "XRP.XRP", 6, Some("nep141:xrp.omft.near"), None),
     asset("near", "near_mainnet", "NEAR", "NEAR.NEAR", 24, Some("nep141:wrap.near"), None),
+    asset("ada", "ada_mainnet", "ADA", "ADA.ADA", 6, Some("nep141:cardano.omft.near"), None),
 ];
 
 pub fn find(coin: &str, network: &str) -> Option<&'static Asset> {
@@ -718,6 +719,26 @@ mod tests {
         // Sens inverse : arrivée sur le compte implicite.
         let back = quote(eth(), near, 50_000_000_000_000_000, EVM, source).unwrap();
         assert!(back.iter().any(|r| r.provider == Provider::Near));
+    }
+
+    /// Réel : dépôt ADA → ETH ouvert chez NEAR Intents (aucun fonds envoyé) —
+    /// adresse de dépôt addr1… à clé de paiement (pas un contrat).
+    /// `cargo test -- --ignored real_swapkit_ada --nocapture`
+    #[test]
+    #[ignore]
+    fn real_swapkit_ada_deposit() {
+        assert!(enabled(), "clé SwapKit absente de partner-keys.env");
+        let ada = find("ada", "ada_mainnet").unwrap();
+        let source = "addr1qxl2jwckw20u69f0cq0vkrnuztx93hcmpwswja60txpnxrunu8tugxe0030m7uyvnz3hlppj4e28jyl9c94cque0gavquchxun";
+        let amount = 100_000_000;
+        let routes = quote(ada, eth(), amount, source, EVM).unwrap();
+        let route = routes.iter().find(|r| r.provider == Provider::Near).expect("pas de route NEAR");
+        let deposit = open_deposit(route, ada, eth(), source, EVM).unwrap();
+        crate::cardano::parse_address(&deposit.address).unwrap();
+        let verified = verify(&deposit, ada, eth(), amount, source, EVM).unwrap();
+        println!("ADA → ETH : dépôt {} ; minimum {} ETH ; commissions {} pb", deposit.address, verified.min_out as f64 / 1e18, verified.fees_bps);
+        assert_eq!(status(Provider::Near, &deposit.channel_id, &deposit.address).unwrap(), SwapState::AwaitingDeposit);
+        assert!(quote(eth(), ada, 50_000_000_000_000_000, EVM, source).unwrap().iter().any(|r| r.provider == Provider::Near));
     }
 
     /// Réel : dépôt XRP → ETH ouvert chez NEAR Intents (aucun fonds envoyé) —

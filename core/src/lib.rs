@@ -49,6 +49,7 @@ pub mod tron;
 pub mod xrp;
 pub mod stellar;
 pub mod near;
+pub mod cardano;
 #[cfg(test)]
 mod robustness_tests;
 #[cfg(windows)]

@@ -113,6 +113,10 @@ pub(crate) fn validate_address(network: &str, address: &str) -> Result<()> {
         "near_mainnet" => {
             crate::near::parse_account(address)?;
         }
+        // Cardano (addr1…).
+        "ada_mainnet" => {
+            crate::cardano::parse_address(address)?;
+        }
         // Zcash protégé (adresse u1 de la carte « Zcash protégé »).
         "zec_shielded" => {
             crate::zcash_shielded::parse_shielded_address(address)?;

@@ -11,7 +11,7 @@ qui la met en œuvre. **Aucune de ces protections n'a encore été vérifiée pa
   interface web locale (`app/src`).
 - Portefeuille non dépositaire multi-réseaux : Bitcoin, réseaux EVM (Ethereum, L2, BNB Chain, Avalanche,
   Polygon, HyperEVM), Solana, Zcash (transparent et protégé Orchard), Monero, Dogecoin, Tron (TRX et USDT
-  TRC-20), XRP Ledger, Stellar, NEAR, jetons du registre (`tokens.rs`).
+  TRC-20), XRP Ledger, Stellar, NEAR, Cardano, jetons du registre (`tokens.rs`).
 - Hors périmètre : la version iOS (non démarrée), les services tiers eux-mêmes (nœuds, agrégateurs d'échange),
   le système d'exploitation et le matériel.
 
@@ -147,6 +147,13 @@ qui la met en œuvre. **Aucune de ces protections n'a encore été vérifiée pa
   adresse Ethereum (0x…) refusée avec consigne. Frais : la retenue du réseau (gaz d'exécution au prix d'achat
   minimal, + 20 %) est le maximum affiché et vérifié ; les frais réels, bien plus bas, sont affichés à côté.
   Délai dépassé du nœud : « envoyée mais pas encore confirmée », jamais « refusée ».
+- **Cardano** : clés BIP32-Ed25519 (CIP-3 Icarus depuis l'entropie maîtresse, chemins CIP-1852) et
+  transactions CBOR construites et signées localement (octets identiques à cardano-serialization-lib ; un nœud
+  réel vérifie la signature : seule la signature MANQUANTE du propriétaire d'une entrée tierce est réclamée,
+  la version altérée est refusée `InvalidWitnessesUTXOW`). Avant la boîte : sorties à jetons ou à donnée jamais
+  dépensées, minimum d'ADA par sortie, frais exacts, monnaie rendue affichée ; adresses de contrat (script),
+  de mise en jeu, de test ou Byron refusées. Le service public (Koios) pourrait mentir sur les sorties : au
+  pire la transaction est refusée par le réseau (montants engagés par la signature, pas de perte possible).
 - *Risques résiduels* : un nœud malveillant peut afficher de faux soldes ou un faux historique (portefeuille
   léger) ; un nœud Monero ou Zcash malveillant peut affaiblir la confidentialité d'un envoi ; les nœuds publics
   voient l'adresse IP et les adresses interrogées ; un agrégateur peut proposer un mauvais cours (le minimum de

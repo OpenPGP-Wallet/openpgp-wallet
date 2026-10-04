@@ -14,7 +14,7 @@
 //!   perdu — jamais utilisé pour le déverrouillage quotidien.
 
 use crate::{
-    btc_rpc, cow, dapp_requests, derivation, doge, lifi, tron, xrp, stellar, near, monero, native_deposit, wallet_birthday, zcash, zcash_shielded, entropy, eth_rpc, eth_tx, history, jupiter_rpc, memory_guard, pgp_engine, secure_storage, shamir,
+    btc_rpc, cow, dapp_requests, derivation, doge, lifi, tron, xrp, stellar, near, cardano, monero, native_deposit, wallet_birthday, zcash, zcash_shielded, entropy, eth_rpc, eth_tx, history, jupiter_rpc, memory_guard, pgp_engine, secure_storage, shamir,
     evm_sign, sol_rpc, sol_spl, sol_tx, thorchain_rpc, tokens, wallet_flow,
 };
 use anyhow::{Context, Result};
@@ -192,6 +192,8 @@ pub struct Addresses {
     pub stellar: String,
     /// Compte NEAR implicite (64 hex), chemin m/44'/397'/{index}'.
     pub near: String,
+    /// Adresse Cardano de base (addr1…), CIP-1852 m/1852'/1815'/{index}'.
+    pub cardano: String,
     /// Adresse THORChain (thor1…), chemin m/44'/931'/0'/0/{index} : celle du
     /// profil principal du développeur est l'adresse d'affiliation de l'app.
     pub thor: String,
@@ -347,6 +349,7 @@ fn derive_addresses(seed: &[u8], index: u32) -> Result<Addresses> {
         xrp: xrp::encode_address(&xrp_account),
         stellar: stellar::encode_address(&stellar_key.verifying_key().to_bytes()),
         near: near::implicit_account(&near_key),
+        cardano: cardano::address_of(seed, index),
         evm: derivation::format_address(&evm_address),
         btc_testnet: derivation::format_btc_testnet_address(&btc_testnet_hash160)?,
         btc_mainnet: derivation::format_btc_mainnet_address(&btc_mainnet_hash160)?,
@@ -3220,6 +3223,63 @@ pub fn send_near(data_dir: &Path, device_password: &str, to: &str, amount: &str,
 /// Bouton « Max » : solde moins le stockage et les frais (vers `to` s'il est connu).
 pub fn near_max(from: &str, to: Option<&str>) -> Result<String> {
     Ok(near::format_near_exact(near::max_amount(&near::MAINNET, from, to)?))
+}
+
+// --- Cardano (ADA) -------------------------------------------------------------------
+
+pub fn get_ada_balance(address: &str) -> Result<u64> {
+    cardano::balance(address)
+}
+
+/// État d'une adresse Cardano destinataire, pour les avertissements de la boîte.
+pub fn ada_recipient_activity(to: &str) -> Result<RecipientActivity> {
+    Ok(match cardano::address_activity(to)? {
+        (true, _) => RecipientActivity::Funded,
+        (false, true) => RecipientActivity::Empty,
+        (false, false) => RecipientActivity::Unused,
+    })
+}
+
+/// Forme canonique d'un montant en ADA (6 décimales), affichée ET signée.
+pub fn canonical_ada_amount(amount: &str) -> Result<String> {
+    Ok(tokens::format_amount(tokens::parse_amount(amount, cardano::DECIMALS)?, cardano::DECIMALS))
+}
+
+fn ada_units(amount: &str) -> Result<u64> {
+    u64::try_from(tokens::parse_amount(amount, cardano::DECIMALS)?).context("montant hors limites")
+}
+
+/// Envoi préparé pour la boîte de confirmation : sorties choisies (ADA
+/// seul), frais exacts, monnaie rendue, minimum d'une sortie.
+pub fn ada_send_plan(from_address: &str, to: &str, amount: &str) -> Result<cardano::AdaPlan> {
+    cardano::plan(from_address, to, ada_units(amount)?)
+}
+
+/// Envoi d'ADA : préparation refaite, frais jamais supérieurs à ceux
+/// affichés (`shown_fee`), transaction signée ici puis diffusée.
+pub fn send_ada(data_dir: &Path, device_password: &str, to: &str, amount: &str, shown_fee: u64, profile_index: u32) -> Result<String> {
+    let units = ada_units(amount)?;
+    let seed = unlock_seed(data_dir, device_password)?;
+    let _seed_lock = memory_guard::lock(&seed);
+    let (payment, stake) = cardano::account_keys(&seed, profile_index);
+    let from = cardano::base_address(&payment.public(), &stake.public());
+    drop(stake);
+    let plan = cardano::plan(&from, to, units)?;
+    anyhow::ensure!(
+        plan.fee <= shown_fee,
+        "les frais Cardano ont augmenté depuis la confirmation ({} au lieu de {} ADA) — relancez l'envoi",
+        cardano::format_ada(plan.fee),
+        cardano::format_ada(shown_fee)
+    );
+    cardano::send(&payment, &from, to, &plan)
+}
+
+/// Bouton « Max » : tout l'ADA dépensable, frais déduits (vers `to` s'il est connu).
+pub fn ada_max(from: &str, to: Option<&str>) -> Result<String> {
+    Ok(cardano::format_ada(match to {
+        Some(to) => cardano::plan_max(from, to)?.amount,
+        None => cardano::max_amount(from)?,
+    }))
 }
 
 // --- Dogecoin -----------------------------------------------------------------------
