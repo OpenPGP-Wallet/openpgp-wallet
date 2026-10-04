@@ -614,7 +614,7 @@ mod tests {
             assert_eq!(parse_address(address).unwrap().len(), 57);
         }
         let (p, _) = account_keys(&seq(), 7);
-        assert_eq!(hex::encode(&[p.kl, p.kr].concat()), "e0f79fca6c15d0ef84965d9bc5efb0947096c90c34a3277ba3f93ad272a05f4f8b1099eb1e5d2caae5269c44ffa59039ea78f2edfa8cb0900d535a5ecd928f11");
+        assert_eq!(hex::encode([p.kl, p.kr].concat()), "e0f79fca6c15d0ef84965d9bc5efb0947096c90c34a3277ba3f93ad272a05f4f8b1099eb1e5d2caae5269c44ffa59039ea78f2edfa8cb0900d535a5ecd928f11");
     }
 
     #[test]
