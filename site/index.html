@@ -436,7 +436,7 @@
       <div class="feature-copy">
         <span class="eyebrow"><span class="num">02</span> Multi-réseau</span>
         <h2>Une seule clé, toutes vos adresses.</h2>
-        <p class="lead">Bitcoin, Ethereum et ses réseaux Arbitrum et Base, Solana, BNB Chain, Avalanche, Polygon, HyperEVM, Zcash (transparent et protégé), Monero, Dogecoin, Tron, XRP et Stellar — avec leurs jetons (USDC, USDT, LINK…), tous dérivés de la même entropie maître. Un tableau de bord, un seul secret à protéger.</p>
+        <p class="lead">Bitcoin, Ethereum et ses réseaux Arbitrum et Base, Solana, BNB Chain, Avalanche, Polygon, HyperEVM, Zcash (transparent et protégé), Monero, Dogecoin, Tron, XRP, Stellar et NEAR — avec leurs jetons (USDC, USDT, LINK…), tous dérivés de la même entropie maître. Un tableau de bord, un seul secret à protéger.</p>
       </div>
       <div class="feature-visual">
         <div class="panel list">
@@ -590,11 +590,11 @@
         <div class="group-title">B — Dérivation et signature</div>
         <div class="item">
           <h3>4. Dérivation multi-réseaux (HD)</h3>
-          <p>Depuis la même entropie maître : Ethereum et Bitcoin via BIP32/secp256k1 (<code>m/44'/60'/0'/0/i</code> et <code>m/44'/0'/0'/0/i</code>), Solana via SLIP-0010/ed25519 avec un chemin entièrement durci (<code>m/44'/501'/i'/0'</code>), Zcash transparent via <code>m/44'/133'/0'/0/i</code> et protégé (Orchard) via ZIP-32, Dogecoin via <code>m/44'/3'/0'/0/i</code>, Tron via <code>m/44'/195'/0'/0/i</code>, XRP via <code>m/44'/144'/0'/0/i</code>, Stellar via <code>m/44'/148'/i'</code> (SEP-0005), Monero selon le schéma de Ledger (<code>m/44'/128'/i'/0/0</code>). Une même adresse sert sur tous les réseaux compatibles Ethereum (Arbitrum, Base, BNB Chain, Avalanche, Polygon, HyperEVM). Un "profil" supplémentaire n'est qu'un index de dérivation de plus sur la même entropie — aucun changement du modèle de sécurité entre 1 profil et 50.</p>
+          <p>Depuis la même entropie maître : Ethereum et Bitcoin via BIP32/secp256k1 (<code>m/44'/60'/0'/0/i</code> et <code>m/44'/0'/0'/0/i</code>), Solana via SLIP-0010/ed25519 avec un chemin entièrement durci (<code>m/44'/501'/i'/0'</code>), Zcash transparent via <code>m/44'/133'/0'/0/i</code> et protégé (Orchard) via ZIP-32, Dogecoin via <code>m/44'/3'/0'/0/i</code>, Tron via <code>m/44'/195'/0'/0/i</code>, XRP via <code>m/44'/144'/0'/0/i</code>, Stellar via <code>m/44'/148'/i'</code> (SEP-0005), NEAR via <code>m/44'/397'/i'</code>, Monero selon le schéma de Ledger (<code>m/44'/128'/i'/0/0</code>). Une même adresse sert sur tous les réseaux compatibles Ethereum (Arbitrum, Base, BNB Chain, Avalanche, Polygon, HyperEVM). Un "profil" supplémentaire n'est qu'un index de dérivation de plus sur la même entropie — aucun changement du modèle de sécurité entre 1 profil et 50.</p>
         </div>
         <div class="item">
           <h3>5. Construction et signature des transactions</h3>
-          <p>Construites "from scratch" pour Bitcoin, Dogecoin, les réseaux compatibles Ethereum, Solana, Tron, XRP et Stellar, sans SDK lourd type <code>rust-bitcoin</code> ou <code>solana-sdk</code> — pour Dogecoin, chaque montant dépensé est en plus revérifié dans sa transaction d'origine ; Zcash passe par la bibliothèque officielle de ses développeurs (librustzcash), Monero par monero-oxide. Nonces déterministes (RFC 6979) pour les signatures ECDSA, empêchant l'extraction de clé privée par réutilisation de nonce — la faille qui a coûté sa clé racine à la PlayStation 3. Signatures vérifiées en interne contre une normalisation "low-S" par une suite de 2000 tests.</p>
+          <p>Construites "from scratch" pour Bitcoin, Dogecoin, les réseaux compatibles Ethereum, Solana, Tron, XRP, Stellar et NEAR, sans SDK lourd type <code>rust-bitcoin</code> ou <code>solana-sdk</code> — pour Dogecoin, chaque montant dépensé est en plus revérifié dans sa transaction d'origine ; Zcash passe par la bibliothèque officielle de ses développeurs (librustzcash), Monero par monero-oxide. Nonces déterministes (RFC 6979) pour les signatures ECDSA, empêchant l'extraction de clé privée par réutilisation de nonce — la faille qui a coûté sa clé racine à la PlayStation 3. Signatures vérifiées en interne contre une normalisation "low-S" par une suite de 2000 tests.</p>
         </div>
       </div>
 

@@ -436,7 +436,7 @@
       <div class="feature-copy">
         <span class="eyebrow"><span class="num">02</span> Multi-chain</span>
         <h2>One key, all your addresses.</h2>
-        <p class="lead">Bitcoin, Ethereum and its Arbitrum and Base networks, Solana, BNB Chain, Avalanche, Polygon, HyperEVM, Zcash (transparent and shielded), Monero, Dogecoin, Tron, XRP and Stellar — with their tokens (USDC, USDT, LINK…), all derived from the same master entropy. One dashboard, one secret to protect.</p>
+        <p class="lead">Bitcoin, Ethereum and its Arbitrum and Base networks, Solana, BNB Chain, Avalanche, Polygon, HyperEVM, Zcash (transparent and shielded), Monero, Dogecoin, Tron, XRP, Stellar and NEAR — with their tokens (USDC, USDT, LINK…), all derived from the same master entropy. One dashboard, one secret to protect.</p>
       </div>
       <div class="feature-visual">
         <div class="panel list">
@@ -590,11 +590,11 @@
         <div class="group-title">B — Derivation and signing</div>
         <div class="item">
           <h3>4. Multi-chain derivation (HD)</h3>
-          <p>From the same master entropy: Ethereum and Bitcoin via BIP32/secp256k1 (<code>m/44'/60'/0'/0/i</code> and <code>m/44'/0'/0'/0/i</code>), Solana via SLIP-0010/ed25519 with a fully hardened path (<code>m/44'/501'/i'/0'</code>), transparent Zcash via <code>m/44'/133'/0'/0/i</code> and shielded Zcash (Orchard) via ZIP-32, Dogecoin via <code>m/44'/3'/0'/0/i</code>, Tron via <code>m/44'/195'/0'/0/i</code>, XRP via <code>m/44'/144'/0'/0/i</code>, Stellar via <code>m/44'/148'/i'</code> (SEP-0005), Monero following Ledger's scheme (<code>m/44'/128'/i'/0/0</code>). The same address is used on every Ethereum-compatible network (Arbitrum, Base, BNB Chain, Avalanche, Polygon, HyperEVM). An extra "profile" is just one more derivation index on the same entropy — the security model is the same with 1 profile or 50.</p>
+          <p>From the same master entropy: Ethereum and Bitcoin via BIP32/secp256k1 (<code>m/44'/60'/0'/0/i</code> and <code>m/44'/0'/0'/0/i</code>), Solana via SLIP-0010/ed25519 with a fully hardened path (<code>m/44'/501'/i'/0'</code>), transparent Zcash via <code>m/44'/133'/0'/0/i</code> and shielded Zcash (Orchard) via ZIP-32, Dogecoin via <code>m/44'/3'/0'/0/i</code>, Tron via <code>m/44'/195'/0'/0/i</code>, XRP via <code>m/44'/144'/0'/0/i</code>, Stellar via <code>m/44'/148'/i'</code> (SEP-0005), NEAR via <code>m/44'/397'/i'</code>, Monero following Ledger's scheme (<code>m/44'/128'/i'/0/0</code>). The same address is used on every Ethereum-compatible network (Arbitrum, Base, BNB Chain, Avalanche, Polygon, HyperEVM). An extra "profile" is just one more derivation index on the same entropy — the security model is the same with 1 profile or 50.</p>
         </div>
         <div class="item">
           <h3>5. Building and signing transactions</h3>
-          <p>Built "from scratch" for Bitcoin, Dogecoin, the Ethereum-compatible networks, Solana, Tron, XRP and Stellar, without heavy SDKs such as <code>rust-bitcoin</code> or <code>solana-sdk</code> — for Dogecoin, every amount spent is also re-checked against its original transaction; Zcash uses its developers' official library (librustzcash), Monero uses monero-oxide. Deterministic nonces (RFC 6979) for ECDSA signatures, preventing private-key extraction through nonce reuse — the flaw that cost the PlayStation 3 its root key. Signatures checked internally for "low-S" normalisation by a 2,000-case test suite.</p>
+          <p>Built "from scratch" for Bitcoin, Dogecoin, the Ethereum-compatible networks, Solana, Tron, XRP, Stellar and NEAR, without heavy SDKs such as <code>rust-bitcoin</code> or <code>solana-sdk</code> — for Dogecoin, every amount spent is also re-checked against its original transaction; Zcash uses its developers' official library (librustzcash), Monero uses monero-oxide. Deterministic nonces (RFC 6979) for ECDSA signatures, preventing private-key extraction through nonce reuse — the flaw that cost the PlayStation 3 its root key. Signatures checked internally for "low-S" normalisation by a 2,000-case test suite.</p>
         </div>
       </div>
 
