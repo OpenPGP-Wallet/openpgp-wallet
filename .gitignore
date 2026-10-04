@@ -17,3 +17,7 @@ node_modules/
 # leur contenu ou leur origine. README.md reste le seul .md public à la racine.
 /*.md
 !/README.md
+
+# Clés d'API des partenaires (SwapKit, MoonPay Trade), lues à la compilation
+# par core/build.rs : jamais dans l'historique.
+/partner-keys.env
