@@ -877,6 +877,12 @@ const I18N = {
     "swap.providerHalted": "{name} — suspendu en ce moment",
     "swap.previewSwapkitRoute": "Fournisseur (via SwapKit)",
     "swap.swapkitRoute": "{provider} — frais SwapKit {fee} %, ~{minutes} min",
+    "swap.swapkit.sent": "Dépôt envoyé ({tx}) — {provider} attend sa confirmation sur le réseau…",
+    "swap.swapkit.processing": "Dépôt reçu par {provider} — échange en cours…",
+    "swap.swapkit.completed": "Échange terminé par {provider} : les fonds sont arrivés.",
+    "swap.swapkit.refunded": "{provider} a remboursé le dépôt sur votre adresse (échange non exécuté).",
+    "swap.swapkit.failed": "{provider} signale un échec de l'échange — le remboursement est prévu sur votre adresse.",
+    "swap.swapkit.unknown": "Suivi arrêté après 3 h — vérifiez l'arrivée des fonds sur votre carte (dépôt {tx}).",
     "swap.twoStepHint":
       "Pas de route directe : l'échange se fait en 2 étapes. 1) {from} → {via} ({first}), reçu sur votre propre adresse. 2) Dès que {via} est arrivé, l'app vous propose {via} → {to} ({second}), avec une seconde confirmation.",
     "swap.previewRoute": "Étape 1 sur 2 : vers {via} ({first}). Ensuite, {via} → {to} ({second}) vous sera proposé dès l'arrivée de {via}.",
@@ -1469,6 +1475,12 @@ const I18N = {
     "swap.providerHalted": "{name} — paused right now",
     "swap.previewSwapkitRoute": "Provider (via SwapKit)",
     "swap.swapkitRoute": "{provider} — SwapKit fee {fee}%, ~{minutes} min",
+    "swap.swapkit.sent": "Deposit sent ({tx}) — {provider} is waiting for its confirmation on the network…",
+    "swap.swapkit.processing": "Deposit received by {provider} — swap in progress…",
+    "swap.swapkit.completed": "Swap completed by {provider}: the funds have arrived.",
+    "swap.swapkit.refunded": "{provider} refunded the deposit to your address (swap not executed).",
+    "swap.swapkit.failed": "{provider} reports the swap failed — a refund to your address is planned.",
+    "swap.swapkit.unknown": "Tracking stopped after 3 h — check the funds have arrived on your card (deposit {tx}).",
     "swap.twoStepHint":
       "No direct route: the swap takes 2 steps. 1) {from} → {via} ({first}), received on your own address. 2) As soon as the {via} arrives, the app offers {via} → {to} ({second}), with a second confirmation.",
     "swap.previewRoute": "Step 1 of 2: to {via} ({first}). Then {via} → {to} ({second}) will be offered as soon as the {via} arrives.",
@@ -6076,9 +6088,8 @@ swapPreviewConfirmBtn.addEventListener("click", withBusyButton(swapPreviewConfir
       const transfer = await invoke("lifi_swap_transaction", { password, fromCoin, fromNetwork, toCoin, toNetwork, amount, destination, profileIndex });
       trackLifiTransfer(successEl, transfer);
     } else if (step.protocol === "swapkit") {
-      const txResult = await invoke("swapkit_swap_transaction", { password, fromCoin, fromNetwork, toCoin, toNetwork, amount, destination, profileIndex });
-      successEl.textContent = t("send.txSent", { tx: txResult });
-      successEl.classList.remove("hidden");
+      const sent = await invoke("swapkit_swap_transaction", { password, fromCoin, fromNetwork, toCoin, toNetwork, amount, destination, profileIndex });
+      trackSwapkitSwap(successEl, sent);
     } else {
       const txResult = step.protocol === "jupiter"
         ? await invoke("jupiter_swap_transaction", { password, fromCoin, toCoin, amount, profileIndex })
@@ -6248,6 +6259,43 @@ function trackLifiTransfer(successEl, transfer) {
     setTimeout(poll, LIFI_POLL_MS);
   };
   setTimeout(poll, LIFI_POLL_MS);
+}
+
+// Échange SwapKit : étape lue auprès du fournisseur (NEAR Intents ou
+// Chainflip) toutes les 20 s, jusqu'à l'arrivée, au remboursement ou à
+// l'échec (3 h au plus).
+const SWAPKIT_POLL_MS = 20000;
+const SWAPKIT_MAX_WAIT_MS = 3 * 60 * 60 * 1000;
+
+function trackSwapkitSwap(successEl, sent) {
+  const text = document.createElement("span");
+  const show = (state) => {
+    text.textContent = t(`swap.swapkit.${state}`, { provider: sent.provider_name, tx: sent.tx_hash });
+  };
+  show("sent");
+  successEl.replaceChildren(text);
+  successEl.classList.remove("hidden");
+  const started = Date.now();
+  const poll = async () => {
+    let state = null;
+    try {
+      state = await invoke("swapkit_status", { provider: sent.provider, channelId: sent.channel_id, depositAddress: sent.deposit_address });
+    } catch (e) {
+      console.error(e);
+    }
+    if (state === "completed" || state === "refunded" || state === "failed") {
+      show(state);
+      refreshAllBalances();
+      return;
+    }
+    if (state === "processing") show("processing");
+    if (Date.now() - started > SWAPKIT_MAX_WAIT_MS) {
+      show("unknown");
+      return;
+    }
+    setTimeout(poll, SWAPKIT_POLL_MS);
+  };
+  setTimeout(poll, SWAPKIT_POLL_MS);
 }
 
 function trackCowOrder(successEl, network, order) {

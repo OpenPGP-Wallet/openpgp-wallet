@@ -3943,6 +3943,24 @@ fn confirm_swapkit_native(
         .blocking_show()
 }
 
+/// Dépôt envoyé : de quoi suivre l'échange auprès du fournisseur.
+#[derive(Serialize)]
+struct SwapkitSentDto {
+    tx_hash: String,
+    provider: pgp_wallet_poc::swapkit::Provider,
+    provider_name: &'static str,
+    channel_id: String,
+    deposit_address: String,
+}
+
+/// Étape d'un échange SwapKit (« awaiting_deposit », « processing »,
+/// « completed », « refunded », « failed », « unknown »), suivie par
+/// l'interface après le dépôt.
+#[tauri::command]
+async fn swapkit_status(provider: pgp_wallet_poc::swapkit::Provider, channel_id: String, deposit_address: String) -> Result<pgp_wallet_poc::swapkit::SwapState, String> {
+    run_blocking(move || pgp_wallet_poc::swapkit::status(provider, &channel_id, &deposit_address).t_err()).await
+}
+
 /// Échange via SwapKit : devis, dépôt ouvert puis CONFIRMÉ par le fournisseur,
 /// boîte native, délai d'annulation, puis virement vers l'adresse de dépôt.
 #[tauri::command]
@@ -3957,7 +3975,7 @@ async fn swapkit_swap_transaction(
     destination: String,
     profile_index: u32,
     app: tauri::AppHandle,
-) -> Result<String, String> {
+) -> Result<SwapkitSentDto, String> {
     use pgp_wallet_poc::{swapkit, tokens};
     run_blocking(move || {
         let password = Zeroizing::new(password);
@@ -4005,7 +4023,13 @@ async fn swapkit_swap_transaction(
             SwapkitDeposit::Doge(fee) => api::send_doge(&dir, &password, &deposit.address, &amount, fee, profile_index),
             SwapkitDeposit::Zec(fee) => api::send_zec(&dir, &password, &deposit.address, &amount, fee, profile_index),
         };
-        sent.t_err()
+        Ok(SwapkitSentDto {
+            tx_hash: sent.t_err()?,
+            provider: deposit.provider,
+            provider_name: deposit.provider.name(),
+            channel_id: deposit.channel_id,
+            deposit_address: deposit.address,
+        })
     })
     .await
 }
@@ -5925,6 +5949,7 @@ pub fn run() {
             resolve_send_countdown,
             get_swapkit_quote,
             swapkit_swap_transaction,
+            swapkit_status,
             max_send_amount,
             send_usdc_transaction,
             get_swap_quote,

@@ -482,9 +482,73 @@ fn check_chainflip(status: &Value, deposit: &Deposit, from: &Asset, to: &Asset, 
     Ok(Verified { min_out, deadline, fees_bps })
 }
 
+// --- Suivi après le dépôt -------------------------------------------------------------
+
+/// Étape d'un échange, lue auprès du fournisseur.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SwapState {
+    AwaitingDeposit,
+    Processing,
+    Completed,
+    Refunded,
+    Failed,
+    Unknown,
+}
+
+fn near_state(status: &str) -> SwapState {
+    match status {
+        "PENDING_DEPOSIT" => SwapState::AwaitingDeposit,
+        "KNOWN_DEPOSIT_TX" | "PROCESSING" | "INCOMPLETE_DEPOSIT" => SwapState::Processing,
+        "SUCCESS" => SwapState::Completed,
+        "REFUNDED" => SwapState::Refunded,
+        "FAILED" => SwapState::Failed,
+        _ => SwapState::Unknown,
+    }
+}
+
+fn chainflip_state(state: &str) -> SwapState {
+    match state {
+        "WAITING" => SwapState::AwaitingDeposit,
+        "RECEIVING" | "SWAPPING" | "SENDING" | "SENT" => SwapState::Processing,
+        "COMPLETED" => SwapState::Completed,
+        "FAILED" => SwapState::Failed,
+        _ => SwapState::Unknown,
+    }
+}
+
+/// Étape de l'échange dont le dépôt est `deposit_address` (NEAR) ou le canal
+/// `channel_id` (Chainflip), auprès du fournisseur.
+pub fn status(provider: Provider, channel_id: &str, deposit_address: &str) -> Result<SwapState> {
+    ensure!(deposit_address.len() <= 128 && deposit_address.bytes().all(|b| b.is_ascii_alphanumeric()), "adresse de dépôt SwapKit invalide");
+    ensure!(channel_id.len() <= 80 && channel_id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'), "identifiant du dépôt invalide");
+    Ok(match provider {
+        Provider::Near => {
+            let value: Value = client().get(format!("{NEAR_STATUS}?depositAddress={deposit_address}")).send().context("NEAR Intents injoignable")?.json().context("réponse NEAR Intents illisible")?;
+            near_state(value["status"].as_str().unwrap_or_default())
+        }
+        Provider::Chainflip => {
+            let value: Value = client().get(format!("{CHAINFLIP_STATUS}/{channel_id}")).send().context("Chainflip injoignable")?.json().context("réponse Chainflip illisible")?;
+            chainflip_state(value["state"].as_str().unwrap_or_default())
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn provider_states_are_mapped() {
+        assert_eq!(near_state("PENDING_DEPOSIT"), SwapState::AwaitingDeposit);
+        assert_eq!(near_state("SUCCESS"), SwapState::Completed);
+        assert_eq!(near_state("REFUNDED"), SwapState::Refunded);
+        assert_eq!(chainflip_state("SWAPPING"), SwapState::Processing);
+        assert_eq!(chainflip_state("COMPLETED"), SwapState::Completed);
+        assert_eq!(chainflip_state("???"), SwapState::Unknown);
+        assert!(status(Provider::Near, "x", "../admin").is_err());
+        assert!(status(Provider::Chainflip, "1-Ethereum-2/../../x", "0xabc").is_err());
+    }
 
     const EVM: &str = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
     const SOL: &str = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
@@ -625,6 +689,7 @@ mod tests {
             let deposit = open_deposit(route, eth(), sol(), EVM, SOL).unwrap();
             let verified = verify(&deposit, eth(), sol(), amount, EVM, SOL).unwrap();
             println!("{} : dépôt {} ; minimum {} SOL ; commissions {} pb", provider.name(), deposit.address, verified.min_out as f64 / 1e9, verified.fees_bps);
+            assert_eq!(status(provider, &deposit.channel_id, &deposit.address).unwrap(), SwapState::AwaitingDeposit);
             // Autre adresse d'arrivée que celle du canal : refusé.
             assert!(verify(&deposit, eth(), sol(), amount, EVM, "So11111111111111111111111111111111111111112").is_err());
         }
