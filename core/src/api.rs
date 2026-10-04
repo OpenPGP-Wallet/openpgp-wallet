@@ -14,7 +14,7 @@
 //!   perdu — jamais utilisé pour le déverrouillage quotidien.
 
 use crate::{
-    btc_rpc, cow, dapp_requests, derivation, doge, lifi, tron, xrp, stellar, near, cardano, monero, native_deposit, wallet_birthday, zcash, zcash_shielded, entropy, eth_rpc, eth_tx, history, jupiter_rpc, memory_guard, pgp_engine, secure_storage, shamir,
+    btc_rpc, cow, dapp_requests, derivation, doge, lifi, tron, xrp, stellar, near, cardano, stacks, monero, native_deposit, wallet_birthday, zcash, zcash_shielded, entropy, eth_rpc, eth_tx, history, jupiter_rpc, memory_guard, pgp_engine, secure_storage, shamir,
     evm_sign, sol_rpc, sol_spl, sol_tx, thorchain_rpc, tokens, wallet_flow,
 };
 use anyhow::{Context, Result};
@@ -194,6 +194,8 @@ pub struct Addresses {
     pub near: String,
     /// Adresse Cardano de base (addr1…), CIP-1852 m/1852'/1815'/{index}'.
     pub cardano: String,
+    /// Adresse Stacks (SP…), chemin m/44'/5757'/0'/0/{index}.
+    pub stacks: String,
     /// Adresse THORChain (thor1…), chemin m/44'/931'/0'/0/{index} : celle du
     /// profil principal du développeur est l'adresse d'affiliation de l'app.
     pub thor: String,
@@ -350,6 +352,7 @@ fn derive_addresses(seed: &[u8], index: u32) -> Result<Addresses> {
         stellar: stellar::encode_address(&stellar_key.verifying_key().to_bytes()),
         near: near::implicit_account(&near_key),
         cardano: cardano::address_of(seed, index),
+        stacks: stacks::address_of(&stacks::MAINNET, &derivation::derive_stacks_key(seed, index)?),
         evm: derivation::format_address(&evm_address),
         btc_testnet: derivation::format_btc_testnet_address(&btc_testnet_hash160)?,
         btc_mainnet: derivation::format_btc_mainnet_address(&btc_mainnet_hash160)?,
@@ -3272,6 +3275,62 @@ pub fn send_ada(data_dir: &Path, device_password: &str, to: &str, amount: &str, 
         cardano::format_ada(shown_fee)
     );
     cardano::send(&payment, &from, to, &plan)
+}
+
+// --- Stacks (STX) -------------------------------------------------------------------
+
+pub fn get_stx_balance(address: &str) -> Result<u64> {
+    stacks::balance(&stacks::MAINNET, address)
+}
+
+/// État d'une adresse Stacks destinataire, pour les avertissements de la boîte.
+pub fn stx_recipient_activity(to: &str) -> Result<RecipientActivity> {
+    Ok(match stacks::address_activity(&stacks::MAINNET, to)? {
+        (true, _) => RecipientActivity::Funded,
+        (false, true) => RecipientActivity::Empty,
+        (false, false) => RecipientActivity::Unused,
+    })
+}
+
+/// Forme canonique d'un montant en STX (6 décimales), affichée ET signée.
+pub fn canonical_stx_amount(amount: &str) -> Result<String> {
+    Ok(tokens::format_amount(tokens::parse_amount(amount, stacks::DECIMALS)?, stacks::DECIMALS))
+}
+
+fn stx_units(amount: &str) -> Result<u64> {
+    u64::try_from(tokens::parse_amount(amount, stacks::DECIMALS)?).context("montant hors limites")
+}
+
+/// Mémo Stacks saisi (34 caractères ASCII au plus ; vide = aucun).
+pub fn parse_stacks_memo(memo: Option<&str>) -> Result<String> {
+    stacks::parse_memo(memo)
+}
+
+/// Envoi préparé pour la boîte de confirmation : solde disponible, frais.
+pub fn stx_send_plan(from_address: &str, to: &str, amount: &str) -> Result<stacks::StxPlan> {
+    stacks::plan(&stacks::MAINNET, from_address, to, stx_units(amount)?)
+}
+
+/// Envoi de STX : préparation refaite, frais jamais supérieurs à ceux
+/// affichés (`shown_fee`), virement signé ici puis diffusé.
+pub fn send_stx(data_dir: &Path, device_password: &str, to: &str, amount: &str, memo: &str, shown_fee: u64, profile_index: u32) -> Result<String> {
+    let units = stx_units(amount)?;
+    let seed = unlock_seed(data_dir, device_password)?;
+    let _seed_lock = memory_guard::lock(&seed);
+    let key = derivation::derive_stacks_key(&seed, profile_index)?;
+    let plan = stacks::plan(&stacks::MAINNET, &stacks::address_of(&stacks::MAINNET, &key), to, units)?;
+    anyhow::ensure!(
+        plan.fee <= shown_fee,
+        "les frais Stacks ont augmenté depuis la confirmation ({} au lieu de {} STX) — relancez l'envoi",
+        stacks::format_stx(plan.fee),
+        stacks::format_stx(shown_fee)
+    );
+    stacks::send(&stacks::MAINNET, &key, to, &plan, memo)
+}
+
+/// Bouton « Max » : solde disponible moins les frais.
+pub fn stx_max(from: &str) -> Result<String> {
+    Ok(stacks::format_stx(stacks::max_amount(&stacks::MAINNET, from)?))
 }
 
 /// Bouton « Max » : tout l'ADA dépensable, frais déduits (vers `to` s'il est connu).

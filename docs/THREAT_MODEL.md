@@ -11,7 +11,7 @@ qui la met en œuvre. **Aucune de ces protections n'a encore été vérifiée pa
   interface web locale (`app/src`).
 - Portefeuille non dépositaire multi-réseaux : Bitcoin, réseaux EVM (Ethereum, L2, BNB Chain, Avalanche,
   Polygon, HyperEVM), Solana, Zcash (transparent et protégé Orchard), Monero, Dogecoin, Tron (TRX et USDT
-  TRC-20), XRP Ledger, Stellar, NEAR, Cardano, jetons du registre (`tokens.rs`).
+  TRC-20), XRP Ledger, Stellar, NEAR, Cardano, Stacks, jetons du registre (`tokens.rs`).
 - Hors périmètre : la version iOS (non démarrée), les services tiers eux-mêmes (nœuds, agrégateurs d'échange),
   le système d'exploitation et le matériel.
 
@@ -154,6 +154,11 @@ qui la met en œuvre. **Aucune de ces protections n'a encore été vérifiée pa
   dépensées, minimum d'ADA par sortie, frais exacts, monnaie rendue affichée ; adresses de contrat (script),
   de mise en jeu, de test ou Byron refusées. Le service public (Koios) pourrait mentir sur les sorties : au
   pire la transaction est refusée par le réseau (montants engagés par la signature, pas de perte possible).
+- **Stacks** : virements sérialisés et signés localement (octets identiques à @stacks/transactions ; envoi
+  avec mémo exécuté de bout en bout sur le réseau de test, signature altérée refusée `SignatureValidation`).
+  Avant la boîte : STX bloqués par le stacking jamais dépensés, frais plafonnés (0,1 STX), adresses de contrat
+  (SP….nom) et d'autres réseaux refusées ; mémo (34 octets, ASCII imprimable) toujours affiché dans la boîte
+  native. Nonce lu transactions en attente comprises.
 - *Risques résiduels* : un nœud malveillant peut afficher de faux soldes ou un faux historique (portefeuille
   léger) ; un nœud Monero ou Zcash malveillant peut affaiblir la confidentialité d'un envoi ; les nœuds publics
   voient l'adresse IP et les adresses interrogées ; un agrégateur peut proposer un mauvais cours (le minimum de

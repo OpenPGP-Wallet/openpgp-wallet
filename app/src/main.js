@@ -31,6 +31,7 @@ const ASSETS = [
   // NEAR : 24 décimales sur la chaîne ; 6 suffisent à la saisie (Max renvoie le montant exact).
   { coin: "near", name: "NEAR", symbol: "NEAR", family: "near", icon: "/assets/near.jpg", iconRound: true, gecko: "near", decimals: 6, chart: "NEAR", networks: ["near_mainnet"] },
   { coin: "ada", name: "Cardano", symbol: "ADA", family: "ada", icon: "/assets/ada.png", gecko: "cardano", decimals: 6, chart: "ADA", networks: ["ada_mainnet"] },
+  { coin: "stx", name: "Stacks", symbol: "STX", family: "stx", icon: "/assets/stx.png", gecko: "blockstack", decimals: 6, chart: "STX", networks: ["stx_mainnet"] },
   // Jetons (`token: true`) : contrats et mints relevés dans core/src/tokens.rs —
   // SEUL le registre Rust fait foi pour un envoi (l'interface n'envoie que
   // l'identifiant et le réseau) ; ceux-ci ne servent qu'aux demandes de
@@ -661,6 +662,7 @@ const I18N = {
     "net.xlm_mainnet": "Stellar — Fonds réels",
     "net.near_mainnet": "NEAR — Fonds réels",
     "net.ada_mainnet": "Cardano — Fonds réels",
+    "net.stx_mainnet": "Stacks — Fonds réels",
     "wallet.historyExplorerOnly": "Pas d'historique ici pour ce réseau : aucun service public gratuit ne le fournit. Il reste consultable sur l'explorateur du réseau.",
     "wallet.historyOpenExplorer": "Voir sur l'explorateur",
     "wallet.historyNeedsKey": "Pour voir l'historique de ce réseau ici, ajoutez une clé API Etherscan gratuite dans Paramètres. Il reste consultable sur l'explorateur du réseau.",
@@ -859,9 +861,9 @@ const I18N = {
     "send.destinationTagShort": "Tag de destination",
     "send.destinationTagInvalid": "Tag de destination : un nombre entier de 0 à 4294967295.",
     "send.memo": "Mémo (facultatif)",
-    "send.memoHint": "Exigé par les plateformes d'échange : recopiez exactement celui qu'elles indiquent (chiffres ou texte, 28 caractères au plus). Sans mémo, les fonds peuvent y être perdus.",
+    "send.memoHint": "Exigé par les plateformes d'échange : recopiez exactement celui qu'elles indiquent (chiffres ou texte). Sans mémo, les fonds peuvent y être perdus.",
     "send.memoShort": "Mémo",
-    "send.memoInvalid": "Mémo : 28 caractères au plus, lettres, chiffres et ponctuation sans accents.",
+    "send.memoInvalid": "Mémo : lettres, chiffres et ponctuation sans accents, longueur limitée.",
     "send.amount": "Montant",
     "send.amountFiat": "Montant dans la devise affichée",
     "send.percentMax": "Max",
@@ -1274,6 +1276,7 @@ const I18N = {
     "net.xlm_mainnet": "Stellar — Real funds",
     "net.near_mainnet": "NEAR — Real funds",
     "net.ada_mainnet": "Cardano — Real funds",
+    "net.stx_mainnet": "Stacks — Real funds",
     "wallet.historyExplorerOnly": "No history here for this network: no free public service provides it. You can still see it on the network's explorer.",
     "wallet.historyOpenExplorer": "View on the explorer",
     "wallet.historyNeedsKey": "To see this network's history here, add a free Etherscan API key in Settings. You can still see it on the network's explorer.",
@@ -1472,9 +1475,9 @@ const I18N = {
     "send.destinationTagShort": "Destination tag",
     "send.destinationTagInvalid": "Destination tag: a whole number from 0 to 4294967295.",
     "send.memo": "Memo (optional)",
-    "send.memoHint": "Required by exchanges: copy exactly the one they show (digits or text, 28 characters at most). Without a memo, funds sent there may be lost.",
+    "send.memoHint": "Required by exchanges: copy exactly the one they show (digits or text). Without a memo, funds sent there may be lost.",
     "send.memoShort": "Memo",
-    "send.memoInvalid": "Memo: 28 characters at most, unaccented letters, digits and punctuation.",
+    "send.memoInvalid": "Memo: unaccented letters, digits and punctuation, limited length.",
     "send.amount": "Amount",
     "send.amountFiat": "Amount in the display currency",
     "send.percentMax": "Max",
@@ -3589,6 +3592,8 @@ function addressOfProfile(profile, coin, network) {
   if (coin === "near") return profile.addresses.near ?? "";
   // Cardano : adresse de base (addr1…) ; absente d'un profil dérivé avant son ajout.
   if (coin === "ada") return profile.addresses.cardano ?? "";
+  // Stacks (SP…) ; absente d'un profil dérivé avant son ajout.
+  if (coin === "stx") return profile.addresses.stacks ?? "";
   // Zcash protégé : adresse u1 (récepteur Orchard seul).
   if (coin === "zecs") return profile.addresses.zcash_shielded ?? "";
   // Jetons Solana (USDC, USDT…) : même adresse propriétaire que SOL (le compte
@@ -4322,7 +4327,7 @@ const qrModal = document.getElementById("qr-modal");
 // EIP-681 pour Ethereum (montant en wei, réseau par son chain id). Sans
 // montant : l'adresse seule, lisible par toutes les applications.
 // Décimales maximales d'un montant demandé : 18 pour toute monnaie EVM.
-const QR_DECIMALS = new Proxy({ btc: 8, sol: 9, zec: 8, zecs: 8, xmr: 12, doge: 8, trx: 6, xrp: 6, xlm: 7, near: 24, ada: 6 }, { get: (known, coin) => ASSET_BY_COIN[coin]?.unitDecimals ?? known[coin] ?? 18 });
+const QR_DECIMALS = new Proxy({ btc: 8, sol: 9, zec: 8, zecs: 8, xmr: 12, doge: 8, trx: 6, xrp: 6, xlm: 7, near: 24, ada: 6, stx: 6 }, { get: (known, coin) => ASSET_BY_COIN[coin]?.unitDecimals ?? known[coin] ?? 18 });
 // Même mint que core/src/sol_spl.rs::usdc_mint_mainnet.
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 let qrCard = null;
@@ -5487,15 +5492,17 @@ document.getElementById("send-cancel").addEventListener("click", () => {
 
 // Complément du destinataire exigé par les plateformes d'échange : tag de
 // destination (XRP, chiffres) ou mémo (Stellar, texte ASCII court).
-const NOTE_COINS = new Set(["xrp", "xlm"]);
+const NOTE_COINS = new Set(["xrp", "xlm", "stx"]);
+// Mémo : longueur maximale selon le réseau (Stellar 28 octets, Stacks 34).
+const MEMO_MAX = { xlm: 28, stx: 34 };
 
 // Libellés du champ, de sa consigne et de la ligne d'aperçu selon la crypto
 // (clés i18n changées aussi, pour un changement de langue fenêtre ouverte).
 function setNoteLabels(coin) {
-  const memo = coin === "xlm";
+  const memo = coin in MEMO_MAX;
   const input = document.getElementById("send-tag");
   input.inputMode = memo ? "text" : "numeric";
-  input.maxLength = memo ? 28 : 10;
+  input.maxLength = memo ? MEMO_MAX[coin] : 10;
   for (const [selector, tagKey, memoKey] of [
     ['label[for="send-tag"]', "send.destinationTag", "send.memo"],
     ["#send-tag-block .tag-hint", "send.destinationTagHint", "send.memoHint"],
@@ -5514,11 +5521,12 @@ function sendNote(coin) {
   return value === "" ? null : value;
 }
 const sendDestinationTag = () => sendNote("xrp");
-const sendMemo = () => sendNote("xlm");
+const sendMemo = () => (sendContext?.coin in MEMO_MAX ? sendNote(sendContext.coin) : null);
 
 // XRP : chiffres seulement ; Stellar : ASCII imprimable (collage compris).
 document.getElementById("send-tag").addEventListener("input", (event) => {
-  const filtered = sendContext?.coin === "xlm" ? event.target.value.replace(/[^\x20-\x7e]/g, "").slice(0, 28) : event.target.value.replace(/\D/g, "").slice(0, 10);
+  const max = MEMO_MAX[sendContext?.coin];
+  const filtered = max ? event.target.value.replace(/[^\x20-\x7e]/g, "").slice(0, max) : event.target.value.replace(/\D/g, "").slice(0, 10);
   if (filtered !== event.target.value) event.target.value = filtered;
 });
 
@@ -5558,7 +5566,7 @@ sendConfirmBtn.addEventListener("click", () => {
     return;
   }
   const memo = sendMemo();
-  if (memo !== null && !/^[\x20-\x7e]{1,28}$/.test(memo)) {
+  if (memo !== null && !(/^[\x20-\x7e]+$/.test(memo) && memo.length <= MEMO_MAX[sendContext.coin])) {
     showError(errorEl, t("send.memoInvalid"));
     return;
   }

@@ -50,6 +50,7 @@ pub mod xrp;
 pub mod stellar;
 pub mod near;
 pub mod cardano;
+pub mod stacks;
 #[cfg(test)]
 mod robustness_tests;
 #[cfg(windows)]

@@ -125,6 +125,12 @@ pub fn derive_tron_key(seed: &[u8], index: u32) -> Result<(SigningKey, crate::tr
     Ok((signing_key, address))
 }
 
+/// Dérive la clé Stacks n°`index` (chemin m/44'/5757'/0'/0/{index}, celui de
+/// Leather et Xverse ; adresse SP… : voir `stacks`).
+pub fn derive_stacks_key(seed: &[u8], index: u32) -> Result<SigningKey> {
+    derive_key_from_path(seed, &format!("m/44'/5757'/0'/0/{index}"))
+}
+
 /// Dérive la clé XRP n°`index` (chemin BIP44 m/44'/144'/0'/0/{index},
 /// coin_type 144' = XRP dans SLIP-0044 — celui de Ledger et Xaman) et retourne
 /// l'identifiant de compte (hash160 de la clé compressée ; voir `xrp`).

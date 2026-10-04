@@ -237,7 +237,7 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("le serveur Stellar a renvoyé un autre identifiant de transaction", "the Stellar server returned another transaction ID"),
     ("transaction Stellar refusée : échouée dans le registre", "Stellar transaction refused: failed in the ledger"),
     ("frais Stellar manquants", "Stellar fee missing"),
-    ("mémo : réservé aux envois Stellar", "memo: only for Stellar transfers"),
+    ("mémo : réservé aux envois Stellar et Stacks", "memo: only for Stellar and Stacks transfers"),
     ("tag de destination et mémo : un seul des deux", "destination tag and memo: only one of the two"),
     // NEAR (core/src/near.rs, core/src/api.rs)
     ("nœud NEAR injoignable", "NEAR node unreachable"),
@@ -279,6 +279,22 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("les frais Cardano ont changé depuis la confirmation — relancez l'envoi", "Cardano fees changed since the confirmation — start again"),
     ("le service Cardano a renvoyé un autre identifiant de transaction", "the Cardano service returned another transaction ID"),
     ("frais Cardano manquants", "Cardano fee missing"),
+    // Stacks (core/src/stacks.rs, core/src/api.rs)
+    ("service Stacks injoignable", "Stacks service unreachable"),
+    ("réponse du service Stacks illisible", "unreadable Stacks service response"),
+    ("montant Stacks illisible", "unreadable Stacks amount"),
+    ("adresse de contrat Stacks : envoi refusé (adresse de portefeuille SP… attendue)", "Stacks contract address: transfer refused (SP… wallet address expected)"),
+    ("adresse Stacks invalide", "invalid Stacks address"),
+    ("adresse Stacks invalide (somme de contrôle)", "invalid Stacks address (checksum)"),
+    ("adresse Stacks d'un autre réseau — refusée", "Stacks address from another network — refused"),
+    ("mémo Stacks trop long (34 caractères au plus)", "Stacks memo too long (34 characters at most)"),
+    ("mémo Stacks invalide (lettres, chiffres et ponctuation ASCII seulement)", "invalid Stacks memo (ASCII letters, digits and punctuation only)"),
+    ("frais Stacks illisibles", "unreadable Stacks fee"),
+    ("envoi vers votre propre adresse Stacks", "sending to your own Stacks address"),
+    ("STX insuffisants pour couvrir les frais du réseau", "not enough STX to cover the network fee"),
+    ("nonce Stacks illisible", "unreadable Stacks nonce"),
+    ("le service Stacks a renvoyé un autre identifiant de transaction", "the Stacks service returned another transaction ID"),
+    ("frais Stacks manquants", "Stacks fee missing"),
     ("montant nul", "zero amount"),
     ("montant hors limites", "amount out of range"),
     // SwapKit (core/src/swapkit.rs)
@@ -924,6 +940,27 @@ fn translate_dynamic_error(msg: &str) -> Option<String> {
     if let Some(detail) = msg.strip_prefix("les frais Cardano ont augmenté depuis la confirmation (").and_then(|rest| rest.strip_suffix(") — relancez l'envoi")) {
         return Some(format!("Cardano fees increased since the confirmation ({}) — start again", detail.replace(" au lieu de ", " instead of ")));
     }
+    if let Some(rest) = msg.strip_prefix("STX insuffisants : ") {
+        return Some(format!(
+            "insufficient STX: {}",
+            rest.replace(" STX disponibles", " STX available").replace(" STX bloqués par le stacking)", " STX locked by stacking)").replace(" STX de frais demandés", " STX in fees requested")
+        ));
+    }
+    if let Some(rest) = msg.strip_prefix("frais du réseau Stacks anormalement élevés (").and_then(|r| r.strip_suffix(" STX) — réessayez plus tard")) {
+        return Some(format!("abnormally high Stacks network fee ({rest} STX) — try again later"));
+    }
+    if let Some(rest) = msg.strip_prefix("transaction Stacks refusée : ") {
+        return Some(format!("Stacks transaction refused: {rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("service Stacks : réponse ") {
+        return Some(format!("Stacks service: response {rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("signature Stacks impossible (") {
+        return Some(format!("Stacks signature impossible ({rest}"));
+    }
+    if let Some(detail) = msg.strip_prefix("les frais Stacks ont augmenté depuis la confirmation (").and_then(|rest| rest.strip_suffix(") — relancez l'envoi")) {
+        return Some(format!("Stacks fees increased since the confirmation ({}) — start again", detail.replace(" au lieu de ", " instead of ")));
+    }
     if let Some(rest) = msg.strip_prefix("DOGE insuffisants : ") {
         return Some(format!(
             "insufficient DOGE: {}",
@@ -1313,6 +1350,7 @@ struct AddressesDto {
     stellar: String,
     near: String,
     cardano: String,
+    stacks: String,
 }
 
 impl From<api::Addresses> for AddressesDto {
@@ -1331,6 +1369,7 @@ impl From<api::Addresses> for AddressesDto {
             stellar: a.stellar,
             near: a.near,
             cardano: a.cardano,
+            stacks: a.stacks,
         }
     }
 }
@@ -1438,7 +1477,7 @@ fn save_bytes_with_dialog(suggested_name: String, content_b64: String, app: taur
 /// aurait laissé un frontend compromis ouvrir n'importe quelle page — un vecteur
 /// de phishing simple, ouvert sans aucun bénéfice fonctionnel puisqu'aucun appel
 /// légitime de cette commande ne cible jamais autre chose que ces domaines.
-const ALLOWED_EXTERNAL_LINK_PREFIXES: [&str; 12] = [
+const ALLOWED_EXTERNAL_LINK_PREFIXES: [&str; 13] = [
     "https://explorer.solana.com/",
     "https://blockstream.info/",
     "https://explorer.cow.fi/",
@@ -1451,6 +1490,7 @@ const ALLOWED_EXTERNAL_LINK_PREFIXES: [&str; 12] = [
     "https://stellar.expert/explorer/public/",
     "https://nearblocks.io/txns/",
     "https://cardanoscan.io/transaction/",
+    "https://explorer.hiro.so/txid/",
 ];
 
 /// Lien vers un explorateur connu de l'app : Solana, Bitcoin, ou l'explorateur
@@ -2161,6 +2201,7 @@ fn forget_session(app: &tauri::AppHandle) {
     app.state::<ProfileStellarCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<ProfileNearCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<ProfileCardanoCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    app.state::<ProfileStacksCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<ShieldedKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<MoneroKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     IS_AFFILIATE_WALLET.store(false, Ordering::Relaxed);
@@ -2220,6 +2261,7 @@ async fn get_balance(network: String, address: String, app: tauri::AppHandle) ->
             "xlm_mainnet" => Ok(pgp_wallet_poc::stellar::format_xlm(api::get_xlm_balance(&address).t_err()?)),
             "near_mainnet" => Ok(pgp_wallet_poc::near::format_near(api::get_near_balance(&address).t_err()?)),
             "ada_mainnet" => Ok(pgp_wallet_poc::cardano::format_ada(api::get_ada_balance(&address).t_err()?)),
+            "stx_mainnet" => Ok(pgp_wallet_poc::stacks::format_stx(api::get_stx_balance(&address).t_err()?)),
             // Base locale (synchronisation de fond) : dépensable + en attente.
             "zec_shielded" => {
                 let balance = api::zec_shielded_balance(&data_dir(&app)?, shielded_profile(&app, &address)?).t_err()?;
@@ -2353,7 +2395,7 @@ async fn has_pending_tx(network: String, address: String, app: tauri::AppHandle)
             // Registre validé toutes les 3 à 5 s : idem.
             "xrp_mainnet" | "xlm_mainnet" | "near_mainnet" => Ok(false),
             // Un bloc toutes les 20 s ; l'envoi apparaît à sa confirmation.
-            "ada_mainnet" => Ok(false),
+            "ada_mainnet" | "stx_mainnet" => Ok(false),
             "xmr_mainnet" => api::has_pending_xmr(&data_dir(&app)?, monero_profile(&app, &address)?).t_err(),
             other => Err(translate_error(&format!("réseau inconnu : {other}"))),
         }
@@ -2568,6 +2610,12 @@ async fn get_tx_history(network: String, address: String, app: tauri::AppHandle)
             Some(price_history::Asset::Pair("ADAUSDT")),
             6,
             |id| format!("https://cardanoscan.io/transaction/{id}"),
+        )),
+        "stx_mainnet" => HistoryDto::read(history_dtos(
+            || pgp_wallet_poc::stacks::history(&pgp_wallet_poc::stacks::MAINNET, &address, HISTORY_LIMIT as usize),
+            Some(price_history::Asset::Pair("STXUSDT")),
+            6,
+            |id| format!("https://explorer.hiro.so/txid/0x{id}?chain=mainnet"),
         )),
         "sol_devnet" | "sol_mainnet" => {
             let net = sol_network(&network)?;
@@ -2851,6 +2899,7 @@ fn network_label(network: &str) -> String {
         "xlm_mainnet" => lang("Stellar MAINNET — fonds réels", "Stellar MAINNET — real funds").to_string(),
         "near_mainnet" => lang("NEAR MAINNET — fonds réels", "NEAR MAINNET — real funds").to_string(),
         "ada_mainnet" => lang("Cardano MAINNET — fonds réels", "Cardano MAINNET — real funds").to_string(),
+        "stx_mainnet" => lang("Stacks MAINNET — fonds réels", "Stacks MAINNET — real funds").to_string(),
         "xmr_mainnet" => lang("Monero MAINNET — fonds réels", "Monero MAINNET — real funds").to_string(),
         "zec_shielded" => lang("Zcash MAINNET — fonds protégés", "Zcash MAINNET — shielded funds").to_string(),
         other => match wallet_flow::evm_network(other) {
@@ -2875,6 +2924,7 @@ fn network_unit(network: &str) -> &'static str {
         "xlm_mainnet" => "XLM",
         "near_mainnet" => "NEAR",
         "ada_mainnet" => "ADA",
+        "stx_mainnet" => "STX",
         other => wallet_flow::evm_network(other).map(|n| n.native_symbol).unwrap_or(""),
     }
 }
@@ -2993,6 +3043,7 @@ fn recipient_warning_lines(first_send: bool, coin: &str, activity: Option<api::R
         "xlm" => ("aucun XLM", "no XLM"),
         "near" => ("aucun NEAR", "no NEAR"),
         "ada" => ("aucun ADA", "no ADA"),
+        "stx" => ("aucun STX", "no STX"),
         "sol" => ("aucun SOL", "no SOL"),
         _ => ("aucun fonds", "no funds"),
     };
@@ -3075,6 +3126,7 @@ fn own_profile_label(app: &tauri::AppHandle, dir: &std::path::Path, network: &st
         "xlm_mainnet" => in_cache(&app.state::<ProfileStellarCache>().0, exact),
         "near_mainnet" => in_cache(&app.state::<ProfileNearCache>().0, exact),
         "ada_mainnet" => in_cache(&app.state::<ProfileCardanoCache>().0, exact),
+        "stx_mainnet" => in_cache(&app.state::<ProfileStacksCache>().0, exact),
         "xmr_mainnet" => {
             app.state::<MoneroKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).iter().find(|(_, (address, _))| address == to).map(|(index, _)| *index)
         }
@@ -3132,11 +3184,13 @@ async fn send_transaction(
 ) -> Result<String, String> {
     run_blocking(move || {
         let password = Zeroizing::new(password);
-        let note = match (api::parse_destination_tag(destination_tag.as_deref()).t_err()?, api::parse_stellar_memo(memo.as_deref()).t_err()?) {
-            (None, StellarMemo::None) => None,
-            (Some(tag), StellarMemo::None) => Some(DestinationNote::XrpTag(tag)),
-            (None, memo) => Some(DestinationNote::StellarMemo(memo)),
-            (Some(_), _) => return Err(translate_error("tag de destination et mémo : un seul des deux")),
+        let memo = memo.filter(|m| !m.trim().is_empty());
+        let note = match (api::parse_destination_tag(destination_tag.as_deref()).t_err()?, memo) {
+            (None, None) => None,
+            (Some(tag), None) => Some(DestinationNote::XrpTag(tag)),
+            (None, Some(memo)) if network == "stx_mainnet" => Some(DestinationNote::StacksMemo(api::parse_stacks_memo(Some(&memo)).t_err()?)),
+            (None, Some(memo)) => Some(DestinationNote::StellarMemo(api::parse_stellar_memo(Some(&memo)).t_err()?)),
+            (Some(_), Some(_)) => return Err(translate_error("tag de destination et mémo : un seul des deux")),
         };
         let dir = data_dir(&app)?;
         let from_label = api::list_profiles(&dir)
@@ -3167,6 +3221,7 @@ async fn send_transaction(
         let from_stellar = app.state::<ProfileStellarCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).cloned();
         let from_near = app.state::<ProfileNearCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).cloned();
         let from_cardano = app.state::<ProfileCardanoCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).cloned();
+        let from_stacks = app.state::<ProfileStacksCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).cloned();
         let from = SendFrom {
             evm: from_evm.as_deref(),
             sol: from_sol.as_deref(),
@@ -3179,6 +3234,7 @@ async fn send_transaction(
             stellar: from_stellar.as_deref(),
             near: from_near.as_deref(),
             cardano: from_cardano.as_deref(),
+            stacks: from_stacks.as_deref(),
         };
         let mut send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &from_label, None, from, max.unwrap_or(false), note)?;
         send_grace_period(&app)?;
@@ -3225,6 +3281,10 @@ async fn send_transaction(
             "ada_mainnet" => {
                 let shown_fee = send.ada_fee.ok_or_else(|| translate_error("frais Cardano manquants"))?;
                 api::send_ada(&dir, &password, &send.to, &send.amount, shown_fee, profile_index).t_err()
+            }
+            "stx_mainnet" => {
+                let shown_fee = send.stx_fee.ok_or_else(|| translate_error("frais Stacks manquants"))?;
+                api::send_stx(&dir, &password, &send.to, &send.amount, send.stacks_memo(), shown_fee, profile_index).t_err()
             }
             // Exactement l'envoi préparé et affiché (sorties, leurres, frais).
             "xmr_mainnet" => match send.xmr_plan.take() {
@@ -3331,6 +3391,7 @@ async fn max_send_amount(network: String, token: Option<String>, profile_index: 
             "xlm_mainnet" => api::xlm_max(&cached(&app.state::<ProfileStellarCache>().0)?).t_err(),
             "near_mainnet" => api::near_max(&cached(&app.state::<ProfileNearCache>().0)?, None).t_err(),
             "ada_mainnet" => api::ada_max(&cached(&app.state::<ProfileCardanoCache>().0)?, None).t_err(),
+            "stx_mainnet" => api::stx_max(&cached(&app.state::<ProfileStacksCache>().0)?).t_err(),
             "xmr_mainnet" => {
                 let keys = app.state::<MoneroKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).map(|(_, keys)| keys.clone()).ok_or_else(unknown)?;
                 Ok(pgp_wallet_poc::monero::format_xmr(api::xmr_send_plan_max(&dir, &keys, None).t_err()?.amount))
@@ -3385,6 +3446,8 @@ struct ConfirmedSend {
     near_fee: Option<u128>,
     /// Frais Cardano affichés (plafond à l'envoi).
     ada_fee: Option<u64>,
+    /// Frais Stacks affichés (plafond à l'envoi).
+    stx_fee: Option<u64>,
     /// Tag (XRP) ou mémo (Stellar) affiché dans la boîte, signé tel quel.
     note: Option<DestinationNote>,
 }
@@ -3395,6 +3458,8 @@ struct ConfirmedSend {
 enum DestinationNote {
     XrpTag(u32),
     StellarMemo(StellarMemo),
+    /// Mémo Stacks (ASCII, 34 octets au plus).
+    StacksMemo(String),
 }
 
 use pgp_wallet_poc::stellar::Memo as StellarMemo;
@@ -3404,6 +3469,13 @@ impl ConfirmedSend {
         match self.note {
             Some(DestinationNote::XrpTag(tag)) => Some(tag),
             _ => None,
+        }
+    }
+
+    fn stacks_memo(&self) -> &str {
+        match &self.note {
+            Some(DestinationNote::StacksMemo(memo)) => memo,
+            _ => "",
         }
     }
 
@@ -3430,6 +3502,7 @@ struct SendFrom<'a> {
     stellar: Option<&'a str>,
     near: Option<&'a str>,
     cardano: Option<&'a str>,
+    stacks: Option<&'a str>,
 }
 
 /// Validation, avertissements et boîte de confirmation native, communs aux
@@ -3466,11 +3539,13 @@ fn confirm_send(
         "xlm_mainnet" => "xlm",
         "near_mainnet" => "near",
         "ada_mainnet" => "ada",
+        "stx_mainnet" => "stx",
         other => return Err(translate_error(&format!("réseau inconnu : {other}"))),
     };
     match (&note, coin) {
         (Some(DestinationNote::XrpTag(_)), c) if c != "xrp" => return Err(translate_error("tag de destination : réservé aux envois XRP")),
-        (Some(DestinationNote::StellarMemo(_)), c) if c != "xlm" => return Err(translate_error("mémo : réservé aux envois Stellar")),
+        (Some(DestinationNote::StellarMemo(_)), c) if c != "xlm" => return Err(translate_error("mémo : réservé aux envois Stellar et Stacks")),
+        (Some(DestinationNote::StacksMemo(_)), c) if c != "stx" => return Err(translate_error("mémo : réservé aux envois Stellar et Stacks")),
         _ => {}
     }
     let destination_tag = match note {
@@ -3507,6 +3582,7 @@ fn confirm_send(
             "xlm" => api::xlm_max(from.stellar.ok_or_else(unknown_profile)?).t_err()?,
             "near" => api::near_max(from.near.ok_or_else(unknown_profile)?, Some(&to)).t_err()?,
             "ada" => api::ada_max(from.cardano.ok_or_else(unknown_profile)?, Some(&to)).t_err()?,
+            "stx" => api::stx_max(from.stacks.ok_or_else(unknown_profile)?).t_err()?,
             _ => {
                 let plan = api::xmr_send_plan_max(dir, from.xmr.ok_or_else(unknown_profile)?, Some(&to)).t_err()?;
                 let amount = pgp_wallet_poc::monero::format_xmr(plan.amount);
@@ -3525,6 +3601,7 @@ fn confirm_send(
         "xlm" => api::canonical_xlm_amount(&amount).t_err()?,
         "near" => api::canonical_near_amount(&amount).t_err()?,
         "ada" => api::canonical_ada_amount(&amount).t_err()?,
+        "stx" => api::canonical_stx_amount(&amount).t_err()?,
         "xmr" => api::canonical_xmr_amount(&amount).t_err()?,
         _ => api::canonical_amount(coin, &amount).t_err()?,
     };
@@ -3603,6 +3680,11 @@ fn confirm_send(
         "ada" => Some(api::ada_send_plan(from.cardano.ok_or_else(unknown_profile)?, &to, &amount).t_err()?),
         _ => None,
     };
+    // Stacks : solde disponible (hors stacking) et frais vérifiés MAINTENANT.
+    let stx_plan = match coin {
+        "stx" => Some(api::stx_send_plan(from.stacks.ok_or_else(unknown_profile)?, &to, &amount).t_err()?),
+        _ => None,
+    };
     // Monero : destinataire vérifié, sorties choisies, leurres tirés et frais
     // calculés MAINTENANT (clés de visualisation, sans la seed) ; c'est cet
     // envoi-là, inchangé, qui sera signé.
@@ -3635,6 +3717,7 @@ fn confirm_send(
         "xlm" => api::xlm_recipient_activity(&to).ok(),
         "near" => api::near_recipient_activity(&to).ok(),
         "ada" => api::ada_recipient_activity(&to).ok(),
+        "stx" => api::stx_recipient_activity(&to).ok(),
         // Adresse vérifiée par la préparation ; aucune activité lisible
         // (adresses et montants invisibles sur la chaîne Monero).
         "xmr" => None,
@@ -3716,6 +3799,7 @@ Change returned to your address: {change} ZEC")));
             }
             line
         }),
+        "stx" => stx_plan.map(|plan| format!("{} : {} STX", lang("Frais", "Fee"), pgp_wallet_poc::stacks::format_stx(plan.fee))),
         "ada" => ada_plan.as_ref().map(|plan| {
             let mut line = format!("{} : {} ADA", lang("Frais", "Fee"), pgp_wallet_poc::cardano::format_ada(plan.fee));
             if plan.change > 0 {
@@ -3758,6 +3842,11 @@ Change returned to your address: {change} XMR (spendable after 10 confirmations,
             StellarMemo::Id(id) => format!("{to}\n{} {id}", lang("Mémo (identifiant) :", "Memo (ID):")),
             StellarMemo::Text(text) => format!("{to}\n{} \"{text}\"", lang("Mémo (texte) :", "Memo (text):")),
         },
+        // Stacks : mémo TOUJOURS montré (ASCII imprimable seulement).
+        ("stx", _) => match &note {
+            Some(DestinationNote::StacksMemo(text)) => format!("{to}\n{} \"{text}\"", lang("Mémo :", "Memo:")),
+            _ => format!("{to}\n{}", lang("Mémo : aucun", "Memo: none")),
+        },
         _ => to.clone(),
     };
     if !confirm_transaction_native(app, network, &to_line, &amount_line, from_label, fee_line.as_deref(), warning.as_deref(), None) {
@@ -3776,6 +3865,7 @@ Change returned to your address: {change} XMR (spendable after 10 confirmations,
         xlm_fee: xlm_plan.map(|plan| plan.fee),
         near_fee: near_plan.map(|plan| plan.fee),
         ada_fee: ada_plan.map(|plan| plan.fee),
+        stx_fee: stx_plan.map(|plan| plan.fee),
         note,
     })
 }
@@ -5693,6 +5783,10 @@ struct ProfileNearCache(std::sync::Mutex<std::collections::HashMap<u32, String>>
 #[derive(Default)]
 struct ProfileCardanoCache(std::sync::Mutex<std::collections::HashMap<u32, String>>);
 
+/// Adresse Stacks de chaque profil (préparation d'un envoi avant la boîte).
+#[derive(Default)]
+struct ProfileStacksCache(std::sync::Mutex<std::collections::HashMap<u32, String>>);
+
 /// Adresse Bitcoin testnet de chaque profil (bouton « Max » d'un envoi testnet).
 #[derive(Default)]
 struct ProfileBtcTestnetCache(std::sync::Mutex<std::collections::HashMap<u32, String>>);
@@ -5750,6 +5844,9 @@ fn remember_addresses(app: &tauri::AppHandle, index: u32, addresses: &api::Addre
     }
     if let Some(cache) = app.try_state::<ProfileCardanoCache>() {
         cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, addresses.cardano.clone());
+    }
+    if let Some(cache) = app.try_state::<ProfileStacksCache>() {
+        cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, addresses.stacks.clone());
     }
     if let Some(cache) = app.try_state::<ShieldedKeysCache>() {
         cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, (addresses.zcash_shielded.clone(), addresses.zcash_shielded_keys.clone()));
@@ -6534,6 +6631,7 @@ pub fn run() {
         .manage(ProfileStellarCache::default())
         .manage(ProfileNearCache::default())
         .manage(ProfileCardanoCache::default())
+        .manage(ProfileStacksCache::default())
         .manage(ProfileDogeCache::default())
         .manage(ProfileBtcCache::default())
         .manage(ShieldedKeysCache::default())
@@ -6802,7 +6900,7 @@ mod tests {
         }
 
         // Chaque avertissement tient sur un seul paragraphe (mise en page de la boîte).
-        for coin in ["evm", "btc", "sol", "usdc", "zec", "doge", "trx", "xrp", "xlm", "near", "ada", "xmr", "zecs"] {
+        for coin in ["evm", "btc", "sol", "usdc", "zec", "doge", "trx", "xrp", "xlm", "near", "ada", "stx", "xmr", "zecs"] {
             for activity in [Some(Unused), Some(Empty), None] {
                 assert!(recipient_warning_lines(true, coin, activity).iter().all(|l| !l.contains('\n')));
             }
@@ -7019,7 +7117,7 @@ mod tests {
             "le serveur Stellar a renvoyé un autre identifiant de transaction",
             "transaction Stellar refusée : échouée dans le registre",
             "frais Stellar manquants",
-            "mémo : réservé aux envois Stellar",
+            "mémo : réservé aux envois Stellar et Stacks",
             "tag de destination et mémo : un seul des deux",
         ] {
             assert!(sources.iter().any(|s| s.contains(&format!("\"{message}\""))), "message absent du code : {message}");
@@ -7127,6 +7225,41 @@ mod tests {
         assert_eq!(
             translate_dynamic_error("les frais Cardano ont augmenté depuis la confirmation (0.180000 au lieu de 0.170000 ADA) — relancez l'envoi").unwrap(),
             "Cardano fees increased since the confirmation (0.180000 instead of 0.170000 ADA) — start again"
+        );
+    }
+
+    /// Messages d'erreur Stacks : présents dans le code, traduits (fixes et variables).
+    #[test]
+    fn stacks_error_messages_have_a_translation() {
+        let sources = [include_str!("../../../core/src/stacks.rs"), include_str!("../../../core/src/api.rs"), include_str!("lib.rs")];
+        for message in [
+            "service Stacks injoignable",
+            "réponse du service Stacks illisible",
+            "montant Stacks illisible",
+            "adresse de contrat Stacks : envoi refusé (adresse de portefeuille SP… attendue)",
+            "adresse Stacks invalide",
+            "adresse Stacks invalide (somme de contrôle)",
+            "adresse Stacks d'un autre réseau — refusée",
+            "mémo Stacks trop long (34 caractères au plus)",
+            "mémo Stacks invalide (lettres, chiffres et ponctuation ASCII seulement)",
+            "frais Stacks illisibles",
+            "envoi vers votre propre adresse Stacks",
+            "STX insuffisants pour couvrir les frais du réseau",
+            "nonce Stacks illisible",
+            "le service Stacks a renvoyé un autre identifiant de transaction",
+            "frais Stacks manquants",
+        ] {
+            assert!(sources.iter().any(|s| s.contains(&format!("\"{message}\""))), "message absent du code : {message}");
+            assert!(EXACT_ERROR_TRANSLATIONS.iter().any(|(fr, _)| *fr == message), "sans traduction : {message}");
+        }
+        assert_eq!(
+            translate_dynamic_error("STX insuffisants : 1.000000 STX disponibles (5.000000 STX bloqués par le stacking), 2.000000 STX + 0.003000 STX de frais demandés").unwrap(),
+            "insufficient STX: 1.000000 STX available (5.000000 STX locked by stacking), 2.000000 STX + 0.003000 STX in fees requested"
+        );
+        assert_eq!(translate_dynamic_error("transaction Stacks refusée : BadNonce").unwrap(), "Stacks transaction refused: BadNonce");
+        assert_eq!(
+            translate_dynamic_error("les frais Stacks ont augmenté depuis la confirmation (0.004000 au lieu de 0.003000 STX) — relancez l'envoi").unwrap(),
+            "Stacks fees increased since the confirmation (0.004000 instead of 0.003000 STX) — start again"
         );
     }
 

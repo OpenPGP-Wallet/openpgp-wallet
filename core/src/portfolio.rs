@@ -67,6 +67,7 @@ const XRP_MAX: usize = 50;
 const XLM_MAX: usize = 50;
 const NEAR_MAX: usize = 25;
 const ADA_MAX: usize = 25;
+const STX_MAX: usize = 50;
 /// Transactions confirmées par page Esplora.
 const BTC_PAGE: usize = 25;
 /// Chaque transaction Solana demande une requête de détail, que le nœud
@@ -190,6 +191,8 @@ enum Source {
     Near,
     /// Cardano : transactions récentes, en une page (voir `ADA_MAX`).
     Ada,
+    /// Stacks : mouvements récents, en une page (voir `STX_MAX`).
+    Stx,
 }
 
 impl Spec {
@@ -202,7 +205,7 @@ impl Spec {
     fn has_history(&self) -> bool {
         match self.source {
             Source::Evm(net) | Source::Erc20(net, _) => history::evm_history_available(net),
-            Source::Btc | Source::Sol | Source::Spl(_) | Source::Xmr | Source::ZecShielded | Source::Doge | Source::Tron | Source::Trc20(_) | Source::Xrp | Source::Xlm | Source::Near | Source::Ada => true,
+            Source::Btc | Source::Sol | Source::Spl(_) | Source::Xmr | Source::ZecShielded | Source::Doge | Source::Tron | Source::Trc20(_) | Source::Xrp | Source::Xlm | Source::Near | Source::Ada | Source::Stx => true,
             Source::Zec => false,
         }
     }
@@ -237,6 +240,7 @@ fn spec(network: &str, token: Option<&str>) -> Result<Option<Spec>> {
         "xlm_mainnet" => Spec { asset: Asset::Pair("XLMUSDT"), decimals: 7, max_read: XLM_MAX, symbol: "XLM", source: Source::Xlm },
         "near_mainnet" => Spec { asset: Asset::Pair("NEARUSDT"), decimals: 24, max_read: NEAR_MAX, symbol: "NEAR", source: Source::Near },
         "ada_mainnet" => Spec { asset: Asset::Pair("ADAUSDT"), decimals: 6, max_read: ADA_MAX, symbol: "ADA", source: Source::Ada },
+        "stx_mainnet" => Spec { asset: Asset::Pair("STXUSDT"), decimals: 6, max_read: STX_MAX, symbol: "STX", source: Source::Stx },
         other => match wallet_flow::evm_network(other) {
             Some(net) if net.mainnet => {
                 let Some(asset) = price_history::price_asset(net.native_symbol) else { return Ok(None) };
@@ -266,6 +270,7 @@ fn fetch_balance(spec: &Spec, address: &str) -> Result<i128> {
         Source::Xlm => api::get_xlm_balance(address)?.into(),
         Source::Near => i128::try_from(api::get_near_balance(address)?).map_err(|_| anyhow!("solde hors limites"))?,
         Source::Ada => api::get_ada_balance(address)?.into(),
+        Source::Stx => api::get_stx_balance(address)?.into(),
         Source::Trc20(contract) => i128::try_from(crate::tron::trc20_balance(address, contract)?).map_err(|_| anyhow!("solde hors limites"))?,
         Source::Spl(mint) => api::get_spl_balance(address, &mint, solana)?.into(),
     })
@@ -326,6 +331,7 @@ fn fetch_page(spec: &Spec, address: &str, cursor: Option<&Cursor>) -> Result<Pag
         Source::Xlm => Ok(Page { entries: crate::stellar::history(&crate::stellar::MAINNET, address, XLM_MAX)?, next: None }),
         Source::Near => Ok(Page { entries: crate::near::history(&crate::near::MAINNET, address, NEAR_MAX)?, next: None }),
         Source::Ada => Ok(Page { entries: crate::cardano::history(address, ADA_MAX)?, next: None }),
+        Source::Stx => Ok(Page { entries: crate::stacks::history(&crate::stacks::MAINNET, address, STX_MAX)?, next: None }),
     }
 }
 
