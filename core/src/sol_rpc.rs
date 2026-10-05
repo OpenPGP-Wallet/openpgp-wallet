@@ -287,9 +287,11 @@ impl SolRpc {
                     Err(anyhow!(BLOCKHASH_EXPIRED_ERROR))
                 } else if text.contains("AlreadyProcessed") || text.contains("already been processed") {
                     Ok(signature)
-                } else if text.starts_with("erreur RPC sendTransaction") || text == RATE_LIMITED_ERROR {
-                    Err(e)
-                } else if e.chain().find_map(|c| c.downcast_ref::<reqwest::Error>()).is_some_and(crate::wallet_flow::nothing_sent) {
+                } else if text.starts_with("erreur RPC sendTransaction")
+                    || text == RATE_LIMITED_ERROR
+                    || e.chain().find_map(|c| c.downcast_ref::<reqwest::Error>()).is_some_and(crate::wallet_flow::nothing_sent)
+                {
+                    // Refus net du nœud, débit dépassé, ou connexion jamais établie : rien n'est parti.
                     Err(e)
                 } else {
                     Err(crate::wallet_flow::maybe_sent(&signature))
