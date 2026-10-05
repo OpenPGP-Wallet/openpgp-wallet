@@ -82,6 +82,11 @@ pub struct JupiterQuote {
 /// (`/swap/v1/program-id-to-label`), espaces encodés.
 const EXCLUDED_DEXES: &str = "HumidiFi,SolFi,SolFi%20V2,TesseraV,ZeroFi,GoonFi%20V2,Obric%20V2,AlphaQ,BisonFi,Aquifer";
 
+/// Plafond des frais de priorité demandé à Jupiter (0,001 SOL) — voir
+/// `build_swap_transaction` ; aussi gardé de côté par le « Max » d'un
+/// échange (`api::swap_max`).
+pub const PRIORITY_FEE_MAX_LAMPORTS: u64 = 1_000_000;
+
 pub fn quote(input_mint: &str, output_mint: &str, amount: u64, slippage_bps: u32, fee_mint: Option<[u8; 32]>) -> Result<JupiterQuote> {
     let fee = if fee_mint.is_some() { format!("&platformFeeBps={AFFILIATE_FEE_BPS}") } else { String::new() };
     let url = format!("{JUPITER_BASE}/swap/v1/quote?inputMint={input_mint}&outputMint={output_mint}&amount={amount}&slippageBps={slippage_bps}{fee}&excludeDexes={EXCLUDED_DEXES}");
@@ -160,7 +165,7 @@ pub fn build_swap_transaction(quote: &JupiterQuote, user_pubkey: &str) -> Result
             // "medium" et pas "high" : mesuré en direct, "high" faisait monter
             // le coût réel à ~915 000 lamports contre ~25 000-105 000 par
             // défaut — le but est un PLAFOND, pas de payer plus cher.
-            "priorityLevelWithMaxLamports": { "maxLamports": 1_000_000, "priorityLevel": "medium" }
+            "priorityLevelWithMaxLamports": { "maxLamports": PRIORITY_FEE_MAX_LAMPORTS, "priorityLevel": "medium" }
         },
     });
     if let Some(mint) = quote.fee_mint {

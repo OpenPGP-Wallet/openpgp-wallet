@@ -1299,7 +1299,12 @@
             <span id="swap-amount-fiat-unit" class="amount-unit"></span>
           </div>
         </div>
-        <p id="swap-balance" class="muted swap-balance"></p>
+        <!-- Solde de départ et « Max » (frais de l'échange déduits, calculés
+             par Rust : main.js, fillSwapMax). -->
+        <div class="swap-balance-row">
+          <p id="swap-balance" class="muted swap-balance"></p>
+          <button type="button" id="swap-max" class="max-chip" data-i18n="send.percentMax" data-i18n-title="swap.maxHint" title="Montant maximal, frais de l'échange déduits">Max</button>
+        </div>
         <div id="swap-destination-block">
           <label data-i18n="swap.destination">Adresse de destination</label>
           <input id="swap-destination" type="text" />

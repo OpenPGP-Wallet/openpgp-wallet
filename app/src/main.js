@@ -914,6 +914,7 @@ const I18N = {
     "swap.providerHalted": "{name} — suspendu en ce moment",
     "swap.alert.unreachable": "{provider} ne répond pas en ce moment : échange impossible par ce fournisseur.",
     "send.checkingRecipient": "Vérification de l'adresse…",
+    "swap.maxHint": "Montant maximal, frais de l'échange déduits",
     "addressBook.networkFirst": "Saisissez d'abord l'adresse",
     "addressBook.networkUnknown": "Adresse non reconnue",
     "send.bookOtherNetwork": "enregistrée pour {network}",
@@ -1538,6 +1539,7 @@ const I18N = {
     "swap.providerHalted": "{name} — paused right now",
     "swap.alert.unreachable": "{provider} is not responding right now: no swap through this provider.",
     "send.checkingRecipient": "Checking the address…",
+    "swap.maxHint": "Maximum amount, swap fees deducted",
     "addressBook.networkFirst": "Enter the address first",
     "addressBook.networkUnknown": "Address not recognized",
     "send.bookOtherNetwork": "saved for {network}",
@@ -5911,6 +5913,7 @@ function onSwapTargetChange() {
   fillSwapProviderOptions();
   updateSwapDestination();
   renderSwapAlerts();
+  if (swapMaxActive) fillSwapMax();
 }
 
 // --- État des fournisseurs ----------------------------------------------------
@@ -6107,6 +6110,50 @@ restrictToAmount(swapFiatInput, () => {
   renderSwapBalance();
 });
 
+// « Max » : montant maximal pour l'échange choisi, frais de l'échange
+// déduits (Rust, `swap_max_amount` : tout le solde d'un jeton ; pour la
+// monnaie du réseau, le solde moins les frais au plus de ce fournisseur).
+// Recalculé si le fournisseur ou la paire change tant que le montant n'a
+// pas été retouché ; la vérification des fonds de l'échange fait foi.
+let swapMaxActive = false;
+const swapMaxBtn = document.getElementById("swap-max");
+
+async function fillSwapMax() {
+  const pair = selectedSwapPair();
+  if (!pair || !swapContext) return;
+  const context = swapContext;
+  const errorEl = document.getElementById("swap-error");
+  hideError(errorEl);
+  swapMaxBtn.classList.add("busy");
+  try {
+    const amount = await invoke("swap_max_amount", {
+      protocol: pair.protocol,
+      fromCoin: pair.from.coin,
+      fromNetwork: pair.from.network,
+      toCoin: (pair.via ?? pair.to).coin,
+      profileIndex: context.profileIndex,
+    });
+    if (swapContext !== context) return;
+    swapAmountInput.value = amount;
+    swapAmountTypedIn = "crypto";
+    syncSwapFiatFromCrypto();
+    renderSwapBalance();
+    swapMaxActive = true;
+  } catch (e) {
+    showError(errorEl, String(e));
+  } finally {
+    swapMaxBtn.classList.remove("busy");
+  }
+}
+
+swapMaxBtn.addEventListener("click", fillSwapMax);
+// Montant tapé à la main : ce n'est plus le maximum.
+for (const input of [swapAmountInput, swapFiatInput]) {
+  input.addEventListener("input", () => {
+    swapMaxActive = false;
+  });
+}
+
 // Unités à droite des deux champs, champ en devise activé ou non, montants
 // resynchronisés.
 function renderSwapAmount() {
@@ -6188,6 +6235,7 @@ function openSwapModal(card, preset = null) {
   swapAmountInput.value = preset?.amount ?? "";
   swapFiatInput.value = "";
   swapAmountTypedIn = "crypto";
+  swapMaxActive = false;
   swapBalance = null;
   swapHealth = [];
   swapSlow = [];
@@ -6246,6 +6294,9 @@ function updateSwapDestination() {
 document.getElementById("swap-to-coin").addEventListener("change", onSwapTargetChange);
 document.getElementById("swap-provider").addEventListener("change", updateSwapDestination);
 document.getElementById("swap-provider").addEventListener("change", renderSwapAlerts);
+document.getElementById("swap-provider").addEventListener("change", () => {
+  if (swapMaxActive) fillSwapMax();
+});
 
 function closeSwapModal() {
   swapModal.classList.add("hidden");

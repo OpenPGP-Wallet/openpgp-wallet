@@ -579,6 +579,12 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("requête refusée par le serveur Bitcoin", "request refused by the Bitcoin server"),
     // core/src/address_book.rs
     ("cette adresse n'est pas une adresse de ce réseau", "this address does not belong to this network"),
+    (
+        "« Max » indisponible pour cet échange — saisissez le montant",
+        "\"Max\" is not available for this swap — enter the amount",
+    ),
+    ("SOL insuffisants pour couvrir les frais de l'échange", "not enough SOL to cover the swap fees"),
+    ("BTC insuffisants pour couvrir les frais de l'échange", "not enough BTC to cover the swap fees"),
     ("réponse esplora /utxo illisible", "unreadable esplora /utxo response"),
     ("txid invalide", "invalid txid"),
     ("txid de taille inattendue", "txid has an unexpected size"),
@@ -4395,6 +4401,40 @@ struct SwapHaltsDto {
 /// Lu à l'ouverture de la fenêtre « Convertir » : un fournisseur suspendu
 /// pour l'échange choisi n'y est plus proposé par défaut. Lecture en échec :
 /// rien de marqué (le devis dira alors la suspension en clair).
+/// Adresse du profil `profile_index` sur `network` (caches Rust remplis au
+/// déverrouillage).
+fn profile_address(app: &tauri::AppHandle, network: &str, profile_index: u32) -> Result<String, String> {
+    let unknown = || translate_error("adresse du profil inconnue — déverrouillez le portefeuille");
+    let cached = |cache: &std::sync::Mutex<std::collections::HashMap<u32, String>>| cache.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).cloned().ok_or_else(unknown);
+    let evm_sol = || app.state::<ProfileAddressCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).cloned().ok_or_else(unknown);
+    match network {
+        n if is_evm(n) => Ok(evm_sol()?.0),
+        "sol_mainnet" | "sol_devnet" => Ok(evm_sol()?.1),
+        "btc_mainnet" => cached(&app.state::<ProfileBtcCache>().0),
+        "btc_testnet" => cached(&app.state::<ProfileBtcTestnetCache>().0),
+        "zec_mainnet" => cached(&app.state::<ProfileZcashCache>().0),
+        "doge_mainnet" => cached(&app.state::<ProfileDogeCache>().0),
+        "tron_mainnet" => cached(&app.state::<ProfileTronCache>().0),
+        "xrp_mainnet" => cached(&app.state::<ProfileXrpCache>().0),
+        "xlm_mainnet" => cached(&app.state::<ProfileStellarCache>().0),
+        "near_mainnet" => cached(&app.state::<ProfileNearCache>().0),
+        "ada_mainnet" => cached(&app.state::<ProfileCardanoCache>().0),
+        "stx_mainnet" => cached(&app.state::<ProfileStacksCache>().0),
+        other => Err(translate_error(&format!("réseau inconnu : {other}"))),
+    }
+}
+
+/// « Max » de la fenêtre « Convertir » : montant maximal pour cet échange,
+/// frais de l'échange déduits (voir `api::swap_max`).
+#[tauri::command]
+async fn swap_max_amount(app: tauri::AppHandle, protocol: String, from_coin: String, from_network: String, to_coin: String, profile_index: u32) -> Result<String, String> {
+    run_blocking(move || {
+        let owner = profile_address(&app, &from_network, profile_index)?;
+        api::swap_max(&protocol, &from_coin, &from_network, &to_coin, &owner).t_err()
+    })
+    .await
+}
+
 /// Fournisseurs d'échange qui ne répondent pas en ce moment (messages rouges
 /// de la fenêtre « Convertir », voir `swap_health`).
 #[tauri::command]
@@ -7060,6 +7100,7 @@ pub fn run() {
             swap_health,
             recipient_warnings,
             address_networks,
+            swap_max_amount,
             get_jupiter_quote,
             jupiter_swap_transaction,
             get_cow_quote,

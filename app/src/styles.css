@@ -711,6 +711,39 @@ button.link:hover {
   color: var(--success);
 }
 
+/* « Max » de la fenêtre « Convertir », au bout de la ligne du solde. */
+.swap-balance-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.swap-balance-row .swap-balance {
+  margin: 8px 0;
+}
+
+.max-chip {
+  flex: none;
+  min-height: 28px;
+  padding: 3px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.max-chip:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.max-chip.busy {
+  opacity: 0.6;
+  cursor: progress;
+}
+
 /* Alertes de la fenêtre « Convertir » : orange (échange dégradé), rouge
    (échange impossible par ce fournisseur pour l'instant). */
 .swap-alerts {

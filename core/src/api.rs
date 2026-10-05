@@ -3948,6 +3948,109 @@ fn jupiter_fee_mint(rpc: &sol_rpc::SolRpc, input_mint: &str, output_mint: &str) 
 /// complet, notamment pourquoi la transaction elle-même n'est pas
 /// reconstruite à la main ici (seulement vérifiée puis signée).
 #[allow(clippy::too_many_arguments)]
+/// Réserve de SOL d'un échange Jupiter, vérifiée avant de construire la
+/// transaction : frais (plancher généreux, pas de valeur exacte avant
+/// construction), compte wSOL temporaire si l'on vend du SOL, compte de
+/// jetons de destination s'il faut le créer.
+fn jupiter_sol_reserve(rpc: &sol_rpc::SolRpc, owner: &[u8; 32], from_coin: &str, to_coin: &str) -> Result<u64> {
+    const SOL_FEE_RESERVE_LAMPORTS: u64 = 50_000;
+    let mut reserve = SOL_FEE_RESERVE_LAMPORTS;
+    // Swapper depuis du SOL natif l'enveloppe d'abord en jeton SPL "wSOL" —
+    // exige de financer un compte de jetons temporaire au minimum
+    // d'exemption de rent, EN PLUS du montant du swap lui-même (récupéré à la
+    // clôture de ce même compte en fin de transaction, mais nécessaire un
+    // instant plus tôt dans la même transaction). Interrogé en direct plutôt
+    // que codé en dur (paramètre réseau qui évolue), même principe que pour
+    // l'ATA USDC (voir send_usdc) — un plancher fixe sous-estimerait
+    // largement ce besoin réel.
+    if from_coin == "sol" {
+        reserve = reserve
+            .checked_add(rpc.minimum_rent_exempt_balance(165)?)
+            .context("réserve de frais dépasse la capacité représentable")?;
+    }
+    // Le compte de jetons de destination peut aussi devoir être créé (Jupiter
+    // l'inclut alors dans la transaction, voir CreateIdempotent côté ATA) :
+    // même coût de rent si le compte n'existe pas encore.
+    if to_coin != "sol" {
+        let output_mint = jupiter_mint_bytes_for_coin(to_coin)?;
+        let dest_ata = sol_spl::find_associated_token_address(owner, &output_mint);
+        let dest_ata_b58 = bs58::encode(dest_ata).into_string();
+        if !rpc.account_exists(&dest_ata_b58)? {
+            reserve = reserve
+                .checked_add(rpc.minimum_rent_exempt_balance(165)?)
+                .context("réserve de frais dépasse la capacité représentable")?;
+        }
+    }
+    Ok(reserve)
+}
+
+/// « Max » indisponible pour cet échange.
+pub const SWAP_MAX_UNAVAILABLE: &str = "« Max » indisponible pour cet échange — saisissez le montant";
+
+/// « Max » de la fenêtre « Convertir », depuis `owner` (adresse du profil sur
+/// `from_network`). Jeton : tout son solde, les frais se payant dans la
+/// monnaie du réseau. Monnaie du réseau : le solde moins ce que l'échange
+/// par `protocol` coûtera au plus — mêmes plafonds que sa propre
+/// vérification des fonds (gas du contrat, sortie memo Bitcoin, comptes
+/// Solana à financer), avec une marge si le prix du gas ou le tarif Bitcoin
+/// monte d'ici le devis. Cette vérification, avant toute signature, fait foi.
+pub fn swap_max(protocol: &str, from_coin: &str, from_network: &str, to_coin: &str, owner: &str) -> Result<String> {
+    let token = tokens::find(from_coin, from_network).is_some() || (from_coin == "usdc" && from_network == "sol_mainnet");
+    if token {
+        return token_max(from_coin, from_network, owner);
+    }
+    if let Some(net) = wallet_flow::evm_network(from_network) {
+        let transfer = evm_max_fee(net, Some(owner), owner)?;
+        let gas_limit = match protocol {
+            "lifi" => lifi_gas_cap(net),
+            "swapkit" => transfer.gas_limit,
+            _ => swap_gas_caps(net).1,
+        };
+        let gas_price = transfer.gas_price.saturating_add(transfer.gas_price / 4);
+        return evm_max_native(net, owner, EvmFee { gas_price, gas_limit, l1_fee: transfer.l1_fee.saturating_mul(4) });
+    }
+    match (from_network, protocol) {
+        ("sol_mainnet", "jupiter" | "lifi") => {
+            let net = &wallet_flow::SOLANA_MAINNET;
+            let reserve = if protocol == "jupiter" {
+                let owner_bytes: [u8; 32] = bs58::decode(owner).into_vec().ok().and_then(|v| v.try_into().ok()).context("adresse Solana invalide")?;
+                jupiter_sol_reserve(&sol_rpc::SolRpc::new(net.rpc), &owner_bytes, "sol", to_coin)?.saturating_add(jupiter_rpc::PRIORITY_FEE_MAX_LAMPORTS)
+            } else {
+                LIFI_SOL_FEE_BUDGET_LAMPORTS
+            };
+            let max = get_sol_balance(owner, net)?.checked_sub(reserve).filter(|max| *max > 0).context("SOL insuffisants pour couvrir les frais de l'échange")?;
+            Ok(tokens::format_amount(u128::from(max), 9))
+        }
+        ("sol_mainnet", _) => sol_max(&wallet_flow::SOLANA_MAINNET, owner),
+        ("btc_mainnet", "swapkit") => {
+            let net = &wallet_flow::BTC_MAINNET;
+            btc_max(net, owner, estimate_btc_fees(owner, net)?.medium_sat)
+        }
+        ("btc_mainnet", _) => {
+            // Comme `send_swap_btc` : deux sorties et le memo le plus long,
+            // tarif à 3 blocs (marge de moitié : relu au devis, et au moins
+            // celui conseillé par THORChain).
+            let esplora = btc_rpc::EsploraClient::new(wallet_flow::BTC_MAINNET.esplora_base);
+            let (utxos, estimates) = (esplora.utxos(owner)?, esplora.fee_estimates()?);
+            let vsize = (crate::btc_tx::estimate_p2wpkh_vsize(utxos.len(), 2) + crate::btc_tx::op_return_output_size(80)) as f64;
+            let rate = (fee_rate_for_target(&estimates, 3) * 1.5).min(BTC_SWAP_MAX_FEE_RATE_SAT_VB as f64);
+            let fee_sat = (rate * vsize).ceil() as u64;
+            let total: u64 = utxos.iter().map(|u| u.value_sat).sum();
+            let max = total.checked_sub(fee_sat).filter(|max| *max > 1_000).context("BTC insuffisants pour couvrir les frais de l'échange")?;
+            Ok(tokens::format_amount(u128::from(max), 8))
+        }
+        // Dépôts simples (SwapKit), ou memo couvert par le minimum de frais
+        // ZIP-317 (Maya, Zcash).
+        ("zec_mainnet", _) => zec_max(owner),
+        ("doge_mainnet", "swapkit") => doge_max(owner),
+        ("tron_mainnet", "swapkit") => trx_max(owner, None),
+        ("xrp_mainnet", "swapkit") => xrp_max(owner),
+        ("ada_mainnet", "swapkit") => ada_max(owner, None),
+        ("near_mainnet", "swapkit") => near_max(owner, None),
+        _ => anyhow::bail!(SWAP_MAX_UNAVAILABLE),
+    }
+}
+
 pub fn send_jupiter_swap(
     data_dir: &Path,
     device_password: &str,
@@ -3972,12 +4075,7 @@ pub fn send_jupiter_swap(
 
     let rpc = sol_rpc::SolRpc::new(network.rpc);
     let sol_balance = rpc.balance_lamports(&owner_address)?;
-
-    // Réserve conservatrice pour les frais réseau/priorité de calcul : pas de
-    // valeur exacte disponible avant construction de la transaction, ce
-    // plancher reste volontairement généreux plutôt que précis.
-    const SOL_FEE_RESERVE_LAMPORTS: u64 = 50_000;
-    let mut reserve = SOL_FEE_RESERVE_LAMPORTS;
+    let reserve = jupiter_sol_reserve(&rpc, &owner, from_coin, to_coin)?;
 
     // Swapper depuis du SOL natif l'enveloppe d'abord en jeton SPL "wSOL" —
     // exige de financer un compte de jetons temporaire au minimum
@@ -3987,25 +4085,6 @@ pub fn send_jupiter_swap(
     // que codé en dur (paramètre réseau qui évolue), même principe que pour
     // l'ATA USDC (voir send_usdc) — un plancher fixe sous-estimerait
     // largement ce besoin réel.
-    if from_coin == "sol" {
-        reserve = reserve
-            .checked_add(rpc.minimum_rent_exempt_balance(165)?)
-            .context("réserve de frais dépasse la capacité représentable")?;
-    }
-    // Le compte de jetons de destination peut aussi devoir être créé (Jupiter
-    // l'inclut alors dans la transaction, voir CreateIdempotent côté ATA) :
-    // même coût de rent si le compte n'existe pas encore.
-    if to_coin != "sol" {
-        let output_mint = jupiter_mint_bytes_for_coin(to_coin)?;
-        let dest_ata = sol_spl::find_associated_token_address(&owner, &output_mint);
-        let dest_ata_b58 = bs58::encode(dest_ata).into_string();
-        if !rpc.account_exists(&dest_ata_b58)? {
-            reserve = reserve
-                .checked_add(rpc.minimum_rent_exempt_balance(165)?)
-                .context("réserve de frais dépasse la capacité représentable")?;
-        }
-    }
-
     if from_coin == "sol" {
         let total_needed = amount_native.checked_add(reserve).context("montant + frais dépasse la capacité représentable")?;
         anyhow::ensure!(
@@ -5097,6 +5176,58 @@ mod tests {
         let sol = parse(&sol_max(&wallet_flow::SOLANA_MAINNET, sol_account).unwrap(), 9);
         assert_eq!(u128::from(get_sol_balance(sol_account, &wallet_flow::SOLANA_MAINNET).unwrap()) - sol, 5_000);
         println!("SOL : max {}", tokens::format_amount(sol, 9));
+    }
+
+    /// Réel (lecture seule) : « Max » d'un échange — sous le solde de la
+    /// réserve propre au fournisseur (gas du contrat, comptes Solana, sortie
+    /// memo Bitcoin), tout le solde d'un jeton.
+    /// `cargo test -- --ignored real_swap_max --nocapture`
+    #[test]
+    #[ignore]
+    fn real_swap_max_on_funded_addresses() {
+        let parse = |s: &str, d: u8| tokens::parse_amount(s, d).unwrap();
+        let evm = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
+        let net = wallet_flow::evm_network("evm_mainnet").unwrap();
+        let balance = get_evm_balance(evm, net).unwrap();
+        let gas_price = evm_max_fee(net, Some(evm), evm).unwrap().gas_price;
+        for (protocol, gas_limit) in [("thorchain", EVM_SWAP_MAX_GAS_LIMIT), ("cow", EVM_SWAP_MAX_GAS_LIMIT), ("lifi", LIFI_MAX_GAS), ("swapkit", EVM_TRANSFER_GAS_LIMIT)] {
+            let max = parse(&swap_max(protocol, "evm", "evm_mainnet", "btc", evm).unwrap(), 18);
+            let kept = balance - max;
+            println!("ETH via {protocol} : max {}, gardé {}", tokens::format_amount(max, 18), tokens::format_amount(kept, 18));
+            // Gas au plafond du fournisseur, prix majoré d'un quart (le prix,
+            // relu à chaque appel, peut bouger d'un bloc à l'autre : 5 %).
+            let expected = (gas_price + gas_price / 4) * u128::from(gas_limit);
+            assert!(kept.abs_diff(expected) <= expected / 20, "{protocol} : gardé {kept}, attendu {expected}");
+        }
+        let whale = "0x28C6c06298d514Db089934071355E5743bf21d60";
+        assert_eq!(swap_max("cow", "usdt", "evm_mainnet", "evm", whale).unwrap(), token_max("usdt", "evm_mainnet", whale).unwrap(), "jeton : tout le solde");
+
+        let sol = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+        let sol_balance = u128::from(get_sol_balance(sol, &wallet_flow::SOLANA_MAINNET).unwrap());
+        let jupiter = sol_balance - parse(&swap_max("jupiter", "sol", "sol_mainnet", "usdc", sol).unwrap(), 9);
+        println!("SOL via Jupiter : gardé {}", tokens::format_amount(jupiter, 9));
+        // Frais (50 000) + priorité au plafond + compte wSOL (+ compte USDC à
+        // créer) ; dépôt d'un compte de jetons lu en direct (baissé depuis
+        // 2 039 280 lamports : 1 488 440 le 05/10/2026).
+        let rent = sol_rpc::SolRpc::new(wallet_flow::SOLANA_MAINNET.rpc).minimum_rent_exempt_balance(165).unwrap();
+        assert!(jupiter >= u128::from(50_000 + jupiter_rpc::PRIORITY_FEE_MAX_LAMPORTS + rent), "{jupiter}");
+        assert_eq!(sol_balance - parse(&swap_max("lifi", "sol", "sol_mainnet", "usdc", sol).unwrap(), 9), u128::from(LIFI_SOL_FEE_BUDGET_LAMPORTS));
+        assert_eq!(sol_balance - parse(&swap_max("swapkit", "sol", "sol_mainnet", "usdc", sol).unwrap(), 9), 5_000);
+
+        // Bitcoin : une adresse ordinaire du dernier bloc (peu de sorties).
+        let tip = reqwest::blocking::get("https://mempool.space/api/blocks/tip/hash").unwrap().text().unwrap();
+        let block: serde_json::Value = reqwest::blocking::get(format!("https://mempool.space/api/block/{tip}/txs")).unwrap().json().unwrap();
+        let btc = block.as_array().unwrap().iter().skip(1).filter_map(|tx| tx["vout"][0]["scriptpubkey_address"].as_str()).find(|a| a.starts_with("bc1q")).unwrap().to_string();
+        let total: u64 = btc_rpc::EsploraClient::new(wallet_flow::BTC_MAINNET.esplora_base).utxos(&btc).unwrap().iter().map(|u| u.value_sat).sum();
+        match swap_max("thorchain", "btc", "btc_mainnet", "evm", &btc) {
+            Ok(max) => {
+                let kept = u128::from(total) - parse(&max, 8);
+                println!("BTC via THORChain ({btc}) : gardé {kept} sat sur {total}");
+                assert!(kept > 0 && kept < 20_000, "{kept}");
+            }
+            Err(e) => println!("BTC ({btc}, {total} sat) : {e}"),
+        }
+        assert_eq!(swap_max("thorchain", "xlm", "xlm_mainnet", "evm", "G").unwrap_err().to_string(), SWAP_MAX_UNAVAILABLE);
     }
 
     /// 23ᵉ passage : un envoi en attente (variation nette négative, monnaie
