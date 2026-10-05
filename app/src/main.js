@@ -4192,7 +4192,16 @@ function resolveSendCountdown(send) {
 
 window.__TAURI__.event.listen("send-countdown", (event) => {
   closeSendCountdown();
-  const { id, seconds } = event.payload;
+  const { id, seconds, recap } = event.payload;
+  // Réseau, montant, adresse (et tag / mémo) : ceux de la boîte de Windows.
+  document.getElementById("send-countdown-network").textContent = recap?.network ?? "";
+  document.getElementById("send-countdown-amount").textContent = recap?.amount ?? "";
+  document.getElementById("send-countdown-to-label").textContent = recap?.to_label ?? "";
+  document.getElementById("send-countdown-to").textContent = recap?.to ?? "";
+  const note = recap?.note;
+  document.getElementById("send-countdown-note-row").classList.toggle("hidden", !note);
+  document.getElementById("send-countdown-note-label").textContent = note ? note[0] : "";
+  document.getElementById("send-countdown-note").textContent = note ? note[1] : "";
   const end = Date.now() + seconds * 1000;
   const text = document.getElementById("send-countdown-text");
   const tick = () => {

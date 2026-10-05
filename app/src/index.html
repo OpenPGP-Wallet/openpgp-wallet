@@ -1088,6 +1088,25 @@
       <div class="modal">
         <h2 id="send-countdown-title" data-i18n="countdown.title">Envoi dans quelques secondes</h2>
         <p id="send-countdown-text" class="muted"></p>
+        <!-- Rappel de ce qui part (valeurs envoyées par Rust, celles de la boîte de Windows). -->
+        <div class="send-preview-rows">
+          <div class="send-preview-row">
+            <span class="send-preview-label" data-i18n="send.previewNetwork">Réseau</span>
+            <span id="send-countdown-network" class="send-preview-value"></span>
+          </div>
+          <div class="send-preview-row">
+            <span class="send-preview-label" data-i18n="send.amount">Montant</span>
+            <span id="send-countdown-amount" class="send-preview-value"></span>
+          </div>
+          <div class="send-preview-row">
+            <span id="send-countdown-to-label" class="send-preview-label"></span>
+            <span id="send-countdown-to" class="send-preview-value mono"></span>
+          </div>
+          <div id="send-countdown-note-row" class="send-preview-row hidden">
+            <span id="send-countdown-note-label" class="send-preview-label"></span>
+            <span id="send-countdown-note" class="send-preview-value"></span>
+          </div>
+        </div>
         <div class="countdown-bar"><div id="send-countdown-progress"></div></div>
         <div class="row-buttons">
           <button id="send-countdown-confirm" type="button" class="primary" data-i18n="countdown.sendNow">Confirmer maintenant</button>

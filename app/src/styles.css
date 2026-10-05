@@ -479,6 +479,13 @@ input[type="radio"] {
 }
 
 /* Délai d'annulation d'un envoi : barre qui se vide en 5 s (`SEND_GRACE`). */
+/* Délai d'annulation : AU-DESSUS de toutes les fenêtres (la fenêtre d'envoi
+   ou l'aperçu d'échange reste ouvert pendant l'envoi ; à niveau égal, elle
+   masquait le compte à rebours et ses boutons, rendant l'annulation impossible). */
+#send-countdown-modal {
+  z-index: 70;
+}
+
 .countdown-bar {
   height: 6px;
   margin: 14px 0 18px;
@@ -2489,6 +2496,7 @@ h2 .coin-icon-inline,
    rétrécissent avec la fenêtre (largeur 100 %, marges de .modal-overlay). */
 #send-modal > .modal,
 #send-preview-modal > .modal,
+#send-countdown-modal > .modal,
 #swap-modal > .modal,
 #swap-preview-modal > .modal,
 #shielded-modal > .modal,

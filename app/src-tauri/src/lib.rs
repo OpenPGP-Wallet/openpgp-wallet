@@ -3273,7 +3273,15 @@ async fn send_transaction(
             stacks: from_stacks.as_deref(),
         };
         let mut send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &from_label, None, from, max.unwrap_or(false), note)?;
-        send_grace_period(&app)?;
+        // Tag / mémo : toujours rappelé sur ces réseaux (« aucun » compris).
+        let note = match (&send.note, network.as_str()) {
+            (Some(note), _) => Some(note.recap()),
+            (None, "xrp_mainnet") => Some((lang("Tag de destination", "Destination tag").to_string(), lang("aucun", "none").to_string())),
+            (None, "xlm_mainnet" | "stx_mainnet") => Some((lang("Mémo", "Memo").to_string(), lang("aucun", "none").to_string())),
+            _ => None,
+        };
+        let recap = GraceRecap { note, ..GraceRecap::new(network_label(&network), format!("{} {}", send.amount, network_unit(&network)), send.to.clone()) };
+        send_grace_period(&app, recap)?;
 
         let result = match network.as_str() {
             n if is_evm(n) => {
@@ -3361,25 +3369,51 @@ struct SendGrace(std::sync::Mutex<std::collections::HashMap<u64, std::sync::mpsc
 struct SendCountdownDto {
     id: u64,
     seconds: u64,
+    recap: GraceRecap,
+}
+
+/// Rappel affiché pendant le délai d'annulation : réseau, montant et adresse,
+/// mêmes valeurs que la boîte native qui vient d'être validée (calculées ici,
+/// jamais relues depuis l'interface).
+#[derive(Clone, Serialize)]
+struct GraceRecap {
+    network: String,
+    amount: String,
+    to_label: String,
+    to: String,
+    /// Tag de destination ou mémo (XRP, Stellar, Stacks) : (libellé, valeur).
+    note: Option<(String, String)>,
+}
+
+impl GraceRecap {
+    /// Envoi : destinataire.
+    fn new(network: impl Into<String>, amount: impl Into<String>, to: impl Into<String>) -> Self {
+        Self { network: network.into(), amount: amount.into(), to_label: lang("Destinataire", "Recipient").to_string(), to: to.into(), note: None }
+    }
+
+    /// Échange : adresse où arrivent les fonds.
+    fn swap(route: impl Into<String>, amount: impl Into<String>, arrival: impl Into<String>) -> Self {
+        Self { network: route.into(), amount: amount.into(), to_label: lang("Adresse d'arrivée", "Arrival address").to_string(), to: arrival.into(), note: None }
+    }
 }
 
 /// Attend la fin du délai d'annulation (ou la décision de l'utilisateur).
 /// `Err` si l'envoi est annulé.
-fn send_grace_period(app: &tauri::AppHandle) -> Result<(), String> {
-    grace_period(app, "Virement annulé pendant le délai d'annulation.")
+fn send_grace_period(app: &tauri::AppHandle, recap: GraceRecap) -> Result<(), String> {
+    grace_period(app, "Virement annulé pendant le délai d'annulation.", recap)
 }
 
 /// Même délai pour un échange, après sa boîte de confirmation.
-fn swap_grace_period(app: &tauri::AppHandle) -> Result<(), String> {
-    grace_period(app, "Échange annulé pendant le délai d'annulation.")
+fn swap_grace_period(app: &tauri::AppHandle, recap: GraceRecap) -> Result<(), String> {
+    grace_period(app, "Échange annulé pendant le délai d'annulation.", recap)
 }
 
-fn grace_period(app: &tauri::AppHandle, cancelled: &str) -> Result<(), String> {
+fn grace_period(app: &tauri::AppHandle, cancelled: &str, recap: GraceRecap) -> Result<(), String> {
     static NEXT_ID: AtomicU64 = AtomicU64::new(1);
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let (sender, receiver) = std::sync::mpsc::channel();
     app.state::<SendGrace>().0.lock().unwrap_or_else(|p| p.into_inner()).insert(id, sender);
-    let _ = app.emit("send-countdown", SendCountdownDto { id, seconds: SEND_GRACE.as_secs() });
+    let _ = app.emit("send-countdown", SendCountdownDto { id, seconds: SEND_GRACE.as_secs(), recap });
     let decision = receiver.recv_timeout(SEND_GRACE);
     app.state::<SendGrace>().0.lock().unwrap_or_else(|p| p.into_inner()).remove(&id);
     let _ = app.emit("send-countdown-end", id);
@@ -3499,6 +3533,20 @@ enum DestinationNote {
 }
 
 use pgp_wallet_poc::stellar::Memo as StellarMemo;
+
+impl DestinationNote {
+    /// (libellé, valeur) du rappel pendant le délai d'annulation.
+    fn recap(&self) -> (String, String) {
+        let (label, value) = match self {
+            DestinationNote::XrpTag(tag) => (lang("Tag de destination", "Destination tag"), tag.to_string()),
+            DestinationNote::StellarMemo(StellarMemo::Id(id)) => (lang("Mémo (identifiant)", "Memo (ID)"), id.to_string()),
+            DestinationNote::StellarMemo(StellarMemo::Text(text)) => (lang("Mémo (texte)", "Memo (text)"), format!("\"{text}\"")),
+            DestinationNote::StellarMemo(StellarMemo::None) => (lang("Mémo", "Memo"), lang("aucun", "none").to_string()),
+            DestinationNote::StacksMemo(text) => (lang("Mémo", "Memo"), format!("\"{text}\"")),
+        };
+        (label.to_string(), value)
+    }
+}
 
 impl ConfirmedSend {
     fn xrp_tag(&self) -> Option<u32> {
@@ -4006,7 +4054,7 @@ async fn hardware_send(id: u32, to: String, amount: String, fee_sat: Option<u64>
         };
         let from = SendFrom { evm: Some(&account.address), sol: Some(&account.address), ..SendFrom::default() };
         let send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &format!("{device} — {}", account.label), Some(&note), from, false, None)?;
-        send_grace_period(&app)?;
+        send_grace_period(&app, GraceRecap::new(network_label(&network), format!("{} {}", send.amount, network_unit(&network)), send.to.clone()))?;
         let result = match network.as_str() {
             n if is_evm(n) => {
                 let fee = send.evm_fee.ok_or_else(|| "frais EVM manquants".to_string())?;
@@ -4424,7 +4472,14 @@ async fn swap_transaction(
         ) {
             return Err(translate_error("Échange annulé (confirmation refusée)."));
         }
-        swap_grace_period(&app)?;
+        swap_grace_period(
+            &app,
+            GraceRecap::swap(
+                lang(&format!("Échange via {}", protocol.name), &format!("Swap via {}", protocol.name)),
+                format!("{amount_line} → ~{} {}", format_1e8(quote.expected_amount_out), to.symbol),
+                destination.clone(),
+            ),
+        )?;
 
         // Devis RE-lu après la confirmation (la boîte native bloque un temps
         // arbitraire, pendant lequel le vault peut tourner), mais refusé s'il ne
@@ -4741,7 +4796,14 @@ async fn swapkit_swap_transaction(
         ) {
             return Err(translate_error("Échange annulé (confirmation refusée)."));
         }
-        swap_grace_period(&app)?;
+        swap_grace_period(
+            &app,
+            GraceRecap::swap(
+                format!("{} SwapKit ({})", lang("Échange via", "Swap via"), deposit.provider.name()),
+                format!("{amount} {} → ~{} {}", from.symbol, tokens::format_balance(deposit.expected_out, to.decimals, 8), to.symbol),
+                destination.clone(),
+            ),
+        )?;
 
         let sent = match prepared {
             SwapkitDeposit::Evm(fee) => api::send_evm(&dir, &password, evm_network(from.network)?, &deposit.address, &amount, fee, profile_index),
@@ -4868,7 +4930,11 @@ async fn jupiter_swap_transaction(
         if !confirm_jupiter_swap_native(&app, &from_label, &amount_line, &expected_out, api::jupiter_symbol(&to_coin).t_err()?, quote.fee_mint.is_some()) {
             return Err(translate_error("Échange annulé (confirmation refusée)."));
         }
-        swap_grace_period(&app)?;
+        let own_solana = app.state::<ProfileAddressCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).map(|(_, sol)| sol.clone()).unwrap_or_default();
+        swap_grace_period(
+            &app,
+            GraceRecap::swap(lang("Solana — échange via Jupiter", "Solana — swap via Jupiter"), format!("{amount_line} → ~{expected_out} {}", api::jupiter_symbol(&to_coin).t_err()?), own_solana),
+        )?;
 
         // `out_amount` = la sortie AFFICHÉE ci-dessus : la transaction réellement
         // signée devra la livrer (au glissement près), vérifié par simulation.
@@ -5070,7 +5136,10 @@ async fn cow_swap_transaction(
         ) {
             return Err(translate_error("Échange annulé (confirmation refusée)."));
         }
-        swap_grace_period(&app)?;
+        swap_grace_period(
+            &app,
+            GraceRecap::swap(format!("{} — {}", network_label(&network), lang("échange via CoW", "swap via CoW")), format!("{sell_line} → ~{}", cow_amount(order.expected_buy, &buy)), order.receiver.clone()),
+        )?;
 
         // Monnaie du réseau : transaction EthFlow ; jeton : ordre signé.
         let uid = if sell.native {
@@ -5316,7 +5385,7 @@ async fn lifi_swap_transaction(
         ) {
             return Err(translate_error("Échange annulé (confirmation refusée)."));
         }
-        swap_grace_period(&app)?;
+        swap_grace_period(&app, GraceRecap::swap(format!("{route} ({})", quote.tool_name), format!("{sell_line} → ~{}", lifi_amount(quote.to_amount, &to)), quote.to_address.clone()))?;
 
         // Nouveau devis sur le même pont (la transaction d'un pont expire
         // vite), refusé s'il ne correspond plus à ce qui a été affiché.
@@ -5394,7 +5463,7 @@ async fn send_usdc_transaction(password: String, to: String, amount: String, pro
         if !confirm_transaction_native(&app, network, &to, &amount_line, &from_label, rent_line.as_deref(), warning.as_deref(), None) {
             return Err(translate_error("Virement annulé (confirmation refusée)."));
         }
-        send_grace_period(&app)?;
+        send_grace_period(&app, GraceRecap::new(network_label(network), amount_line.clone(), to.clone()))?;
 
         let result = api::send_usdc(&dir, &password, net, &to, &amount, profile_index).t_err();
         if result.is_ok() {
@@ -5482,7 +5551,7 @@ async fn send_token_transaction(
                 if !confirm_transaction_native(&app, &network, &to, &amount_line, &from_label, Some(&fee_line), warning.as_deref(), Some(&token_line)) {
                     return Err(translate_error("Virement annulé (confirmation refusée)."));
                 }
-                send_grace_period(&app)?;
+                send_grace_period(&app, GraceRecap::new(network_label(&network), amount_line.clone(), to.clone()))?;
                 api::send_erc20(&dir, &password, &token, &network, &to, &amount, fee, profile_index).t_err()
             }
             pgp_wallet_poc::tokens::TokenKind::Trc20 { contract } => {
@@ -5512,7 +5581,7 @@ async fn send_token_transaction(
                 if !confirm_transaction_native(&app, &network, &to, &amount_line, &from_label, Some(&fee_line), warning.as_deref(), Some(&token_line)) {
                     return Err(translate_error("Virement annulé (confirmation refusée)."));
                 }
-                send_grace_period(&app)?;
+                send_grace_period(&app, GraceRecap::new(network_label(&network), amount_line.clone(), to.clone()))?;
                 api::send_trc20(&dir, &password, &token, &to, &amount, plan.fee_max, profile_index).t_err()
             }
             pgp_wallet_poc::tokens::TokenKind::Spl { mint } => {
@@ -5542,7 +5611,7 @@ async fn send_token_transaction(
                 if !confirm_transaction_native(&app, &network, &to, &amount_line, &from_label, rent_line.as_deref(), warning.as_deref(), Some(&token_line)) {
                     return Err(translate_error("Virement annulé (confirmation refusée)."));
                 }
-                send_grace_period(&app)?;
+                send_grace_period(&app, GraceRecap::new(network_label(&network), amount_line.clone(), to.clone()))?;
                 api::send_registered_spl(&dir, &password, &token, &to, &amount, profile_index).t_err()
             }
         };
@@ -6156,7 +6225,8 @@ async fn zec_send_shielded(password: String, profile_index: u32, to: String, amo
                 format!("{warning}Envoi depuis vos ZEC protégés\n\nDepuis le profil : {from_label}\nVers : {to}\nMontant : {amount} ZEC{max_note}\nFrais réseau : {fee} ZEC (ZIP-317)\n\nC'est irréversible.\n\nConfirmer cet envoi ?")
             };
             // Puis le délai d'annulation, avant la signature.
-            shielded_dialog(&app, ("Confirmer l'envoi", "Confirm the transfer"), message) && send_grace_period(&app).is_ok()
+            shielded_dialog(&app, ("Confirmer l'envoi", "Confirm the transfer"), message)
+                && send_grace_period(&app, GraceRecap::new(network_label("zec_shielded"), format!("{amount} ZEC{max_note}"), to.to_string())).is_ok()
         };
         let sent = if max {
             api::send_zec_shielded_max(&dir, &password, profile_index, &to, confirm)
@@ -6590,9 +6660,22 @@ async fn wc_approve_request(request_id: u64, password: String, app: tauri::AppHa
         // Transaction (fonds qui partent) : même délai d'annulation qu'un envoi ;
         // annulée, elle est refusée à la dApp.
         let moves_funds = matches!(prepared, dapp_requests::Prepared::EvmTransaction { .. } | dapp_requests::Prepared::SolanaTransaction { .. });
-        if moves_funds && send_grace_period(&app).is_err() {
-            let _ = client.respond(request_id, Err((5000, "User rejected.".to_string())));
-            return Ok(false);
+        if moves_funds {
+            let recap = match &prepared {
+                dapp_requests::Prepared::EvmTransaction { network, to, value, .. } => {
+                    let amount = if *value == 0 {
+                        format!("0 {} ({})", network.native_symbol, lang("appel de contrat", "contract call"))
+                    } else {
+                        format!("{} {}", format_units(&value.to_string(), Some(18)), network.native_symbol)
+                    };
+                    GraceRecap::new(network.name, amount, pgp_wallet_poc::derivation::format_address(to))
+                }
+                _ => GraceRecap::new("Solana", lang("selon la demande de l'application", "as requested by the app"), dialog_label(&session.peer.name)),
+            };
+            if send_grace_period(&app, recap).is_err() {
+                let _ = client.respond(request_id, Err((5000, "User rejected.".to_string())));
+                return Ok(false);
+            }
         }
         match api::sign_dapp_request(&dir, &password, session.profile_index, &session.account(), &prepared) {
             Ok(result) => client.respond(request_id, Ok(result)).t_err().map(|_| true),
@@ -7268,6 +7351,22 @@ mod tests {
             translate_dynamic_error("les frais Cardano ont augmenté depuis la confirmation (0.180000 au lieu de 0.170000 ADA) — relancez l'envoi").unwrap(),
             "Cardano fees increased since the confirmation (0.180000 instead of 0.170000 ADA) — start again"
         );
+    }
+
+    /// Délai d'annulation : le rappel (réseau, montant, adresse, tag / mémo)
+    /// part tel quel vers l'interface, au format qu'elle lit.
+    #[test]
+    fn countdown_event_carries_the_recap() {
+        let recap = GraceRecap { note: Some(DestinationNote::XrpTag(104_857).recap()), ..GraceRecap::new("XRP Ledger MAINNET — fonds réels", "2 XRP", "rMQ98K56yXJbDGv49ZSmW51sLn94Xe1mu1") };
+        let json = serde_json::to_value(SendCountdownDto { id: 7, seconds: 5, recap }).unwrap();
+        assert_eq!(json["recap"]["network"], "XRP Ledger MAINNET — fonds réels");
+        assert_eq!(json["recap"]["amount"], "2 XRP");
+        assert_eq!(json["recap"]["to"], "rMQ98K56yXJbDGv49ZSmW51sLn94Xe1mu1");
+        assert_eq!(json["recap"]["note"], serde_json::json!(["Tag de destination", "104857"]));
+        let plain = serde_json::to_value(SendCountdownDto { id: 8, seconds: 5, recap: GraceRecap::swap("Échange via THORChain", "0.1 ETH → ~0.002 BTC", "bc1q…") }).unwrap();
+        assert!(plain["recap"]["note"].is_null());
+        assert_eq!(plain["recap"]["to_label"], "Adresse d'arrivée");
+        assert_eq!(DestinationNote::StellarMemo(StellarMemo::Text("abc".into())).recap(), ("Mémo (texte)".to_string(), "\"abc\"".to_string()));
     }
 
     /// Messages d'erreur Stacks : présents dans le code, traduits (fixes et variables).
