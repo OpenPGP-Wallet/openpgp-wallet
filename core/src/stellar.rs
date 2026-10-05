@@ -428,14 +428,24 @@ pub fn send(net: &Network, key: &SigningKey, to: &[u8; 32], plan: &XlmPlan, memo
 
 pub fn submit(net: &Network, signed: &Signed) -> Result<String> {
     let blob = base64::engine::general_purpose::STANDARD.encode(&signed.envelope);
-    let response = client().post(format!("{}/transactions", net.horizon)).form(&[("tx", blob)]).send().context("serveur Stellar injoignable")?;
+    let response = client()
+        .post(format!("{}/transactions", net.horizon))
+        .form(&[("tx", blob)])
+        .send()
+        .map_err(|e| crate::wallet_flow::broadcast_failure(e, "serveur Stellar injoignable", &signed.hash))?;
     let status = response.status();
     // Délai dépassé côté Horizon : la transaction peut encore entrer dans le
     // registre — surtout pas présentée comme refusée.
     if status == reqwest::StatusCode::GATEWAY_TIMEOUT {
         bail!("réseau Stellar lent : transaction {} envoyée mais pas encore confirmée — vérifiez l'historique avant de renvoyer", signed.hash);
     }
-    let value: Value = response.json().context("réponse du serveur Stellar illisible")?;
+    // Réponse illisible après acceptation, ou erreur de passerelle : peut-être
+    // partie (voir `wallet_flow::maybe_sent`).
+    let value: Value = match response.json() {
+        Ok(value) => value,
+        Err(_) if status.is_success() || crate::wallet_flow::server_error_may_have_sent(status) => return Err(crate::wallet_flow::maybe_sent(&signed.hash)),
+        Err(_) => bail!("serveur Stellar : réponse {status}"),
+    };
     if status.is_success() {
         ensure!(value["hash"].as_str() == Some(signed.hash.as_str()), "le serveur Stellar a renvoyé un autre identifiant de transaction");
         ensure!(value["successful"].as_bool() != Some(false), "transaction Stellar refusée : échouée dans le registre");

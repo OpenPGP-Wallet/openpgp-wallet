@@ -300,9 +300,18 @@ pub fn send(net: &Network, key: &SigningKey, to: &str, plan: &StxPlan, memo: &st
 }
 
 pub fn submit(net: &Network, signed: &Signed) -> Result<String> {
-    let response = client().post(format!("{}/v2/transactions", net.api)).header("content-type", "application/octet-stream").body(signed.bytes.clone()).send().context("service Stacks injoignable")?;
+    let response = client()
+        .post(format!("{}/v2/transactions", net.api))
+        .header("content-type", "application/octet-stream")
+        .body(signed.bytes.clone())
+        .send()
+        .map_err(|e| crate::wallet_flow::broadcast_failure(e, "service Stacks injoignable", &signed.txid))?;
     let status = response.status();
     let text = response.text().unwrap_or_default();
+    // Erreur de passerelle : peut-être partie (voir `wallet_flow::maybe_sent`).
+    if crate::wallet_flow::server_error_may_have_sent(status) {
+        return Err(crate::wallet_flow::maybe_sent(&signed.txid));
+    }
     if status.is_success() {
         let returned = text.trim().trim_matches('"').trim_start_matches("0x").to_ascii_lowercase();
         ensure!(returned == signed.txid, "le service Stacks a renvoyé un autre identifiant de transaction");

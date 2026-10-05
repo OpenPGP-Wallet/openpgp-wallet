@@ -346,19 +346,59 @@ pub fn send_xrp(net: &Network, key: &SigningKey, to: &AccountId, amount: u64, fe
     submit(net, &signed)
 }
 
+/// Diffuse (nœud suivant si l'un ne répond pas). Sans réponse nette d'aucun :
+/// « peut-être partie » (voir `wallet_flow::maybe_sent`) ; déjà reçue
+/// (`tefALREADY`, ou séquence consommée par CETTE transaction) : la même,
+/// partie — jamais « refusée », un nouvel envoi prendrait la séquence
+/// suivante et paierait deux fois.
 pub fn submit(net: &Network, signed: &Signed) -> Result<String> {
-    let result = rpc(net, "submit", json!({ "tx_blob": hex::encode_upper(&signed.blob) }))?;
-    let engine = result["engine_result"].as_str().unwrap_or("");
-    // Accepté (ou mis en file d'attente) par le réseau.
-    if engine == "tesSUCCESS" || engine == "terQUEUED" {
-        return Ok(signed.hash.clone());
+    let body = json!({ "method": "submit", "params": [{ "tx_blob": hex::encode_upper(&signed.blob) }] });
+    let mut uncertain = false;
+    let mut last = anyhow!("nœud XRP injoignable");
+    for &node in net.nodes {
+        let result = match client().post(node).json(&body).send() {
+            Ok(response) if response.status().is_success() => match response.json::<Value>() {
+                Ok(value) => value["result"].clone(),
+                Err(_) => {
+                    uncertain = true;
+                    continue;
+                }
+            },
+            Ok(response) => {
+                uncertain |= crate::wallet_flow::server_error_may_have_sent(response.status());
+                last = anyhow!("nœud XRP : réponse {}", response.status());
+                continue;
+            }
+            Err(e) => {
+                uncertain |= !crate::wallet_flow::nothing_sent(&e);
+                last = anyhow::Error::new(e).context("nœud XRP injoignable");
+                continue;
+            }
+        };
+        // Nœud surchargé ou pas à jour : on essaie le suivant.
+        if let Some(error) = result["error"].as_str().filter(|e| TRANSIENT_ERRORS.contains(e)) {
+            last = anyhow!("nœud XRP : réponse {error}");
+            continue;
+        }
+        let known = || rpc(net, "tx", json!({ "transaction": signed.hash })).is_ok_and(|tx| tx["hash"].as_str().is_some_and(|h| h.eq_ignore_ascii_case(&signed.hash)));
+        return submit_outcome(&result, &signed.hash, known);
     }
+    Err(if uncertain { crate::wallet_flow::maybe_sent(&signed.hash) } else { last })
+}
+
+fn submit_outcome(result: &Value, hash: &str, known: impl FnOnce() -> bool) -> Result<String> {
+    let engine = result["engine_result"].as_str().unwrap_or("");
+    // Accepté (ou mis en file d'attente) par le réseau, ou déjà reçu.
+    if engine == "tesSUCCESS" || engine == "terQUEUED" || engine == "tefALREADY" || (engine == "tefPAST_SEQ" && known()) {
+        return Ok(hash.to_string());
+    }
+    let signed_hash = hash;
     let message = ["engine_result_message", "error_exception", "error_message", "error"].iter().find_map(|k| result[*k].as_str()).unwrap_or("erreur inconnue");
     let detail = [engine, message].iter().filter(|p| !p.is_empty()).copied().collect::<Vec<_>>().join(" ");
     // tec… : le paiement échoue mais la transaction entre dans le registre et
     // ses frais sont prélevés (les contrôles d'avant la boîte l'évitent).
     if engine.starts_with("tec") {
-        bail!("transaction XRP refusée : {detail} — frais du réseau prélevés (identifiant {})", signed.hash);
+        bail!("transaction XRP refusée : {detail} — frais du réseau prélevés (identifiant {signed_hash})");
     }
     bail!("transaction XRP refusée : {detail}")
 }
@@ -406,6 +446,18 @@ pub fn history(net: &Network, address: &str, limit: usize) -> Result<Vec<history
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Déjà reçue (`tefALREADY`, ou séquence prise par CETTE transaction) :
+    /// la même, partie ; séquence prise par une autre : refusée.
+    #[test]
+    fn an_already_received_payment_counts_as_sent() {
+        let outcome = |engine: &str, known: bool| submit_outcome(&json!({ "engine_result": engine }), "AB", || known);
+        assert!(outcome("tesSUCCESS", false).is_ok());
+        assert!(outcome("tefALREADY", false).is_ok());
+        assert!(outcome("tefPAST_SEQ", true).is_ok());
+        assert!(outcome("tefPAST_SEQ", false).unwrap_err().to_string().starts_with("transaction XRP refusée"));
+        assert!(outcome("tecUNFUNDED_PAYMENT", false).unwrap_err().to_string().contains("frais du réseau prélevés (identifiant AB)"));
+    }
 
     const SEED: &str = "5eb00bbddcf069084889a8ab9155568165f5c453ccb85e70811aaed6f6da5fc19a5ac40b389cd370d086206dec8aa6c43daea6690f20ad3d8d48b2d2ce9e38e4";
 

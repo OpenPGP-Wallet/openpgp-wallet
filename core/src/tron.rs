@@ -471,12 +471,52 @@ pub fn send_trx(key: &SigningKey, to: &Address, amount: u64) -> Result<String> {
     broadcast(&signed)
 }
 
+/// Diffuse (nœud suivant si l'un ne répond pas). Sans réponse nette d'aucun :
+/// « peut-être partie » (voir `wallet_flow::maybe_sent`) ; déjà reçue
+/// (`DUP_TRANSACTION_ERROR`, par un nœud précédent resté sans réponse) :
+/// la même, partie — jamais « refusée ».
 pub fn broadcast(signed: &Signed) -> Result<String> {
-    let reply = post("/wallet/broadcasthex", json!({ "transaction": hex::encode(&signed.bytes) }))?;
+    let body = json!({ "transaction": hex::encode(&signed.bytes) });
+    let mut uncertain = false;
+    let mut last = anyhow!("nœud Tron injoignable");
+    for node in NODES {
+        let reply: Value = match client().post(format!("{node}/wallet/broadcasthex")).json(&body).send() {
+            Ok(response) if response.status().is_success() => match response.json() {
+                Ok(value) => value,
+                Err(_) => {
+                    uncertain = true;
+                    continue;
+                }
+            },
+            Ok(response) => {
+                uncertain |= crate::wallet_flow::server_error_may_have_sent(response.status());
+                last = anyhow!("nœud Tron : réponse {}", response.status());
+                continue;
+            }
+            Err(e) => {
+                uncertain |= !crate::wallet_flow::nothing_sent(&e);
+                last = anyhow::Error::new(e).context("nœud Tron injoignable");
+                continue;
+            }
+        };
+        // Refus du nœud lui-même (débit dépassé…) : nœud suivant.
+        if reply.get("Error").is_some() {
+            last = anyhow!("nœud Tron : {}", reply["Error"].as_str().unwrap_or("erreur").chars().take(120).collect::<String>());
+            continue;
+        }
+        return broadcast_outcome(&reply, &signed.txid);
+    }
+    Err(if uncertain { crate::wallet_flow::maybe_sent(&signed.txid) } else { last })
+}
+
+fn broadcast_outcome(reply: &Value, txid: &str) -> Result<String> {
     if reply["result"].as_bool() == Some(true) {
-        return Ok(signed.txid.clone());
+        return Ok(txid.to_string());
     }
     let code = reply["code"].as_str().unwrap_or("ERREUR");
+    if code == "DUP_TRANSACTION_ERROR" {
+        return Ok(txid.to_string());
+    }
     // Message en hexadécimal (TronGrid) ou en clair (PublicNode).
     let message = reply["message"].as_str().map(|m| hex::decode(m).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_else(|_| m.to_string())).unwrap_or_default();
     let message: String = message.chars().take(200).collect();
@@ -533,6 +573,14 @@ pub fn history(address: &str, limit: usize) -> Result<Vec<history::TxEntry>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Déjà reçue par un nœud précédent : la même, partie ; refus net : refusée.
+    #[test]
+    fn a_duplicate_broadcast_counts_as_sent() {
+        assert_eq!(broadcast_outcome(&json!({ "result": true }), "ab").unwrap(), "ab");
+        assert_eq!(broadcast_outcome(&json!({ "result": false, "code": "DUP_TRANSACTION_ERROR" }), "ab").unwrap(), "ab");
+        assert!(broadcast_outcome(&json!({ "result": false, "code": "SIGERROR", "message": "6261642073696700" }), "ab").unwrap_err().to_string().starts_with("transaction Tron refusée : SIGERROR"));
+    }
 
     #[test]
     fn addresses_match_an_independent_implementation() {

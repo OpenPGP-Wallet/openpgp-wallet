@@ -524,9 +524,18 @@ pub fn submit(signed: &Signed) -> Result<String> {
 
 /// Diffusion : `Ok(Err(texte complet))` si le nœud refuse la transaction.
 fn submit_full(signed: &Signed) -> Result<std::result::Result<String, String>> {
-    let response = client().post(format!("{KOIOS}/submittx")).header("content-type", "application/cbor").body(signed.cbor.clone()).send().context("service Cardano injoignable")?;
+    let response = client()
+        .post(format!("{KOIOS}/submittx"))
+        .header("content-type", "application/cbor")
+        .body(signed.cbor.clone())
+        .send()
+        .map_err(|e| crate::wallet_flow::broadcast_failure(e, "service Cardano injoignable", &signed.hash))?;
     let status = response.status();
     let text = response.text().unwrap_or_default();
+    // Erreur de passerelle : peut-être partie (voir `wallet_flow::maybe_sent`).
+    if crate::wallet_flow::server_error_may_have_sent(status) {
+        return Err(crate::wallet_flow::maybe_sent(&signed.hash));
+    }
     if !status.is_success() {
         return Ok(Err(text));
     }

@@ -468,7 +468,9 @@ pub fn broadcast(raw: &[u8], txid: &str) -> Result<String> {
                 Err(status) if status.code() == tonic::Code::DeadlineExceeded => Err(anyhow!(
                     "transaction Zcash envoyée ({txid}) mais pas encore acceptée par le réseau — vérifiez l'historique dans quelques minutes avant de recommencer"
                 )),
-                Err(status) => Err(anyhow!("envoi Zcash impossible : {}", status.message())),
+                // Canal ouvert, requête partie : sans réponse nette, peut-être
+                // diffusée (voir `wallet_flow::maybe_sent`).
+                Err(_) => Err(crate::wallet_flow::maybe_sent(txid)),
             };
         }
         Err(last)
@@ -554,12 +556,18 @@ fn plan(mut utxos: Vec<Utxo>, amount: u64, memo: Option<Vec<u8>>) -> Result<Send
 /// des k plus grosses sorties (chacune ajoute des frais ZIP-317 ; une sortie
 /// plus petite que ce qu'elle coûte est laissée de côté).
 pub fn max_amount(utxos: &[Utxo]) -> Result<u64> {
+    max_amount_with_memo(utxos, None)
+}
+
+/// Comme `max_amount`, avec une sortie OP_RETURN de `memo_len` octets en plus
+/// (dépôt Maya : le memo peut coûter une action ZIP-317 de plus).
+pub fn max_amount_with_memo(utxos: &[Utxo], memo_len: Option<usize>) -> Result<u64> {
     let mut values: Vec<u64> = utxos.iter().map(|u| u.value).collect();
     values.sort_unstable_by(|a, b| b.cmp(a));
     let (mut total, mut best) = (0u64, 0u64);
     for (index, value) in values.iter().take(MAX_INPUTS).enumerate() {
         total = total.saturating_add(*value);
-        best = best.max(total.saturating_sub(zip317_fee(index + 1, 1)));
+        best = best.max(total.saturating_sub(zip317_fee_with_memo(index + 1, 1, memo_len)));
     }
     ensure!(best > 0, "ZEC insuffisants pour couvrir les frais du réseau");
     Ok(best)
@@ -781,6 +789,13 @@ mod tests {
         let with_dust = vec![utxo(300_000, 1, &h), utxo(200_000, 2, &h), utxo(3_000, 3, &h)];
         assert_eq!(max_amount(&with_dust).unwrap(), 500_000 - zip317_fee(2, 1));
         assert!(max_amount(&[utxo(9_000, 1, &h)]).is_err(), "moins que les frais minimaux");
+        // Dépôt Maya (memo de 80 octets) : le maximum compte l'action du memo
+        // et passe la préparation du dépôt ; celui d'un simple envoi non.
+        let two = vec![utxo(300_000, 1, &h), utxo(200_000, 2, &h)];
+        let with_memo = max_amount_with_memo(&two, Some(80)).unwrap();
+        assert!(with_memo < max_amount(&two).unwrap());
+        assert!(plan_deposit(two.clone(), with_memo, &[0; 80]).is_ok());
+        assert!(plan_deposit(two.clone(), max_amount(&two).unwrap(), &[0; 80]).is_err());
     }
 
     /// Notre dérivation (m/44'/133'/0'/0/i) donne la même clé que celle de la

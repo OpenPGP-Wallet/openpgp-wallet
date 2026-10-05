@@ -271,20 +271,31 @@ impl SolRpc {
             .ok_or_else(|| anyhow!("réponse requestAirdrop inattendue"))
     }
 
+    /// Diffuse une transaction signée ; renvoie sa signature (identifiant,
+    /// lue dans la transaction). Refus net du nœud (simulation préalable,
+    /// débit) : rien n'est parti. Sans réponse nette : « peut-être partie »
+    /// (voir `wallet_flow::maybe_sent`). Déjà traitée : c'est la même.
     pub fn send_transaction(&self, raw_tx: &[u8]) -> Result<String> {
+        // Première signature, après le compteur (un octet : moins de 128).
+        let signature = raw_tx.get(1..65).filter(|_| raw_tx.first().is_some_and(|n| (1..128).contains(n))).map(|s| bs58::encode(s).into_string()).context("transaction Solana sans signature")?;
         let b64 = base64::engine::general_purpose::STANDARD.encode(raw_tx);
-        // Refusée par la simulation préalable du nœud : rien n'est diffusé.
-        let result = self.call("sendTransaction", json!([b64, {"encoding": "base64"}])).map_err(|e| {
-            if e.to_string().contains("\"BlockhashNotFound\"") {
-                anyhow!(BLOCKHASH_EXPIRED_ERROR)
-            } else {
-                e
+        match self.call("sendTransaction", json!([b64, {"encoding": "base64"}])) {
+            Ok(result) => result.as_str().map(String::from).ok_or_else(|| crate::wallet_flow::maybe_sent(&signature)),
+            Err(e) => {
+                let text = e.to_string();
+                if text.contains("\"BlockhashNotFound\"") {
+                    Err(anyhow!(BLOCKHASH_EXPIRED_ERROR))
+                } else if text.contains("AlreadyProcessed") || text.contains("already been processed") {
+                    Ok(signature)
+                } else if text.starts_with("erreur RPC sendTransaction") || text == RATE_LIMITED_ERROR {
+                    Err(e)
+                } else if e.chain().find_map(|c| c.downcast_ref::<reqwest::Error>()).is_some_and(crate::wallet_flow::nothing_sent) {
+                    Err(e)
+                } else {
+                    Err(crate::wallet_flow::maybe_sent(&signature))
+                }
             }
-        })?;
-        result
-            .as_str()
-            .map(String::from)
-            .ok_or_else(|| anyhow!("réponse sendTransaction inattendue"))
+        }
     }
 
     /// État brut (lamports, programme propriétaire, données) de plusieurs

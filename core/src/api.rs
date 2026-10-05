@@ -4034,9 +4034,11 @@ pub fn swap_max(protocol: &str, from_coin: &str, from_network: &str, to_coin: &s
             let max = total.checked_sub(fee_sat).filter(|max| *max > 1_000).context("BTC insuffisants pour couvrir les frais de l'échange")?;
             Ok(tokens::format_amount(u128::from(max), 8))
         }
-        // Dépôts simples (SwapKit), ou memo couvert par le minimum de frais
-        // ZIP-317 (Maya, Zcash).
-        ("zec_mainnet", _) => zec_max(owner),
+        // Dépôt Maya : memo de 80 octets au plus (comme `zec_swap_plan`), qui
+        // peut coûter une action ZIP-317 de plus (31ᵉ passage).
+        ("zec_mainnet", "swapkit") => zec_max(owner),
+        ("zec_mainnet", _) => Ok(zcash::format_zec(zcash::max_amount_with_memo(&zcash::utxos(owner)?, Some(80))?)),
+        // Dépôts simples (SwapKit).
         ("doge_mainnet", "swapkit") => doge_max(owner),
         ("tron_mainnet", "swapkit") => trx_max(owner, None),
         ("xrp_mainnet", "swapkit") => xrp_max(owner),

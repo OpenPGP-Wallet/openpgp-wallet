@@ -74,22 +74,25 @@ fn rpc(net: &Network, method: &str, params: Value) -> Result<std::result::Result
             response.json().context("réponse du nœud NEAR illisible")
         })();
         match attempt {
-            Ok(value) => {
-                if let Some(error) = value.get("error") {
-                    let name = error["cause"]["name"].as_str().or(error["name"].as_str()).unwrap_or("").to_string();
-                    let detail = [error["cause"]["info"].to_string(), error["data"].to_string()].into_iter().find(|d| d != "null" && d != "{}").unwrap_or_default();
-                    return Ok(Err(RpcError { name, detail }));
-                }
-                // Réponse d'une requête « query » : erreur dans le résultat.
-                if let Some(error) = value["result"]["error"].as_str() {
-                    return Ok(Err(RpcError { name: "QUERY_ERROR".into(), detail: error.to_string() }));
-                }
-                return Ok(Ok(value["result"].clone()));
-            }
+            Ok(value) => return Ok(reply(&value)),
             Err(e) => last = e,
         }
     }
     Err(last)
+}
+
+/// Réponse JSON-RPC : le résultat, ou l'erreur DU NŒUD.
+fn reply(value: &Value) -> std::result::Result<Value, RpcError> {
+    if let Some(error) = value.get("error") {
+        let name = error["cause"]["name"].as_str().or(error["name"].as_str()).unwrap_or("").to_string();
+        let detail = [error["cause"]["info"].to_string(), error["data"].to_string()].into_iter().find(|d| d != "null" && d != "{}").unwrap_or_default();
+        return Err(RpcError { name, detail });
+    }
+    // Réponse d'une requête « query » : erreur dans le résultat.
+    if let Some(error) = value["result"]["error"].as_str() {
+        return Err(RpcError { name: "QUERY_ERROR".into(), detail: error.to_string() });
+    }
+    Ok(value["result"].clone())
 }
 
 fn rpc_ok(net: &Network, method: &str, params: Value) -> Result<Value> {
@@ -350,9 +353,43 @@ pub fn send(net: &Network, key: &SigningKey, to: &str, plan: &NearPlan) -> Resul
     submit(net, &sign(&tx, key))
 }
 
+/// Diffuse (nœud suivant si l'un ne répond pas). Sans réponse nette d'aucun :
+/// « peut-être partie » (voir `wallet_flow::maybe_sent`) ; et un refus
+/// venu APRÈS un nœud resté sans réponse (nonce déjà utilisé…) peut venir de
+/// CETTE transaction déjà reçue : « peut-être partie » aussi, jamais
+/// « refusée ».
 pub fn submit(net: &Network, signed: &Signed) -> Result<String> {
     let blob = base64::engine::general_purpose::STANDARD.encode(&signed.bytes);
-    match rpc(net, "send_tx", json!({ "signed_tx_base64": blob, "wait_until": "EXECUTED_OPTIMISTIC" }))? {
+    let body = json!({ "jsonrpc": "2.0", "id": "ow", "method": "send_tx", "params": { "signed_tx_base64": blob, "wait_until": "EXECUTED_OPTIMISTIC" } });
+    let mut uncertain = false;
+    let mut last = anyhow!("nœud NEAR injoignable");
+    for node in net.rpc {
+        let value: Value = match client().post(node).json(&body).send() {
+            Ok(response) if response.status().is_success() || response.status() == reqwest::StatusCode::BAD_REQUEST => match response.json() {
+                Ok(value) => value,
+                Err(_) => {
+                    uncertain = true;
+                    continue;
+                }
+            },
+            Ok(response) => {
+                uncertain |= crate::wallet_flow::server_error_may_have_sent(response.status());
+                last = anyhow!("nœud NEAR : réponse {}", response.status());
+                continue;
+            }
+            Err(e) => {
+                uncertain |= !crate::wallet_flow::nothing_sent(&e);
+                last = anyhow::Error::new(e).context("nœud NEAR injoignable");
+                continue;
+            }
+        };
+        return submit_outcome(reply(&value), signed, uncertain);
+    }
+    Err(if uncertain { crate::wallet_flow::maybe_sent(&signed.hash) } else { last })
+}
+
+fn submit_outcome(outcome: std::result::Result<Value, RpcError>, signed: &Signed, uncertain: bool) -> Result<String> {
+    match outcome {
         Ok(result) => {
             let status = &result["status"];
             if let Some(failure) = status.get("Failure") {
@@ -364,6 +401,7 @@ pub fn submit(net: &Network, signed: &Signed) -> Result<String> {
         }
         // Délai dépassé : la transaction peut encore être exécutée.
         Err(e) if e.name == "TIMEOUT_ERROR" => bail!("réseau NEAR lent : transaction {} envoyée mais pas encore confirmée — vérifiez l'historique avant de renvoyer", signed.hash),
+        Err(_) if uncertain => Err(crate::wallet_flow::maybe_sent(&signed.hash)),
         Err(e) => bail!("transaction NEAR refusée : {} {}", e.name, e.detail),
     }
 }

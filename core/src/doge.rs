@@ -505,16 +505,23 @@ pub fn max_send(own_hash160: &[u8; 20]) -> Result<u64> {
 }
 
 /// Diffuse la transaction ; renvoie son identifiant.
+/// Diffuse ; déjà connue du nœud : la même, partie. Sans réponse nette :
+/// « peut-être partie » (voir `wallet_flow::maybe_sent`).
 pub fn broadcast(signed: &Signed) -> Result<String> {
     let response = client()
         .post(format!("{BITCORE}/tx/send"))
         .json(&serde_json::json!({ "rawTx": hex::encode(&signed.raw) }))
         .send()
-        .context("service Dogecoin injoignable")?;
+        .map_err(|e| crate::wallet_flow::broadcast_failure(e, "service Dogecoin injoignable", &signed.txid))?;
     let status = response.status();
     let body = response.text().unwrap_or_default();
-    ensure!(status.is_success(), "transaction Dogecoin refusée : {}", body.chars().take(200).collect::<String>());
-    Ok(signed.txid.clone())
+    if status.is_success() || body.contains("already") {
+        return Ok(signed.txid.clone());
+    }
+    if crate::wallet_flow::server_error_may_have_sent(status) {
+        return Err(crate::wallet_flow::maybe_sent(&signed.txid));
+    }
+    bail!("transaction Dogecoin refusée : {}", body.chars().take(200).collect::<String>())
 }
 
 // --- Historique ----------------------------------------------------------------------

@@ -60,6 +60,47 @@ pub(crate) fn push_varint(buf: &mut Vec<u8>, n: u64) {
 /// marker/flag segwit, comptes d'entrées/sorties) + ~68 vbytes par entrée P2WPKH
 /// (grâce à la remise de poids segwit sur la signature/clé publique en témoin) +
 /// ~31 vbytes par sortie P2WPKH.
+/// Identifiant (txid, ordre affiché) d'une transaction sérialisée : double
+/// SHA-256 de sa forme SANS témoins (segwit : marqueur, drapeau et témoins
+/// retirés). `None` si la sérialisation est illisible.
+pub fn txid(raw: &[u8]) -> Option<String> {
+    fn varint(raw: &[u8], pos: &mut usize) -> Option<usize> {
+        let first = *raw.get(*pos)?;
+        let (value, len) = match first {
+            0xfd => (u64::from(u16::from_le_bytes(raw.get(*pos + 1..*pos + 3)?.try_into().ok()?)), 3),
+            0xfe => (u64::from(u32::from_le_bytes(raw.get(*pos + 1..*pos + 5)?.try_into().ok()?)), 5),
+            0xff => (u64::from_le_bytes(raw.get(*pos + 1..*pos + 9)?.try_into().ok()?), 9),
+            n => (u64::from(n), 1),
+        };
+        *pos += len;
+        usize::try_from(value).ok()
+    }
+    let legacy;
+    let body: &[u8] = if raw.get(4) == Some(&0) && raw.get(5) == Some(&1) {
+        let mut pos = 6;
+        for _ in 0..varint(raw, &mut pos)? {
+            pos = pos.checked_add(36)?;
+            let script = varint(raw, &mut pos)?;
+            pos = pos.checked_add(script)?.checked_add(4)?;
+        }
+        for _ in 0..varint(raw, &mut pos)? {
+            pos = pos.checked_add(8)?;
+            let script = varint(raw, &mut pos)?;
+            pos = pos.checked_add(script)?;
+        }
+        if raw.len() < pos.checked_add(4)? {
+            return None;
+        }
+        legacy = [&raw[..4], &raw[6..pos], &raw[raw.len() - 4..]].concat();
+        &legacy
+    } else {
+        raw
+    };
+    let mut hash = dsha256(body);
+    hash.reverse();
+    Some(hex::encode(hash))
+}
+
 pub fn estimate_p2wpkh_vsize(num_inputs: usize, num_outputs: usize) -> u64 {
     (10.5 + (num_inputs as f64) * 68.0 + (num_outputs as f64) * 31.0).ceil() as u64
 }

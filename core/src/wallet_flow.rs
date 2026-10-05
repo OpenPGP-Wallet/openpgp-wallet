@@ -14,6 +14,38 @@ use crate::sol_tx;
 use anyhow::{anyhow, Context, Result};
 use std::io::{self, Write};
 
+/// Diffusion sans réponse nette — délai dépassé, réponse coupée ou
+/// illisible : la transaction a pu partir. Jamais présentée comme refusée ni
+/// comme simple panne : un nouvel envoi pourrait la payer une seconde fois
+/// (nonce ou séquence suivants, autres UTXO) — 31ᵉ passage.
+pub const MAYBE_SENT_PREFIX: &str = "connexion perdue pendant l'envoi : la transaction ";
+pub const MAYBE_SENT_SUFFIX: &str = " est peut-être partie — vérifiez l'historique avant de renvoyer";
+
+pub fn maybe_sent(id: &str) -> anyhow::Error {
+    anyhow!("{MAYBE_SENT_PREFIX}{id}{MAYBE_SENT_SUFFIX}")
+}
+
+/// Rien n'a pu partir : la connexion ne s'est même pas établie.
+pub fn nothing_sent(error: &reqwest::Error) -> bool {
+    error.is_connect() || error.is_builder()
+}
+
+/// Échec réseau d'une diffusion à serveur unique : l'erreur d'origine si rien
+/// n'a pu partir, sinon `maybe_sent`.
+pub fn broadcast_failure(error: reqwest::Error, context: &'static str, id: &str) -> anyhow::Error {
+    if nothing_sent(&error) {
+        anyhow::Error::new(error).context(context)
+    } else {
+        maybe_sent(id)
+    }
+}
+
+/// Réponse HTTP d'erreur serveur à une diffusion : la transaction a pu être
+/// relayée avant l'erreur (passerelle, délai) — sauf 503, service fermé.
+pub fn server_error_may_have_sent(status: reqwest::StatusCode) -> bool {
+    status.is_server_error() && status != reqwest::StatusCode::SERVICE_UNAVAILABLE
+}
+
 pub fn prompt(message: &str) -> Result<String> {
     print!("{message}");
     io::stdout().flush()?;

@@ -744,6 +744,10 @@ const LEDGER_PREFIX_TRANSLATIONS: &[(&str, &str)] = &[
 /// correspondance exacte ne peut pas fonctionner, donc reconstruction par
 /// découpage autour de la partie fixe du message.
 fn translate_dynamic_error(msg: &str) -> Option<String> {
+    use pgp_wallet_poc::wallet_flow::{MAYBE_SENT_PREFIX, MAYBE_SENT_SUFFIX};
+    if let Some(id) = msg.strip_prefix(MAYBE_SENT_PREFIX).and_then(|rest| rest.strip_suffix(MAYBE_SENT_SUFFIX)) {
+        return Some(format!("connection lost while sending: transaction {id} may have gone through — check the history before sending again"));
+    }
     if let Some(n) = msg.strip_prefix("trop de décimales (").and_then(|rest| rest.strip_suffix(" au plus pour ce jeton)")) {
         return Some(format!("too many decimals (at most {n} for this token)"));
     }

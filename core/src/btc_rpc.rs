@@ -312,15 +312,33 @@ impl EsploraClient {
     /// txid. Serveur suivant seulement si le premier est saturé, en panne ou
     /// injoignable (une même transaction diffusée deux fois reste une seule
     /// dépense) ; une transaction refusée ne l'est pas ailleurs.
+    ///
+    /// Identifiant calculé ici (`btc_tx::txid`). Déjà connue d'un serveur
+    /// (diffusée par le précédent, resté sans réponse) : c'est la même,
+    /// partie. Sans réponse nette d'aucun : « peut-être partie » (voir
+    /// `wallet_flow::maybe_sent`), jamais « serveurs indisponibles ».
     pub fn broadcast(&self, raw_tx: &[u8]) -> Result<String> {
+        let txid = crate::btc_tx::txid(raw_tx).context("transaction Bitcoin illisible")?;
         let hex_tx = hex::encode(raw_tx);
-        let resp = self.request("/tx", |url| self.client.post(url).body(hex_tx.clone()))?;
-
-        if !resp.status().is_success() {
-            let body = resp.text().unwrap_or_default();
-            return Err(anyhow!("échec de diffusion de la transaction : {body}"));
+        let mut uncertain = false;
+        for mirror in self.ordered_mirrors() {
+            match self.client.post(format!("{mirror}/tx")).body(hex_tx.clone()).send() {
+                Ok(resp) if resp.status().is_success() => return Ok(txid),
+                Ok(resp) if resp.status() == StatusCode::TOO_MANY_REQUESTS || resp.status().is_server_error() => {
+                    uncertain |= crate::wallet_flow::server_error_may_have_sent(resp.status());
+                }
+                Ok(resp) => {
+                    let body = resp.text().unwrap_or_default();
+                    if body.contains("already") {
+                        return Ok(txid);
+                    }
+                    return Err(anyhow!("échec de diffusion de la transaction : {body}"));
+                }
+                Err(e) => uncertain |= !crate::wallet_flow::nothing_sent(&e),
+            }
+            cooling().insert(mirror, Instant::now() + MIRROR_COOLDOWN);
         }
-        Ok(resp.text().context("réponse esplora /tx illisible")?.trim().to_string())
+        Err(if uncertain { crate::wallet_flow::maybe_sent(&txid) } else { anyhow!(BITCOIN_SERVERS_DOWN) })
     }
 
     /// Tarifs de frais actuels (sat/vByte) par objectif de confirmation (en blocs),
@@ -400,6 +418,27 @@ mod tests {
         assert!(err.contains("bad-txns-inputs-missingorspent"), "{err}");
         assert_eq!(client.address_stats("bc1qtest").err().unwrap().to_string(), BITCOIN_REQUEST_REFUSED);
         assert_eq!(spare_hits.load(Ordering::SeqCst), 0);
+    }
+
+    /// Transaction déjà connue d'un serveur (diffusée par un précédent resté
+    /// sans réponse) : la même, partie — jamais « échec ».
+    #[test]
+    fn an_already_known_transaction_counts_as_sent() {
+        let (busy, _) = local_server("429 Too Many Requests", "");
+        let (knowing, _) = local_server("400 Bad Request", "sendrawtransaction RPC error: txn-already-known");
+        let client = EsploraClient::with_mirrors(vec![busy, knowing]);
+        let raw = hex::decode(REAL_SEGWIT_TX).unwrap();
+        assert_eq!(client.broadcast(&raw).unwrap(), REAL_SEGWIT_TXID);
+    }
+
+    /// Transaction segwit réelle (bloc du 05/10/2026) : txid recalculé ici.
+    const REAL_SEGWIT_TX: &str = "02000000000101ad487afc8681dc27cf310967360e2d08cda3c36ac3ee1f5b6b6750b700fcf43a0100000000fdffffff022412f1050000000016001445e8767745422b4292d96eee4ce6fcb2a3dc81b80095ba0a00000000160014574583706299b84078391eed9e0efb20806c9bbe024730440220473bbb58550feedbbd591af5b4f73239be4df78a7fbe040d790087c11adb9d69022044b091f732aafdc612f528a7688d07e439ee1238ba729aca432f930e65fb4cdf0121039054a6a7a07ed2a76c055103d56dc987917b40d53cf7059cf8797145f6d50bc255cd0e00";
+    const REAL_SEGWIT_TXID: &str = "bbf97468027dd29541cd04fa23dcda6fb8b21a618000e5d70f94195ca8fb8c2d";
+
+    #[test]
+    fn txid_of_a_real_segwit_transaction() {
+        assert_eq!(crate::btc_tx::txid(&hex::decode(REAL_SEGWIT_TX).unwrap()).as_deref(), Some(REAL_SEGWIT_TXID));
+        assert_eq!(crate::btc_tx::txid(&[0, 0, 0, 0, 0, 1, 5]), None, "sérialisation tronquée");
     }
 
     /// Tous saturés ou injoignables : message clair, pas « illisible ».

@@ -445,6 +445,13 @@ fn check_near(status: &Value, deposit: &Deposit, from: &Asset, to: &Asset, amoun
         request["depositType"].as_str() == Some("ORIGIN_CHAIN") && request["recipientType"].as_str() == Some("DESTINATION_CHAIN") && request["refundType"].as_str() == Some("ORIGIN_CHAIN"),
         refused("le type de dépôt")
     );
+    // Dépôt « simple » seulement : en mode memo (adresse partagée, un memo
+    // identifie l'échange), le virement ordinaire de l'app, sans memo, ne
+    // serait attribué à aucun échange — fonds bloqués (31ᵉ passage).
+    ensure!(
+        request["depositMode"].as_str().is_none_or(|mode| mode == "SIMPLE") && quote["depositMemo"].as_str().is_none_or(str::is_empty),
+        refused("un dépôt simple, sans memo")
+    );
     ensure!(request["recipient"].as_str().is_some_and(|a| same_address(a, destination)), refused("votre adresse d'arrivée"));
     ensure!(request["refundTo"].as_str().is_some_and(|a| same_address(a, source)), refused("votre adresse de remboursement"));
     let min_out: u128 = quote["minAmountOut"].as_str().and_then(|m| m.parse().ok()).ok_or_else(|| refused("le minimum de réception"))?;
@@ -618,6 +625,8 @@ mod tests {
         assert!(tampered(&["quoteResponse", "quote", "minAmountOut"], json!("2000000000")).contains("minimum"));
         assert!(tampered(&["quoteResponse", "quote", "deadline"], json!("2026-10-04T16:00:00.000Z")).contains("échéance"));
         assert!(tampered(&["status"], json!("PROCESSING")).contains("attente"));
+        assert!(tampered(&["quoteResponse", "quoteRequest", "depositMode"], json!("MEMO")).contains("sans memo"));
+        assert!(tampered(&["quoteResponse", "quote", "depositMemo"], json!("1234567")).contains("sans memo"));
         let mut greedy = near_status();
         greedy["quoteResponse"]["quoteRequest"]["appFees"] = json!([{ "fee": 500 }]);
         assert!(check_near(&greedy, &near_deposit(), eth(), sol(), 100_000_000_000_000_000, EVM, SOL, now).unwrap_err().to_string().contains("commissions"));

@@ -225,13 +225,27 @@ impl EthRpc {
         Ok(Some(status == "0x1"))
     }
 
-    /// Diffuse une transaction déjà signée (RLP brute) et renvoie son hash.
+    /// Diffuse une transaction déjà signée (RLP brute) et renvoie son hash
+    /// (Keccak-256 de la transaction signée, calculé ici). Sans réponse nette,
+    /// « peut-être partie » (voir `wallet_flow::maybe_sent`) ; déjà connue du
+    /// nœud : c'est la même, partie.
     pub fn send_raw_transaction(&self, raw_tx: &[u8]) -> Result<String> {
-        let raw_hex = format!("0x{}", hex::encode(raw_tx));
-        let result = self.call("eth_sendRawTransaction", json!([raw_hex]))?;
-        result
-            .as_str()
-            .map(String::from)
-            .ok_or_else(|| anyhow!("réponse eth_sendRawTransaction non textuelle"))
+        use sha3::{Digest, Keccak256};
+        let hash = format!("0x{}", hex::encode(Keccak256::digest(raw_tx)));
+        let body = json!({ "jsonrpc": "2.0", "id": 1, "method": "eth_sendRawTransaction", "params": [format!("0x{}", hex::encode(raw_tx))] });
+        let response = self
+            .client
+            .post(&self.endpoint)
+            .json(&body)
+            .send()
+            .map_err(|e| crate::wallet_flow::broadcast_failure(e, "appel RPC eth_sendRawTransaction impossible", &hash))?;
+        let resp: Value = response.json().map_err(|_| crate::wallet_flow::maybe_sent(&hash))?;
+        if let Some(err) = resp.get("error") {
+            if err.to_string().to_ascii_lowercase().contains("already known") {
+                return Ok(hash);
+            }
+            return Err(anyhow!("erreur RPC eth_sendRawTransaction : {err}"));
+        }
+        resp.get("result").and_then(Value::as_str).map(String::from).ok_or_else(|| crate::wallet_flow::maybe_sent(&hash))
     }
 }
