@@ -572,17 +572,19 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("réponse requestAirdrop inattendue", "unexpected requestAirdrop response"),
     ("réponse sendTransaction inattendue", "unexpected sendTransaction response"),
     // core/src/btc_rpc.rs
-    ("appel esplora /utxo impossible", "esplora /utxo call failed"),
+    (
+        "serveurs Bitcoin indisponibles pour l'instant (trop de requêtes ou panne) — réessayez dans une minute",
+        "Bitcoin servers unavailable right now (too many requests or outage) — try again in a minute",
+    ),
+    ("requête refusée par le serveur Bitcoin", "request refused by the Bitcoin server"),
     ("réponse esplora /utxo illisible", "unreadable esplora /utxo response"),
     ("txid invalide", "invalid txid"),
     ("txid de taille inattendue", "txid has an unexpected size"),
-    ("appel esplora /txs/mempool impossible", "esplora /txs/mempool call failed"),
     ("réponse esplora /txs/mempool illisible", "unreadable esplora /txs/mempool response"),
-    ("appel esplora /txs impossible", "esplora /txs call failed"),
     ("réponse esplora /txs illisible", "unreadable esplora /txs response"),
-    ("appel esplora /tx impossible", "esplora /tx call failed"),
+    ("réponse esplora /address illisible", "unreadable esplora /address response"),
+    ("réponse esplora /tx/hex illisible", "unreadable esplora /tx/hex response"),
     ("réponse esplora /tx illisible", "unreadable esplora /tx response"),
-    ("appel esplora /fee-estimates impossible", "esplora /fee-estimates call failed"),
     ("réponse esplora /fee-estimates illisible", "unreadable esplora /fee-estimates response"),
     // core/src/blockscout.rs
     ("appel Blockscout impossible", "Blockscout call failed"),
@@ -2735,6 +2737,7 @@ struct PortfolioHistoryDto {
     loading: bool,
     transactions_read: usize,
     constant: Vec<String>,
+    unavailable: Vec<String>,
 }
 
 /// Valeur en dollars d'un ensemble d'adresses publiques au fil de la période
@@ -2754,6 +2757,7 @@ async fn get_portfolio_history(holdings: Vec<HoldingDto>, range: String) -> Resu
             loading: history.loading,
             transactions_read: history.transactions_read,
             constant: history.constant,
+            unavailable: history.unavailable,
         })
     })
     .await

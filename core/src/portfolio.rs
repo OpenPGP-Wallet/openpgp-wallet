@@ -52,6 +52,10 @@ pub struct PortfolioHistory {
     /// Cryptos détenues sur un réseau sans historique, comptées à leur solde
     /// actuel sur toute la période (symboles, sans doublon).
     pub constant: Vec<String>,
+    /// Cryptos dont une adresse n'a rien pu lire (service saturé ou en
+    /// panne) : absentes de la courbe, relues au prochain appel (symboles,
+    /// sans doublon).
+    pub unavailable: Vec<String>,
 }
 
 /// Transactions lues au plus par adresse : 20 pages Blockscout, 40 pages
@@ -553,11 +557,43 @@ fn chart_start(data: &[&HoldingData], range_start: Option<i64>, now: i64) -> (i6
     (start, since)
 }
 
+/// État des adresses demandées : données publiées ; adresse encore sans
+/// données ni échec (`missing`) ; cryptos dont l'adresse a échoué sans rien
+/// donner (`unavailable`, sans doublon), et la première de ces erreurs.
+struct Gathered {
+    data: Vec<Arc<HoldingData>>,
+    missing: bool,
+    unavailable: Vec<String>,
+    first_error: Option<String>,
+}
+
+fn gather(keys: &[(Key, Spec)], map: &HashMap<Key, Slot>) -> Gathered {
+    let mut gathered = Gathered { data: Vec::with_capacity(keys.len()), missing: false, unavailable: Vec::new(), first_error: None };
+    for (key, spec) in keys {
+        let slot = map.get(key);
+        match slot.and_then(|slot| slot.data.as_ref()) {
+            Some((_, holding)) => gathered.data.push(holding.clone()),
+            None => match slot.and_then(|slot| slot.error.clone()) {
+                Some(error) => {
+                    if !gathered.unavailable.iter().any(|s| s == spec.symbol) {
+                        gathered.unavailable.push(spec.symbol.to_string());
+                    }
+                    gathered.first_error.get_or_insert(error);
+                }
+                None => gathered.missing = true,
+            },
+        }
+    }
+    gathered
+}
+
 /// Valeur de `holdings` sur la période `range`. Attend au plus `WAIT` que
 /// les historiques nécessaires soient lus ; au-delà, la courbe est calculée
 /// avec ce qui l'est déjà (`loading`) et la lecture continue en arrière-plan
 /// — un nouvel appel donne la suite. Tant qu'une adresse n'a encore rien
-/// donné, aucun point (une courbe sans elle serait fausse).
+/// donné, aucun point (une courbe sans elle serait fausse). Une adresse en
+/// échec est laissée de côté et signalée (`unavailable`) : un seul service
+/// saturé ne prive plus de toute la courbe (Esplora en 429, 05/10/2026).
 pub fn portfolio_history(holdings: &[Holding], range: ChartRange) -> Result<PortfolioHistory> {
     ensure!(holdings.len() <= MAX_HOLDINGS, "trop d'adresses pour un graphique");
     for h in holdings {
@@ -585,22 +621,15 @@ pub fn portfolio_history(holdings: &[Holding], range: ChartRange) -> Result<Port
         map = slots().1.wait_timeout(map, left).unwrap_or_else(|p| p.into_inner()).0;
     }
     let loading = keys.iter().any(|(key, _)| map.get(key).is_some_and(|slot| slot.running));
-    let mut data = Vec::with_capacity(keys.len());
-    let mut missing = false;
-    for (key, _) in &keys {
-        let slot = map.get(key);
-        match slot.and_then(|slot| slot.data.as_ref()) {
-            Some((_, holding)) => data.push(holding.clone()),
-            None => match slot.and_then(|slot| slot.error.clone()) {
-                Some(error) => return Err(anyhow!(error)),
-                None => missing = true,
-            },
-        }
-    }
+    let Gathered { data, missing, unavailable, first_error } = gather(&keys, &map);
     drop(map);
+    // Aucune adresse lisible : l'erreur elle-même.
+    if let (true, false, Some(error)) = (data.is_empty(), missing, first_error) {
+        return Err(anyhow!(error));
+    }
     let transactions_read = data.iter().map(|d| d.read).sum();
     if missing {
-        return Ok(PortfolioHistory { points: Vec::new(), since: None, approximate: false, loading: true, transactions_read, constant: Vec::new() });
+        return Ok(PortfolioHistory { points: Vec::new(), since: None, approximate: false, loading: true, transactions_read, constant: Vec::new(), unavailable });
     }
     let mut constant: Vec<String> = Vec::new();
     for d in data.iter().filter(|d| d.constant && d.balance > 0) {
@@ -625,7 +654,7 @@ pub fn portfolio_history(holdings: &[Holding], range: ChartRange) -> Result<Port
     let step = if range == ChartRange::All { price_history::step_for_span(now - start) } else { range.step() };
     let times = sample_times(start, now, step);
     let (points, negative) = values_over_time(&refs, &times, |asset, t| series.get(&asset).and_then(|s| s.usd_at(Some(t))));
-    Ok(PortfolioHistory { points, since, approximate: negative || data.iter().any(|d| d.approximate), loading, transactions_read, constant })
+    Ok(PortfolioHistory { points, since, approximate: negative || data.iter().any(|d| d.approximate), loading, transactions_read, constant, unavailable })
 }
 
 #[cfg(test)]
@@ -634,6 +663,25 @@ mod tests {
 
     fn holding_data(asset: Asset, decimals: i32, balance: i128, changes: &[(i64, i128)]) -> HoldingData {
         HoldingData { asset, decimals, symbol: "X", constant: false, balance, changes: changes.to_vec(), oldest: changes.last().map(|c| c.0), next: None, read: changes.len(), approximate: false }
+    }
+
+    /// Une adresse en échec (Esplora saturé) est laissée de côté et
+    /// signalée, les autres font la courbe ; seule en échec : l'erreur.
+    #[test]
+    fn a_failing_address_is_left_out_and_reported() {
+        let btc = spec("btc_mainnet", None).unwrap().unwrap();
+        let eth = spec("evm_mainnet", None).unwrap().unwrap();
+        let key = |network: &str| (network.to_string(), "adresse".to_string(), None);
+        let failed = Slot { error: Some("serveurs Bitcoin indisponibles".into()), ..Default::default() };
+        let read = Slot { data: Some((Instant::now(), Arc::new(holding_data(Asset::Eth, 18, 1, &[])))), ..Default::default() };
+        let map: HashMap<Key, Slot> = [(key("btc_mainnet"), failed), (key("evm_mainnet"), read)].into_iter().collect();
+        let both = gather(&[(key("btc_mainnet"), btc), (key("evm_mainnet"), eth)], &map);
+        assert_eq!((both.data.len(), both.missing, both.unavailable), (1, false, vec!["BTC".to_string()]));
+        let alone = gather(&[(key("btc_mainnet"), btc)], &map);
+        assert!(alone.data.is_empty() && !alone.missing);
+        assert_eq!(alone.first_error.as_deref(), Some("serveurs Bitcoin indisponibles"));
+        // Adresse pas encore lue (ni données ni échec) : en attente.
+        assert!(gather(&[(key("sol_mainnet"), eth)], &map).missing);
     }
 
     #[test]

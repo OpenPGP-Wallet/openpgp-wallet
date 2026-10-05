@@ -700,6 +700,7 @@ const I18N = {
     "assets.done": "Terminé",
     "assets.autoShown": "{symbol} affiché : des fonds ont été détectés.",
     "charts.constantBalance": "Sans historique sur leur réseau : {list} — solde actuel compté sur toute la période.",
+    "charts.unavailable": "Sans {list} pour l'instant : service indisponible, courbe incomplète.",
     "settings.currency": "Devise d'affichage",
     "settings.usd": "Dollar ($)",
     "settings.eur": "Euro (€)",
@@ -1318,6 +1319,7 @@ const I18N = {
     "assets.done": "Done",
     "assets.autoShown": "{symbol} shown: funds detected.",
     "charts.constantBalance": "No history on their network: {list} — current balance counted over the whole period.",
+    "charts.unavailable": "Without {list} for now: service unavailable, incomplete chart.",
     "settings.currency": "Display currency",
     "settings.usd": "US dollar ($)",
     "settings.eur": "Euro (€)",
@@ -8074,6 +8076,9 @@ async function loadHoldingsHistory(holdings, range) {
   if (holdings.length === 0) return { points: [] };
   const result = await invoke("get_portfolio_history", { holdings, range });
   const notes = [];
+  // Adresse illisible (service saturé ou en panne) : courbe sans elle, dit
+  // en premier (voir core/src/portfolio.rs).
+  if (result.unavailable?.length) notes.push(t("charts.unavailable", { list: result.unavailable.join(", ") }));
   if (result.loading) {
     const count = result.transactions_read;
     notes.push(count ? t("charts.loadingHistory", { count: count.toLocaleString(chartLocale()) }) : t("charts.loadingHistoryStart"));
