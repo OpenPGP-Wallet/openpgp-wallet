@@ -4534,13 +4534,12 @@ function buildHistoryRow(tx) {
   right.className = "history-right";
   const amountDiv = document.createElement("div");
   amountDiv.className = "history-amount";
-  if (tx.amount != null) {
-    // Montant nul (transaction « Autre ») : ni vert ni rouge.
-    if (Number.parseFloat(tx.amount) !== 0) {
-      amountDiv.classList.add(tx.amount.startsWith("-") ? "negative" : "positive");
-    }
+  if (tx.amount != null && Number.parseFloat(tx.amount) !== 0) {
+    amountDiv.classList.add(tx.amount.startsWith("-") ? "negative" : "positive");
     amountDiv.textContent = tx.amount;
   } else {
+    // Rien de cette crypto déplacé (transaction « Autre » : jeton reçu,
+    // opération payée par un tiers…) : un tiret plutôt que « +0.000000000 ».
     amountDiv.textContent = "—";
   }
   const amountBox = document.createElement("div");
