@@ -4439,6 +4439,13 @@ async fn swap_max_amount(app: tauri::AppHandle, protocol: String, from_coin: Str
     .await
 }
 
+/// Rendements annuels du staking liquide (JitoSOL, stETH), pour la note de
+/// « Convertir » (voir `core/src/staking.rs`).
+#[tauri::command]
+async fn staking_aprs() -> Result<pgp_wallet_poc::staking::Aprs, String> {
+    run_blocking(|| Ok(pgp_wallet_poc::staking::aprs())).await
+}
+
 /// Fournisseurs d'échange qui ne répondent pas en ce moment (messages rouges
 /// de la fenêtre « Convertir », voir `swap_health`).
 #[tauri::command]
@@ -7105,6 +7112,7 @@ pub fn run() {
             recipient_warnings,
             address_networks,
             swap_max_amount,
+            staking_aprs,
             get_jupiter_quote,
             jupiter_swap_transaction,
             get_cow_quote,

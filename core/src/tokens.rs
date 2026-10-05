@@ -132,6 +132,12 @@ pub const TOKENS: &[Token] = &[
     Token { id: "aster", symbol: "ASTER", name: "Aster", deployments: &[erc20("bsc_mainnet", "0x000ae314e2a2172a039b26378814c252734f556a", 18)] },
     Token { id: "vvv", symbol: "VVV", name: "Venice Token", deployments: &[erc20("base_mainnet", "0xacfe6019ed1a7dc6f7b508c02d1b04ec88cc21bf", 18)] },
     Token { id: "render", symbol: "RENDER", name: "Render", deployments: &[spl("rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof", 8)] },
+    // Staking liquide (« Staker » sur les cartes SOL et ETH, voir staking.rs) :
+    // JitoSOL de Jito (mint lu sur la blockchain : programme SPL Token,
+    // 9 décimales) et stETH de Lido (18 décimales ; le solde augmente chaque
+    // jour avec les récompenses).
+    Token { id: "jitosol", symbol: "JitoSOL", name: "Jito Staked SOL", deployments: &[spl("J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn", 9)] },
+    Token { id: "steth", symbol: "stETH", name: "Lido Staked ETH", deployments: &[erc20("evm_mainnet", "0xae7ab96520de3a18e5e111b5eaab095312d7fe84", 18)] },
 ];
 
 /// Jeton `id` sur `network`, s'il est dans le registre.

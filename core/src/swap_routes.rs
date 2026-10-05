@@ -46,12 +46,14 @@ impl Protocol {
 }
 
 /// Cryptos échangeables via Jupiter (voir `api::send_jupiter_swap`).
-const JUPITER: [SwapAsset; 5] = [
+const JUPITER: [SwapAsset; 6] = [
     SwapAsset { coin: "sol", network: "sol_mainnet" },
     SwapAsset { coin: "usdc", network: "sol_mainnet" },
     SwapAsset { coin: "usdt", network: "sol_mainnet" },
     SwapAsset { coin: "eurc", network: "sol_mainnet" },
     SwapAsset { coin: "render", network: "sol_mainnet" },
+    // Staking liquide : SOL ⇄ JitoSOL.
+    SwapAsset { coin: "jitosol", network: "sol_mainnet" },
 ];
 
 /// `protocol` relie-t-il `from` à `to` ? Depuis Bitcoin ou Zcash aussi :

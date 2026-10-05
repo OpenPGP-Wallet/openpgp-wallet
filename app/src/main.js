@@ -50,6 +50,8 @@ const ASSETS = [
   { coin: "arb", name: "Arbitrum", symbol: "ARB", token: true, icon: "/assets/arb.jpg", iconRound: true, gecko: "arbitrum", decimals: 6, unitDecimals: 18, chart: "ARB", networks: ["arbitrum_mainnet", "evm_mainnet"], contracts: { arbitrum_mainnet: "0x912ce59144191c1204e64559fe8253a0e49e6548", evm_mainnet: "0xb50721bcf8d664c30412cfbc6cf7a15145234ad1" } },
   { coin: "aster", name: "Aster", symbol: "ASTER", token: true, icon: "/assets/aster.png", gecko: "aster-2", decimals: 6, unitDecimals: 18, chart: "ASTER", networks: ["bsc_mainnet"], contracts: { bsc_mainnet: "0x000ae314e2a2172a039b26378814c252734f556a" } },
   { coin: "vvv", name: "Venice", symbol: "VVV", token: true, icon: "/assets/vvv.png", gecko: "venice-token", decimals: 6, unitDecimals: 18, chart: "VVV", networks: ["base_mainnet"], contracts: { base_mainnet: "0xacfe6019ed1a7dc6f7b508c02d1b04ec88cc21bf" } },
+  { coin: "jitosol", name: "Jito Staked SOL", symbol: "JitoSOL", token: true, icon: "/assets/jitosol.png", gecko: "jito-staked-sol", decimals: 6, unitDecimals: 9, chart: "JITOSOL", networks: ["sol_mainnet"], contracts: { sol_mainnet: "J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn" } },
+  { coin: "steth", name: "Lido Staked ETH", symbol: "stETH", token: true, icon: "/assets/steth.png", gecko: "staked-ether", decimals: 6, unitDecimals: 18, chart: "STETH", networks: ["evm_mainnet"], contracts: { evm_mainnet: "0xae7ab96520de3a18e5e111b5eaab095312d7fe84" } },
   { coin: "render", name: "Render", symbol: "RENDER", token: true, icon: "/assets/render.png", gecko: "render-token", decimals: 6, unitDecimals: 8, chart: "RENDER", networks: ["sol_mainnet"], contracts: { sol_mainnet: "rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof" } },
 ];
 const ASSET_BY_COIN = Object.fromEntries(ASSETS.map((asset) => [asset.coin, asset]));
@@ -915,6 +917,12 @@ const I18N = {
     "swap.alert.unreachable": "{provider} ne répond pas en ce moment : échange impossible par ce fournisseur.",
     "send.checkingRecipient": "Vérification de l'adresse…",
     "swap.maxHint": "Montant maximal, frais de l'échange déduits",
+    "staking.action": "Staker",
+    "staking.hint": "Staking liquide : vos cryptos rapportent des récompenses, revendables à tout moment",
+    "staking.noteSol": "Staking liquide via Jito : vos SOL deviennent des JitoSOL, qui prennent de la valeur avec les récompenses du staking{apr}. Ils restent dans votre portefeuille et se revendent à tout moment contre des SOL (« Convertir »). Risque : celui du contrat de Jito.",
+    "staking.noteEth": "Staking liquide via Lido : vos ETH deviennent des stETH, dont le solde augmente chaque jour avec les récompenses du staking{apr}. Ils restent dans votre portefeuille et se revendent à tout moment contre des ETH (« Convertir »). Risque : celui du contrat de Lido.",
+    "staking.unstake": "Sortie du staking : vos {from} sont revendus contre des {to} au prix du marché, tout de suite (pas de délai d'attente).",
+    "staking.apr": " (environ {apr} %/an annoncés)",
     "addressBook.networkFirst": "Saisissez d'abord l'adresse",
     "addressBook.networkUnknown": "Adresse non reconnue",
     "send.bookOtherNetwork": "enregistrée pour {network}",
@@ -1540,6 +1548,12 @@ const I18N = {
     "swap.alert.unreachable": "{provider} is not responding right now: no swap through this provider.",
     "send.checkingRecipient": "Checking the address…",
     "swap.maxHint": "Maximum amount, swap fees deducted",
+    "staking.action": "Stake",
+    "staking.hint": "Liquid staking: your crypto earns rewards and can be sold back at any time",
+    "staking.noteSol": "Liquid staking with Jito: your SOL becomes JitoSOL, which grows in value with staking rewards{apr}. It stays in your wallet and can be sold back for SOL at any time (\"Convert\"). Risk: Jito's contract.",
+    "staking.noteEth": "Liquid staking with Lido: your ETH becomes stETH, whose balance grows every day with staking rewards{apr}. It stays in your wallet and can be sold back for ETH at any time (\"Convert\"). Risk: Lido's contract.",
+    "staking.unstake": "Leaving staking: your {from} is sold for {to} at the market price, right away (no waiting period).",
+    "staking.apr": " (about {apr}% a year announced)",
     "addressBook.networkFirst": "Enter the address first",
     "addressBook.networkUnknown": "Address not recognized",
     "send.bookOtherNetwork": "saved for {network}",
@@ -3673,7 +3687,16 @@ function renderCardAddress(card) {
 // « Convertir » seulement là où un échange existe pour la crypto ET le réseau
 // affichés (voir `swapPairs`) : pas sur un réseau de test, ni là où il
 // échangerait les fonds d'un autre réseau que celui affiché.
+// Staking liquide : jeton reçu pour la monnaie de chaque réseau concerné.
+const LIQUID_STAKING = { sol_mainnet: { from: "sol", to: "jitosol" }, evm_mainnet: { from: "evm", to: "steth" } };
+
+function liquidStakingFor(coin, network) {
+  const target = LIQUID_STAKING[network];
+  return target && target.from === coin && swapPairs.some((p) => p.from_coin === coin && p.from_network === network && p.to_coin === target.to) ? target : null;
+}
+
 function updateConvertButton(card) {
+  card.querySelector('[data-action="stake"]')?.classList.toggle("hidden", !liquidStakingFor(card.dataset.coin, networkForCard(card)));
   const convert = card.querySelector('[data-action="swap"]');
   if (!convert) return;
   const coin = card.dataset.coin;
@@ -4348,6 +4371,16 @@ document.querySelectorAll(".wallet-card").forEach((card) => {
   const swapBtn = card.querySelector('[data-action="swap"]');
   if (swapBtn) swapBtn.addEventListener("click", () => openSwapModal(card));
   card.querySelector('[data-action="shield"]')?.addEventListener("click", () => openShieldedModal("shield"));
+  card.querySelector('[data-action="stake"]')?.addEventListener("click", () => {
+    const network = networkForCard(card);
+    const target = liquidStakingFor(card.dataset.coin, network);
+    if (!target) return;
+    // Carte du jeton de staking affichée : le solde reçu s'y verra.
+    assetChoices[target.to] = true;
+    saveAssetChoices();
+    applyAssetVisibility();
+    openSwapModal(card, { from: { coin: target.from, network }, to: { coin: target.to, network } });
+  });
   // Même historique que l'onglet « Historique », ouvert directement sur cette
   // crypto : plus facile à trouver depuis la carte que l'onglet seul.
   card.querySelector('[data-action="history"]').addEventListener("click", () => openCoinHistory(card.dataset.coin));
@@ -5908,10 +5941,39 @@ function fillSwapProviderOptions() {
   syncCustomSelect(select);
 }
 
+// Rendements annoncés (Rust, `staking_aprs`), lus une fois par session.
+let stakingAprs = null;
+
+function renderStakingNote() {
+  const el = document.getElementById("swap-staking-note");
+  const pair = selectedSwapPair();
+  const lst = { jitosol: "sol", steth: "evm" };
+  let text = "";
+  if (pair && !pair.via && lst[pair.to.coin] === pair.from.coin) {
+    const apr = stakingAprs?.[pair.to.coin];
+    const aprText = apr ? t("staking.apr", { apr: apr.toLocaleString(chartLocale(), { maximumFractionDigits: 1 }) }) : "";
+    text = t(pair.to.coin === "jitosol" ? "staking.noteSol" : "staking.noteEth", { apr: aprText });
+    if (!stakingAprs) {
+      stakingAprs = {};
+      invoke("staking_aprs")
+        .then((rates) => {
+          stakingAprs = rates;
+          renderStakingNote();
+        })
+        .catch((e) => console.error(e));
+    }
+  } else if (pair && !pair.via && lst[pair.from.coin] === pair.to.coin) {
+    text = t("staking.unstake", { from: COIN_SYMBOL[pair.from.coin], to: COIN_SYMBOL[pair.to.coin] });
+  }
+  el.textContent = text;
+  el.classList.toggle("hidden", !text);
+}
+
 function onSwapTargetChange() {
   fillSwapProviderOptions();
   updateSwapDestination();
   renderSwapAlerts();
+  renderStakingNote();
   if (swapMaxActive) fillSwapMax();
 }
 

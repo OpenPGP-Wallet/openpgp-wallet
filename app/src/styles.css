@@ -744,6 +744,18 @@ button.link:hover {
   cursor: progress;
 }
 
+/* Note du staking liquide dans « Convertir » : information, teinte d'accent. */
+.swap-staking-note {
+  margin: 10px 0 4px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
 /* Alertes de la fenêtre « Convertir » : orange (échange dégradé), rouge
    (échange impossible par ce fournisseur pour l'instant). */
 .swap-alerts {
@@ -3486,6 +3498,7 @@ h2 .coin-icon-inline,
 .wallet-card [data-action="refresh"] { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M20%2011a8%208%200%200%200-14.3-4.3L4%208.5'%2F%3E%3Cpath%20d%3D'M4%204v4.5h4.5'%2F%3E%3Cpath%20d%3D'M4%2013a8%208%200%200%200%2014.3%204.3l1.7-1.8'%2F%3E%3Cpath%20d%3D'M20%2020v-4.5h-4.5'%2F%3E%3C%2Fsvg%3E"); }
 .wallet-card .receive-action { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M17%207%207%2017'%2F%3E%3Cpath%20d%3D'M15.5%2017H7V8.5'%2F%3E%3C%2Fsvg%3E"); }
 .wallet-card [data-action="shield"] { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M12%203l7%203v5c0%204.5-3%208.5-7%2010-4-1.5-7-5.5-7-10V6z'%2F%3E%3Cpath%20d%3D'M9%2012l2%202%204-4'%2F%3E%3C%2Fsvg%3E"); }
+.wallet-card [data-action="stake"] { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M12%2021v-9'%2F%3E%3Cpath%20d%3D'M12%2012c0-4.5%203-7.5%208-7.5%200%205-3%207.5-8%207.5z'%2F%3E%3Cpath%20d%3D'M12%2014.5c0-3.5-2.5-5.5-7-5.5%200%203.8%202.5%205.5%207%205.5z'%2F%3E%3C%2Fsvg%3E"); }
 .wallet-card [data-action="swap"] { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M4%208h13l-3.5-3.5'%2F%3E%3Cpath%20d%3D'M20%2016H7l3.5%203.5'%2F%3E%3C%2Fsvg%3E"); }
 
 /* Actions secondaires d'une carte : discrètes, « Envoyer » seul en avant. */
@@ -3731,6 +3744,7 @@ h2 .coin-icon-inline,
 :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner .receive-action { order: 2; }
 :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner [data-action="swap"] { order: 3; }
 :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner [data-action="shield"] { order: 3; }
+:root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner [data-action="stake"] { order: 3; }
 :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner [data-action="history"] { order: 4; }
 :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner [data-action="refresh"] { order: 5; }
 

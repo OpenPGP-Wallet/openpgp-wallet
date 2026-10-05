@@ -327,6 +327,7 @@
                 <div class="row-buttons">
                   <button class="secondary" data-action="refresh" data-i18n="wallet.refresh" data-i18n-title="wallet.refresh">Actualiser</button>
                   <button class="secondary receive-action" data-action="qr" data-i18n="wallet.receive">Recevoir</button>
+                  <button class="secondary stake-action hidden" data-action="stake" data-i18n="staking.action" data-i18n-title="staking.hint" title="Staking liquide : vos cryptos rapportent des récompenses, revendables à tout moment">Staker</button>
                   <button class="secondary" data-action="history" data-i18n="wallet.history">Historique</button>
                   <button class="primary" data-action="send" data-i18n="wallet.send">Envoyer</button>
                 </div>
@@ -529,6 +530,7 @@
                 <div class="row-buttons">
                   <button class="secondary" data-action="refresh" data-i18n="wallet.refresh" data-i18n-title="wallet.refresh">Actualiser</button>
                   <button class="secondary receive-action" data-action="qr" data-i18n="wallet.receive">Recevoir</button>
+                  <button class="secondary stake-action hidden" data-action="stake" data-i18n="staking.action" data-i18n-title="staking.hint" title="Staking liquide : vos cryptos rapportent des récompenses, revendables à tout moment">Staker</button>
                   <button class="secondary" data-action="history" data-i18n="wallet.history">Historique</button>
                   <button class="primary" data-action="send" data-i18n="wallet.send">Envoyer</button>
                 </div>
@@ -1287,6 +1289,10 @@
         </div>
         <!-- État des fournisseurs : orange (dégradé), rouge (échange impossible). -->
         <div id="swap-alerts" class="swap-alerts hidden" role="status" aria-live="polite"></div>
+        <!-- Staking liquide (cible JitoSOL ou stETH, ou retour vers SOL/ETH) :
+             ce que c'est, rendement annoncé, comment récupérer (main.js,
+             renderStakingNote). -->
+        <p id="swap-staking-note" class="swap-staking-note hidden"></p>
         <label data-i18n="swap.amount">Montant</label>
         <div class="amount-pair">
           <div class="amount-field">

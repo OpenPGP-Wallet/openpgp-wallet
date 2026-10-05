@@ -83,6 +83,11 @@ pub fn price_asset(symbol: &str) -> Option<Asset> {
         "ASTER" => Asset::Pair("ASTERUSDT"),
         "RENDER" => Asset::Pair("RENDERUSDT"),
         "VVV" => Asset::Kraken("VVVUSD"),
+        "JITOSOL" => Asset::Kraken("JITOSOLUSD"),
+        // stETH : absent de Binance et de Kraken ; il suit l'ETH à 1:1 à
+        // quelques dixièmes de pour cent près (rachetable par Lido) — courbe
+        // de l'ETH.
+        "STETH" => Asset::Eth,
         // Monero : retiré de Binance en 2024, dont l'API renvoie encore un
         // cours figé (118,70 $ le 03/10/2026, contre 553 $ chez Kraken).
         "XMR" => Asset::Kraken("XMRUSD"),
