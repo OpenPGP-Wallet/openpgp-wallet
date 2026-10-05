@@ -288,26 +288,28 @@
               <div class="collapsible-inner">
                 <div class="address-row">
                   <p class="address" data-field="address"></p>
-                  <button class="qr-btn" data-action="copy-address" data-i18n-title="wallet.copyAddress" title="Copier l'adresse">
-                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
-                      <rect x="8" y="8" width="12" height="12" rx="2" />
-                      <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
-                    </svg>
-                  </button>
-                  <button class="qr-btn" data-action="qr" data-i18n-title="wallet.showQr" title="Afficher en QR code">
-                    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
-                      <path d="M3 3h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
-                      <rect x="5.2" y="5.2" width="1.6" height="1.6" />
-                      <path d="M15 3h6v6h-6z" fill="none" stroke="currentColor" stroke-width="1.6" />
-                      <rect x="17.2" y="5.2" width="1.6" height="1.6" />
-                      <path d="M3 15h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
-                      <rect x="5.2" y="17.2" width="1.6" height="1.6" />
-                      <rect x="15" y="15" width="2.5" height="2.5" />
-                      <rect x="18.5" y="15" width="2.5" height="2.5" />
-                      <rect x="15" y="18.5" width="2.5" height="2.5" />
-                      <rect x="18.5" y="18.5" width="2.5" height="2.5" />
-                    </svg>
-                  </button>
+                  <div class="address-tools">
+                    <button class="qr-btn" data-action="copy-address" data-i18n-title="wallet.copyAddress" title="Copier l'adresse">
+                      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                        <rect x="8" y="8" width="12" height="12" rx="2" />
+                        <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
+                      </svg>
+                    </button>
+                    <button class="qr-btn" data-action="qr" data-i18n-title="wallet.showQr" title="Afficher en QR code">
+                      <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+                        <path d="M3 3h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                        <rect x="5.2" y="5.2" width="1.6" height="1.6" />
+                        <path d="M15 3h6v6h-6z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                        <rect x="17.2" y="5.2" width="1.6" height="1.6" />
+                        <path d="M3 15h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                        <rect x="5.2" y="17.2" width="1.6" height="1.6" />
+                        <rect x="15" y="15" width="2.5" height="2.5" />
+                        <rect x="18.5" y="15" width="2.5" height="2.5" />
+                        <rect x="15" y="18.5" width="2.5" height="2.5" />
+                        <rect x="18.5" y="18.5" width="2.5" height="2.5" />
+                      </svg>
+                    </button>
+                  </div>
                   <button class="convert-btn hidden" data-action="swap" data-i18n-title="wallet.convertHint" title="Échanger contre une autre crypto">
                     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                       <path d="M4 8h13l-3-3M20 16H7l3 3" />
@@ -394,26 +396,28 @@
               <div class="collapsible-inner">
                 <div class="address-row">
                   <p class="address" data-field="address"></p>
-                  <button class="qr-btn" data-action="copy-address" data-i18n-title="wallet.copyAddress" title="Copier l'adresse">
-                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
-                      <rect x="8" y="8" width="12" height="12" rx="2" />
-                      <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
-                    </svg>
-                  </button>
-                  <button class="qr-btn" data-action="qr" data-i18n-title="wallet.showQr" title="Afficher en QR code">
-                    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
-                      <path d="M3 3h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
-                      <rect x="5.2" y="5.2" width="1.6" height="1.6" />
-                      <path d="M15 3h6v6h-6z" fill="none" stroke="currentColor" stroke-width="1.6" />
-                      <rect x="17.2" y="5.2" width="1.6" height="1.6" />
-                      <path d="M3 15h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
-                      <rect x="5.2" y="17.2" width="1.6" height="1.6" />
-                      <rect x="15" y="15" width="2.5" height="2.5" />
-                      <rect x="18.5" y="15" width="2.5" height="2.5" />
-                      <rect x="15" y="18.5" width="2.5" height="2.5" />
-                      <rect x="18.5" y="18.5" width="2.5" height="2.5" />
-                    </svg>
-                  </button>
+                  <div class="address-tools">
+                    <button class="qr-btn" data-action="copy-address" data-i18n-title="wallet.copyAddress" title="Copier l'adresse">
+                      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                        <rect x="8" y="8" width="12" height="12" rx="2" />
+                        <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
+                      </svg>
+                    </button>
+                    <button class="qr-btn" data-action="qr" data-i18n-title="wallet.showQr" title="Afficher en QR code">
+                      <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+                        <path d="M3 3h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                        <rect x="5.2" y="5.2" width="1.6" height="1.6" />
+                        <path d="M15 3h6v6h-6z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                        <rect x="17.2" y="5.2" width="1.6" height="1.6" />
+                        <path d="M3 15h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                        <rect x="5.2" y="17.2" width="1.6" height="1.6" />
+                        <rect x="15" y="15" width="2.5" height="2.5" />
+                        <rect x="18.5" y="15" width="2.5" height="2.5" />
+                        <rect x="15" y="18.5" width="2.5" height="2.5" />
+                        <rect x="18.5" y="18.5" width="2.5" height="2.5" />
+                      </svg>
+                    </button>
+                  </div>
                   <button class="convert-btn hidden" data-action="swap" data-i18n-title="wallet.convertHint" title="Échanger contre une autre crypto">
                     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                       <path d="M4 8h13l-3-3M20 16H7l3 3" />
@@ -493,26 +497,28 @@
               <div class="collapsible-inner">
                 <div class="address-row">
                   <p class="address" data-field="address"></p>
-                  <button class="qr-btn" data-action="copy-address" data-i18n-title="wallet.copyAddress" title="Copier l'adresse">
-                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
-                      <rect x="8" y="8" width="12" height="12" rx="2" />
-                      <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
-                    </svg>
-                  </button>
-                  <button class="qr-btn" data-action="qr" data-i18n-title="wallet.showQr" title="Afficher en QR code">
-                    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
-                      <path d="M3 3h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
-                      <rect x="5.2" y="5.2" width="1.6" height="1.6" />
-                      <path d="M15 3h6v6h-6z" fill="none" stroke="currentColor" stroke-width="1.6" />
-                      <rect x="17.2" y="5.2" width="1.6" height="1.6" />
-                      <path d="M3 15h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
-                      <rect x="5.2" y="17.2" width="1.6" height="1.6" />
-                      <rect x="15" y="15" width="2.5" height="2.5" />
-                      <rect x="18.5" y="15" width="2.5" height="2.5" />
-                      <rect x="15" y="18.5" width="2.5" height="2.5" />
-                      <rect x="18.5" y="18.5" width="2.5" height="2.5" />
-                    </svg>
-                  </button>
+                  <div class="address-tools">
+                    <button class="qr-btn" data-action="copy-address" data-i18n-title="wallet.copyAddress" title="Copier l'adresse">
+                      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                        <rect x="8" y="8" width="12" height="12" rx="2" />
+                        <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
+                      </svg>
+                    </button>
+                    <button class="qr-btn" data-action="qr" data-i18n-title="wallet.showQr" title="Afficher en QR code">
+                      <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+                        <path d="M3 3h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                        <rect x="5.2" y="5.2" width="1.6" height="1.6" />
+                        <path d="M15 3h6v6h-6z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                        <rect x="17.2" y="5.2" width="1.6" height="1.6" />
+                        <path d="M3 15h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                        <rect x="5.2" y="17.2" width="1.6" height="1.6" />
+                        <rect x="15" y="15" width="2.5" height="2.5" />
+                        <rect x="18.5" y="15" width="2.5" height="2.5" />
+                        <rect x="15" y="18.5" width="2.5" height="2.5" />
+                        <rect x="18.5" y="18.5" width="2.5" height="2.5" />
+                      </svg>
+                    </button>
+                  </div>
                   <button class="convert-btn hidden" data-action="swap" data-i18n-title="wallet.convertHint" title="Échanger contre une autre crypto">
                     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                       <path d="M4 8h13l-3-3M20 16H7l3 3" />
@@ -595,26 +601,28 @@
               <div class="collapsible-inner">
                 <div class="address-row">
                   <p class="address" data-field="address"></p>
-                  <button class="qr-btn" data-action="copy-address" data-i18n-title="wallet.copyAddress" title="Copier l'adresse">
-                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
-                      <rect x="8" y="8" width="12" height="12" rx="2" />
-                      <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
-                    </svg>
-                  </button>
-                  <button class="qr-btn" data-action="qr" data-i18n-title="wallet.showQr" title="Afficher en QR code">
-                    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
-                      <path d="M3 3h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
-                      <rect x="5.2" y="5.2" width="1.6" height="1.6" />
-                      <path d="M15 3h6v6h-6z" fill="none" stroke="currentColor" stroke-width="1.6" />
-                      <rect x="17.2" y="5.2" width="1.6" height="1.6" />
-                      <path d="M3 15h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
-                      <rect x="5.2" y="17.2" width="1.6" height="1.6" />
-                      <rect x="15" y="15" width="2.5" height="2.5" />
-                      <rect x="18.5" y="15" width="2.5" height="2.5" />
-                      <rect x="15" y="18.5" width="2.5" height="2.5" />
-                      <rect x="18.5" y="18.5" width="2.5" height="2.5" />
-                    </svg>
-                  </button>
+                  <div class="address-tools">
+                    <button class="qr-btn" data-action="copy-address" data-i18n-title="wallet.copyAddress" title="Copier l'adresse">
+                      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                        <rect x="8" y="8" width="12" height="12" rx="2" />
+                        <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
+                      </svg>
+                    </button>
+                    <button class="qr-btn" data-action="qr" data-i18n-title="wallet.showQr" title="Afficher en QR code">
+                      <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+                        <path d="M3 3h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                        <rect x="5.2" y="5.2" width="1.6" height="1.6" />
+                        <path d="M15 3h6v6h-6z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                        <rect x="17.2" y="5.2" width="1.6" height="1.6" />
+                        <path d="M3 15h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                        <rect x="5.2" y="17.2" width="1.6" height="1.6" />
+                        <rect x="15" y="15" width="2.5" height="2.5" />
+                        <rect x="18.5" y="15" width="2.5" height="2.5" />
+                        <rect x="15" y="18.5" width="2.5" height="2.5" />
+                        <rect x="18.5" y="18.5" width="2.5" height="2.5" />
+                      </svg>
+                    </button>
+                  </div>
                   <button class="convert-btn hidden" data-action="swap" data-i18n-title="wallet.convertHint" title="Échanger contre une autre crypto">
                     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                       <path d="M4 8h13l-3-3M20 16H7l3 3" />
@@ -1119,8 +1127,12 @@
     <div id="send-modal" class="modal-overlay hidden">
       <div class="modal">
         <h2 id="send-modal-title" data-i18n="send.title">Envoyer</h2>
-        <p class="muted" data-i18n-html="send.fromProfile">Depuis le profil : <strong id="send-from-profile"></strong></p>
-        <p id="send-mainnet-warning" class="error hidden" data-i18n="send.mainnetWarning">
+        <!-- Profil qui envoie et réseau, en pastilles (main.js, openSendModal). -->
+        <div class="send-meta">
+          <span class="send-chip"><span data-i18n="send.fromShort">Depuis</span> <strong id="send-from-profile"></strong></span>
+          <span id="send-network-chip" class="send-chip"></span>
+        </div>
+        <p id="send-mainnet-warning" class="send-banner hidden" data-i18n="send.mainnetWarning">
           ⚠ Réseau MAINNET — ceci dépense de vrais fonds, irréversible.
         </p>
         <label data-i18n="send.toAddress">Adresse destinataire</label>
@@ -1142,7 +1154,11 @@
           <input id="send-tag" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" maxlength="10" />
           <p class="muted tag-hint" data-i18n="send.destinationTagHint">Exigé par les plateformes d'échange : recopiez exactement celui qu'elles indiquent. Sans tag, les fonds peuvent y être perdus.</p>
         </div>
-        <label data-i18n="send.amount">Montant</label>
+        <!-- Solde disponible à droite du libellé (main.js, renderSendAvailable). -->
+        <div class="label-row">
+          <label for="send-amount" data-i18n="send.amount">Montant</label>
+          <span id="send-available" class="label-aside"></span>
+        </div>
         <div class="amount-pair">
           <div class="amount-field">
             <input id="send-amount" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="0.001" />
@@ -1154,14 +1170,19 @@
             <span id="send-amount-fiat-unit" class="amount-unit"></span>
           </div>
         </div>
-        <div id="send-quick-amounts" class="quick-amounts"></div>
-        <div id="send-quick-percentages" class="quick-amounts"></div>
+        <!-- Raccourcis : montants dans la devise à gauche, part du solde à droite. -->
+        <div class="quick-row">
+          <div id="send-quick-amounts" class="quick-amounts"></div>
+          <div id="send-quick-percentages" class="quick-amounts"></div>
+        </div>
         <div id="send-fee-block" class="hidden">
           <label data-i18n="send.feeSpeed">Vitesse d'envoi (frais réseau)</label>
           <div id="send-fee-options" class="fee-options"></div>
         </div>
-        <label data-i18n="send.passwordToConfirm">Mot de passe (pour valider la transaction)</label>
-        <input id="send-password" type="password" />
+        <div class="send-auth">
+          <label for="send-password" data-i18n="send.passwordToConfirm">Mot de passe (pour valider la transaction)</label>
+          <input id="send-password" type="password" />
+        </div>
         <p id="send-error" class="error hidden"></p>
         <p id="send-success" class="success hidden"></p>
         <div class="row-buttons">
@@ -1595,6 +1616,8 @@
         <h2 data-i18n="external.addWalletTitle">Ajouter un wallet externe</h2>
         <label data-i18n="external.label">Nom (pour vous y retrouver)</label>
         <input id="external-wallet-label" type="text" />
+        <label data-i18n="external.address">Adresse</label>
+        <input id="external-wallet-address" type="text" />
         <label data-i18n="external.network">Réseau</label>
         <div class="custom-select dropdown">
           <select id="external-wallet-network">
@@ -1615,8 +1638,6 @@
           </button>
           <ul class="custom-select-options"></ul>
         </div>
-        <label data-i18n="external.address">Adresse</label>
-        <input id="external-wallet-address" type="text" />
         <label data-i18n="external.group">Groupe (optionnel)</label>
         <div class="custom-select dropdown">
           <select id="external-wallet-group">
@@ -1730,25 +1751,19 @@
         <h2 data-i18n="addressBook.addTitle">Ajouter une adresse</h2>
         <label data-i18n="addressBook.label">Nom (pour vous y retrouver)</label>
         <input id="address-book-label" type="text" />
+        <label data-i18n="addressBook.address">Adresse</label>
+        <input id="address-book-address" type="text" />
+        <!-- Réseau déduit de l'adresse (main.js, networkFollowsAddress) : seuls
+             ceux où elle est valide sont proposés. -->
         <label data-i18n="addressBook.network">Réseau</label>
         <div class="custom-select dropdown">
-          <select id="address-book-network">
-            <option value="evm_mainnet" data-i18n="external.netEvmMainnet">Ethereum — Mainnet</option>
-            <option value="evm_sepolia" data-i18n="external.netEvmSepolia">Ethereum — Sepolia (testnet)</option>
-            <option value="btc_mainnet" data-i18n="external.netBtcMainnet">Bitcoin — Mainnet</option>
-            <option value="btc_testnet" data-i18n="external.netBtcTestnet">Bitcoin — Testnet</option>
-            <option value="sol_mainnet" data-i18n="external.netSolMainnet">Solana — Mainnet</option>
-            <option value="sol_devnet" data-i18n="external.netSolDevnet">Solana — Devnet</option>
-            <option value="usdc_solana" data-i18n="external.netUsdcSolana">USDC — Solana (Mainnet)</option>
-          </select>
+          <select id="address-book-network"></select>
           <button type="button" class="custom-select-trigger">
             <span class="custom-select-label"></span>
             <span class="select-arrow"></span>
           </button>
           <ul class="custom-select-options"></ul>
         </div>
-        <label data-i18n="addressBook.address">Adresse</label>
-        <input id="address-book-address" type="text" />
         <p id="add-address-book-error" class="error hidden"></p>
         <div class="row-buttons">
           <button id="add-address-book-confirm" class="primary" data-i18n="addressBook.add">Ajouter</button>

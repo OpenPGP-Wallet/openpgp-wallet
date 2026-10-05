@@ -47,8 +47,57 @@ pub fn list_entries(data_dir: &Path) -> Vec<AddressBookEntry> {
     load(data_dir).entries
 }
 
+/// Réseaux proposables pour une adresse (carnet, wallets externes), dans
+/// l'ordre de proposition : réseaux principaux d'abord, de test à la fin.
+const NETWORKS: [&str; 23] = [
+    "evm_mainnet",
+    "base_mainnet",
+    "arbitrum_mainnet",
+    "bsc_mainnet",
+    "avax_mainnet",
+    "polygon_mainnet",
+    "hyperevm_mainnet",
+    "btc_mainnet",
+    "sol_mainnet",
+    "usdc_solana",
+    "zec_mainnet",
+    "zec_shielded",
+    "xmr_mainnet",
+    "doge_mainnet",
+    "tron_mainnet",
+    "xrp_mainnet",
+    "xlm_mainnet",
+    "near_mainnet",
+    "ada_mainnet",
+    "stx_mainnet",
+    "evm_sepolia",
+    "btc_testnet",
+    "sol_devnet",
+];
+
+/// Réseaux où `address` est valide (mêmes parseurs que l'envoi) : le menu
+/// « Réseau » ne propose que ceux-là, et l'ajout refuse les autres. NEAR à
+/// part : sa syntaxe de compte nommé (minuscules, chiffres, « . », « - »,
+/// « _ ») accepte presque n'importe quel mot — une adresse Bitcoin bech32,
+/// ou mal recopiée (« bc1qpasuneadresse », constaté). Proposé seulement pour
+/// une forme propre à NEAR (compte implicite, ou nom à point comme
+/// « alice.near »), et si aucun autre réseau ne la reconnaît.
+pub fn networks_for(address: &str) -> Vec<&'static str> {
+    let address = address.trim();
+    if address.is_empty() {
+        return Vec::new();
+    }
+    let mut found: Vec<&'static str> = NETWORKS.iter().copied().filter(|n| *n != "near_mainnet" && validate_address(n, address).is_ok()).collect();
+    let implicit = address.len() == 64 && address.bytes().all(|b| b.is_ascii_hexdigit());
+    if found.is_empty() && (implicit || address.contains('.')) && validate_address("near_mainnet", address).is_ok() {
+        found.push("near_mainnet");
+    }
+    found
+}
+
 pub fn add_entry(data_dir: &Path, label: &str, network: &str, address: &str) -> Result<AddressBookEntry> {
     validate_address(network, address)?;
+    anyhow::ensure!(networks_for(address).contains(&network), "cette adresse n'est pas une adresse de ce réseau");
     let mut data = load(data_dir);
     let next_id = data.entries.iter().map(|e| e.id).max().map_or(0, |m| m + 1);
     let entry = AddressBookEntry {
@@ -125,6 +174,35 @@ pub fn lookalike_entry<'a>(entries: &'a [AddressBookEntry], address: &str) -> Op
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Le réseau suit l'adresse : une adresse Solana ne peut pas être
+    /// enregistrée comme adresse Ethereum, ni une adresse Bitcoin comme
+    /// compte NEAR.
+    #[test]
+    fn networks_follow_the_address() {
+        let evm = networks_for("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045");
+        assert_eq!(evm.first(), Some(&"evm_mainnet"));
+        assert_eq!(evm.last(), Some(&"evm_sepolia"));
+        assert!(evm.iter().all(|n| crate::wallet_flow::evm_network(n).is_some()), "{evm:?}");
+        assert_eq!(evm.len(), crate::wallet_flow::EVM_NETWORKS.len());
+        assert_eq!(networks_for("bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh"), vec!["btc_mainnet"]);
+        assert_eq!(networks_for("So11111111111111111111111111111111111111112"), vec!["sol_mainnet", "usdc_solana", "sol_devnet"]);
+        assert_eq!(networks_for("alice.near"), vec!["near_mainnet"]);
+        assert_eq!(networks_for(&"ab".repeat(32)), vec!["near_mainnet"]);
+        assert!(networks_for("pas une adresse !").is_empty());
+        // Adresse Bitcoin mal recopiée : pas un « compte NEAR » pour autant.
+        assert!(networks_for("bc1qpasuneadresse").is_empty());
+        assert!(networks_for("  ").is_empty());
+
+        let dir = std::env::temp_dir().join(format!("pgp_wallet_book_networks_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(add_entry(&dir, "x", "evm_mainnet", "So11111111111111111111111111111111111111112").is_err());
+        let err = add_entry(&dir, "x", "near_mainnet", "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh").err().unwrap().to_string();
+        assert_eq!(err, "cette adresse n'est pas une adresse de ce réseau");
+        assert!(add_entry(&dir, "x", "btc_mainnet", "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh").is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     fn entry(label: &str, address: &str) -> AddressBookEntry {
         AddressBookEntry { id: 0, label: label.into(), network: "evm_mainnet".into(), address: address.into() }

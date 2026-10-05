@@ -1638,6 +1638,13 @@ input.assets-search {
   gap: 8px;
 }
 
+/* Copier et QR code de la ligne d'adresse : groupés pour pouvoir être
+   superposés en vue cartes ; ailleurs le groupe s'efface (ses boutons restent
+   des éléments de la ligne). */
+.address-tools {
+  display: contents;
+}
+
 /* « Convertir » (échange vers une autre crypto) : bien visible, à droite de
    l'adresse ; seulement là où l'échange existe (voir SWAP_NETWORK). */
 /* Teinté plutôt que plein : « Envoyer » reste la seule action pleine. */
@@ -1686,11 +1693,11 @@ button.convert-btn svg {
   flex-shrink: 0;
 }
 
-.address-row:has(> .convert-btn:not(.hidden)) > [data-action="copy-address"] {
+.address-row:has(> .convert-btn:not(.hidden)) [data-action="copy-address"] {
   grid-area: copy;
 }
 
-.address-row:has(> .convert-btn:not(.hidden)) > [data-action="qr"] {
+.address-row:has(> .convert-btn:not(.hidden)) [data-action="qr"] {
   grid-area: qr;
 }
 
@@ -2622,6 +2629,134 @@ h2 .coin-icon-inline,
   border-color: var(--muted);
 }
 
+/* Menu « Réseau » qui suit l'adresse saisie (carnet, wallets externes) :
+   un seul réseau possible, il s'affiche sans flèche ni clic ; aucun (adresse
+   vide ou non reconnue), la consigne en gris. */
+.custom-select-trigger:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+.custom-select-trigger:disabled .select-arrow {
+  display: none;
+}
+
+.custom-select.is-empty .custom-select-label {
+  color: var(--muted);
+}
+
+/* --- Fenêtre d'envoi ----------------------------------------------------------
+   Profil et réseau en pastilles sous le titre, avertissement « fonds réels »
+   en bandeau, solde disponible à droite de « Montant », raccourcis en une
+   rangée de pastilles, mot de passe séparé par un filet. */
+.send-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 4px 0 2px;
+}
+
+.send-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.send-chip strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.send-chip .coin-icon-inline {
+  width: 15px;
+  height: 15px;
+  margin-right: 2px;
+  vertical-align: 0;
+}
+
+.send-banner {
+  margin: 14px 0 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border-left: 3px solid var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  color: var(--danger);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.label-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 16px 0 7px;
+}
+
+.label-row label {
+  margin: 0;
+}
+
+.label-aside {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+#send-modal .quick-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px 12px;
+  margin: 10px 0 4px;
+}
+
+#send-modal .quick-row .quick-amounts {
+  margin: 0;
+  gap: 6px;
+}
+
+#send-modal .quick-row .quick-amounts-hint {
+  margin: 0;
+  align-self: center;
+  font-size: 0.8rem;
+}
+
+#send-modal .quick-amount-btn {
+  flex: none;
+  flex-direction: row;
+  min-height: 32px;
+  padding: 5px 14px;
+  border-radius: 999px;
+  font-size: 0.85rem;
+}
+
+#send-modal .quick-amount-usd {
+  font-weight: 600;
+}
+
+/* Équivalent en crypto : en info-bulle (le champ montant le montre au clic). */
+#send-modal .quick-amount-crypto {
+  display: none;
+}
+
+#send-modal .quick-amount-btn.busy {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.send-auth {
+  margin-top: 20px;
+  border-top: 1px solid var(--border);
+}
+
 /* Menu « Carnet d'adresses ou autre profil » : détaché du champ d'adresse
    au-dessus (collés, ils se lisaient comme un seul bloc). */
 #send-address-book-picker {
@@ -3434,7 +3569,8 @@ h2 .coin-icon-inline,
 }
 
 /* --- Cartes : actions rondes (vue cartes ; la vue liste garde ses boutons) -----
-   L'adresse et sa copie en première ligne, puis une rangée d'actions rondes à
+   L'adresse en première ligne (copie et QR code l'un sur l'autre à sa
+   droite), puis une rangée d'actions rondes à
    icône, libellé dessous : Envoyer, Recevoir (le QR code), Convertir,
    Historique, Actualiser. Les conteneurs d'origine (.address-row,
    .row-buttons) s'effacent (`display: contents`) : rien ne change dans le
@@ -3456,14 +3592,19 @@ h2 .coin-icon-inline,
   font-size: 0.75rem;
 }
 
-:root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .address-row > [data-action="copy-address"] {
+/* Copier et QR code : l'un sur l'autre, dans une colonne étroite à droite de
+   l'adresse, chacun à mi-hauteur (le QR code s'ouvre aussi par « Recevoir »). */
+:root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .address-row > .address-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   flex: 0 0 40px;
-  padding: 0;
 }
 
-/* Le QR code s'ouvre par « Recevoir ». */
-:root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .address-row > [data-action="qr"] {
-  display: none;
+:root:not([data-wallet-list-view="true"]) .wallet-card .address-tools > .qr-btn {
+  flex: 1 1 0;
+  min-height: 0;
+  padding: 0;
 }
 
 :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .row-buttons > button,
@@ -3693,7 +3834,7 @@ h2 .coin-icon-inline,
     column-gap: 0;
   }
 
-  :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .address-row > [data-action="copy-address"] {
+  :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .address-row > .address-tools {
     margin-left: 8px;
   }
 

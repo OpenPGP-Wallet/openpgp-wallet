@@ -198,8 +198,10 @@ function buildAssetCard(asset) {
       <div class="collapsible-inner">
         <div class="address-row">
           <p class="address" data-field="address"></p>
-          <button class="qr-btn" data-action="copy-address" data-i18n-title="wallet.copyAddress">${ICON_COPY}</button>
-          <button class="qr-btn" data-action="qr" data-i18n-title="wallet.showQr">${ICON_QR}</button>
+          <div class="address-tools">
+            <button class="qr-btn" data-action="copy-address" data-i18n-title="wallet.copyAddress">${ICON_COPY}</button>
+            <button class="qr-btn" data-action="qr" data-i18n-title="wallet.showQr">${ICON_QR}</button>
+          </div>
           <button class="convert-btn hidden" data-action="swap" data-i18n-title="wallet.convertHint">${ICON_CONVERT}<span data-i18n="wallet.convert">Convertir</span></button>
         </div>
         <div class="row-buttons">
@@ -862,7 +864,8 @@ const I18N = {
     "settings.biometricDisableConfirm": "Désactiver",
     "settings.biometricEnabledStatus": "Windows Hello est activé sur cet appareil.",
     "send.title": "Envoyer",
-    "send.fromProfile": "Depuis le profil : <strong id=\"send-from-profile\"></strong>",
+    "send.fromShort": "Depuis",
+    "send.available": "Disponible : {amount}{approx}",
     "send.mainnetWarning": "⚠ Réseau MAINNET — ceci dépense de vrais fonds, irréversible.",
     "send.toAddress": "Adresse destinataire",
     "send.destinationTag": "Tag de destination (facultatif)",
@@ -911,6 +914,9 @@ const I18N = {
     "swap.providerHalted": "{name} — suspendu en ce moment",
     "swap.alert.unreachable": "{provider} ne répond pas en ce moment : échange impossible par ce fournisseur.",
     "send.checkingRecipient": "Vérification de l'adresse…",
+    "addressBook.networkFirst": "Saisissez d'abord l'adresse",
+    "addressBook.networkUnknown": "Adresse non reconnue",
+    "send.bookOtherNetwork": "enregistrée pour {network}",
     "swap.alert.halted": "{provider} a suspendu les échanges de {coins} (maintenance ou incident de ce réseau) : échange impossible par ce fournisseur pour l'instant.",
     "swap.alert.slow": "Un de vos échanges via {provider} attend depuis {minutes} min : ce service est lent en ce moment.",
     "swap.previewSwapkitRoute": "Fournisseur (via SwapKit)",
@@ -1482,7 +1488,8 @@ const I18N = {
     "settings.biometricDisableConfirm": "Disable",
     "settings.biometricEnabledStatus": "Windows Hello is enabled on this device.",
     "send.title": "Send",
-    "send.fromProfile": "From profile: <strong id=\"send-from-profile\"></strong>",
+    "send.fromShort": "From",
+    "send.available": "Available: {amount}{approx}",
     "send.mainnetWarning": "⚠ MAINNET network — this spends real funds, irreversible.",
     "send.toAddress": "Recipient address",
     "send.destinationTag": "Destination tag (optional)",
@@ -1531,6 +1538,9 @@ const I18N = {
     "swap.providerHalted": "{name} — paused right now",
     "swap.alert.unreachable": "{provider} is not responding right now: no swap through this provider.",
     "send.checkingRecipient": "Checking the address…",
+    "addressBook.networkFirst": "Enter the address first",
+    "addressBook.networkUnknown": "Address not recognized",
+    "send.bookOtherNetwork": "saved for {network}",
     "swap.alert.halted": "{provider} has paused {coins} swaps (network maintenance or incident): no swap through this provider for now.",
     "swap.alert.slow": "One of your swaps through {provider} has been waiting for {minutes} min: this service is slow right now.",
     "swap.previewSwapkitRoute": "Provider (via SwapKit)",
@@ -3292,6 +3302,7 @@ function refreshCurrencyDisplays() {
   if (!sendModal.classList.contains("hidden")) {
     renderQuickAmounts();
     renderSendAmountUnits();
+    renderSendAvailable();
   }
   if (!swapModal.classList.contains("hidden")) renderSwapAmount();
 }
@@ -3415,6 +3426,7 @@ async function refreshPrices() {
     if (!sendModal.classList.contains("hidden")) {
       renderQuickAmounts();
       renderSendAmountUnits();
+      renderSendAvailable();
     }
     if (!swapModal.classList.contains("hidden")) renderSwapAmount();
   } finally {
@@ -5333,6 +5345,7 @@ function renderQuickAmounts() {
     cryptoSpan.textContent = `≈ ${cryptoAmount} ${symbol}`;
     btn.appendChild(usdSpan);
     btn.appendChild(cryptoSpan);
+    btn.title = cryptoSpan.textContent;
     btn.addEventListener("click", () => {
       setSendCryptoAmount(cryptoAmount);
     });
@@ -5360,6 +5373,7 @@ async function fillMaxAmount(btn) {
   const network = networkForCard(context.card);
   const cryptoSpan = btn?.querySelector(".quick-amount-crypto");
   if (cryptoSpan) cryptoSpan.textContent = t("send.maxComputing");
+  btn?.classList.add("busy");
   hideError(document.getElementById("send-error"));
   try {
     const amount = await invoke("max_send_amount", {
@@ -5375,7 +5389,27 @@ async function fillMaxAmount(btn) {
   } catch (e) {
     if (cryptoSpan) cryptoSpan.textContent = t("send.maxHint");
     showError(document.getElementById("send-error"), String(e));
+  } finally {
+    btn?.classList.remove("busy");
+    if (btn && cryptoSpan) btn.title = cryptoSpan.textContent;
   }
+}
+
+// « Disponible : 0.0419 SOL (≈ 5,03 $) » à droite de « Montant » : le solde
+// affiché sur la carte, sans zéros inutiles.
+function renderSendAvailable() {
+  const el = document.getElementById("send-available");
+  if (!sendContext) return;
+  const text = sendContext.card.querySelector('[data-field="balance"]').textContent.trim();
+  const balance = Number.parseFloat(text);
+  if (!Number.isFinite(balance)) {
+    el.textContent = "";
+    return;
+  }
+  const rate = sendRate();
+  const approx = rate && balance > 0 ? ` (${formatUsdApprox(balance * rate.price)})` : "";
+  const amount = text.includes(".") ? text.replace(/0+$/, "").replace(/\.$/, "") : text;
+  el.textContent = t("send.available", { amount: `${amount} ${COIN_SYMBOL[sendContext.coin]}`, approx });
 }
 
 function renderQuickPercentages() {
@@ -5404,6 +5438,7 @@ function renderQuickPercentages() {
     cryptoSpan.textContent = percent === 100 ? t("send.maxHint") : `≈ ${cryptoAmount} ${symbol}`;
     btn.appendChild(percentSpan);
     btn.appendChild(cryptoSpan);
+    btn.title = cryptoSpan.textContent;
     btn.addEventListener("click", () => {
       if (percent === 100) {
         fillMaxAmount(btn);
@@ -5430,6 +5465,7 @@ function openSendModal(card) {
   const coinName = card.querySelector("h2").textContent.trim().replace(/\s+/g, " ");
   setWithCoinIcon(document.getElementById("send-modal-title"), card.dataset.coin, `${t("send.title")} (${coinName})`);
   document.getElementById("send-from-profile").textContent = profile ? profile.label : "—";
+  setWithCoinIcon(document.getElementById("send-network-chip"), coinForNetwork(network), contactNetworkLabel(network));
   document.getElementById("send-mainnet-warning").classList.toggle("hidden", !network.endsWith("mainnet"));
   document.getElementById("send-to").value = "";
   document.getElementById("send-amount").value = "";
@@ -5441,6 +5477,7 @@ function openSendModal(card) {
   hideError(document.getElementById("send-error"));
   document.getElementById("send-success").classList.add("hidden");
   renderSendAmountUnits();
+  renderSendAvailable();
   renderQuickAmounts();
   renderQuickPercentages();
   loadBtcFeeOptions(card, network);
@@ -6909,17 +6946,6 @@ document.getElementById("clear-decrypted").addEventListener("click", () => {
 let externalWalletsCache = [];
 let externalGroupsCache = [];
 
-function externalWalletCoin(network) {
-  // "usdc_solana" avant "sol" : sinon startsWith("sol") ne matcherait de
-  // toute façon pas ("usdc_solana" ne commence pas par "sol"), mais autant
-  // rester explicite plutôt que de dépendre de cet ordre par accident.
-  if (network === "usdc_solana") return "usdc";
-  if (isEvmNetwork(network)) return "evm";
-  if (network.startsWith("btc")) return "btc";
-  if (network.startsWith("sol")) return "sol";
-  return null;
-}
-
 // Crypto dont le prix valorise un wallet externe : la monnaie du réseau (BNB
 // sur BNB Chain…), ou USDC pour « USDC — Solana ».
 function externalWalletPriceCoin(network) {
@@ -6938,8 +6964,9 @@ function externalNetworkLabel(network) {
     usdc_solana: "external.netUsdcSolana",
   }[network];
   if (key) return t(key);
-  // Autres réseaux EVM (Arbitrum, BNB Chain…) : même libellé que sur les cartes.
-  return isEvmNetwork(network) ? t(`net.${network}`) : network;
+  // Autres réseaux (Arbitrum, Zcash, XRP…) : même libellé que sur les cartes.
+  const label = t(`net.${network}`);
+  return label === `net.${network}` ? network : label;
 }
 
 async function loadExternalWallets() {
@@ -7155,11 +7182,65 @@ refreshExternalWalletsBtn.addEventListener(
   withThrottledButton(refreshExternalWalletsBtn, REFRESH_COOLDOWN_MS, refreshExternalWalletBalances, { keepLabel: true })
 );
 
+// Nom court d'un réseau pour une adresse enregistrée (« Ethereum », « Base »,
+// « XRP Ledger ») ; réseaux de test et cas à part : libellé complet.
+function contactNetworkLabel(network) {
+  if (network === "btc_mainnet") return "Bitcoin";
+  const label = t(`net.${network}`);
+  if (network.endsWith("_mainnet") && label !== `net.${network}`) return label.split(" — ")[0];
+  return externalNetworkLabel(network);
+}
+
+// Menu « Réseau » qui suit l'adresse saisie (carnet d'adresses, wallets
+// externes) : seulement les réseaux où elle est valide, d'après Rust
+// (`address_networks`, mêmes parseurs que l'envoi), parmi ceux que
+// `allowed` accepte ; choisi d'office s'il n'y en a qu'un. Adresse vide ou
+// non reconnue : le menu le dit. Renvoie la fonction de mise à jour.
+function networkFollowsAddress(input, select, allowed) {
+  let check = 0;
+  const refresh = async () => {
+    const address = input.value.trim();
+    const current = select.value;
+    const mine = ++check;
+    let networks = [];
+    if (address) {
+      try {
+        networks = await invoke("address_networks", { address });
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    if (mine !== check) return;
+    networks = networks.filter(allowed);
+    const option = (value, text) => Object.assign(document.createElement("option"), { value, textContent: text });
+    if (networks.length) {
+      select.replaceChildren(...networks.map((network) => option(network, contactNetworkLabel(network))));
+      select.value = networks.includes(current) ? current : networks[0];
+    } else {
+      select.replaceChildren(option("", t(address ? "addressBook.networkUnknown" : "addressBook.networkFirst")));
+    }
+    const wrapper = select.closest(".custom-select");
+    wrapper.classList.toggle("is-empty", networks.length === 0);
+    wrapper.querySelector(".custom-select-trigger").disabled = networks.length < 2;
+    syncCustomSelect(select);
+  };
+  input.addEventListener("input", refresh);
+  return refresh;
+}
+
 // --- Modale ajout d'un wallet externe ---------------------------------------
+// Réseaux suivis (soldes lisibles), d'après le menu d'origine.
+const EXTERNAL_WALLET_NETWORKS = [...document.getElementById("external-wallet-network").options].map((o) => o.value);
+const refreshExternalWalletNetwork = networkFollowsAddress(
+  document.getElementById("external-wallet-address"),
+  document.getElementById("external-wallet-network"),
+  (network) => EXTERNAL_WALLET_NETWORKS.includes(network)
+);
 
 document.getElementById("add-external-wallet-btn").addEventListener("click", () => {
   document.getElementById("external-wallet-label").value = "";
   document.getElementById("external-wallet-address").value = "";
+  refreshExternalWalletNetwork();
   hideError(document.getElementById("add-external-wallet-error"));
 
   const groupSelect = document.getElementById("external-wallet-group");
@@ -7266,7 +7347,7 @@ function renderAddressBookRow(entry) {
   setWithCoinIcon(labelEl, externalWalletPriceCoin(entry.network), entry.label);
   const meta = document.createElement("span");
   meta.className = "recipient-fp";
-  meta.textContent = `${externalNetworkLabel(entry.network)} · ${entry.address}`;
+  meta.textContent = `${contactNetworkLabel(entry.network)} · ${entry.address}`;
   info.appendChild(labelEl);
   info.appendChild(meta);
 
@@ -7311,9 +7392,18 @@ function renderAddressBook() {
   container.appendChild(list);
 }
 
+// « USDC — Solana » : ancien réseau du carnet, plus proposé (une adresse
+// Solana sert pour le SOL comme pour ses jetons) ; ses entrées restent lues.
+const refreshAddressBookNetwork = networkFollowsAddress(
+  document.getElementById("address-book-address"),
+  document.getElementById("address-book-network"),
+  (network) => network !== "usdc_solana"
+);
+
 document.getElementById("add-address-book-btn").addEventListener("click", () => {
   document.getElementById("address-book-label").value = "";
   document.getElementById("address-book-address").value = "";
+  refreshAddressBookNetwork();
   hideError(document.getElementById("add-address-book-error"));
   document.getElementById("add-address-book-modal").classList.remove("hidden");
 });
@@ -7334,6 +7424,10 @@ addAddressBookConfirmBtn.addEventListener("click", withBusyButton(addAddressBook
     showError(errorEl, t("external.labelAndAddressRequired"));
     return;
   }
+  if (!network) {
+    showError(errorEl, t("addressBook.networkUnknown"));
+    return;
+  }
 
   try {
     await invoke("add_address_book_entry", { label, network, address });
@@ -7345,18 +7439,26 @@ addAddressBookConfirmBtn.addEventListener("click", withBusyButton(addAddressBook
 }));
 
 // Sélecteur "choisir depuis le carnet d'adresses" dans la modale d'envoi :
-// filtré par coin (même correspondance réseau->coin que pour les wallets
-// externes, voir externalWalletCoin), masqué s'il n'y a aucune entrée
-// compatible pour ce coin. Choisir une entrée remplit juste le champ adresse,
+// contacts dont l'adresse a le format du réseau de l'envoi (voir
+// addressFamily), masqué s'il n'y en a aucun ni d'autre profil. Choisir une
+// entrée remplit juste le champ adresse,
 // le sélecteur repart ensuite sur son placeholder (action, pas un état persistant).
 // Destinataires proposés à l'envoi : contacts du carnet, puis les AUTRES
 // profils de ce portefeuille (leur adresse pour la même crypto et le même
 // réseau). La boîte de confirmation native nomme le profil reconnu, d'après
 // les adresses dérivées côté Rust — jamais d'après ce menu.
+// Format d'adresse d'un réseau : tous les EVM ont le même ; les réseaux
+// Solana aussi (« USDC — Solana » compris) ; chaque autre a le sien.
+function addressFamily(network) {
+  if (isEvmNetwork(network)) return "evm";
+  if (network === "usdc_solana" || network.startsWith("sol_")) return "sol";
+  return network;
+}
+
 function refreshSendAddressBookPicker(coin, network, sourceProfileIndex) {
   const wrapper = document.getElementById("send-address-book-picker");
   const select = document.getElementById("send-address-book-select");
-  const matches = addressBookCache.filter((entry) => externalWalletCoin(entry.network) === coin);
+  const matches = addressBookCache.filter((entry) => addressFamily(entry.network) === addressFamily(network));
   const profiles = profilesCache
     .filter((profile) => profile.index !== sourceProfileIndex)
     .map((profile) => ({ profile, address: addressOfProfile(profile, coin, network) }))
@@ -7371,7 +7473,13 @@ function refreshSendAddressBookPicker(coin, network, sourceProfileIndex) {
   };
   group(
     "send.pickBook",
-    matches.map((entry) => Object.assign(document.createElement("option"), { value: `book:${entry.id}`, textContent: `${entry.label} — ${entry.address}` }))
+    matches.map((entry) => {
+      // Contact enregistré pour un autre réseau du même format (Ethereum pour
+      // un envoi sur Base…) : dit, une plateforme d'échange pouvant ne pas
+      // accepter ce réseau-là.
+      const other = entry.network === network ? "" : ` (${t("send.bookOtherNetwork", { network: contactNetworkLabel(entry.network) })})`;
+      return Object.assign(document.createElement("option"), { value: `book:${entry.id}`, textContent: `${entry.label} — ${entry.address}${other}` });
+    })
   );
   group(
     "send.pickProfiles",

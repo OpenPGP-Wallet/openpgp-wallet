@@ -577,6 +577,8 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
         "Bitcoin servers unavailable right now (too many requests or outage) — try again in a minute",
     ),
     ("requête refusée par le serveur Bitcoin", "request refused by the Bitcoin server"),
+    // core/src/address_book.rs
+    ("cette adresse n'est pas une adresse de ce réseau", "this address does not belong to this network"),
     ("réponse esplora /utxo illisible", "unreadable esplora /utxo response"),
     ("txid invalide", "invalid txid"),
     ("txid de taille inattendue", "txid has an unexpected size"),
@@ -6026,6 +6028,13 @@ fn list_address_book(app: tauri::AppHandle) -> Result<Vec<address_book::AddressB
     Ok(address_book::list_entries(&dir))
 }
 
+/// Réseaux où une adresse est valide (carnet d'adresses, wallets externes) :
+/// le menu « Réseau » de l'interface ne propose que ceux-là.
+#[tauri::command]
+fn address_networks(address: String) -> Vec<&'static str> {
+    address_book::networks_for(&address)
+}
+
 #[tauri::command]
 fn add_address_book_entry(
     label: String,
@@ -7050,6 +7059,7 @@ pub fn run() {
             swap_halts,
             swap_health,
             recipient_warnings,
+            address_networks,
             get_jupiter_quote,
             jupiter_swap_transaction,
             get_cow_quote,
