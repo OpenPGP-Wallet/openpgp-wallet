@@ -3943,11 +3943,6 @@ fn jupiter_fee_mint(rpc: &sol_rpc::SolRpc, input_mint: &str, output_mint: &str) 
     Ok(None)
 }
 
-/// Envoie un swap SOL <-> USDC via Jupiter (même chaîne, contrairement au
-/// swap cross-chain via THORChain) — voir jupiter_rpc.rs pour le contexte
-/// complet, notamment pourquoi la transaction elle-même n'est pas
-/// reconstruite à la main ici (seulement vérifiée puis signée).
-#[allow(clippy::too_many_arguments)]
 /// Réserve de SOL d'un échange Jupiter, vérifiée avant de construire la
 /// transaction : frais (plancher généreux, pas de valeur exacte avant
 /// construction), compte wSOL temporaire si l'on vend du SOL, compte de
@@ -4051,6 +4046,11 @@ pub fn swap_max(protocol: &str, from_coin: &str, from_network: &str, to_coin: &s
     }
 }
 
+/// Envoie un swap SOL <-> USDC via Jupiter (même chaîne, contrairement au
+/// swap cross-chain via THORChain) — voir jupiter_rpc.rs pour le contexte
+/// complet, notamment pourquoi la transaction elle-même n'est pas
+/// reconstruite à la main ici (seulement vérifiée puis signée).
+#[allow(clippy::too_many_arguments)]
 pub fn send_jupiter_swap(
     data_dir: &Path,
     device_password: &str,
