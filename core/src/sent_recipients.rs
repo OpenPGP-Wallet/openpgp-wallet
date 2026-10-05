@@ -71,6 +71,15 @@ fn normalize(address: &str) -> String {
 }
 
 /// `true` si ce portefeuille a déjà envoyé des fonds à `address` sur `network`.
+/// Toutes les adresses déjà payées, tous réseaux confondus (sans doublon) —
+/// pour reconnaître une adresse presque identique (`recipient_check`).
+pub fn addresses(data_dir: &Path) -> Vec<String> {
+    let mut list: Vec<String> = load(data_dir).entries.into_iter().map(|e| e.address).collect();
+    list.sort();
+    list.dedup();
+    list
+}
+
 pub fn has_sent_to(data_dir: &Path, network: &str, address: &str) -> bool {
     let address = normalize(address);
     load(data_dir).entries.iter().any(|e| e.network == network && e.address == address)

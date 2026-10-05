@@ -26,6 +26,7 @@ pub mod messaging;
 pub mod external_wallets;
 pub mod address_book;
 pub mod sent_recipients;
+pub mod recipient_check;
 pub mod walletconnect;
 pub mod evm_sign;
 pub mod dapp_requests;

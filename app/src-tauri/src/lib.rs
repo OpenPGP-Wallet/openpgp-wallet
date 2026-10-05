@@ -3092,12 +3092,171 @@ fn recipient_warning_lines(first_send: bool, coin: &str, activity: Option<api::R
 /// profil de ce portefeuille : le profil est nommé à la place des deux
 /// derniers (ni « nouvelle adresse » ni « jamais servi » à craindre).
 fn send_warnings(app: &tauri::AppHandle, dir: &std::path::Path, network: &str, coin: &str, to: &str, activity: Option<api::RecipientActivity>) -> Option<String> {
-    let mut lines: Vec<String> = lookalike_warning(dir, to).into_iter().collect();
-    match own_profile_label(app, dir, network, to) {
-        Some(label) => lines.push(own_profile_line(&label)),
-        None => lines.extend(recipient_warning_lines(!sent_recipients::has_sent_to(dir, network, to), coin, activity)),
-    }
+    let lines: Vec<String> = recipient_warning_list(app, dir, network, coin, to, activity).into_iter().map(|w| w.text).collect();
     (!lines.is_empty()).then(|| lines.join("\n\n"))
+}
+
+/// Un avertissement sur le destinataire et sa gravité : « danger » (adresse
+/// presque identique à une connue, sosie d'un contact), « warning »
+/// (nouvelle adresse, jamais servi, vide), « ok » (un de vos profils),
+/// « info » (état impossible à vérifier).
+#[derive(Serialize)]
+struct RecipientWarning {
+    level: &'static str,
+    text: String,
+}
+
+/// Tous les avertissements d'un envoi, du plus grave au moins grave — mêmes
+/// lignes dans la boîte native et dans l'aperçu de l'interface.
+fn recipient_warning_list(app: &tauri::AppHandle, dir: &std::path::Path, network: &str, coin: &str, to: &str, activity: Option<api::RecipientActivity>) -> Vec<RecipientWarning> {
+    let mut list = Vec::new();
+    // Presque identique à une adresse connue : plus précis que le sosie du
+    // carnet (début et fin seulement), qui n'est alors pas répété.
+    if let Some(text) = near_miss_warning(app, dir, to).or_else(|| lookalike_warning(dir, to)) {
+        list.push(RecipientWarning { level: "danger", text });
+    }
+    match own_profile_label(app, dir, network, to) {
+        Some(label) => list.push(RecipientWarning { level: "ok", text: own_profile_line(&label) }),
+        None => {
+            let first_send = !sent_recipients::has_sent_to(dir, network, to);
+            let unverified = activity.is_none();
+            for (i, text) in recipient_warning_lines(first_send, coin, activity).into_iter().enumerate() {
+                let level = if unverified && !(first_send && i == 0) { "info" } else { "warning" };
+                list.push(RecipientWarning { level, text });
+            }
+        }
+    }
+    list
+}
+
+/// Adresses connues, avec qui elles désignent : profils de ce portefeuille
+/// (caches Rust), contacts du carnet, destinataires déjà payés.
+fn known_recipients(app: &tauri::AppHandle, dir: &std::path::Path) -> Vec<(String, String)> {
+    let english = UI_LANG_IS_ENGLISH.load(Ordering::Relaxed);
+    let labels: std::collections::HashMap<u32, String> = api::list_profiles(dir).into_iter().map(|p| (p.index, p.label)).collect();
+    let profile = |index: &u32| {
+        let label = dialog_label(labels.get(index).map(String::as_str).unwrap_or("?"));
+        if english {
+            format!("your profile \"{label}\"")
+        } else {
+            format!("votre profil « {label} »")
+        }
+    };
+    let mut known: Vec<(String, String)> = Vec::new();
+    for (index, (evm, sol)) in app.state::<ProfileAddressCache>().0.lock().unwrap_or_else(|p| p.into_inner()).iter() {
+        known.push((profile(index), evm.clone()));
+        known.push((profile(index), sol.clone()));
+    }
+    let mut simple = |cache: &std::sync::Mutex<std::collections::HashMap<u32, String>>| {
+        for (index, address) in cache.lock().unwrap_or_else(|p| p.into_inner()).iter() {
+            known.push((profile(index), address.clone()));
+        }
+    };
+    simple(&app.state::<ProfileBtcCache>().0);
+    simple(&app.state::<ProfileZcashCache>().0);
+    simple(&app.state::<ProfileDogeCache>().0);
+    simple(&app.state::<ProfileTronCache>().0);
+    simple(&app.state::<ProfileXrpCache>().0);
+    simple(&app.state::<ProfileStellarCache>().0);
+    simple(&app.state::<ProfileNearCache>().0);
+    simple(&app.state::<ProfileCardanoCache>().0);
+    simple(&app.state::<ProfileStacksCache>().0);
+    for (index, (address, _)) in app.state::<MoneroKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).iter() {
+        known.push((profile(index), address.clone()));
+    }
+    for (index, (address, _)) in app.state::<ShieldedKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).iter() {
+        known.push((profile(index), address.clone()));
+    }
+    for entry in address_book::list_entries(dir) {
+        let label = dialog_label(&entry.label);
+        known.push((if english { format!("your contact \"{label}\"") } else { format!("votre contact « {label} »") }, entry.address));
+    }
+    let paid = lang("une adresse à qui vous avez déjà envoyé", "an address you have already sent to").to_string();
+    known.extend(sent_recipients::addresses(dir).into_iter().map(|address| (paid.clone(), address)));
+    known
+}
+
+/// `to` presque identique à une adresse connue (voir
+/// `pgp_wallet_poc::recipient_check`) : laquelle, et la différence exacte.
+fn near_miss_warning(app: &tauri::AppHandle, dir: &std::path::Path, to: &str) -> Option<String> {
+    let known = known_recipients(app, dir);
+    let (address, difference) = pgp_wallet_poc::recipient_check::near_miss(known.iter().map(|(_, a)| a.as_str()), to)?;
+    let who = &known.iter().find(|(_, a)| a == address)?.0;
+    Some(near_miss_line(who, address, &difference))
+}
+
+fn near_miss_line(who: &str, known: &str, difference: &pgp_wallet_poc::recipient_check::Difference) -> String {
+    use pgp_wallet_poc::recipient_check::Difference;
+    let english = UI_LANG_IS_ENGLISH.load(Ordering::Relaxed);
+    let chars: Vec<char> = known.trim().chars().collect();
+    let short = if chars.len() > 14 {
+        format!("{}…{}", chars[..6].iter().collect::<String>(), chars[chars.len() - 6..].iter().collect::<String>())
+    } else {
+        chars.iter().collect()
+    };
+    // Caractère tapé (adresse saisie) : jamais un caractère de mise en page.
+    let shown = |c: char| if is_dialog_hazard(c) { '?' } else { c };
+    let place = |position: usize| match (position, english) {
+        (0, false) => "au début".to_string(),
+        (0, true) => "at the start".to_string(),
+        (p, false) if p + 1 >= chars.len() => "à la fin".to_string(),
+        (p, true) if p + 1 >= chars.len() => "at the end".to_string(),
+        (p, false) => format!("en {}ᵉ position", p + 1),
+        (p, true) => format!("at position {}", p + 1),
+    };
+    let what = match (difference, english) {
+        (Difference::Missing { position, expected }, false) => format!("il manque « {} » {}", shown(*expected), place(*position)),
+        (Difference::Missing { position, expected }, true) => format!("\"{}\" is missing {}", shown(*expected), place(*position)),
+        (Difference::Extra { position, typed }, false) => format!("« {} » en trop {}", shown(*typed), place(*position)),
+        (Difference::Extra { position, typed }, true) => format!("an extra \"{}\" {}", shown(*typed), place(*position)),
+        (Difference::Changed { position, typed, expected }, false) => format!("« {} » au lieu de « {} » {}", shown(*typed), shown(*expected), place(*position)),
+        (Difference::Changed { position, typed, expected }, true) => format!("\"{}\" instead of \"{}\" {}", shown(*typed), shown(*expected), place(*position)),
+        (Difference::Swapped { position }, false) => format!("deux caractères inversés {}", place(*position)),
+        (Difference::Swapped { position }, true) => format!("two characters swapped {}", place(*position)),
+        (Difference::Two, false) => "deux caractères diffèrent".to_string(),
+        (Difference::Two, true) => "two characters differ".to_string(),
+    };
+    if english {
+        format!("WARNING — ALMOST THE SAME ADDRESS as {who} ({short}): {what}. Probably a copy mistake: check it before going on.")
+    } else {
+        format!("ATTENTION — ADRESSE PRESQUE IDENTIQUE à {who} ({short}) : {what}. Sans doute une erreur de copie : vérifiez-la avant de continuer.")
+    }
+}
+
+/// Avertissements sur le destinataire pour l'APERÇU de l'interface (mêmes
+/// lignes que la boîte native, qui reste la seule vraie protection) :
+/// adresse presque identique à une connue, sosie d'un contact, nouvelle
+/// adresse, état sur la blockchain. `token` : jeton du registre, ou
+/// « usdc » pour l'USDC Solana (chemin dédié). Adresse invalide : aucun
+/// avertissement (l'envoi la refusera avec son propre message).
+#[tauri::command]
+async fn recipient_warnings(app: tauri::AppHandle, network: String, token: Option<String>, to: String) -> Result<Vec<RecipientWarning>, String> {
+    run_blocking(move || {
+        let dir = data_dir(&app)?;
+        let to = canonical_address_input(&to)?;
+        let usdc_solana = token.as_deref() == Some("usdc") && pgp_wallet_poc::tokens::find("usdc", &network).is_none();
+        let network = if usdc_solana { "sol_mainnet".to_string() } else { network };
+        if pgp_wallet_poc::recipient_check::validate(&network, &to).is_err() {
+            return Ok(Vec::new());
+        }
+        let (coin, activity) = match token.as_deref() {
+            Some(_) if usdc_solana => ("usdc", api::usdc_recipient_activity(&to, sol_network(&network)?).ok()),
+            Some(token) => {
+                let (_, deployment) = pgp_wallet_poc::tokens::find(token, &network).ok_or_else(|| translate_error("jeton non pris en charge sur ce réseau"))?;
+                match deployment.kind {
+                    pgp_wallet_poc::tokens::TokenKind::Erc20 { .. } => ("evm", api::evm_recipient_activity(&to, evm_network(&network)?).ok()),
+                    pgp_wallet_poc::tokens::TokenKind::Trc20 { .. } => ("trx", api::trx_recipient_activity(&to).ok()),
+                    pgp_wallet_poc::tokens::TokenKind::Spl { .. } => ("sol", api::sol_recipient_activity(&to, sol_network(&network)?).ok()),
+                }
+            }
+            None => {
+                let coin = send_coin(&network)?;
+                (coin, recipient_activity(coin, &network, &to)?)
+            }
+        };
+        Ok(recipient_warning_list(&app, &dir, &network, coin, &to, activity))
+    })
+    .await
 }
 
 fn own_profile_line(label: &str) -> String {
@@ -3604,6 +3763,61 @@ struct SendFrom<'a> {
     stacks: Option<&'a str>,
 }
 
+/// État de `to` sur la blockchain, pour les avertissements (`None` : lecture
+/// impossible). Adresse refusée ici si elle est mal formée (EVM/BTC :
+/// jusqu'ici seulement au moment de signer) ou, pour Solana, si ce n'est pas
+/// un portefeuille (voir `api::check_solana_recipient`).
+fn recipient_activity(coin: &str, network: &str, to: &str) -> Result<Option<api::RecipientActivity>, String> {
+    Ok(match coin {
+        "evm" => {
+            api::validate_evm_recipient(to).t_err()?;
+            api::evm_recipient_activity(to, evm_network(network)?).ok()
+        }
+        "btc" => {
+            let net = btc_network(network)?;
+            api::validate_btc_recipient(to, net).t_err()?;
+            api::btc_recipient_activity(to, net).ok()
+        }
+        // Adresse déjà vérifiée (préparation de l'envoi, ou format vérifié
+        // par `recipient_warnings` pour l'aperçu).
+        "zec" => api::zec_recipient_activity(to).ok(),
+        "doge" => api::doge_recipient_activity(to).ok(),
+        "trx" => api::trx_recipient_activity(to).ok(),
+        "xrp" => api::xrp_recipient_activity(to).ok(),
+        "xlm" => api::xlm_recipient_activity(to).ok(),
+        "near" => api::near_recipient_activity(to).ok(),
+        "ada" => api::ada_recipient_activity(to).ok(),
+        "stx" => api::stx_recipient_activity(to).ok(),
+        // Adresse vérifiée par la préparation ; aucune activité lisible
+        // (adresses et montants invisibles sur la chaîne Monero).
+        "xmr" => None,
+        _ => {
+            let net = sol_network(network)?;
+            api::check_solana_recipient(to, net).t_err()?;
+            api::sol_recipient_activity(to, net).ok()
+        }
+    })
+}
+
+/// Monnaie d'un envoi selon son réseau (`Err` : réseau inconnu).
+fn send_coin(network: &str) -> Result<&'static str, String> {
+    Ok(match network {
+        n if is_evm(n) => "evm",
+        "btc_testnet" | "btc_mainnet" => "btc",
+        "sol_devnet" | "sol_mainnet" => "sol",
+        "zec_mainnet" => "zec",
+        "xmr_mainnet" => "xmr",
+        "doge_mainnet" => "doge",
+        "tron_mainnet" => "trx",
+        "xrp_mainnet" => "xrp",
+        "xlm_mainnet" => "xlm",
+        "near_mainnet" => "near",
+        "ada_mainnet" => "ada",
+        "stx_mainnet" => "stx",
+        other => return Err(translate_error(&format!("réseau inconnu : {other}"))),
+    })
+}
+
 /// Validation, avertissements et boîte de confirmation native, communs aux
 /// envois du portefeuille et des comptes matériels (`device_note` : consigne
 /// ajoutée à la boîte pour la confirmation sur l'appareil). `Err` si refusé.
@@ -3626,21 +3840,7 @@ fn confirm_send(
     // la boîte, l'erreur n'arrivant qu'après. Adresse et montant remplacés par
     // leur forme canonique, utilisée pour l'affichage ET la signature (voir
     // `canonical_address_input`/`api::canonical_amount`).
-    let coin = match network {
-        n if is_evm(n) => "evm",
-        "btc_testnet" | "btc_mainnet" => "btc",
-        "sol_devnet" | "sol_mainnet" => "sol",
-        "zec_mainnet" => "zec",
-        "xmr_mainnet" => "xmr",
-        "doge_mainnet" => "doge",
-        "tron_mainnet" => "trx",
-        "xrp_mainnet" => "xrp",
-        "xlm_mainnet" => "xlm",
-        "near_mainnet" => "near",
-        "ada_mainnet" => "ada",
-        "stx_mainnet" => "stx",
-        other => return Err(translate_error(&format!("réseau inconnu : {other}"))),
-    };
+    let coin = send_coin(network)?;
     match (&note, coin) {
         (Some(DestinationNote::XrpTag(_)), c) if c != "xrp" => return Err(translate_error("tag de destination : réservé aux envois XRP")),
         (Some(DestinationNote::StellarMemo(_)), c) if c != "xlm" => return Err(translate_error("mémo : réservé aux envois Stellar et Stacks")),
@@ -3794,38 +3994,7 @@ fn confirm_send(
         }
         (_, plan) => plan,
     };
-    // Adresse refusée AVANT la confirmation si elle est mal formée (EVM/BTC :
-    // jusqu'ici seulement au moment de signer) ou, pour Solana, si ce n'est
-    // pas un portefeuille (voir `api::check_solana_recipient`). Puis état de
-    // l'adresse sur la blockchain, pour les avertissements de la boîte.
-    let activity = match coin {
-        "evm" => {
-            api::validate_evm_recipient(&to).t_err()?;
-            api::evm_recipient_activity(&to, evm_network(network)?).ok()
-        }
-        "btc" => {
-            let net = btc_network(network)?;
-            api::validate_btc_recipient(&to, net).t_err()?;
-            api::btc_recipient_activity(&to, net).ok()
-        }
-        // Adresse déjà vérifiée par la préparation de l'envoi.
-        "zec" => api::zec_recipient_activity(&to).ok(),
-        "doge" => api::doge_recipient_activity(&to).ok(),
-        "trx" => api::trx_recipient_activity(&to).ok(),
-        "xrp" => api::xrp_recipient_activity(&to).ok(),
-        "xlm" => api::xlm_recipient_activity(&to).ok(),
-        "near" => api::near_recipient_activity(&to).ok(),
-        "ada" => api::ada_recipient_activity(&to).ok(),
-        "stx" => api::stx_recipient_activity(&to).ok(),
-        // Adresse vérifiée par la préparation ; aucune activité lisible
-        // (adresses et montants invisibles sur la chaîne Monero).
-        "xmr" => None,
-        _ => {
-            let net = sol_network(network)?;
-            api::check_solana_recipient(&to, net).t_err()?;
-            api::sol_recipient_activity(&to, net).ok()
-        }
-    };
+    let activity = recipient_activity(coin, network, &to)?;
     // Ligne de frais choisie d'après le RÉSEAU, jamais d'après la simple
     // présence de `fee_sat` (22ᵉ passage) : un `fee_sat` envoyé pour un
     // virement ETH remplaçait jusqu'ici l'affichage des vrais frais de gas par
@@ -6880,6 +7049,7 @@ pub fn run() {
             swap_pairs,
             swap_halts,
             swap_health,
+            recipient_warnings,
             get_jupiter_quote,
             jupiter_swap_transaction,
             get_cow_quote,
@@ -7013,6 +7183,25 @@ mod tests {
         assert_eq!(canonical_address_input("  0xabc\n").unwrap(), "0xabc");
         assert!(canonical_address_input("bc1q abc").is_err());
         assert!(canonical_address_input("  ").is_err());
+    }
+
+    /// Le cas réel du 05/10/2026 (premier caractère oublié) : la ligne dit
+    /// exactement quoi et où.
+    #[test]
+    fn near_miss_line_names_the_exact_slip() {
+        use pgp_wallet_poc::recipient_check::Difference;
+        let known = "F1YBYFJWBteTwi5eS5BjdSy3xDGGv8bhHBJ54n78nzdc";
+        assert_eq!(
+            near_miss_line("une adresse à qui vous avez déjà envoyé", known, &Difference::Missing { position: 0, expected: 'F' }),
+            "ATTENTION — ADRESSE PRESQUE IDENTIQUE à une adresse à qui vous avez déjà envoyé (F1YBYF…78nzdc) : il manque « F » au début. \
+             Sans doute une erreur de copie : vérifiez-la avant de continuer."
+        );
+        let changed = near_miss_line("x", known, &Difference::Changed { position: 4, typed: 'Z', expected: 'Y' });
+        assert!(changed.contains("« Z » au lieu de « Y » en 5ᵉ position"), "{changed}");
+        let end = near_miss_line("x", known, &Difference::Missing { position: known.len() - 1, expected: 'c' });
+        assert!(end.contains("il manque « c » à la fin"), "{end}");
+        let hazard = near_miss_line("x", known, &Difference::Extra { position: 3, typed: '\u{202E}' });
+        assert!(hazard.contains("« ? » en trop en 4ᵉ position"), "{hazard}");
     }
 
     #[test]

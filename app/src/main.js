@@ -910,6 +910,7 @@ const I18N = {
     "swap.providerRecommended": "{name} — frais {fee} (recommandé)",
     "swap.providerHalted": "{name} — suspendu en ce moment",
     "swap.alert.unreachable": "{provider} ne répond pas en ce moment : échange impossible par ce fournisseur.",
+    "send.checkingRecipient": "Vérification de l'adresse…",
     "swap.alert.halted": "{provider} a suspendu les échanges de {coins} (maintenance ou incident de ce réseau) : échange impossible par ce fournisseur pour l'instant.",
     "swap.alert.slow": "Un de vos échanges via {provider} attend depuis {minutes} min : ce service est lent en ce moment.",
     "swap.previewSwapkitRoute": "Fournisseur (via SwapKit)",
@@ -1529,6 +1530,7 @@ const I18N = {
     "swap.providerRecommended": "{name} — {fee} fee (recommended)",
     "swap.providerHalted": "{name} — paused right now",
     "swap.alert.unreachable": "{provider} is not responding right now: no swap through this provider.",
+    "send.checkingRecipient": "Checking the address…",
     "swap.alert.halted": "{provider} has paused {coins} swaps (network maintenance or incident): no swap through this provider for now.",
     "swap.alert.slow": "One of your swaps through {provider} has been waiting for {minutes} min: this service is slow right now.",
     "swap.previewSwapkitRoute": "Provider (via SwapKit)",
@@ -5587,6 +5589,40 @@ function networkLabelForCard(card) {
 
 const sendPreviewModal = document.getElementById("send-preview-modal");
 
+// Avertissements sur le destinataire dans l'aperçu (Rust, `recipient_warnings`) :
+// adresse presque identique à une adresse connue, sosie d'un contact,
+// nouvelle adresse, état sur la blockchain — les mêmes que la boîte de
+// Windows, qui reste la vraie protection.
+let recipientCheck = 0;
+
+async function showRecipientWarnings(to) {
+  const box = document.getElementById("send-preview-warnings");
+  const check = ++recipientCheck;
+  const line = (level, text) => {
+    const p = document.createElement("p");
+    p.className = `send-warning ${level}`;
+    p.textContent = text;
+    return p;
+  };
+  box.replaceChildren(line("info", t("send.checkingRecipient")));
+  box.classList.remove("hidden");
+  const network = networkForCard(sendContext.card);
+  const coin = sendContext.coin;
+  // Même aiguillage que l'envoi : jeton du registre, USDC Solana, monnaie.
+  const token = usesTokenRegistry(coin, network) ? coin : coin === "usdc" ? "usdc" : null;
+  let warnings = [];
+  try {
+    warnings = await invoke("recipient_warnings", { network, token, to });
+  } catch (e) {
+    // Adresse refusée (compte de jetons Solana, adresse mal formée…) :
+    // l'envoi le sera aussi, autant le dire dès l'aperçu.
+    warnings = [{ level: "danger", text: String(e) }];
+  }
+  if (check !== recipientCheck) return;
+  box.replaceChildren(...warnings.map((w) => line(w.level, w.text)));
+  box.classList.toggle("hidden", warnings.length === 0);
+}
+
 // Étape 1 : valide les champs puis affiche un aperçu stylé (réseau,
 // destinataire, montant, frais) — pas encore d'appel réseau ni de secret
 // impliqué ici, juste relire ce qui est déjà dans le formulaire.
@@ -5651,6 +5687,7 @@ sendConfirmBtn.addEventListener("click", () => {
     feeRow.classList.add("hidden");
   }
 
+  showRecipientWarnings(to);
   sendPreviewModal.classList.remove("hidden");
 });
 

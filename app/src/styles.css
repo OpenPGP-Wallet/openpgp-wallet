@@ -671,6 +671,46 @@ button.link:hover {
   font-size: 0.8rem;
 }
 
+/* Avertissements sur le destinataire dans l'aperçu d'envoi : rouge (adresse
+   presque identique à une connue, sosie d'un contact), orange (nouvelle
+   adresse, jamais servi, vide), vert (un de vos profils), gris (état
+   impossible à vérifier). */
+.send-warnings {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 12px 0 4px;
+}
+
+.send-warning {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border-left: 3px solid var(--border);
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.send-warning.danger {
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.send-warning.warning {
+  border-color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 8%, transparent);
+  color: var(--warning);
+}
+
+.send-warning.ok {
+  border-color: var(--success);
+  background: color-mix(in srgb, var(--success) 8%, transparent);
+  color: var(--success);
+}
+
 /* Alertes de la fenêtre « Convertir » : orange (échange dégradé), rouge
    (échange impossible par ce fournisseur pour l'instant). */
 .swap-alerts {
@@ -2580,6 +2620,12 @@ h2 .coin-icon-inline,
 .modal-close-btn:hover {
   color: var(--text);
   border-color: var(--muted);
+}
+
+/* Menu « Carnet d'adresses ou autre profil » : détaché du champ d'adresse
+   au-dessus (collés, ils se lisaient comme un seul bloc). */
+#send-address-book-picker {
+  margin-top: 10px;
 }
 
 .quick-amounts {
