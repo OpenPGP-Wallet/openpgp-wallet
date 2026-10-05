@@ -879,6 +879,7 @@ const I18N = {
     "send.maxHint": "frais déduits",
     "send.maxComputing": "calcul…",
     "send.maxSuffix": " (maximum, frais déduits)",
+    "send.maxSuffixToken": " (tout le solde)",
     "countdown.title": "Envoi dans quelques secondes",
     "countdown.text": "Envoi définitif dans {seconds} s — vous pouvez encore l'annuler.",
     "countdown.sendNow": "Confirmer maintenant",
@@ -1493,6 +1494,7 @@ const I18N = {
     "send.maxHint": "fees deducted",
     "send.maxComputing": "computing…",
     "send.maxSuffix": " (maximum, fees deducted)",
+    "send.maxSuffixToken": " (whole balance)",
     "countdown.title": "Sending in a few seconds",
     "countdown.text": "Final send in {seconds} s — you can still cancel it.",
     "countdown.sendNow": "Confirm now",
@@ -5598,7 +5600,9 @@ sendConfirmBtn.addEventListener("click", () => {
   document.getElementById("send-preview-tag").textContent = tag ?? memo ?? t("send.destinationTagNone");
   const rate = sendRate();
   const approx = rate ? ` (${formatUsdApprox(Number(amount) * rate.price)})` : "";
-  const maxNote = sendContext.max ? t("send.maxSuffix") : "";
+  // Jeton : tout son solde part (les frais sont payés dans la crypto du réseau).
+  const tokenMax = sendContext.coin === "usdc" || usesTokenRegistry(sendContext.coin, networkForCard(sendContext.card));
+  const maxNote = sendContext.max ? t(tokenMax ? "send.maxSuffixToken" : "send.maxSuffix") : "";
   setWithCoinIcon(document.getElementById("send-preview-amount"), sendContext.coin, `${amount} ${COIN_SYMBOL[sendContext.coin]}${maxNote}${approx}`);
 
   const feeRow = document.getElementById("send-preview-fee-row");

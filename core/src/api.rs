@@ -4031,8 +4031,20 @@ pub fn send_jupiter_swap(
     }
 
     // Même décision de frais que celle AFFICHÉE dans la confirmation (`fee_mint`).
-    let quote = jupiter_rpc::quote(&input_mint, &output_mint, amount_native, slippage_bps, fee_mint)?;
-    let raw_tx = jupiter_rpc::build_swap_transaction(&quote, &owner_address)?;
+    let min_out = shown_out_amount.saturating_mul(u64::from(10_000 - slippage_bps.min(10_000))) / 10_000;
+    let limits = swap_effect_limits(owner, from_coin, amount_native, to_coin, min_out)?;
+    // Prix qui a bougé entre le devis et la simulation : un devis neuf, une
+    // seule fois. Rien n'est signé avant une simulation réussie.
+    let mut retried = false;
+    let raw_tx = loop {
+        let quote = jupiter_rpc::quote(&input_mint, &output_mint, amount_native, slippage_bps, fee_mint)?;
+        let raw_tx = jupiter_rpc::build_swap_transaction(&quote, &owner_address)?;
+        match check_swap_effects(&rpc, &raw_tx, &limits) {
+            Ok(()) => break raw_tx,
+            Err(e) if !retried && e.to_string() == SWAP_PRICE_MOVED => retried = true,
+            Err(e) => return Err(e),
+        }
+    };
 
     // Simulation de la transaction ENTIÈREMENT CONSTRUITE, avec vérification de
     // ses effets réels sur les comptes de l'utilisateur (voir
@@ -4043,8 +4055,6 @@ pub fn send_jupiter_swap(
     // signée et diffusable par quiconque la voyait passer. La simulation ne
     // vérifie aucune signature (`sigVerify: false`) : le message non signé
     // suffit, et c'est exactement ce message qui est signé juste après.
-    let min_out = shown_out_amount.saturating_mul(u64::from(10_000 - slippage_bps.min(10_000))) / 10_000;
-    check_swap_effects(&rpc, &raw_tx, &swap_effect_limits(owner, from_coin, amount_native, to_coin, min_out)?)?;
 
     // Blockhash frais de notre nœud (voir `jupiter_rpc::with_recent_blockhash`).
     let raw_tx = jupiter_rpc::with_recent_blockhash(&raw_tx, &rpc.latest_blockhash()?)?;
@@ -4339,10 +4349,20 @@ fn verify_swap_effects(
 /// Résout les comptes inscriptibles d'une transaction (clés statiques + tables
 /// de correspondance lues ON-CHAIN, jamais fournies par Jupiter), récupère leur
 /// état avant, simule avec leur état après, puis appelle `verify_swap_effects`.
+/// Simulation refusée par Jupiter pour glissement de prix (6001,
+/// `SlippageToleranceExceeded`) : le prix a bougé entre le devis et la
+/// simulation. Rien n'a été signé ; un devis neuf peut réussir.
+const SWAP_PRICE_MOVED: &str = "le prix a bougé pendant la préparation de l'échange (au-delà du glissement toléré) — rien n'a été envoyé, relancez l'échange";
+
+fn is_jupiter_slippage(err: &serde_json::Value, logs: &str) -> bool {
+    err.to_string().contains("\"Custom\":6001") && logs.contains("JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 failed: custom program error: 0x1771")
+}
+
 fn check_swap_effects(rpc: &sol_rpc::SolRpc, tx: &[u8], limits: &SwapEffectLimits) -> Result<()> {
     let addresses = resolve_writable_addresses(rpc, tx)?;
     let pre = rpc.multiple_accounts(&addresses)?;
     match rpc.simulate_with_account_states(tx, &addresses)? {
+        sol_rpc::SimulationOutcome::Failed { err, logs } if is_jupiter_slippage(&err, &logs) => Err(anyhow::anyhow!(SWAP_PRICE_MOVED)),
         sol_rpc::SimulationOutcome::Failed { err, logs } => {
             Err(rpc.explain_simulation_failure(&err, &logs).unwrap_or_else(|| anyhow::anyhow!("échec de simulation de l'échange ({err}) :\n{logs}")))
         }
@@ -5039,6 +5059,15 @@ mod swap_matrix;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Glissement Jupiter (6001) reconnu ; autres échecs laissés tels quels.
+    #[test]
+    fn jupiter_slippage_is_recognized() {
+        let logs = "Program JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 consumed 56922 of 1372519 compute units\nProgram JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 failed: custom program error: 0x1771";
+        assert!(is_jupiter_slippage(&serde_json::json!({ "InstructionError": [6, { "Custom": 6001 }] }), logs));
+        assert!(!is_jupiter_slippage(&serde_json::json!({ "InstructionError": [6, { "Custom": 6025 }] }), logs));
+        assert!(!is_jupiter_slippage(&serde_json::json!({ "InstructionError": [2, { "Custom": 6001 }] }), "Program Other failed: custom program error: 0x1771"));
+    }
 
     /// Réel (lecture seule) : « Max » sur des adresses publiques pourvues —
     /// sous le solde, de l'écart des frais du réseau seulement.

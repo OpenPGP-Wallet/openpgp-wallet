@@ -73,9 +73,18 @@ pub struct JupiterQuote {
 /// en points de base (ex: 50 = 0,50 %). `fee_mint` : jeton dont le compte de
 /// frais de l'affilié recevra les 0,80 % (doit exister, voir
 /// `fee_mint_candidates`) ; `None` : sans frais.
+/// Teneurs de marché « prop AMM » exclus des devis : leur prix, tiré d'un
+/// oracle, ne vaut que quelques blocs (« replay: slot window ») — périmé le
+/// temps que l'app simule la transaction sur son propre nœud, l'échange
+/// échouait en glissement (erreur 6001, constaté le 05/10/2026 avec HumidiFi
+/// sur un vrai SOL → USDC). Coût mesuré de l'exclusion sur SOL → USDC :
+/// 0,0003 % (routes Whirlpool, Manifest…). Libellés de Jupiter
+/// (`/swap/v1/program-id-to-label`), espaces encodés.
+const EXCLUDED_DEXES: &str = "HumidiFi,SolFi,SolFi%20V2,TesseraV,ZeroFi,GoonFi%20V2,Obric%20V2,AlphaQ,BisonFi,Aquifer";
+
 pub fn quote(input_mint: &str, output_mint: &str, amount: u64, slippage_bps: u32, fee_mint: Option<[u8; 32]>) -> Result<JupiterQuote> {
     let fee = if fee_mint.is_some() { format!("&platformFeeBps={AFFILIATE_FEE_BPS}") } else { String::new() };
-    let url = format!("{JUPITER_BASE}/swap/v1/quote?inputMint={input_mint}&outputMint={output_mint}&amount={amount}&slippageBps={slippage_bps}{fee}");
+    let url = format!("{JUPITER_BASE}/swap/v1/quote?inputMint={input_mint}&outputMint={output_mint}&amount={amount}&slippageBps={slippage_bps}{fee}&excludeDexes={EXCLUDED_DEXES}");
     let raw: Value = shared_client()
         .get(&url)
         .send()

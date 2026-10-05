@@ -295,6 +295,10 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("nonce Stacks illisible", "unreadable Stacks nonce"),
     ("le service Stacks a renvoyé un autre identifiant de transaction", "the Stacks service returned another transaction ID"),
     ("frais Stacks manquants", "Stacks fee missing"),
+    (
+        "le prix a bougé pendant la préparation de l'échange (au-delà du glissement toléré) — rien n'a été envoyé, relancez l'échange",
+        "the price moved while the swap was being prepared (beyond the tolerated slippage) — nothing was sent, start the swap again",
+    ),
     ("montant nul", "zero amount"),
     ("montant hors limites", "amount out of range"),
     // SwapKit (core/src/swapkit.rs)
