@@ -34,6 +34,7 @@ pub mod trezor;
 pub mod hardware;
 pub mod thorchain_rpc;
 pub mod swap_routes;
+pub mod swap_health;
 pub mod jupiter_rpc;
 pub mod cow;
 pub mod lifi;

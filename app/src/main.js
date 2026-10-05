@@ -908,6 +908,9 @@ const I18N = {
     "swap.providerOption": "{name} — frais {fee}",
     "swap.providerRecommended": "{name} — frais {fee} (recommandé)",
     "swap.providerHalted": "{name} — suspendu en ce moment",
+    "swap.alert.unreachable": "{provider} ne répond pas en ce moment : échange impossible par ce fournisseur.",
+    "swap.alert.halted": "{provider} a suspendu les échanges de {coins} (maintenance ou incident de ce réseau) : échange impossible par ce fournisseur pour l'instant.",
+    "swap.alert.slow": "Un de vos échanges via {provider} attend depuis {minutes} min : ce service est lent en ce moment.",
     "swap.previewSwapkitRoute": "Fournisseur (via SwapKit)",
     "swap.swapkitRoute": "{provider} — frais SwapKit {fee} %, ~{minutes} min",
     "swap.swapkit.sent": "Dépôt envoyé ({tx}) — {provider} attend sa confirmation sur le réseau…",
@@ -1523,6 +1526,9 @@ const I18N = {
     "swap.providerOption": "{name} — {fee} fee",
     "swap.providerRecommended": "{name} — {fee} fee (recommended)",
     "swap.providerHalted": "{name} — paused right now",
+    "swap.alert.unreachable": "{provider} is not responding right now: no swap through this provider.",
+    "swap.alert.halted": "{provider} has paused {coins} swaps (network maintenance or incident): no swap through this provider for now.",
+    "swap.alert.slow": "One of your swaps through {provider} has been waiting for {minutes} min: this service is slow right now.",
     "swap.previewSwapkitRoute": "Provider (via SwapKit)",
     "swap.swapkitRoute": "{provider} — SwapKit fee {fee}%, ~{minutes} min",
     "swap.swapkit.sent": "Deposit sent ({tx}) — {provider} is waiting for its confirmation on the network…",
@@ -2360,6 +2366,7 @@ document.getElementById("reset-wallet").addEventListener("click", async () => {
     await invoke("reset_wallet");
     profilesCache = [];
     currentProfileIndex = 0;
+    writePendingSwaps([]);
     showView("onboarding");
   } catch (e) {
     showError(document.getElementById("unlock-error"), String(e));
@@ -2371,6 +2378,7 @@ document.getElementById("reset-wallet-dashboard").addEventListener("click", asyn
     await invoke("reset_wallet");
     profilesCache = [];
     currentProfileIndex = 0;
+    writePendingSwaps([]);
     stopBalanceAutoRefresh();
     stopBalanceWatch();
     showView("onboarding");
@@ -2877,6 +2885,7 @@ restoreSubmitBtn.addEventListener("click", withBusyButton(restoreSubmitBtn, asyn
     });
 
     stopUsbRestore(true);
+    writePendingSwaps([]);
     renderDashboardAddresses(singleProfileList(addresses));
     showView("dashboard");
     refreshAllBalances();
@@ -3112,6 +3121,7 @@ restoreUsbSubmitBtn.addEventListener("click", withBusyButton(restoreUsbSubmitBtn
   try {
     const addresses = await invoke("restore_wallet_from_usb", { newPassword });
     stopUsbRestore(true);
+    writePendingSwaps([]);
     renderDashboardAddresses(singleProfileList(addresses));
     showView("dashboard");
     refreshAllBalances();
@@ -5550,6 +5560,24 @@ document.getElementById("send-tag").addEventListener("input", (event) => {
   if (filtered !== event.target.value) event.target.value = filtered;
 });
 
+// Champs d'adresse : aucune espace possible (touche Espace bloquée, espaces
+// retirées d'un collage) — une adresse n'en contient jamais, une espace
+// glissée par mégarde la rendrait invalide.
+for (const id of ["send-to", "shielded-to", "swap-destination", "external-wallet-address", "ledger-send-to", "address-book-address", "wc-uri"]) {
+  const input = document.getElementById(id);
+  if (!input) continue;
+  input.addEventListener("keydown", (event) => {
+    if (event.key === " " || event.code === "Space") event.preventDefault();
+  });
+  input.addEventListener("input", () => {
+    if (!/\s/.test(input.value)) return;
+    const caret = input.selectionStart ?? input.value.length;
+    const removedBefore = (input.value.slice(0, caret).match(/\s/g) ?? []).length;
+    input.value = input.value.replace(/\s+/g, "");
+    input.setSelectionRange(caret - removedBefore, caret - removedBefore);
+  });
+}
+
 function networkLabelForCard(card) {
   var label = card.querySelector(".custom-select-label") || card.querySelector(".network-fixed-label");
   return label ? label.textContent.trim() : networkForCard(card);
@@ -5806,6 +5834,102 @@ function fillSwapProviderOptions() {
 function onSwapTargetChange() {
   fillSwapProviderOptions();
   updateSwapDestination();
+  renderSwapAlerts();
+}
+
+// --- État des fournisseurs ----------------------------------------------------
+// Messages orange (échange dégradé) ou rouge (impossible par ce fournisseur)
+// sous son choix : service qui ne répond pas (Rust, `swap_health`), crypto
+// suspendue par THORChain ou Maya (`swap_halts`), échange en cours
+// anormalement long (suivi ici, gardé d'une ouverture de l'app à l'autre).
+let swapHealth = [];
+let swapSlow = [];
+const PENDING_SWAPS_KEY = "pgp-wallet-pending-swaps";
+// « Lent » : au-delà de 15 min, ou de 3 fois la durée annoncée. Oublié après
+// 48 h (et à la réinitialisation ou la restauration du portefeuille) : au-delà,
+// « lent en ce moment » ne voudrait plus rien dire.
+const SLOW_SWAP_MIN_MS = 15 * 60 * 1000;
+const PENDING_SWAP_MAX_MS = 48 * 60 * 60 * 1000;
+
+function readPendingSwaps() {
+  try {
+    const list = JSON.parse(localStorage.getItem(PENDING_SWAPS_KEY) ?? "[]");
+    return Array.isArray(list) ? list.filter((e) => Date.now() - e.started < PENDING_SWAP_MAX_MS) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function writePendingSwaps(list) {
+  try {
+    localStorage.setItem(PENDING_SWAPS_KEY, JSON.stringify(list.slice(-20)));
+  } catch (e) {
+    // Préférence d'affichage seulement : sans stockage, pas d'alerte de lenteur.
+  }
+}
+
+function addPendingSwap(entry) {
+  writePendingSwaps([...readPendingSwaps().filter((e) => e.id !== entry.id), entry]);
+}
+
+function removePendingSwap(id) {
+  writePendingSwaps(readPendingSwaps().filter((e) => e.id !== id));
+}
+
+// Échanges en cours depuis trop longtemps : état relu chez le fournisseur ;
+// ceux qui sont terminés sortent de la liste.
+async function slowPendingSwaps() {
+  const slow = [];
+  for (const entry of readPendingSwaps()) {
+    if (Date.now() - entry.started < Math.max(SLOW_SWAP_MIN_MS, 3 * (entry.expected_secs ?? 0) * 1000)) continue;
+    let done = false;
+    try {
+      if (entry.kind === "swapkit") done = ["completed", "refunded", "failed"].includes(await invoke("swapkit_status", entry.status_args));
+      if (entry.kind === "lifi") {
+        const status = String(await invoke("lifi_status", entry.status_args));
+        done = status === "FAILED" || status.startsWith("DONE");
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    if (done) removePendingSwap(entry.id);
+    else slow.push(entry);
+  }
+  return slow;
+}
+
+function renderSwapAlerts() {
+  const box = document.getElementById("swap-alerts");
+  const pair = selectedSwapPair();
+  const alerts = [];
+  if (pair) {
+    // Étape à faire maintenant (un fournisseur au choix), puis la seconde d'un
+    // échange en deux étapes, depuis l'intermédiaire.
+    const steps = new Map(pair.providers.map((protocol) => [protocol, [pair.from, pair.via ?? pair.to]]));
+    if (pair.thenProtocol) steps.set(pair.thenProtocol, [...(steps.get(pair.thenProtocol) ?? []), pair.via, pair.to]);
+    for (const [protocol, coins] of steps) {
+      const halted = coins.filter(({ coin, network }) => (swapHalts[protocol] ?? []).includes(swapKey(coin, network))).map(({ coin }) => COIN_SYMBOL[coin] ?? coin);
+      if (halted.length) alerts.push({ protocol, severity: "error", text: t("swap.alert.halted", { provider: SWAP_PROTOCOL_NAMES[protocol], coins: [...new Set(halted)].join(", ") }) });
+      for (const issue of swapHealth.filter((i) => i.protocol === protocol)) {
+        alerts.push({ protocol, severity: issue.severity, text: t("swap.alert.unreachable", { provider: issue.provider }) });
+      }
+      for (const entry of swapSlow.filter((e) => e.protocol === protocol)) {
+        alerts.push({ protocol, severity: "warning", text: t("swap.alert.slow", { provider: entry.provider_name, minutes: Math.round((Date.now() - entry.started) / 60000) }) });
+      }
+    }
+    // Fournisseur choisi d'abord, puis le rouge avant l'orange.
+    const rank = (a) => (a.protocol === pair.protocol ? 0 : 2) + (a.severity === "error" ? 0 : 1);
+    alerts.sort((a, b) => rank(a) - rank(b));
+  }
+  box.replaceChildren(
+    ...alerts.map((alert) => {
+      const line = document.createElement("p");
+      line.className = `swap-alert ${alert.severity}`;
+      line.textContent = alert.text;
+      return line;
+    })
+  );
+  box.classList.toggle("hidden", alerts.length === 0);
 }
 
 const SWAP_PROTOCOL_NAMES = { thorchain: "THORChain", maya: "Maya", jupiter: "Jupiter", cow: "CoW", lifi: "LI.FI", swapkit: "SwapKit" };
@@ -5989,6 +6113,22 @@ function openSwapModal(card, preset = null) {
   swapFiatInput.value = "";
   swapAmountTypedIn = "crypto";
   swapBalance = null;
+  swapHealth = [];
+  swapSlow = [];
+  invoke("swap_health")
+    .then((issues) => {
+      if (swapContext?.card !== card) return;
+      swapHealth = issues;
+      renderSwapAlerts();
+    })
+    .catch((e) => console.error(e));
+  slowPendingSwaps()
+    .then((slow) => {
+      if (swapContext?.card !== card) return;
+      swapSlow = slow;
+      renderSwapAlerts();
+    })
+    .catch((e) => console.error(e));
   swapHalts = {};
   invoke("swap_halts")
     .then((halts) => {
@@ -6029,6 +6169,7 @@ function updateSwapDestination() {
 
 document.getElementById("swap-to-coin").addEventListener("change", onSwapTargetChange);
 document.getElementById("swap-provider").addEventListener("change", updateSwapDestination);
+document.getElementById("swap-provider").addEventListener("change", renderSwapAlerts);
 
 function closeSwapModal() {
   swapModal.classList.add("hidden");
@@ -6368,6 +6509,8 @@ function trackLifiTransfer(successEl, transfer) {
   successEl.classList.remove("hidden");
 
   const started = Date.now();
+  const pendingId = `lifi:${transfer.tx_hash}`;
+  addPendingSwap({ id: pendingId, kind: "lifi", protocol: "lifi", provider_name: "LI.FI", started, expected_secs: transfer.duration_secs ?? 0, status_args: { txHash: transfer.tx_hash, fromChain: transfer.from_chain, toChain: transfer.to_chain } });
   const poll = async () => {
     let status;
     try {
@@ -6383,6 +6526,7 @@ function trackLifiTransfer(successEl, transfer) {
     }[status] ?? (status?.startsWith("DONE") ? "swap.lifiDone" : null);
     if (final) {
       setText(final);
+      removePendingSwap(pendingId);
       refreshAllBalances();
       return;
     }
@@ -6410,6 +6554,8 @@ function trackSwapkitSwap(successEl, sent) {
   successEl.replaceChildren(text);
   successEl.classList.remove("hidden");
   const started = Date.now();
+  const pendingId = `swapkit:${sent.deposit_address}`;
+  addPendingSwap({ id: pendingId, kind: "swapkit", protocol: "swapkit", provider_name: sent.provider_name, started, expected_secs: 0, status_args: { provider: sent.provider, channelId: sent.channel_id, depositAddress: sent.deposit_address } });
   const poll = async () => {
     let state = null;
     try {
@@ -6419,6 +6565,7 @@ function trackSwapkitSwap(successEl, sent) {
     }
     if (state === "completed" || state === "refunded" || state === "failed") {
       show(state);
+      removePendingSwap(pendingId);
       refreshAllBalances();
       return;
     }

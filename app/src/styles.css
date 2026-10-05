@@ -671,6 +671,36 @@ button.link:hover {
   font-size: 0.8rem;
 }
 
+/* Alertes de la fenêtre « Convertir » : orange (échange dégradé), rouge
+   (échange impossible par ce fournisseur pour l'instant). */
+.swap-alerts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 0 4px;
+}
+
+.swap-alert {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border-left: 3px solid;
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.swap-alert.warning {
+  border-color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 8%, transparent);
+  color: var(--warning);
+}
+
+.swap-alert.error {
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  color: var(--danger);
+}
+
 /* Consigne sous le tag de destination XRP. */
 .tag-hint {
   margin: 6px 0 0;

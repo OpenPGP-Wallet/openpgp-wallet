@@ -4220,6 +4220,13 @@ struct SwapHaltsDto {
 /// Lu à l'ouverture de la fenêtre « Convertir » : un fournisseur suspendu
 /// pour l'échange choisi n'y est plus proposé par défaut. Lecture en échec :
 /// rien de marqué (le devis dira alors la suspension en clair).
+/// Fournisseurs d'échange qui ne répondent pas en ce moment (messages rouges
+/// de la fenêtre « Convertir », voir `swap_health`).
+#[tauri::command]
+async fn swap_health() -> Result<Vec<pgp_wallet_poc::swap_health::Issue>, String> {
+    run_blocking(|| Ok(pgp_wallet_poc::swap_health::check())).await
+}
+
 #[tauri::command]
 async fn swap_halts() -> Result<SwapHaltsDto, String> {
     use pgp_wallet_poc::thorchain_rpc::{CrossChain, MAYA, THORCHAIN};
@@ -6868,6 +6875,7 @@ pub fn run() {
             swap_transaction,
             swap_pairs,
             swap_halts,
+            swap_health,
             get_jupiter_quote,
             jupiter_swap_transaction,
             get_cow_quote,
