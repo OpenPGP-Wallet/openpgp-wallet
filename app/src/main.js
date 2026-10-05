@@ -209,6 +209,11 @@ function buildAssetCard(asset) {
         <div class="row-buttons">
           <button class="secondary" data-action="refresh" data-i18n="wallet.refresh" data-i18n-title="wallet.refresh">Actualiser</button>
           <button class="secondary receive-action" data-action="qr" data-i18n="wallet.receive">Recevoir</button>${
+            asset.coin === "ada"
+              ? `
+          <button class="secondary stake-action" data-action="stake" data-i18n="staking.action" data-i18n-title="staking.adaHint">Staker</button>`
+              : ""
+          }${
             asset.coin === "zecs"
               ? `
           <button class="secondary" data-action="shield" data-i18n="shielded.shieldAction" data-i18n-title="shielded.shieldTitle">Protéger</button>`
@@ -924,6 +929,20 @@ const I18N = {
     "staking.unstake": "Retour en {to} immédiat, au prix du marché.",
     "staking.apr": "Gagnez des récompenses sur vos {coin} : elles s'ajoutent toutes seules, revente quand vous voulez.",
     "staking.fee": " Frais : {fee} %.",
+    "staking.adaHint": "Staker vos ADA : ils restent à vous et dépensables, les récompenses s'ajoutent",
+    "staking.adaTitle": "Staker vos ADA",
+    "staking.adaIntro": "Gagnez environ 2 à 3 % par an sur vos ADA. Ils restent dans votre portefeuille, dépensables à tout moment. Dépôt de 2 ADA, rendu à l'arrêt.",
+    "staking.adaPool": "Pool",
+    "staking.adaPoolOption": "{ticker} — marge {margin} % · {stake} M ADA délégués",
+    "staking.adaLoading": "Lecture de votre délégation…",
+    "staking.adaNone": "Pas encore staké.",
+    "staking.adaStatus": "Staké avec {pool} · récompenses disponibles : {rewards} ADA",
+    "staking.adaStatusPending": "Staké avec {pool} · premières récompenses dans 15 à 20 jours",
+    "staking.adaDelegate": "Staker",
+    "staking.adaChange": "Changer de pool",
+    "staking.adaWithdraw": "Retirer les récompenses",
+    "staking.adaStop": "Arrêter",
+    "staking.adaSent": "Envoyé (transaction {tx}). Visible dans quelques secondes.",
     "addressBook.networkFirst": "Saisissez d'abord l'adresse",
     "addressBook.networkUnknown": "Adresse non reconnue",
     "send.bookOtherNetwork": "enregistrée pour {network}",
@@ -1556,6 +1575,20 @@ const I18N = {
     "staking.unstake": "Back to {to} instantly, at the market price.",
     "staking.apr": "Earn rewards on your {coin}: they add up on their own, sell back anytime.",
     "staking.fee": " Fee: {fee}%.",
+    "staking.adaHint": "Stake your ADA: it stays yours and spendable, rewards add up",
+    "staking.adaTitle": "Stake your ADA",
+    "staking.adaIntro": "Earn about 2 to 3% a year on your ADA. It stays in your wallet, spendable at any time. 2 ADA deposit, returned when you stop.",
+    "staking.adaPool": "Pool",
+    "staking.adaPoolOption": "{ticker} — {margin}% margin · {stake}M ADA delegated",
+    "staking.adaLoading": "Reading your delegation…",
+    "staking.adaNone": "Not staked yet.",
+    "staking.adaStatus": "Staked with {pool} · rewards available: {rewards} ADA",
+    "staking.adaStatusPending": "Staked with {pool} · first rewards in 15 to 20 days",
+    "staking.adaDelegate": "Stake",
+    "staking.adaChange": "Change pool",
+    "staking.adaWithdraw": "Withdraw rewards",
+    "staking.adaStop": "Stop",
+    "staking.adaSent": "Sent (transaction {tx}). Visible in a few seconds.",
     "addressBook.networkFirst": "Enter the address first",
     "addressBook.networkUnknown": "Address not recognized",
     "send.bookOtherNetwork": "saved for {network}",
@@ -3698,7 +3731,8 @@ function liquidStakingFor(coin, network) {
 }
 
 function updateConvertButton(card) {
-  card.querySelector('[data-action="stake"]')?.classList.toggle("hidden", !liquidStakingFor(card.dataset.coin, networkForCard(card)));
+  const ada = card.dataset.coin === "ada";
+  card.querySelector('[data-action="stake"]')?.classList.toggle("hidden", !ada && !liquidStakingFor(card.dataset.coin, networkForCard(card)));
   const convert = card.querySelector('[data-action="swap"]');
   if (!convert) return;
   const coin = card.dataset.coin;
@@ -4374,6 +4408,10 @@ document.querySelectorAll(".wallet-card").forEach((card) => {
   if (swapBtn) swapBtn.addEventListener("click", () => openSwapModal(card));
   card.querySelector('[data-action="shield"]')?.addEventListener("click", () => openShieldedModal("shield"));
   card.querySelector('[data-action="stake"]')?.addEventListener("click", () => {
+    if (card.dataset.coin === "ada") {
+      openAdaStakeModal(card);
+      return;
+    }
     const network = networkForCard(card);
     const target = liquidStakingFor(card.dataset.coin, network);
     if (!target) return;
@@ -5942,6 +5980,84 @@ function fillSwapProviderOptions() {
   select.value = ordered[0] ?? "";
   syncCustomSelect(select);
 }
+
+// --- Staking Cardano (délégation à un pool) -----------------------------------
+// Les ADA restent dans le portefeuille ; tout se décide côté Rust (pools
+// proposés, état du compte, transaction, boîte native, délai d'annulation).
+const adaStakeModal = document.getElementById("ada-stake-modal");
+let adaStakeContext = null;
+
+async function openAdaStakeModal(card) {
+  const profile = currentProfile();
+  const context = { profileIndex: profile ? profile.index : currentProfileIndex, status: null };
+  adaStakeContext = context;
+  const statusEl = document.getElementById("ada-stake-status");
+  const select = document.getElementById("ada-stake-pool");
+  statusEl.textContent = t("staking.adaLoading");
+  document.getElementById("ada-stake-password").value = "";
+  hideError(document.getElementById("ada-stake-error"));
+  document.getElementById("ada-stake-success").classList.add("hidden");
+  for (const id of ["ada-stake-withdraw", "ada-stake-stop"]) document.getElementById(id).classList.add("hidden");
+  adaStakeModal.classList.remove("hidden");
+  const [status, pools] = await Promise.allSettled([invoke("cardano_stake_status", { profileIndex: context.profileIndex }), invoke("cardano_pools")]);
+  if (adaStakeContext !== context) return;
+  if (pools.status === "fulfilled") {
+    select.replaceChildren(
+      ...pools.value.map((p) => Object.assign(document.createElement("option"), {
+        value: p.id,
+        textContent: t("staking.adaPoolOption", { ticker: p.ticker, margin: p.margin_percent.toLocaleString(chartLocale(), { maximumFractionDigits: 2 }), stake: Math.round(p.active_stake_ada / 1e6).toLocaleString(chartLocale()) }),
+      }))
+    );
+  } else {
+    showError(document.getElementById("ada-stake-error"), String(pools.reason));
+  }
+  if (status.status === "fulfilled") {
+    const s = status.value;
+    context.status = s;
+    const pool = s.ticker ?? s.pool;
+    statusEl.textContent = !s.registered || !s.pool ? t("staking.adaNone") : t(s.rewards_lovelace > 0 ? "staking.adaStatus" : "staking.adaStatusPending", { pool, rewards: s.rewards });
+    if (s.pool && [...select.options].some((o) => o.value === s.pool)) select.value = s.pool;
+    else if (s.pool) select.prepend(Object.assign(document.createElement("option"), { value: s.pool, textContent: pool, selected: true }));
+    document.getElementById("ada-stake-delegate").textContent = t(s.registered && s.pool ? "staking.adaChange" : "staking.adaDelegate");
+    document.getElementById("ada-stake-withdraw").classList.toggle("hidden", !(s.rewards_lovelace > 0));
+    document.getElementById("ada-stake-stop").classList.toggle("hidden", !s.registered);
+  } else {
+    statusEl.textContent = "";
+    showError(document.getElementById("ada-stake-error"), String(status.reason));
+  }
+  syncCustomSelect(select);
+}
+
+async function runAdaStake(action) {
+  if (!adaStakeContext) return;
+  const errorEl = document.getElementById("ada-stake-error");
+  const successEl = document.getElementById("ada-stake-success");
+  hideError(errorEl);
+  successEl.classList.add("hidden");
+  const password = document.getElementById("ada-stake-password").value;
+  if (!password) {
+    showError(errorEl, t("wallet.allFieldsRequired"));
+    return;
+  }
+  try {
+    const tx = await invoke("cardano_stake", { password, action, pool: document.getElementById("ada-stake-pool").value || null, profileIndex: adaStakeContext.profileIndex });
+    successEl.textContent = t("staking.adaSent", { tx: `${tx.slice(0, 10)}…` });
+    successEl.classList.remove("hidden");
+  } catch (e) {
+    showError(errorEl, String(e));
+  } finally {
+    document.getElementById("ada-stake-password").value = "";
+  }
+}
+
+for (const [id, action] of [["ada-stake-delegate", "delegate"], ["ada-stake-withdraw", "withdraw"], ["ada-stake-stop", "undelegate"]]) {
+  const button = document.getElementById(id);
+  button.addEventListener("click", withBusyButton(button, () => runAdaStake(action)));
+}
+document.getElementById("ada-stake-close").addEventListener("click", () => {
+  adaStakeModal.classList.add("hidden");
+  adaStakeContext = null;
+});
 
 // Rendements annoncés (Rust, `staking_aprs`), lus une fois par session.
 let stakingAprs = null;

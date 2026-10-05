@@ -160,6 +160,19 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ),
     ("Réinitialisation annulée (confirmation refusée).", "Reset cancelled (confirmation refused)."),
     ("Échange annulé (confirmation refusée).", "Swap cancelled (confirmation refused)."),
+    ("Opération annulée (confirmation refusée).", "Operation cancelled (confirmation refused)."),
+    ("Opération annulée pendant le délai d'annulation.", "Operation cancelled during the cancellation delay."),
+    ("vos ADA sont déjà délégués à ce pool", "your ADA is already delegated to this pool"),
+    ("aucune récompense à retirer pour l'instant", "no rewards to withdraw yet"),
+    ("vos ADA ne sont pas délégués", "your ADA is not delegated"),
+    ("liste des pools Cardano indisponible pour l'instant", "Cardano pool list unavailable right now"),
+    ("aucun ADA sur cette adresse pour payer les frais du réseau", "no ADA on this address to pay the network fee"),
+    ("adresse Cardano sans clé de mise en jeu : délégation impossible", "Cardano address without a stake key: delegation impossible"),
+    ("identifiant de pool Cardano invalide", "invalid Cardano pool id"),
+    ("pool Cardano non choisi", "no Cardano pool chosen"),
+    ("clé de mise en jeu d'un autre compte — refusé", "stake key of another account — refused"),
+    ("les frais Cardano ont changé depuis la confirmation — relancez l'opération", "Cardano fees changed since the confirmation — start the operation again"),
+    ("l'état de votre délégation Cardano a changé depuis la confirmation — relancez l'opération", "your Cardano delegation changed since the confirmation — start the operation again"),
     // CoW Protocol (core/src/cow.rs, core/src/api.rs)
     ("échange via CoW pas encore activé", "swaps via CoW are not enabled yet"),
     // Zcash (core/src/zcash.rs, core/src/api.rs)
@@ -744,6 +757,9 @@ const LEDGER_PREFIX_TRANSLATIONS: &[(&str, &str)] = &[
 /// correspondance exacte ne peut pas fonctionner, donc reconstruction par
 /// découpage autour de la partie fixe du message.
 fn translate_dynamic_error(msg: &str) -> Option<String> {
+    if let Some(amount) = msg.strip_prefix("ADA insuffisants : il faut au moins ").and_then(|r| r.strip_suffix(" ADA (dépôt et frais du réseau compris)")) {
+        return Some(format!("not enough ADA: at least {amount} ADA needed (deposit and network fee included)"));
+    }
     use pgp_wallet_poc::wallet_flow::{MAYBE_SENT_PREFIX, MAYBE_SENT_SUFFIX};
     if let Some(id) = msg.strip_prefix(MAYBE_SENT_PREFIX).and_then(|rest| rest.strip_suffix(MAYBE_SENT_SUFFIX)) {
         return Some(format!("connection lost while sending: transaction {id} may have gone through — check the history before sending again"));
@@ -4439,6 +4455,216 @@ async fn swap_max_amount(app: tauri::AppHandle, protocol: String, from_coin: Str
     .await
 }
 
+/// Mise en jeu Cardano du profil : inscription, pool délégué, récompenses.
+#[derive(Serialize)]
+struct AdaStakeStatusDto {
+    reward_address: String,
+    registered: bool,
+    pool: Option<String>,
+    ticker: Option<String>,
+    voting: bool,
+    rewards: String,
+    rewards_lovelace: u64,
+    deposit: String,
+}
+
+#[tauri::command]
+async fn cardano_stake_status(app: tauri::AppHandle, profile_index: u32) -> Result<AdaStakeStatusDto, String> {
+    run_blocking(move || {
+        let from = own_address_on(&app, "ada_mainnet", profile_index)?;
+        let account = pgp_wallet_poc::cardano::stake_account(&from).t_err()?;
+        Ok(AdaStakeStatusDto {
+            reward_address: pgp_wallet_poc::cardano::reward_address(&from).t_err()?,
+            registered: account.registered,
+            ticker: account.pool.as_deref().and_then(pgp_wallet_poc::cardano::pool_ticker),
+            pool: account.pool,
+            voting: account.voting,
+            rewards: pgp_wallet_poc::cardano::format_ada(account.rewards),
+            rewards_lovelace: account.rewards,
+            deposit: pgp_wallet_poc::cardano::format_ada(account.deposit),
+        })
+    })
+    .await
+}
+
+#[derive(Serialize)]
+struct AdaPoolDto {
+    id: String,
+    ticker: String,
+    margin_percent: f64,
+    fixed_cost_ada: u64,
+    active_stake_ada: u64,
+}
+
+/// Pools Cardano proposés (voir `cardano::pools`).
+#[tauri::command]
+async fn cardano_pools() -> Result<Vec<AdaPoolDto>, String> {
+    run_blocking(|| {
+        Ok(pgp_wallet_poc::cardano::pools()
+            .t_err()?
+            .into_iter()
+            .map(|p| AdaPoolDto { margin_percent: p.margin * 100.0, fixed_cost_ada: p.fixed_cost / 1_000_000, active_stake_ada: p.active_stake / 1_000_000, id: p.id, ticker: p.ticker })
+            .collect())
+    })
+    .await
+}
+
+/// Boîte native d'une opération de mise en jeu Cardano.
+fn confirm_ada_stake_native(app: &tauri::AppHandle, from_label: &str, action: api::AdaStakeAction, plan: &pgp_wallet_poc::cardano::StakePlan, pool: Option<(&str, Option<&str>)>) -> bool {
+    use pgp_wallet_poc::cardano::format_ada;
+    let from_label = dialog_label(from_label);
+    let fee = format_ada(plan.fee);
+    let pool_line = pool.map(|(id, ticker)| {
+        let short = format!("{}…{}", &id[..id.len().min(12)], &id[id.len().saturating_sub(6)..]);
+        match ticker {
+            Some(t) => format!("{} ({short})", dialog_label(t)),
+            None => short,
+        }
+    });
+    let english = UI_LANG_IS_ENGLISH.load(Ordering::Relaxed);
+    let (title, body) = match (action, plan.vote_only(), english) {
+        (_, true, false) => (
+            "Activer le retrait des récompenses",
+            format!("Étape 1 sur 2 — délégation de vote « abstention », exigée par Cardano pour retirer des récompenses.
+
+Depuis le profil : {from_label}
+Frais du réseau : {fee} ADA
+
+Relancez ensuite l'opération pour retirer vos récompenses."),
+        ),
+        (_, true, true) => (
+            "Enable reward withdrawal",
+            format!("Step 1 of 2 — \"abstain\" vote delegation, required by Cardano to withdraw rewards.
+
+From profile: {from_label}
+Network fee: {fee} ADA
+
+Then run the operation again to withdraw your rewards."),
+        ),
+        (api::AdaStakeAction::Delegate, false, false) => (
+            "Staker vos ADA",
+            format!(
+                "Délégation Cardano à un pool
+
+Depuis le profil : {from_label}
+Pool : {}
+{}Frais du réseau : {fee} ADA
+
+Vos ADA restent dans votre portefeuille et dépensables à tout moment. Délégation de vote : « abstention » (exigée pour retirer les récompenses).
+Récompenses : dès 15 à 20 jours, puis tous les 5 jours.
+
+Confirmer ?",
+                pool_line.unwrap_or_default(),
+                if plan.deposit > 0 { format!("Dépôt : {} ADA (rendu à l'arrêt de la délégation)
+", format_ada(plan.deposit)) } else { String::new() }
+            ),
+        ),
+        (api::AdaStakeAction::Delegate, false, true) => (
+            "Stake your ADA",
+            format!(
+                "Cardano delegation to a pool
+
+From profile: {from_label}
+Pool: {}
+{}Network fee: {fee} ADA
+
+Your ADA stays in your wallet and spendable at any time. Vote delegation: \"abstain\" (required to withdraw rewards).
+Rewards: from 15 to 20 days, then every 5 days.
+
+Confirm?",
+                pool_line.unwrap_or_default(),
+                if plan.deposit > 0 { format!("Deposit: {} ADA (returned when you stop delegating)
+", format_ada(plan.deposit)) } else { String::new() }
+            ),
+        ),
+        (api::AdaStakeAction::Withdraw, false, false) => (
+            "Retirer vos récompenses",
+            format!("Retrait des récompenses Cardano
+
+Depuis le profil : {from_label}
+Récompenses : {} ADA
+Frais du réseau : {fee} ADA
+
+Elles arrivent sur votre adresse Cardano. La délégation continue.
+
+Confirmer ?", format_ada(plan.withdrawal)),
+        ),
+        (api::AdaStakeAction::Withdraw, false, true) => (
+            "Withdraw your rewards",
+            format!("Cardano reward withdrawal
+
+From profile: {from_label}
+Rewards: {} ADA
+Network fee: {fee} ADA
+
+They arrive on your Cardano address. Delegation continues.
+
+Confirm?", format_ada(plan.withdrawal)),
+        ),
+        (api::AdaStakeAction::Undelegate, false, false) => (
+            "Arrêter le staking",
+            format!("Arrêt de la délégation Cardano
+
+Depuis le profil : {from_label}
+Récompenses retirées : {} ADA
+Dépôt rendu : {} ADA
+Frais du réseau : {fee} ADA
+
+Confirmer ?", format_ada(plan.withdrawal), format_ada(plan.refund)),
+        ),
+        (api::AdaStakeAction::Undelegate, false, true) => (
+            "Stop staking",
+            format!("Stopping Cardano delegation
+
+From profile: {from_label}
+Rewards withdrawn: {} ADA
+Deposit returned: {} ADA
+Network fee: {fee} ADA
+
+Confirm?", format_ada(plan.withdrawal), format_ada(plan.refund)),
+        ),
+    };
+    app.dialog().message(body).title(title).kind(MessageDialogKind::Warning).buttons(MessageDialogButtons::OkCancel).blocking_show()
+}
+
+/// Opération de mise en jeu Cardano : préparée, confirmée (boîte native),
+/// délai d'annulation, puis signée et diffusée.
+#[tauri::command]
+async fn cardano_stake(app: tauri::AppHandle, password: String, action: String, pool: Option<String>, profile_index: u32) -> Result<String, String> {
+    run_blocking(move || {
+        let password = Zeroizing::new(password);
+        let dir = data_dir(&app)?;
+        let action = match action.as_str() {
+            "delegate" => api::AdaStakeAction::Delegate,
+            "withdraw" => api::AdaStakeAction::Withdraw,
+            "undelegate" => api::AdaStakeAction::Undelegate,
+            other => return Err(translate_error(&format!("opération inconnue : {other}"))),
+        };
+        let pool = if action == api::AdaStakeAction::Delegate { pool } else { None };
+        let from = own_address_on(&app, "ada_mainnet", profile_index)?;
+        let account = pgp_wallet_poc::cardano::stake_account(&from).t_err()?;
+        let plan = api::ada_stake_plan(&from, &account, action, pool.as_deref()).t_err()?;
+        let ticker = pool.as_deref().and_then(pgp_wallet_poc::cardano::pool_ticker);
+        let from_label = api::list_profiles(&dir).into_iter().find(|p| p.index == profile_index).map(|p| p.label).unwrap_or_else(|| format!("profil #{profile_index}"));
+        if !confirm_ada_stake_native(&app, &from_label, action, &plan, pool.as_deref().map(|id| (id, ticker.as_deref()))) {
+            return Err(translate_error("Opération annulée (confirmation refusée)."));
+        }
+        let what = match (action, plan.vote_only()) {
+            (_, true) => lang("Délégation de vote Cardano", "Cardano vote delegation"),
+            (api::AdaStakeAction::Delegate, _) => lang("Staking Cardano", "Cardano staking"),
+            (api::AdaStakeAction::Withdraw, _) => lang("Retrait des récompenses", "Reward withdrawal"),
+            (api::AdaStakeAction::Undelegate, _) => lang("Arrêt du staking", "Stop staking"),
+        };
+        let amount = match action {
+            api::AdaStakeAction::Delegate => ticker.clone().or_else(|| pool.clone()).unwrap_or_default(),
+            _ => format!("{} ADA", pgp_wallet_poc::cardano::format_ada(plan.withdrawal)),
+        };
+        grace_period(&app, "Opération annulée pendant le délai d'annulation.", GraceRecap::new(what, amount, from.clone()).on("ada_mainnet"))?;
+        api::send_ada_stake(&dir, &password, action, pool.as_deref(), &plan, profile_index).t_err()
+    })
+    .await
+}
+
 /// Rendements annuels du staking liquide (JitoSOL, stETH), pour la note de
 /// « Convertir » (voir `core/src/staking.rs`).
 #[tauri::command]
@@ -7134,6 +7360,9 @@ pub fn run() {
             address_networks,
             swap_max_amount,
             staking_aprs,
+            cardano_stake_status,
+            cardano_pools,
+            cardano_stake,
             get_jupiter_quote,
             jupiter_swap_transaction,
             get_cow_quote,

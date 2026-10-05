@@ -744,6 +744,17 @@ button.link:hover {
   cursor: progress;
 }
 
+/* État de la délégation Cardano (fenêtre « Staker vos ADA »). */
+.ada-stake-status {
+  margin: 12px 0 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+#ada-stake-modal > .modal {
+  max-width: 620px;
+}
+
 /* Note du staking liquide dans « Convertir » : information, teinte d'accent. */
 .swap-staking-note {
   margin: 10px 0 4px;

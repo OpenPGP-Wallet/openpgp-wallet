@@ -3260,6 +3260,40 @@ pub fn ada_send_plan(from_address: &str, to: &str, amount: &str) -> Result<carda
 
 /// Envoi d'ADA : préparation refaite, frais jamais supérieurs à ceux
 /// affichés (`shown_fee`), transaction signée ici puis diffusée.
+/// Opération de mise en jeu Cardano (« Staker » sur la carte Cardano).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AdaStakeAction {
+    Delegate,
+    Withdraw,
+    Undelegate,
+}
+
+/// Opération préparée depuis l'adresse publique du profil (boîte de
+/// confirmation) : exactement ce qui sera signé.
+pub fn ada_stake_plan(address: &str, account: &cardano::StakeAccount, action: AdaStakeAction, pool: Option<&str>) -> Result<cardano::StakePlan> {
+    match action {
+        AdaStakeAction::Delegate => cardano::plan_delegate(address, account, pool.context("pool Cardano non choisi")?),
+        AdaStakeAction::Withdraw => cardano::plan_withdraw(address, account),
+        AdaStakeAction::Undelegate => cardano::plan_undelegate(address, account),
+    }
+}
+
+/// Signe et diffuse l'opération confirmée : préparée à nouveau ICI, elle doit
+/// être celle affichée (mêmes certificats, même retrait, frais au plus ceux
+/// affichés), sinon refus.
+pub fn send_ada_stake(data_dir: &Path, device_password: &str, action: AdaStakeAction, pool: Option<&str>, shown: &cardano::StakePlan, profile_index: u32) -> Result<String> {
+    let seed = unlock_seed(data_dir, device_password)?;
+    let _seed_lock = memory_guard::lock(&seed);
+    let (payment, stake) = cardano::account_keys(&seed, profile_index);
+    let from = cardano::base_address(&payment.public(), &stake.public());
+    let plan = ada_stake_plan(&from, &cardano::stake_account(&from)?, action, pool)?;
+    anyhow::ensure!(
+        plan.certs == shown.certs && plan.withdrawal == shown.withdrawal && plan.fee <= shown.fee,
+        "l'état de votre délégation Cardano a changé depuis la confirmation — relancez l'opération"
+    );
+    cardano::send_stake(&payment, &stake, &from, &plan)
+}
+
 pub fn send_ada(data_dir: &Path, device_password: &str, to: &str, amount: &str, shown_fee: u64, profile_index: u32) -> Result<String> {
     let units = ada_units(amount)?;
     let seed = unlock_seed(data_dir, device_password)?;

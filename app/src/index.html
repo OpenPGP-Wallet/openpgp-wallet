@@ -1125,6 +1125,39 @@
       </div>
     </div>
 
+    <!-- Staking Cardano : délégation à un pool (main.js, openAdaStakeModal ;
+         transaction, boîte native et délai d'annulation côté Rust). -->
+    <div id="ada-stake-modal" class="modal-overlay hidden">
+      <div class="modal">
+        <div class="modal-header-row">
+          <h2 data-i18n="staking.adaTitle">Staker vos ADA</h2>
+          <button type="button" id="ada-stake-close" class="modal-close-btn" data-i18n-title="common.close" data-i18n-aria-label="common.close" title="Fermer" aria-label="Fermer">×</button>
+        </div>
+        <p class="swap-staking-note" data-i18n="staking.adaIntro">Gagnez environ 2 à 3 % par an sur vos ADA. Ils restent dans votre portefeuille, dépensables à tout moment. Dépôt de 2 ADA, rendu à l'arrêt.</p>
+        <p id="ada-stake-status" class="ada-stake-status"></p>
+        <label for="ada-stake-pool" data-i18n="staking.adaPool">Pool</label>
+        <div class="custom-select dropdown">
+          <select id="ada-stake-pool"></select>
+          <button type="button" class="custom-select-trigger">
+            <span class="custom-select-label"></span>
+            <span class="select-arrow"></span>
+          </button>
+          <ul class="custom-select-options"></ul>
+        </div>
+        <div class="send-auth">
+          <label for="ada-stake-password" data-i18n="send.passwordToConfirm">Mot de passe (pour valider la transaction)</label>
+          <input id="ada-stake-password" type="password" />
+        </div>
+        <p id="ada-stake-error" class="error hidden"></p>
+        <p id="ada-stake-success" class="success hidden"></p>
+        <div class="row-buttons">
+          <button id="ada-stake-delegate" class="primary" data-i18n="staking.adaDelegate">Staker</button>
+          <button id="ada-stake-withdraw" class="secondary hidden" data-i18n="staking.adaWithdraw">Retirer les récompenses</button>
+          <button id="ada-stake-stop" class="secondary hidden" data-i18n="staking.adaStop">Arrêter</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Modale d'envoi -->
     <div id="send-modal" class="modal-overlay hidden">
       <div class="modal">
