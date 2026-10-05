@@ -919,11 +919,11 @@ const I18N = {
     "swap.maxHint": "Montant maximal, frais de l'échange déduits",
     "staking.action": "Staker",
     "staking.hint": "Staking liquide : vos cryptos rapportent des récompenses, revendables à tout moment",
-    "staking.noteSol": "Staking liquide via Jito : vos SOL deviennent des JitoSOL, qui prennent de la valeur avec les récompenses du staking{apr}. Ils restent dans votre portefeuille et se revendent à tout moment contre des SOL (« Convertir »). Risque : celui du contrat de Jito.",
-    "staking.noteEth": "Staking liquide via Lido : vos ETH deviennent des stETH, dont le solde augmente chaque jour avec les récompenses du staking{apr}. Ils restent dans votre portefeuille et se revendent à tout moment contre des ETH (« Convertir »). Risque : celui du contrat de Lido.",
-    "staking.unstake": "Sortie du staking : vos {from} sont revendus contre des {to} au prix du marché, tout de suite (pas de délai d'attente).",
-    "staking.apr": " (environ {apr} %/an annoncés)",
-    "staking.fee": " Frais de l'app : {fee} % (la concurrence prélève, elle, une part des récompenses).",
+    "staking.noteSol": "Gagnez {apr} % par an sur vos SOL avec Jito. Vos JitoSOL restent à vous et se revendent quand vous voulez.",
+    "staking.noteEth": "Gagnez {apr} % par an sur vos ETH avec Lido. Vos stETH restent à vous et se revendent quand vous voulez.",
+    "staking.unstake": "Retour en {to} immédiat, au prix du marché.",
+    "staking.apr": "Gagnez des récompenses sur vos {coin} : elles s'ajoutent toutes seules, revente quand vous voulez.",
+    "staking.fee": " Frais : {fee} %.",
     "addressBook.networkFirst": "Saisissez d'abord l'adresse",
     "addressBook.networkUnknown": "Adresse non reconnue",
     "send.bookOtherNetwork": "enregistrée pour {network}",
@@ -1551,11 +1551,11 @@ const I18N = {
     "swap.maxHint": "Maximum amount, swap fees deducted",
     "staking.action": "Stake",
     "staking.hint": "Liquid staking: your crypto earns rewards and can be sold back at any time",
-    "staking.noteSol": "Liquid staking with Jito: your SOL becomes JitoSOL, which grows in value with staking rewards{apr}. It stays in your wallet and can be sold back for SOL at any time (\"Convert\"). Risk: Jito's contract.",
-    "staking.noteEth": "Liquid staking with Lido: your ETH becomes stETH, whose balance grows every day with staking rewards{apr}. It stays in your wallet and can be sold back for ETH at any time (\"Convert\"). Risk: Lido's contract.",
-    "staking.unstake": "Leaving staking: your {from} is sold for {to} at the market price, right away (no waiting period).",
-    "staking.apr": " (about {apr}% a year announced)",
-    "staking.fee": " App fee: {fee}% (competitors take a share of the rewards instead).",
+    "staking.noteSol": "Earn {apr}% a year on your SOL with Jito. Your JitoSOL stays yours and can be sold back anytime.",
+    "staking.noteEth": "Earn {apr}% a year on your ETH with Lido. Your stETH stays yours and can be sold back anytime.",
+    "staking.unstake": "Back to {to} instantly, at the market price.",
+    "staking.apr": "Earn rewards on your {coin}: they add up on their own, sell back anytime.",
+    "staking.fee": " Fee: {fee}%.",
     "addressBook.networkFirst": "Enter the address first",
     "addressBook.networkUnknown": "Address not recognized",
     "send.bookOtherNetwork": "saved for {network}",
@@ -5953,8 +5953,10 @@ function renderStakingNote() {
   let text = "";
   if (pair && !pair.via && lst[pair.to.coin] === pair.from.coin) {
     const apr = stakingAprs?.[pair.to.coin];
-    const aprText = apr ? t("staking.apr", { apr: apr.toLocaleString(chartLocale(), { maximumFractionDigits: 1 }) }) : "";
-    text = t(pair.to.coin === "jitosol" ? "staking.noteSol" : "staking.noteEth", { apr: aprText });
+    // Taux annoncé (Jito, Lido) ; inconnu : message sans chiffre.
+    text = apr
+      ? t(pair.to.coin === "jitosol" ? "staking.noteSol" : "staking.noteEth", { apr: apr.toLocaleString(chartLocale(), { maximumFractionDigits: 1 }) })
+      : t("staking.apr", { coin: COIN_SYMBOL[pair.from.coin] });
     if (!stakingAprs) {
       stakingAprs = {};
       invoke("staking_aprs")
