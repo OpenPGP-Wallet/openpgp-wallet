@@ -169,6 +169,9 @@ pub const MARKET_IDS: &[&str] = &[
     "aster-2",
     "venice-token",
     "render-token",
+    // Staking liquide (JitoSOL, stETH).
+    "jito-staked-sol",
+    "staked-ether",
 ];
 
 pub struct MarketCoin {
