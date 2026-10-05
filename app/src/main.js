@@ -83,6 +83,13 @@ function coinIconEl(coin) {
   return img;
 }
 
+// Logo d'un réseau : celui de sa crypto native (Arbitrum : son propre logo ;
+// Base et Sepolia : celui d'Ethereum). `null` pour un réseau inconnu.
+function coinForNetwork(network) {
+  if (network === "arbitrum_mainnet") return "arb";
+  return ASSETS.find((asset) => !asset.token && asset.networks.includes(network))?.coin ?? null;
+}
+
 // Remplace le contenu de `el` par le logo de `coin` suivi de `text`.
 function setWithCoinIcon(el, coin, text) {
   const icon = coinIconEl(coin);
@@ -4194,7 +4201,7 @@ window.__TAURI__.event.listen("send-countdown", (event) => {
   closeSendCountdown();
   const { id, seconds, recap } = event.payload;
   // Réseau, montant, adresse (et tag / mémo) : ceux de la boîte de Windows.
-  document.getElementById("send-countdown-network").textContent = recap?.network ?? "";
+  setWithCoinIcon(document.getElementById("send-countdown-network"), coinForNetwork(recap?.network_id), recap?.network ?? "");
   document.getElementById("send-countdown-amount").textContent = recap?.amount ?? "";
   document.getElementById("send-countdown-to-label").textContent = recap?.to_label ?? "";
   document.getElementById("send-countdown-to").textContent = recap?.to ?? "";

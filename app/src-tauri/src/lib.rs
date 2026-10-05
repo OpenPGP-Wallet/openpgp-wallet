@@ -3280,7 +3280,7 @@ async fn send_transaction(
             (None, "xlm_mainnet" | "stx_mainnet") => Some((lang("Mémo", "Memo").to_string(), lang("aucun", "none").to_string())),
             _ => None,
         };
-        let recap = GraceRecap { note, ..GraceRecap::new(network_label(&network), format!("{} {}", send.amount, network_unit(&network)), send.to.clone()) };
+        let recap = GraceRecap { note, ..GraceRecap::new(network_label(&network), format!("{} {}", send.amount, network_unit(&network)), send.to.clone()).on(&network) };
         send_grace_period(&app, recap)?;
 
         let result = match network.as_str() {
@@ -3377,6 +3377,8 @@ struct SendCountdownDto {
 /// jamais relues depuis l'interface).
 #[derive(Clone, Serialize)]
 struct GraceRecap {
+    /// Identifiant du réseau (« xrp_mainnet »…) : logo affiché par l'interface.
+    network_id: String,
     network: String,
     amount: String,
     to_label: String,
@@ -3388,12 +3390,17 @@ struct GraceRecap {
 impl GraceRecap {
     /// Envoi : destinataire.
     fn new(network: impl Into<String>, amount: impl Into<String>, to: impl Into<String>) -> Self {
-        Self { network: network.into(), amount: amount.into(), to_label: lang("Destinataire", "Recipient").to_string(), to: to.into(), note: None }
+        Self { network_id: String::new(), network: network.into(), amount: amount.into(), to_label: lang("Destinataire", "Recipient").to_string(), to: to.into(), note: None }
     }
 
     /// Échange : adresse où arrivent les fonds.
     fn swap(route: impl Into<String>, amount: impl Into<String>, arrival: impl Into<String>) -> Self {
-        Self { network: route.into(), amount: amount.into(), to_label: lang("Adresse d'arrivée", "Arrival address").to_string(), to: arrival.into(), note: None }
+        Self { network_id: String::new(), network: route.into(), amount: amount.into(), to_label: lang("Adresse d'arrivée", "Arrival address").to_string(), to: arrival.into(), note: None }
+    }
+
+    /// Réseau de départ des fonds (son logo est affiché).
+    fn on(self, network_id: &str) -> Self {
+        Self { network_id: network_id.to_string(), ..self }
     }
 }
 
@@ -4054,7 +4061,7 @@ async fn hardware_send(id: u32, to: String, amount: String, fee_sat: Option<u64>
         };
         let from = SendFrom { evm: Some(&account.address), sol: Some(&account.address), ..SendFrom::default() };
         let send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &format!("{device} — {}", account.label), Some(&note), from, false, None)?;
-        send_grace_period(&app, GraceRecap::new(network_label(&network), format!("{} {}", send.amount, network_unit(&network)), send.to.clone()))?;
+        send_grace_period(&app, GraceRecap::new(network_label(&network), format!("{} {}", send.amount, network_unit(&network)), send.to.clone()).on(&network))?;
         let result = match network.as_str() {
             n if is_evm(n) => {
                 let fee = send.evm_fee.ok_or_else(|| "frais EVM manquants".to_string())?;
@@ -4478,7 +4485,8 @@ async fn swap_transaction(
                 lang(&format!("Échange via {}", protocol.name), &format!("Swap via {}", protocol.name)),
                 format!("{amount_line} → ~{} {}", format_1e8(quote.expected_amount_out), to.symbol),
                 destination.clone(),
-            ),
+            )
+            .on(from.network),
         )?;
 
         // Devis RE-lu après la confirmation (la boîte native bloque un temps
@@ -4802,7 +4810,8 @@ async fn swapkit_swap_transaction(
                 format!("{} SwapKit ({})", lang("Échange via", "Swap via"), deposit.provider.name()),
                 format!("{amount} {} → ~{} {}", from.symbol, tokens::format_balance(deposit.expected_out, to.decimals, 8), to.symbol),
                 destination.clone(),
-            ),
+            )
+            .on(from.network),
         )?;
 
         let sent = match prepared {
@@ -4933,7 +4942,7 @@ async fn jupiter_swap_transaction(
         let own_solana = app.state::<ProfileAddressCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).map(|(_, sol)| sol.clone()).unwrap_or_default();
         swap_grace_period(
             &app,
-            GraceRecap::swap(lang("Solana — échange via Jupiter", "Solana — swap via Jupiter"), format!("{amount_line} → ~{expected_out} {}", api::jupiter_symbol(&to_coin).t_err()?), own_solana),
+            GraceRecap::swap(lang("Solana — échange via Jupiter", "Solana — swap via Jupiter"), format!("{amount_line} → ~{expected_out} {}", api::jupiter_symbol(&to_coin).t_err()?), own_solana).on("sol_mainnet"),
         )?;
 
         // `out_amount` = la sortie AFFICHÉE ci-dessus : la transaction réellement
@@ -5138,7 +5147,7 @@ async fn cow_swap_transaction(
         }
         swap_grace_period(
             &app,
-            GraceRecap::swap(format!("{} — {}", network_label(&network), lang("échange via CoW", "swap via CoW")), format!("{sell_line} → ~{}", cow_amount(order.expected_buy, &buy)), order.receiver.clone()),
+            GraceRecap::swap(format!("{} — {}", network_label(&network), lang("échange via CoW", "swap via CoW")), format!("{sell_line} → ~{}", cow_amount(order.expected_buy, &buy)), order.receiver.clone()).on(&network),
         )?;
 
         // Monnaie du réseau : transaction EthFlow ; jeton : ordre signé.
@@ -5385,7 +5394,7 @@ async fn lifi_swap_transaction(
         ) {
             return Err(translate_error("Échange annulé (confirmation refusée)."));
         }
-        swap_grace_period(&app, GraceRecap::swap(format!("{route} ({})", quote.tool_name), format!("{sell_line} → ~{}", lifi_amount(quote.to_amount, &to)), quote.to_address.clone()))?;
+        swap_grace_period(&app, GraceRecap::swap(format!("{route} ({})", quote.tool_name), format!("{sell_line} → ~{}", lifi_amount(quote.to_amount, &to)), quote.to_address.clone()).on(from_net))?;
 
         // Nouveau devis sur le même pont (la transaction d'un pont expire
         // vite), refusé s'il ne correspond plus à ce qui a été affiché.
@@ -5463,7 +5472,7 @@ async fn send_usdc_transaction(password: String, to: String, amount: String, pro
         if !confirm_transaction_native(&app, network, &to, &amount_line, &from_label, rent_line.as_deref(), warning.as_deref(), None) {
             return Err(translate_error("Virement annulé (confirmation refusée)."));
         }
-        send_grace_period(&app, GraceRecap::new(network_label(network), amount_line.clone(), to.clone()))?;
+        send_grace_period(&app, GraceRecap::new(network_label(network), amount_line.clone(), to.clone()).on(network))?;
 
         let result = api::send_usdc(&dir, &password, net, &to, &amount, profile_index).t_err();
         if result.is_ok() {
@@ -5551,7 +5560,7 @@ async fn send_token_transaction(
                 if !confirm_transaction_native(&app, &network, &to, &amount_line, &from_label, Some(&fee_line), warning.as_deref(), Some(&token_line)) {
                     return Err(translate_error("Virement annulé (confirmation refusée)."));
                 }
-                send_grace_period(&app, GraceRecap::new(network_label(&network), amount_line.clone(), to.clone()))?;
+                send_grace_period(&app, GraceRecap::new(network_label(&network), amount_line.clone(), to.clone()).on(&network))?;
                 api::send_erc20(&dir, &password, &token, &network, &to, &amount, fee, profile_index).t_err()
             }
             pgp_wallet_poc::tokens::TokenKind::Trc20 { contract } => {
@@ -5581,7 +5590,7 @@ async fn send_token_transaction(
                 if !confirm_transaction_native(&app, &network, &to, &amount_line, &from_label, Some(&fee_line), warning.as_deref(), Some(&token_line)) {
                     return Err(translate_error("Virement annulé (confirmation refusée)."));
                 }
-                send_grace_period(&app, GraceRecap::new(network_label(&network), amount_line.clone(), to.clone()))?;
+                send_grace_period(&app, GraceRecap::new(network_label(&network), amount_line.clone(), to.clone()).on(&network))?;
                 api::send_trc20(&dir, &password, &token, &to, &amount, plan.fee_max, profile_index).t_err()
             }
             pgp_wallet_poc::tokens::TokenKind::Spl { mint } => {
@@ -5611,7 +5620,7 @@ async fn send_token_transaction(
                 if !confirm_transaction_native(&app, &network, &to, &amount_line, &from_label, rent_line.as_deref(), warning.as_deref(), Some(&token_line)) {
                     return Err(translate_error("Virement annulé (confirmation refusée)."));
                 }
-                send_grace_period(&app, GraceRecap::new(network_label(&network), amount_line.clone(), to.clone()))?;
+                send_grace_period(&app, GraceRecap::new(network_label(&network), amount_line.clone(), to.clone()).on(&network))?;
                 api::send_registered_spl(&dir, &password, &token, &to, &amount, profile_index).t_err()
             }
         };
@@ -6226,7 +6235,7 @@ async fn zec_send_shielded(password: String, profile_index: u32, to: String, amo
             };
             // Puis le délai d'annulation, avant la signature.
             shielded_dialog(&app, ("Confirmer l'envoi", "Confirm the transfer"), message)
-                && send_grace_period(&app, GraceRecap::new(network_label("zec_shielded"), format!("{amount} ZEC{max_note}"), to.to_string())).is_ok()
+                && send_grace_period(&app, GraceRecap::new(network_label("zec_shielded"), format!("{amount} ZEC{max_note}"), to.to_string()).on("zec_shielded")).is_ok()
         };
         let sent = if max {
             api::send_zec_shielded_max(&dir, &password, profile_index, &to, confirm)
@@ -6668,9 +6677,9 @@ async fn wc_approve_request(request_id: u64, password: String, app: tauri::AppHa
                     } else {
                         format!("{} {}", format_units(&value.to_string(), Some(18)), network.native_symbol)
                     };
-                    GraceRecap::new(network.name, amount, pgp_wallet_poc::derivation::format_address(to))
+                    GraceRecap::new(network.name, amount, pgp_wallet_poc::derivation::format_address(to)).on(network.id)
                 }
-                _ => GraceRecap::new("Solana", lang("selon la demande de l'application", "as requested by the app"), dialog_label(&session.peer.name)),
+                _ => GraceRecap::new("Solana", lang("selon la demande de l'application", "as requested by the app"), dialog_label(&session.peer.name)).on("sol_mainnet"),
             };
             if send_grace_period(&app, recap).is_err() {
                 let _ = client.respond(request_id, Err((5000, "User rejected.".to_string())));
@@ -7357,9 +7366,10 @@ mod tests {
     /// part tel quel vers l'interface, au format qu'elle lit.
     #[test]
     fn countdown_event_carries_the_recap() {
-        let recap = GraceRecap { note: Some(DestinationNote::XrpTag(104_857).recap()), ..GraceRecap::new("XRP Ledger MAINNET — fonds réels", "2 XRP", "rMQ98K56yXJbDGv49ZSmW51sLn94Xe1mu1") };
+        let recap = GraceRecap { note: Some(DestinationNote::XrpTag(104_857).recap()), ..GraceRecap::new("XRP Ledger MAINNET — fonds réels", "2 XRP", "rMQ98K56yXJbDGv49ZSmW51sLn94Xe1mu1").on("xrp_mainnet") };
         let json = serde_json::to_value(SendCountdownDto { id: 7, seconds: 5, recap }).unwrap();
         assert_eq!(json["recap"]["network"], "XRP Ledger MAINNET — fonds réels");
+        assert_eq!(json["recap"]["network_id"], "xrp_mainnet");
         assert_eq!(json["recap"]["amount"], "2 XRP");
         assert_eq!(json["recap"]["to"], "rMQ98K56yXJbDGv49ZSmW51sLn94Xe1mu1");
         assert_eq!(json["recap"]["note"], serde_json::json!(["Tag de destination", "104857"]));
