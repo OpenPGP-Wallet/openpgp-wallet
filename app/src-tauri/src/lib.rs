@@ -4517,7 +4517,7 @@ fn swap_pair_dtos() -> Vec<SwapPairDto> {
                 to_coin: to.coin,
                 to_network: to.network,
                 protocol: route.first,
-                fees_bps: protocols.iter().map(|p| pgp_wallet_poc::swap_routes::affiliate_fee_bps(*p, from)).collect(),
+                fees_bps: protocols.iter().map(|p| pgp_wallet_poc::swap_routes::affiliate_fee_bps(*p, from, to)).collect(),
                 protocols,
                 via: route.via.map(|(via, _)| via),
                 then_protocol: route.via.map(|(_, second)| second),
@@ -5116,15 +5116,15 @@ async fn get_jupiter_quote(from_coin: String, to_coin: String, amount: String) -
 /// `api::check_swap_effects`) AVANT d'être signée, jamais reconstruite. Le
 /// texte disait encore "vérifiée (payeur de frais)", resté de l'avant-21ᵉ
 /// passage : il sous-décrivait la protection réelle.
-fn confirm_jupiter_swap_native(app: &tauri::AppHandle, from_label: &str, amount: &str, expected_out: &str, to_symbol: &str, with_fee: bool) -> bool {
+fn confirm_jupiter_swap_native(app: &tauri::AppHandle, from_label: &str, amount: &str, expected_out: &str, to_symbol: &str, fee_bps: Option<u32>) -> bool {
     let from_label = dialog_label(from_label);
     // Sans compte de frais existant pour ces jetons, l'échange se fait sans
     // frais d'affiliation (voir `api::jupiter_fee_mint`) : la boîte le dit.
-    let fee_line = match (with_fee, UI_LANG_IS_ENGLISH.load(Ordering::Relaxed)) {
-        (true, true) => "Includes a 0.80% affiliate fee",
-        (true, false) => "Inclut 0,80% de frais d'affiliation",
-        (false, true) => "No affiliate fee on this pair",
-        (false, false) => "Sans frais d'affiliation pour cette paire",
+    let fee_line = match (fee_bps.filter(|bps| *bps > 0), UI_LANG_IS_ENGLISH.load(Ordering::Relaxed)) {
+        (Some(bps), true) => format!("Includes a {}% affiliate fee", percent_text(bps)),
+        (Some(bps), false) => format!("Inclut {} % de frais d'affiliation", percent_text(bps)),
+        (None, true) => "No affiliate fee on this pair".to_string(),
+        (None, false) => "Sans frais d'affiliation pour cette paire".to_string(),
     };
     let message = if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
         format!(
@@ -5173,7 +5173,7 @@ async fn jupiter_swap_transaction(
         let expected_out = format_native_amount(out_amount, u32::from(api::jupiter_decimals(&to_coin).t_err()?));
         let amount_line = format!("{amount} {}", api::jupiter_symbol(&from_coin).t_err()?);
 
-        if !confirm_jupiter_swap_native(&app, &from_label, &amount_line, &expected_out, api::jupiter_symbol(&to_coin).t_err()?, quote.fee_mint.is_some()) {
+        if !confirm_jupiter_swap_native(&app, &from_label, &amount_line, &expected_out, api::jupiter_symbol(&to_coin).t_err()?, quote.fee_mint.map(|_| quote.fee_bps)) {
             return Err(translate_error("Échange annulé (confirmation refusée)."));
         }
         let own_solana = app.state::<ProfileAddressCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).map(|(_, sol)| sol.clone()).unwrap_or_default();
@@ -5237,7 +5237,7 @@ async fn get_cow_quote(network: String, from_coin: String, to_coin: String, amou
     run_blocking(move || {
         let (sell, buy) = cow_pair(&network, &from_coin, &to_coin)?;
         let owner = profile_evm_address(&app, profile_index)?;
-        let order = api::get_cow_quote(evm_network(&network)?, &sell, &buy, &amount, &owner).t_err()?;
+        let order = api::get_cow_quote(evm_network(&network)?, &sell, &buy, &amount, &owner, cow_fee_bps(&network, &from_coin, &to_coin)).t_err()?;
         Ok(CowQuoteDto {
             expected_out: cow_amount(order.expected_buy, &buy),
             min_out: cow_amount(order.min_buy, &buy),
@@ -5254,6 +5254,24 @@ async fn get_cow_quote(network: String, from_coin: String, to_coin: String, amou
 /// la monnaie du réseau) — texte construit uniquement à partir de l'ordre
 /// préparé côté Rust.
 #[allow(clippy::too_many_arguments)]
+/// Frais partenaire CoW de la paire : staking liquide plus bas (voir
+/// `swap_routes::staking_fee_bps`), sinon `cow::PARTNER_FEE_BPS`.
+fn cow_fee_bps(network: &str, from_coin: &str, to_coin: &str) -> u32 {
+    pgp_wallet_poc::swap_routes::staking_fee_bps((from_coin, network), (to_coin, network)).unwrap_or(pgp_wallet_poc::cow::PARTNER_FEE_BPS)
+}
+
+/// Taux en pour cent, sans zéros inutiles (« 1 », « 0,3 » ; « 0.3 » en anglais).
+fn percent_text(bps: u32) -> String {
+    let text = format!("{:.2}", f64::from(bps) / 100.0);
+    let text = text.trim_end_matches('0').trim_end_matches('.').to_string();
+    if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
+        text
+    } else {
+        text.replace('.', ",")
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn confirm_cow_swap_native(
     app: &tauri::AppHandle,
     from_label: &str,
@@ -5263,12 +5281,14 @@ fn confirm_cow_swap_native(
     expected_out: &str,
     min_out: &str,
     partner_fee: &str,
+    partner_fee_bps: u32,
     receiver: &str,
     minutes: u64,
     transaction_lines: Option<&str>,
     eth_flow: bool,
 ) -> bool {
     let from_label = dialog_label(from_label);
+    let fee_percent = percent_text(partner_fee_bps);
     let transaction_lines = transaction_lines.map(|a| format!("{a}\n")).unwrap_or_default();
     let english = UI_LANG_IS_ENGLISH.load(Ordering::Relaxed);
     let (expiry, closing) = match (eth_flow, english) {
@@ -5282,11 +5302,11 @@ fn confirm_cow_swap_native(
     };
     let message = if english {
         format!(
-            "Swap via CoW Protocol (external protocol, not audited by this app)\n\nFrom profile: {from_label}\nNetwork: {network_name}\nSelling: {sell_line} (incl. ≈ {network_fee} of CoW network costs)\nExpected to receive: ~{expected_out}\nGuaranteed minimum: {min_out} (otherwise the order is not executed)\nFunds will arrive at: {receiver}\n(verify this is really your own address)\nIncludes a 1% integration fee (≈ {partner_fee}).\nOrder valid for about {minutes} minutes; {expiry}\n{transaction_lines}\n{closing}\n\nConfirm this swap?"
+            "Swap via CoW Protocol (external protocol, not audited by this app)\n\nFrom profile: {from_label}\nNetwork: {network_name}\nSelling: {sell_line} (incl. ≈ {network_fee} of CoW network costs)\nExpected to receive: ~{expected_out}\nGuaranteed minimum: {min_out} (otherwise the order is not executed)\nFunds will arrive at: {receiver}\n(verify this is really your own address)\nIncludes a {fee_percent}% integration fee (≈ {partner_fee}).\nOrder valid for about {minutes} minutes; {expiry}\n{transaction_lines}\n{closing}\n\nConfirm this swap?"
         )
     } else {
         format!(
-            "Échange via CoW Protocol (protocole externe, non audité par cette app)\n\nDepuis le profil : {from_label}\nRéseau : {network_name}\nVente : {sell_line} (dont ≈ {network_fee} de frais réseau de CoW)\nRéception attendue : ~{expected_out}\nMinimum garanti : {min_out} (sinon l'ordre n'est pas exécuté)\nLes fonds arriveront sur : {receiver}\n(vérifiez qu'il s'agit bien de votre propre adresse)\nInclut 1 % de frais d'intégration (≈ {partner_fee}).\nOrdre valable environ {minutes} minutes ; {expiry}\n{transaction_lines}\n{closing}\n\nConfirmer cet échange ?"
+            "Échange via CoW Protocol (protocole externe, non audité par cette app)\n\nDepuis le profil : {from_label}\nRéseau : {network_name}\nVente : {sell_line} (dont ≈ {network_fee} de frais réseau de CoW)\nRéception attendue : ~{expected_out}\nMinimum garanti : {min_out} (sinon l'ordre n'est pas exécuté)\nLes fonds arriveront sur : {receiver}\n(vérifiez qu'il s'agit bien de votre propre adresse)\nInclut {fee_percent} % de frais d'intégration (≈ {partner_fee}).\nOrdre valable environ {minutes} minutes ; {expiry}\n{transaction_lines}\n{closing}\n\nConfirmer cet échange ?"
         )
     };
     app.dialog()
@@ -5360,7 +5380,7 @@ async fn cow_swap_transaction(
 
         // Devis obtenu ICI, juste avant la confirmation : l'ordre affiché est
         // exactement celui qui sera signé (aucun nouveau devis ensuite).
-        let order = api::get_cow_quote(net, &sell, &buy, &amount, &owner).t_err()?;
+        let order = api::get_cow_quote(net, &sell, &buy, &amount, &owner, cow_fee_bps(&network, &from_coin, &to_coin)).t_err()?;
         let gas_price = api::evm_gas_price_for_confirmation(net).t_err()?;
         let sell_line = cow_amount(order.sell_amount, &sell);
         let transaction_lines = cow_transaction_lines(net, &sell, &order, gas_price, &sell_line)?;
@@ -5375,6 +5395,7 @@ async fn cow_swap_transaction(
             &cow_amount(order.expected_buy, &buy),
             &cow_amount(order.min_buy, &buy),
             &cow_amount(order.partner_fee_buy, &buy),
+            order.partner_fee_bps,
             &order.receiver,
             minutes,
             transaction_lines.as_deref(),

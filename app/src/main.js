@@ -923,6 +923,7 @@ const I18N = {
     "staking.noteEth": "Staking liquide via Lido : vos ETH deviennent des stETH, dont le solde augmente chaque jour avec les récompenses du staking{apr}. Ils restent dans votre portefeuille et se revendent à tout moment contre des ETH (« Convertir »). Risque : celui du contrat de Lido.",
     "staking.unstake": "Sortie du staking : vos {from} sont revendus contre des {to} au prix du marché, tout de suite (pas de délai d'attente).",
     "staking.apr": " (environ {apr} %/an annoncés)",
+    "staking.fee": " Frais de l'app : {fee} % (la concurrence prélève, elle, une part des récompenses).",
     "addressBook.networkFirst": "Saisissez d'abord l'adresse",
     "addressBook.networkUnknown": "Adresse non reconnue",
     "send.bookOtherNetwork": "enregistrée pour {network}",
@@ -1554,6 +1555,7 @@ const I18N = {
     "staking.noteEth": "Liquid staking with Lido: your ETH becomes stETH, whose balance grows every day with staking rewards{apr}. It stays in your wallet and can be sold back for ETH at any time (\"Convert\"). Risk: Lido's contract.",
     "staking.unstake": "Leaving staking: your {from} is sold for {to} at the market price, right away (no waiting period).",
     "staking.apr": " (about {apr}% a year announced)",
+    "staking.fee": " App fee: {fee}% (competitors take a share of the rewards instead).",
     "addressBook.networkFirst": "Enter the address first",
     "addressBook.networkUnknown": "Address not recognized",
     "send.bookOtherNetwork": "saved for {network}",
@@ -5965,6 +5967,9 @@ function renderStakingNote() {
   } else if (pair && !pair.via && lst[pair.from.coin] === pair.to.coin) {
     text = t("staking.unstake", { from: COIN_SYMBOL[pair.from.coin], to: COIN_SYMBOL[pair.to.coin] });
   }
+  // Frais de l'app pour ce fournisseur et cette paire (Rust, `fees_bps`).
+  const bps = pair?.feesBps?.[pair.protocol];
+  if (text && bps != null) text += t("staking.fee", { fee: (bps / 100).toLocaleString(chartLocale(), { maximumFractionDigits: 2 }) });
   el.textContent = text;
   el.classList.toggle("hidden", !text);
 }
@@ -6355,6 +6360,7 @@ function updateSwapDestination() {
 document.getElementById("swap-to-coin").addEventListener("change", onSwapTargetChange);
 document.getElementById("swap-provider").addEventListener("change", updateSwapDestination);
 document.getElementById("swap-provider").addEventListener("change", renderSwapAlerts);
+document.getElementById("swap-provider").addEventListener("change", renderStakingNote);
 document.getElementById("swap-provider").addEventListener("change", () => {
   if (swapMaxActive) fillSwapMax();
 });

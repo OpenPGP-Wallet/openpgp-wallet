@@ -2232,10 +2232,10 @@ pub fn canonical_cow_amount(sell: &cow::CowToken, amount: &str) -> Result<String
 /// Devis CoW pour vendre `amount` de `sell` contre `buy`, au profit de
 /// `owner` (vendeur ET destinataire). Refusé tant que l'adresse des frais
 /// partenaire n'est pas renseignée (voir `cow::PARTNER_FEE_RECIPIENT`).
-pub fn get_cow_quote(network: &wallet_flow::EvmNetwork, sell: &cow::CowToken, buy: &cow::CowToken, amount: &str, owner: &str) -> Result<cow::CowOrder> {
+pub fn get_cow_quote(network: &wallet_flow::EvmNetwork, sell: &cow::CowToken, buy: &cow::CowToken, amount: &str, owner: &str, partner_fee_bps: u32) -> Result<cow::CowOrder> {
     let recipient = cow::PARTNER_FEE_RECIPIENT.context("échange via CoW pas encore activé")?;
     wallet_flow::parse_evm_address(owner)?;
-    cow::quote(network.id, sell, buy, tokens::parse_amount(amount, sell.decimals)?, owner, recipient)
+    cow::quote(network.id, sell, buy, tokens::parse_amount(amount, sell.decimals)?, owner, recipient, partner_fee_bps)
 }
 
 /// Autorisations à envoyer au VaultRelayer de CoW avant l'ordre, et frais
@@ -3918,8 +3918,15 @@ pub fn get_jupiter_quote(from_coin: &str, to_coin: &str, amount: &str, slippage_
     let output_mint = jupiter_mint_for_coin(to_coin)?;
     let amount_native = jupiter_amount(from_coin, amount)?;
     let fee_mint = jupiter_fee_mint(&sol_rpc::SolRpc::new(wallet_flow::SOLANA_MAINNET.rpc), &input_mint, &output_mint)?;
-    let quote = jupiter_rpc::quote(&input_mint, &output_mint, amount_native, slippage_bps, fee_mint)?;
-    Ok(JupiterQuoteInfo { out_amount: quote.out_amount, fee_mint })
+    let fee_bps = jupiter_fee_bps(from_coin, to_coin);
+    let quote = jupiter_rpc::quote_with_fee(&input_mint, &output_mint, amount_native, slippage_bps, fee_mint, fee_bps)?;
+    Ok(JupiterQuoteInfo { out_amount: quote.out_amount, fee_mint, fee_bps })
+}
+
+/// Frais d'affiliation Jupiter de la paire : ceux du staking liquide
+/// (`swap_routes::staking_fee_bps`), sinon `jupiter_rpc::AFFILIATE_FEE_BPS`.
+pub fn jupiter_fee_bps(from_coin: &str, to_coin: &str) -> u32 {
+    crate::swap_routes::staking_fee_bps((from_coin, "sol_mainnet"), (to_coin, "sol_mainnet")).unwrap_or(jupiter_rpc::AFFILIATE_FEE_BPS)
 }
 
 /// Devis Jupiter tel qu'affiché : sortie attendue, et jeton des frais
@@ -3927,6 +3934,8 @@ pub fn get_jupiter_quote(from_coin: &str, to_coin: &str, amount: &str, slippage_
 pub struct JupiterQuoteInfo {
     pub out_amount: u64,
     pub fee_mint: Option<[u8; 32]>,
+    /// Taux appliqué si `fee_mint` existe (points de base).
+    pub fee_bps: u32,
 }
 
 /// Jeton des frais d'affiliation d'un échange Jupiter : le premier des
@@ -4118,7 +4127,7 @@ pub fn send_jupiter_swap(
     // seule fois. Rien n'est signé avant une simulation réussie.
     let mut retried = false;
     let raw_tx = loop {
-        let quote = jupiter_rpc::quote(&input_mint, &output_mint, amount_native, slippage_bps, fee_mint)?;
+        let quote = jupiter_rpc::quote_with_fee(&input_mint, &output_mint, amount_native, slippage_bps, fee_mint, jupiter_fee_bps(from_coin, to_coin))?;
         let raw_tx = jupiter_rpc::build_swap_transaction(&quote, &owner_address)?;
         match check_swap_effects(&rpc, &raw_tx, &limits) {
             Ok(()) => break raw_tx,

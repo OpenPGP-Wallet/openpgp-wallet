@@ -173,7 +173,7 @@ fn quote(protocol: Protocol, from: SwapAsset, to: SwapAsset, amount: &str) -> Re
         Protocol::Cow => {
             let (sell, buy) = cow_tokens(from.network, from.coin, to.coin)?;
             let net = wallet_flow::evm_network(from.network).context("réseau EVM")?;
-            let order = get_cow_quote(net, &sell, &buy, amount, EVM_FUNDED)?;
+            let order = get_cow_quote(net, &sell, &buy, amount, EVM_FUNDED, crate::cow::PARTNER_FEE_BPS)?;
             anyhow::ensure!(order.sell_amount <= units(from, amount), "CoW vendrait plus que le montant");
             Ok((order.expected_buy, buy.decimals))
         }

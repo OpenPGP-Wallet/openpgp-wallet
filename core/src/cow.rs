@@ -155,9 +155,10 @@ pub fn explorer_order_url(network: &str, uid: &str) -> Option<String> {
 }
 
 /// Document `appData` de l'ordre (clés triées, compact, comme le SDK) : code
-/// de l'app et frais partenaire.
-pub fn app_data(recipient: &str) -> String {
-    format!(r#"{{"appCode":"{APP_CODE}","metadata":{{"partnerFee":{{"recipient":"{recipient}","volumeBps":{PARTNER_FEE_BPS}}}}},"version":"{APP_DATA_VERSION}"}}"#)
+/// de l'app et frais partenaire (`partner_fee_bps` : `PARTNER_FEE_BPS`, ou le
+/// taux du staking liquide, voir `swap_routes::staking_fee_bps`).
+pub fn app_data(recipient: &str, partner_fee_bps: u32) -> String {
+    format!(r#"{{"appCode":"{APP_CODE}","metadata":{{"partnerFee":{{"recipient":"{recipient}","volumeBps":{partner_fee_bps}}}}},"version":"{APP_DATA_VERSION}"}}"#)
 }
 
 /// Ordre prêt à signer, tel qu'il sera AFFICHÉ puis signé.
@@ -177,6 +178,8 @@ pub struct CowOrder {
     pub network_fee_sell: u128,
     /// Frais partenaire, en jeton acheté.
     pub partner_fee_buy: u128,
+    /// Taux des frais partenaire (points de base), celui de l'appData signée.
+    pub partner_fee_bps: u32,
     pub valid_to: u32,
     pub app_data: String,
     pub app_data_hash: [u8; 32],
@@ -209,7 +212,7 @@ fn mul_div(a: u128, b: u128, c: u128) -> Option<u128> {
 /// correspondante, frais réseau en jeton vendu, frais du protocole en bps),
 /// formule du SDK officiel : (vente totale, réception attendue, minimum,
 /// frais partenaire).
-pub fn order_amounts(sell: u128, buy: u128, fee: u128, protocol_fee_bps: f64) -> Result<(u128, u128, u128, u128)> {
+pub fn order_amounts(sell: u128, buy: u128, fee: u128, protocol_fee_bps: f64, partner_fee_bps: u32) -> Result<(u128, u128, u128, u128)> {
     ensure!(sell > 0 && buy > 0, "devis CoW vide");
     let cost_in_buy = mul_div(buy, fee, sell).context("montant hors limites")?;
     let scaled = (protocol_fee_bps * 100_000.0).round();
@@ -217,7 +220,7 @@ pub fn order_amounts(sell: u128, buy: u128, fee: u128, protocol_fee_bps: f64) ->
     let scaled = scaled as u128;
     let protocol_fee = if scaled > 0 { mul_div(buy, scaled, 10_000 * 100_000 - scaled).context("montant hors limites")? } else { 0 };
     let before_all = buy.checked_add(cost_in_buy).and_then(|b| b.checked_add(protocol_fee)).context("montant hors limites")?;
-    let partner_fee = before_all.checked_mul(u128::from(PARTNER_FEE_BPS)).context("montant hors limites")? / 10_000;
+    let partner_fee = before_all.checked_mul(u128::from(partner_fee_bps)).context("montant hors limites")? / 10_000;
     let expected = buy.checked_sub(partner_fee).context("frais supérieurs à la réception")?;
     let min = expected - expected * u128::from(SLIPPAGE_BPS) / 10_000;
     Ok((sell.checked_add(fee).context("montant hors limites")?, expected, min, partner_fee))
@@ -226,14 +229,14 @@ pub fn order_amounts(sell: u128, buy: u128, fee: u128, protocol_fee_bps: f64) ->
 /// Devis CoW pour vendre `amount` (unités) de `sell` contre `buy` sur
 /// `network`, au profit de `owner` (vendeur ET destinataire). La réponse est
 /// revérifiée (jetons, destinataire, sens, montants) avant d'en tirer l'ordre.
-pub fn quote(network: &'static str, sell: &CowToken, buy: &CowToken, amount: u128, owner: &str, recipient: &str) -> Result<CowOrder> {
+pub fn quote(network: &'static str, sell: &CowToken, buy: &CowToken, amount: u128, owner: &str, recipient: &str, partner_fee_bps: u32) -> Result<CowOrder> {
     ensure!(sell.address != buy.address, "échange d'une crypto vers elle-même");
     let api = api_network(network).ok_or_else(|| anyhow!("réseau non pris en charge par CoW"))?;
     // EthFlow : devis sur la version enveloppée, ordre créé on-chain par le
     // contrat (paramètres du SDK officiel, ETH_FLOW_AUX_QUOTE_PARAMS).
     let sell_token = if sell.native { wrapped_native(network).context("réseau sans EthFlow")?.to_string() } else { sell.address.clone() };
     ensure!(!(sell.native && buy.native), "échange d'une crypto vers elle-même");
-    let app_data = app_data(recipient);
+    let app_data = app_data(recipient, partner_fee_bps);
     let app_data_hash = evm_sign::keccak(app_data.as_bytes());
     let mut body = json!({
         "sellToken": sell_token,
@@ -280,7 +283,7 @@ pub fn quote(network: &'static str, sell: &CowToken, buy: &CowToken, amount: u12
         Some(Value::Number(n)) => n.as_f64().unwrap_or(0.0),
         _ => 0.0,
     };
-    let (sell_amount, expected_buy, min_buy, partner_fee_buy) = order_amounts(sell_after, buy_quoted, fee, protocol_fee_bps)?;
+    let (sell_amount, expected_buy, min_buy, partner_fee_buy) = order_amounts(sell_after, buy_quoted, fee, protocol_fee_bps, partner_fee_bps)?;
     let valid_to = q.get("validTo").and_then(Value::as_u64).ok_or_else(|| anyhow!("devis CoW sans validité"))?;
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).context("horloge système invalide")?.as_secs();
     ensure!(valid_to > now && valid_to <= now + MAX_VALIDITY_SECS, "validité du devis CoW inattendue");
@@ -295,6 +298,7 @@ pub fn quote(network: &'static str, sell: &CowToken, buy: &CowToken, amount: u12
         min_buy,
         network_fee_sell: fee,
         partner_fee_buy,
+        partner_fee_bps,
         valid_to: valid_to as u32,
         app_data,
         app_data_hash,
@@ -477,7 +481,7 @@ mod tests {
     use super::*;
 
     fn eth_flow_order() -> CowOrder {
-        let app_data = app_data("0x1111111111111111111111111111111111111111");
+        let app_data = app_data("0x1111111111111111111111111111111111111111", PARTNER_FEE_BPS);
         CowOrder {
             network: "evm_mainnet",
             sell_token: wrapped_native("evm_mainnet").unwrap().into(),
@@ -488,6 +492,7 @@ mod tests {
             min_buy: 130_000_000,
             network_fee_sell: 0,
             partner_fee_buy: 0,
+            partner_fee_bps: PARTNER_FEE_BPS,
             valid_to: 1_790_000_000,
             app_data_hash: evm_sign::keccak(app_data.as_bytes()),
             app_data,
@@ -542,7 +547,7 @@ mod tests {
         for (network, buy, amount) in [("evm_mainnet", "usdc", 50_000_000_000_000_000u128), ("bsc_mainnet", "aster", 100_000_000_000_000_000)] {
             let net = wallet_flow::evm_network(network).unwrap();
             let sell = token(native_coin(net), network).unwrap();
-            let order = quote(network, &sell, &token(buy, network).unwrap(), amount, owner, "0x1111111111111111111111111111111111111111").unwrap();
+            let order = quote(network, &sell, &token(buy, network).unwrap(), amount, owner, "0x1111111111111111111111111111111111111111", PARTNER_FEE_BPS).unwrap();
             println!("{network} : vente {} minimum {} devis n°{:?}", order.sell_amount, order.min_buy, order.eth_flow_quote_id);
             assert_eq!(order.sell_token, wrapped_native(network).unwrap());
             let rpc = crate::eth_rpc::EthRpc::new(net.rpc);
@@ -570,18 +575,18 @@ mod tests {
     /// un devis de 10 LINK → USDC.
     #[test]
     fn order_amounts_match_the_official_sdk() {
-        let (sell, expected, min, partner) = order_amounts(9_776_517_981_337_341_408, 140_645_630, 223_482_018_662_658_592, 2.0).unwrap();
+        let (sell, expected, min, partner) = order_amounts(9_776_517_981_337_341_408, 140_645_630, 223_482_018_662_658_592, 2.0, PARTNER_FEE_BPS).unwrap();
         assert_eq!(sell, 10_000_000_000_000_000_000);
         assert_eq!(partner, 1_438_887);
         assert_eq!(expected, 139_206_743);
         assert_eq!(min, 137_814_676);
-        assert!(order_amounts(0, 1, 0, 0.0).is_err());
-        assert!(order_amounts(100, 50, 10, -1.0).is_err());
-        assert!(order_amounts(100, 50, 10, f64::NAN).is_err());
-        assert!(order_amounts(u128::MAX, u128::MAX, 1, 0.0).is_err());
+        assert!(order_amounts(0, 1, 0, 0.0, PARTNER_FEE_BPS).is_err());
+        assert!(order_amounts(100, 50, 10, -1.0, PARTNER_FEE_BPS).is_err());
+        assert!(order_amounts(100, 50, 10, f64::NAN, PARTNER_FEE_BPS).is_err());
+        assert!(order_amounts(u128::MAX, u128::MAX, 1, 0.0, PARTNER_FEE_BPS).is_err());
         // Deux jetons à 18 décimales et faible prix (ordres de grandeur d'un
         // vrai devis FET → ARB) : le produit buy × fee dépasse 2^128.
-        let (sell, expected, _, partner) = order_amounts(100_000_000_000_000_000_000, 166_000_000_000_000_000_000, 10_000_000_000_000_000_000, 0.0).unwrap();
+        let (sell, expected, _, partner) = order_amounts(100_000_000_000_000_000_000, 166_000_000_000_000_000_000, 10_000_000_000_000_000_000, 0.0, PARTNER_FEE_BPS).unwrap();
         assert_eq!(sell, 110_000_000_000_000_000_000);
         assert_eq!(partner, (166_000_000_000_000_000_000u128 + 16_600_000_000_000_000_000) / 100);
         assert_eq!(expected, 166_000_000_000_000_000_000 - partner);
@@ -593,7 +598,7 @@ mod tests {
     /// (domaine GPv2Settlement), sur Ethereum et sur Arbitrum.
     #[test]
     fn order_digest_matches_the_official_library() {
-        let app_data = app_data("0x1111111111111111111111111111111111111111");
+        let app_data = app_data("0x1111111111111111111111111111111111111111", PARTNER_FEE_BPS);
         let order = CowOrder {
             network: "evm_mainnet",
             sell_token: "0x514910771af9ca656af840dff83e8264ecf986ca".into(),
@@ -604,6 +609,7 @@ mod tests {
             min_buy: 137_000_000,
             network_fee_sell: 0,
             partner_fee_buy: 0,
+            partner_fee_bps: PARTNER_FEE_BPS,
             valid_to: 1_790_000_000,
             app_data_hash: evm_sign::keccak(app_data.as_bytes()),
             app_data,
@@ -627,7 +633,7 @@ mod tests {
             ("bsc_mainnet", "aster", "bnb", 100_000_000_000_000_000_000),
         ] {
             let (s, b) = (token(sell, network).unwrap(), token(buy, network).unwrap());
-            let order = quote(network, &s, &b, amount, owner, recipient).unwrap();
+            let order = quote(network, &s, &b, amount, owner, recipient, PARTNER_FEE_BPS).unwrap();
             println!("{network} {sell}→{buy} : vente {} attendu {} minimum {} frais réseau {} partenaire {}", order.sell_amount, order.expected_buy, order.min_buy, order.network_fee_sell, order.partner_fee_buy);
             assert_eq!(order.sell_amount, amount);
             assert!(order.min_buy > 0 && order.min_buy < order.expected_buy);
@@ -645,7 +651,7 @@ mod tests {
         let key = k256::ecdsa::SigningKey::from_slice(&evm_sign::keccak(b"openpgp-wallet cow test key, no funds")).unwrap();
         let owner = format!("0x{}", hex::encode(crate::derivation::evm_address_from_key(&key)));
         let (link, usdc) = (token("link", "evm_mainnet").unwrap(), token("usdc", "evm_mainnet").unwrap());
-        let order = quote("evm_mainnet", &link, &usdc, 10_000_000_000_000_000_000, &owner, "0x1111111111111111111111111111111111111111").unwrap();
+        let order = quote("evm_mainnet", &link, &usdc, 10_000_000_000_000_000_000, &owner, "0x1111111111111111111111111111111111111111", PARTNER_FEE_BPS).unwrap();
         let hash = digest(&order, 1).unwrap();
         let signature = evm_sign::sign_digest(&key, &hash).unwrap();
         let error = submit(&order, &hash, &signature, &owner).unwrap_err().to_string();
@@ -701,7 +707,7 @@ mod tests {
     /// schéma) et même empreinte keccak256.
     #[test]
     fn app_data_matches_the_official_sdk() {
-        let doc = app_data("0x1111111111111111111111111111111111111111");
+        let doc = app_data("0x1111111111111111111111111111111111111111", PARTNER_FEE_BPS);
         assert_eq!(doc, r#"{"appCode":"OpenPGP Wallet","metadata":{"partnerFee":{"recipient":"0x1111111111111111111111111111111111111111","volumeBps":100}},"version":"1.15.0"}"#);
         assert_eq!(hex::encode(evm_sign::keccak(doc.as_bytes())), "e2f19f04f6fd06ccb99166260a45bca65d7fbeca47f18afb796f0237c383437e");
     }

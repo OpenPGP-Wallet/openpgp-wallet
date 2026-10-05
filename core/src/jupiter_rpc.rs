@@ -88,7 +88,14 @@ const EXCLUDED_DEXES: &str = "HumidiFi,SolFi,SolFi%20V2,TesseraV,ZeroFi,GoonFi%2
 pub const PRIORITY_FEE_MAX_LAMPORTS: u64 = 1_000_000;
 
 pub fn quote(input_mint: &str, output_mint: &str, amount: u64, slippage_bps: u32, fee_mint: Option<[u8; 32]>) -> Result<JupiterQuote> {
-    let fee = if fee_mint.is_some() { format!("&platformFeeBps={AFFILIATE_FEE_BPS}") } else { String::new() };
+    quote_with_fee(input_mint, output_mint, amount, slippage_bps, fee_mint, AFFILIATE_FEE_BPS)
+}
+
+/// Comme `quote`, au taux `fee_bps` (staking liquide : plus bas, voir
+/// `swap_routes::staking_fee_bps`). Taux nul : aucun compte de frais.
+pub fn quote_with_fee(input_mint: &str, output_mint: &str, amount: u64, slippage_bps: u32, fee_mint: Option<[u8; 32]>, fee_bps: u32) -> Result<JupiterQuote> {
+    let fee_mint = fee_mint.filter(|_| fee_bps > 0);
+    let fee = if fee_mint.is_some() { format!("&platformFeeBps={fee_bps}") } else { String::new() };
     let url = format!("{JUPITER_BASE}/swap/v1/quote?inputMint={input_mint}&outputMint={output_mint}&amount={amount}&slippageBps={slippage_bps}{fee}&excludeDexes={EXCLUDED_DEXES}");
     let raw: Value = shared_client()
         .get(&url)

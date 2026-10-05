@@ -72,7 +72,37 @@ fn links(protocol: &thorchain_rpc::CrossChain, from: SwapAsset, to: SwapAsset) -
 /// via `protocol` : 0 depuis Bitcoin ou Zcash par THORChain ou Maya tant que
 /// le nom court n'existe pas. Jupiter : sans compte de frais pour la paire,
 /// l'échange se fait sans frais (dit dans sa boîte de confirmation).
-pub fn affiliate_fee_bps(protocol: Protocol, from: SwapAsset) -> u32 {
+/// Staking liquide (SOL ⇄ JitoSOL, ETH ⇄ stETH) : frais de l'app alignés sur
+/// la concurrence, qui prélève sur les RÉCOMPENSES (Phantom, PSOL : 4 % des
+/// récompenses + 0,1 % en sortie ; MetaMask : 10 à 15 % des récompenses),
+/// soit ≈ 0,3 % par an. Les récompenses de Jito et de Lido échappent à l'app
+/// (non-custodial) : perçus à l'entrée (0,30 %) et à la sortie (0,10 %, comme
+/// Phantom), au lieu des 0,80 % / 1 % d'un échange ordinaire (06/10/2026).
+pub const STAKING_ENTRY_FEE_BPS: u32 = 30;
+pub const STAKING_EXIT_FEE_BPS: u32 = 10;
+
+/// Crypto et réseau.
+type CoinOn = (&'static str, &'static str);
+
+const LIQUID_STAKING: [(CoinOn, CoinOn); 2] = [(("sol", "sol_mainnet"), ("jitosol", "sol_mainnet")), (("evm", "evm_mainnet"), ("steth", "evm_mainnet"))];
+
+/// Frais de l'app pour une paire de staking liquide (`None` : autre paire).
+pub fn staking_fee_bps(from: (&str, &str), to: (&str, &str)) -> Option<u32> {
+    LIQUID_STAKING.iter().find_map(|&(base, token)| {
+        if (from, to) == (base, token) {
+            Some(STAKING_ENTRY_FEE_BPS)
+        } else if (from, to) == (token, base) {
+            Some(STAKING_EXIT_FEE_BPS)
+        } else {
+            None
+        }
+    })
+}
+
+pub fn affiliate_fee_bps(protocol: Protocol, from: SwapAsset, to: SwapAsset) -> u32 {
+    if let (Some(bps), Protocol::Jupiter | Protocol::Cow) = (staking_fee_bps((from.coin, from.network), (to.coin, to.network)), protocol) {
+        return bps;
+    }
     match protocol {
         Protocol::Thorchain | Protocol::Maya => {
             let cross_chain = protocol.cross_chain().expect("THORChain ou Maya");
@@ -141,7 +171,9 @@ pub fn direct_all(from: SwapAsset, to: SwapAsset) -> Vec<Protocol> {
     if links(&thorchain_rpc::MAYA, from, to) {
         all.push(Protocol::Maya);
     }
-    if lifi_enabled() && lifi::links((from.coin, from.network), (to.coin, to.network)) {
+    // Staking liquide : Jupiter et CoW seuls (frais de staking, voir
+    // `staking_fee_bps`).
+    if lifi_enabled() && staking_fee_bps((from.coin, from.network), (to.coin, to.network)).is_none() && lifi::links((from.coin, from.network), (to.coin, to.network)) {
         if from.network == "btc_mainnet" && !thorchain_rpc::THORCHAIN.charges_affiliate("BTC.BTC") {
             all.insert(0, Protocol::Lifi);
         } else {
@@ -243,6 +275,25 @@ pub fn find(coin: &str, network: &str) -> Option<SwapAsset> {
 mod tests {
     use super::*;
 
+    /// Staking liquide : 0,30 % à l'entrée, 0,10 % à la sortie, par Jupiter
+    /// et CoW ; LI.FI pas proposé ; ailleurs, les frais habituels.
+    #[test]
+    fn liquid_staking_has_its_own_fees() {
+        let sol = SwapAsset { coin: "sol", network: "sol_mainnet" };
+        let jitosol = SwapAsset { coin: "jitosol", network: "sol_mainnet" };
+        let eth = SwapAsset { coin: "evm", network: "evm_mainnet" };
+        let steth = SwapAsset { coin: "steth", network: "evm_mainnet" };
+        let usdc = SwapAsset { coin: "usdc", network: "sol_mainnet" };
+        assert_eq!(affiliate_fee_bps(Protocol::Jupiter, sol, jitosol), 30);
+        assert_eq!(affiliate_fee_bps(Protocol::Jupiter, jitosol, sol), 10);
+        assert_eq!(affiliate_fee_bps(Protocol::Cow, eth, steth), 30);
+        assert_eq!(affiliate_fee_bps(Protocol::Cow, steth, eth), 10);
+        assert_eq!(affiliate_fee_bps(Protocol::Jupiter, sol, usdc), crate::jupiter_rpc::AFFILIATE_FEE_BPS);
+        assert_eq!(affiliate_fee_bps(Protocol::Jupiter, jitosol, usdc), crate::jupiter_rpc::AFFILIATE_FEE_BPS, "JitoSOL → USDC : un échange ordinaire");
+        assert!(!direct_all(sol, jitosol).contains(&Protocol::Lifi));
+        assert_eq!(direct_all(sol, jitosol).first(), Some(&Protocol::Jupiter));
+    }
+
     fn a(coin: &'static str, network: &'static str) -> SwapAsset {
         SwapAsset { coin, network }
     }
@@ -311,11 +362,11 @@ mod tests {
         }
         assert_eq!(direct_all(btc, eth), expected);
         let free = u32::from(thorchain_rpc::THORCHAIN.charges_affiliate("BTC.BTC")) * thorchain_rpc::AFFILIATE_FEE_BPS;
-        assert_eq!(affiliate_fee_bps(Protocol::Thorchain, btc), free);
-        assert_eq!(affiliate_fee_bps(Protocol::Maya, btc), 0, "Maya : pas de MAYAName");
-        assert_eq!(affiliate_fee_bps(Protocol::Thorchain, eth), 80);
-        assert_eq!(affiliate_fee_bps(Protocol::Lifi, btc), 80);
-        assert_eq!(affiliate_fee_bps(Protocol::Cow, eth), 100);
+        assert_eq!(affiliate_fee_bps(Protocol::Thorchain, btc, eth), free);
+        assert_eq!(affiliate_fee_bps(Protocol::Maya, btc, eth), 0, "Maya : pas de MAYAName");
+        assert_eq!(affiliate_fee_bps(Protocol::Thorchain, eth, btc), 80);
+        assert_eq!(affiliate_fee_bps(Protocol::Lifi, btc, eth), 80);
+        assert_eq!(affiliate_fee_bps(Protocol::Cow, eth, a("usdc", "evm_mainnet")), 100);
         // Toute crypto que l'app échange est joignable depuis Bitcoin.
         let all = assets();
         for to in all.iter().filter(|t| **t != btc) {
@@ -373,7 +424,7 @@ mod tests {
         assert_eq!(direct(a("usdc", "arbitrum_mainnet"), zec), Some(Protocol::Maya));
         assert_eq!(direct_all(zec, eth), vec![Protocol::Maya]);
         assert_eq!(direct_all(zec, a("btc", "btc_mainnet")), vec![Protocol::Maya]);
-        assert_eq!(affiliate_fee_bps(Protocol::Maya, zec), 0);
+        assert_eq!(affiliate_fee_bps(Protocol::Maya, zec, eth), 0);
         let to_sol = route(zec, a("sol", "sol_mainnet")).expect("ZEC → SOL en deux étapes");
         let (via, _) = to_sol.via.expect("deux étapes");
         assert!(!matches!(via.network, "btc_mainnet" | "zec_mainnet"), "intermédiaire lent : {via:?}");
