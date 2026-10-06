@@ -493,6 +493,8 @@
               <p class="fiat-value" data-field="fiat">—</p>
               <p class="pending-badge" data-field="pending" data-i18n="wallet.pendingBadge"> Transaction en attente détectée</p>
             </div>
+            <!-- SOL stakés (staking natif), comptés dans la valeur : main.js, refreshSolStaked. -->
+            <p class="coin-status muted" data-field="coin-status"></p>
             <p class="address collapsed-address hidden" data-field="collapsed-address"></p>
             <div class="collapsible-body" id="wallet-body-sol">
               <div class="collapsible-inner">
@@ -1154,6 +1156,53 @@
           <button id="ada-stake-delegate" class="primary" data-i18n="staking.adaDelegate">Staker</button>
           <button id="ada-stake-withdraw" class="secondary hidden" data-i18n="staking.adaWithdraw">Retirer les récompenses</button>
           <button id="ada-stake-stop" class="secondary hidden" data-i18n="staking.adaStop">Arrêter</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Staking Solana : liquide (JitoSOL, via « Convertir ») ou natif (compte
+         de mise délégué à un validateur ; main.js, openSolStakeModal ;
+         préparation, simulation, boîte native et délai d'annulation côté Rust). -->
+    <div id="sol-stake-modal" class="modal-overlay hidden">
+      <div class="modal">
+        <div class="modal-header-row">
+          <h2 data-i18n="staking.solTitle">Staker vos SOL</h2>
+          <button type="button" id="sol-stake-close" class="modal-close-btn" data-i18n-title="common.close" data-i18n-aria-label="common.close" title="Fermer" aria-label="Fermer">×</button>
+        </div>
+        <button type="button" id="sol-stake-liquid" class="stake-option">
+          <span class="stake-option-title" data-i18n="staking.solLiquid">Staking liquide — JitoSOL</span>
+          <span id="sol-stake-liquid-text" class="stake-option-text" data-i18n="staking.solLiquidText">Vos SOL échangés contre des JitoSOL, qui prennent de la valeur. Revente immédiate quand vous voulez.</span>
+        </button>
+        <h3 class="stake-section-title" data-i18n="staking.solNative">Staking natif</h3>
+        <p class="swap-staking-note" data-i18n="staking.solNativeIntro">Vos SOL délégués à un validateur, sur un compte de mise dont vous êtes la seule autorité. Aucun frais de l'app. Pour récupérer vos SOL : arrêt, puis retrait 2 à 3 jours plus tard.</p>
+        <p id="sol-stake-status" class="ada-stake-status"></p>
+        <ul id="sol-stake-accounts" class="sol-stake-accounts"></ul>
+        <label for="sol-stake-validator" data-i18n="staking.solValidator">Validateur</label>
+        <div class="custom-select dropdown">
+          <select id="sol-stake-validator"></select>
+          <button type="button" class="custom-select-trigger">
+            <span class="custom-select-label"></span>
+            <span class="select-arrow"></span>
+          </button>
+          <ul class="custom-select-options"></ul>
+        </div>
+        <label for="sol-stake-amount" data-i18n="staking.solAmount">Montant à staker</label>
+        <div class="amount-field">
+          <input id="sol-stake-amount" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="1" />
+          <span class="amount-unit">SOL</span>
+        </div>
+        <div class="swap-balance-row">
+          <p id="sol-stake-min" class="muted swap-balance"></p>
+          <button type="button" id="sol-stake-max" class="max-chip" data-i18n="send.percentMax" data-i18n-title="staking.solMaxHint" title="Montant maximal : réserve du compte de mise, frais et SOL pour l'arrêt gardés">Max</button>
+        </div>
+        <div class="send-auth">
+          <label for="sol-stake-password" data-i18n="send.passwordToConfirm">Mot de passe (pour valider la transaction)</label>
+          <input id="sol-stake-password" type="password" />
+        </div>
+        <p id="sol-stake-error" class="error hidden"></p>
+        <p id="sol-stake-success" class="success hidden"></p>
+        <div class="row-buttons">
+          <button id="sol-stake-delegate" class="primary" data-i18n="staking.solDelegate">Staker</button>
         </div>
       </div>
     </div>

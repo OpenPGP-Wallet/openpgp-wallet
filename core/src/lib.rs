@@ -37,6 +37,7 @@ pub mod thorchain_rpc;
 pub mod swap_routes;
 pub mod swap_health;
 pub mod staking;
+pub mod sol_stake;
 pub mod jupiter_rpc;
 pub mod cow;
 pub mod lifi;

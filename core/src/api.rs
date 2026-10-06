@@ -15,7 +15,7 @@
 
 use crate::{
     btc_rpc, cow, dapp_requests, derivation, doge, lifi, tron, xrp, stellar, near, cardano, stacks, monero, native_deposit, wallet_birthday, zcash, zcash_shielded, entropy, eth_rpc, eth_tx, history, jupiter_rpc, memory_guard, pgp_engine, secure_storage, shamir,
-    evm_sign, sol_rpc, sol_spl, sol_tx, thorchain_rpc, tokens, wallet_flow,
+    evm_sign, sol_rpc, sol_spl, sol_stake, sol_tx, thorchain_rpc, tokens, wallet_flow,
 };
 use anyhow::{Context, Result};
 use openpgp::armor;
@@ -3309,6 +3309,55 @@ pub fn send_ada(data_dir: &Path, device_password: &str, to: &str, amount: &str, 
         cardano::format_ada(shown_fee)
     );
     cardano::send(&payment, &from, to, &plan)
+}
+
+// --- Staking natif Solana -----------------------------------------------------------
+
+fn sol_mainnet_rpc() -> sol_rpc::SolRpc {
+    sol_rpc::SolRpc::new(wallet_flow::SOLANA_MAINNET.rpc)
+}
+
+pub fn sol_stake_overview(owner: &str) -> Result<sol_stake::Overview> {
+    sol_stake::overview(&sol_mainnet_rpc(), owner)
+}
+
+pub fn sol_validators() -> Result<Vec<sol_stake::Validator>> {
+    sol_stake::validators(&sol_mainnet_rpc())
+}
+
+/// « Max » de la fenêtre de staking natif, en SOL.
+pub fn sol_stake_max(owner: &str) -> Result<String> {
+    Ok(sol_rpc::format_lamports(sol_stake::max_delegation(&sol_mainnet_rpc(), owner)?))
+}
+
+/// Opération préparée et simulée depuis l'adresse publique du profil (boîte
+/// de confirmation). Mise : `amount` (SOL) et `target` = compte de vote ;
+/// arrêt ou retrait : `target` = compte de mise.
+pub fn sol_stake_plan(owner: &str, action: sol_stake::Action, amount: Option<&str>, target: &str) -> Result<sol_stake::Plan> {
+    let rpc = sol_mainnet_rpc();
+    match action {
+        sol_stake::Action::Delegate => {
+            let lamports = wallet_flow::parse_sol_to_lamports(amount.context("montant à staker absent")?)?;
+            sol_stake::plan_delegate(&rpc, owner, lamports, target)
+        }
+        sol_stake::Action::Deactivate => sol_stake::plan_deactivate(&rpc, owner, target),
+        sol_stake::Action::Withdraw => sol_stake::plan_withdraw(&rpc, owner, target),
+    }
+}
+
+/// Signe et diffuse l'opération confirmée : préparée et simulée à nouveau
+/// ICI, elle doit être exactement celle affichée, sinon refus.
+pub fn send_sol_stake(data_dir: &Path, device_password: &str, action: sol_stake::Action, amount: Option<&str>, target: &str, shown: &sol_stake::Plan, profile_index: u32) -> Result<String> {
+    let seed = unlock_seed(data_dir, device_password)?;
+    let _seed_lock = memory_guard::lock(&seed);
+    let signing_key = derivation::derive_solana_key(&seed, profile_index);
+    let owner = signing_key.verifying_key().to_bytes();
+    let plan = sol_stake_plan(&bs58::encode(owner).into_string(), action, amount, target)?;
+    anyhow::ensure!(plan == *shown, "l'état de votre staking Solana a changé depuis la confirmation — relancez l'opération");
+    let rpc = sol_mainnet_rpc();
+    let message = sol_stake::message(&plan, &owner, &rpc.latest_blockhash()?)?;
+    let raw_tx = sol_tx::assemble_transaction(&ed25519_dalek::Signer::sign(&signing_key, &message).to_bytes(), &message);
+    rpc.send_transaction(&raw_tx)
 }
 
 // --- Stacks (STX) -------------------------------------------------------------------

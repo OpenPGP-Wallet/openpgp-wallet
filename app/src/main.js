@@ -735,6 +735,7 @@ const I18N = {
     "history.kindReceived": "Reçu",
     "history.kindSent": "Envoyé",
     "history.kindSwap": "Swap",
+    "history.kindStake": "Staking",
     "history.kindOther": "Autre",
     "history.usdAtTime": "Valeur en dollars au moment de la transaction",
     "wallet.historyLoading": "Chargement…",
@@ -943,6 +944,31 @@ const I18N = {
     "staking.adaWithdraw": "Retirer les récompenses",
     "staking.adaStop": "Arrêter",
     "staking.adaSent": "Envoyé (transaction {tx}). Visible dans quelques secondes.",
+    "staking.solTitle": "Staker vos SOL",
+    "staking.solLiquid": "Staking liquide — JitoSOL",
+    "staking.solLiquidText": "Vos SOL échangés contre des JitoSOL, qui prennent de la valeur. Revente immédiate quand vous voulez.",
+    "staking.solLiquidApr": "Environ {apr} % par an : vos SOL échangés contre des JitoSOL, revendables immédiatement quand vous voulez.",
+    "staking.solNative": "Staking natif",
+    "staking.solNativeIntro": "Vos SOL délégués à un validateur, sur un compte de mise dont vous êtes la seule autorité. Aucun frais de l'app. Pour récupérer vos SOL : arrêt, puis retrait 2 à 3 jours plus tard.",
+    "staking.solValidator": "Validateur",
+    "staking.solValidatorOption": "{name} — commission {commission} % · ≈ {apy} % par an",
+    "staking.solValidatorOptionNoApy": "{name} — commission {commission} %",
+    "staking.solAmount": "Montant à staker",
+    "staking.solMin": "Minimum {min} SOL · réserve du compte de mise {reserve} SOL, rendue au retrait",
+    "staking.solMaxHint": "Montant maximal : réserve du compte de mise, frais et SOL pour l'arrêt gardés",
+    "staking.solDelegate": "Staker",
+    "staking.solLoading": "Lecture de vos comptes de mise…",
+    "staking.solNone": "Aucun SOL staké en natif pour l'instant.",
+    "staking.solTotal": "{amount} SOL stakés en natif",
+    "staking.solActivating": "En activation — actif dans {eta} environ",
+    "staking.solActive": "Actif — récompenses à chaque époque",
+    "staking.solDeactivating": "En arrêt — retirable dans {eta} environ",
+    "staking.solInactive": "Arrêté — prêt à être retiré",
+    "staking.solUndelegated": "Non délégué",
+    "staking.solFlagged": "Validateur signalé depuis (pratiques douteuses) : arrêtez et choisissez-en un autre.",
+    "staking.solStop": "Arrêter",
+    "staking.solWithdraw": "Retirer",
+    "staking.solStakedLine": "+ {amount} SOL stakés",
     "addressBook.networkFirst": "Saisissez d'abord l'adresse",
     "addressBook.networkUnknown": "Adresse non reconnue",
     "send.bookOtherNetwork": "enregistrée pour {network}",
@@ -1381,6 +1407,7 @@ const I18N = {
     "history.kindReceived": "Received",
     "history.kindSent": "Sent",
     "history.kindSwap": "Swap",
+    "history.kindStake": "Staking",
     "history.kindOther": "Other",
     "history.usdAtTime": "Value in dollars at the time of the transaction",
     "wallet.historyLoading": "Loading…",
@@ -1589,6 +1616,31 @@ const I18N = {
     "staking.adaWithdraw": "Withdraw rewards",
     "staking.adaStop": "Stop",
     "staking.adaSent": "Sent (transaction {tx}). Visible in a few seconds.",
+    "staking.solTitle": "Stake your SOL",
+    "staking.solLiquid": "Liquid staking — JitoSOL",
+    "staking.solLiquidText": "Your SOL swapped for JitoSOL, which grows in value. Sell back instantly whenever you want.",
+    "staking.solLiquidApr": "About {apr}% a year: your SOL swapped for JitoSOL, which you can sell back instantly whenever you want.",
+    "staking.solNative": "Native staking",
+    "staking.solNativeIntro": "Your SOL delegated to a validator, in a stake account you alone control. No app fee. To get your SOL back: stop, then withdraw 2 to 3 days later.",
+    "staking.solValidator": "Validator",
+    "staking.solValidatorOption": "{name} — {commission}% commission · ≈ {apy}% a year",
+    "staking.solValidatorOptionNoApy": "{name} — {commission}% commission",
+    "staking.solAmount": "Amount to stake",
+    "staking.solMin": "Minimum {min} SOL · stake account reserve {reserve} SOL, returned on withdrawal",
+    "staking.solMaxHint": "Maximum amount: stake account reserve, fee and SOL for stopping kept",
+    "staking.solDelegate": "Stake",
+    "staking.solLoading": "Reading your stake accounts…",
+    "staking.solNone": "No SOL natively staked yet.",
+    "staking.solTotal": "{amount} SOL natively staked",
+    "staking.solActivating": "Activating — active in about {eta}",
+    "staking.solActive": "Active — rewards every epoch",
+    "staking.solDeactivating": "Stopping — withdrawable in about {eta}",
+    "staking.solInactive": "Stopped — ready to withdraw",
+    "staking.solUndelegated": "Not delegated",
+    "staking.solFlagged": "Validator flagged since (questionable practices): stop and choose another one.",
+    "staking.solStop": "Stop",
+    "staking.solWithdraw": "Withdraw",
+    "staking.solStakedLine": "+ {amount} SOL staked",
     "addressBook.networkFirst": "Enter the address first",
     "addressBook.networkUnknown": "Address not recognized",
     "send.bookOtherNetwork": "saved for {network}",
@@ -3380,9 +3432,17 @@ function marketChange24h(coin) {
   return market && Number.isFinite(market.change_24h_percent) ? market.change_24h_percent : null;
 }
 
-// Solde affiché d'une carte (valeur en devise, valeur totale).
+// SOL stakés du profil affiché, liés à son adresse (`balanceKey`) : comptés
+// dans la valeur de la carte SOL et dans la valeur totale. Relus toutes les
+// 5 min au plus (les récompenses tombent tous les 2 jours), et aussitôt
+// après une opération.
+let solStaked = { key: "", lamports: 0, at: 0 };
+const SOL_STAKED_TTL_MS = 5 * 60 * 1000;
+
+// Solde affiché d'une carte (valeur en devise, valeur totale), SOL stakés
+// compris (staking natif : ils ont quitté l'adresse mais restent à vous).
 function cardTotalBalance(card) {
-  return Number.parseFloat(card.querySelector('[data-field="balance"]').textContent);
+  return Number.parseFloat(card.querySelector('[data-field="balance"]').textContent) + solStakedFor(card);
 }
 
 function updatePortfolioTotal() {
@@ -3730,9 +3790,23 @@ function liquidStakingFor(coin, network) {
   return target && target.from === coin && swapPairs.some((p) => p.from_coin === coin && p.from_network === network && p.to_coin === target.to) ? target : null;
 }
 
+// Staking liquide : échange vers le jeton de staking dans « Convertir ».
+function openLiquidStaking(card) {
+  const network = networkForCard(card);
+  const target = liquidStakingFor(card.dataset.coin, network);
+  if (!target) return;
+  // Carte du jeton de staking affichée : le solde reçu s'y verra.
+  assetChoices[target.to] = true;
+  saveAssetChoices();
+  applyAssetVisibility();
+  openSwapModal(card, { from: { coin: target.from, network }, to: { coin: target.to, network } });
+}
+
 function updateConvertButton(card) {
-  const ada = card.dataset.coin === "ada";
-  card.querySelector('[data-action="stake"]')?.classList.toggle("hidden", !ada && !liquidStakingFor(card.dataset.coin, networkForCard(card)));
+  // Cardano (délégation) et Solana (staking natif) : toujours ; ailleurs,
+  // seulement si le staking liquide est possible.
+  const native = card.dataset.coin === "ada" || (card.dataset.coin === "sol" && networkForCard(card) === "sol_mainnet");
+  card.querySelector('[data-action="stake"]')?.classList.toggle("hidden", !native && !liquidStakingFor(card.dataset.coin, networkForCard(card)));
   const convert = card.querySelector('[data-action="swap"]');
   if (!convert) return;
   const coin = card.dataset.coin;
@@ -4013,7 +4087,7 @@ async function refreshBalance(card) {
         balanceEl.textContent = t("wallet.balanceError");
       });
     const pendingPromise = checkPendingTx(card, address, network);
-    const statusPromise = coin === "zecs" ? refreshShieldedStatus(card) : coin === "xmr" ? refreshXmrStatus(card) : Promise.resolve();
+    const statusPromise = coin === "zecs" ? refreshShieldedStatus(card) : coin === "xmr" ? refreshXmrStatus(card) : coin === "sol" ? refreshSolStaked(card) : Promise.resolve();
     await Promise.all([balancePromise, pendingPromise, statusPromise]);
     updateFiatValue(card);
   } finally {
@@ -4412,14 +4486,11 @@ document.querySelectorAll(".wallet-card").forEach((card) => {
       openAdaStakeModal(card);
       return;
     }
-    const network = networkForCard(card);
-    const target = liquidStakingFor(card.dataset.coin, network);
-    if (!target) return;
-    // Carte du jeton de staking affichée : le solde reçu s'y verra.
-    assetChoices[target.to] = true;
-    saveAssetChoices();
-    applyAssetVisibility();
-    openSwapModal(card, { from: { coin: target.from, network }, to: { coin: target.to, network } });
+    if (card.dataset.coin === "sol" && networkForCard(card) === "sol_mainnet") {
+      openSolStakeModal(card);
+      return;
+    }
+    openLiquidStaking(card);
   });
   // Même historique que l'onglet « Historique », ouvert directement sur cette
   // crypto : plus facile à trouver depuis la carte que l'onglet seul.
@@ -4591,7 +4662,7 @@ function buildHistoryRow(tx) {
   const statusSpan = document.createElement("span");
   statusSpan.className = `history-status history-status-${tx.status}`;
   statusSpan.textContent = historyStatusLabel(tx.status);
-  const kindKey = { received: "history.kindReceived", sent: "history.kindSent", swap: "history.kindSwap", other: "history.kindOther" }[tx.kind];
+  const kindKey = { received: "history.kindReceived", sent: "history.kindSent", swap: "history.kindSwap", stake: "history.kindStake", other: "history.kindOther" }[tx.kind];
   if (kindKey) {
     const kindSpan = document.createElement("span");
     kindSpan.className = `history-kind history-kind-${tx.kind}`;
@@ -6058,6 +6129,220 @@ document.getElementById("ada-stake-close").addEventListener("click", () => {
   adaStakeModal.classList.add("hidden");
   adaStakeContext = null;
 });
+
+// --- Staking Solana (liquide ou natif) -------------------------------------------
+// Liquide : échange SOL → JitoSOL dans « Convertir ». Natif : compte de mise
+// délégué à un validateur ; tout se décide et se vérifie côté Rust
+// (validateurs proposés, simulation, boîte native, délai d'annulation).
+const solStakeModal = document.getElementById("sol-stake-modal");
+let solStakeContext = null;
+
+function solStakedFor(card) {
+  return card.dataset.coin === "sol" && solStaked.key === balanceKey(card) ? solStaked.lamports / 1e9 : 0;
+}
+
+function renderSolStaked(card) {
+  const statusEl = card.querySelector('[data-field="coin-status"]');
+  if (!statusEl) return;
+  const staked = solStakedFor(card);
+  const text = staked > 0 ? t("staking.solStakedLine", { amount: staked.toLocaleString(chartLocale(), { maximumFractionDigits: 4 }) }) : "";
+  if (statusEl.textContent !== text) statusEl.textContent = text;
+}
+
+async function refreshSolStaked(card, force = false) {
+  const key = balanceKey(card);
+  const fresh = solStaked.key === key && Date.now() - solStaked.at < SOL_STAKED_TTL_MS;
+  if (networkForCard(card) === "sol_mainnet" && (force || !fresh)) {
+    try {
+      const status = await invoke("sol_stake_status", { profileIndex: currentProfileIndex });
+      if (balanceKey(card) === key) solStaked = { key, lamports: status.total_lamports, at: Date.now() };
+    } catch (e) {
+      console.error(e);
+    }
+  }
+  renderSolStaked(card);
+}
+
+function shortAccount(text) {
+  return `${text.slice(0, 6)}…${text.slice(-6)}`;
+}
+
+function renderSolStakeAccounts(context, status) {
+  const list = document.getElementById("sol-stake-accounts");
+  const label = (a) => a.validator_name ?? (a.validator ? shortAccount(a.validator) : shortAccount(a.address));
+  const stateText = {
+    activating: () => t("staking.solActivating", { eta: status.epoch_ends_in }),
+    active: () => t("staking.solActive"),
+    deactivating: () => t("staking.solDeactivating", { eta: status.epoch_ends_in }),
+    inactive: () => t("staking.solInactive"),
+    undelegated: () => t("staking.solUndelegated"),
+  };
+  list.replaceChildren(
+    ...status.accounts.map((a) => {
+      const item = document.createElement("li");
+      item.className = "sol-stake-account";
+      const main = document.createElement("div");
+      main.className = "sol-stake-account-main";
+      const amount = document.createElement("span");
+      amount.className = "sol-stake-amount";
+      amount.textContent = `${Number.parseFloat(a.amount).toLocaleString(chartLocale(), { maximumFractionDigits: 6 })} SOL`;
+      const who = document.createElement("span");
+      who.className = "muted";
+      who.textContent = label(a);
+      main.append(amount, who);
+      const state = document.createElement("span");
+      state.className = `sol-stake-state ${a.status}`;
+      state.textContent = stateText[a.status]?.() ?? a.status;
+      item.append(main, state);
+      if (a.validator_flagged && (a.status === "active" || a.status === "activating")) {
+        const warn = document.createElement("span");
+        warn.className = "sol-stake-flag";
+        warn.textContent = t("staking.solFlagged");
+        item.append(warn);
+      }
+      const action = (a.status === "active" || a.status === "activating") && a.can_deactivate ? "deactivate" : (a.status === "inactive" || a.status === "undelegated") && !a.locked ? "withdraw" : null;
+      if (action) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "secondary";
+        button.textContent = t(action === "deactivate" ? "staking.solStop" : "staking.solWithdraw");
+        button.addEventListener("click", withBusyButton(button, () => runSolStake(action, a.address)));
+        item.append(button);
+      }
+      return item;
+    })
+  );
+  document.getElementById("sol-stake-status").textContent = status.accounts.length
+    ? t("staking.solTotal", { amount: Number.parseFloat(status.total).toLocaleString(chartLocale(), { maximumFractionDigits: 6 }) })
+    : t("staking.solNone");
+  document.getElementById("sol-stake-min").textContent = t("staking.solMin", { min: status.min_delegation, reserve: status.rent_reserve });
+  // Même lecture pour la carte SOL et la valeur totale.
+  const key = balanceKey(context.card);
+  solStaked = { key, lamports: status.total_lamports, at: Date.now() };
+  renderSolStaked(context.card);
+  updateFiatValue(context.card);
+}
+
+async function loadSolStakeStatus(context) {
+  try {
+    const status = await invoke("sol_stake_status", { profileIndex: context.profileIndex });
+    if (solStakeContext === context) renderSolStakeAccounts(context, status);
+  } catch (e) {
+    if (solStakeContext !== context) return;
+    document.getElementById("sol-stake-status").textContent = "";
+    showError(document.getElementById("sol-stake-error"), String(e));
+  }
+}
+
+async function openSolStakeModal(card) {
+  const profile = currentProfile();
+  const context = { profileIndex: profile ? profile.index : currentProfileIndex, card };
+  solStakeContext = context;
+  const liquid = liquidStakingFor("sol", "sol_mainnet");
+  document.getElementById("sol-stake-liquid").classList.toggle("hidden", !liquid);
+  const renderLiquid = () => {
+    const apr = stakingAprs?.jitosol;
+    document.getElementById("sol-stake-liquid-text").textContent = apr
+      ? t("staking.solLiquidApr", { apr: apr.toLocaleString(chartLocale(), { maximumFractionDigits: 1 }) })
+      : t("staking.solLiquidText");
+  };
+  renderLiquid();
+  if (!stakingAprs) {
+    stakingAprs = {};
+    invoke("staking_aprs")
+      .then((rates) => {
+        stakingAprs = rates;
+        if (solStakeContext === context) renderLiquid();
+      })
+      .catch((e) => console.error(e));
+  }
+  document.getElementById("sol-stake-status").textContent = t("staking.solLoading");
+  document.getElementById("sol-stake-accounts").replaceChildren();
+  document.getElementById("sol-stake-min").textContent = "";
+  document.getElementById("sol-stake-amount").value = "";
+  document.getElementById("sol-stake-password").value = "";
+  hideError(document.getElementById("sol-stake-error"));
+  document.getElementById("sol-stake-success").classList.add("hidden");
+  const select = document.getElementById("sol-stake-validator");
+  select.replaceChildren();
+  syncCustomSelect(select);
+  solStakeModal.classList.remove("hidden");
+  const [, validators] = await Promise.allSettled([loadSolStakeStatus(context), invoke("sol_validators")]);
+  if (solStakeContext !== context) return;
+  if (validators.status === "fulfilled") {
+    select.replaceChildren(
+      ...validators.value.map((v) => Object.assign(document.createElement("option"), {
+        value: v.vote,
+        textContent: t(v.apy ? "staking.solValidatorOption" : "staking.solValidatorOptionNoApy", {
+          name: v.name ?? shortAccount(v.vote),
+          commission: v.commission,
+          apy: v.apy?.toLocaleString(chartLocale(), { maximumFractionDigits: 1 }),
+        }),
+      }))
+    );
+  } else {
+    showError(document.getElementById("sol-stake-error"), String(validators.reason));
+  }
+  syncCustomSelect(select);
+}
+
+async function runSolStake(action, target) {
+  const context = solStakeContext;
+  if (!context) return;
+  const errorEl = document.getElementById("sol-stake-error");
+  const successEl = document.getElementById("sol-stake-success");
+  hideError(errorEl);
+  successEl.classList.add("hidden");
+  const password = document.getElementById("sol-stake-password").value;
+  const amount = action === "delegate" ? document.getElementById("sol-stake-amount").value.trim() : null;
+  if (!password || !target || (action === "delegate" && !amount)) {
+    showError(errorEl, t("wallet.allFieldsRequired"));
+    return;
+  }
+  try {
+    const tx = await invoke("sol_stake", { password, action, amount, target, profileIndex: context.profileIndex });
+    successEl.textContent = t("staking.adaSent", { tx: `${tx.slice(0, 10)}…` });
+    successEl.classList.remove("hidden");
+    if (action === "delegate") document.getElementById("sol-stake-amount").value = "";
+    // Relu une fois la transaction confirmée (quelques secondes).
+    setTimeout(() => {
+      if (solStakeContext === context) loadSolStakeStatus(context);
+      else refreshSolStaked(context.card, true);
+      refreshBalance(context.card);
+    }, 5000);
+  } catch (e) {
+    showError(errorEl, String(e));
+  } finally {
+    document.getElementById("sol-stake-password").value = "";
+  }
+}
+
+{
+  const delegateBtn = document.getElementById("sol-stake-delegate");
+  delegateBtn.addEventListener("click", withBusyButton(delegateBtn, () => runSolStake("delegate", document.getElementById("sol-stake-validator").value)));
+  const maxBtn = document.getElementById("sol-stake-max");
+  maxBtn.addEventListener("click", withBusyButton(maxBtn, async () => {
+    const context = solStakeContext;
+    if (!context) return;
+    hideError(document.getElementById("sol-stake-error"));
+    try {
+      const max = await invoke("sol_stake_max", { profileIndex: context.profileIndex });
+      if (solStakeContext === context) document.getElementById("sol-stake-amount").value = max;
+    } catch (e) {
+      showError(document.getElementById("sol-stake-error"), String(e));
+    }
+  }));
+  document.getElementById("sol-stake-liquid").addEventListener("click", () => {
+    const context = solStakeContext;
+    solStakeModal.classList.add("hidden");
+    solStakeContext = null;
+    if (context) openLiquidStaking(context.card);
+  });
+  document.getElementById("sol-stake-close").addEventListener("click", () => {
+    solStakeModal.classList.add("hidden");
+    solStakeContext = null;
+  });
+}
 
 // Rendements annoncés (Rust, `staking_aprs`), lus une fois par session.
 let stakingAprs = null;

@@ -192,7 +192,7 @@ impl SolRpc {
         }
     }
 
-    fn call(&self, method: &str, params: Value) -> Result<Value> {
+    pub(crate) fn call(&self, method: &str, params: Value) -> Result<Value> {
         let body = json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -423,6 +423,7 @@ impl SolRpc {
                 SolTx {
                     net_lamports: details.as_deref().and_then(|tx| amount(tx, account)),
                     swap: details.as_deref().is_some_and(is_swap_transaction),
+                    stake: details.as_deref().is_some_and(is_stake_transaction),
                     signature,
                     block_time,
                     confirmed: matches!(confirmation_status, "confirmed" | "finalized"),
@@ -645,6 +646,14 @@ const JUPITER_PROGRAM: &str = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4";
 /// message, un programme ne pouvant venir d'une table d'adresses), ou memo de
 /// swap THORChain dans le journal du programme Memo
 /// (`Program log: Memo (len N): "…"`).
+/// Opération de staking natif (programme Stake parmi les comptes) : mise,
+/// arrêt ou retrait, voir `sol_stake`.
+fn is_stake_transaction(tx: &Value) -> bool {
+    tx.pointer("/transaction/message/accountKeys")
+        .and_then(Value::as_array)
+        .is_some_and(|keys| keys.iter().any(|k| k.as_str() == Some(crate::sol_stake::STAKE_PROGRAM)))
+}
+
 fn is_swap_transaction(tx: &Value) -> bool {
     let jupiter = tx
         .pointer("/transaction/message/accountKeys")
@@ -702,7 +711,7 @@ pub struct AccountState {
 }
 
 impl AccountState {
-    fn from_rpc_value(value: &Value) -> Result<Option<Self>> {
+    pub(crate) fn from_rpc_value(value: &Value) -> Result<Option<Self>> {
         if value.is_null() {
             return Ok(None);
         }
@@ -738,6 +747,8 @@ pub struct SolTx {
     pub net_lamports: Option<i128>,
     /// Swap Jupiter ou THORChain (voir `is_swap_transaction`).
     pub swap: bool,
+    /// Staking natif (voir `is_stake_transaction`).
+    pub stake: bool,
 }
 
 #[cfg(test)]

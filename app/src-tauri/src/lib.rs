@@ -173,6 +173,24 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("clé de mise en jeu d'un autre compte — refusé", "stake key of another account — refused"),
     ("les frais Cardano ont changé depuis la confirmation — relancez l'opération", "Cardano fees changed since the confirmation — start the operation again"),
     ("l'état de votre délégation Cardano a changé depuis la confirmation — relancez l'opération", "your Cardano delegation changed since the confirmation — start the operation again"),
+    ("l'état de votre staking Solana a changé depuis la confirmation — relancez l'opération", "your Solana staking changed since the confirmation — start the operation again"),
+    ("ce validateur n'est plus proposé (retard de votes, commission relevée ou mise trop grosse) — choisissez-en un autre", "this validator is no longer offered (behind on votes, raised commission or too much stake) — choose another one"),
+    ("trop de comptes de mise : retirez d'abord ceux qui sont arrêtés", "too many stake accounts: withdraw the stopped ones first"),
+    ("compte de mise introuvable", "stake account not found"),
+    ("ce compte n'est pas un compte de mise", "this account is not a stake account"),
+    ("compte de mise illisible", "unreadable stake account"),
+    ("ce compte de mise n'est pas sous votre contrôle", "this stake account is not under your control"),
+    ("ce compte n'est pas en cours de staking", "this account is not staking"),
+    ("arrêtez d'abord le staking de ce compte (désactivation), puis retirez-le à l'époque suivante", "stop staking this account first (deactivation), then withdraw it in the next epoch"),
+    ("ce compte de mise est verrouillé par son créateur : retrait impossible pour l'instant", "this stake account is locked by its creator: withdrawal is not possible yet"),
+    ("retrait pas encore possible : la désactivation n'est pas terminée — réessayez à l'époque suivante", "withdrawal not possible yet: deactivation is not finished — try again in the next epoch"),
+    ("la simulation ne donne pas le résultat annoncé — opération refusée par sécurité", "the simulation does not give the announced result — operation refused for safety"),
+    ("aucun validateur Solana ne remplit les critères en ce moment — réessayez plus tard", "no Solana validator meets the criteria right now — try again later"),
+    ("montant à staker absent", "no amount to stake"),
+    ("il faut au moins 0.000005 SOL sur votre adresse pour les frais", "you need at least 0.000005 SOL on your address for the fee"),
+    ("graine du compte de mise absente", "stake account seed missing"),
+    ("adresse du compte de mise incohérente", "inconsistent stake account address"),
+    ("validateur absent", "no validator"),
     // CoW Protocol (core/src/cow.rs, core/src/api.rs)
     ("échange via CoW pas encore activé", "swaps via CoW are not enabled yet"),
     // Zcash (core/src/zcash.rs, core/src/api.rs)
@@ -795,6 +813,28 @@ fn translate_dynamic_error(msg: &str) -> Option<String> {
     }
     if let Some(label) = msg.strip_prefix("le compte « ").and_then(|rest| rest.strip_suffix(" » n'est pas sur ce réseau")) {
         return Some(format!("the account \"{label}\" is not on this network"));
+    }
+    if let Some(rest) = msg.strip_prefix("pas assez de SOL pour staker : il faut au moins ").and_then(|rest| rest.strip_suffix(" SOL, réserve du compte de mise et frais)")) {
+        if let Some((total, min)) = rest.split_once(" SOL sur votre adresse (mise minimale ") {
+            return Some(format!("not enough SOL to stake: you need at least {total} SOL on your address (minimum stake {min} SOL, stake account reserve and fee)"));
+        }
+    }
+    if let Some(rest) = msg.strip_prefix("mise minimale sur Solana : ") {
+        return Some(format!("minimum stake on Solana: {rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("retrait possible à la fin de l'époque en cours (dans ").and_then(|rest| rest.strip_suffix(" environ)")) {
+        return Some(format!("withdrawal possible at the end of the current epoch (in about {rest})"));
+    }
+    if let Some(rest) = msg.strip_prefix("le réseau Solana refuserait cette opération : ") {
+        return Some(format!("the Solana network would refuse this operation: {rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("SOL insuffisant : ") {
+        let numbers: Vec<&str> = rest.split(' ').filter(|w| w.starts_with(|c: char| c.is_ascii_digit())).collect();
+        if let [available, needed, reserve, kept] = numbers[..] {
+            return Some(format!(
+                "insufficient SOL: {available} SOL available, {needed} needed (stake, stake account reserve {reserve} SOL returned on withdrawal, fee, and {kept} SOL kept for stopping)"
+            ));
+        }
     }
     if let Some(rest) = msg.strip_prefix("ZEC insuffisants : ") {
         return Some(format!("insufficient ZEC: {rest}"));
@@ -2489,6 +2529,7 @@ fn kind_str(kind: &history::TxKind) -> &'static str {
         TxKind::Received => "received",
         TxKind::Sent => "sent",
         TxKind::Swap => "swap",
+        TxKind::Stake => "stake",
         TxKind::Other => "other",
     }
 }
@@ -4661,6 +4702,242 @@ async fn cardano_stake(app: tauri::AppHandle, password: String, action: String, 
         };
         grace_period(&app, "Opération annulée pendant le délai d'annulation.", GraceRecap::new(what, amount, from.clone()).on("ada_mainnet"))?;
         api::send_ada_stake(&dir, &password, action, pool.as_deref(), &plan, profile_index).t_err()
+    })
+    .await
+}
+
+/// Staking natif Solana du profil : comptes de mise, époque, minimum.
+#[derive(Serialize)]
+struct SolStakeAccountDto {
+    address: String,
+    status: pgp_wallet_poc::sol_stake::StakeStatus,
+    amount: String,
+    lamports: u64,
+    validator: Option<String>,
+    validator_name: Option<String>,
+    validator_flagged: bool,
+    can_deactivate: bool,
+    locked: bool,
+}
+
+#[derive(Serialize)]
+struct SolStakeStatusDto {
+    accounts: Vec<SolStakeAccountDto>,
+    /// Total de SOL sur les comptes de mise (réserves comprises).
+    total: String,
+    total_lamports: u64,
+    epoch_ends_in: String,
+    min_delegation: String,
+    rent_reserve: String,
+}
+
+#[tauri::command]
+async fn sol_stake_status(app: tauri::AppHandle, profile_index: u32) -> Result<SolStakeStatusDto, String> {
+    use pgp_wallet_poc::sol_rpc::format_lamports;
+    run_blocking(move || {
+        let owner = own_address_on(&app, "sol_mainnet", profile_index)?;
+        let view = api::sol_stake_overview(&owner).t_err()?;
+        let total_lamports = view.accounts.iter().map(|a| a.lamports).sum();
+        Ok(SolStakeStatusDto {
+            accounts: view
+                .accounts
+                .into_iter()
+                .map(|a| SolStakeAccountDto {
+                    amount: format_lamports(a.lamports),
+                    address: a.address,
+                    status: a.status,
+                    lamports: a.lamports,
+                    validator: a.validator,
+                    validator_name: a.validator_name,
+                    validator_flagged: a.validator_flagged,
+                    can_deactivate: a.can_deactivate,
+                    locked: a.locked,
+                })
+                .collect(),
+            total: format_lamports(total_lamports),
+            total_lamports,
+            epoch_ends_in: pgp_wallet_poc::sol_stake::duration_text(view.epoch.ends_in_secs),
+            min_delegation: format_lamports(view.min_delegation),
+            rent_reserve: format_lamports(view.rent_reserve),
+        })
+    })
+    .await
+}
+
+/// Validateurs Solana proposés (voir `sol_stake::validators`).
+#[tauri::command]
+async fn sol_validators() -> Result<Vec<pgp_wallet_poc::sol_stake::Validator>, String> {
+    run_blocking(|| api::sol_validators().t_err()).await
+}
+
+/// « Max » de la fenêtre de staking natif.
+#[tauri::command]
+async fn sol_stake_max(app: tauri::AppHandle, profile_index: u32) -> Result<String, String> {
+    run_blocking(move || {
+        let owner = own_address_on(&app, "sol_mainnet", profile_index)?;
+        api::sol_stake_max(&owner).t_err()
+    })
+    .await
+}
+
+/// Boîte native d'une opération de staking natif Solana.
+fn confirm_sol_stake_native(app: &tauri::AppHandle, from_label: &str, plan: &pgp_wallet_poc::sol_stake::Plan, validator_name: Option<&str>, epoch_ends_in: &str) -> bool {
+    use pgp_wallet_poc::sol_rpc::format_lamports;
+    use pgp_wallet_poc::sol_stake::Action;
+    let from_label = dialog_label(from_label);
+    let fee = format_lamports(plan.fee);
+    let amount = format_lamports(plan.lamports);
+    let rent = format_lamports(plan.rent_reserve);
+    let short = |text: &str| format!("{}…{}", &text[..text.len().min(6)], &text[text.len().saturating_sub(6)..]);
+    let validator = plan.validator.as_deref().map(|vote| match validator_name {
+        Some(name) => format!("{} ({})", dialog_label(name), short(vote)),
+        None => short(vote),
+    });
+    let stake_account = short(&plan.stake_account);
+    let english = UI_LANG_IS_ENGLISH.load(Ordering::Relaxed);
+    let (title, body) = match (plan.action, english) {
+        (Action::Delegate, false) => (
+            "Staker vos SOL",
+            format!(
+                "Staking natif Solana
+
+Depuis le profil : {from_label}
+Montant : {amount} SOL
+Validateur : {}
+Commission du validateur : {} %
+Réserve du compte de mise : {rent} SOL (rendue au retrait)
+Frais du réseau : {fee} SOL
+
+Vos SOL restent à vous, sur un compte de mise dont vous êtes la seule autorité. Récompenses à chaque époque (environ 2 jours), dès la prochaine.
+Pour les récupérer : arrêt du staking, puis retrait à l'époque suivante.
+
+Confirmer ?",
+                validator.unwrap_or_default(),
+                plan.commission.unwrap_or(0)
+            ),
+        ),
+        (Action::Delegate, true) => (
+            "Stake your SOL",
+            format!(
+                "Solana native staking
+
+From profile: {from_label}
+Amount: {amount} SOL
+Validator: {}
+Validator commission: {}%
+Stake account reserve: {rent} SOL (returned on withdrawal)
+Network fee: {fee} SOL
+
+Your SOL stays yours, in a stake account you alone control. Rewards every epoch (about 2 days), starting with the next one.
+To get it back: stop staking, then withdraw in the following epoch.
+
+Confirm?",
+                validator.unwrap_or_default(),
+                plan.commission.unwrap_or(0)
+            ),
+        ),
+        (Action::Deactivate, false) => (
+            "Arrêter le staking",
+            format!(
+                "Arrêt du staking natif Solana
+
+Depuis le profil : {from_label}
+Compte de mise : {stake_account} — {amount} SOL
+Validateur : {}
+Frais du réseau : {fee} SOL
+
+Les récompenses s'arrêtent à la fin de l'époque en cours. Retrait possible ensuite, dans {epoch_ends_in} environ.
+
+Confirmer ?",
+                validator.unwrap_or_default()
+            ),
+        ),
+        (Action::Deactivate, true) => (
+            "Stop staking",
+            format!(
+                "Stopping Solana native staking
+
+From profile: {from_label}
+Stake account: {stake_account} — {amount} SOL
+Validator: {}
+Network fee: {fee} SOL
+
+Rewards stop at the end of the current epoch. Withdrawal is possible after that, in about {epoch_ends_in}.
+
+Confirm?",
+                validator.unwrap_or_default()
+            ),
+        ),
+        (Action::Withdraw, false) => (
+            "Retirer vos SOL",
+            format!(
+                "Retrait d'un compte de mise Solana
+
+Depuis le profil : {from_label}
+Compte de mise : {stake_account}
+Montant : {amount} SOL (réserve comprise), vers votre adresse Solana
+Frais du réseau : {fee} SOL
+
+Le compte de mise est ensuite fermé.
+
+Confirmer ?"
+            ),
+        ),
+        (Action::Withdraw, true) => (
+            "Withdraw your SOL",
+            format!(
+                "Withdrawal from a Solana stake account
+
+From profile: {from_label}
+Stake account: {stake_account}
+Amount: {amount} SOL (reserve included), to your Solana address
+Network fee: {fee} SOL
+
+The stake account is then closed.
+
+Confirm?"
+            ),
+        ),
+    };
+    app.dialog().message(body).title(title).kind(MessageDialogKind::Warning).buttons(MessageDialogButtons::OkCancel).blocking_show()
+}
+
+/// Opération de staking natif Solana : préparée et simulée, confirmée (boîte
+/// native), délai d'annulation, puis signée et diffusée.
+#[tauri::command]
+async fn sol_stake(app: tauri::AppHandle, password: String, action: String, amount: Option<String>, target: String, profile_index: u32) -> Result<String, String> {
+    use pgp_wallet_poc::sol_stake::Action;
+    run_blocking(move || {
+        let password = Zeroizing::new(password);
+        let dir = data_dir(&app)?;
+        let action = match action.as_str() {
+            "delegate" => Action::Delegate,
+            "deactivate" => Action::Deactivate,
+            "withdraw" => Action::Withdraw,
+            other => return Err(translate_error(&format!("opération inconnue : {other}"))),
+        };
+        let amount = if action == Action::Delegate { amount } else { None };
+        let owner = own_address_on(&app, "sol_mainnet", profile_index)?;
+        let plan = api::sol_stake_plan(&owner, action, amount.as_deref(), &target).t_err()?;
+        // Nom du validateur et fin d'époque : affichage seulement.
+        let view = api::sol_stake_overview(&owner).ok();
+        let validator_name = match action {
+            Action::Delegate => api::sol_validators().ok().and_then(|list| list.into_iter().find(|v| Some(&v.vote) == plan.validator.as_ref()).and_then(|v| v.name)),
+            _ => view.as_ref().and_then(|v| v.accounts.iter().find(|a| a.address == plan.stake_account).and_then(|a| a.validator_name.clone())),
+        };
+        let epoch_ends_in = view.map(|v| pgp_wallet_poc::sol_stake::duration_text(v.epoch.ends_in_secs)).unwrap_or_else(|| "2 j".into());
+        let from_label = api::list_profiles(&dir).into_iter().find(|p| p.index == profile_index).map(|p| p.label).unwrap_or_else(|| format!("profil #{profile_index}"));
+        if !confirm_sol_stake_native(&app, &from_label, &plan, validator_name.as_deref(), &epoch_ends_in) {
+            return Err(translate_error("Opération annulée (confirmation refusée)."));
+        }
+        let what = match action {
+            Action::Delegate => lang("Staking Solana", "Solana staking"),
+            Action::Deactivate => lang("Arrêt du staking", "Stop staking"),
+            Action::Withdraw => lang("Retrait du staking", "Staking withdrawal"),
+        };
+        let amount_text = format!("{} SOL", pgp_wallet_poc::sol_rpc::format_lamports(plan.lamports));
+        grace_period(&app, "Opération annulée pendant le délai d'annulation.", GraceRecap::new(what, amount_text, plan.stake_account.clone()).on("sol_mainnet"))?;
+        api::send_sol_stake(&dir, &password, action, amount.as_deref(), &target, &plan, profile_index).t_err()
     })
     .await
 }
@@ -7361,6 +7638,10 @@ pub fn run() {
             swap_max_amount,
             staking_aprs,
             cardano_stake_status,
+            sol_stake_status,
+            sol_validators,
+            sol_stake_max,
+            sol_stake,
             cardano_pools,
             cardano_stake,
             get_jupiter_quote,

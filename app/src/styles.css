@@ -751,8 +751,110 @@ button.link:hover {
   font-variant-numeric: tabular-nums;
 }
 
-#ada-stake-modal > .modal {
+#ada-stake-modal > .modal,
+#sol-stake-modal > .modal {
   max-width: 620px;
+}
+
+/* Fenêtre « Staker vos SOL » : choix du staking liquide (ouvre « Convertir »),
+   puis staking natif (comptes de mise, validateur, montant). */
+.stake-option {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  margin: 12px 0 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.stake-option:hover {
+  border-color: var(--accent);
+}
+
+.stake-option-title {
+  font-weight: 600;
+}
+
+.stake-option-title::after {
+  content: " →";
+  color: var(--accent-text);
+}
+
+.stake-option-text {
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.stake-section-title {
+  margin: 18px 0 0;
+  font-size: 1rem;
+}
+
+.sol-stake-accounts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 10px 0 4px;
+  padding: 0;
+  list-style: none;
+}
+
+.sol-stake-accounts:empty {
+  display: none;
+}
+
+.sol-stake-account {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.sol-stake-account > button {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+
+.sol-stake-account-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  min-width: 0;
+}
+
+.sol-stake-amount {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.sol-stake-state {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.sol-stake-state.active {
+  color: var(--success);
+}
+
+.sol-stake-state.inactive {
+  color: var(--accent-text);
+}
+
+.sol-stake-flag {
+  grid-column: 1;
+  color: var(--warning);
+  font-size: 0.85rem;
 }
 
 /* Note du staking liquide dans « Convertir » : information, teinte d'accent. */
@@ -2571,6 +2673,10 @@ h2 .coin-icon-inline,
 
 .history-kind-swap {
   color: var(--warning);
+}
+
+.history-kind-stake {
+  color: var(--accent-text);
 }
 
 .history-kind-other {

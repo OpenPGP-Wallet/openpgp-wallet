@@ -26,6 +26,9 @@ pub enum TxKind {
     /// Échange (Jupiter, THORChain…), dans un sens ou dans l'autre : le signe
     /// du montant dit si l'actif est parti ou arrivé.
     Swap,
+    /// Staking natif Solana (mise, arrêt, retrait) : le signe du montant dit
+    /// si les SOL sont partis vers un compte de mise ou en sont revenus.
+    Stake,
     /// Aucun montant de l'actif du réseau déplacé (autorisation ou virement de
     /// jeton, appel de contrat, opération payée par un tiers…), ou montant
     /// inconnu — ni envoi ni réception de cet actif.
@@ -120,7 +123,7 @@ pub fn btc_history_after(network: &wallet_flow::BtcNetwork, address: &str, after
 fn sol_entries(txs: Vec<SolTx>) -> Vec<TxEntry> {
     txs.into_iter()
         .map(|tx| TxEntry {
-            kind: classify(tx.net_lamports, tx.swap),
+            kind: if tx.stake && !tx.swap { TxKind::Stake } else { classify(tx.net_lamports, tx.swap) },
             id: tx.signature,
             timestamp_unix: tx.block_time,
             status: if tx.failed {

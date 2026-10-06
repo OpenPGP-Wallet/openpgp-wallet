@@ -264,7 +264,12 @@ fn fetch_balance(spec: &Spec, address: &str) -> Result<i128> {
         // réceptions non confirmées (annulables par leur émetteur, voir
         // `api::BtcBalanceView`) — retirées aussi de l'historique (`fetch_page`).
         Source::Btc => api::get_btc_balance_view(address, &wallet_flow::BTC_MAINNET)?.settled_sat.into(),
-        Source::Sol => api::get_sol_balance(address, solana)?.into(),
+        // SOL stakés compris (staking natif) : ils restent à l'utilisateur.
+        // Lecture impossible : solde seul, plutôt qu'aucune courbe.
+        Source::Sol => {
+            let staked = crate::sol_stake::staked_lamports(&crate::sol_rpc::SolRpc::new(solana.rpc), address).unwrap_or(0);
+            i128::from(api::get_sol_balance(address, solana)?) + i128::from(staked)
+        }
         Source::Zec => api::get_zec_balance(address)?.into(),
         Source::Xmr => crate::monero::balance_of_address(address)?.into(),
         Source::ZecShielded => crate::zcash_shielded::balance_of_address(address)?.into(),
@@ -315,10 +320,16 @@ fn fetch_page(spec: &Spec, address: &str, cursor: Option<&Cursor>) -> Result<Pag
                 _ => None,
             };
             let size = if before.is_some() { SOL_PAGE } else { SOL_FIRST_PAGE };
-            let entries = match spec.source {
+            let mut entries = match spec.source {
                 Source::Spl(mint) => history::spl_history_before(solana.rpc, &api::spl_token_account(address, &mint)?, size, before)?,
                 _ => history::sol_history_before(solana.rpc, address, size, before)?,
             };
+            // Staking natif : les SOL passent d'un compte à l'autre de
+            // l'utilisateur, tous deux comptés (`fetch_balance`) — seuls les
+            // frais (0,000005 SOL) changent le total, négligés.
+            for entry in entries.iter_mut().filter(|e| e.kind == history::TxKind::Stake) {
+                entry.net_amount_minor = Some(0);
+            }
             let next = if entries.len() >= size as usize { entries.last().map(|e| Cursor::Sol(e.id.clone())) } else { None };
             Ok(Page { entries, next })
         }
