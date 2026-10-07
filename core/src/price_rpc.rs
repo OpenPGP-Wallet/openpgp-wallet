@@ -161,6 +161,7 @@ pub const MARKET_IDS: &[&str] = &[
     "global-dollar",
     "tether-gold",
     "ondo-finance",
+    "quant-network",
     "fetch-ai",
     "euro-coin",
     "gnosis",

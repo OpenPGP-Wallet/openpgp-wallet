@@ -108,6 +108,8 @@ pub const TOKENS: &[Token] = &[
     },
     Token { id: "xaut", symbol: "XAUt", name: "Tether Gold", deployments: &[erc20("evm_mainnet", "0x68749665ff8d2d112fa859aa293f07a622782f38", 6)] },
     Token { id: "ondo", symbol: "ONDO", name: "Ondo", deployments: &[erc20("evm_mainnet", "0xfaba6f8e4a5e8ab82f62fe7c39859fa577269be3", 18)] },
+    // Quant : contrat, symbole et 18 décimales relus sur Ethereum (07/10/2026).
+    Token { id: "qnt", symbol: "QNT", name: "Quant", deployments: &[erc20("evm_mainnet", "0x4a220e6096b25eadb88358cb44068a3248254675", 18)] },
     Token { id: "fet", symbol: "FET", name: "Artificial Superintelligence Alliance", deployments: &[erc20("evm_mainnet", "0xaea46a60368a7bd060eec7df8cba43b7ef41ad85", 18)] },
     Token {
         id: "eurc",

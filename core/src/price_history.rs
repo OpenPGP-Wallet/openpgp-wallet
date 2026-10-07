@@ -76,6 +76,7 @@ pub fn price_asset(symbol: &str) -> Option<Asset> {
         "UNI" => Asset::Pair("UNIUSDT"),
         "XAUT" => Asset::Pair("XAUTUSDT"),
         "ONDO" => Asset::Pair("ONDOUSDT"),
+        "QNT" => Asset::Pair("QNTUSDT"),
         "FET" => Asset::Pair("FETUSDT"),
         "GNO" => Asset::Pair("GNOUSDT"),
         "ARB" => Asset::Pair("ARBUSDT"),

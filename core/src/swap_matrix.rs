@@ -97,6 +97,7 @@ fn gecko(coin: &str) -> &'static str {
         "usdg" => "global-dollar",
         "xaut" => "tether-gold",
         "ondo" => "ondo-finance",
+        "qnt" => "quant-network",
         "fet" => "fetch-ai",
         "eurc" => "euro-coin",
         "gno" => "gnosis",
