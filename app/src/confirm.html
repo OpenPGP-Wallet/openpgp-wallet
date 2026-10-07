@@ -1,0 +1,34 @@
+<!doctype html>
+<!-- Fenêtre de confirmation ouverte par Rust pour les actions sensibles qui ne
+     sont pas des transactions (voir lib.rs, secure_confirm, et confirm.js).
+     Contenu fourni par Rust, affiché en texte seul. -->
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OpenPGP Wallet</title>
+    <script type="module" src="/confirm.js" defer></script>
+  </head>
+
+  <body class="secure-confirm-body">
+    <main id="secure-confirm" class="secure-confirm hidden" role="alertdialog" aria-labelledby="confirm-title" aria-describedby="confirm-body">
+      <div class="secure-confirm-head">
+        <span id="confirm-icon" class="secure-confirm-icon" aria-hidden="true"></span>
+        <h1 id="confirm-title" class="secure-confirm-title"></h1>
+      </div>
+      <div id="confirm-body" class="secure-confirm-text"></div>
+      <div id="confirm-phrase-block" class="secure-confirm-phrase hidden">
+        <label id="confirm-phrase-prompt" for="confirm-phrase-input"></label>
+        <p id="confirm-phrase" class="secure-confirm-phrase-text"></p>
+        <input id="confirm-phrase-input" type="text" autocomplete="off" spellcheck="false" />
+      </div>
+      <p id="confirm-error" class="error hidden"></p>
+      <div class="secure-confirm-actions">
+        <button type="button" id="confirm-cancel" class="secondary"></button>
+        <button type="button" id="confirm-ok" class="primary" disabled></button>
+      </div>
+      <p id="confirm-note" class="secure-confirm-note"></p>
+    </main>
+  </body>
+</html>

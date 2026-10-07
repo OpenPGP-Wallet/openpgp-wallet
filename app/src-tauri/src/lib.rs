@@ -640,6 +640,10 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
         "link refused: only the app's known block explorers are allowed",
     ),
     ("Régénération annulée (confirmation refusée).", "Regeneration cancelled (confirmation refused)."),
+    ("fenêtre de confirmation inconnue", "unknown confirmation window"),
+    ("confirmation trop rapide : relisez, puis confirmez", "confirmed too quickly: read it, then confirm"),
+    ("phrase de confirmation incorrecte", "the confirmation phrase does not match"),
+    ("opération interrompue", "operation interrupted"),
     ("Restauration annulée (confirmation refusée).", "Restoration cancelled (confirmation refused)."),
     ("Virement annulé (confirmation refusée).", "Transfer cancelled (confirmation refused)."),
     ("Ajout annulé (clé différente refusée).", "Addition cancelled (different key refused)."),
@@ -1612,6 +1616,238 @@ fn wallet_exists(app: tauri::AppHandle) -> Result<bool, String> {
     Ok(api::device_vault_exists(&dir))
 }
 
+// --- Fenêtre de confirmation sécurisée -------------------------------------------
+// Actions sensibles qui ne sont pas des transactions (réinitialisation, kit de
+// sauvegarde, restauration, Windows Hello, kit entier sur une clé) : fenêtre au
+// design de l'app, ouverte ICI. La page principale ne peut ni la créer (aucune
+// permission de fenêtre : capabilities/default.json n'accorde que core:default),
+// ni l'atteindre (autre webview), ni répondre à sa place : la réponse n'est
+// acceptée que de CETTE fenêtre, reconnue par son étiquette, que Tauri tire de
+// la webview qui appelle — jamais du message. Même garantie que la boîte de
+// l'OS qu'elle remplace (07/10/2026, à la demande de l'utilisateur : plus
+// lisible), et en plus : « Annuler » par défaut, confirmation refusée pendant
+// la première seconde (une touche Entrée tapée dans l'app à son apparition ne
+// la valide pas), phrase à recopier pour la réinitialisation. Les transactions
+// (adresse, montant) gardent la boîte de l'OS.
+
+/// Délai avant qu'une confirmation soit acceptée (anti-« Entrée » involontaire).
+const SECURE_CONFIRM_DELAY: std::time::Duration = std::time::Duration::from_millis(900);
+
+/// Contenu d'une fenêtre de confirmation (textes construits ici, dans la
+/// langue de l'interface ; affichés par `textContent`, jamais comme HTML).
+#[derive(Clone, Serialize)]
+struct SecureConfirmDetails {
+    lang: &'static str,
+    /// Pictogramme : « trash », « key », « swap », « usb », « fingerprint ».
+    icon: &'static str,
+    title: String,
+    paragraphs: Vec<String>,
+    note: String,
+    confirm_label: String,
+    cancel_label: String,
+    /// Bouton rouge : action destructrice.
+    danger: bool,
+    /// Phrase à recopier pour confirmer, et sa consigne.
+    phrase: Option<String>,
+    phrase_prompt: Option<String>,
+}
+
+impl SecureConfirmDetails {
+    fn new(icon: &'static str, title: (&str, &str), paragraphs: Vec<String>, confirm_label: (&str, &str)) -> Self {
+        Self {
+            lang: lang("fr", "en"),
+            icon,
+            title: lang(title.0, title.1).to_string(),
+            paragraphs,
+            note: lang("Vous n'avez pas demandé ça ? Cliquez sur Annuler.", "Didn't ask for this? Click Cancel.").to_string(),
+            confirm_label: lang(confirm_label.0, confirm_label.1).to_string(),
+            cancel_label: lang("Annuler", "Cancel").to_string(),
+            danger: false,
+            phrase: None,
+            phrase_prompt: None,
+        }
+    }
+}
+
+/// Paragraphe dans la langue de l'interface.
+fn text(fr: &str, en: &str) -> String {
+    lang(fr, en).to_string()
+}
+
+struct PendingConfirm {
+    details: SecureConfirmDetails,
+    /// Contenu affiché (fenêtre montrée) : point de départ du délai.
+    shown_at: Option<std::time::Instant>,
+    answer: std::sync::mpsc::Sender<bool>,
+}
+
+/// Fenêtres de confirmation ouvertes, par étiquette.
+#[derive(Default)]
+struct SecureConfirmState(std::sync::Mutex<std::collections::HashMap<String, PendingConfirm>>);
+
+static NEXT_CONFIRM: AtomicU64 = AtomicU64::new(1);
+static OPEN_CONFIRMS: AtomicU64 = AtomicU64::new(0);
+
+/// Fenêtre principale inactive tant qu'une confirmation est ouverte (comme
+/// sous une boîte de l'OS), réactivée et remise au premier plan ensuite.
+struct MainWindowDisabled(Option<tauri::WebviewWindow>);
+
+impl MainWindowDisabled {
+    fn new(app: &tauri::AppHandle) -> Self {
+        let main = app.get_webview_window("main");
+        if OPEN_CONFIRMS.fetch_add(1, Ordering::SeqCst) == 0 {
+            if let Some(main) = &main {
+                let _ = main.set_enabled(false);
+            }
+        }
+        Self(main)
+    }
+}
+
+impl Drop for MainWindowDisabled {
+    fn drop(&mut self) {
+        if OPEN_CONFIRMS.fetch_sub(1, Ordering::SeqCst) == 1 {
+            if let Some(main) = &self.0 {
+                let _ = main.set_enabled(true);
+                let _ = main.set_focus();
+            }
+        }
+    }
+}
+
+fn finish_confirm(app: &tauri::AppHandle, label: &str, accepted: bool) {
+    if let Some(pending) = app.state::<SecureConfirmState>().0.lock().unwrap_or_else(|p| p.into_inner()).remove(label) {
+        let _ = pending.answer.send(accepted);
+    }
+}
+
+/// Ouvre la fenêtre et attend la réponse : `true` seulement si l'utilisateur a
+/// confirmé DANS cette fenêtre. Toujours appelée hors du fil principal (une
+/// commande synchrone s'y bloquerait : la fenêtre a besoin de ce fil).
+/// Fermée par sa croix, ou impossible à ouvrir : refus.
+fn secure_confirm(app: &tauri::AppHandle, details: SecureConfirmDetails) -> bool {
+    let label = format!("confirm-{}", NEXT_CONFIRM.fetch_add(1, Ordering::SeqCst));
+    let title = details.title.clone();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    app.state::<SecureConfirmState>().0.lock().unwrap_or_else(|p| p.into_inner()).insert(label.clone(), PendingConfirm { details, shown_at: None, answer: sender });
+    let main = app.get_webview_window("main");
+    let mut builder = tauri::WebviewWindowBuilder::new(app, &label, tauri::WebviewUrl::App("confirm.html".into()))
+        .title(&title)
+        .inner_size(460.0, 380.0)
+        .resizable(false)
+        .minimizable(false)
+        .maximizable(false)
+        .skip_taskbar(true)
+        .visible(false)
+        .center();
+    if let Some(main) = &main {
+        builder = match builder.parent(main) {
+            Ok(builder) => builder,
+            Err(e) => {
+                eprintln!("fenêtre de confirmation : {e}");
+                finish_confirm(app, &label, false);
+                return false;
+            }
+        };
+    }
+    let window = match builder.build() {
+        Ok(window) => window,
+        Err(e) => {
+            eprintln!("fenêtre de confirmation : {e}");
+            finish_confirm(app, &label, false);
+            return false;
+        }
+    };
+    let disabled = MainWindowDisabled::new(app);
+    {
+        let app = app.clone();
+        let label = label.clone();
+        window.on_window_event(move |event| {
+            if matches!(event, tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed) {
+                finish_confirm(&app, &label, false);
+            }
+        });
+    }
+    // Page jamais prête (erreur de chargement) : montrée quand même, pour
+    // pouvoir la fermer.
+    {
+        let window = window.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(4));
+            if window.is_visible().ok() == Some(false) {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        });
+    }
+    let accepted = receiver.recv().unwrap_or(false);
+    // Fenêtre principale réactivée AVANT la fermeture : sinon Windows donne
+    // le premier plan à une autre application.
+    drop(disabled);
+    let _ = window.destroy();
+    accepted
+}
+
+/// Comparaison de la phrase recopiée : casse et espaces multiples ignorés.
+fn normalize_phrase(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ").to_uppercase()
+}
+
+/// Contenu de la fenêtre de confirmation QUI APPELLE (et d'aucune autre).
+#[tauri::command]
+fn secure_confirm_details(webview: tauri::Webview, state: tauri::State<SecureConfirmState>) -> Result<SecureConfirmDetails, String> {
+    state.0.lock().unwrap_or_else(|p| p.into_inner()).get(webview.label()).map(|p| p.details.clone()).ok_or_else(|| translate_error("fenêtre de confirmation inconnue"))
+}
+
+/// Contenu affiché : fenêtre ajustée à sa hauteur, assortie au thème, montrée.
+#[tauri::command]
+fn secure_confirm_ready(webview: tauri::Webview, theme: String, height: f64, state: tauri::State<SecureConfirmState>, app: tauri::AppHandle) -> Result<(), String> {
+    let label = webview.label().to_string();
+    let window = app.get_webview_window(&label).ok_or_else(|| translate_error("fenêtre de confirmation inconnue"))?;
+    let height = if height.is_finite() { height.clamp(200.0, 760.0) } else { 380.0 };
+    apply_window_frame(&window, &theme);
+    let _ = window.set_size(tauri::LogicalSize::new(460.0, height));
+    let _ = window.center();
+    let _ = window.show();
+    let _ = window.set_focus();
+    let mut pending = state.0.lock().unwrap_or_else(|p| p.into_inner());
+    pending.get_mut(&label).ok_or_else(|| translate_error("fenêtre de confirmation inconnue"))?.shown_at = Some(std::time::Instant::now());
+    Ok(())
+}
+
+/// Réponse de la fenêtre de confirmation QUI APPELLE : confirmation acceptée
+/// seulement après le délai, et avec la phrase exacte si elle est demandée.
+#[tauri::command]
+fn secure_confirm_answer(webview: tauri::Webview, accepted: bool, typed: Option<String>, state: tauri::State<SecureConfirmState>) -> Result<(), String> {
+    let mut pending = state.0.lock().unwrap_or_else(|p| p.into_inner());
+    let entry = pending.get(webview.label()).ok_or_else(|| translate_error("fenêtre de confirmation inconnue"))?;
+    if accepted {
+        if !entry.shown_at.is_some_and(|shown| shown.elapsed() >= SECURE_CONFIRM_DELAY) {
+            return Err(translate_error("confirmation trop rapide : relisez, puis confirmez"));
+        }
+        if let Some(phrase) = &entry.details.phrase {
+            if normalize_phrase(typed.as_deref().unwrap_or_default()) != normalize_phrase(phrase) {
+                return Err(translate_error("phrase de confirmation incorrecte"));
+            }
+        }
+    }
+    if let Some(entry) = pending.remove(webview.label()) {
+        let _ = entry.answer.send(accepted);
+    }
+    Ok(())
+}
+
+/// Travail à faire sur le fil principal (Windows Hello : comme avant le
+/// passage de sa confirmation à la fenêtre sécurisée), depuis un autre fil.
+fn on_main_thread<T: Send + 'static>(app: &tauri::AppHandle, work: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    app.run_on_main_thread(move || {
+        let _ = sender.send(work());
+    })
+    .map_err(|e| e.to_string())?;
+    receiver.recv().map_err(|_| translate_error("opération interrompue"))?
+}
+
 /// Trouvé lors du 22ᵉ passage : la seule action IRRÉVERSIBLE de l'app sans
 /// confirmation native. Restaurer, régénérer le kit, activer/désactiver
 /// Windows Hello passent tous par une boîte de l'OS (un frontend compromis
@@ -1621,20 +1857,26 @@ fn wallet_exists(app: tauri::AppHandle) -> Result<bool, String> {
 /// sans kit de sauvegarde les fonds étaient perdus pour toujours. Pas de mot
 /// de passe exigé (réinitialiser reste le recours en cas d'oubli), mais une
 /// boîte native, comme pour les autres actions de ce niveau.
-fn confirm_reset_native(app: &tauri::AppHandle) -> bool {
-    app.dialog()
-        .message(lang(
-            "Ceci va SUPPRIMER le portefeuille de cet appareil (coffre et clé de l'appareil). \
-             Il ne pourra être récupéré qu'avec 2 des 3 parts de votre kit de sauvegarde : sans elles, \
-             les fonds seront définitivement perdus. Ne continuez que si vous avez initié cette action vous-même.",
-            "This will DELETE the wallet from this device (vault and device key). It can only be recovered \
-             with 2 of the 3 shares of your backup kit: without them, the funds will be lost forever. Only \
-             continue if you initiated this action yourself.",
-        ))
-        .title(lang("Confirmer la suppression du portefeuille", "Confirm wallet deletion"))
-        .kind(MessageDialogKind::Warning)
-        .buttons(MessageDialogButtons::OkCancel)
-        .blocking_show()
+///
+/// Depuis le 07/10/2026 : fenêtre sécurisée (voir `secure_confirm`), phrase
+/// à recopier.
+fn confirm_reset_window(app: &tauri::AppHandle) -> bool {
+    let mut details = SecureConfirmDetails::new(
+        "trash",
+        ("Supprimer le portefeuille ?", "Delete the wallet?"),
+        vec![
+            text("Il sera effacé de cet ordinateur.", "It will be erased from this computer."),
+            text(
+                "Pour le retrouver, il vous faudra 2 parts de votre kit de sauvegarde. Sans elles, vos fonds seront perdus.",
+                "To get it back, you will need 2 shares of your backup kit. Without them, your funds will be lost.",
+            ),
+        ],
+        ("Supprimer", "Delete"),
+    );
+    details.danger = true;
+    details.phrase = Some(text("CECI VA SUPPRIMER LE WALLET", "THIS WILL DELETE THE WALLET"));
+    details.phrase_prompt = Some(text("Pour confirmer, écrivez :", "To confirm, type:"));
+    secure_confirm(app, details)
 }
 
 /// Supprime le coffre local (voir `api::reset_wallet`) : permet de revenir à
@@ -1649,7 +1891,7 @@ fn confirm_reset_native(app: &tauri::AppHandle) -> bool {
 async fn reset_wallet(app: tauri::AppHandle) -> Result<(), String> {
     run_blocking(move || {
         let dir = data_dir(&app)?;
-        if !confirm_reset_native(&app) {
+        if !confirm_reset_window(&app) {
             return Err(translate_error("Réinitialisation annulée (confirmation refusée)."));
         }
         forget_session(&app);
@@ -1684,22 +1926,25 @@ fn create_wallet(password: String, app: tauri::AppHandle) -> Result<CreateWallet
 /// maîtresse plus tard, sans jamais retoucher au coffre ni déclencher la moindre
 /// transaction détectable. Un script ayant déjà volé le mot de passe (ex: capture
 /// du champ de saisie) pourrait sinon appeler cette commande sans que
-/// l'utilisateur s'en aperçoive jamais. Le dialogue natif de l'OS rend cette
-/// tentative visible et impossible à supprimer silencieusement.
-fn confirm_regenerate_backup_native(app: &tauri::AppHandle) -> bool {
-    app.dialog()
-        .message(lang(
-            "Ceci va générer un nouveau kit de sauvegarde (3 fichiers + 3 mots de passe permettant \
-             à quiconque les possède de reconstruire votre portefeuille, sans jamais avoir besoin de \
-             votre mot de passe d'appareil). Ne continuez que si vous avez initié cette action vous-même.",
-            "This will generate a new backup kit (3 files + 3 passwords letting anyone who has them \
-             rebuild your wallet, without ever needing your device password). Only continue if you \
-             initiated this action yourself.",
-        ))
-        .title(lang("Confirmer la régénération du kit de sauvegarde", "Confirm backup kit regeneration"))
-        .kind(MessageDialogKind::Warning)
-        .buttons(MessageDialogButtons::OkCancel)
-        .blocking_show()
+/// l'utilisateur s'en aperçoive jamais. La fenêtre de confirmation sécurisée
+/// (voir `secure_confirm`) rend cette tentative visible et impossible à
+/// valider sans l'utilisateur.
+fn confirm_regenerate_backup_window(app: &tauri::AppHandle) -> bool {
+    secure_confirm(
+        app,
+        SecureConfirmDetails::new(
+            "key",
+            ("Créer un nouveau kit de sauvegarde ?", "Create a new backup kit?"),
+            vec![
+                text("Vous allez obtenir 3 nouvelles parts, chacune avec son mot de passe.", "You will get 3 new shares, each with its own password."),
+                text(
+                    "2 parts suffisent pour récupérer tout votre portefeuille : rangez-les à des endroits différents.",
+                    "2 shares are enough to recover your whole wallet: keep them in different places.",
+                ),
+            ],
+            ("Créer le kit", "Create the kit"),
+        ),
+    )
 }
 
 /// Régénère un kit de sauvegarde Shamir 2-sur-3 tout neuf (voir
@@ -1708,15 +1953,16 @@ fn confirm_regenerate_backup_native(app: &tauri::AppHandle) -> bool {
 /// sauvegarde d'origine. Redemande le mot de passe : régénérer suppose de
 /// redéchiffrer la seed, jamais mise en cache.
 #[tauri::command]
-fn regenerate_backup_kit(password: String, app: tauri::AppHandle) -> Result<Vec<BackupShareDto>, String> {
-    let password = Zeroizing::new(password);
-    let dir = data_dir(&app)?;
-
-    if !confirm_regenerate_backup_native(&app) {
-        return Err(translate_error("Régénération annulée (confirmation refusée)."));
-    }
-
-    api::regenerate_backup_kit(&dir, &password).map(backup_dtos).t_err()
+async fn regenerate_backup_kit(password: String, app: tauri::AppHandle) -> Result<Vec<BackupShareDto>, String> {
+    run_blocking(move || {
+        let password = Zeroizing::new(password);
+        let dir = data_dir(&app)?;
+        if !confirm_regenerate_backup_window(&app) {
+            return Err(translate_error("Régénération annulée (confirmation refusée)."));
+        }
+        api::regenerate_backup_kit(&dir, &password).map(backup_dtos).t_err()
+    })
+    .await
 }
 
 /// Adresse THORChain (RUNE) dérivée de la même entropie maître (voir
@@ -1875,36 +2121,39 @@ fn biometric_unlock_enrolled(app: tauri::AppHandle) -> Result<bool, String> {
     Ok(api::biometric_unlock_enrolled(&dir))
 }
 
-/// Même raison que `confirm_regenerate_backup_native` : activer un second moyen
+/// Même raison que `confirm_regenerate_backup_window` : activer un second moyen
 /// de déverrouiller le coffre est une action de sécurité, rendue visible et
-/// impossible à déclencher silencieusement par un frontend compromis grâce au
-/// dialogue natif de l'OS.
-fn confirm_enroll_biometric_native(app: &tauri::AppHandle) -> bool {
-    app.dialog()
-        .message(lang(
-            "Ceci va activer un second moyen de déverrouiller ce portefeuille sur CET appareil, via \
-             Windows Hello (empreinte, visage ou code confidentiel), en plus du mot de passe actuel — \
-             celui-ci reste nécessaire pour les actions sensibles (sauvegarde, suppression de profil, \
-             désactivation de cette option). Ne continuez que si vous avez initié cette action vous-même.",
-            "This will enable a second way to unlock this wallet on THIS device, via Windows Hello \
-             (fingerprint, face, or PIN), in addition to your current password — which remains required \
-             for sensitive actions (backup, profile deletion, disabling this option). Only continue if \
-             you initiated this action yourself.",
-        ))
-        .title(lang("Confirmer l'activation de Windows Hello", "Confirm enabling Windows Hello"))
-        .kind(MessageDialogKind::Warning)
-        .buttons(MessageDialogButtons::OkCancel)
-        .blocking_show()
+/// impossible à déclencher silencieusement par un frontend compromis grâce à
+/// la fenêtre de confirmation sécurisée.
+fn confirm_enroll_biometric_window(app: &tauri::AppHandle) -> bool {
+    secure_confirm(
+        app,
+        SecureConfirmDetails::new(
+            "fingerprint",
+            ("Activer Windows Hello ?", "Enable Windows Hello?"),
+            vec![
+                text(
+                    "Vous pourrez ouvrir votre portefeuille avec votre empreinte, votre visage ou votre code PIN.",
+                    "You will be able to open your wallet with your fingerprint, face or PIN.",
+                ),
+                text("Votre mot de passe restera demandé pour les actions importantes.", "Your password will still be asked for important actions."),
+            ],
+            ("Activer", "Enable"),
+        ),
+    )
 }
 
 #[tauri::command]
-fn enroll_biometric_unlock(password: String, app: tauri::AppHandle) -> Result<(), String> {
-    let password = Zeroizing::new(password);
-    let dir = data_dir(&app)?;
-    if !confirm_enroll_biometric_native(&app) {
-        return Err(translate_error("Activation annulée (confirmation refusée)."));
-    }
-    api::enroll_biometric_unlock(&dir, &password).t_err()
+async fn enroll_biometric_unlock(password: String, app: tauri::AppHandle) -> Result<(), String> {
+    run_blocking(move || {
+        let password = Zeroizing::new(password);
+        let dir = data_dir(&app)?;
+        if !confirm_enroll_biometric_window(&app) {
+            return Err(translate_error("Activation annulée (confirmation refusée)."));
+        }
+        on_main_thread(&app, move || api::enroll_biometric_unlock(&dir, &password).t_err())
+    })
+    .await
 }
 
 /// Déverrouille le coffre via Windows Hello plutôt que le mot de passe — voir
@@ -1918,29 +2167,29 @@ fn unlock_wallet_biometric(app: tauri::AppHandle) -> Result<Vec<ProfileDto>, Str
     Ok(profiles.into_iter().map(Into::into).collect())
 }
 
-fn confirm_disable_biometric_native(app: &tauri::AppHandle) -> bool {
-    app.dialog()
-        .message(lang(
-            "Ceci va désactiver le déverrouillage par Windows Hello sur cet appareil — seul le mot de \
-             passe permettra ensuite de déverrouiller ce portefeuille. Ne continuez que si vous avez \
-             initié cette action vous-même.",
-            "This will disable Windows Hello unlock on this device — only the password will then unlock \
-             this wallet. Only continue if you initiated this action yourself.",
-        ))
-        .title(lang("Confirmer la désactivation de Windows Hello", "Confirm disabling Windows Hello"))
-        .kind(MessageDialogKind::Warning)
-        .buttons(MessageDialogButtons::OkCancel)
-        .blocking_show()
+fn confirm_disable_biometric_window(app: &tauri::AppHandle) -> bool {
+    secure_confirm(
+        app,
+        SecureConfirmDetails::new(
+            "fingerprint",
+            ("Désactiver Windows Hello ?", "Disable Windows Hello?"),
+            vec![text("Vous ouvrirez votre portefeuille uniquement avec votre mot de passe.", "You will open your wallet with your password only.")],
+            ("Désactiver", "Disable"),
+        ),
+    )
 }
 
 #[tauri::command]
-fn disable_biometric_unlock(password: String, app: tauri::AppHandle) -> Result<(), String> {
-    let password = Zeroizing::new(password);
-    let dir = data_dir(&app)?;
-    if !confirm_disable_biometric_native(&app) {
-        return Err(translate_error("Désactivation annulée (confirmation refusée)."));
-    }
-    api::disable_biometric_unlock(&dir, &password).t_err()
+async fn disable_biometric_unlock(password: String, app: tauri::AppHandle) -> Result<(), String> {
+    run_blocking(move || {
+        let password = Zeroizing::new(password);
+        let dir = data_dir(&app)?;
+        if !confirm_disable_biometric_window(&app) {
+            return Err(translate_error("Désactivation annulée (confirmation refusée)."));
+        }
+        on_main_thread(&app, move || api::disable_biometric_unlock(&dir, &password).t_err())
+    })
+    .await
 }
 
 /// Ajoute un profil (nouvelle adresse par réseau, dérivée de la même seed — voir
@@ -1990,7 +2239,7 @@ fn list_archived_profiles(app: tauri::AppHandle) -> Result<Vec<ProfileLabelDto>,
     Ok(api::list_archived_profiles(&dir).into_iter().map(Into::into).collect())
 }
 
-/// Boîte de dialogue native avertissant qu'une restauration va remplacer le coffre
+/// Confirmation (fenêtre sécurisée) avertissant qu'une restauration va remplacer le coffre
 /// actuel de cet appareil. Sans elle, un script capable d'invoquer directement la
 /// commande Tauri `restore_wallet` (devtools, dépendance compromise) pourrait
 /// substituer silencieusement un tout autre wallet — par exemple un wallet dont
@@ -1998,23 +2247,25 @@ fn list_archived_profiles(app: tauri::AppHandle) -> Result<Vec<ProfileLabelDto>,
 /// clique jamais sur "envoyer". Les adresses affichées ensuite dans le tableau de
 /// bord seraient alors celles de l'attaquant : un dépôt fait de bonne foi via l'écran
 /// "recevoir" irait droit vers lui. Même logique de défense que
-/// `confirm_transaction_native` : dialogue piloté par l'OS, pas par la webview,
-/// donc impossible à falsifier ou à contourner depuis un frontend compromis.
-fn confirm_restore_native(app: &tauri::AppHandle) -> bool {
-    app.dialog()
-        .message(lang(
-            "Ceci va remplacer le portefeuille actuel de cet appareil par celui reconstruit \
-             à partir des 2 fichiers de sauvegarde fournis. Ne continuez que si vous êtes sûr(e) de \
-             leur provenance — quelqu'un d'autre en possession de 2 de vos parts pourrait sinon \
-             substituer son propre wallet au vôtre.",
-            "This will replace the current wallet on this device with the one rebuilt from the 2 backup \
-             files provided. Only continue if you are sure of their origin — someone else in possession \
-             of 2 of your shares could otherwise substitute their own wallet for yours.",
-        ))
-        .title(lang("Confirmer la restauration", "Confirm restoration"))
-        .kind(MessageDialogKind::Warning)
-        .buttons(MessageDialogButtons::OkCancel)
-        .blocking_show()
+/// `confirm_transaction_native` : confirmation hors de la page principale (voir
+/// `secure_confirm`), donc impossible à falsifier ou à contourner depuis un
+/// frontend compromis.
+fn confirm_restore_window(app: &tauri::AppHandle) -> bool {
+    secure_confirm(
+        app,
+        SecureConfirmDetails::new(
+            "swap",
+            ("Restaurer ce portefeuille ?", "Restore this wallet?"),
+            vec![
+                text("Il remplacera celui de cet ordinateur.", "It will replace the one on this computer."),
+                text(
+                    "Utilisez uniquement les parts de votre propre kit, jamais celles qu'on vous aurait données.",
+                    "Only use the shares of your own kit, never ones someone gave you.",
+                ),
+            ],
+            ("Restaurer", "Restore"),
+        ),
+    )
 }
 
 #[derive(Serialize)]
@@ -2081,25 +2332,32 @@ struct KitShareDto {
     passphrase: String,
 }
 
-/// Boîte native avant d'écrire TOUT le kit sur une seule clé : cette clé
+/// Confirmation (fenêtre sécurisée) avant d'écrire TOUT le kit sur une seule clé : cette clé
 /// suffira à elle seule à tout récupérer, sans mot de passe.
-fn confirm_kit_on_one_drive_native(app: &tauri::AppHandle, drive: &str) -> bool {
+fn confirm_kit_on_one_drive_window(app: &tauri::AppHandle, drive: &str) -> bool {
     let drive = dialog_label(drive);
-    let message = if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
-        format!("Save the 3 shares on the single USB drive \"{drive}\"?\n\nThis drive will then be enough ON ITS OWN to recover the whole wallet and its funds, with no password: whoever finds or steals it gets everything. Keep it somewhere safe (a safe), never with the computer.\n\nSafer: save each share on its own drive, in different places.")
-    } else {
-        format!("Enregistrer les 3 parts sur la seule clé USB « {drive} » ?\n\nCette clé suffira alors À ELLE SEULE à récupérer tout le portefeuille et ses fonds, sans aucun mot de passe : qui la trouve ou la vole a accès à tout. Rangez-la en lieu sûr (coffre), jamais avec l'ordinateur.\n\nPlus sûr : enregistrer chaque part sur sa propre clé, à des endroits différents.")
-    };
-    app.dialog()
-        .message(message)
-        .title(lang("Tout le kit sur une clé USB", "Whole kit on one USB drive"))
-        .kind(MessageDialogKind::Warning)
-        .buttons(MessageDialogButtons::OkCancel)
-        .blocking_show()
+    let mut details = SecureConfirmDetails::new(
+        "usb",
+        ("Tout mettre sur une seule clé USB ?", "Put everything on one USB drive?"),
+        vec![
+            if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
+                format!("The 3 shares will be saved on \"{drive}\".")
+            } else {
+                format!("Les 3 parts seront enregistrées sur « {drive} ».")
+            },
+            text(
+                "Cette clé suffira à elle seule pour accéder à vos fonds, sans mot de passe. Rangez-la en lieu sûr, jamais avec l'ordinateur.",
+                "This drive alone will give access to your funds, with no password. Keep it somewhere safe, never with the computer.",
+            ),
+        ],
+        ("Tout enregistrer", "Save everything"),
+    );
+    details.note = text("Plus sûr : une part par clé.", "Safer: one share per drive.");
+    secure_confirm(app, details)
 }
 
 /// Écrit TOUT le kit (les 3 parts complètes) sur la clé USB `root`, après la
-/// boîte native qui en dit la conséquence, puis vérifie chaque part relue.
+/// confirmation qui en dit la conséquence, puis vérifie chaque part relue.
 /// Renvoie le nom de la clé ; `None` si l'utilisateur a refusé dans la boîte.
 #[tauri::command]
 async fn save_kit_to_usb(root: String, kit_id: String, shares: Vec<KitShareDto>, app: tauri::AppHandle) -> Result<Option<String>, String> {
@@ -2120,7 +2378,7 @@ async fn save_kit_to_usb(root: String, kit_id: String, shares: Vec<KitShareDto>,
             .find(|d| d.root.to_string_lossy().eq_ignore_ascii_case(root.trim()))
             .map(|d| if d.label.is_empty() { d.root.to_string_lossy().into_owned() } else { format!("{} ({})", d.label, d.root.to_string_lossy().trim_end_matches('\\')) })
             .ok_or_else(|| translate_error("clé USB introuvable : branchez-la puis réessayez"))?;
-        if !confirm_kit_on_one_drive_native(&app, &name) {
+        if !confirm_kit_on_one_drive_window(&app, &name) {
             return Ok(None);
         }
         let drive = pgp_wallet_poc::usb_backup::write_kit(&root, &kit_id, &parts, |written| {
@@ -2194,7 +2452,7 @@ fn restore_wallet_from_usb_blocking(new_password: String, app: &tauri::AppHandle
         };
         (copy(i), copy(j))
     };
-    if !confirm_restore_native(&app) {
+    if !confirm_restore_window(&app) {
         return Err(translate_error("Restauration annulée (confirmation refusée)."));
     }
     // Clés de l'ancien portefeuille oubliées avant d'effacer son état.
@@ -2240,7 +2498,7 @@ fn restore_wallet_blocking(new_password: String, part1: [String; 3], part2: [Str
     let passphrase2 = Zeroizing::new(passphrase2);
     let dir = data_dir(&app)?;
 
-    if !confirm_restore_native(&app) {
+    if !confirm_restore_window(&app) {
         return Err(translate_error("Restauration annulée (confirmation refusée)."));
     }
 
@@ -7564,6 +7822,7 @@ pub fn run() {
         .manage(ProfileAddressCache::default())
         .manage(ProfileZcashCache::default())
         .manage(SendGrace::default())
+        .manage(SecureConfirmState::default())
         .manage(ProfileBtcTestnetCache::default())
         .manage(ProfileTronCache::default())
         .manage(ProfileXrpCache::default())
@@ -7681,6 +7940,9 @@ pub fn run() {
             swap_max_amount,
             staking_aprs,
             cardano_stake_status,
+            secure_confirm_details,
+            secure_confirm_ready,
+            secure_confirm_answer,
             sol_stake_status,
             sol_staked_total,
             sol_validators,

@@ -2718,6 +2718,126 @@ h2 .coin-icon-inline,
   overscroll-behavior: contain;
 }
 
+/* Fenêtre de confirmation sécurisée (confirm.html, ouverte par Rust : voir
+   lib.rs, secure_confirm) : même allure que les fenêtres de l'app, teinte
+   rouge pour une action destructrice. */
+.secure-confirm-body {
+  --tone: var(--accent);
+  min-height: 0;
+  overflow-y: auto;
+  background:
+    radial-gradient(ellipse 90% 70% at 50% -10%, color-mix(in srgb, var(--tone) 12%, transparent), transparent 70%),
+    var(--bg);
+}
+
+.secure-confirm-body[data-tone="danger"] {
+  --tone: var(--danger);
+}
+
+.secure-confirm {
+  padding: 24px 26px 18px;
+}
+
+.secure-confirm-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.secure-confirm-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  color: var(--tone);
+  background: color-mix(in srgb, var(--tone) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--tone) 28%, transparent);
+}
+
+.secure-confirm-icon svg {
+  width: 22px;
+  height: 22px;
+}
+
+.secure-confirm-title {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 650;
+  line-height: 1.3;
+}
+
+.secure-confirm-text p {
+  margin: 0 0 8px;
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+
+.secure-confirm-phrase {
+  margin-top: 14px;
+}
+
+.secure-confirm-phrase label {
+  margin-top: 0;
+}
+
+/* Phrase à recopier : bien visible, non sélectionnable (à écrire, pas à copier). */
+.secure-confirm-phrase-text {
+  margin: 0 0 10px;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px dashed color-mix(in srgb, var(--tone) 50%, transparent);
+  background: color-mix(in srgb, var(--tone) 8%, transparent);
+  color: var(--tone);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-align: center;
+  user-select: none;
+}
+
+.secure-confirm-phrase input {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.secure-confirm-body.phrase-ok .secure-confirm-phrase input {
+  border-color: var(--success);
+}
+
+.secure-confirm-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.secure-confirm-actions button {
+  flex: 1;
+  width: auto;
+  margin-top: 0;
+}
+
+.secure-confirm-actions button.primary.danger:not(:disabled) {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--danger), white 8%), var(--danger));
+  box-shadow: 0 6px 16px -10px color-mix(in srgb, var(--danger) 70%, transparent), inset 0 1px 0 rgba(255, 255, 255, 0.16);
+}
+
+.secure-confirm-actions button.primary.danger:not(:disabled):hover {
+  background: linear-gradient(180deg, var(--danger), color-mix(in srgb, var(--danger), black 8%));
+}
+
+.secure-confirm .error {
+  margin: 10px 0 0;
+}
+
+.secure-confirm-note {
+  margin: 12px 0 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+  text-align: center;
+}
+
 .modal {
   background: linear-gradient(180deg, color-mix(in srgb, var(--surface), white 3%), var(--surface));
   border: 1px solid var(--border-strong);
