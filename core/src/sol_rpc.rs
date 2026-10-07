@@ -423,7 +423,7 @@ impl SolRpc {
                 SolTx {
                     net_lamports: details.as_deref().and_then(|tx| amount(tx, account)),
                     swap: details.as_deref().is_some_and(is_swap_transaction),
-                    stake: details.as_deref().is_some_and(is_stake_transaction),
+                    stake: details.as_deref().is_some_and(|tx| is_stake_transaction(tx, account)),
                     signature,
                     block_time,
                     confirmed: matches!(confirmation_status, "confirmed" | "finalized"),
@@ -646,12 +646,14 @@ const JUPITER_PROGRAM: &str = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4";
 /// message, un programme ne pouvant venir d'une table d'adresses), ou memo de
 /// swap THORChain dans le journal du programme Memo
 /// (`Program log: Memo (len N): "…"`).
-/// Opération de staking natif (programme Stake parmi les comptes) : mise,
-/// arrêt ou retrait, voir `sol_stake`.
-fn is_stake_transaction(tx: &Value) -> bool {
-    tx.pointer("/transaction/message/accountKeys")
-        .and_then(Value::as_array)
-        .is_some_and(|keys| keys.iter().any(|k| k.as_str() == Some(crate::sol_stake::STAKE_PROGRAM)))
+/// Opération de staking natif de `account` (mise, arrêt ou retrait, voir
+/// `sol_stake`) : programme Stake parmi les comptes, et `account` payeur des
+/// frais (premier compte). Une transaction d'un tiers qui toucherait aussi le
+/// programme Stake reste une réception ordinaire.
+fn is_stake_transaction(tx: &Value, account: &str) -> bool {
+    tx.pointer("/transaction/message/accountKeys").and_then(Value::as_array).is_some_and(|keys| {
+        keys.first().and_then(Value::as_str) == Some(account) && keys.iter().any(|k| k.as_str() == Some(crate::sol_stake::STAKE_PROGRAM))
+    })
 }
 
 fn is_swap_transaction(tx: &Value) -> bool {

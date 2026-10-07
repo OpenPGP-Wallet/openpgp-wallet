@@ -953,9 +953,9 @@ mod tests {
 
     /// Réel : un compte de mise existant (délégué au premier validateur
     /// proposé) est relu et décodé ; un compte délégué à l'époque en cours a
-    /// pour dernière transaction sa création, classée « Staking » (les
-    /// comptes plus anciens reçoivent aussi des récompenses MEV de Jito,
-    /// de simples réceptions).
+    /// pour dernière transaction sa création : « Staking » dans l'historique
+    /// de son payeur, simple réception dans celui du compte de mise (payé par
+    /// un autre).
     /// `cargo test -- --ignored real_stake_account_and_history --nocapture`
     #[test]
     #[ignore]
@@ -978,7 +978,13 @@ mod tests {
         let fresh = fresh[0]["pubkey"].as_str().unwrap();
         let entries = crate::history::sol_history(crate::wallet_flow::SOLANA_MAINNET.rpc, fresh, 1).unwrap();
         println!("{fresh} : {:?}", entries.iter().map(|e| (&e.id[..8], &e.kind, e.net_amount_minor)).collect::<Vec<_>>());
-        assert_eq!(entries[0].kind, crate::history::TxKind::Stake);
+        assert_ne!(entries[0].kind, crate::history::TxKind::Stake);
+        let tx = rpc.call("getTransaction", json!([entries[0].id, {"encoding": "json", "maxSupportedTransactionVersion": 0}])).unwrap();
+        let payer = tx.pointer("/transaction/message/accountKeys/0").and_then(Value::as_str).unwrap().to_string();
+        let payer_entries = crate::history::sol_history(crate::wallet_flow::SOLANA_MAINNET.rpc, &payer, 10).unwrap();
+        let creation = payer_entries.iter().find(|e| e.id == entries[0].id);
+        println!("payeur {payer} : {:?}", creation.map(|e| (&e.kind, e.net_amount_minor)));
+        assert!(creation.is_none() || creation.unwrap().kind == crate::history::TxKind::Stake);
     }
 
     /// Réel : désactivation et retrait simulés dans une même transaction
