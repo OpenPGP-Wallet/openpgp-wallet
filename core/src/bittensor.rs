@@ -821,6 +821,75 @@ mod tests {
         assert_eq!(validate(&forged, &ctx.block_hash).unwrap(), Validity::Invalid(4), "signature altérée : refus attendu");
     }
 
+    /// Réel (clé Taostats requise) : historique d'un compte actif recoupé
+    /// avec la chaîne. Chaque ligne « bloc-index » désigne bien la
+    /// transaction dont Taostats donne l'empreinte (blake2-256 des octets lus
+    /// sur le nœud) ; pour un virement direct (`Balances`), destinataire et
+    /// montant relus dans la transaction = ceux de l'historique.
+    /// `cargo test -- --ignored real_taostats_history --nocapture`
+    #[test]
+    #[ignore]
+    fn real_taostats_history() {
+        assert!(history_available(), "TAOSTATS_API_KEY absente de partner-keys.env");
+        let me_text = "5FHxxe8ZKYaNmGcSLdG5ekxXeZDhQnk9cbpHdsJW8RunGpSs";
+        let me = parse_address(me_text).unwrap();
+        let entries = history(me_text, 20).unwrap();
+        assert!(!entries.is_empty(), "aucun virement");
+        // Données brutes (empreintes), même requête.
+        let raw: Value = client()
+            .get(format!("{TAOSTATS}?network=finney&address={me_text}&limit=20&order=block_number_desc"))
+            .header("Authorization", TAOSTATS_KEY.unwrap())
+            .send()
+            .unwrap()
+            .json()
+            .unwrap();
+        let layout = layout().unwrap();
+        let (mut hashes, mut amounts) = (0, 0);
+        for entry in &entries {
+            let (block, index) = entry.id.split_once('-').unwrap();
+            let (block, index): (u64, usize) = (block.parse().unwrap(), index.parse().unwrap());
+            let hash = rpc("chain_getBlockHash", json!([block])).unwrap();
+            let extrinsic = hex_bytes(&rpc("chain_getBlock", json!([hash])).unwrap()["block"]["extrinsics"][index]).unwrap();
+            let expected = raw["data"].as_array().unwrap().iter().find(|i| i["extrinsic_id"] == entry.id.as_str()).unwrap()["transaction_hash"].as_str().unwrap().to_lowercase();
+            assert_eq!(format!("0x{}", hex::encode(blake2_256(&extrinsic))), expected, "{} : autre transaction à cette position", entry.id);
+            hashes += 1;
+            // Virement direct signé (format du runtime actuel) : appel relu.
+            let mut input = &extrinsic[..];
+            let _len = Compact::<u32>::decode(&mut input).unwrap();
+            if input.len() < 100 || input[0] != 0x84 || input[1] != 0x00 || input[34] != 0x01 {
+                continue;
+            }
+            let signer: [u8; 32] = input[2..34].try_into().unwrap();
+            input = &input[99..];
+            for extension in &layout.extensions {
+                match extension {
+                    Extension::Mortality => input = &input[if input[0] == 0 { 1 } else { 2 }..],
+                    Extension::Nonce => drop(Compact::<u32>::decode(&mut input).unwrap()),
+                    Extension::Tip => drop(Compact::<u64>::decode(&mut input).unwrap()),
+                    Extension::MetadataHash => input = &input[1..],
+                    _ => {}
+                }
+            }
+            if input.len() < 35 || input[0] != layout.balances || !matches!(input[1], 0 | 3) || input[2] != 0x00 {
+                continue;
+            }
+            let dest: [u8; 32] = input[3..35].try_into().unwrap();
+            let mut rest = &input[35..];
+            let value = i128::from(Compact::<u64>::decode(&mut rest).unwrap().0);
+            let net = entry.net_amount_minor.unwrap();
+            if signer == me {
+                assert_eq!(net, -value, "{} : montant envoyé", entry.id);
+            } else {
+                assert_eq!(dest, me, "{} : destinataire", entry.id);
+                assert_eq!(net, value, "{} : montant reçu", entry.id);
+            }
+            amounts += 1;
+            println!("{} {:?} {} TAO (frais {}) vérifié sur la chaîne", entry.id, entry.kind, format_tao(value as u64), format_tao(entry.fee_minor as u64));
+        }
+        println!("{} lignes : {hashes} empreintes identiques, {amounts} montants relus dans la transaction", entries.len());
+        assert!(amounts > 0, "aucun virement direct à recouper");
+    }
+
     /// Réel : signataires de transactions récentes : nonce décodé égal à
     /// celui du nœud (`system_accountNextIndex`, autre chemin) à quelques
     /// transactions en attente près ; au moins un compte actif (nonce et
