@@ -235,6 +235,8 @@
                   <img class="coin-icon" src="/assets/eth.svg" alt="" />Ethereum
                 </button>
               </h2>
+              <!-- Staking (Lido), rendement annuel estimé à côté : main.js, renderStakeChips. -->
+              <button type="button" class="stake-chip hidden" data-action="stake" data-i18n-title="staking.chipHint" title="Staker : vos cryptos vous rapportent (rendement annuel estimé)"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21v-9" /><path d="M12 12c0-4 3-7 8-7 0 5-3 7-8 7z" /><path d="M12 14c0-3.5-2.5-6-7-6 0 4 2.5 6 7 6z" /></svg><span class="stake-label" data-i18n="staking.action">Staker</span><span class="stake-rate hidden" data-field="stake-rate"></span></button>
               <div class="custom-select dropdown">
                 <select class="network-select" data-coin="evm">
                   <option value="evm_mainnet" selected data-i18n="wallet.ethereumMainnet">Ethereum — Fonds réels</option>
@@ -327,7 +329,6 @@
                 <div class="row-buttons">
                   <button class="secondary" data-action="refresh" data-i18n="wallet.refresh" data-i18n-title="wallet.refresh">Actualiser</button>
                   <button class="secondary receive-action" data-action="qr" data-i18n="wallet.receive">Recevoir</button>
-                  <button class="secondary stake-action hidden" data-action="stake" data-i18n="staking.action" data-i18n-title="staking.hint" title="Staking liquide : vos cryptos rapportent des récompenses, revendables à tout moment">Staker</button>
                   <button class="secondary" data-action="history" data-i18n="wallet.history">Historique</button>
                   <button class="primary" data-action="send" data-i18n="wallet.send">Envoyer</button>
                 </div>
@@ -444,6 +445,8 @@
                   <img class="coin-icon coin-icon-sol" src="/assets/sol.png" alt="" />Solana
                 </button>
               </h2>
+              <!-- Staking (liquide ou natif), rendement annuel estimé à côté : main.js, renderStakeChips. -->
+              <button type="button" class="stake-chip hidden" data-action="stake" data-i18n-title="staking.chipHint" title="Staker : vos cryptos vous rapportent (rendement annuel estimé)"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21v-9" /><path d="M12 12c0-4 3-7 8-7 0 5-3 7-8 7z" /><path d="M12 14c0-3.5-2.5-6-7-6 0 4 2.5 6 7 6z" /></svg><span class="stake-label" data-i18n="staking.action">Staker</span><span class="stake-rate hidden" data-field="stake-rate"></span></button>
               <div class="custom-select dropdown">
                 <select class="network-select" data-coin="sol">
                   <option value="sol_mainnet" selected data-i18n="wallet.mainnet">Mainnet — Fonds réels</option>
@@ -532,7 +535,6 @@
                 <div class="row-buttons">
                   <button class="secondary" data-action="refresh" data-i18n="wallet.refresh" data-i18n-title="wallet.refresh">Actualiser</button>
                   <button class="secondary receive-action" data-action="qr" data-i18n="wallet.receive">Recevoir</button>
-                  <button class="secondary stake-action hidden" data-action="stake" data-i18n="staking.action" data-i18n-title="staking.hint" title="Staking liquide : vos cryptos rapportent des récompenses, revendables à tout moment">Staker</button>
                   <button class="secondary" data-action="history" data-i18n="wallet.history">Historique</button>
                   <button class="primary" data-action="send" data-i18n="wallet.send">Envoyer</button>
                 </div>

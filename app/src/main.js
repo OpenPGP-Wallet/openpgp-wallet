@@ -172,7 +172,8 @@ function buildAssetCard(asset) {
           <span class="collapse-chevron" aria-hidden="true"></span>
           <img class="${iconClass}" src="${asset.icon}" alt="" /><span class="coin-name"></span>
         </button>
-      </h2>
+      </h2>${asset.coin === "ada" ? `
+      <button type="button" class="stake-chip" data-action="stake" data-i18n-title="staking.chipHint" title="Staker : vos cryptos vous rapportent (rendement annuel estimé)"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21v-9" /><path d="M12 12c0-4 3-7 8-7 0 5-3 7-8 7z" /><path d="M12 14c0-3.5-2.5-6-7-6 0 4 2.5 6 7 6z" /></svg><span class="stake-label" data-i18n="staking.action">Staker</span><span class="stake-rate hidden" data-field="stake-rate"></span></button>` : ""}
       ${
         asset.networks.length > 1
           ? `<div class="custom-select dropdown">
@@ -209,11 +210,6 @@ function buildAssetCard(asset) {
         <div class="row-buttons">
           <button class="secondary" data-action="refresh" data-i18n="wallet.refresh" data-i18n-title="wallet.refresh">Actualiser</button>
           <button class="secondary receive-action" data-action="qr" data-i18n="wallet.receive">Recevoir</button>${
-            asset.coin === "ada"
-              ? `
-          <button class="secondary stake-action" data-action="stake" data-i18n="staking.action" data-i18n-title="staking.adaHint">Staker</button>`
-              : ""
-          }${
             asset.coin === "zecs"
               ? `
           <button class="secondary" data-action="shield" data-i18n="shielded.shieldAction" data-i18n-title="shielded.shieldTitle">Protéger</button>`
@@ -924,6 +920,7 @@ const I18N = {
     "send.checkingRecipient": "Vérification de l'adresse…",
     "swap.maxHint": "Montant maximal, frais de l'échange déduits",
     "staking.action": "Staker",
+    "staking.chipHint": "Staker : vos cryptos vous rapportent (rendement annuel estimé)",
     "staking.hint": "Staking liquide : vos cryptos rapportent des récompenses, revendables à tout moment",
     "staking.noteSol": "Gagnez {apr} % par an sur vos SOL avec Jito. Vos JitoSOL restent à vous et se revendent quand vous voulez.",
     "staking.noteEth": "Gagnez {apr} % par an sur vos ETH avec Lido. Vos stETH restent à vous et se revendent quand vous voulez.",
@@ -1596,6 +1593,7 @@ const I18N = {
     "send.checkingRecipient": "Checking the address…",
     "swap.maxHint": "Maximum amount, swap fees deducted",
     "staking.action": "Stake",
+    "staking.chipHint": "Stake: your crypto earns rewards (estimated yearly yield)",
     "staking.hint": "Liquid staking: your crypto earns rewards and can be sold back at any time",
     "staking.noteSol": "Earn {apr}% a year on your SOL with Jito. Your JitoSOL stays yours and can be sold back anytime.",
     "staking.noteEth": "Earn {apr}% a year on your ETH with Lido. Your stETH stays yours and can be sold back anytime.",
@@ -1863,6 +1861,7 @@ document.querySelectorAll(".lang-btn").forEach((btn) => {
     renderRecipientList();
     renderEtherscanKey();
     renderAffiliateNames();
+    renderStakeChips();
     // Valeur en dollars des cartes (« ≈ 1 234,56 $ » / « ≈ $1,234.56 ») :
     // recalculée sur place, sans appel réseau.
     document.querySelectorAll(".wallet-card").forEach(updateFiatValue);
@@ -3274,6 +3273,7 @@ let balanceRefreshTimer = null;
 // publique utilisée (CoinGecko, gratuite) a une limite de requêtes par minute.
 function startBalanceAutoRefresh() {
   stopBalanceAutoRefresh();
+  loadStakingAprs();
   // Toujours précédé d'une relecture complète (déverrouillage, création,
   // restauration) : le rattrapage au focus n'a pas à la refaire.
   lastAutoBalances = Date.now();
@@ -6312,13 +6312,9 @@ async function openSolStakeModal(card) {
   };
   renderLiquid();
   if (!stakingAprs) {
-    stakingAprs = {};
-    invoke("staking_aprs")
-      .then((rates) => {
-        stakingAprs = rates;
-        if (solStakeContext === context) renderLiquid();
-      })
-      .catch((e) => console.error(e));
+    loadStakingAprs().then(() => {
+      if (solStakeContext === context) renderLiquid();
+    });
   }
   document.getElementById("sol-stake-status").textContent = t("staking.solLoading");
   document.getElementById("sol-stake-accounts").replaceChildren();
@@ -6408,8 +6404,41 @@ async function runSolStake(action, target) {
   });
 }
 
-// Rendements annoncés (Rust, `staking_aprs`), lus une fois par session.
+// Rendements annuels estimés (Rust, `staking_aprs`) : lus au déverrouillage,
+// une fois par heure au plus. Affichés à côté de « Staker » (renderStakeChips),
+// dans la note de « Convertir » et dans la fenêtre « Staker vos SOL ».
 let stakingAprs = null;
+let stakingAprsAt = 0;
+// Taux affiché par carte : SOL → Jito, ETH → Lido, Cardano → moyenne du réseau.
+const STAKE_RATE_SOURCE = { sol: "jitosol", evm: "steth", ada: "ada" };
+
+function loadStakingAprs() {
+  if (stakingAprs && Date.now() - stakingAprsAt < 60 * 60 * 1000) return Promise.resolve(stakingAprs);
+  stakingAprsAt = Date.now();
+  if (!stakingAprs) stakingAprs = {};
+  return invoke("staking_aprs")
+    .then((rates) => {
+      stakingAprs = rates;
+      renderStakeChips();
+      renderStakingNote();
+      return rates;
+    })
+    .catch((e) => {
+      console.error(e);
+      stakingAprsAt = 0;
+    });
+}
+
+function renderStakeChips() {
+  document.querySelectorAll(".stake-chip").forEach((chip) => {
+    const rate = stakingAprs?.[STAKE_RATE_SOURCE[chip.closest(".wallet-card")?.dataset.coin]];
+    const known = Number.isFinite(rate) && rate > 0;
+    const el = chip.querySelector('[data-field="stake-rate"]');
+    const text = known ? rate.toLocaleString(chartLocale(), { maximumFractionDigits: 1 }) : "";
+    el.textContent = known ? (currentLang === "en" ? `${text}%` : `${text}\u00a0%`) : "";
+    el.classList.toggle("hidden", !known);
+  });
+}
 
 function renderStakingNote() {
   const el = document.getElementById("swap-staking-note");
@@ -6422,15 +6451,7 @@ function renderStakingNote() {
     text = apr
       ? t(pair.to.coin === "jitosol" ? "staking.noteSol" : "staking.noteEth", { apr: apr.toLocaleString(chartLocale(), { maximumFractionDigits: 1 }) })
       : t("staking.apr", { coin: COIN_SYMBOL[pair.from.coin] });
-    if (!stakingAprs) {
-      stakingAprs = {};
-      invoke("staking_aprs")
-        .then((rates) => {
-          stakingAprs = rates;
-          renderStakingNote();
-        })
-        .catch((e) => console.error(e));
-    }
+    if (!stakingAprs) loadStakingAprs();
   } else if (pair && !pair.via && lst[pair.from.coin] === pair.to.coin) {
     text = t("staking.unstake", { from: COIN_SYMBOL[pair.from.coin], to: COIN_SYMBOL[pair.to.coin] });
   }

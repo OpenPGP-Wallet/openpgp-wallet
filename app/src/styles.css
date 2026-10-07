@@ -1596,6 +1596,9 @@ textarea:focus {
      la carte Bitcoin (adresse, solde) remontait par rapport aux deux autres,
      malgré l'alignement déjà fait sur l'adresse et les boutons. */
   min-height: 34px;
+  /* Espace entre le nom et le bouton « Staker » sur une même ligne (aucun
+     retrait quand le bouton passe à la ligne). */
+  column-gap: 10px;
 }
 
 .wallet-card h2 {
@@ -1609,6 +1612,55 @@ textarea:focus {
 
 .wallet-card .collapse-toggle {
   gap: 10px;
+}
+
+/* « Staker » à côté du nom de la crypto, avec le rendement annuel estimé ;
+   la marge automatique garde le menu des réseaux tout à droite. */
+.stake-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 auto 0 0;
+  padding: 3px 10px 3px 8px;
+  min-height: 26px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--success) 30%, var(--border));
+  background: color-mix(in srgb, var(--success) 10%, var(--surface-2));
+  color: var(--text);
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.stake-chip:hover {
+  border-color: color-mix(in srgb, var(--success) 55%, var(--border));
+  background: color-mix(in srgb, var(--success) 16%, var(--surface-2));
+}
+
+.stake-chip svg {
+  flex: none;
+  color: var(--success);
+}
+
+.stake-rate {
+  color: var(--success);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Cartes de 300 à 369 px (trois colonnes, fenêtre large) : la ligne du nom
+   n'a la place que pour le rendement (l'en-tête garde 42 px pour le bouton
+   d'actualisation) — « Staker » reste dans l'infobulle, et revient sans
+   rendement connu. Plus larges : tout tient. Plus étroites : le bouton passe
+   sous le nom, en entier (mesuré le 07/10/2026 : noms jusqu'à 140 px). */
+@container (min-width: 260px) and (max-width: 329px) {
+  .stake-chip {
+    gap: 5px;
+    padding: 3px 9px 3px 7px;
+  }
+
+  .stake-chip:not(:has(.stake-rate.hidden)) .stake-label {
+    display: none;
+  }
 }
 
 .coin-icon {
