@@ -14,7 +14,7 @@
 //!   perdu — jamais utilisé pour le déverrouillage quotidien.
 
 use crate::{
-    btc_rpc, cow, dapp_requests, derivation, doge, lifi, tron, xrp, stellar, near, cardano, stacks, monero, native_deposit, wallet_birthday, zcash, zcash_shielded, entropy, eth_rpc, eth_tx, history, jupiter_rpc, memory_guard, pgp_engine, secure_storage, shamir,
+    btc_rpc, cow, dapp_requests, derivation, doge, lifi, tron, xrp, stellar, near, cardano, stacks, bittensor, monero, native_deposit, wallet_birthday, zcash, zcash_shielded, entropy, eth_rpc, eth_tx, history, jupiter_rpc, memory_guard, pgp_engine, secure_storage, shamir,
     evm_sign, sol_rpc, sol_spl, sol_stake, sol_tx, thorchain_rpc, tokens, wallet_flow,
 };
 use anyhow::{Context, Result};
@@ -196,6 +196,9 @@ pub struct Addresses {
     pub cardano: String,
     /// Adresse Stacks (SP…), chemin m/44'/5757'/0'/0/{index}.
     pub stacks: String,
+    /// Adresse Bittensor (5…, SS58 format 42), clé sr25519 : racine de
+    /// l'entropie pour le profil 0, chemin dur « //n » au-delà (voir `bittensor`).
+    pub bittensor: String,
     /// Adresse THORChain (thor1…), chemin m/44'/931'/0'/0/{index} : celle du
     /// profil principal du développeur est l'adresse d'affiliation de l'app.
     pub thor: String,
@@ -353,6 +356,7 @@ fn derive_addresses(seed: &[u8], index: u32) -> Result<Addresses> {
         near: near::implicit_account(&near_key),
         cardano: cardano::address_of(seed, index),
         stacks: stacks::address_of(&stacks::MAINNET, &derivation::derive_stacks_key(seed, index)?),
+        bittensor: bittensor::address(&bittensor::keypair(seed, index)?.public.to_bytes()),
         evm: derivation::format_address(&evm_address),
         btc_testnet: derivation::format_btc_testnet_address(&btc_testnet_hash160)?,
         btc_mainnet: derivation::format_btc_mainnet_address(&btc_mainnet_hash160)?,
@@ -3455,6 +3459,58 @@ pub fn send_stx(data_dir: &Path, device_password: &str, to: &str, amount: &str, 
 /// Bouton « Max » : solde disponible moins les frais.
 pub fn stx_max(from: &str) -> Result<String> {
     Ok(stacks::format_stx(stacks::max_amount(&stacks::MAINNET, from)?))
+}
+
+// --- Bittensor (TAO) ----------------------------------------------------------------
+
+pub fn get_tao_balance(address: &str) -> Result<u64> {
+    bittensor::balance(address)
+}
+
+/// État d'une adresse Bittensor destinataire, pour les avertissements de la boîte.
+pub fn tao_recipient_activity(to: &str) -> Result<RecipientActivity> {
+    Ok(match bittensor::address_activity(to)? {
+        (true, _) => RecipientActivity::Funded,
+        (false, true) => RecipientActivity::Empty,
+        (false, false) => RecipientActivity::Unused,
+    })
+}
+
+/// Forme canonique d'un montant en TAO (9 décimales), affichée ET signée.
+pub fn canonical_tao_amount(amount: &str) -> Result<String> {
+    Ok(tokens::format_amount(tokens::parse_amount(amount, bittensor::DECIMALS)?, bittensor::DECIMALS))
+}
+
+fn tao_units(amount: &str) -> Result<u64> {
+    u64::try_from(tokens::parse_amount(amount, bittensor::DECIMALS)?).context("montant hors limites")
+}
+
+/// Envoi préparé pour la boîte de confirmation : frais, réserves vérifiées.
+pub fn tao_send_plan(from_address: &str, to: &str, amount: &str) -> Result<bittensor::TaoPlan> {
+    bittensor::plan(from_address, to, tao_units(amount)?)
+}
+
+/// Envoi de TAO : préparation refaite, frais au plus ceux affichés à 10 %
+/// près (ils suivent la charge du réseau, de très peu), virement signé ici,
+/// validé par le nœud, puis diffusé.
+pub fn send_tao(data_dir: &Path, device_password: &str, to: &str, amount: &str, shown_fee: u64, profile_index: u32) -> Result<String> {
+    let units = tao_units(amount)?;
+    let seed = unlock_seed(data_dir, device_password)?;
+    let _seed_lock = memory_guard::lock(&seed);
+    let pair = bittensor::keypair(&seed, profile_index)?;
+    let plan = bittensor::plan(&bittensor::address(&pair.public.to_bytes()), to, units)?;
+    anyhow::ensure!(
+        plan.fee <= shown_fee.saturating_add(shown_fee / 10),
+        "les frais Bittensor ont augmenté depuis la confirmation ({} au lieu de {} TAO) — relancez l'envoi",
+        bittensor::format_tao(plan.fee),
+        bittensor::format_tao(shown_fee)
+    );
+    bittensor::send(&pair, &plan)
+}
+
+/// Bouton « Max » : solde disponible moins les frais et la réserve du compte.
+pub fn tao_max(from: &str, to: Option<&str>) -> Result<String> {
+    Ok(tokens::format_amount(u128::from(bittensor::max_amount(from, to)?), bittensor::DECIMALS))
 }
 
 /// Bouton « Max » : tout l'ADA dépensable, frais déduits (vers `to` s'il est connu).

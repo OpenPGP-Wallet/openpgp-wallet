@@ -31,6 +31,7 @@ const ASSETS = [
   { coin: "near", name: "NEAR", symbol: "NEAR", family: "near", icon: "/assets/near.jpg", iconRound: true, gecko: "near", decimals: 6, chart: "NEAR", networks: ["near_mainnet"] },
   { coin: "ada", name: "Cardano", symbol: "ADA", family: "ada", icon: "/assets/ada.png", gecko: "cardano", decimals: 6, chart: "ADA", networks: ["ada_mainnet"] },
   { coin: "stx", name: "Stacks", symbol: "STX", family: "stx", icon: "/assets/stx.png", gecko: "blockstack", decimals: 6, chart: "STX", networks: ["stx_mainnet"] },
+  { coin: "tao", name: "Bittensor", symbol: "TAO", family: "tao", icon: "/assets/tao.jpg", iconRound: true, gecko: "bittensor", decimals: 9, chart: "TAO", networks: ["tao_mainnet"] },
   // Jetons (`token: true`) : contrats et mints relevés dans core/src/tokens.rs —
   // SEUL le registre Rust fait foi pour un envoi (l'interface n'envoie que
   // l'identifiant et le réseau) ; ceux-ci ne servent qu'aux demandes de
@@ -676,6 +677,7 @@ const I18N = {
     "net.near_mainnet": "NEAR — Fonds réels",
     "net.ada_mainnet": "Cardano — Fonds réels",
     "net.stx_mainnet": "Stacks — Fonds réels",
+    "net.tao_mainnet": "Bittensor — Fonds réels",
     "wallet.historyExplorerOnly": "Pas d'historique ici pour ce réseau : aucun service public gratuit ne le fournit. Il reste consultable sur l'explorateur du réseau.",
     "wallet.historyOpenExplorer": "Voir sur l'explorateur",
     "wallet.historyLimited": "L'historique de ce réseau est momentanément indisponible (trop de demandes). Réessayez plus tard, ou consultez-le sur l'explorateur du réseau.",
@@ -1335,6 +1337,7 @@ const I18N = {
     "net.near_mainnet": "NEAR — Real funds",
     "net.ada_mainnet": "Cardano — Real funds",
     "net.stx_mainnet": "Stacks — Real funds",
+    "net.tao_mainnet": "Bittensor — Real funds",
     "wallet.historyExplorerOnly": "No history here for this network: no free public service provides it. You can still see it on the network's explorer.",
     "wallet.historyOpenExplorer": "View on the explorer",
     "wallet.historyLimited": "This network's history is temporarily unavailable (too many requests). Try again later, or see it on the network's explorer.",
@@ -3724,6 +3727,8 @@ function addressOfProfile(profile, coin, network) {
   if (coin === "ada") return profile.addresses.cardano ?? "";
   // Stacks (SP…) ; absente d'un profil dérivé avant son ajout.
   if (coin === "stx") return profile.addresses.stacks ?? "";
+  // Bittensor (5…, SS58) ; absente d'un profil dérivé avant son ajout.
+  if (coin === "tao") return profile.addresses.bittensor ?? "";
   // Zcash protégé : adresse u1 (récepteur Orchard seul).
   if (coin === "zecs") return profile.addresses.zcash_shielded ?? "";
   // Jetons Solana (USDC, USDT…) : même adresse propriétaire que SOL (le compte

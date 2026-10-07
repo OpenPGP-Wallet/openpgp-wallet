@@ -70,6 +70,7 @@ pub fn price_asset(symbol: &str) -> Option<Asset> {
         "NEAR" => Asset::Pair("NEARUSDT"),
         "ADA" => Asset::Pair("ADAUSDT"),
         "STX" => Asset::Pair("STXUSDT"),
+        "TAO" => Asset::Pair("TAOUSDT"),
         "LINK" => Asset::Pair("LINKUSDT"),
         "DAI" => Asset::Pair("DAIUSDT"),
         "USDE" => Asset::Pair("USDEUSDT"),

@@ -152,6 +152,7 @@ pub const MARKET_IDS: &[&str] = &[
     "near",
     "cardano",
     "blockstack",
+    "bittensor",
     // Jetons (core/src/tokens.rs).
     "tether",
     "chainlink",

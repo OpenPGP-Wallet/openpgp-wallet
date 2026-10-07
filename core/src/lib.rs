@@ -56,6 +56,7 @@ pub mod stellar;
 pub mod near;
 pub mod cardano;
 pub mod stacks;
+pub mod bittensor;
 #[cfg(test)]
 mod robustness_tests;
 #[cfg(windows)]

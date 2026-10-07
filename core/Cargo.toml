@@ -77,6 +77,13 @@ base64 = "0.22"
 # cryptographie sur courbe).
 curve25519-dalek = "4.1.3"
 blake2b_simd = "1"
+# Bittensor (TAO, chaîne Substrate) : signatures sr25519, encodage SCALE,
+# métadonnées du réseau (format des transactions), graine depuis l'entropie.
+schnorrkel = "0.11"
+parity-scale-codec = { version = "3", features = ["derive"] }
+frame-metadata = { version = "23", features = ["decode", "current"] }
+scale-info = { version = "2", default-features = false, features = ["decode"] }
+pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
 
 # --- Zcash (adresses transparentes t1) ---
 # Bibliothèques officielles librustzcash (Zcash Foundation / ECC) plutôt qu'un

@@ -121,6 +121,10 @@ pub(crate) fn validate_address(network: &str, address: &str) -> Result<()> {
         "stx_mainnet" => {
             crate::stacks::parse_address(&crate::stacks::MAINNET, address)?;
         }
+        // Bittensor (5…, SS58 format 42).
+        "tao_mainnet" => {
+            crate::bittensor::parse_address(address)?;
+        }
         // Zcash protégé (adresse u1 de la carte « Zcash protégé »).
         "zec_shielded" => {
             crate::zcash_shielded::parse_shielded_address(address)?;

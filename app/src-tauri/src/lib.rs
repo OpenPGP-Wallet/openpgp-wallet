@@ -326,6 +326,35 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("nonce Stacks illisible", "unreadable Stacks nonce"),
     ("le service Stacks a renvoyé un autre identifiant de transaction", "the Stacks service returned another transaction ID"),
     ("frais Stacks manquants", "Stacks fee missing"),
+    // Bittensor (core/src/bittensor.rs, core/src/api.rs)
+    ("adresse Bittensor invalide", "invalid Bittensor address"),
+    ("adresse Bittensor invalide (somme de contrôle)", "invalid Bittensor address (checksum)"),
+    ("réponse du nœud Bittensor illisible", "unreadable Bittensor node response"),
+    ("réponse du nœud Bittensor sans résultat", "Bittensor node response without a result"),
+    ("compte Bittensor illisible", "unreadable Bittensor account"),
+    ("le format des transactions Bittensor a changé : mettez l'app à jour", "the Bittensor transaction format changed: update the app"),
+    ("version du runtime Bittensor illisible", "unreadable Bittensor runtime version"),
+    ("version des transactions Bittensor illisible", "unreadable Bittensor transaction version"),
+    ("métadonnées Bittensor illisibles", "unreadable Bittensor metadata"),
+    ("métadonnées Bittensor d'une version inattendue : mettez l'app à jour", "Bittensor metadata of an unexpected version: update the app"),
+    ("ce nœud n'est pas sur le réseau principal Bittensor", "this node is not on the Bittensor main network"),
+    ("empreinte de bloc Bittensor invalide", "invalid Bittensor block hash"),
+    ("numéro de bloc Bittensor absent", "Bittensor block number missing"),
+    ("numéro de bloc Bittensor invalide", "invalid Bittensor block number"),
+    ("nonce Bittensor illisible", "unreadable Bittensor nonce"),
+    ("réponse de validation Bittensor inattendue", "unexpected Bittensor validation response"),
+    ("frais Bittensor illisibles", "unreadable Bittensor fee"),
+    ("TAO insuffisants pour payer les frais du réseau", "not enough TAO to pay the network fee"),
+    ("transaction Bittensor refusée : signature invalide (format du réseau changé ?) — rien n'a été envoyé", "Bittensor transaction refused: invalid signature (network format changed?) — nothing was sent"),
+    ("transaction Bittensor refusée (nonce) : une autre transaction est peut-être en cours — réessayez dans un instant", "Bittensor transaction refused (nonce): another transaction may be in progress — try again in a moment"),
+    ("envoi vers votre propre adresse Bittensor", "sending to your own Bittensor address"),
+    ("le nœud Bittensor a renvoyé un autre identifiant de transaction", "the Bittensor node returned another transaction ID"),
+    ("frais Bittensor manquants", "Bittensor fee missing"),
+    ("historique Bittensor indisponible dans cette version de l'app", "Bittensor history unavailable in this version of the app"),
+    ("historique Bittensor momentanément indisponible (limite du service atteinte) — réessayez plus tard", "Bittensor history temporarily unavailable (service limit reached) — try again later"),
+    ("aucun TAO envoyable sur cette adresse", "no sendable TAO on this address"),
+    ("clé Taostats refusée", "Taostats key refused"),
+    ("réponse de Taostats illisible", "unreadable Taostats response"),
     (
         "le prix a bougé pendant la préparation de l'échange (au-delà du glissement toléré) — rien n'a été envoyé, relancez l'échange",
         "the price moved while the swap was being prepared (beyond the tolerated slippage) — nothing was sent, start the swap again",
@@ -1035,6 +1064,42 @@ fn translate_dynamic_error(msg: &str) -> Option<String> {
     if let Some(detail) = msg.strip_prefix("les frais Stacks ont augmenté depuis la confirmation (").and_then(|rest| rest.strip_suffix(") — relancez l'envoi")) {
         return Some(format!("Stacks fees increased since the confirmation ({}) — start again", detail.replace(" au lieu de ", " instead of ")));
     }
+    if let Some(rest) = msg.strip_prefix("TAO insuffisants : ") {
+        return Some(format!(
+            "insufficient TAO: {}",
+            rest.replace(" TAO disponibles, ", " TAO available, ").replace(" TAO requis (frais ", " TAO required (fee ").replace(" TAO et réserve du compte ", " TAO and account reserve ").replace(" TAO compris)", " TAO included)")
+        ));
+    }
+    if let Some(rest) = msg.strip_prefix("montant trop faible pour ce destinataire (compte vide) : au moins ") {
+        return Some(format!("amount too small for this recipient (empty account): at least {rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("frais du réseau Bittensor anormalement élevés (").and_then(|r| r.strip_suffix(" TAO) — réessayez plus tard")) {
+        return Some(format!("abnormally high Bittensor network fee ({rest} TAO) — try again later"));
+    }
+    if let Some(rest) = msg.strip_prefix("transaction Bittensor refusée par le réseau (").and_then(|r| r.strip_suffix(") — rien n'a été envoyé")) {
+        return Some(format!("Bittensor transaction refused by the network ({rest}) — nothing was sent"));
+    }
+    if let Some(detail) = msg.strip_prefix("les frais Bittensor ont augmenté depuis la confirmation (").and_then(|rest| rest.strip_suffix(") — relancez l'envoi")) {
+        return Some(format!("Bittensor fees increased since the confirmation ({}) — start again", detail.replace(" au lieu de ", " instead of ")));
+    }
+    if let Some(rest) = msg.strip_prefix("adresse d'un autre réseau que Bittensor (format SS58 ").and_then(|r| r.strip_suffix(" au lieu de 42)")) {
+        return Some(format!("address from another network than Bittensor (SS58 format {rest} instead of 42)"));
+    }
+    if let Some(rest) = msg.strip_prefix("le réseau Bittensor demande une donnée de transaction inconnue de cette version de l'app (").and_then(|r| r.strip_suffix(") : mettez l'app à jour")) {
+        return Some(format!("the Bittensor network requires transaction data unknown to this version of the app ({rest}): update the app"));
+    }
+    if let Some(rest) = msg.strip_prefix("le nœud Bittensor a refusé : ") {
+        return Some(format!("the Bittensor node refused: {rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("nœud Bittensor injoignable : ") {
+        return Some(format!("Bittensor node unreachable: {rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("Taostats injoignable : ") {
+        return Some(format!("Taostats unreachable: {rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("Taostats : réponse ") {
+        return Some(format!("Taostats: response {rest}"));
+    }
     if let Some(rest) = msg.strip_prefix("DOGE insuffisants : ") {
         return Some(format!(
             "insufficient DOGE: {}",
@@ -1425,6 +1490,7 @@ struct AddressesDto {
     near: String,
     cardano: String,
     stacks: String,
+    bittensor: String,
 }
 
 impl From<api::Addresses> for AddressesDto {
@@ -1444,6 +1510,7 @@ impl From<api::Addresses> for AddressesDto {
             near: a.near,
             cardano: a.cardano,
             stacks: a.stacks,
+            bittensor: a.bittensor,
         }
     }
 }
@@ -1551,7 +1618,7 @@ fn save_bytes_with_dialog(suggested_name: String, content_b64: String, app: taur
 /// aurait laissé un frontend compromis ouvrir n'importe quelle page — un vecteur
 /// de phishing simple, ouvert sans aucun bénéfice fonctionnel puisqu'aucun appel
 /// légitime de cette commande ne cible jamais autre chose que ces domaines.
-const ALLOWED_EXTERNAL_LINK_PREFIXES: [&str; 13] = [
+const ALLOWED_EXTERNAL_LINK_PREFIXES: [&str; 15] = [
     "https://explorer.solana.com/",
     "https://blockstream.info/",
     "https://explorer.cow.fi/",
@@ -1565,6 +1632,8 @@ const ALLOWED_EXTERNAL_LINK_PREFIXES: [&str; 13] = [
     "https://nearblocks.io/txns/",
     "https://cardanoscan.io/transaction/",
     "https://explorer.hiro.so/txid/",
+    "https://taostats.io/extrinsic/",
+    "https://taostats.io/account/",
 ];
 
 /// Lien vers un explorateur connu de l'app : Solana, Bitcoin, ou l'explorateur
@@ -2559,6 +2628,7 @@ fn forget_session(app: &tauri::AppHandle) {
     app.state::<ProfileNearCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<ProfileCardanoCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<ProfileStacksCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    app.state::<ProfileBittensorCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<ShieldedKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     app.state::<MoneroKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
     IS_AFFILIATE_WALLET.store(false, Ordering::Relaxed);
@@ -2619,6 +2689,7 @@ async fn get_balance(network: String, address: String, app: tauri::AppHandle) ->
             "near_mainnet" => Ok(pgp_wallet_poc::near::format_near(api::get_near_balance(&address).t_err()?)),
             "ada_mainnet" => Ok(pgp_wallet_poc::cardano::format_ada(api::get_ada_balance(&address).t_err()?)),
             "stx_mainnet" => Ok(pgp_wallet_poc::stacks::format_stx(api::get_stx_balance(&address).t_err()?)),
+            "tao_mainnet" => Ok(pgp_wallet_poc::bittensor::format_tao(api::get_tao_balance(&address).t_err()?)),
             // Base locale (synchronisation de fond) : dépensable + en attente.
             "zec_shielded" => {
                 let balance = api::zec_shielded_balance(&data_dir(&app)?, shielded_profile(&app, &address)?).t_err()?;
@@ -2753,6 +2824,8 @@ async fn has_pending_tx(network: String, address: String, app: tauri::AppHandle)
             "xrp_mainnet" | "xlm_mainnet" | "near_mainnet" => Ok(false),
             // Un bloc toutes les 20 s ; l'envoi apparaît à sa confirmation.
             "ada_mainnet" | "stx_mainnet" => Ok(false),
+            // Un bloc toutes les 12 s ; l'envoi apparaît à son inclusion.
+            "tao_mainnet" => Ok(false),
             "xmr_mainnet" => api::has_pending_xmr(&data_dir(&app)?, monero_profile(&app, &address)?).t_err(),
             other => Err(translate_error(&format!("réseau inconnu : {other}"))),
         }
@@ -2972,6 +3045,22 @@ async fn get_tx_history(network: String, address: String, app: tauri::AppHandle)
             6,
             |id| format!("https://explorer.hiro.so/txid/0x{id}?chain=mainnet"),
         )),
+        "tao_mainnet" => {
+            pgp_wallet_poc::bittensor::parse_address(&address).t_err()?;
+            let explorer = pgp_wallet_poc::bittensor::explorer_address_url(&address);
+            if !pgp_wallet_poc::bittensor::history_available() {
+                return Ok(HistoryDto { entries: Vec::new(), explorer_url: Some(explorer), reason: None });
+            }
+            match history_dtos(
+                || pgp_wallet_poc::bittensor::history(&address, HISTORY_LIMIT as usize),
+                Some(price_history::Asset::Pair("TAOUSDT")),
+                9,
+                pgp_wallet_poc::bittensor::explorer_tx_url,
+            ) {
+                Err(e) if e == translate_error(pgp_wallet_poc::bittensor::HISTORY_LIMITED) => Ok(HistoryDto { entries: Vec::new(), explorer_url: Some(explorer), reason: Some("limited") }),
+                entries => HistoryDto::read(entries),
+            }
+        }
         "sol_devnet" | "sol_mainnet" => {
             let net = sol_network(&network)?;
             let asset = (network == "sol_mainnet").then_some(price_history::Asset::Sol);
@@ -3241,6 +3330,7 @@ fn network_label(network: &str) -> String {
         "near_mainnet" => lang("NEAR MAINNET — fonds réels", "NEAR MAINNET — real funds").to_string(),
         "ada_mainnet" => lang("Cardano MAINNET — fonds réels", "Cardano MAINNET — real funds").to_string(),
         "stx_mainnet" => lang("Stacks MAINNET — fonds réels", "Stacks MAINNET — real funds").to_string(),
+        "tao_mainnet" => lang("Bittensor MAINNET — fonds réels", "Bittensor MAINNET — real funds").to_string(),
         "xmr_mainnet" => lang("Monero MAINNET — fonds réels", "Monero MAINNET — real funds").to_string(),
         "zec_shielded" => lang("Zcash MAINNET — fonds protégés", "Zcash MAINNET — shielded funds").to_string(),
         other => match wallet_flow::evm_network(other) {
@@ -3266,6 +3356,7 @@ fn network_unit(network: &str) -> &'static str {
         "near_mainnet" => "NEAR",
         "ada_mainnet" => "ADA",
         "stx_mainnet" => "STX",
+        "tao_mainnet" => "TAO",
         other => wallet_flow::evm_network(other).map(|n| n.native_symbol).unwrap_or(""),
     }
 }
@@ -3385,6 +3476,7 @@ fn recipient_warning_lines(first_send: bool, coin: &str, activity: Option<api::R
         "near" => ("aucun NEAR", "no NEAR"),
         "ada" => ("aucun ADA", "no ADA"),
         "stx" => ("aucun STX", "no STX"),
+        "tao" => ("aucun TAO", "no TAO"),
         "sol" => ("aucun SOL", "no SOL"),
         _ => ("aucun fonds", "no funds"),
     };
@@ -3494,6 +3586,7 @@ fn known_recipients(app: &tauri::AppHandle, dir: &std::path::Path) -> Vec<(Strin
     simple(&app.state::<ProfileNearCache>().0);
     simple(&app.state::<ProfileCardanoCache>().0);
     simple(&app.state::<ProfileStacksCache>().0);
+    simple(&app.state::<ProfileBittensorCache>().0);
     for (index, (address, _)) in app.state::<MoneroKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).iter() {
         known.push((profile(index), address.clone()));
     }
@@ -3627,6 +3720,7 @@ fn own_profile_label(app: &tauri::AppHandle, dir: &std::path::Path, network: &st
         "near_mainnet" => in_cache(&app.state::<ProfileNearCache>().0, exact),
         "ada_mainnet" => in_cache(&app.state::<ProfileCardanoCache>().0, exact),
         "stx_mainnet" => in_cache(&app.state::<ProfileStacksCache>().0, exact),
+        "tao_mainnet" => in_cache(&app.state::<ProfileBittensorCache>().0, exact),
         "xmr_mainnet" => {
             app.state::<MoneroKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).iter().find(|(_, (address, _))| address == to).map(|(index, _)| *index)
         }
@@ -3758,6 +3852,7 @@ async fn send_transaction(
         let from_near = app.state::<ProfileNearCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).cloned();
         let from_cardano = app.state::<ProfileCardanoCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).cloned();
         let from_stacks = app.state::<ProfileStacksCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).cloned();
+        let from_bittensor = app.state::<ProfileBittensorCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).cloned();
         let from = SendFrom {
             evm: from_evm.as_deref(),
             sol: from_sol.as_deref(),
@@ -3771,6 +3866,7 @@ async fn send_transaction(
             near: from_near.as_deref(),
             cardano: from_cardano.as_deref(),
             stacks: from_stacks.as_deref(),
+            bittensor: from_bittensor.as_deref(),
         };
         let mut send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &from_label, None, from, max.unwrap_or(false), note)?;
         // Tag / mémo : toujours rappelé sur ces réseaux (« aucun » compris).
@@ -3829,6 +3925,10 @@ async fn send_transaction(
             "stx_mainnet" => {
                 let shown_fee = send.stx_fee.ok_or_else(|| translate_error("frais Stacks manquants"))?;
                 api::send_stx(&dir, &password, &send.to, &send.amount, send.stacks_memo(), shown_fee, profile_index).t_err()
+            }
+            "tao_mainnet" => {
+                let shown_fee = send.tao_fee.ok_or_else(|| translate_error("frais Bittensor manquants"))?;
+                api::send_tao(&dir, &password, &send.to, &send.amount, shown_fee, profile_index).t_err()
             }
             // Exactement l'envoi préparé et affiché (sorties, leurres, frais).
             "xmr_mainnet" => match send.xmr_plan.take() {
@@ -3969,6 +4069,7 @@ async fn max_send_amount(network: String, token: Option<String>, profile_index: 
             "near_mainnet" => api::near_max(&cached(&app.state::<ProfileNearCache>().0)?, None).t_err(),
             "ada_mainnet" => api::ada_max(&cached(&app.state::<ProfileCardanoCache>().0)?, None).t_err(),
             "stx_mainnet" => api::stx_max(&cached(&app.state::<ProfileStacksCache>().0)?).t_err(),
+            "tao_mainnet" => api::tao_max(&cached(&app.state::<ProfileBittensorCache>().0)?, None).t_err(),
             "xmr_mainnet" => {
                 let keys = app.state::<MoneroKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).map(|(_, keys)| keys.clone()).ok_or_else(unknown)?;
                 Ok(pgp_wallet_poc::monero::format_xmr(api::xmr_send_plan_max(&dir, &keys, None).t_err()?.amount))
@@ -4025,6 +4126,8 @@ struct ConfirmedSend {
     ada_fee: Option<u64>,
     /// Frais Stacks affichés (plafond à l'envoi).
     stx_fee: Option<u64>,
+    /// Frais Bittensor affichés (plafond à l'envoi, à 10 % près).
+    tao_fee: Option<u64>,
     /// Tag (XRP) ou mémo (Stellar) affiché dans la boîte, signé tel quel.
     note: Option<DestinationNote>,
 }
@@ -4094,6 +4197,7 @@ struct SendFrom<'a> {
     near: Option<&'a str>,
     cardano: Option<&'a str>,
     stacks: Option<&'a str>,
+    bittensor: Option<&'a str>,
 }
 
 /// État de `to` sur la blockchain, pour les avertissements (`None` : lecture
@@ -4121,6 +4225,7 @@ fn recipient_activity(coin: &str, network: &str, to: &str) -> Result<Option<api:
         "near" => api::near_recipient_activity(to).ok(),
         "ada" => api::ada_recipient_activity(to).ok(),
         "stx" => api::stx_recipient_activity(to).ok(),
+        "tao" => api::tao_recipient_activity(to).ok(),
         // Adresse vérifiée par la préparation ; aucune activité lisible
         // (adresses et montants invisibles sur la chaîne Monero).
         "xmr" => None,
@@ -4147,6 +4252,7 @@ fn send_coin(network: &str) -> Result<&'static str, String> {
         "near_mainnet" => "near",
         "ada_mainnet" => "ada",
         "stx_mainnet" => "stx",
+        "tao_mainnet" => "tao",
         other => return Err(translate_error(&format!("réseau inconnu : {other}"))),
     })
 }
@@ -4215,6 +4321,7 @@ fn confirm_send(
             "near" => api::near_max(from.near.ok_or_else(unknown_profile)?, Some(&to)).t_err()?,
             "ada" => api::ada_max(from.cardano.ok_or_else(unknown_profile)?, Some(&to)).t_err()?,
             "stx" => api::stx_max(from.stacks.ok_or_else(unknown_profile)?).t_err()?,
+            "tao" => api::tao_max(from.bittensor.ok_or_else(unknown_profile)?, Some(&to)).t_err()?,
             _ => {
                 let plan = api::xmr_send_plan_max(dir, from.xmr.ok_or_else(unknown_profile)?, Some(&to)).t_err()?;
                 let amount = pgp_wallet_poc::monero::format_xmr(plan.amount);
@@ -4234,6 +4341,7 @@ fn confirm_send(
         "near" => api::canonical_near_amount(&amount).t_err()?,
         "ada" => api::canonical_ada_amount(&amount).t_err()?,
         "stx" => api::canonical_stx_amount(&amount).t_err()?,
+        "tao" => api::canonical_tao_amount(&amount).t_err()?,
         "xmr" => api::canonical_xmr_amount(&amount).t_err()?,
         _ => api::canonical_amount(coin, &amount).t_err()?,
     };
@@ -4315,6 +4423,12 @@ fn confirm_send(
     // Stacks : solde disponible (hors stacking) et frais vérifiés MAINTENANT.
     let stx_plan = match coin {
         "stx" => Some(api::stx_send_plan(from.stacks.ok_or_else(unknown_profile)?, &to, &amount).t_err()?),
+        _ => None,
+    };
+    // Bittensor : frais, réserve minimale de l'envoyeur et compte destinataire
+    // vide vérifiés MAINTENANT (refus que la validation du nœud ne voit pas).
+    let tao_plan = match coin {
+        "tao" => Some(api::tao_send_plan(from.bittensor.ok_or_else(unknown_profile)?, &to, &amount).t_err()?),
         _ => None,
     };
     // Monero : destinataire vérifié, sorties choisies, leurres tirés et frais
@@ -4401,6 +4515,7 @@ Change returned to your address: {change} ZEC")));
             line
         }),
         "stx" => stx_plan.map(|plan| format!("{} : {} STX", lang("Frais", "Fee"), pgp_wallet_poc::stacks::format_stx(plan.fee))),
+        "tao" => tao_plan.as_ref().map(|plan| format!("{} : {} TAO", lang("Frais", "Fee"), pgp_wallet_poc::bittensor::format_tao(plan.fee))),
         "ada" => ada_plan.as_ref().map(|plan| {
             let mut line = format!("{} : {} ADA", lang("Frais", "Fee"), pgp_wallet_poc::cardano::format_ada(plan.fee));
             if plan.change > 0 {
@@ -4467,6 +4582,7 @@ Change returned to your address: {change} XMR (spendable after 10 confirmations,
         near_fee: near_plan.map(|plan| plan.fee),
         ada_fee: ada_plan.map(|plan| plan.fee),
         stx_fee: stx_plan.map(|plan| plan.fee),
+        tao_fee: tao_plan.map(|plan| plan.fee),
         note,
     })
 }
@@ -4745,6 +4861,7 @@ fn profile_address(app: &tauri::AppHandle, network: &str, profile_index: u32) ->
         "near_mainnet" => cached(&app.state::<ProfileNearCache>().0),
         "ada_mainnet" => cached(&app.state::<ProfileCardanoCache>().0),
         "stx_mainnet" => cached(&app.state::<ProfileStacksCache>().0),
+        "tao_mainnet" => cached(&app.state::<ProfileBittensorCache>().0),
         other => Err(translate_error(&format!("réseau inconnu : {other}"))),
     }
 }
@@ -6944,6 +7061,10 @@ struct ProfileCardanoCache(std::sync::Mutex<std::collections::HashMap<u32, Strin
 #[derive(Default)]
 struct ProfileStacksCache(std::sync::Mutex<std::collections::HashMap<u32, String>>);
 
+/// Adresse Bittensor de chaque profil (préparation d'un envoi avant la boîte).
+#[derive(Default)]
+struct ProfileBittensorCache(std::sync::Mutex<std::collections::HashMap<u32, String>>);
+
 /// Adresse Bitcoin testnet de chaque profil (bouton « Max » d'un envoi testnet).
 #[derive(Default)]
 struct ProfileBtcTestnetCache(std::sync::Mutex<std::collections::HashMap<u32, String>>);
@@ -7004,6 +7125,9 @@ fn remember_addresses(app: &tauri::AppHandle, index: u32, addresses: &api::Addre
     }
     if let Some(cache) = app.try_state::<ProfileStacksCache>() {
         cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, addresses.stacks.clone());
+    }
+    if let Some(cache) = app.try_state::<ProfileBittensorCache>() {
+        cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, addresses.bittensor.clone());
     }
     if let Some(cache) = app.try_state::<ShieldedKeysCache>() {
         cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, (addresses.zcash_shielded.clone(), addresses.zcash_shielded_keys.clone()));
@@ -7807,6 +7931,7 @@ pub fn run() {
         .manage(ProfileNearCache::default())
         .manage(ProfileCardanoCache::default())
         .manage(ProfileStacksCache::default())
+        .manage(ProfileBittensorCache::default())
         .manage(ProfileDogeCache::default())
         .manage(ProfileBtcCache::default())
         .manage(ShieldedKeysCache::default())
@@ -8113,7 +8238,7 @@ mod tests {
         }
 
         // Chaque avertissement tient sur un seul paragraphe (mise en page de la boîte).
-        for coin in ["evm", "btc", "sol", "usdc", "zec", "doge", "trx", "xrp", "xlm", "near", "ada", "stx", "xmr", "zecs"] {
+        for coin in ["evm", "btc", "sol", "usdc", "zec", "doge", "trx", "xrp", "xlm", "near", "ada", "stx", "tao", "xmr", "zecs"] {
             for activity in [Some(Unused), Some(Empty), None] {
                 assert!(recipient_warning_lines(true, coin, activity).iter().all(|l| !l.contains('\n')));
             }
@@ -8456,6 +8581,61 @@ mod tests {
         assert!(plain["recap"]["note"].is_null());
         assert_eq!(plain["recap"]["to_label"], "Adresse d'arrivée");
         assert_eq!(DestinationNote::StellarMemo(StellarMemo::Text("abc".into())).recap(), ("Mémo (texte)".to_string(), "\"abc\"".to_string()));
+    }
+
+    /// Messages d'erreur Bittensor : présents dans le code, traduits (fixes et variables).
+    #[test]
+    fn bittensor_error_messages_have_a_translation() {
+        let sources = [include_str!("../../../core/src/bittensor.rs"), include_str!("../../../core/src/api.rs"), include_str!("lib.rs")];
+        for fr in [
+            "adresse Bittensor invalide",
+            "adresse Bittensor invalide (somme de contrôle)",
+            "réponse du nœud Bittensor illisible",
+            "réponse du nœud Bittensor sans résultat",
+            "compte Bittensor illisible",
+            "le format des transactions Bittensor a changé : mettez l'app à jour",
+            "version du runtime Bittensor illisible",
+            "version des transactions Bittensor illisible",
+            "métadonnées Bittensor illisibles",
+            "métadonnées Bittensor d'une version inattendue : mettez l'app à jour",
+            "ce nœud n'est pas sur le réseau principal Bittensor",
+            "empreinte de bloc Bittensor invalide",
+            "numéro de bloc Bittensor absent",
+            "numéro de bloc Bittensor invalide",
+            "nonce Bittensor illisible",
+            "réponse de validation Bittensor inattendue",
+            "frais Bittensor illisibles",
+            "TAO insuffisants pour payer les frais du réseau",
+            "transaction Bittensor refusée : signature invalide (format du réseau changé ?) — rien n'a été envoyé",
+            "transaction Bittensor refusée (nonce) : une autre transaction est peut-être en cours — réessayez dans un instant",
+            "envoi vers votre propre adresse Bittensor",
+            "le nœud Bittensor a renvoyé un autre identifiant de transaction",
+            "frais Bittensor manquants",
+            "historique Bittensor indisponible dans cette version de l'app",
+            "historique Bittensor momentanément indisponible (limite du service atteinte) — réessayez plus tard",
+            "aucun TAO envoyable sur cette adresse",
+            "clé Taostats refusée",
+            "réponse de Taostats illisible",
+        ] {
+            assert!(sources.iter().any(|s| s.contains(fr)), "message absent du code : {fr}");
+            assert!(EXACT_ERROR_TRANSLATIONS.iter().any(|(f, _)| *f == fr), "sans traduction : {fr}");
+        }
+        for (fr, en) in [
+            (
+                "TAO insuffisants : 1.000000000 TAO disponibles, 2.000000500 TAO requis (frais 0.000083124 TAO et réserve du compte 0.000000500 TAO compris)",
+                "insufficient TAO: 1.000000000 TAO available, 2.000000500 TAO required (fee 0.000083124 TAO and account reserve 0.000000500 TAO included)",
+            ),
+            ("montant trop faible pour ce destinataire (compte vide) : au moins 0.000000500 TAO", "amount too small for this recipient (empty account): at least 0.000000500 TAO"),
+            ("frais du réseau Bittensor anormalement élevés (0.020000000 TAO) — réessayez plus tard", "abnormally high Bittensor network fee (0.020000000 TAO) — try again later"),
+            ("transaction Bittensor refusée par le réseau (Invalid(7)) — rien n'a été envoyé", "Bittensor transaction refused by the network (Invalid(7)) — nothing was sent"),
+            (
+                "les frais Bittensor ont augmenté depuis la confirmation (0.000100000 au lieu de 0.000083124 TAO) — relancez l'envoi",
+                "Bittensor fees increased since the confirmation (0.000100000 instead of 0.000083124 TAO) — start again",
+            ),
+            ("adresse d'un autre réseau que Bittensor (format SS58 0 au lieu de 42)", "address from another network than Bittensor (SS58 format 0 instead of 42)"),
+        ] {
+            assert_eq!(translate_dynamic_error(fr).as_deref(), Some(en));
+        }
     }
 
     /// Messages d'erreur Stacks : présents dans le code, traduits (fixes et variables).
