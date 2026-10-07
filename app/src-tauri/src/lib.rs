@@ -552,13 +552,9 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("clé de visualisation Monero invalide", "invalid Monero view key"),
     ("démarrage du client Monero impossible", "could not start the Monero client"),
     ("envoi Monero non préparé", "Monero transfer not prepared"),
-    // Clé Etherscan (core/src/etherscan_key.rs, core/src/routescan.rs)
-    (
-        "clé Etherscan invalide : 34 lettres majuscules et chiffres attendus (à copier depuis etherscan.io/myapikey)",
-        "invalid Etherscan key: 34 uppercase letters and digits expected (copy it from etherscan.io/myapikey)",
-    ),
-    (pgp_wallet_poc::routescan::ETHERSCAN_KEY_MISSING, "history of this network: add your free Etherscan key in Settings"),
-    (pgp_wallet_poc::routescan::ETHERSCAN_KEY_REFUSED, "Etherscan refuses the saved key (invalid or revoked) — check it in Settings"),
+    // Historique BNB Chain (core/src/nodereal.rs)
+    (pgp_wallet_poc::nodereal::KEY_MISSING, "BNB Chain history unavailable in this version of the app"),
+    (pgp_wallet_poc::nodereal::LIMITED, "BNB Chain history temporarily unavailable (service limit reached) — try again later"),
     (
         pgp_wallet_poc::lifi::NO_CONFIRMED_BTC,
         "no confirmed BTC on your address: LI.FI builds the deposit from funds received and confirmed (at least one confirmation)",
@@ -2862,10 +2858,8 @@ struct HistoryDto {
     /// Réseau sans source d'historique utilisable : page de l'adresse sur
     /// l'explorateur du réseau, à ouvrir à la place (`entries` vide).
     explorer_url: Option<String>,
-    /// Pourquoi : « no_key » (clé Etherscan gratuite à saisir dans
-    /// Paramètres), « paid_key » (sans clé, sur un réseau que seule une offre
-    /// Etherscan payante couvre), « paid_plan » (clé enregistrée refusée pour
-    /// ce réseau par l'offre gratuite).
+    /// Pourquoi, s'il est connu : « limited » (limite de l'offre gratuite de
+    /// NodeReal atteinte, historique BNB Chain).
     reason: Option<&'static str>,
 }
 
@@ -2874,16 +2868,15 @@ impl HistoryDto {
         Ok(Self { entries: entries?, explorer_url: None, reason: None })
     }
 
-    /// Historique EVM : sans clé Etherscan pour ce réseau, ou refusé par
-    /// l'offre gratuite, la page de l'explorateur avec le motif.
+    /// Historique EVM : sans source utilisable (BNB Chain sans clé NodeReal
+    /// dans cette version), ou limite de l'offre gratuite atteinte, la page
+    /// de l'explorateur, avec le motif.
     fn evm(net: &wallet_flow::EvmNetwork, explorer_url: String, read: impl FnOnce() -> Result<Vec<TxEntryDto>, String>) -> Result<Self, String> {
         if !history::evm_history_available(net) {
-            let reason = (net.history == Some(wallet_flow::EvmHistory::Etherscan))
-                .then_some(if pgp_wallet_poc::routescan::etherscan_free_tier_covers(net.chain_id) { "no_key" } else { "paid_key" });
-            return Ok(Self { entries: Vec::new(), explorer_url: Some(explorer_url), reason });
+            return Ok(Self { entries: Vec::new(), explorer_url: Some(explorer_url), reason: None });
         }
         match read() {
-            Err(e) if pgp_wallet_poc::routescan::is_paid_plan_refusal(&e) => Ok(Self { entries: Vec::new(), explorer_url: Some(explorer_url), reason: Some("paid_plan") }),
+            Err(e) if e == translate_error(pgp_wallet_poc::nodereal::LIMITED) => Ok(Self { entries: Vec::new(), explorer_url: Some(explorer_url), reason: Some("limited") }),
             entries => Self::read(entries),
         }
     }
@@ -2992,22 +2985,6 @@ async fn get_tx_history(network: String, address: String, app: tauri::AppHandle)
         other => Err(translate_error(&format!("réseau inconnu : {other}"))),
     })
     .await
-}
-
-/// Clé Etherscan enregistrée sur l'appareil, sous forme masquée seulement
-/// (voir `core/src/etherscan_key.rs`) : jamais renvoyée en entier.
-#[tauri::command]
-fn etherscan_key_status() -> Option<String> {
-    pgp_wallet_poc::etherscan_key::masked()
-}
-
-/// Enregistre (ou, vide, supprime) la clé Etherscan de l'utilisateur ;
-/// renvoie sa forme masquée.
-#[tauri::command]
-fn set_etherscan_key(key: String, app: tauri::AppHandle) -> Result<Option<String>, String> {
-    let key = Zeroizing::new(key);
-    let dir = data_dir(&app)?;
-    pgp_wallet_poc::etherscan_key::save(&dir, &key).t_err()
 }
 
 /// Historique d'un jeton du registre (`core/src/tokens.rs`) : ERC-20 via
@@ -7849,10 +7826,10 @@ pub fn run() {
                 // Détails des transactions Solana finalisées déjà lus (données publiques) :
                 // le nœud public n'en accorde qu'environ un par seconde.
                 pgp_wallet_poc::sol_rpc::use_details_cache_file(dir.join("solana_tx_cache.jsonl"));
-                // Clé Etherscan de l'utilisateur (historiques HyperEVM et BNB Chain).
-                if let Err(e) = pgp_wallet_poc::etherscan_key::load(&dir) {
-                    eprintln!("clé Etherscan : {e:#}");
-                }
+                // Ancienne clé Etherscan de l'utilisateur (historiques HyperEVM et
+                // BNB Chain, retirés le 07/10/2026 : HyperEVM supprimé, BNB Chain
+                // lu chez NodeReal) : plus rien ne s'en sert, effacée.
+                let _ = std::fs::remove_file(dir.join("etherscan_key.txt"));
                 // Événements WalletConnect (proposition, demande, état du relais)
                 // relayés au frontend ; le contenu des demandes, lui, n'est
                 // jamais relu depuis le frontend (voir `wc_prepare_request`).
@@ -7918,8 +7895,6 @@ pub fn run() {
             has_pending_tx,
             get_tx_history,
             get_token_tx_history,
-            etherscan_key_status,
-            set_etherscan_key,
             estimate_btc_fees,
             get_crypto_prices,
             get_market_prices,
@@ -8030,13 +8005,12 @@ mod tests {
             "https://snowtrace.io/tx/0x01",
             "https://bscscan.com/address/0x01",
             "https://bscscan.com/token/0x000ae314e2a2172a039b26378814c252734f556a?a=0x01",
-            "https://hyperevmscan.io/address/0x01",
             "https://explorer.solana.com/tx/abc",
             "https://blockstream.info/tx/abc",
         ] {
             assert!(external_link_allowed(allowed), "{allowed}");
         }
-        for refused in ["https://arbiscan.io.evil.com/tx/0x01", "http://etherscan.io/tx/0x01", "https://evil.com/?u=https://etherscan.io/", "https://bscscan.co/"] {
+        for refused in ["https://arbiscan.io.evil.com/tx/0x01", "http://etherscan.io/tx/0x01", "https://evil.com/?u=https://etherscan.io/", "https://bscscan.co/", "https://hyperevmscan.io/address/0x01"] {
             assert!(!external_link_allowed(refused), "{refused}");
         }
         for net in wallet_flow::EVM_NETWORKS {

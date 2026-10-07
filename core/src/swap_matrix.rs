@@ -87,7 +87,6 @@ fn gecko(coin: &str) -> &'static str {
         "bnb" => "binancecoin",
         "avax" => "avalanche-2",
         "pol" => "polygon-ecosystem-token",
-        "hype" => "hyperliquid",
         "zec" => "zcash",
         "doge" => "dogecoin",
         "usdt" => "tether",

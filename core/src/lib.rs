@@ -42,7 +42,7 @@ pub mod seed_state;
 pub mod jupiter_rpc;
 pub mod cow;
 pub mod lifi;
-pub mod etherscan_key;
+pub mod nodereal;
 pub mod native_deposit;
 pub mod zcash;
 pub mod zcash_shielded;

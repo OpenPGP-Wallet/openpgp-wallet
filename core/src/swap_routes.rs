@@ -317,7 +317,7 @@ mod tests {
         assert_eq!(direct(a("evm", "evm_mainnet"), a("btc", "btc_mainnet")), Some(Protocol::Thorchain), "THORChain avant Maya");
         assert_eq!(direct(a("evm", "arbitrum_mainnet"), a("bnb", "bsc_mainnet")), lifi_or_none, "aucun protocole natif ne relie les deux");
         assert_eq!(find("usdc", "base_mainnet"), Some(a("usdc", "base_mainnet")));
-        assert_eq!(find("hype", "hyperevm_mainnet").is_some(), lifi_enabled(), "HYPE : via LI.FI seulement");
+        assert!(find("hype", "hyperevm_mainnet").is_none(), "HyperEVM retiré de l'app");
     }
 
     /// CoW : même réseau EVM seulement (monnaie du réseau comprise, via
@@ -375,7 +375,7 @@ mod tests {
     }
 
     /// LI.FI : entre deux réseaux différents (Bitcoin compris, PSBT vérifiée),
-    /// et depuis un réseau sans simulation (Avalanche, HyperEVM) vers un
+    /// et depuis un réseau sans simulation (Avalanche) vers un
     /// réseau EVM seulement ; proposé en dernier (sauf depuis Bitcoin), une
     /// fois le nom d'intégrateur renseigné.
     #[test]
@@ -383,9 +383,8 @@ mod tests {
         assert!(lifi::links(("render", "sol_mainnet"), ("link", "evm_mainnet")), "le cas qui manquait");
         assert!(lifi::links(("link", "evm_mainnet"), ("render", "sol_mainnet")));
         assert!(lifi::links(("evm", "evm_mainnet"), ("btc", "btc_mainnet")));
-        assert!(lifi::links(("hype", "hyperevm_mainnet"), ("usdc", "arbitrum_mainnet")), "HYPE vendu vers un réseau EVM");
-        assert!(lifi::links(("usdc", "base_mainnet"), ("hype", "hyperevm_mainnet")), "HYPE acheté");
-        assert!(!lifi::links(("hype", "hyperevm_mainnet"), ("sol", "sol_mainnet")), "HyperEVM ne simule pas : pas vers Solana");
+        assert!(lifi::links(("avax", "avax_mainnet"), ("usdc", "arbitrum_mainnet")), "AVAX vendu vers un réseau EVM");
+        assert!(!lifi::links(("avax", "avax_mainnet"), ("sol", "sol_mainnet")), "Avalanche ne simule pas : pas vers Solana");
         assert!(!lifi::links(("avax", "avax_mainnet"), ("btc", "btc_mainnet")));
         assert!(lifi::links(("btc", "btc_mainnet"), ("evm", "evm_mainnet")), "depuis Bitcoin : PSBT vérifiée");
         assert!(lifi::links(("btc", "btc_mainnet"), ("sol", "sol_mainnet")));
@@ -452,26 +451,21 @@ mod tests {
     }
 
     /// Deux étapes quand rien ne relie directement, par la monnaie d'un réseau
-    /// de préférence ; chaque étape est une paire directe ; HYPE seulement via
-    /// LI.FI.
+    /// de préférence ; chaque étape est une paire directe.
     #[test]
     fn two_step_routes_go_through_a_network_currency() {
         let sol = a("sol", "sol_mainnet");
         let eth = a("evm", "evm_mainnet");
-        let hype = a("hype", "hyperevm_mainnet");
         assert_eq!(route(eth, a("btc", "btc_mainnet")), Some(Route { first: Protocol::Thorchain, via: None }));
         if lifi_enabled() {
-            // Directs via LI.FI ; il reste 2 étapes depuis HyperEVM vers Solana
-            // (pas de simulation sur HyperEVM : LI.FI seulement vers un réseau EVM).
+            // Directs via LI.FI.
             let lifi = Some(Route { first: Protocol::Lifi, via: None });
             assert_eq!(route(a("render", "sol_mainnet"), eth), lifi);
             assert_eq!(route(a("evm", "arbitrum_mainnet"), a("bnb", "bsc_mainnet")), lifi);
-            assert_eq!(route(hype, sol), Some(Route { first: Protocol::Lifi, via: Some((eth, Protocol::Thorchain)) }));
         } else {
             assert_eq!(route(a("render", "sol_mainnet"), eth), Some(Route { first: Protocol::Jupiter, via: Some((sol, Protocol::Thorchain)) }));
             assert_eq!(route(a("usdc", "sol_mainnet"), a("btc", "btc_mainnet")), Some(Route { first: Protocol::Jupiter, via: Some((sol, Protocol::Thorchain)) }));
             assert_eq!(route(a("evm", "arbitrum_mainnet"), a("bnb", "bsc_mainnet")), Some(Route { first: Protocol::Maya, via: Some((eth, Protocol::Thorchain)) }));
-            assert_eq!(route(eth, hype), None);
         }
         for (from, to, r) in routes() {
             match r.via {

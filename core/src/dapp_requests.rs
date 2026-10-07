@@ -543,7 +543,7 @@ mod tests {
         assert!(prepare("eth_sign", &json!([account().evm, "0x00"]), EVM_MAINNET, &account()).is_err());
         assert!(prepare("personal_sign", &json!(["0x00", account().evm]), "eip155:10", &account()).is_err(), "réseau non géré par l'app");
         assert!(prepare("personal_sign", &json!(["0x00", account().evm]), "eip155:01", &account()).is_err(), "forme non canonique");
-        assert!(network_for_chain("eip155:8453").is_some() && network_for_chain("eip155:999").is_some());
+        assert!(network_for_chain("eip155:8453").is_some() && network_for_chain("eip155:999").is_none(), "HyperEVM retiré");
         assert!(prepare("solana_signMessage", &json!({"message": "2"}), EVM_MAINNET, &account()).is_err());
     }
 

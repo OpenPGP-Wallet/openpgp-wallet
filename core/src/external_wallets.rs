@@ -130,8 +130,10 @@ pub(crate) fn validate_address(network: &str, address: &str) -> Result<()> {
     Ok(())
 }
 
+/// Wallets suivis sur les réseaux de l'app ; ceux d'un réseau retiré
+/// (HyperEVM, le 07/10/2026) restent dans le fichier sans être affichés.
 pub fn list_wallets(data_dir: &Path) -> Vec<ExternalWallet> {
-    load(data_dir).wallets
+    load(data_dir).wallets.into_iter().filter(|w| validate_address(&w.network, &w.address).is_ok()).collect()
 }
 
 pub fn list_groups(data_dir: &Path) -> Vec<ExternalWalletGroup> {

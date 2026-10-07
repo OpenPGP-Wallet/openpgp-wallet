@@ -85,14 +85,12 @@ pub struct EvmNetwork {
     /// Frais de publication sur Ethereum facturés EN PLUS du gas (réseaux OP
     /// Stack, comme Base), lus auprès du contrat oracle du réseau.
     pub op_stack_l1_fee: bool,
-    /// Source de l'historique des transactions ; `None` : aucune source publique
-    /// sans clé (BNB Chain, HyperEVM — constaté : ni Blockscout, ni Routescan,
-    /// et l'offre gratuite d'Etherscan exclut BNB Chain) ; l'app renvoie alors
-    /// vers l'explorateur du réseau.
+    /// Source de l'historique des transactions ; `None` : aucune source,
+    /// l'app renvoie alors vers l'explorateur du réseau.
     pub history: Option<EvmHistory>,
 }
 
-/// Source publique de l'historique d'une adresse EVM (sans clé, sauf Etherscan).
+/// Source de l'historique d'une adresse EVM (sans clé, sauf NodeReal).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EvmHistory {
     /// Instance Blockscout (API v2).
@@ -100,10 +98,9 @@ pub enum EvmHistory {
     /// API compatible Etherscan de Routescan, par identifiant de chaîne
     /// (Avalanche C-Chain).
     Routescan,
-    /// API v2 d'Etherscan, avec la clé de l'utilisateur (voir
-    /// `etherscan_key`) : HyperEVM (offre gratuite), BNB Chain (offre payante
-    /// seulement).
-    Etherscan,
+    /// NodeReal, avec la clé intégrée à l'app (voir `nodereal`) : BNB Chain,
+    /// qu'aucun service public sans clé ne couvre.
+    NodeReal,
 }
 
 impl EvmNetwork {
@@ -198,7 +195,7 @@ pub const BSC_MAINNET: EvmNetwork = EvmNetwork {
     max_gas_price_wei: Some(100 * GWEI),
     transfer_gas: Some(21_000),
     op_stack_l1_fee: false,
-    history: Some(EvmHistory::Etherscan),
+    history: Some(EvmHistory::NodeReal),
 };
 
 pub const AVALANCHE_MAINNET: EvmNetwork = EvmNetwork {
@@ -232,21 +229,6 @@ pub const POLYGON_MAINNET: EvmNetwork = EvmNetwork {
     history: Some(EvmHistory::Blockscout("https://polygon.blockscout.com")),
 };
 
-pub const HYPEREVM_MAINNET: EvmNetwork = EvmNetwork {
-    id: "hyperevm_mainnet",
-    name: "HyperEVM",
-    rpc: "https://rpc.hyperliquid.xyz/evm",
-    chain_id: 999,
-    label: "HyperEVM — FONDS RÉELS",
-    explorer_tx_prefix: "https://hyperevmscan.io/tx/",
-    native_symbol: "HYPE",
-    mainnet: true,
-    max_gas_price_wei: Some(100 * GWEI),
-    transfer_gas: Some(21_000),
-    op_stack_l1_fee: false,
-    history: Some(EvmHistory::Etherscan),
-};
-
 /// Tous les réseaux EVM connus de l'app.
 pub const EVM_NETWORKS: &[&EvmNetwork] = &[
     &ETHEREUM_MAINNET,
@@ -256,7 +238,6 @@ pub const EVM_NETWORKS: &[&EvmNetwork] = &[
     &BSC_MAINNET,
     &AVALANCHE_MAINNET,
     &POLYGON_MAINNET,
-    &HYPEREVM_MAINNET,
 ];
 
 /// Réseau EVM par son identifiant ("evm_mainnet", "bsc_mainnet"…).

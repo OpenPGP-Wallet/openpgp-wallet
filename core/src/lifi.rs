@@ -9,7 +9,7 @@
 //!   jeton vendu quitte l'utilisateur, au montant exact, et le destinataire
 //!   émis par le contrat est celui affiché. Un pont qui garde le destinataire
 //!   hors chaîne (« Relay depository ») est écarté et un nouveau devis
-//!   demandé sans lui. Avalanche et HyperEVM : leurs nœuds ne simulent pas,
+//!   demandé sans lui. Avalanche : ses nœuds ne simulent pas,
 //!   le destinataire est lu dans les données de l'appel (destination EVM
 //!   seulement) ;
 //! - source Solana : simulation des effets sur les comptes de l'utilisateur
@@ -69,11 +69,10 @@ fn shared_client() -> &'static reqwest::blocking::Client {
 }
 
 /// Contrat d'entrée de LI.FI (« diamond ») sur un réseau EVM de l'app, relevé
-/// sur `li.quest/v1/chains` (même adresse partout sauf HyperEVM).
+/// sur `li.quest/v1/chains` (même adresse partout).
 pub fn diamond(network: &str) -> Option<&'static str> {
     Some(match network {
         "evm_mainnet" | "arbitrum_mainnet" | "base_mainnet" | "bsc_mainnet" | "avax_mainnet" | "polygon_mainnet" => "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
-        "hyperevm_mainnet" => "0x0a0758d937d1059c356D4714e57F5df0239bce1A",
         _ => return None,
     })
 }
@@ -89,7 +88,7 @@ pub fn chain_id(network: &str) -> Option<u64> {
 
 /// Le nœud du réseau sait-il simuler (`eth_simulateV1`, relevé le 02/10/2026) ?
 pub fn simulates(network: &str) -> bool {
-    !matches!(network, "avax_mainnet" | "hyperevm_mainnet")
+    network != "avax_mainnet"
 }
 
 fn is_evm(network: &str) -> bool {
@@ -103,7 +102,6 @@ fn native_coin(network: &wallet_flow::EvmNetwork) -> &'static str {
         "BNB" => "bnb",
         "AVAX" => "avax",
         "POL" => "pol",
-        "HYPE" => "hype",
         _ => "",
     }
 }
@@ -736,7 +734,7 @@ pub fn verify_simulation(calls: &[eth_rpc::SimulatedCall], expected: &Expected) 
     Ok(Verification::Verified)
 }
 
-/// Vérification sans simulation (Avalanche, HyperEVM) : `BridgeData` lue dans
+/// Vérification sans simulation (Avalanche) : `BridgeData` lue dans
 /// l'appel — destination EVM seulement, destinataire = celui affiché, bon
 /// réseau, pas d'appel à l'arrivée, jeton envoyé = jeton vendu s'il n'est pas
 /// d'abord échangé. Ce qui quitte l'utilisateur reste borné par l'app :
@@ -979,17 +977,17 @@ mod tests {
 
     #[test]
     fn tokens_networks_and_contracts() {
-        let hype = token("hype", "hyperevm_mainnet").unwrap();
-        assert!(hype.native && hype.chain == 999 && hype.symbol == "HYPE");
+        let avax = token("avax", "avax_mainnet").unwrap();
+        assert!(avax.native && avax.chain == 43114 && avax.symbol == "AVAX");
         assert_eq!(token("render", "sol_mainnet").unwrap().address, "rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof");
         assert_eq!(token("sol", "sol_mainnet").unwrap().address, "11111111111111111111111111111111");
         assert_eq!(token("btc", "btc_mainnet").unwrap().address, "bitcoin");
         assert_eq!(token("evm", "arbitrum_mainnet").unwrap().chain, 42161);
         assert!(token("evm", "evm_sepolia").is_none());
-        assert_ne!(diamond("hyperevm_mainnet"), diamond("evm_mainnet"));
+        assert!(diamond("hyperevm_mainnet").is_none(), "HyperEVM retiré de l'app");
         assert!(!simulates("avax_mainnet") && simulates("bsc_mainnet"));
         let all = tradable();
-        assert!(all.contains(&("hype", "hyperevm_mainnet")) && all.contains(&("render", "sol_mainnet")) && all.contains(&("btc", "btc_mainnet")));
+        assert!(all.contains(&("avax", "avax_mainnet")) && all.contains(&("render", "sol_mainnet")) && all.contains(&("btc", "btc_mainnet")));
     }
 
     fn to_network_of(address: &str) -> &'static str {
@@ -1009,7 +1007,6 @@ mod tests {
             (("render", "sol_mainnet"), ("link", "evm_mainnet"), 5_000_000_000u128, SOLANA_USER, evm_user),
             (("link", "evm_mainnet"), ("render", "sol_mainnet"), AMOUNT, evm_user, SOLANA_USER),
             (("evm", "evm_mainnet"), ("btc", "btc_mainnet"), 100_000_000_000_000_000, evm_user, "bc1q9wz06uj2u4smvwu2qnlhallkyfqml54hwa00yu"),
-            (("hype", "hyperevm_mainnet"), ("usdc", "arbitrum_mainnet"), 10_000_000_000_000_000_000, evm_user, evm_user),
         ] {
             let (f, t) = (token(from.0, from.1).unwrap(), token(to.0, to.1).unwrap());
             let q = quote(from.1, &f, to.1, &t, amount, from_address, to_address, &[], None).unwrap();

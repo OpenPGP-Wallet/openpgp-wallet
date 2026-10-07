@@ -143,7 +143,6 @@ pub const MARKET_IDS: &[&str] = &[
     "binancecoin",
     "avalanche-2",
     "polygon-ecosystem-token",
-    "hyperliquid",
     "zcash",
     "monero",
     "dogecoin",

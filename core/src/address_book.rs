@@ -43,20 +43,22 @@ fn save(data_dir: &Path, data: &AddressBookData) -> Result<()> {
     std::fs::write(path(data_dir), content).context("écriture du carnet d'adresses")
 }
 
+/// Contacts des réseaux de l'app ; ceux d'un réseau retiré (HyperEVM, le
+/// 07/10/2026) restent dans le fichier mais ne sont plus proposés : une
+/// adresse de dépôt valable sur un réseau ne l'est pas forcément sur un autre.
 pub fn list_entries(data_dir: &Path) -> Vec<AddressBookEntry> {
-    load(data_dir).entries
+    load(data_dir).entries.into_iter().filter(|e| NETWORKS.contains(&e.network.as_str())).collect()
 }
 
 /// Réseaux proposables pour une adresse (carnet, wallets externes), dans
 /// l'ordre de proposition : réseaux principaux d'abord, de test à la fin.
-const NETWORKS: [&str; 23] = [
+const NETWORKS: [&str; 22] = [
     "evm_mainnet",
     "base_mainnet",
     "arbitrum_mainnet",
     "bsc_mainnet",
     "avax_mainnet",
     "polygon_mainnet",
-    "hyperevm_mainnet",
     "btc_mainnet",
     "sol_mainnet",
     "usdc_solana",

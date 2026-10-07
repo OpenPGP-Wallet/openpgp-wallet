@@ -682,7 +682,6 @@ mod tests {
         assert!(wrapped_native("arbitrum_mainnet").is_some() && wrapped_native("hyperevm_mainnet").is_none());
         assert!(eth.native && eth.address == NATIVE_BUY_TOKEN && eth.symbol == "ETH");
         assert_eq!(token("bnb", "bsc_mainnet").unwrap().symbol, "BNB");
-        assert!(token("hype", "hyperevm_mainnet").is_none(), "HyperEVM : pas sur CoW");
         assert!(token("usdc", "sol_mainnet").is_none());
         assert!(token("evm", "evm_sepolia").is_none());
         let all = tradable();

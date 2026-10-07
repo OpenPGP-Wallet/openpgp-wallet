@@ -18,7 +18,6 @@ const ASSETS = [
   { coin: "bnb", name: "BNB", symbol: "BNB", family: "evm", icon: "/assets/bnb.png", gecko: "binancecoin", decimals: 6, chart: "BNB", networks: ["bsc_mainnet"] },
   { coin: "avax", name: "Avalanche", symbol: "AVAX", family: "evm", icon: "/assets/avax.png", gecko: "avalanche-2", decimals: 6, chart: "AVAX", networks: ["avax_mainnet"] },
   { coin: "pol", name: "Polygon", symbol: "POL", family: "evm", icon: "/assets/pol.png", gecko: "polygon-ecosystem-token", decimals: 6, chart: "POL", networks: ["polygon_mainnet"] },
-  { coin: "hype", name: "Hyperliquid", symbol: "HYPE", family: "evm", icon: "/assets/hype.jpg", iconRound: true, gecko: "hyperliquid", decimals: 6, chart: "HYPE", networks: ["hyperevm_mainnet"] },
   { coin: "zec", name: "Zcash", symbol: "ZEC", family: "zec", icon: "/assets/zec.png", gecko: "zcash", decimals: 8, chart: "ZEC", networks: ["zec_mainnet"] },
   // Fonds Zcash protégés (Orchard, adresse u1) : leur propre carte, à côté de
   // la carte transparente (t1). `nameKey` : nom traduit (voir `assetName`).
@@ -150,7 +149,6 @@ const EVM_CHAIN_IDS = {
   bsc_mainnet: 56,
   avax_mainnet: 43114,
   polygon_mainnet: 137,
-  hyperevm_mainnet: 999,
 };
 
 const ICON_COPY = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" /></svg>`;
@@ -679,13 +677,9 @@ const I18N = {
     "net.stx_mainnet": "Stacks — Fonds réels",
     "wallet.historyExplorerOnly": "Pas d'historique ici pour ce réseau : aucun service public gratuit ne le fournit. Il reste consultable sur l'explorateur du réseau.",
     "wallet.historyOpenExplorer": "Voir sur l'explorateur",
-    "wallet.historyNeedsKey": "Pour voir l'historique de ce réseau ici, ajoutez une clé API Etherscan gratuite dans Paramètres. Il reste consultable sur l'explorateur du réseau.",
-    "wallet.historyPaidPlan": "Etherscan ne fournit l'historique de ce réseau qu'avec une offre payante : une clé gratuite ne suffit pas. Il reste consultable sur l'explorateur du réseau.",
-    "wallet.historyAddKey": "Ajouter une clé",
-    "wallet.historyPaidKey": "Etherscan ne fournit l'historique de ce réseau qu'avec une offre payante : une clé gratuite ne suffit pas. Avec une clé payante, ajoutez-la dans Paramètres. Il reste consultable sur l'explorateur du réseau.",
+    "wallet.historyLimited": "L'historique de ce réseau est momentanément indisponible (trop de demandes). Réessayez plus tard, ou consultez-le sur l'explorateur du réseau.",
     "net.avax_mainnet": "Avalanche — Fonds réels",
     "net.polygon_mainnet": "Polygon — Fonds réels",
-    "net.hyperevm_mainnet": "HyperEVM — Fonds réels",
     "wallet.receiveAsset": "Recevoir {symbol}",
     "assets.manage": "Gérer mes cryptos",
     "assets.search": "Rechercher une crypto…",
@@ -842,16 +836,6 @@ const I18N = {
     "settings.xmrNodeDefault": "Nœuds publics par défaut.",
     "settings.xmrNodeCustom": "Nœud utilisé : {node}",
     "settings.xmrNodeEmpty": "Indiquez d'abord l'adresse du nœud.",
-    "settings.etherscanTitle": "Historique HyperEVM et BNB Chain",
-    "settings.etherscanHint":
-      "Aucun service public sans clé ne fournit l'historique de ces réseaux. Avec une clé API Etherscan gratuite (créée sur etherscan.io, gardée uniquement sur cet appareil), l'historique HyperEVM s'affiche dans l'app ; BNB Chain demande une offre Etherscan payante. Cette clé ne donne accès qu'à des données publiques.",
-    "settings.etherscanLabel": "Clé API Etherscan",
-    "settings.etherscanSave": "Enregistrer la clé",
-    "settings.etherscanRemove": "Supprimer la clé",
-    "settings.etherscanCreate": "Créer une clé gratuite sur etherscan.io",
-    "settings.etherscanSaved": "Clé enregistrée : {key}",
-    "settings.etherscanNone": "Aucune clé enregistrée.",
-    "settings.etherscanEmpty": "Collez d'abord votre clé.",
     "settings.deviceSecurity": "Sécurité de l'appareil",
     "settings.biometricTitle": "Déverrouillage biométrique",
     "settings.biometricHint":
@@ -1352,13 +1336,9 @@ const I18N = {
     "net.stx_mainnet": "Stacks — Real funds",
     "wallet.historyExplorerOnly": "No history here for this network: no free public service provides it. You can still see it on the network's explorer.",
     "wallet.historyOpenExplorer": "View on the explorer",
-    "wallet.historyNeedsKey": "To see this network's history here, add a free Etherscan API key in Settings. You can still see it on the network's explorer.",
-    "wallet.historyPaidPlan": "Etherscan only provides this network's history with a paid plan: a free key is not enough. You can still see it on the network's explorer.",
-    "wallet.historyAddKey": "Add a key",
-    "wallet.historyPaidKey": "Etherscan only provides this network's history with a paid plan: a free key is not enough. With a paid key, add it in Settings. You can still see it on the network's explorer.",
+    "wallet.historyLimited": "This network's history is temporarily unavailable (too many requests). Try again later, or see it on the network's explorer.",
     "net.avax_mainnet": "Avalanche — Real funds",
     "net.polygon_mainnet": "Polygon — Real funds",
-    "net.hyperevm_mainnet": "HyperEVM — Real funds",
     "wallet.receiveAsset": "Receive {symbol}",
     "assets.manage": "Manage my cryptos",
     "assets.search": "Search a crypto…",
@@ -1515,16 +1495,6 @@ const I18N = {
     "settings.xmrNodeDefault": "Default public nodes.",
     "settings.xmrNodeCustom": "Node in use: {node}",
     "settings.xmrNodeEmpty": "Enter the node address first.",
-    "settings.etherscanTitle": "HyperEVM and BNB Chain history",
-    "settings.etherscanHint":
-      "No public keyless service provides these networks' history. With a free Etherscan API key (created on etherscan.io, kept only on this device), HyperEVM history shows in the app; BNB Chain requires a paid Etherscan plan. This key only gives access to public data.",
-    "settings.etherscanLabel": "Etherscan API key",
-    "settings.etherscanSave": "Save the key",
-    "settings.etherscanRemove": "Remove the key",
-    "settings.etherscanCreate": "Create a free key on etherscan.io",
-    "settings.etherscanSaved": "Key saved: {key}",
-    "settings.etherscanNone": "No key saved.",
-    "settings.etherscanEmpty": "Paste your key first.",
     "settings.deviceSecurity": "Device security",
     "settings.biometricTitle": "Biometric unlock",
     "settings.biometricHint":
@@ -1859,7 +1829,6 @@ document.querySelectorAll(".lang-btn").forEach((btn) => {
     // langue. Les autres listes dynamiques (historique, frais, kit de sauvegarde...)
     // adopteront la nouvelle langue à leur prochain affichage.
     renderRecipientList();
-    renderEtherscanKey();
     renderAffiliateNames();
     renderStakeChips();
     // Valeur en dollars des cartes (« ≈ 1 234,56 $ » / « ≈ $1,234.56 ») :
@@ -2781,57 +2750,6 @@ rescanPrivateBtn.addEventListener("click", withBusyButton(rescanPrivateBtn, asyn
 const xmrNodeResetBtn = document.getElementById("xmr-node-reset");
 xmrNodeResetBtn.addEventListener("click", withBusyButton(xmrNodeResetBtn, () => saveXmrNode("")));
 
-// --- Clé Etherscan (historiques HyperEVM et BNB Chain) ------------------------
-// Gardée par Rust sur l'appareil (core/src/etherscan_key.rs) ; l'interface ne
-// reçoit jamais que sa forme masquée.
-
-let etherscanKeyMasked = null;
-
-function renderEtherscanKey() {
-  document.getElementById("etherscan-key-status").textContent = etherscanKeyMasked
-    ? t("settings.etherscanSaved", { key: etherscanKeyMasked })
-    : t("settings.etherscanNone");
-  document.getElementById("etherscan-key-remove").classList.toggle("hidden", !etherscanKeyMasked);
-}
-
-function loadEtherscanKey() {
-  invoke("etherscan_key_status")
-    .then((masked) => {
-      etherscanKeyMasked = masked;
-      renderEtherscanKey();
-    })
-    .catch((e) => console.error(e));
-}
-
-async function saveEtherscanKey(key) {
-  const errorEl = document.getElementById("etherscan-key-error");
-  hideError(errorEl);
-  try {
-    etherscanKeyMasked = await invoke("set_etherscan_key", { key });
-    document.getElementById("etherscan-key-input").value = "";
-    renderEtherscanKey();
-  } catch (e) {
-    showError(errorEl, String(e));
-  }
-}
-
-const etherscanSaveBtn = document.getElementById("etherscan-key-save");
-etherscanSaveBtn.addEventListener("click", withBusyButton(etherscanSaveBtn, async () => {
-  const key = document.getElementById("etherscan-key-input").value.trim();
-  if (!key) {
-    showError(document.getElementById("etherscan-key-error"), t("settings.etherscanEmpty"));
-    return;
-  }
-  await saveEtherscanKey(key);
-}));
-
-const etherscanRemoveBtn = document.getElementById("etherscan-key-remove");
-etherscanRemoveBtn.addEventListener("click", withBusyButton(etherscanRemoveBtn, () => saveEtherscanKey("")));
-
-document.getElementById("etherscan-key-create").addEventListener("click", () => {
-  invoke("open_external_link", { url: "https://etherscan.io/myapikey" }).catch((e) => alert(t("wallet.linkError", { err: e })));
-});
-
 // --- Adresse THOR (frais de swap) -------------------------------------------
 // Purement informatif (voir api::get_thor_fee_address) : aucune fonction
 // d'envoi/solde RUNE, juste la dérivation + l'affichage de l'adresse.
@@ -2941,7 +2859,6 @@ document.querySelectorAll(".nav-tab").forEach((tab) => {
     if (target === "settings") {
       loadArchivedProfiles();
       loadBiometricSettings();
-      loadEtherscanKey();
       loadXmrNode();
       loadAffiliateNames();
     }
@@ -4811,9 +4728,9 @@ async function renderHistory(coin, container, networkEl) {
       ? await invoke("get_token_tx_history", { token: coin, network, address })
       : await invoke("get_tx_history", { network, address });
     if (!current()) return;
-    // Historique indisponible (BNB Chain, HyperEVM sans clé Etherscan, ou
-    // offre gratuite refusée) : motif, et lien vers la page de l'adresse sur
-    // l'explorateur du réseau.
+    // Historique indisponible (BNB Chain sans clé NodeReal dans cette
+    // version, ou limite du service atteinte) : motif, et lien vers la page
+    // de l'adresse sur l'explorateur du réseau.
     if (result.explorer_url) {
       container.replaceChildren(historyExplorerOnly(result.explorer_url, result.reason));
       return;
@@ -4852,19 +4769,7 @@ function historyExplorerOnly(url, reason) {
   open.addEventListener("click", () => {
     invoke("open_external_link", { url }).catch((e) => alert(t("wallet.linkError", { err: e })));
   });
-  const message = { no_key: "wallet.historyNeedsKey", paid_key: "wallet.historyPaidKey", paid_plan: "wallet.historyPaidPlan" }[reason] ?? "wallet.historyExplorerOnly";
-  box.append(mutedParagraph(t(message)));
-  if (reason === "no_key" || reason === "paid_key") {
-    const addKey = document.createElement("button");
-    addKey.type = "button";
-    addKey.className = "secondary";
-    addKey.textContent = t("wallet.historyAddKey");
-    addKey.addEventListener("click", () => {
-      document.querySelector('.nav-tab[data-tab="settings"]')?.click();
-      document.getElementById("etherscan-key-input").focus();
-    });
-    box.append(addKey);
-  }
+  box.append(mutedParagraph(t(reason === "limited" ? "wallet.historyLimited" : "wallet.historyExplorerOnly")));
   box.append(open);
   return box;
 }
@@ -8836,7 +8741,7 @@ async function loadHoldingsHistory(holdings, range) {
   }
   else if (result.since) notes.push(t("charts.since", { date: new Date(result.since * 1000).toLocaleDateString(chartLocale()) }));
   if (result.approximate && !result.loading) notes.push(t("charts.approximate"));
-  // Réseau sans historique public (BNB Chain, HyperEVM) : solde actuel compté
+  // Réseau sans historique utilisable (BNB Chain sans clé NodeReal) : solde actuel compté
   // sur toute la période (voir core/src/portfolio.rs).
   if (result.constant?.length) notes.push(t("charts.constantBalance", { list: result.constant.join(", ") }));
   return { points: result.points, since: result.since, note: notes.join(" "), loading: result.loading };

@@ -10,7 +10,7 @@
 //! dont l'historique n'a pas été lu jusqu'au bout, son solde est inconnu : la
 //! courbe commence alors à cet instant (`since`) au lieu d'inventer une valeur.
 //!
-//! Réseau sans source publique d'historique (BNB Chain, HyperEVM) : le solde
+//! Réseau sans source d'historique utilisable (BNB Chain sans clé NodeReal) : le solde
 //! actuel est compté sur toute la période, et la crypto est signalée
 //! (`constant`) pour que l'interface le dise.
 
@@ -200,9 +200,9 @@ enum Source {
 }
 
 impl Spec {
-    /// Historique lu chez Etherscan, avec la clé de l'utilisateur.
-    fn uses_etherscan(&self) -> bool {
-        matches!(self.source, Source::Evm(net) | Source::Erc20(net, _) if matches!(net.history, Some(wallet_flow::EvmHistory::Etherscan)))
+    /// Historique lu chez NodeReal (offre gratuite partagée, voir `nodereal`).
+    fn uses_nodereal(&self) -> bool {
+        matches!(self.source, Source::Evm(net) | Source::Erc20(net, _) if matches!(net.history, Some(wallet_flow::EvmHistory::NodeReal)))
     }
 
     /// Une source d'historique existe pour cet avoir (voir `EvmNetwork::history`).
@@ -377,10 +377,10 @@ fn fetch_first(spec: &Spec, address: &str) -> Result<HoldingData> {
     data.balance = balance?;
     match first {
         Ok(page) => data.absorb(page, price_history::unix_now()),
-        // Clé Etherscan refusée pour ce réseau (offre gratuite sur BNB Chain,
-        // clé révoquée…) : solde compté constant plutôt qu'une courbe entière
-        // en échec — l'interface le dit (`constant`).
-        Err(_) if spec.uses_etherscan() => data.constant = true,
+        // NodeReal momentanément indisponible (limite de l'offre gratuite
+        // atteinte…) : solde compté constant plutôt qu'une courbe entière en
+        // échec — l'interface le dit (`constant`).
+        Err(_) if spec.uses_nodereal() => data.constant = true,
         Err(e) => return Err(e),
     }
     Ok(data)

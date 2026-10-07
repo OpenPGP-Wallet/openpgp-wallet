@@ -9,7 +9,7 @@
 use crate::blockscout::{BlockscoutClient, EvmTx, PageParams};
 use crate::sol_rpc::{SolRpc, SolTx};
 use crate::wallet_flow::EvmHistory;
-use crate::{btc_rpc::EsploraClient, routescan, wallet_flow};
+use crate::{btc_rpc::EsploraClient, nodereal, routescan, wallet_flow};
 use anyhow::{anyhow, Result};
 
 pub enum TxStatus {
@@ -168,14 +168,16 @@ pub enum EvmCursor {
     Blockscout(PageParams),
     /// Numéro de la page suivante (Routescan).
     Page(u32),
+    /// Suite NodeReal (BNB Chain) : les deux sens et ce qui reste à rendre.
+    NodeReal(nodereal::Cursor),
 }
 
-/// Historique lisible sur `net` : une source existe, et pour Etherscan une
-/// clé est enregistrée (voir `etherscan_key`).
+/// Historique lisible sur `net` : une source existe, et pour NodeReal la
+/// clé est intégrée à cette version de l'app.
 pub fn evm_history_available(net: &wallet_flow::EvmNetwork) -> bool {
     match net.history {
         None => false,
-        Some(EvmHistory::Etherscan) => crate::etherscan_key::current().is_some(),
+        Some(EvmHistory::NodeReal) => nodereal::available(),
         Some(_) => true,
     }
 }
@@ -209,9 +211,13 @@ pub fn evm_history_page(chain_id: u64, address: &str, cursor: Option<&EvmCursor>
             let (txs, next) = BlockscoutClient::new(base_url).tx_history_page(address, page)?;
             (txs, next.map(EvmCursor::Blockscout))
         }
-        source @ (EvmHistory::Routescan | EvmHistory::Etherscan) => {
-            let (txs, next) = routescan::tx_history_page(etherscan_api(source), chain_id, address, page_number(cursor))?;
+        EvmHistory::Routescan => {
+            let (txs, next) = routescan::tx_history_page(chain_id, address, page_number(cursor))?;
             (txs, next.map(EvmCursor::Page))
+        }
+        EvmHistory::NodeReal => {
+            let (txs, next) = nodereal::tx_history_page(address, nodereal_cursor(cursor))?;
+            (txs, next.map(EvmCursor::NodeReal))
         }
     };
     Ok((txs.into_iter().map(evm_entry).collect(), next))
@@ -241,9 +247,13 @@ pub fn erc20_history_page(chain_id: u64, address: &str, contract: &str, cursor: 
             let (moves, next) = BlockscoutClient::new(base_url).token_transfers_page(address, contract, page)?;
             (moves, next.map(EvmCursor::Blockscout))
         }
-        source @ (EvmHistory::Routescan | EvmHistory::Etherscan) => {
-            let (moves, next) = routescan::token_history_page(etherscan_api(source), chain_id, address, contract, page_number(cursor))?;
+        EvmHistory::Routescan => {
+            let (moves, next) = routescan::token_history_page(chain_id, address, contract, page_number(cursor))?;
             (moves, next.map(EvmCursor::Page))
+        }
+        EvmHistory::NodeReal => {
+            let (moves, next) = nodereal::token_history_page(address, contract, nodereal_cursor(cursor))?;
+            (moves, next.map(EvmCursor::NodeReal))
         }
     };
     let entries = moves
@@ -261,11 +271,11 @@ pub fn erc20_history_page(chain_id: u64, address: &str, contract: &str, cursor: 
     Ok((entries, next))
 }
 
-/// Service compatible Etherscan d'une source d'historique.
-fn etherscan_api(source: EvmHistory) -> routescan::Api {
-    match source {
-        EvmHistory::Etherscan => routescan::Api::Etherscan,
-        _ => routescan::Api::Routescan,
+/// Suite NodeReal demandée par `cursor` (la première page sans).
+fn nodereal_cursor(cursor: Option<&EvmCursor>) -> Option<&nodereal::Cursor> {
+    match cursor {
+        Some(EvmCursor::NodeReal(next)) => Some(next),
+        _ => None,
     }
 }
 
@@ -318,7 +328,16 @@ mod tests {
             entries.iter().find(|e| e.id.eq_ignore_ascii_case(id)).map(|e| &e.kind)
         }
 
-        let btc = btc_history(&wallet_flow::BTC_MAINNET, "bc1qwqap30shafhtfd0k5hda4xep6xypgm6fyvphnw").unwrap();
+        // L'adresse reçoit encore : la transaction connue recule de page en
+        // page (constaté le 07/10/2026), quelques pages sont parcourues.
+        let mut btc = btc_history(&wallet_flow::BTC_MAINNET, "bc1qwqap30shafhtfd0k5hda4xep6xypgm6fyvphnw").unwrap();
+        for _ in 0..6 {
+            if find(&btc, "909686b5b485c49ab270ea0b86d6c981129b6b67ac4ce5c333a722fa2fb6796c").is_some() {
+                break;
+            }
+            let Some(last) = btc.last().map(|e| e.id.clone()) else { break };
+            btc.extend(btc_history_after(&wallet_flow::BTC_MAINNET, "bc1qwqap30shafhtfd0k5hda4xep6xypgm6fyvphnw", Some(&last)).unwrap());
+        }
         show("BTC destinataire d'un paiement THORChain", &btc);
         assert_eq!(find(&btc, "909686b5b485c49ab270ea0b86d6c981129b6b67ac4ce5c333a722fa2fb6796c"), Some(&TxKind::Swap));
 
