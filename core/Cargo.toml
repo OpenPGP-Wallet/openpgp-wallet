@@ -93,7 +93,7 @@ zcash_address = "0.13"
 tonic = { version = "0.14", default-features = false, features = ["channel", "codegen", "tls-ring", "tls-webpki-roots"] }
 tonic-prost = "0.14"
 prost = "0.14"
-tokio = { version = "1", features = ["rt"] }
+tokio = { version = "1", features = ["rt", "time", "macros"] }
 # Types nommés par le module Zcash (mêmes versions que celles de zcash_primitives) :
 # clé de signature transparente (secp256k1), bundles protégés toujours absents
 # (sapling-crypto, orchard), script de sortie et vérification des signatures dans

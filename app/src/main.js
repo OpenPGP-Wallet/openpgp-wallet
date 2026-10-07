@@ -2131,6 +2131,14 @@ function showView(name) {
   }
 }
 
+// Événement de fond (synchronisation, surveillance) arrivé hors du tableau de
+// bord — verrouillé, réinitialisé, restauration en cours : rien à relire.
+// Constaté le 07/10/2026 : la fin d'une synchronisation Zcash lancée avant
+// une réinitialisation relisait encore des soldes.
+function dashboardShown() {
+  return !views.dashboard.classList.contains("hidden");
+}
+
 function showError(el, message) {
   el.textContent = message;
   el.classList.remove("hidden");
@@ -2478,7 +2486,8 @@ document.getElementById("goto-unlock").addEventListener("click", () => {
 
 // Pas de confirm() JavaScript : la confirmation est une boîte NATIVE côté Rust
 // (`confirm_reset_native`), la seule qu'un frontend compromis ne peut pas sauter.
-document.getElementById("reset-wallet").addEventListener("click", async () => {
+const resetWalletBtn = document.getElementById("reset-wallet");
+resetWalletBtn.addEventListener("click", withBusyButton(resetWalletBtn, async () => {
   try {
     await invoke("reset_wallet");
     profilesCache = [];
@@ -2488,9 +2497,10 @@ document.getElementById("reset-wallet").addEventListener("click", async () => {
   } catch (e) {
     showError(document.getElementById("unlock-error"), String(e));
   }
-});
+}));
 
-document.getElementById("reset-wallet-dashboard").addEventListener("click", async () => {
+const resetWalletDashboardBtn = document.getElementById("reset-wallet-dashboard");
+resetWalletDashboardBtn.addEventListener("click", withBusyButton(resetWalletDashboardBtn, async () => {
   try {
     await invoke("reset_wallet");
     profilesCache = [];
@@ -2502,7 +2512,7 @@ document.getElementById("reset-wallet-dashboard").addEventListener("click", asyn
   } catch (e) {
     alert(t("common.error", { err: e }));
   }
-});
+}));
 
 // --- Déverrouillage biométrique (Windows Hello), onglet Paramètres ---------
 
@@ -4175,7 +4185,7 @@ async function refreshXmrStatus(card) {
 
 window.__TAURI__.event.listen("xmr-synced", () => {
   const card = document.querySelector('.wallet-card[data-coin="xmr"]');
-  if (card) refreshBalance(card);
+  if (card && dashboardShown()) refreshBalance(card);
 }).catch((e) => console.error(e));
 
 // --- Zcash protégé ------------------------------------------------------------
@@ -4318,7 +4328,7 @@ shieldedConfirmBtn.addEventListener("click", withBusyButton(shieldedConfirmBtn, 
 
 window.__TAURI__.event.listen("zec-shielded-synced", () => {
   const card = document.querySelector('.wallet-card[data-coin="zecs"]');
-  if (card) refreshBalance(card);
+  if (card && dashboardShown()) refreshBalance(card);
 }).catch((e) => console.error(e));
 
 // Crypto masquée SANS choix explicite de l'utilisateur, avec des fonds :
@@ -4454,7 +4464,7 @@ document.addEventListener("keydown", (e) => {
 
 window.__TAURI__.event.listen("balance-changed", (event) => {
   const card = document.querySelector(`.wallet-card[data-coin="${event.payload}"]`);
-  if (card) refreshBalance(card);
+  if (card && dashboardShown()) refreshBalance(card);
 });
 
 // Signale une transaction détectée mais pas encore finalisée (mempool Bitcoin,

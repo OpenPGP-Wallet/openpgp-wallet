@@ -922,6 +922,9 @@ fn restore_wallet_with(
         archived: false,
     };
     let addresses = derive_addresses(&recovered, default_profile.index)?;
+    // État de l'ancien portefeuille effacé AVANT d'écrire le nouveau coffre :
+    // en cas d'échec, l'ancien reste entier (voir `remove_seed_bound_state`).
+    remove_seed_bound_state(data_dir)?;
     // Toute étiquette de profil créée en plus du défaut sur l'ancien appareil est
     // perdue (elle n'est pas incluse dans la sauvegarde Shamir, qui ne protège que
     // l'entropie) : sans conséquence sur les fonds, les mêmes adresses restent
@@ -949,7 +952,6 @@ fn restore_wallet_with(
     ] {
         let _ = std::fs::remove_file(data_dir.join(file));
     }
-    remove_seed_bound_state(data_dir);
 
     // Prouver la possession de 2 parts de sauvegarde est une preuve d'identité bien
     // plus forte qu'un mot de passe ; un éventuel verrou anti-brute-force accumulé
@@ -969,10 +971,39 @@ fn restore_wallet_with(
 /// les destinataires déjà payés : sinon l'alerte « nouvelle adresse »
 /// disparaîtrait pour un autre portefeuille (au pire, quelques alertes de plus
 /// si c'est le même qui revient).
-fn remove_seed_bound_state(data_dir: &Path) {
-    wallet_birthday::forget(data_dir);
-    for file in ["zcash_shielded.sqlite", "zcash_shielded.sqlite-wal", "zcash_shielded.sqlite-shm", "monero_wallet.json", "sent_recipients.json"] {
-        let _ = std::fs::remove_file(data_dir.join(file));
+/// Efface l'état lié à la graine, synchronisations de fond arrêtées d'abord
+/// (voir `seed_state`). Un fichier qui ne s'efface pas est une erreur : la
+/// réinitialisation ou la restauration s'arrête AVANT de toucher au coffre,
+/// au lieu de laisser les données de l'ancien portefeuille au suivant.
+fn remove_seed_bound_state(data_dir: &Path) -> Result<()> {
+    crate::seed_state::wipe(|| {
+        zcash_shielded::forget_known();
+        monero::forget_known();
+        for file in ["zcash_shielded.sqlite", "zcash_shielded.sqlite-journal", "zcash_shielded.sqlite-wal", "zcash_shielded.sqlite-shm", "monero_wallet.json", "sent_recipients.json"] {
+            remove_with_retry(&data_dir.join(file)).map_err(|_| {
+                anyhow::anyhow!("effacement de {file} impossible : le fichier est encore ouvert (autre programme ?) — rien n'a été supprimé, fermez l'app puis recommencez")
+            })?;
+        }
+        wallet_birthday::forget(data_dir);
+        Ok(())
+    })
+}
+
+/// Efface `path` (absent : déjà fait), en réessayant 3 s : une lecture brève
+/// (solde affiché) peut le tenir ouvert un instant, et Windows refuse alors
+/// l'effacement d'un fichier ouvert.
+fn remove_with_retry(path: &Path) -> std::io::Result<()> {
+    let mut attempts = 0;
+    loop {
+        match std::fs::remove_file(path) {
+            Ok(()) => return Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) if attempts >= 30 => return Err(e),
+            Err(_) => {
+                attempts += 1;
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        }
     }
 }
 
@@ -1039,8 +1070,9 @@ pub fn reset_wallet(data_dir: &Path) -> Result<()> {
 /// unlock`/`disable_biometric_unlock` : ne doit jamais déclencher un vrai
 /// prompt Windows Hello pendant `cargo test`.
 fn reset_wallet_with(data_dir: &Path, sealer: &dyn SecretSealer) -> Result<()> {
+    // D'abord : en cas d'échec, le portefeuille reste entier.
+    remove_seed_bound_state(data_dir)?;
     try_remove_existing_biometric_enrollment(data_dir, sealer);
-    remove_seed_bound_state(data_dir);
     for file in [
         DEVICE_PUBKEY_FILE,
         DEVICE_VAULT_FILE,
@@ -2762,8 +2794,10 @@ pub fn send_lifi_solana(data_dir: &Path, device_password: &str, quote: &lifi::Li
 
 /// Synchronise les comptes Monero jusqu'au bout de la chaîne (appelé en
 /// arrière-plan après le déverrouillage).
-pub fn sync_xmr(data_dir: &Path, keys: &[monero::ViewKeys]) -> Result<()> {
-    monero::sync(data_dir, keys)
+/// Passe de synchronisation Monero ; `generation` : lue avant les clés (voir
+/// `seed_state`), sans quoi la passe est écartée.
+pub fn sync_xmr(data_dir: &Path, keys: &[monero::ViewKeys], generation: u64) -> Result<()> {
+    monero::sync(data_dir, keys, generation)
 }
 
 pub fn xmr_balance(data_dir: &Path, profile_index: u32) -> Result<monero::Balance> {
@@ -2829,7 +2863,9 @@ pub fn set_xmr_node(data_dir: &Path, url: &str) -> Result<Option<String>> {
 
 /// Crée les comptes protégés manquants puis synchronise jusqu'au bout de la
 /// chaîne (appelé en arrière-plan après le déverrouillage).
-pub fn sync_zec_shielded(data_dir: &Path, keys: &[zcash_shielded::ProfileKeys]) -> Result<()> {
+/// Passe de synchronisation Zcash protégée (même règle que `sync_xmr`).
+pub fn sync_zec_shielded(data_dir: &Path, keys: &[zcash_shielded::ProfileKeys], generation: u64) -> Result<()> {
+    let Some(_pass) = crate::seed_state::pass(generation) else { return Ok(()) };
     zcash_shielded::ensure_accounts(data_dir, keys)?;
     zcash_shielded::sync(data_dir)
 }
@@ -5867,6 +5903,29 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Base Zcash protégée encore ouverte (comme pendant une synchronisation) :
+    /// Windows refuse de l'effacer — constaté le 07/10/2026, l'échec était
+    /// ignoré et la base de l'ancien portefeuille restait. La réinitialisation
+    /// s'arrête désormais AVANT de toucher au coffre, puis réussit une fois la
+    /// base refermée.
+    #[cfg(windows)]
+    #[test]
+    fn reset_stops_before_the_vault_when_state_stays_open() {
+        let dir = std::env::temp_dir().join(format!("pgp_wallet_open_state_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        create_wallet(&dir, "un mot de passe de test bien assez long").expect("création du wallet");
+        let db = rusqlite::Connection::open(dir.join("zcash_shielded.sqlite")).unwrap();
+        db.execute_batch("CREATE TABLE t(x); INSERT INTO t VALUES (1);").unwrap();
+        let err = reset_wallet_with(&dir, &FakeSealer { fail_enroll: false }).expect_err("base ouverte : refus attendu");
+        assert!(err.to_string().contains("zcash_shielded.sqlite"), "{err}");
+        assert!(device_vault_exists(&dir), "coffre supprimé malgré l'échec");
+        drop(db);
+        reset_wallet_with(&dir, &FakeSealer { fail_enroll: false }).expect("base refermée : réinitialisation");
+        assert!(!dir.join("zcash_shielded.sqlite").exists() && !device_vault_exists(&dir));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// L'état propre à une seed (Zcash protégé, Monero, destinataires payés)
     /// ne survit ni à une réinitialisation ni à une restauration.
     #[test]
@@ -5881,7 +5940,7 @@ mod tests {
         reset_wallet_with(&dir, &FakeSealer { fail_enroll: false }).expect("réinitialisation");
         assert!(files.iter().all(|f| !dir.join(f).exists()), "réinitialisation");
         plant();
-        remove_seed_bound_state(&dir);
+        remove_seed_bound_state(&dir).expect("restauration (même nettoyage)");
         assert!(files.iter().all(|f| !dir.join(f).exists()), "restauration (même nettoyage)");
         let _ = std::fs::remove_dir_all(&dir);
     }

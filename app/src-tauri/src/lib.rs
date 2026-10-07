@@ -1641,15 +1641,23 @@ fn confirm_reset_native(app: &tauri::AppHandle) -> bool {
 /// l'onboarding sans avoir à retrouver/effacer manuellement le répertoire de
 /// données de l'app. Le wallet reste récupérable via les 3 parts de sauvegarde
 /// exportées à la création, si elles ont été conservées.
+///
+/// Clés oubliées d'abord (plus aucune synchronisation ne repart avec elles),
+/// puis effacement — qui attend l'arrêt des synchronisations en cours, d'où
+/// une commande asynchrone (voir `seed_state`).
 #[tauri::command]
-fn reset_wallet(app: tauri::AppHandle) -> Result<(), String> {
-    let dir = data_dir(&app)?;
-    if !confirm_reset_native(&app) {
-        return Err(translate_error("Réinitialisation annulée (confirmation refusée)."));
-    }
-    api::reset_wallet(&dir).t_err()?;
-    forget_wallet_connections(&app);
-    Ok(())
+async fn reset_wallet(app: tauri::AppHandle) -> Result<(), String> {
+    run_blocking(move || {
+        let dir = data_dir(&app)?;
+        if !confirm_reset_native(&app) {
+            return Err(translate_error("Réinitialisation annulée (confirmation refusée)."));
+        }
+        forget_session(&app);
+        api::reset_wallet(&dir).t_err()?;
+        forget_wallet_connections(&app);
+        Ok(())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -2165,7 +2173,12 @@ fn usb_restore_clear(app: tauri::AppHandle) {
 /// Restauration à partir de deux parts d'un même kit lues sur des clés USB
 /// (`usb_restore_load`) — même chemin que `restore_wallet` ensuite.
 #[tauri::command]
-fn restore_wallet_from_usb(new_password: String, app: tauri::AppHandle) -> Result<AddressesDto, String> {
+async fn restore_wallet_from_usb(new_password: String, app: tauri::AppHandle) -> Result<AddressesDto, String> {
+    run_blocking(move || restore_wallet_from_usb_blocking(new_password, &app)).await
+}
+
+fn restore_wallet_from_usb_blocking(new_password: String, app: &tauri::AppHandle) -> Result<AddressesDto, String> {
+    let app = app.clone();
     let new_password = Zeroizing::new(new_password);
     let dir = data_dir(&app)?;
     let state = app.state::<UsbRestoreState>();
@@ -2184,6 +2197,8 @@ fn restore_wallet_from_usb(new_password: String, app: tauri::AppHandle) -> Resul
     if !confirm_restore_native(&app) {
         return Err(translate_error("Restauration annulée (confirmation refusée)."));
     }
+    // Clés de l'ancien portefeuille oubliées avant d'effacer son état.
+    forget_session(&app);
     let addresses = api::restore_wallet(
         &dir,
         &new_password,
@@ -2197,8 +2212,9 @@ fn restore_wallet_from_usb(new_password: String, app: tauri::AppHandle) -> Resul
     Ok(addresses.into())
 }
 
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
-fn restore_wallet(
+async fn restore_wallet(
     new_password: String,
     backup1_b64: String,
     privkey1_armored_b64: String,
@@ -2208,6 +2224,17 @@ fn restore_wallet(
     passphrase2: String,
     app: tauri::AppHandle,
 ) -> Result<AddressesDto, String> {
+    run_blocking(move || {
+        restore_wallet_blocking(new_password, [backup1_b64, privkey1_armored_b64, passphrase1], [backup2_b64, privkey2_armored_b64, passphrase2], &app)
+    })
+    .await
+}
+
+/// `part` : [part chiffrée (base64), clé privée (base64), mot de passe].
+fn restore_wallet_blocking(new_password: String, part1: [String; 3], part2: [String; 3], app: &tauri::AppHandle) -> Result<AddressesDto, String> {
+    let app = app.clone();
+    let [backup1_b64, privkey1_armored_b64, passphrase1] = part1;
+    let [backup2_b64, privkey2_armored_b64, passphrase2] = part2;
     let new_password = Zeroizing::new(new_password);
     let passphrase1 = Zeroizing::new(passphrase1);
     let passphrase2 = Zeroizing::new(passphrase2);
@@ -2227,6 +2254,8 @@ fn restore_wallet(
     // Une restauration ne recrée toujours qu'un seul profil par défaut (voir
     // `api::restore_wallet`) : les éventuelles étiquettes de profils supplémentaires
     // créées sur l'ancien appareil ne font pas partie de la sauvegarde Shamir.
+    // Clés de l'ancien portefeuille oubliées avant d'effacer son état.
+    forget_session(&app);
     let addresses = api::restore_wallet(
         &dir,
         &new_password,
@@ -6789,11 +6818,13 @@ fn start_monero_sync(app: &tauri::AppHandle) {
     }
     let app = app.clone();
     std::thread::spawn(move || loop {
+        // Génération lue AVANT les clés (voir `seed_state`).
+        let generation = pgp_wallet_poc::seed_state::generation();
         let keys: Vec<_> = app.state::<MoneroKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).values().map(|(_, keys)| keys.clone()).collect();
         let wanted = XMR_SYNC_WANTED.load(Ordering::Relaxed) || data_dir(&app).is_ok_and(|dir| api::xmr_has_received(&dir));
         if wanted && !keys.is_empty() {
             match data_dir(&app) {
-                Ok(dir) => match catch_sync_panic(|| api::sync_xmr(&dir, &keys)) {
+                Ok(dir) => match catch_sync_panic(|| api::sync_xmr(&dir, &keys, generation)) {
                     Ok(()) => {
                         let _ = app.emit("xmr-synced", ());
                     }
@@ -6911,10 +6942,11 @@ fn start_shielded_sync(app: &tauri::AppHandle) {
     }
     let app = app.clone();
     std::thread::spawn(move || loop {
+        let generation = pgp_wallet_poc::seed_state::generation();
         let keys: Vec<_> = app.state::<ShieldedKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).values().map(|(_, keys)| keys.clone()).collect();
         if !keys.is_empty() {
             match data_dir(&app) {
-                Ok(dir) => match catch_sync_panic(|| api::sync_zec_shielded(&dir, &keys)) {
+                Ok(dir) => match catch_sync_panic(|| api::sync_zec_shielded(&dir, &keys, generation)) {
                     Ok(()) => {
                         let _ = app.emit("zec-shielded-synced", ());
                     }

@@ -50,6 +50,22 @@ fn open(data_dir: &Path) -> Result<Db> {
     Ok(db)
 }
 
+/// Base pour une simple lecture (solde, historique, montant maximal) : `None`
+/// si elle n'existe pas — jamais créée ici. Constaté le 07/10/2026 : un solde
+/// demandé juste après l'effacement de la base (réinitialisation) la
+/// recréait aussitôt, vide mais au nom du portefeuille suivant.
+fn open_existing(data_dir: &Path) -> Result<Option<Db>> {
+    if !data_dir.join(WALLET_FILE).exists() {
+        return Ok(None);
+    }
+    open(data_dir).map(Some)
+}
+
+/// Oublie les adresses mémorisées (effacement de l'état, voir `seed_state`).
+pub(crate) fn forget_known() {
+    *KNOWN.lock().unwrap_or_else(|p| p.into_inner()) = None;
+}
+
 fn account_index(profile: u32) -> Result<zip32::AccountId> {
     zip32::AccountId::try_from(profile).map_err(|_| anyhow!("profil hors des comptes Zcash possibles"))
 }
@@ -86,6 +102,20 @@ fn find_account(db: &Db, profile: u32) -> Result<Option<AccountUuid>> {
 
 /// Connexion sans délai par requête (un lot de blocs compacts peut dépasser
 /// les 30 s du client transparent), serveurs essayés dans l'ordre.
+/// `future` abandonné dès qu'un effacement de l'état est demandé (voir
+/// `seed_state`) : `None`. La base ouverte autour se referme aussitôt.
+async fn unless_wiped<T>(future: impl std::future::Future<Output = Result<T>>) -> Result<Option<T>> {
+    let wiped = async {
+        while !crate::seed_state::cancelled() {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    };
+    tokio::select! {
+        result = future => result.map(Some),
+        () = wiped => Ok(None),
+    }
+}
+
 async fn client() -> Result<CompactTxStreamerClient<tonic::transport::Channel>> {
     let mut last = anyhow!("aucun serveur Zcash configuré");
     for server in zcash::SERVERS {
@@ -159,7 +189,7 @@ pub fn ensure_accounts(data_dir: &Path, profiles: &[ProfileKeys]) -> Result<()> 
     if missing.is_empty() {
         return Ok(());
     }
-    let birthday = runtime()?.block_on(async { birthday(data_dir, &mut client().await?).await })?;
+    let Some(birthday) = runtime()?.block_on(unless_wiped(async { birthday(data_dir, &mut client().await?).await }))? else { return Ok(()) };
     for (profile, ufvk, t1_pubkey, seed_fp) in missing {
         let purpose = AccountPurpose::Spending { derivation: Some(Zip32Derivation::new(*seed_fp, account_index(*profile)?)) };
         let account = db
@@ -207,11 +237,15 @@ pub fn sync(data_dir: &Path) -> Result<()> {
     if db.get_account_ids()?.is_empty() {
         return Ok(());
     }
-    runtime()?.block_on(async {
-        let mut client = client().await?;
-        let cache = MemoryCache::default();
-        zcash_client_backend::sync::run(&mut client, &MainNetwork, &cache, &mut db, SYNC_BATCH).await.map_err(|e| anyhow!("synchronisation Zcash protégée : {e}"))
-    })
+    // Réinitialisation ou restauration demandée : passe abandonnée (voir
+    // `unless_wiped`).
+    runtime()?
+        .block_on(unless_wiped(async {
+            let mut client = client().await?;
+            let cache = MemoryCache::default();
+            zcash_client_backend::sync::run(&mut client, &MainNetwork, &cache, &mut db, SYNC_BATCH).await.map_err(|e| anyhow!("synchronisation Zcash protégée : {e}"))
+        }))
+        .map(|_| ())
 }
 
 /// Solde du compte protégé du profil (zatoshis).
@@ -227,7 +261,7 @@ pub struct ShieldedBalance {
 }
 
 pub fn balance(data_dir: &Path, profile: u32) -> Result<ShieldedBalance> {
-    let db = open(data_dir)?;
+    let Some(db) = open_existing(data_dir)? else { return Ok(ShieldedBalance::default()) };
     let Some(account) = find_account(&db, profile)? else { return Ok(ShieldedBalance::default()) };
     let Some(summary) = db.get_wallet_summary(ConfirmationsPolicy::default())? else { return Ok(ShieldedBalance::default()) };
     let Some(balances) = summary.account_balances().get(&account) else { return Ok(ShieldedBalance::default()) };
@@ -262,7 +296,8 @@ pub fn parse_shielded_address(address: &str) -> Result<()> {
 /// une protection apparaît reçue ici et envoyée sur la carte transparente ;
 /// un envoi compte ses frais. Lu dans la base locale, aucun appel réseau.
 pub fn history(data_dir: &Path, profile: u32) -> Result<Vec<history::TxEntry>> {
-    let Some(account) = find_account(&open(data_dir)?, profile)? else { return Ok(Vec::new()) };
+    let Some(db) = open_existing(data_dir)? else { return Ok(Vec::new()) };
+    let Some(account) = find_account(&db, profile)? else { return Ok(Vec::new()) };
     let conn = rusqlite::Connection::open_with_flags(data_dir.join(WALLET_FILE), rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
         .context("base Zcash protégée illisible")?;
     let account_id: i64 = conn
@@ -603,7 +638,7 @@ fn max_proposal(db: &mut Db, account: AccountUuid, recipient: zcash_address::Zca
 /// ou vers sa propre adresse pour une estimation : mêmes frais Orchard).
 pub fn max_amount(data_dir: &Path, profile: u32, to: &str) -> Result<u64> {
     let recipient = check_recipient(to)?;
-    let mut db = open(data_dir)?;
+    let mut db = open_existing(data_dir)?.context("fonds protégés pas encore prêts (synchronisation en cours)")?;
     let account = find_account(&db, profile)?.context("fonds protégés pas encore prêts (synchronisation en cours)")?;
     Ok(max_proposal(&mut db, account, recipient)?.1)
 }
@@ -705,6 +740,20 @@ mod tests {
     use zcash_address::ToAddress as _;
 
     const SEED: [u8; 64] = [5u8; 64];
+
+    /// Lectures sans base (portefeuille réinitialisé) : vides, et la base
+    /// n'est pas recréée.
+    #[test]
+    fn reads_never_create_the_database() {
+        let dir = std::env::temp_dir().join(format!("zec-shielded-absent-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(balance(&dir, 0).unwrap(), ShieldedBalance::default());
+        assert!(history(&dir, 0).unwrap().is_empty());
+        assert!(max_amount(&dir, 0, &address(&viewing_key(&SEED, 0).unwrap()).unwrap()).is_err());
+        assert!(!dir.join(WALLET_FILE).exists(), "base recréée par une lecture");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// Requête d'historique exécutée sur une base créée par la bibliothèque
     /// (schéma réel : tables et colonnes vérifiées) ; vide sans transaction.

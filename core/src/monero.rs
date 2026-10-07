@@ -387,11 +387,19 @@ fn node_err(e: impl std::fmt::Display) -> anyhow::Error {
 
 // --- Synchronisation ---------------------------------------------------------------
 
+/// Oublie les adresses mémorisées (effacement de l'état, voir `seed_state`).
+pub(crate) fn forget_known() {
+    *KNOWN.lock().unwrap_or_else(|p| p.into_inner()) = None;
+}
+
 /// Analyse les blocs jusqu'au bout de la chaîne pour tous les profils
 /// (appelé en arrière-plan après le déverrouillage). L'état est enregistré
 /// après chaque lot : une interruption ne perd que le lot en cours.
-pub fn sync(data_dir: &Path, keys: &[ViewKeys]) -> Result<()> {
-    if keys.is_empty() {
+/// `generation` (voir `seed_state`) : l'état n'est lu et écrit que sous son
+/// autorisation, jamais pendant les appels réseau — une réinitialisation
+/// n'attend qu'un lot en mémoire, et la passe s'arrête sans rien réécrire.
+pub fn sync(data_dir: &Path, keys: &[ViewKeys], generation: u64) -> Result<()> {
+    if keys.is_empty() || crate::seed_state::pass(generation).is_none() {
         return Ok(());
     }
     let mut scanners = keys.iter().map(|k| Ok((k.profile, Scanner::new(k.pair()?)))).collect::<Result<BTreeMap<_, _>>>()?;
@@ -400,10 +408,16 @@ pub fn sync(data_dir: &Path, keys: &[ViewKeys]) -> Result<()> {
     runtime()?.block_on(async {
         let (rpc, _) = connect(data_dir).await?;
         loop {
+            // Réinitialisation ou restauration demandée : rien n'est réécrit
+            // (voir `seed_state`).
+            if crate::seed_state::cancelled() {
+                return Ok(());
+            }
             let tip = rpc.latest_block_number().await.map_err(node_err)?;
             // Verrou relâché pendant les appels réseau : un envoi n'attend
             // jamais la fin d'un lot.
             let (start, recent) = {
+                let Some(_pass) = crate::seed_state::pass(generation) else { return Ok(()) };
                 let _guard = lock();
                 let state = load(data_dir)?;
                 (scan_start(&state, keys), state.recent.clone())
@@ -415,6 +429,7 @@ pub fn sync(data_dir: &Path, keys: &[ViewKeys]) -> Result<()> {
                 Vec::new()
             };
 
+            let Some(_pass) = crate::seed_state::pass(generation) else { return Ok(()) };
             let _guard = lock();
             let mut state = load(data_dir)?;
             // Nouveau profil : analyse depuis peu avant la création du
@@ -457,6 +472,10 @@ pub fn sync(data_dir: &Path, keys: &[ViewKeys]) -> Result<()> {
                 }
             }
             for block in blocks {
+                // Effacement demandé : arrêt entre deux blocs, rien réécrit.
+                if crate::seed_state::cancelled() {
+                    return Ok(());
+                }
                 process_block(&mut state, &mut scanners, block)?;
             }
             save(data_dir, &state)?;
@@ -1155,13 +1174,13 @@ mod tests {
         let dir = temp_dir("sync");
         let keys = view_keys(&seed(), 0).unwrap();
         let started = std::time::Instant::now();
-        sync(&dir, std::slice::from_ref(&keys)).unwrap();
+        sync(&dir, std::slice::from_ref(&keys), crate::seed_state::generation()).unwrap();
         let state = load(&dir).unwrap();
         println!("{} blocs en {:?}, hauteur {}", state.tip + 1 - BIRTHDAY_HEIGHT, started.elapsed(), state.tip);
         assert!(balance(&dir, 0).unwrap().synced);
         // Seconde passe : rien à relire.
         let again = std::time::Instant::now();
-        sync(&dir, std::slice::from_ref(&keys)).unwrap();
+        sync(&dir, std::slice::from_ref(&keys), crate::seed_state::generation()).unwrap();
         println!("seconde passe {:?}", again.elapsed());
         let error = prepare_send(&dir, &keys, &keys.address().unwrap(), 1).map(|_| ()).unwrap_err().to_string();
         assert!(error.contains("propre adresse"), "{error}");
