@@ -1005,6 +1005,12 @@ const I18N = {
     "swap.cowViewOrder": "Voir l'ordre",
     "swap.viaLifi": "via LI.FI",
     "swap.previewLifiRoute": "Pont (via LI.FI)",
+    "swap.viaMoonpay": "via MoonPay Trade",
+    "swap.previewMoonpayRoute": "Fournisseur",
+    "swap.moonpayRoute": "MoonPay Trade — commission {fee} %, vérifié par simulation",
+    "swap.moonpayRouteUnverified": "MoonPay Trade — commission {fee} %, ~{minutes} min. Seul fournisseur pour cette paire : la livraison est gérée par MoonPay Trade, l'app ne peut pas la vérifier.",
+    "swap.moonpaySent": "Échange envoyé ({tx}).",
+    "swap.moonpayDepositSent": "Dépôt envoyé ({tx}) — MoonPay Trade livre en ~{minutes} min.",
     "swap.lifiDuration": "≈ {minutes} min",
     "swap.lifiSent": "Transaction envoyée. Transfert en cours (≈ {minutes} min)…",
     "swap.lifiDone": "Échange terminé : les fonds sont arrivés.",
@@ -1662,6 +1668,12 @@ const I18N = {
     "swap.cowViewOrder": "View order",
     "swap.viaLifi": "via LI.FI",
     "swap.previewLifiRoute": "Bridge (via LI.FI)",
+    "swap.viaMoonpay": "via MoonPay Trade",
+    "swap.previewMoonpayRoute": "Provider",
+    "swap.moonpayRoute": "MoonPay Trade — fee {fee}%, verified by simulation",
+    "swap.moonpayRouteUnverified": "MoonPay Trade — fee {fee}%, ~{minutes} min. Only provider for this pair: delivery is handled by MoonPay Trade, the app cannot verify it.",
+    "swap.moonpaySent": "Swap sent ({tx}).",
+    "swap.moonpayDepositSent": "Deposit sent ({tx}) — MoonPay Trade delivers in ~{minutes} min.",
     "swap.lifiDuration": "≈ {minutes} min",
     "swap.lifiSent": "Transaction sent. Transfer in progress (≈ {minutes} min)…",
     "swap.lifiDone": "Swap completed: the funds have arrived.",
@@ -5985,7 +5997,7 @@ function selectedSwapPair() {
 // Frais d'affiliation par défaut de chaque fournisseur, en % (voir
 // core/src/cow.rs et core/src/thorchain_rpc.rs), quand Rust n'en déclare pas
 // pour la paire.
-const SWAP_PROVIDER_FEE_PERCENT = { thorchain: 0.8, maya: 0.8, jupiter: 0.8, cow: 1, lifi: 0.8, swapkit: 0.15 };
+const SWAP_PROVIDER_FEE_PERCENT = { thorchain: 0.8, maya: 0.8, jupiter: 0.8, cow: 1, lifi: 0.8, swapkit: 0.15, moonpay: 0.8 };
 
 function swapProviderFeePercent(pair, protocol) {
   const bps = pair?.feesBps?.[protocol];
@@ -6476,7 +6488,7 @@ function renderSwapAlerts() {
   box.classList.toggle("hidden", alerts.length === 0);
 }
 
-const SWAP_PROTOCOL_NAMES = { thorchain: "THORChain", maya: "Maya", jupiter: "Jupiter", cow: "CoW", lifi: "LI.FI", swapkit: "SwapKit" };
+const SWAP_PROTOCOL_NAMES = { thorchain: "THORChain", maya: "Maya", jupiter: "Jupiter", cow: "CoW", lifi: "LI.FI", swapkit: "SwapKit", moonpay: "MoonPay Trade" };
 
 // Au-delà de ce coût estimé (frais et écart au cours du marché), l'aperçu
 // avertit avant de continuer.
@@ -6528,7 +6540,7 @@ function updateSwapToOptions() {
         const option = document.createElement("option");
         option.value = swapKey(p.to_coin, p.to_network);
         option.dataset.coin = p.to_coin;
-        const note = p.via ? t("swap.viaTwoSteps", { via: swapShortLabel(p.via) }) : { jupiter: t("swap.viaJupiter"), cow: t("swap.viaCow"), lifi: t("swap.viaLifi") }[p.protocol];
+        const note = p.via ? t("swap.viaTwoSteps", { via: swapShortLabel(p.via) }) : { jupiter: t("swap.viaJupiter"), cow: t("swap.viaCow"), lifi: t("swap.viaLifi"), moonpay: t("swap.viaMoonpay") }[p.protocol];
         option.textContent = swapAssetLabel(p.to_coin, p.to_network) + (note ? ` · ${note}` : "");
         return option;
       })
@@ -6742,7 +6754,9 @@ function openSwapModal(card, preset = null) {
 // portefeuille : pas d'adresse de destination à saisir, contrairement à un
 // échange entre réseaux (THORChain, Maya), où elle est pré-remplie avec
 // l'adresse du profil sur le réseau d'arrivée.
-const isSameWalletSwap = (pair) => pair?.protocol === "jupiter" || pair?.protocol === "cow";
+// MoonPay Trade sur un même réseau EVM : routeur, achats sur l'adresse du
+// profil (vérifié par simulation).
+const isSameWalletSwap = (pair) => pair?.protocol === "jupiter" || pair?.protocol === "cow" || (pair?.protocol === "moonpay" && pair.from?.network === pair.to?.network);
 
 function updateSwapDestination() {
   const pair = selectedSwapPair();
@@ -6852,6 +6866,24 @@ swapQuoteBtn.addEventListener("click", withBusyButton(swapQuoteBtn, async () => 
       minRow.classList.remove("hidden");
       destRow.classList.remove("hidden");
       feeRow.classList.remove("hidden");
+    } else if (step.protocol === "moonpay") {
+      // MoonPay Trade : sur un même réseau EVM, routeur simulé à la
+      // confirmation (achats sur l'adresse du profil) ; ailleurs, dépôt dont
+      // la livraison est gérée par MoonPay Trade — dit ici et dans la boîte.
+      const quote = await invoke("get_moonpay_quote", { fromCoin, fromNetwork, toCoin, toNetwork, amount, destination, profileIndex: swapContext.profileIndex });
+      const symbol = COIN_SYMBOL[toCoin] || toCoin.toUpperCase();
+      receivingText = `≈ ${quote.expected_out} ${symbol}`;
+      receivedAmount = Number.parseFloat(quote.expected_out);
+      document.getElementById("swap-preview-min").textContent = `${quote.min_out} ${symbol}`;
+      document.getElementById("swap-preview-fees-label").textContent = t("swap.previewMoonpayRoute");
+      document.getElementById("swap-preview-fees").textContent = t(quote.verified ? "swap.moonpayRoute" : "swap.moonpayRouteUnverified", {
+        fee: (quote.fee_bps / 100).toLocaleString(chartLocale(), { minimumFractionDigits: 2 }),
+        minutes: Math.max(1, Math.ceil(quote.duration_secs / 60)),
+      });
+      document.getElementById("swap-preview-destination").textContent = destination;
+      minRow.classList.remove("hidden");
+      destRow.classList.toggle("hidden", quote.verified);
+      feeRow.classList.remove("hidden");
     } else if (step.protocol === "jupiter") {
       const outAmount = await invoke("get_jupiter_quote", { fromCoin, toCoin, amount });
       receivingText = `≈ ${outAmount} ${COIN_SYMBOL[toCoin] || toCoin.toUpperCase()}`;
@@ -6955,6 +6987,12 @@ swapPreviewConfirmBtn.addEventListener("click", withBusyButton(swapPreviewConfir
     } else if (step.protocol === "lifi") {
       const transfer = await invoke("lifi_swap_transaction", { password, fromCoin, fromNetwork, toCoin, toNetwork, amount, destination, profileIndex });
       trackLifiTransfer(successEl, transfer);
+    } else if (step.protocol === "moonpay") {
+      const sent = await invoke("moonpay_swap_transaction", { password, fromCoin, fromNetwork, toCoin, toNetwork, amount, destination, profileIndex });
+      successEl.textContent = sent.deposit
+        ? t("swap.moonpayDepositSent", { tx: sent.tx_hash, minutes: Math.max(1, Math.ceil(sent.duration_secs / 60)) })
+        : t("swap.moonpaySent", { tx: sent.tx_hash });
+      successEl.classList.remove("hidden");
     } else if (step.protocol === "swapkit") {
       const sent = await invoke("swapkit_swap_transaction", { password, fromCoin, fromNetwork, toCoin, toNetwork, amount, destination, profileIndex });
       trackSwapkitSwap(successEl, sent);

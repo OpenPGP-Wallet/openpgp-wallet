@@ -198,6 +198,9 @@ fn quote(protocol: Protocol, from: SwapAsset, to: SwapAsset, amount: &str) -> Re
             let routes = crate::swapkit::quote(f, t, units(from, amount), &sender, &destination(to.network))?;
             Ok((routes[0].expected_out, t.decimals))
         }
+        // Jamais proposé dans les tests (clé de l'app absente) : ses devis
+        // réels sont testés dans `moonpay_trade` avec la clé de démo.
+        Protocol::Moonpay => anyhow::bail!("MoonPay Trade : devis testés dans moonpay_trade"),
     }
 }
 

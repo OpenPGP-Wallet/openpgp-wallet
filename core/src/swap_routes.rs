@@ -4,7 +4,7 @@
 //! ce que l'interface propose (« Convertir ») et de ce que les commandes
 //! d'échange acceptent (chaque étape est une paire directe).
 
-use crate::{cow, lifi, swapkit, thorchain_rpc, tokens};
+use crate::{cow, lifi, moonpay_trade, swapkit, thorchain_rpc, tokens};
 use serde::{Deserialize, Serialize};
 
 /// Une crypto de l'app sur un réseau (identifiant de carte, réseau).
@@ -31,6 +31,10 @@ pub enum Protocol {
     /// Agrégateur SwapKit : NEAR Intents ou Chainflip, dépôt confirmé par le
     /// fournisseur lui-même avant signature (voir `core/src/swapkit.rs`).
     Swapkit,
+    /// MoonPay Trade (swaps.xyz) : routeur simulé sur un même réseau EVM ;
+    /// ailleurs, dépôt au destinataire final invérifiable, proposé en dernier
+    /// recours seulement (voir `core/src/moonpay_trade.rs`).
+    Moonpay,
 }
 
 impl Protocol {
@@ -40,7 +44,7 @@ impl Protocol {
         match self {
             Protocol::Thorchain => Some(&thorchain_rpc::THORCHAIN),
             Protocol::Maya => Some(&thorchain_rpc::MAYA),
-            Protocol::Jupiter | Protocol::Cow | Protocol::Lifi | Protocol::Swapkit => None,
+            Protocol::Jupiter | Protocol::Cow | Protocol::Lifi | Protocol::Swapkit | Protocol::Moonpay => None,
         }
     }
 }
@@ -117,6 +121,7 @@ pub fn affiliate_fee_bps(protocol: Protocol, from: SwapAsset, to: SwapAsset) -> 
         // Commission de SwapKit (l'app n'en touche pas encore, voir
         // `swapkit::AFFILIATE_FEE_BPS`).
         Protocol::Swapkit => swapkit::SERVICE_FEE_BPS + swapkit::AFFILIATE_FEE_BPS,
+        Protocol::Moonpay => moonpay_trade::FEE_BPS,
     }
 }
 
@@ -143,6 +148,15 @@ fn lifi_enabled() -> bool {
 /// paires SwapKit sont testées dans `swapkit`).
 fn swapkit_enabled() -> bool {
     cfg!(not(test)) && swapkit::enabled()
+}
+
+/// MoonPay Trade : proposé avec une clé Trade (lue à la compilation). Même
+/// règle que SwapKit pour les tests de ce module, sauf `MOONPAY_IN_TESTS`.
+fn moonpay_enabled() -> bool {
+    #[cfg(test)]
+    return tests::MOONPAY_IN_TESTS.with(std::cell::Cell::get);
+    #[cfg(not(test))]
+    moonpay_trade::enabled()
 }
 
 /// Tous les protocoles qui relient directement `from` à `to`, du préféré au
@@ -184,6 +198,13 @@ pub fn direct_all(from: SwapAsset, to: SwapAsset) -> Vec<Protocol> {
     if swapkit_enabled() && swapkit::links((from.coin, from.network), (to.coin, to.network)) {
         all.push(Protocol::Swapkit);
     }
+    // MoonPay Trade : une option de plus quand l'app vérifie le destinataire
+    // (même réseau EVM) ; sinon en dernier recours seulement, si aucun autre
+    // fournisseur ne relie la paire (choix de l'utilisateur, 07/10/2026).
+    let (from_pair, to_pair) = ((from.coin, from.network), (to.coin, to.network));
+    if moonpay_enabled() && moonpay_trade::links(from_pair, to_pair) && (all.is_empty() || moonpay_trade::verifiable(from_pair, to_pair)) {
+        all.push(Protocol::Moonpay);
+    }
     all
 }
 
@@ -199,7 +220,8 @@ pub fn assets() -> Vec<SwapAsset> {
     let cow_assets = cow::tradable().into_iter().filter(|_| cow_enabled()).map(|(coin, network)| SwapAsset { coin, network });
     let lifi_assets = lifi::tradable().into_iter().filter(|_| lifi_enabled()).map(|(coin, network)| SwapAsset { coin, network });
     let swapkit_assets = swapkit::tradable().into_iter().filter(|_| swapkit_enabled()).map(|(coin, network)| SwapAsset { coin, network });
-    for asset in cross_chain.chain(JUPITER).chain(cow_assets).chain(lifi_assets).chain(swapkit_assets) {
+    let moonpay_assets = moonpay_trade::tradable().into_iter().filter(|_| moonpay_enabled()).map(|(coin, network)| SwapAsset { coin, network });
+    for asset in cross_chain.chain(JUPITER).chain(cow_assets).chain(lifi_assets).chain(swapkit_assets).chain(moonpay_assets) {
         if !all.contains(&asset) {
             all.push(asset);
         }
@@ -274,6 +296,31 @@ pub fn find(coin: &str, network: &str) -> Option<SwapAsset> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    thread_local! {
+        /// MoonPay Trade activé pour le test en cours (fil de test seul).
+        pub(super) static MOONPAY_IN_TESTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+
+    /// MoonPay Trade : une option de plus sur un même réseau EVM (routeur
+    /// vérifié) ; ailleurs, seulement si aucun autre fournisseur ne relie la
+    /// paire (dépôt au destinataire invérifiable) ; jamais sans clé.
+    #[test]
+    fn moonpay_is_offered_last_or_as_last_resort() {
+        let a = |coin, network| find(coin, network).unwrap_or(SwapAsset { coin, network });
+        let (eth, usdc, btc, xmr) = (a("evm", "evm_mainnet"), a("usdc", "evm_mainnet"), a("btc", "btc_mainnet"), SwapAsset { coin: "xmr", network: "xmr_mainnet" });
+        assert!(!direct_all(eth, usdc).contains(&Protocol::Moonpay), "sans clé : jamais");
+        MOONPAY_IN_TESTS.with(|m| m.set(true));
+        let same_network = direct_all(eth, usdc);
+        assert_eq!(same_network.last(), Some(&Protocol::Moonpay), "même réseau EVM : une option de plus, en dernier");
+        assert!(same_network.len() > 1);
+        assert!(!direct_all(eth, btc).contains(&Protocol::Moonpay), "THORChain relie ETH et BTC : pas de dépôt invérifiable");
+        assert_eq!(direct_all(eth, xmr), vec![Protocol::Moonpay], "XMR : aucun autre fournisseur, dernier recours");
+        assert_eq!(route(eth, xmr), Some(Route { first: Protocol::Moonpay, via: None }));
+        assert!(direct_all(xmr, eth).is_empty(), "pas de dépôt depuis Monero");
+        assert_eq!(affiliate_fee_bps(Protocol::Moonpay, eth, xmr), 80);
+        MOONPAY_IN_TESTS.with(|m| m.set(false));
+    }
 
     /// Staking liquide : 0,30 % à l'entrée, 0,10 % à la sortie, par Jupiter
     /// et CoW ; LI.FI pas proposé ; ailleurs, les frais habituels.

@@ -57,6 +57,7 @@ pub mod near;
 pub mod cardano;
 pub mod stacks;
 pub mod bittensor;
+pub mod moonpay_trade;
 #[cfg(test)]
 mod robustness_tests;
 #[cfg(windows)]

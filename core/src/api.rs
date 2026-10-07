@@ -14,7 +14,7 @@
 //!   perdu — jamais utilisé pour le déverrouillage quotidien.
 
 use crate::{
-    btc_rpc, cow, dapp_requests, derivation, doge, lifi, tron, xrp, stellar, near, cardano, stacks, bittensor, monero, native_deposit, wallet_birthday, zcash, zcash_shielded, entropy, eth_rpc, eth_tx, history, jupiter_rpc, memory_guard, pgp_engine, secure_storage, shamir,
+    btc_rpc, cow, dapp_requests, derivation, doge, lifi, tron, xrp, stellar, near, cardano, stacks, bittensor, moonpay_trade, monero, native_deposit, wallet_birthday, zcash, zcash_shielded, entropy, eth_rpc, eth_tx, history, jupiter_rpc, memory_guard, pgp_engine, secure_storage, shamir,
     evm_sign, sol_rpc, sol_spl, sol_stake, sol_tx, thorchain_rpc, tokens, wallet_flow,
 };
 use anyhow::{Context, Result};
@@ -3403,6 +3403,132 @@ pub fn send_sol_stake(data_dir: &Path, device_password: &str, action: sol_stake:
     let message = sol_stake::message(&plan, &owner, &rpc.latest_blockhash()?)?;
     let raw_tx = sol_tx::assemble_transaction(&ed25519_dalek::Signer::sign(&signing_key, &message).to_bytes(), &message);
     rpc.send_transaction(&raw_tx)
+}
+
+// --- MoonPay Trade (voir core/src/moonpay_trade.rs) ------------------------------------
+
+/// Paire MoonPay Trade désignée par l'interface (réseaux de l'app).
+pub fn moonpay_assets(from_coin: &str, from_network: &str, to_coin: &str, to_network: &str) -> Result<(moonpay_trade::Asset, moonpay_trade::Asset)> {
+    let from = moonpay_trade::asset(from_coin, from_network).context("crypto non échangeable via MoonPay Trade")?;
+    let to = moonpay_trade::asset(to_coin, to_network).context("crypto non échangeable via MoonPay Trade")?;
+    Ok((from, to))
+}
+
+/// Devis MoonPay Trade (forme vérifiée, voir `moonpay_trade::parse_action`)
+/// pour un montant saisi.
+pub fn moonpay_quote(from: &moonpay_trade::Asset, to: &moonpay_trade::Asset, amount: &str, sender: &str, recipient: &str) -> Result<moonpay_trade::Quote> {
+    let units = tokens::parse_amount(amount, from.decimals)?;
+    moonpay_trade::quote(from, to, units, sender, recipient)
+}
+
+/// Simule l'échange par le routeur (même réseau EVM) depuis `sender` :
+/// autorisation au montant exact s'il en faut, puis l'appel ; vérifie que
+/// seul le jeton vendu sort, au montant exact, et que le jeton acheté arrive
+/// sur l'adresse de `sender`, au moins le minimum garanti. Renvoie ce qui
+/// arriverait.
+pub fn verify_moonpay_router(from: &moonpay_trade::Asset, to: &moonpay_trade::Asset, quote: &moonpay_trade::Quote, sender: &str) -> Result<u128> {
+    let moonpay_trade::TradeTx::Router { router, data, value } = &quote.tx else { anyhow::bail!("devis MoonPay Trade sans routeur") };
+    anyhow::ensure!(from.network == to.network, "échange MoonPay Trade par le routeur : même réseau seulement");
+    let network = wallet_flow::evm_network(from.network).context("réseau EVM inconnu")?;
+    let user = wallet_flow::parse_evm_address(sender)?;
+    let token = |asset: &moonpay_trade::Asset| if asset.native { Ok(None) } else { wallet_flow::parse_evm_address(asset.token).map(Some) };
+    let expected = moonpay_trade::Expected { user, sell_token: token(from)?, amount: quote.amount, buy_token: token(to)?, min_out: quote.min_out, router: *router };
+    let router_text = derivation::format_address(router);
+    let approvals = match expected.sell_token {
+        Some(_) => approval_amounts(get_erc20_allowance(network, from.token, &user, router)?, quote.amount),
+        None => Vec::new(),
+    };
+    let approve_data: Vec<Vec<u8>> = approvals.iter().map(|amount| erc20_approve_data(router, *amount)).collect();
+    let mut calls: Vec<eth_rpc::SimCallRequest> = approve_data.iter().map(|data| eth_rpc::SimCallRequest { from: sender, to: from.token, value: 0, data }).collect();
+    calls.push(eth_rpc::SimCallRequest { from: sender, to: &router_text, value: *value, data });
+    let simulated = eth_rpc::EthRpc::new(network.rpc).simulate_v1_with_native_transfers(&calls)?;
+    moonpay_trade::verify_router(&simulated, &expected)
+}
+
+/// Frais maximum d'un échange MoonPay Trade par le routeur, montrés avant la
+/// confirmation : l'appel au plafond de gas (+ frais L1 sur Base) et les
+/// autorisations au routeur s'il en faut.
+pub fn moonpay_router_fees(from: &moonpay_trade::Asset, quote: &moonpay_trade::Quote, sender: &str, gas_price: u128) -> Result<(EvmFee, EvmFee, usize)> {
+    let moonpay_trade::TradeTx::Router { router, data, value } = &quote.tx else { anyhow::bail!("devis MoonPay Trade sans routeur") };
+    let network = wallet_flow::evm_network(from.network).context("réseau EVM inconnu")?;
+    let cap = lifi_gas_cap(network);
+    let call = EvmFee { gas_price, gas_limit: cap, l1_fee: evm_l1_fee(network, router, *value, data, gas_price, cap)? };
+    if from.native {
+        return Ok((call, EvmFee { gas_price, gas_limit: 0, l1_fee: 0 }, 0));
+    }
+    let (approve_cap, _) = swap_gas_caps(network);
+    let contract = wallet_flow::parse_evm_address(from.token)?;
+    let approve = EvmFee { gas_price, gas_limit: approve_cap, l1_fee: evm_l1_fee(network, &contract, 0, &erc20_approve_data(router, quote.amount), gas_price, approve_cap)? };
+    let approvals = approval_amounts(get_erc20_allowance(network, from.token, &wallet_flow::parse_evm_address(sender)?, router)?, quote.amount).len();
+    Ok((call, approve, approvals))
+}
+
+/// Échange MoonPay Trade par le routeur : la transaction AFFICHÉE, revérifiée
+/// par simulation juste avant la signature (au moins le minimum affiché sur
+/// l'adresse du profil), au nom du profil qui signe, au prix du gas affiché ;
+/// autorisation au montant exact au routeur si nécessaire. Renvoie le hash.
+#[allow(clippy::too_many_arguments)]
+pub fn send_moonpay_router(
+    data_dir: &Path,
+    device_password: &str,
+    from: &moonpay_trade::Asset,
+    to: &moonpay_trade::Asset,
+    quote: &moonpay_trade::Quote,
+    sender: &str,
+    gas_price: u128,
+    profile_index: u32,
+) -> Result<String> {
+    let moonpay_trade::TradeTx::Router { router, data, value } = &quote.tx else { anyhow::bail!("devis MoonPay Trade sans routeur") };
+    let network = wallet_flow::evm_network(from.network).context("réseau EVM inconnu")?;
+    anyhow::ensure!(
+        moonpay_trade::router(network.id).map(wallet_flow::parse_evm_address).transpose()? == Some(*router),
+        "transaction MoonPay Trade incohérente — échange refusé"
+    );
+    check_evm_gas_price(network, gas_price)?;
+    verify_moonpay_router(from, to, quote, sender)?;
+    let seed = unlock_seed(data_dir, device_password)?;
+    let _seed_lock = memory_guard::lock(&seed);
+    let (signing_key, address) = derivation::derive_evm_key(&seed, profile_index)?;
+    let address_str = derivation::format_address(&address);
+    anyhow::ensure!(address_str.eq_ignore_ascii_case(sender), "l'échange MoonPay Trade n'est pas au nom de ce profil — échange refusé");
+    let rpc = eth_rpc::EthRpc::new(network.rpc);
+    let (nonce, chain_id, balance) = std::thread::scope(|scope| {
+        let nonce = scope.spawn(|| rpc.nonce(&address_str));
+        let chain_id = scope.spawn(|| rpc.chain_id());
+        let balance = scope.spawn(|| rpc.balance(&address_str));
+        let join = "un fil de lecture ne doit pas paniquer";
+        (nonce.join().expect(join), chain_id.join().expect(join), balance.join().expect(join))
+    });
+    let (mut nonce, chain_id, balance) = (nonce?, chain_id?, balance?);
+    anyhow::ensure!(chain_id == network.chain_id, "le nœud RPC répond pour le réseau {chain_id}, pas {} — envoi refusé", network.chain_id);
+    let cap = lifi_gas_cap(network);
+    let call_fee = gas_price
+        .checked_mul(u128::from(cap))
+        .and_then(|g| g.checked_add(evm_l1_fee(network, router, *value, data, gas_price, cap).ok()?))
+        .and_then(|f| f.checked_add(*value))
+        .context("montant + frais dépassant la capacité représentable")?;
+    if from.native {
+        ensure_fees_covered(network, router, router, &[], gas_price, call_fee, balance)?;
+    } else {
+        let contract = wallet_flow::parse_evm_address(from.token)?;
+        let token_balance = get_erc20_balance(network, from.token, &address_str)?;
+        anyhow::ensure!(
+            quote.amount <= token_balance,
+            "{} insuffisants : {} disponibles, {} demandés",
+            from.symbol,
+            tokens::format_amount(token_balance, from.decimals),
+            tokens::format_amount(quote.amount, from.decimals)
+        );
+        let approvals = approval_amounts(get_erc20_allowance(network, from.token, &address, router)?, quote.amount);
+        ensure_fees_covered(network, &contract, router, &approvals, gas_price, call_fee, balance)?;
+        nonce = send_approvals(&rpc, network, &signing_key, &address_str, chain_id, nonce, &contract, router, &approvals, gas_price)?;
+    }
+    let router_text = derivation::format_address(router);
+    let estimated = rpc.estimate_gas(&address_str, &router_text, *value, data)?;
+    let gas_limit = estimated.saturating_mul(12).div_ceil(10).max(eth_tx::intrinsic_gas(data));
+    anyhow::ensure!(gas_limit <= cap, "gas estimé anormalement élevé pour l'échange MoonPay Trade ({gas_limit}, maximum {cap}) — échange refusé");
+    let tx = eth_tx::EthTx { nonce, gas_price, gas_limit, to: *router, value: *value, chain_id, data: data.clone() };
+    rpc.send_raw_transaction(&tx.sign(&signing_key)?)
 }
 
 // --- Stacks (STX) -------------------------------------------------------------------

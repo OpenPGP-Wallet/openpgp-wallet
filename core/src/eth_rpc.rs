@@ -17,6 +17,10 @@ pub struct SimulatedCall {
     pub logs: Vec<SimulatedLog>,
 }
 
+/// Émetteur des mouvements de monnaie native tracés par `eth_simulateV1`
+/// (`traceTransfers`, spécification execution-apis).
+pub const NATIVE_TRANSFER_EMITTER: [u8; 20] = [0xee; 20];
+
 #[derive(Clone)]
 pub struct SimulatedLog {
     pub address: [u8; 20],
@@ -140,6 +144,18 @@ impl EthRpc {
     /// avant de la signer — autorisation préalable comprise, simulée juste
     /// avant dans le même bloc.
     pub fn simulate_v1(&self, calls: &[SimCallRequest]) -> Result<Vec<SimulatedCall>> {
+        self.simulate(calls, false)
+    }
+
+    /// Comme `simulate_v1`, avec en plus chaque mouvement de la monnaie du
+    /// réseau sous forme d'événement `Transfer` émis par l'adresse
+    /// `NATIVE_TRANSFER_EMITTER` (`traceTransfers`) : ce qu'un contrat envoie
+    /// en ETH, BNB… n'émet sinon aucun événement.
+    pub fn simulate_v1_with_native_transfers(&self, calls: &[SimCallRequest]) -> Result<Vec<SimulatedCall>> {
+        self.simulate(calls, true)
+    }
+
+    fn simulate(&self, calls: &[SimCallRequest], trace_transfers: bool) -> Result<Vec<SimulatedCall>> {
         let calls_json: Vec<Value> = calls
             .iter()
             .map(|c| {
@@ -151,7 +167,11 @@ impl EthRpc {
                 })
             })
             .collect();
-        let result = self.call("eth_simulateV1", json!([{ "blockStateCalls": [{ "calls": calls_json }], "validation": false }, "latest"]))?;
+        let mut options = json!({ "blockStateCalls": [{ "calls": calls_json }], "validation": false });
+        if trace_transfers {
+            options["traceTransfers"] = json!(true);
+        }
+        let result = self.call("eth_simulateV1", json!([options, "latest"]))?;
         let simulated = result
             .get(0)
             .and_then(|block| block.get("calls"))

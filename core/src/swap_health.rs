@@ -41,7 +41,7 @@ struct Probe {
     expect: &'static str,
 }
 
-const PROBES: [Probe; 6] = [
+const PROBES: [Probe; 7] = [
     // Petit devis SOL → USDC : la cotation elle-même répond.
     Probe {
         protocol: Protocol::Jupiter,
@@ -55,6 +55,7 @@ const PROBES: [Probe; 6] = [
     Probe { protocol: Protocol::Swapkit, provider: "SwapKit", url: "https://api.swapkit.dev/providers", api_key: crate::swapkit::API_KEY, expect: "" },
     Probe { protocol: Protocol::Swapkit, provider: "NEAR Intents", url: "https://1click.chaindefuser.com/v0/tokens", api_key: None, expect: "assetId" },
     Probe { protocol: Protocol::Swapkit, provider: "Chainflip", url: "https://chainflip-swap.chainflip.io/healthcheck", api_key: None, expect: "" },
+    Probe { protocol: Protocol::Moonpay, provider: "MoonPay Trade", url: "https://api-v2.swaps.xyz/api/getChainList", api_key: crate::moonpay_trade::API_KEY, expect: "chainId" },
 ];
 
 fn responds(probe: &Probe) -> bool {
@@ -77,6 +78,7 @@ pub fn check() -> Vec<Issue> {
             .iter()
             // SwapKit sans clé : non proposé, rien à vérifier.
             .filter(|p| p.protocol != Protocol::Swapkit || crate::swapkit::enabled())
+            .filter(|p| p.protocol != Protocol::Moonpay || crate::moonpay_trade::enabled())
             .map(|probe| (probe, scope.spawn(move || responds(probe))))
             .collect();
         let thorchain = scope.spawn(|| THORCHAIN.halted_assets().is_ok());
