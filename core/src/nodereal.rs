@@ -311,6 +311,7 @@ mod tests {
 
     /// Virement au format réel (champs relevés le 07/10/2026 sur une réponse
     /// de `nr_getAssetTransfers`).
+    #[allow(clippy::too_many_arguments)]
     fn raw(id: u64, category: &str, block: u64, from: &str, to: &str, value: u128, hash: &str, status: u64) -> Value {
         json!({
             "id": id, "category": category, "blockNum": format!("0x{block:x}"), "from": from, "to": to,
@@ -413,6 +414,65 @@ mod tests {
         assert!(parse_reply(&json!({ "error": { "code": -32601, "message": "method does not exist" } })).unwrap_err().to_string().contains("refusé"));
     }
 
+    /// Réel (clé requise) : montants nets comparés à la transaction lue sur
+    /// un nœud public de BNB Chain (valeur, émetteur, destinataire, frais).
+    /// `cargo test -- --ignored real_nodereal_amounts --nocapture`
+    #[test]
+    #[ignore]
+    fn real_nodereal_amounts() {
+        let rpc = "https://bsc-dataseed.bnbchain.org";
+        let node = |method: &str, hash: &str| -> Value {
+            reqwest::blocking::Client::new().post(rpc).json(&json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": [hash] })).send().unwrap().json::<Value>().unwrap()["result"].clone()
+        };
+        let (txs, _) = tx_history_page(OTHER, None).unwrap();
+        let mut checked = 0;
+        for tx in txs.iter().filter(|t| t.net_wei != 0 && !t.failed).take(12) {
+            let chain = node("eth_getTransactionByHash", &tx.hash);
+            let receipt = node("eth_getTransactionReceipt", &tx.hash);
+            let value = number(&chain["value"]).unwrap() as i128;
+            let from = chain["from"].as_str().unwrap().to_lowercase();
+            let to = chain["to"].as_str().unwrap_or_default().to_lowercase();
+            // Virement direct (pas d'un contrat) : le montant net est la valeur de la transaction.
+            let expected = if from == OTHER { -value } else if to == OTHER { value } else { continue };
+            // Reçu pas (encore) servi par le nœud public : transaction suivante.
+            let (Some(gas_used), Some(gas_price)) = (number(&receipt["gasUsed"]), number(&receipt["effectiveGasPrice"])) else { continue };
+            let fee = if from == OTHER { (gas_used * gas_price) as i128 } else { 0 };
+            println!("{} net {} (nœud {expected}) frais {} (nœud {fee})", &tx.hash[..12], tx.net_wei, tx.fee_wei);
+            assert_eq!((tx.net_wei, tx.fee_wei), (expected, fee), "{}", tx.hash);
+            checked += 1;
+        }
+        assert!(checked > 0, "aucune transaction comparable dans la page");
+    }
+
+    /// Diagnostic réel (clé requise) : jusqu'où remontent les pages sans
+    /// bornes de blocs (constaté le 07/10/2026 : au-delà de 210 000 blocs, la
+    /// limite de 100 000 ne vaut qu'avec des bornes), et des bornes trop
+    /// larges refusées.
+    /// `cargo test -- --ignored real_nodereal_range --nocapture`
+    #[test]
+    #[ignore]
+    fn real_nodereal_range() {
+        let quiet = "0x000000000000000000000000000000000000dead";
+        let mut params = base_params(&["external"]);
+        params["toAddress"] = json!(quiet);
+        let mut newest = None;
+        for page in 0..10 {
+            let (transfers, next) = call(params.clone()).unwrap();
+            let (low, high) = (transfers.iter().map(|t| t.block).min(), transfers.iter().map(|t| t.block).max());
+            newest = newest.or(high);
+            println!("page {page} : {} virements, blocs {low:?}..{high:?}, recul {:?} blocs, suite {}", transfers.len(), newest.zip(low).map(|(n, l)| n - l), next.is_some());
+            match next {
+                Some(key) => params["pageKey"] = json!(key),
+                None => break,
+            }
+        }
+        let mut explicit = base_params(&["external"]);
+        explicit["toAddress"] = json!(quiet);
+        explicit["fromBlock"] = json!("0x0");
+        explicit["toBlock"] = json!("latest");
+        println!("bornes 0..latest : {:?}", call(explicit).map(|(t, n)| (t.len(), n.is_some())));
+    }
+
     /// Réel (clé requise) : historique de l'adresse chaude de Binance, pages
     /// successives sans doublon et de plus en plus anciennes ; une adresse peu
     /// active lue au-delà de 100 000 blocs (la limite de plage de NodeReal ne
@@ -439,11 +499,12 @@ mod tests {
             let (page, next) = tx_history_page(quiet, cursor.as_ref()).unwrap();
             oldest = oldest.min(page.iter().filter_map(|t| t.timestamp_unix).min().unwrap_or(oldest));
             cursor = next;
-            if cursor.is_none() || newest - oldest > 2 * 24 * 3600 {
+            if cursor.is_none() || newest - oldest > 20 * 3600 {
                 break;
             }
         }
+        // 100 000 blocs ≈ 11,7 h (0,42 s par bloc, mesuré le 07/10/2026).
         println!("adresse peu active : remonté de {} h", (newest - oldest) / 3600);
-        assert!(newest - oldest > 24 * 3600, "historique limité à la dernière plage de blocs");
+        assert!(newest - oldest > 15 * 3600, "historique limité à la dernière plage de blocs");
     }
 }

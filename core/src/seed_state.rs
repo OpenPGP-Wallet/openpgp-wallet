@@ -13,11 +13,16 @@
 //! leur fin, puis efface. La génération écarte une passe dont les clés ont été
 //! lues avant un effacement.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{RwLock, RwLockReadGuard};
 
 static LOCK: RwLock<()> = RwLock::new(());
-static WIPING: AtomicBool = AtomicBool::new(false);
+/// Effacements demandés et pas encore terminés : un compteur, pas un
+/// drapeau — le premier de deux effacements simultanés qui se termine ne
+/// doit pas lever la demande d'arrêt de l'autre (vu le 07/10/2026 : la passe
+/// en cours ne s'arrêtait plus, le second effacement l'attendait jusqu'au
+/// bout).
+static WIPING: AtomicUsize = AtomicUsize::new(0);
 static GENERATION: AtomicU64 = AtomicU64::new(0);
 
 /// Génération de l'état : à lire AVANT les clés d'une passe.
@@ -34,19 +39,23 @@ pub fn pass(generation: u64) -> Option<RwLockReadGuard<'static, ()>> {
 
 /// Effacement demandé : la passe en cours s'arrête au plus tôt.
 pub fn cancelled() -> bool {
-    WIPING.load(Ordering::SeqCst)
+    WIPING.load(Ordering::SeqCst) > 0
 }
 
 /// Arrête les passes, attend leur fin, puis exécute `erase`.
 pub fn wipe<T>(erase: impl FnOnce() -> T) -> T {
-    WIPING.store(true, Ordering::SeqCst);
-    let result = {
-        let _guard = LOCK.write().unwrap_or_else(|p| p.into_inner());
-        GENERATION.fetch_add(1, Ordering::SeqCst);
-        erase()
-    };
-    WIPING.store(false, Ordering::SeqCst);
-    result
+    // Demande levée à la fin, même si `erase` panique.
+    struct Request;
+    impl Drop for Request {
+        fn drop(&mut self) {
+            WIPING.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+    WIPING.fetch_add(1, Ordering::SeqCst);
+    let _request = Request;
+    let _guard = LOCK.write().unwrap_or_else(|p| p.into_inner());
+    GENERATION.fetch_add(1, Ordering::SeqCst);
+    erase()
 }
 
 #[cfg(test)]
@@ -76,8 +85,11 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(10));
             }
             std::thread::sleep(Duration::from_millis(100));
+            // Heure notée AVANT de rendre le verrou : l'effacement peut
+            // commencer aussitôt après.
+            let ended = Instant::now();
             drop(pass_guard);
-            Instant::now()
+            ended
         });
         let used = started_pass.recv().unwrap();
         let erased_at = wipe(Instant::now);
