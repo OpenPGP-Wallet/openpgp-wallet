@@ -3264,8 +3264,61 @@ let balanceRefreshTimer = null;
 // publique utilisée (CoinGecko, gratuite) a une limite de requêtes par minute.
 function startBalanceAutoRefresh() {
   stopBalanceAutoRefresh();
-  balanceRefreshTimer = setInterval(refreshAllBalances, 60000);
+  // Toujours précédé d'une relecture complète (déverrouillage, création,
+  // restauration) : le rattrapage au focus n'a pas à la refaire.
+  lastAutoBalances = Date.now();
+  balanceRefreshTimer = setInterval(autoRefreshBalances, BALANCE_REFRESH_MS);
   startPriceAutoRefresh();
+}
+
+// Fenêtre réduite : ni soldes ni cours relus (une vingtaine d'appels par
+// minute aux nœuds publics, pour un écran que personne ne regarde). Les
+// réceptions restent signalées par la surveillance en direct (Rust) ; tout
+// est relu dès que la fenêtre reprend le focus. `document.hidden` reste faux
+// dans WebView2 fenêtre réduite (constaté le 06/10/2026) : Tauri répond.
+const BALANCE_REFRESH_MS = 60000;
+const PRICE_REFRESH_MS = 30000;
+let lastAutoBalances = 0;
+let lastAutoPrices = 0;
+
+async function windowMinimized() {
+  try {
+    return await window.__TAURI__.window.getCurrentWindow().isMinimized();
+  } catch (e) {
+    return false;
+  }
+}
+
+// Relu il y a moins d'une demi-période (rattrapage au retour du focus) :
+// ce tick attend le suivant.
+async function autoRefreshBalances() {
+  if (Date.now() - lastAutoBalances < BALANCE_REFRESH_MS / 2 || (await windowMinimized())) return;
+  lastAutoBalances = Date.now();
+  refreshAllBalances();
+}
+
+async function autoRefreshPrices() {
+  if (Date.now() - lastAutoPrices < PRICE_REFRESH_MS / 2 || (await windowMinimized())) return;
+  lastAutoPrices = Date.now();
+  refreshPrices();
+}
+
+try {
+  // Focus rendu : relecture directe — `isMinimized` répond encore « vrai »
+  // à cet instant (constaté le 06/10/2026), l'interroger ici l'annulerait.
+  window.__TAURI__.window.getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+    if (!focused) return;
+    if (balanceRefreshTimer && Date.now() - lastAutoBalances > BALANCE_REFRESH_MS) {
+      lastAutoBalances = Date.now();
+      refreshAllBalances();
+    }
+    if (priceRefreshTimer && Date.now() - lastAutoPrices > PRICE_REFRESH_MS) {
+      lastAutoPrices = Date.now();
+      refreshPrices();
+    }
+  }).catch((e) => console.error(e));
+} catch (e) {
+  console.error(e);
 }
 
 function stopBalanceAutoRefresh() {
@@ -3670,8 +3723,9 @@ function renderMarkets(coins) {
 
 function startPriceAutoRefresh() {
   stopPriceAutoRefresh();
+  lastAutoPrices = Date.now();
   refreshPrices();
-  priceRefreshTimer = setInterval(refreshPrices, 30000);
+  priceRefreshTimer = setInterval(autoRefreshPrices, PRICE_REFRESH_MS);
 }
 
 function stopPriceAutoRefresh() {
@@ -6154,8 +6208,8 @@ async function refreshSolStaked(card, force = false) {
   const fresh = solStaked.key === key && Date.now() - solStaked.at < SOL_STAKED_TTL_MS;
   if (networkForCard(card) === "sol_mainnet" && (force || !fresh)) {
     try {
-      const status = await invoke("sol_stake_status", { profileIndex: currentProfileIndex });
-      if (balanceKey(card) === key) solStaked = { key, lamports: status.total_lamports, at: Date.now() };
+      const lamports = await invoke("sol_staked_total", { profileIndex: currentProfileIndex });
+      if (balanceKey(card) === key) solStaked = { key, lamports, at: Date.now() };
     } catch (e) {
       console.error(e);
     }

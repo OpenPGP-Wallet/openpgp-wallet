@@ -3325,6 +3325,11 @@ pub fn sol_validators() -> Result<Vec<sol_stake::Validator>> {
     sol_stake::validators(&sol_mainnet_rpc())
 }
 
+/// SOL stakés en natif (lamports) : ligne de la carte SOL et valeur totale.
+pub fn sol_staked_lamports(owner: &str) -> Result<u64> {
+    sol_stake::staked_lamports(&sol_mainnet_rpc(), owner)
+}
+
 /// « Max » de la fenêtre de staking natif, en SOL.
 pub fn sol_stake_max(owner: &str) -> Result<String> {
     Ok(sol_rpc::format_lamports(sol_stake::max_delegation(&sol_mainnet_rpc(), owner)?))

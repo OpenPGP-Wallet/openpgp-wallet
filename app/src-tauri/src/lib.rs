@@ -4764,6 +4764,17 @@ async fn sol_stake_status(app: tauri::AppHandle, profile_index: u32) -> Result<S
     .await
 }
 
+/// SOL stakés en natif par le profil (lamports), pour la carte SOL : une
+/// seule lecture, sans l'état détaillé de `sol_stake_status`.
+#[tauri::command]
+async fn sol_staked_total(app: tauri::AppHandle, profile_index: u32) -> Result<u64, String> {
+    run_blocking(move || {
+        let owner = own_address_on(&app, "sol_mainnet", profile_index)?;
+        api::sol_staked_lamports(&owner).t_err()
+    })
+    .await
+}
+
 /// Validateurs Solana proposés (voir `sol_stake::validators`).
 #[tauri::command]
 async fn sol_validators() -> Result<Vec<pgp_wallet_poc::sol_stake::Validator>, String> {
@@ -4920,9 +4931,9 @@ async fn sol_stake(app: tauri::AppHandle, password: String, action: String, amou
         let owner = own_address_on(&app, "sol_mainnet", profile_index)?;
         let plan = api::sol_stake_plan(&owner, action, amount.as_deref(), &target).t_err()?;
         // Nom du validateur et fin d'époque : affichage seulement.
-        let view = api::sol_stake_overview(&owner).ok();
+        let view = if action == Action::Delegate { None } else { api::sol_stake_overview(&owner).ok() };
         let validator_name = match action {
-            Action::Delegate => api::sol_validators().ok().and_then(|list| list.into_iter().find(|v| Some(&v.vote) == plan.validator.as_ref()).and_then(|v| v.name)),
+            Action::Delegate => plan.validator.as_deref().and_then(pgp_wallet_poc::sol_stake::validator_name),
             _ => view.as_ref().and_then(|v| v.accounts.iter().find(|a| a.address == plan.stake_account).and_then(|a| a.validator_name.clone())),
         };
         let epoch_ends_in = view.map(|v| pgp_wallet_poc::sol_stake::duration_text(v.epoch.ends_in_secs)).unwrap_or_else(|| "2 j".into());
@@ -7639,6 +7650,7 @@ pub fn run() {
             staking_aprs,
             cardano_stake_status,
             sol_stake_status,
+            sol_staked_total,
             sol_validators,
             sol_stake_max,
             sol_stake,

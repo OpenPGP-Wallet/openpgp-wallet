@@ -342,11 +342,11 @@ pub fn overview(rpc: &SolRpc, owner: &str) -> Result<Overview> {
         let epoch = scope.spawn(|| epoch_info(rpc));
         let min = scope.spawn(|| minimum_delegation(rpc));
         let rent = scope.spawn(|| rpc.minimum_rent_exempt_balance(STAKE_ACCOUNT_SPACE));
-        let wiz = scope.spawn(wiz_cached);
         let accounts = owned_accounts(rpc, &owner);
         let epoch = epoch.join().map_err(|_| anyhow!("lecture de l'époque interrompue"))??;
         let mut accounts: Vec<StakeAccount> = accounts?.iter().filter_map(|(address, state)| stake_account(address, state, &owner, epoch.epoch)).collect();
-        let wiz = wiz.join().unwrap_or_default();
+        // Noms des validateurs (2 Mo, gardés 10 min) : seulement s'il y en a.
+        let wiz = if accounts.iter().any(|a| a.validator.is_some()) { wiz_cached() } else { HashMap::new() };
         for account in &mut accounts {
             if let Some(info) = account.validator.as_ref().and_then(|v| wiz.get(v)) {
                 account.validator_name = info.name.clone();
@@ -495,6 +495,11 @@ fn wiz_cached() -> HashMap<String, Wiz> {
         *CACHE.lock().unwrap_or_else(|p| p.into_inner()) = Some((Instant::now(), fresh.clone()));
     }
     fresh
+}
+
+/// Nom publié d'un validateur (boîte de confirmation).
+pub fn validator_name(vote: &str) -> Option<String> {
+    wiz_cached().get(vote.trim()).and_then(|info| info.name.clone())
 }
 
 /// Ordre des validateurs admissibles. Avec stakewiz : signalés et inconnus
