@@ -452,15 +452,24 @@ fn typed_risk(typed: &TypedData) -> TypedRisk {
     }
     let m = &typed.message;
     let spender = m.get("spender").and_then(Value::as_str).map(str::to_string);
-    // EIP-2612 : `value` ; Permit2 : `details.amount` ou `permitted.amount`.
-    let amount = [m.get("value"), m.pointer("/details/amount"), m.pointer("/permitted/amount")]
-        .into_iter()
-        .flatten()
-        .find_map(|v| evm_sign::parse_uint256(v).ok());
+    // EIP-2612 : `value` ; Permit2 : `details.amount` ou `permitted.amount`,
+    // et en lot (`PermitBatch`, `PermitBatchTransferFrom`) des LISTES de
+    // montants — une seule illimitée suffit à l'avertissement (33ᵉ passage :
+    // les lots n'étaient pas lus).
+    let mut amounts: Vec<&Value> = Vec::new();
+    amounts.extend(m.get("value"));
+    for key in ["details", "permitted"] {
+        match m.get(key) {
+            Some(Value::Array(items)) => amounts.extend(items.iter().filter_map(|item| item.get("amount"))),
+            Some(item) => amounts.extend(item.get("amount")),
+            None => {}
+        }
+    }
+    let amounts: Vec<U256> = amounts.into_iter().filter_map(|v| evm_sign::parse_uint256(v).ok()).collect();
     TypedRisk::Permit {
         spender,
-        unlimited: amount.is_some_and(|a| a.is_practically_unlimited()),
-        amount: amount.map(|a| a.to_decimal()),
+        unlimited: amounts.iter().any(|a| a.is_practically_unlimited()),
+        amount: (!amounts.is_empty()).then(|| amounts.iter().map(|a| a.to_decimal()).collect::<Vec<_>>().join(" + ")),
     }
 }
 
@@ -536,6 +545,39 @@ mod tests {
         let mut other = permit(1, "1");
         other[0] = json!("0x5555555555555555555555555555555555555555");
         assert!(prepare("eth_signTypedData_v4", &other, EVM_MAINNET, &account()).is_err());
+    }
+
+    /// Permit2 en lot : une autorisation illimitée dans la liste est signalée.
+    #[test]
+    fn batch_permits_are_flagged_unlimited() {
+        let max = "1461501637330902918203684832716283019655932542975";
+        let batch = |amounts: [&str; 2]| {
+            json!(["0x2c7536E3605D9C16a7a3D7b1898e529396a65c23", {
+                "domain": {"name": "Permit2", "chainId": 1, "verifyingContract": "0x000000000022D473030F116dDEE9F6B43aC78BA3"},
+                "types": {
+                    "PermitBatch": [{"name": "details", "type": "PermitDetails[]"}, {"name": "spender", "type": "address"}, {"name": "sigDeadline", "type": "uint256"}],
+                    "PermitDetails": [{"name": "token", "type": "address"}, {"name": "amount", "type": "uint160"}, {"name": "expiration", "type": "uint48"}, {"name": "nonce", "type": "uint48"}]
+                },
+                "primaryType": "PermitBatch",
+                "message": {
+                    "details": [
+                        {"token": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", "amount": amounts[0], "expiration": "1893456000", "nonce": "0"},
+                        {"token": "0xdAC17F958D2ee523a2206206994597C13D831ec7", "amount": amounts[1], "expiration": "1893456000", "nonce": "0"}
+                    ],
+                    "spender": "0x5555555555555555555555555555555555555555",
+                    "sigDeadline": "1893456000"
+                }
+            }])
+        };
+        let risk = |amounts| match prepare("eth_signTypedData_v4", &batch(amounts), EVM_MAINNET, &account()).unwrap() {
+            Prepared::EvmTypedData { view, .. } => view.risk,
+            _ => panic!(),
+        };
+        match risk(["1000000", max]) {
+            TypedRisk::Permit { unlimited, amount, .. } => assert!(unlimited && amount.is_some_and(|a| a.starts_with("1000000 + "))),
+            _ => panic!("lot non détecté"),
+        }
+        assert!(matches!(risk(["1000000", "2000000"]), TypedRisk::Permit { unlimited: false, .. }));
     }
 
     #[test]

@@ -262,7 +262,7 @@ fn amount_value(value: &Value) -> Option<u128> {
 fn contains_word(args: &[u8], value: u128) -> bool {
     let mut word = [0u8; 32];
     word[16..].copy_from_slice(&value.to_be_bytes());
-    args.as_chunks::<32>().0.iter().any(|chunk| *chunk == word)
+    args.as_chunks::<32>().0.contains(&word)
 }
 
 /// Appel ERC-20 `transfer(to, amount)`.

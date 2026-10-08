@@ -159,6 +159,7 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
         "invalid address: spaces, line breaks or invisible characters are refused",
     ),
     ("Réinitialisation annulée (confirmation refusée).", "Reset cancelled (confirmation refused)."),
+    ("Suppression annulée (confirmation refusée).", "Deletion cancelled (confirmation refused)."),
     ("Échange annulé (confirmation refusée).", "Swap cancelled (confirmation refused)."),
     ("Opération annulée (confirmation refusée).", "Operation cancelled (confirmation refused)."),
     ("Opération annulée pendant le délai d'annulation.", "Operation cancelled during the cancellation delay."),
@@ -2215,6 +2216,8 @@ async fn register_affiliate_name(password: String, chain: String, app: tauri::Ap
         if !confirmed {
             return Err(translate_error("Inscription annulée (confirmation refusée)."));
         }
+        // Délai d'annulation, comme pour tout mouvement de fonds (33ᵉ passage).
+        send_grace_period(&app, GraceRecap::new(network.to_string(), deposit.clone(), address.to_string()))?;
         api::register_affiliate_name(&dir, &password, &chain, status.deposit).t_err()
     })
     .await
@@ -2349,11 +2352,42 @@ fn create_profile(password: Option<String>, label: String, app: tauri::AppHandle
 /// l'accès depuis cette interface. Ce n'est pas une simple opération de confort sur
 /// une liste de labels, d'où une confirmation à la hauteur (comme pour un envoi de
 /// fonds), au lieu d'un simple `confirm()` JS.
+///
+/// Confirmée dans la fenêtre sécurisée (nom du profil lu ici, pas fourni par
+/// la page) : avec le seul mot de passe, un script de la page qui l'aurait
+/// capté pouvait supprimer un profil approvisionné sans rien montrer
+/// (33ᵉ passage).
 #[tauri::command]
-fn delete_profile(password: String, index: u32, app: tauri::AppHandle) -> Result<(), String> {
-    let password = Zeroizing::new(password);
-    let dir = data_dir(&app)?;
-    api::delete_profile(&dir, &password, index).t_err()
+async fn delete_profile(password: String, index: u32, app: tauri::AppHandle) -> Result<(), String> {
+    run_blocking(move || {
+        let password = Zeroizing::new(password);
+        let dir = data_dir(&app)?;
+        let label = api::profile_label(&dir, index).ok_or_else(|| translate_error(&format!("profil introuvable (index {index})")))?;
+        api::check_device_password(&dir, &password).t_err()?;
+        if !confirm_delete_profile_window(&app, &label) {
+            return Err(translate_error("Suppression annulée (confirmation refusée)."));
+        }
+        api::delete_profile(&dir, &password, index).t_err()
+    })
+    .await
+}
+
+fn confirm_delete_profile_window(app: &tauri::AppHandle, label: &str) -> bool {
+    let label = dialog_label(label);
+    let mut details = SecureConfirmDetails::new(
+        "trash",
+        ("Supprimer ce profil ?", "Delete this profile?"),
+        vec![
+            text(&format!("Le profil « {label} » sera supprimé définitivement."), &format!("The profile \"{label}\" will be deleted for good.")),
+            text(
+                "S'il reste des fonds sur ses adresses, l'app ne pourra plus y accéder.",
+                "If funds remain on its addresses, the app will no longer be able to reach them.",
+            ),
+        ],
+        ("Supprimer", "Delete"),
+    );
+    details.danger = true;
+    secure_confirm(app, details)
 }
 
 /// Suppression "légère" et réversible (voir `api::archive_profile`) : pas de mot de
@@ -7693,7 +7727,10 @@ async fn zec_shield(password: String, profile_index: u32, app: tauri::AppHandle)
             } else {
                 format!("Protéger vos ZEC transparents\n\nDepuis : {t1}\nVers votre adresse protégée : {to}\nMontant protégé : {amount} ZEC\nFrais réseau : {fee} ZEC (ZIP-317)\n\nUne fois protégés, montants et adresses ne sont plus visibles sur la blockchain.\n\nConfirmer ?")
             };
+            // Puis le délai d'annulation, avant la signature (33ᵉ passage : il
+            // manquait ici, comme partout ailleurs depuis le 29ᵉ).
             shielded_dialog(&app, ("Confirmer la protection", "Confirm shielding"), message)
+                && send_grace_period(&app, GraceRecap::new(network_label("zec_shielded"), format!("{amount} ZEC"), to.to_string()).on("zec_mainnet")).is_ok()
         };
         match api::shield_zec(&dir, &password, profile_index, &t1, confirm).t_err()? {
             Some(txid) => {

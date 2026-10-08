@@ -392,6 +392,13 @@ fn submit_outcome(result: &Value, hash: &str, known: impl FnOnce() -> bool) -> R
     if engine == "tesSUCCESS" || engine == "terQUEUED" || engine == "tefALREADY" || (engine == "tefPAST_SEQ" && known()) {
         return Ok(hash.to_string());
     }
+    // ter… (sauf compte source inexistant) : pas encore appliquée, mais peut
+    // l'être dans les registres suivants (avant `LastLedgerSequence`) —
+    // « peut-être partie », jamais « refusée » : un nouvel envoi la paierait
+    // deux fois (33ᵉ passage).
+    if engine.starts_with("ter") && engine != "terNO_ACCOUNT" {
+        return Err(crate::wallet_flow::maybe_sent(hash));
+    }
     let signed_hash = hash;
     let message = ["engine_result_message", "error_exception", "error_message", "error"].iter().find_map(|k| result[*k].as_str()).unwrap_or("erreur inconnue");
     let detail = [engine, message].iter().filter(|p| !p.is_empty()).copied().collect::<Vec<_>>().join(" ");
@@ -457,6 +464,12 @@ mod tests {
         assert!(outcome("tefPAST_SEQ", true).is_ok());
         assert!(outcome("tefPAST_SEQ", false).unwrap_err().to_string().starts_with("transaction XRP refusée"));
         assert!(outcome("tecUNFUNDED_PAYMENT", false).unwrap_err().to_string().contains("frais du réseau prélevés (identifiant AB)"));
+        // Pas encore appliquée (ter…) : peut-être partie ; compte source
+        // inexistant : refusée.
+        for engine in ["terPRE_SEQ", "terRETRY", "terINSUF_FEE_B"] {
+            assert!(outcome(engine, false).unwrap_err().to_string().contains("peut-être partie"), "{engine}");
+        }
+        assert!(outcome("terNO_ACCOUNT", false).unwrap_err().to_string().starts_with("transaction XRP refusée"));
     }
 
     const SEED: &str = "5eb00bbddcf069084889a8ab9155568165f5c453ccb85e70811aaed6f6da5fc19a5ac40b389cd370d086206dec8aa6c43daea6690f20ad3d8d48b2d2ce9e38e4";

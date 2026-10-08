@@ -35,6 +35,9 @@ const SS58_PREFIX: u8 = 42;
 const SYSTEM_ACCOUNT: [u8; 32] = hex_literal("26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9");
 /// Durée de validité d'une transaction, en blocs (~13 min à 12 s le bloc).
 const ERA_PERIOD: u64 = 64;
+/// `Balances` et `transfer_keep_alive` dans le runtime (relevés le 07/10/2026).
+const BALANCES_PALLET: u8 = 5;
+const TRANSFER_KEEP_ALIVE: u8 = 3;
 
 const fn hex_literal(text: &str) -> [u8; 32] {
     let bytes = text.as_bytes();
@@ -319,6 +322,11 @@ fn layout_from(metadata: &RuntimeMetadataV14, spec_version: u32, tx_version: u32
     let calls = pallet.calls.as_ref().context(update)?;
     let Some(TypeDef::Variant(variants)) = registry.resolve(calls.ty.id).map(|t| &t.type_def) else { bail!(update) };
     let call = variants.variants.iter().find(|v| v.name == "transfer_keep_alive").context(update)?;
+    // Index du module et de l'appel figés (relevés le 07/10/2026) : un nœud
+    // qui annoncerait d'autres index ferait signer un autre appel que le
+    // virement affiché (33ᵉ passage). Un vrai changement du réseau exigera
+    // une mise à jour de l'app.
+    ensure!((pallet.index, call.index) == (BALANCES_PALLET, TRANSFER_KEEP_ALIVE), update);
     ensure!(call.fields.len() == 2, update);
     // Destinataire : MultiAddress, « Id » en variante 0 ; montant : Compact<u64>.
     let Some(TypeDef::Variant(dest)) = registry.resolve(call.fields[0].ty.id).map(|t| &t.type_def) else { bail!(update) };

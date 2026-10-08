@@ -515,7 +515,9 @@ pub fn broadcast(signed: &Signed) -> Result<String> {
         .map_err(|e| crate::wallet_flow::broadcast_failure(e, "service Dogecoin injoignable", &signed.txid))?;
     let status = response.status();
     let body = response.text().unwrap_or_default();
-    if status.is_success() || body.contains("already") {
+    // Déjà reçue (« transaction already in block chain », « txn-already-in-mempool »,
+    // « txn-already-known ») ; pas « already spent », un vrai refus (33ᵉ passage).
+    if status.is_success() || ["already in", "already-in", "already-known"].iter().any(|k| body.contains(k)) {
         return Ok(signed.txid.clone());
     }
     if crate::wallet_flow::server_error_may_have_sent(status) {

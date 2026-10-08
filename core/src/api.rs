@@ -430,6 +430,19 @@ pub fn unarchive_profile(data_dir: &Path, index: u32) -> Result<()> {
 ///
 /// Toujours au moins un profil restant : sans coffre par défaut affichable,
 /// l'utilisateur n'aurait plus aucune adresse visible après un déverrouillage.
+/// Mot de passe de l'appareil juste (coffre déchiffré puis effacé aussitôt) :
+/// vérifié AVANT d'ouvrir une fenêtre de confirmation, pour ne pas la faire
+/// accepter pour rien.
+pub fn check_device_password(data_dir: &Path, device_password: &str) -> Result<()> {
+    let _ = unlock_seed(data_dir, device_password)?;
+    Ok(())
+}
+
+/// Nom d'un profil (actif ou archivé), lu dans le fichier des profils.
+pub fn profile_label(data_dir: &Path, index: u32) -> Option<String> {
+    load_profiles(data_dir).into_iter().find(|p| p.index == index).map(|p| p.label)
+}
+
 pub fn delete_profile(data_dir: &Path, device_password: &str, index: u32) -> Result<()> {
     // Seed jetée sans être utilisée : on ne veut que vérifier le mot de passe.
     // `Zeroizing` l'efface automatiquement à la fin de cette expression, pas besoin
