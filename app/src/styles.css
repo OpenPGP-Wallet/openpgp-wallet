@@ -666,6 +666,15 @@ button.link:hover {
   margin-top: 12px;
 }
 
+/* Erreur technique reformulée : le détail brut en petit, dessous. */
+.error .error-detail {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.75rem;
+  opacity: 0.75;
+  word-break: break-word;
+}
+
 .strength-hint {
   margin-top: 6px;
   font-size: 0.8rem;
@@ -1541,6 +1550,14 @@ textarea:focus {
 
 .profile-bar label {
   margin: 0;
+}
+
+/* Archiver : action rare, discrète, à droite (les nouveaux venus la
+   confondaient avec une action courante). */
+.profile-bar > .profile-archive-link {
+  margin-left: auto;
+  font-size: 0.85rem;
+  opacity: 0.8;
 }
 
 .profile-bar select {

@@ -474,6 +474,9 @@ const I18N = {
       "Ce mot de passe est trop faible ou trop prévisible — essayez un mélange de lettres, chiffres et symboles.",
     "common.passwordsMismatch": "Les deux mots de passe ne correspondent pas.",
     "common.passwordRequired": "Mot de passe requis.",
+    "errors.network": "Connexion au réseau impossible pour l'instant : vérifiez votre connexion Internet, puis réessayez dans un moment.",
+    "errors.rejected": "Le réseau a refusé la demande. Vérifiez le montant et votre solde, puis réessayez ; si cela persiste, réessayez plus tard.",
+    "errors.details": "Détail technique : {detail}",
     "common.saveFailed": "Échec de l'enregistrement : {err}",
     "common.error": "Erreur : {err}",
     "common.copyFailed": "Copie impossible : {err}",
@@ -1149,6 +1152,9 @@ const I18N = {
     "common.passwordTooWeak": "This password is too weak or too predictable — try mixing letters, digits and symbols.",
     "common.passwordsMismatch": "The two passwords don't match.",
     "common.passwordRequired": "Password required.",
+    "errors.network": "Can't reach the network right now: check your Internet connection, then try again in a moment.",
+    "errors.rejected": "The network refused the request. Check the amount and your balance, then try again; if it persists, try again later.",
+    "errors.details": "Technical detail: {detail}",
     "common.saveFailed": "Save failed: {err}",
     "common.error": "Error: {err}",
     "common.copyFailed": "Copy failed: {err}",
@@ -2142,8 +2148,29 @@ function dashboardShown() {
 }
 
 function showError(el, message) {
-  el.textContent = message;
+  const friendly = friendlyError(String(message));
+  if (friendly) {
+    const detail = document.createElement("span");
+    detail.className = "error-detail";
+    detail.textContent = t("errors.details", { detail: String(message) });
+    el.replaceChildren(friendly, detail);
+  } else {
+    el.textContent = message;
+  }
   el.classList.remove("hidden");
+}
+
+// Erreur technique brute (bibliothèque réseau, nœud) : phrase simple à
+// montrer d'abord (`null` : message déjà clair, montré tel quel). Jamais
+// pour un envoi « peut-être parti » : ce message-là dit quoi faire (vérifier
+// l'historique avant de renvoyer) et doit rester intact.
+function friendlyError(message) {
+  if (/peut-être partie|may have been sent|vérifiez l'historique|check the history/i.test(message)) return null;
+  if (/error sending request|timed out|operation timed out|connection (refused|reset|closed)|dns error|tcp connect|failed to lookup|network is unreachable|connexion impossible/i.test(message)) {
+    return t("errors.network");
+  }
+  if (/erreur RPC|RPC error|"code"\s*:\s*-?\d+|InvalidFEOpcode|execution reverted/i.test(message)) return t("errors.rejected");
+  return null;
 }
 
 function hideError(el) {
@@ -4857,11 +4884,11 @@ function loadAllHistory() {
 
 document.getElementById("refresh-history-btn").addEventListener("click", loadAllHistory);
 
-// Menu « Recevoir » : une entrée par crypto affichée (ETH, BTC, SOL gardent
-// leur libellé d'origine ; USDC reçoit à l'adresse Solana).
+// Menu « Recevoir » : une entrée par crypto affichée, USDC compris (la
+// fenêtre de réception dit le réseau de sa carte, à choisir à l'envoi).
 function renderReceiveMenu() {
   const list = document.querySelector(".action-menu .custom-select-options");
-  const items = ASSETS.filter((asset) => asset.coin !== "usdc" && isAssetVisible(asset.coin)).map((asset) => {
+  const items = ASSETS.filter((asset) => isAssetVisible(asset.coin)).map((asset) => {
     const li = document.createElement("li");
     li.dataset.coin = asset.coin;
     setWithCoinIcon(li, asset.coin, t("wallet.receiveAsset", { symbol: asset.nameKey ? assetName(asset) : asset.symbol }));
@@ -5953,7 +5980,7 @@ async function showSendFeeEstimate(to, amount) {
   } catch (e) {
     // Solde insuffisant, adresse refusée… : dit ici déjà, plutôt qu'à la fin.
     if (check !== sendFeeEstimate) return;
-    value.textContent = String(e);
+    value.textContent = friendlyError(String(e)) ?? String(e);
   }
 }
 

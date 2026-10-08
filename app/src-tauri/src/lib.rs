@@ -3853,10 +3853,9 @@ fn own_profile_label(app: &tauri::AppHandle, dir: &std::path::Path, network: &st
 fn evm_fee_line_for(fee: api::EvmFee, symbol: &str) -> String {
     let gas_fee = fee.gas_price.saturating_mul(u128::from(fee.gas_limit)) as f64 / 1e18;
     let max_fee = gas_fee + fee.l1_fee as f64 / 1e18;
-    let gwei = fee.gas_price as f64 / 1e9;
     let mut line = lang(
-        &format!("Frais réseau maximum : {max_fee:.8} {symbol} ({gwei:.4} gwei)"),
-        &format!("Maximum network fee: {max_fee:.8} {symbol} ({gwei:.4} gwei)"),
+        &format!("Frais réseau maximum : {max_fee:.8} {symbol}"),
+        &format!("Maximum network fee: {max_fee:.8} {symbol}"),
     )
     .to_string();
     if fee.l1_fee > 0 {
@@ -4559,7 +4558,7 @@ fn confirm_send(
             Some(format!("{} : {fee_sat} sat", lang("Frais", "Fee")))
         }
         "zec" => zec_plan.as_ref().map(|plan| {
-            let mut line = format!("{} : {} ZEC (ZIP-317)", lang("Frais", "Fee"), pgp_wallet_poc::zcash::format_zec(plan.fee));
+            let mut line = format!("{} : {} ZEC", lang("Frais", "Fee"), pgp_wallet_poc::zcash::format_zec(plan.fee));
             if plan.change > 0 {
                 let change = pgp_wallet_poc::zcash::format_zec(plan.change);
                 line.push_str(lang(&format!("
@@ -4922,11 +4921,10 @@ fn cross_chain_pair(
 /// autorisations préalables, plus les frais de publication sur Ethereum (Base).
 fn evm_swap_fee_line(fees: &api::EvmSwapFees, symbol: &str) -> Result<String, String> {
     let total = fees.max_total().t_err()? as f64 / 1e18;
-    let gwei = fees.deposit.gas_price as f64 / 1e9;
     let l1 = (fees.deposit.l1_fee + fees.approve.l1_fee * fees.approvals as u128) as f64 / 1e18;
     let mut line = lang(
-        &format!("Frais réseau maximum : {total:.8} {symbol} ({gwei:.4} gwei)"),
-        &format!("Maximum network fee: {total:.8} {symbol} ({gwei:.4} gwei)"),
+        &format!("Frais réseau maximum : {total:.8} {symbol}"),
+        &format!("Maximum network fee: {total:.8} {symbol}"),
     )
     .to_string();
     if fees.approvals > 0 {
@@ -5688,12 +5686,12 @@ async fn swap_transaction(
                 let plan = api::zec_swap_plan(&from_zec, &quote, &amount).t_err()?;
                 zec_fee = Some(plan.fee);
                 let fee = pgp_wallet_poc::zcash::format_zec(plan.fee);
-                Some(lang(&format!("Frais réseau Zcash : au plus {fee} ZEC (ZIP-317)"), &format!("Zcash network fee: at most {fee} ZEC (ZIP-317)")).to_string())
+                Some(lang(&format!("Frais réseau Zcash : au plus {fee} ZEC"), &format!("Zcash network fee: at most {fee} ZEC")).to_string())
             }
             _ => Some(
                 lang(
-                    &format!("Frais réseau : vitesse moyenne, au plus {} sat/vB", api::BTC_SWAP_MAX_FEE_RATE_SAT_VB),
-                    &format!("Network fee: medium speed, at most {} sat/vB", api::BTC_SWAP_MAX_FEE_RATE_SAT_VB),
+                    "Frais réseau : vitesse moyenne (plafonnés par l'app)",
+                    "Network fee: medium speed (capped by the app)",
                 )
                 .to_string(),
             ),
@@ -5903,7 +5901,7 @@ fn prepare_deposit(coin: &str, network: &str, source: &str, deposit: &str, amoun
         }
         "zec_mainnet" => {
             let plan = api::zec_send_plan(source, deposit, amount).t_err()?;
-            Ok((DepositSend::Zec(plan.fee), format!("{} : {} ZEC (ZIP-317)", lang("Frais réseau", "Network fee"), pgp_wallet_poc::zcash::format_zec(plan.fee))))
+            Ok((DepositSend::Zec(plan.fee), format!("{} : {} ZEC", lang("Frais réseau", "Network fee"), pgp_wallet_poc::zcash::format_zec(plan.fee))))
         }
         "tron_mainnet" => {
             let plan = api::trx_send_plan(source, deposit, amount).t_err()?;
@@ -6403,8 +6401,8 @@ async fn moonpay_swap_transaction(
                 }
                 api::verify_moonpay_router(&from, &to, &quote, &source).t_err()?;
                 let total = call.max_total().t_err()?.saturating_add(approve.max_total().t_err()?.saturating_mul(approvals as u128)) as f64 / 1e18;
-                let (gwei, symbol) = (gas_price as f64 / 1e9, net.native_symbol);
-                let mut fee_lines = lang(&format!("Frais réseau maximum : {total:.8} {symbol} ({gwei:.4} gwei)"), &format!("Maximum network fee: {total:.8} {symbol} ({gwei:.4} gwei)")).to_string();
+                let symbol = net.native_symbol;
+                let mut fee_lines = lang(&format!("Frais réseau maximum : {total:.8} {symbol}"), &format!("Maximum network fee: {total:.8} {symbol}")).to_string();
                 if approvals > 0 {
                     let router = pgp_wallet_poc::derivation::format_address(router);
                     fee_lines.push_str(lang(
@@ -6696,14 +6694,13 @@ fn confirm_cow_swap_native(
 /// dépôt EthFlow (monnaie du réseau) ou autorisation préalable du jeton au
 /// VaultRelayer de CoW (aucune si celle déjà accordée suffit).
 fn cow_transaction_lines(net: &wallet_flow::EvmNetwork, sell: &cow::CowToken, order: &cow::CowOrder, gas_price: u128, sell_line: &str) -> Result<Option<String>, String> {
-    let gwei = gas_price as f64 / 1e9;
     let symbol = net.native_symbol;
     if sell.native {
         let total = api::cow_eth_flow_fee(net, order, gas_price).t_err()?.max_total().t_err()? as f64 / 1e18;
         return Ok(Some(
             lang(
-                &format!("Transaction : {sell_line} confiés au contrat EthFlow de CoW {}, qui les garde jusqu'à l'exécution de l'ordre.\nFrais réseau maximum de cette transaction : {total:.8} {symbol} ({gwei:.4} gwei)", cow::ETH_FLOW),
-                &format!("Transaction: {sell_line} entrusted to CoW's EthFlow contract {}, which holds it until the order is executed.\nMaximum network fee for this transaction: {total:.8} {symbol} ({gwei:.4} gwei)", cow::ETH_FLOW),
+                &format!("Transaction : {sell_line} confiés au contrat EthFlow de CoW {}, qui les garde jusqu'à l'exécution de l'ordre.\nFrais réseau maximum de cette transaction : {total:.8} {symbol}", cow::ETH_FLOW),
+                &format!("Transaction: {sell_line} entrusted to CoW's EthFlow contract {}, which holds it until the order is executed.\nMaximum network fee for this transaction: {total:.8} {symbol}", cow::ETH_FLOW),
             )
             .to_string(),
         ));
@@ -6715,8 +6712,8 @@ fn cow_transaction_lines(net: &wallet_flow::EvmNetwork, sell: &cow::CowToken, or
     let total = approve_fee.max_total().t_err()?.saturating_mul(approvals as u128) as f64 / 1e18;
     Ok(Some(
         lang(
-            &format!("Autorisation préalable (transaction séparée) : le contrat de CoW {} pourra prélever exactement {sell_line}, une seule fois.\nFrais réseau maximum de l'autorisation : {total:.8} {symbol} ({gwei:.4} gwei)", cow::VAULT_RELAYER),
-            &format!("Prior approval (separate transaction): CoW's contract {} will be allowed to take exactly {sell_line}, once.\nMaximum network fee for the approval: {total:.8} {symbol} ({gwei:.4} gwei)", cow::VAULT_RELAYER),
+            &format!("Autorisation préalable (transaction séparée) : le contrat de CoW {} pourra prélever exactement {sell_line}, une seule fois.\nFrais réseau maximum de l'autorisation : {total:.8} {symbol}", cow::VAULT_RELAYER),
+            &format!("Prior approval (separate transaction): CoW's contract {} will be allowed to take exactly {sell_line}, once.\nMaximum network fee for the approval: {total:.8} {symbol}", cow::VAULT_RELAYER),
         )
         .to_string(),
     ))
@@ -6976,24 +6973,24 @@ async fn lifi_swap_transaction(
                 let pgp_wallet_poc::lifi::LifiTx::Bitcoin { deposit: address, .. } = &quote.tx else {
                     return Err(translate_error("devis LI.FI non Bitcoin"));
                 };
-                let (fee, rate) = (deposit.network_fee, deposit.network_fee as f64 / deposit.vsize.max(1) as f64);
+                let fee = deposit.network_fee;
                 let max_fee = fee.saturating_mul(3) / 2;
                 btc_max_network_fee = Some(max_fee);
                 let (service, total) = (deposit.service_fees, deposit.total_debit);
                 lang(
-                    &format!("Dépôt Bitcoin vers l'adresse du pont : {address}\nFrais réseau Bitcoin : {fee} sat (≈ {rate:.1} sat/vB), au plus {max_fee} sat\nFrais de LI.FI et de l'app : {service} sat\nTotal débité de votre adresse : {total} sat"),
-                    &format!("Bitcoin deposit to the bridge's address: {address}\nBitcoin network fee: {fee} sat (≈ {rate:.1} sat/vB), at most {max_fee} sat\nLI.FI's and the app's fees: {service} sat\nTotal debited from your address: {total} sat"),
+                    &format!("Dépôt Bitcoin vers l'adresse du pont : {address}\nFrais réseau Bitcoin : {fee} sat, au plus {max_fee} sat\nFrais de LI.FI et de l'app : {service} sat\nTotal débité de votre adresse : {total} sat"),
+                    &format!("Bitcoin deposit to the bridge's address: {address}\nBitcoin network fee: {fee} sat, at most {max_fee} sat\nLI.FI's and the app's fees: {service} sat\nTotal debited from your address: {total} sat"),
                 )
                 .to_string()
             }
             (Some(net), Some(gas_price)) => {
                 let (call, approve, approvals) = api::lifi_evm_fees(net, &quote, gas_price).t_err()?;
                 let total = call.max_total().t_err()?.saturating_add(approve.max_total().t_err()?.saturating_mul(approvals as u128)) as f64 / 1e18;
-                let (gwei, symbol) = (gas_price as f64 / 1e9, net.native_symbol);
+                let symbol = net.native_symbol;
                 let diamond = pgp_wallet_poc::lifi::diamond(from_net).unwrap_or("?");
                 let mut lines = lang(
-                    &format!("Frais réseau maximum : {total:.8} {symbol} ({gwei:.4} gwei)"),
-                    &format!("Maximum network fee: {total:.8} {symbol} ({gwei:.4} gwei)"),
+                    &format!("Frais réseau maximum : {total:.8} {symbol}"),
+                    &format!("Maximum network fee: {total:.8} {symbol}"),
                 )
                 .to_string();
                 if approvals > 0 {
@@ -7834,9 +7831,9 @@ async fn zec_shield(password: String, profile_index: u32, app: tauri::AppHandle)
             let (amount, fee) = (pgp_wallet_poc::zcash::format_zec(s.amount), pgp_wallet_poc::zcash::format_zec(s.fee));
             let to = &s.recipient;
             let message = if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
-                format!("Shield your transparent ZEC\n\nFrom: {t1}\nTo your shielded address: {to}\nAmount shielded: {amount} ZEC\nNetwork fee: {fee} ZEC (ZIP-317)\n\nOnce shielded, amounts and addresses are no longer visible on the blockchain.\n\nConfirm?")
+                format!("Shield your transparent ZEC\n\nFrom: {t1}\nTo your shielded address: {to}\nAmount shielded: {amount} ZEC\nNetwork fee: {fee} ZEC\n\nOnce shielded, amounts and addresses are no longer visible on the blockchain.\n\nConfirm?")
             } else {
-                format!("Protéger vos ZEC transparents\n\nDepuis : {t1}\nVers votre adresse protégée : {to}\nMontant protégé : {amount} ZEC\nFrais réseau : {fee} ZEC (ZIP-317)\n\nUne fois protégés, montants et adresses ne sont plus visibles sur la blockchain.\n\nConfirmer ?")
+                format!("Protéger vos ZEC transparents\n\nDepuis : {t1}\nVers votre adresse protégée : {to}\nMontant protégé : {amount} ZEC\nFrais réseau : {fee} ZEC\n\nUne fois protégés, montants et adresses ne sont plus visibles sur la blockchain.\n\nConfirmer ?")
             };
             // Puis le délai d'annulation, avant la signature (33ᵉ passage : il
             // manquait ici, comme partout ailleurs depuis le 29ᵉ).
@@ -7882,9 +7879,9 @@ async fn zec_send_shielded(password: String, profile_index: u32, to: String, amo
             let to = &s.recipient;
             let max_note = if max { lang(" (maximum, frais déduits)", " (maximum, fees deducted)") } else { "" };
             let message = if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
-                format!("{warning}Send from your shielded ZEC\n\nFrom profile: {from_label}\nTo: {to}\nAmount: {amount} ZEC{max_note}\nNetwork fee: {fee} ZEC (ZIP-317)\n\nThis is irreversible.\n\nConfirm this transfer?")
+                format!("{warning}Send from your shielded ZEC\n\nFrom profile: {from_label}\nTo: {to}\nAmount: {amount} ZEC{max_note}\nNetwork fee: {fee} ZEC\n\nThis is irreversible.\n\nConfirm this transfer?")
             } else {
-                format!("{warning}Envoi depuis vos ZEC protégés\n\nDepuis le profil : {from_label}\nVers : {to}\nMontant : {amount} ZEC{max_note}\nFrais réseau : {fee} ZEC (ZIP-317)\n\nC'est irréversible.\n\nConfirmer cet envoi ?")
+                format!("{warning}Envoi depuis vos ZEC protégés\n\nDepuis le profil : {from_label}\nVers : {to}\nMontant : {amount} ZEC{max_note}\nFrais réseau : {fee} ZEC\n\nC'est irréversible.\n\nConfirmer cet envoi ?")
             };
             // Puis le délai d'annulation, avant la signature.
             shielded_dialog(&app, ("Confirmer l'envoi", "Confirm the transfer"), message)
