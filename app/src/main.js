@@ -4805,7 +4805,23 @@ function formatUsdApprox(usd, fiat = usdToFiat(usd)) {
   return `≈ ${withCurrency(fiat.toLocaleString(chartLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 }))}`;
 }
 
-function buildHistoryRow(tx) {
+// « -0.010000000000000000 » → « -0.01 » : zéros de fin retirés.
+function trimAmount(amount) {
+  return amount.includes(".") ? amount.replace(/0+$/, "").replace(/\.$/, "") : amount;
+}
+
+// Montant lisible : décimales coupées à celles de la carte (`decimals`),
+// mais au moins 3 chiffres significatifs pour une très petite somme
+// (« +0.00000000000123 » reste lisible) ; jamais arrondi vers le haut. Le
+// montant exact venu de Rust reste au survol (title).
+function shortAmount(amount, decimals) {
+  const [int, frac = ""] = amount.split(".");
+  const firstDigit = frac.search(/[1-9]/);
+  const keep = /^[+-]?0$/.test(int) && firstDigit >= 0 ? Math.max(decimals, firstDigit + 3) : decimals;
+  return trimAmount(frac.length > keep ? `${int}.${frac.slice(0, keep)}` : amount);
+}
+
+function buildHistoryRow(tx, symbol, decimals) {
   const row = document.createElement("div");
   row.className = "history-row";
 
@@ -4839,7 +4855,9 @@ function buildHistoryRow(tx) {
   amountDiv.className = "history-amount";
   if (tx.amount != null && Number.parseFloat(tx.amount) !== 0) {
     amountDiv.classList.add(tx.amount.startsWith("-") ? "negative" : "positive");
-    amountDiv.textContent = tx.amount;
+    const shown = decimals != null ? shortAmount(tx.amount, decimals) : trimAmount(tx.amount);
+    amountDiv.textContent = symbol ? `${shown} ${symbol}` : shown;
+    if (shown !== trimAmount(tx.amount)) amountDiv.title = symbol ? `${trimAmount(tx.amount)} ${symbol}` : trimAmount(tx.amount);
   } else {
     // Rien de cette crypto déplacé (transaction « Autre » : jeton reçu,
     // opération payée par un tiers…) : un tiret plutôt que « +0.000000000 ».
@@ -4921,8 +4939,10 @@ async function renderHistory(coin, container, networkEl) {
       container.innerHTML = `<p class="muted">${t("wallet.historyEmpty")}</p>`;
       return;
     }
-    waiting.forEach((send) => container.appendChild(buildHistoryRow(recentSendEntry(send))));
-    entries.forEach((tx) => container.appendChild(buildHistoryRow(tx)));
+    // Montant d'un envoi en attente : tel que saisi, jamais coupé.
+    const { symbol, decimals } = ASSET_BY_COIN[coin] ?? {};
+    waiting.forEach((send) => container.appendChild(buildHistoryRow(recentSendEntry(send), symbol)));
+    entries.forEach((tx) => container.appendChild(buildHistoryRow(tx, symbol, decimals)));
     if (waiting.length) recheckHistoryLater(container, () => renderHistory(coin, container, networkEl));
   } catch (e) {
     if (!current()) return;
