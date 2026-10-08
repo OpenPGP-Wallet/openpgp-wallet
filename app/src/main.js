@@ -760,7 +760,7 @@ const I18N = {
     "wallet.balanceError": "erreur",
     "message.title": "Chiffrer un message",
     "message.subtitle":
-      "L'usage d'origine de PGP, avant qu'on le détourne ici pour protéger une seed : chiffrer un message pour que seul le destinataire puisse le lire.",
+      "Chiffrez un message pour que seul son destinataire puisse le lire — l'usage d'origine de PGP, la technologie qui protège aussi votre portefeuille.",
     "message.recipientsTitle": "Destinataires",
     "message.addRecipient": "Ajouter un destinataire",
     "message.name": "Nom",
@@ -1086,9 +1086,9 @@ const I18N = {
     "ledger.to": "Destinataire",
     "ledger.amount": "Montant ({unit})",
     "ledger.fee": "Frais",
-    "ledger.feeFast": "Rapide (~10 min) : {sat} sat",
-    "ledger.feeMedium": "Moyen (~30 min) : {sat} sat",
-    "ledger.feeSlow": "Lent (~1 h) : {sat} sat",
+    "ledger.feeFast": "Rapide (~10 min) : {fee}",
+    "ledger.feeMedium": "Moyen (~30 min) : {fee}",
+    "ledger.feeSlow": "Lent (~1 h) : {fee}",
     "ledger.feeLoading": "Estimation des frais…",
     "ledger.sendHint": "Après la confirmation de Windows, vérifiez le destinataire et le montant sur l'écran de l'appareil, puis confirmez-y.",
     "ledger.waitDevice": "Confirmez sur l'appareil…",
@@ -1443,7 +1443,7 @@ const I18N = {
     "wallet.balanceError": "error",
     "message.title": "Encrypt a message",
     "message.subtitle":
-      "The original purpose of PGP, before it got repurposed here to protect a seed: encrypting a message so only the recipient can read it.",
+      "Encrypt a message so only its recipient can read it — the original purpose of PGP, the technology that also protects your wallet.",
     "message.recipientsTitle": "Recipients",
     "message.addRecipient": "Add a recipient",
     "message.name": "Name",
@@ -1766,9 +1766,9 @@ const I18N = {
     "ledger.to": "Recipient",
     "ledger.amount": "Amount ({unit})",
     "ledger.fee": "Fee",
-    "ledger.feeFast": "Fast (~10 min): {sat} sat",
-    "ledger.feeMedium": "Medium (~30 min): {sat} sat",
-    "ledger.feeSlow": "Slow (~1 h): {sat} sat",
+    "ledger.feeFast": "Fast (~10 min): {fee}",
+    "ledger.feeMedium": "Medium (~30 min): {fee}",
+    "ledger.feeSlow": "Slow (~1 h): {fee}",
     "ledger.feeLoading": "Estimating fees…",
     "ledger.sendHint": "After the Windows confirmation, check the recipient and amount on the device's screen, then confirm there.",
     "ledger.waitDevice": "Confirm on the device…",
@@ -5807,6 +5807,14 @@ function openSendModal(card) {
   loadAddressBook().then(() => refreshSendAddressBookPicker(card.dataset.coin, network, sendContext.profileIndex));
 }
 
+// Frais Bitcoin d'un niveau (total en satoshis) dits dans la devise affichée,
+// ou en BTC sans cours (réseau de test, cours pas encore chargé).
+function btcFeeText(sat, network) {
+  const btc = sat / 1e8;
+  const price = network === "btc_mainnet" ? priceForCoin("btc") : null;
+  return price != null ? formatUsdApprox(btc * price) : `${btc.toLocaleString(chartLocale(), { maximumSignificantDigits: 3 })} BTC`;
+}
+
 // Bitcoin est le seul réseau où les frais sont un choix explicite de l'utilisateur
 // (voir core/src/api.rs::estimate_btc_fees) : EVM/Solana calculent déjà les leurs
 // automatiquement (gas price / frais de base réseau), rien à proposer pour eux.
@@ -5850,7 +5858,8 @@ async function loadBtcFeeOptions(card, network) {
       hintSpan.textContent = tier.hint;
       const satSpan = document.createElement("span");
       satSpan.className = "fee-option-sat";
-      satSpan.textContent = `${sat} sat`;
+      satSpan.textContent = btcFeeText(sat, network);
+      satSpan.title = `${sat} sat`;
       btn.appendChild(labelSpan);
       btn.appendChild(hintSpan);
       btn.appendChild(satSpan);
@@ -8848,7 +8857,7 @@ async function openLedgerSend(account) {
     ].forEach(([key, sat]) => {
       const opt = document.createElement("option");
       opt.value = String(sat);
-      opt.textContent = t(key, { sat });
+      opt.textContent = t(key, { fee: btcFeeText(sat, account.network) });
       feeSelect.appendChild(opt);
     });
     feeSelect.value = String(fees.medium_sat);
