@@ -4714,9 +4714,79 @@ document.getElementById("qr-close").addEventListener("click", () => {
 
 const HISTORY_COINS = ASSETS.map((asset) => asset.coin);
 
+// Pas encore dans un bloc : pas de date (le statut dit « En attente »).
 function formatTxTimestamp(unixSeconds) {
-  if (unixSeconds == null) return "en attente";
-  return new Date(unixSeconds * 1000).toLocaleString("fr-FR");
+  if (unixSeconds == null) return "";
+  return new Date(unixSeconds * 1000).toLocaleString(chartLocale());
+}
+
+// Envois partis de l'app pendant cette session, que l'historique du réseau
+// ne liste pas encore (indexeur en retard de quelques secondes à quelques
+// minutes) : affichés « En attente » en tête, pour qu'un envoi ne semble
+// jamais avoir disparu. En mémoire seulement ; oubliés dès que l'historique
+// les liste, ou au bout d'une heure.
+const RECENT_SEND_MAX_AGE_MS = 60 * 60 * 1000;
+const recentSends = [];
+
+function normalizeTxId(id) {
+  return String(id).toLowerCase().replace(/^0x/, "");
+}
+
+function rememberRecentSend(coin, network, id, amount) {
+  const address = addressForCoin(coin, network);
+  if (!address || typeof id !== "string" || !id) return;
+  const send = { coin, network, address, id, amount, at: Date.now(), explorerUrl: null };
+  recentSends.push(send);
+  invoke("tx_explorer_url", { network, tx: id }).then((url) => { send.explorerUrl = url; }).catch(() => {});
+}
+
+// Envois de `network`/`address` encore absents de `entries`, du plus récent
+// au plus ancien. Listé = même identifiant ; sinon (TAO : l'historique
+// désigne une transaction par bloc et position, pas par son hash) chaque
+// envoi plus récent que le plus ancien attendu, et d'identifiant inconnu,
+// en tient lieu, du plus ancien au plus récent.
+function recentSendsAwaiting(network, address, entries) {
+  const now = Date.now();
+  const ids = new Set(entries.map((tx) => normalizeTxId(tx.id)));
+  const mine = recentSends.filter((send) => send.network === network && send.address === address && now - send.at < RECENT_SEND_MAX_AGE_MS);
+  const known = new Set(mine.map((send) => normalizeTxId(send.id)));
+  let waiting = mine.filter((send) => !ids.has(normalizeTxId(send.id))).sort((a, b) => a.at - b.at);
+  if (waiting.length) {
+    const since = waiting[0].at / 1000 - 120;
+    const newer = entries.filter((tx) => tx.kind === "sent" && !known.has(normalizeTxId(tx.id)) && tx.timestamp_unix != null && tx.timestamp_unix >= since).length;
+    waiting = waiting.slice(newer);
+  }
+  for (let i = recentSends.length - 1; i >= 0; i--) {
+    const send = recentSends[i];
+    const forget = now - send.at >= RECENT_SEND_MAX_AGE_MS || (send.network === network && send.address === address && !waiting.includes(send));
+    if (forget) recentSends.splice(i, 1);
+  }
+  return waiting.reverse();
+}
+
+// Ligne d'historique d'un envoi en attente, au format des autres.
+function recentSendEntry(send) {
+  const price = TEST_NETWORKS.includes(send.network) ? null : priceForCoin(send.coin);
+  return {
+    id: send.id,
+    timestamp_unix: Math.floor(send.at / 1000),
+    status: "pending",
+    kind: "sent",
+    amount: `-${send.amount}`,
+    usd_value: price != null ? Number(send.amount) * price : null,
+    explorer_url: send.explorerUrl,
+  };
+}
+
+// Envoi encore en attente : l'historique est relu toutes les 30 s tant
+// qu'il est affiché (onglet Activité ou fenêtre d'historique d'une crypto)
+// et la fenêtre de l'app visible, pour le voir passer en « Confirmée » sans
+// Actualiser. Annulé par toute nouvelle lecture du même conteneur.
+function recheckHistoryLater(container, reload) {
+  container._recheck = setTimeout(() => {
+    if (document.hidden || !container.isConnected || container.offsetParent === null) return;
+    reload();
+  }, 30000);
 }
 
 function historyStatusLabel(status) {
@@ -4758,7 +4828,7 @@ function buildHistoryRow(tx) {
     kindSpan.textContent = t(kindKey);
     meta.appendChild(kindSpan);
   }
-  meta.appendChild(dateSpan);
+  if (dateSpan.textContent) meta.appendChild(dateSpan);
   meta.appendChild(statusSpan);
   left.appendChild(idDiv);
   left.appendChild(meta);
@@ -4799,7 +4869,7 @@ function buildHistoryRow(tx) {
     invoke("open_external_link", { url: tx.explorer_url }).catch((e) => alert(t("wallet.linkError", { err: e })));
   });
   right.appendChild(amountBox);
-  right.appendChild(link);
+  if (tx.explorer_url) right.appendChild(link);
 
   row.appendChild(left);
   row.appendChild(right);
@@ -4818,6 +4888,7 @@ async function renderHistory(coin, container, networkEl) {
   if (!card || !container || !networkEl) return;
   const load = String((Number(container.dataset.load) || 0) + 1);
   container.dataset.load = load;
+  clearTimeout(container._recheck);
   const current = () => container.dataset.load === load;
 
   const network = networkForCard(card);
@@ -4844,12 +4915,15 @@ async function renderHistory(coin, container, networkEl) {
       return;
     }
     const entries = result.entries;
+    const waiting = recentSendsAwaiting(network, address, entries);
     container.innerHTML = "";
-    if (entries.length === 0) {
+    if (entries.length === 0 && waiting.length === 0) {
       container.innerHTML = `<p class="muted">${t("wallet.historyEmpty")}</p>`;
       return;
     }
+    waiting.forEach((send) => container.appendChild(buildHistoryRow(recentSendEntry(send))));
     entries.forEach((tx) => container.appendChild(buildHistoryRow(tx)));
+    if (waiting.length) recheckHistoryLater(container, () => renderHistory(coin, container, networkEl));
   } catch (e) {
     if (!current()) return;
     // textContent, jamais innerHTML : le message d'erreur vient de Rust, qui y
@@ -6055,6 +6129,7 @@ sendPreviewConfirmBtn.addEventListener("click", withBusyButton(sendPreviewConfir
           memo: sendMemo(),
         });
     showSentTransaction(successEl, network, txResult);
+    rememberRecentSend(sendContext.coin, network, txResult, amount);
     refreshBalance(sendContext.card);
   } catch (e) {
     showError(errorEl, String(e));
