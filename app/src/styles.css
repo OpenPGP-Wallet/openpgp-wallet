@@ -2365,6 +2365,38 @@ h2 .coin-icon-inline,
   font-variant-numeric: tabular-nums;
 }
 
+/* Envoi parti : identifiant lisible en entier, lien vers l'explorateur. */
+.sent-tx-id {
+  word-break: break-all;
+  font-size: 0.8rem;
+}
+
+.sent-tx-link {
+  display: inline-block;
+  margin-top: 4px;
+}
+
+/* Recevoir : copie de l'adresse, et réseau à choisir — n°1 des pertes depuis
+   une plateforme d'échange : un retrait sur le mauvais réseau. */
+.qr-copy {
+  margin-top: 4px;
+}
+
+.qr-network-hint {
+  margin: 12px 0 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border-left: 3px solid var(--warning);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+  font-size: 0.82rem;
+  line-height: 1.45;
+  text-align: left;
+}
+
+.qr-network-hint strong {
+  font-weight: 600;
+}
+
 .qr-amount-hint {
   font-size: 0.8rem;
   margin: 8px 0 0;

@@ -478,6 +478,10 @@ const I18N = {
     "common.error": "Erreur : {err}",
     "common.copyFailed": "Copie impossible : {err}",
     "common.copied": "Copié !",
+    "qr.copy": "Copier l'adresse",
+    "qr.networkChoose": "Réseau à choisir :",
+    "qr.networkWarning": "Depuis une plateforme d'échange, sélectionnez exactement ce réseau pour le retrait. Sur un autre réseau, les fonds peuvent être perdus.",
+    "qr.testnetWarning": "Réseau de test : n'envoyez jamais de vrais fonds à cette adresse.",
     "backup.title": "Sauvegardez votre kit de récupération",
     "backup.subtitle":
       "Ces 3 parts protègent votre portefeuille en cas de perte de cet appareil. <strong>2 des 3 suffisent</strong> à tout récupérer, mais aucune seule ne sert à rien — c'est voulu, personne (y compris vous) ne peut voler votre wallet avec une seule part. Le plus simple : enregistrez chaque part sur sa propre clé USB (rien à noter) et rangez les clés à des endroits différents. Sinon, téléchargez les fichiers et notez les mots de passe, séparément.",
@@ -642,9 +646,9 @@ const I18N = {
     "wallet.cannotArchiveLastProfile": "Impossible d'archiver le dernier profil actif restant.",
     "wallet.archiveConfirm":
       "Archiver le profil \"{label}\" ? Il disparaîtra du sélecteur mais restera récupérable à tout moment depuis Paramètres → Profils archivés.",
-    "wallet.mainnet": "Mainnet — Fonds réels",
-    "wallet.sepolia": "Sepolia (testnet)",
-    "wallet.testnet": "Testnet",
+    "wallet.mainnet": "Réseau principal",
+    "wallet.sepolia": "Sepolia (réseau de test)",
+    "wallet.testnet": "Réseau de test",
     "wallet.devnet": "Devnet",
     "wallet.refresh": "Actualiser",
     "wallet.send": "Envoyer",
@@ -659,30 +663,30 @@ const I18N = {
     "wallet.showAddress": "Afficher l'adresse",
     "wallet.hideAddress": "Masquer l'adresse",
     "wallet.addressCopied": "Adresse copiée !",
-    "wallet.ethereumMainnet": "Ethereum — Fonds réels",
-    "wallet.arbitrum": "Arbitrum — Fonds réels",
-    "wallet.base": "Base — Fonds réels",
-    "net.bsc_mainnet": "BNB Chain — Fonds réels",
-    "net.evm_mainnet": "Ethereum — Fonds réels",
-    "net.arbitrum_mainnet": "Arbitrum — Fonds réels",
-    "net.base_mainnet": "Base — Fonds réels",
-    "net.sol_mainnet": "Solana — Fonds réels",
-    "net.zec_mainnet": "Zcash — Fonds réels",
+    "wallet.ethereumMainnet": "Ethereum",
+    "wallet.arbitrum": "Arbitrum",
+    "wallet.base": "Base",
+    "net.bsc_mainnet": "BNB Chain",
+    "net.evm_mainnet": "Ethereum",
+    "net.arbitrum_mainnet": "Arbitrum",
+    "net.base_mainnet": "Base",
+    "net.sol_mainnet": "Solana",
+    "net.zec_mainnet": "Zcash",
     "net.zec_shielded": "Zcash — Fonds protégés",
-    "net.xmr_mainnet": "Monero — Fonds réels",
-    "net.doge_mainnet": "Dogecoin — Fonds réels",
-    "net.tron_mainnet": "Tron — Fonds réels",
-    "net.xrp_mainnet": "XRP Ledger — Fonds réels",
-    "net.xlm_mainnet": "Stellar — Fonds réels",
-    "net.near_mainnet": "NEAR — Fonds réels",
-    "net.ada_mainnet": "Cardano — Fonds réels",
-    "net.stx_mainnet": "Stacks — Fonds réels",
-    "net.tao_mainnet": "Bittensor — Fonds réels",
+    "net.xmr_mainnet": "Monero",
+    "net.doge_mainnet": "Dogecoin",
+    "net.tron_mainnet": "Tron",
+    "net.xrp_mainnet": "XRP Ledger",
+    "net.xlm_mainnet": "Stellar",
+    "net.near_mainnet": "NEAR",
+    "net.ada_mainnet": "Cardano",
+    "net.stx_mainnet": "Stacks",
+    "net.tao_mainnet": "Bittensor",
     "wallet.historyExplorerOnly": "Pas d'historique ici pour ce réseau : aucun service public gratuit ne le fournit. Il reste consultable sur l'explorateur du réseau.",
     "wallet.historyOpenExplorer": "Voir sur l'explorateur",
     "wallet.historyLimited": "L'historique de ce réseau est momentanément indisponible (trop de demandes). Réessayez plus tard, ou consultez-le sur l'explorateur du réseau.",
-    "net.avax_mainnet": "Avalanche — Fonds réels",
-    "net.polygon_mainnet": "Polygon — Fonds réels",
+    "net.avax_mainnet": "Avalanche",
+    "net.polygon_mainnet": "Polygon",
     "wallet.receiveAsset": "Recevoir {symbol}",
     "assets.manage": "Gérer mes cryptos",
     "assets.search": "Rechercher une crypto…",
@@ -702,7 +706,7 @@ const I18N = {
     "assets.done": "Terminé",
     "assets.autoShown": "{symbol} affiché : des fonds ont été détectés.",
     "charts.constantBalance": "Sans historique sur leur réseau : {list} — solde actuel compté sur toute la période.",
-    "charts.unavailable": "Sans {list} pour l'instant : service indisponible, courbe incomplète.",
+    "charts.unavailable": "{list} : données momentanément illisibles, la courbe sera complétée plus tard.",
     "settings.currency": "Devise d'affichage",
     "settings.usd": "Dollar ($)",
     "settings.eur": "Euro (€)",
@@ -857,7 +861,10 @@ const I18N = {
     "send.title": "Envoyer",
     "send.fromShort": "Depuis",
     "send.available": "Disponible : {amount}{approx}",
-    "send.mainnetWarning": "⚠ Réseau MAINNET — ceci dépense de vrais fonds, irréversible.",
+    "send.mainnetWarning": "⚠ Envoi définitif : une fois partie, une transaction ne peut être ni annulée ni remboursée. Vérifiez bien l'adresse.",
+    "send.feeEstimate": "Frais réseau estimés",
+    "send.feeEstimateLoading": "calcul…",
+    "send.feeUpTo": "jusqu'à {fee}",
     "send.toAddress": "Adresse destinataire",
     "send.destinationTag": "Tag de destination (facultatif)",
     "send.destinationTagHint": "Exigé par les plateformes d'échange : recopiez exactement celui qu'elles indiquent. Sans tag, les fonds peuvent y être perdus.",
@@ -891,9 +898,11 @@ const I18N = {
     "send.previewConfirm": "Continuer",
     "send.previewBack": "Modifier",
     "send.txSent": "Transaction envoyée : {tx}",
+    "send.sentFriendly": "Envoi parti ✓ Le réseau le confirme en général en quelques minutes (Bitcoin : jusqu'à une heure) ; votre solde se met à jour tout seul.",
+    "send.track": "Suivre la transaction",
     "swap.title": "Échanger",
     "swap.subtitle":
-      "Passe par un protocole externe non audité par cette app (voir \"Comment ça marche\"). Frais d'affiliation inclus : 0,80 % (THORChain, Maya, Jupiter, LI.FI), 1 % (CoW, sur un même réseau EVM), sauf mention contraire dans la confirmation.",
+      "L'échange est réalisé par un service externe. Les frais de chaque fournisseur sont indiqués dans la liste, et le montant reçu est déjà calculé frais compris.",
     "swap.fromAsset": "Depuis",
     "swap.toAsset": "Vers",
     "swap.viaJupiter": "via Jupiter, même portefeuille",
@@ -1087,7 +1096,7 @@ const I18N = {
     "charts.hideTable": "Masquer les données",
     "charts.loading": "Chargement de la courbe…",
     "charts.noData": "Aucune donnée pour cette période.",
-    "charts.portfolioEmpty": "Aucun fonds réel sur ce profil pour le moment.",
+    "charts.portfolioEmpty": "Aucun fonds sur ce profil pour le moment. Pour commencer, cliquez sur « Recevoir » : votre adresse s'affiche, à donner à qui vous envoie des cryptos.",
     "charts.externalEmpty": "Aucun fonds réel sur ces wallets externes.",
     "charts.since": "Valeur reconstruite à partir des dernières transactions de chaque adresse : connue depuis le {date}.",
     "charts.loadingHistoryStart":
@@ -1144,6 +1153,10 @@ const I18N = {
     "common.error": "Error: {err}",
     "common.copyFailed": "Copy failed: {err}",
     "common.copied": "Copied!",
+    "qr.copy": "Copy address",
+    "qr.networkChoose": "Network to choose:",
+    "qr.networkWarning": "When withdrawing from an exchange, select exactly this network. On another network, the funds can be lost.",
+    "qr.testnetWarning": "Test network: never send real funds to this address.",
     "backup.title": "Save your recovery kit",
     "backup.subtitle":
       "These 3 shares protect your wallet if you lose this device. <strong>2 out of 3 are enough</strong> to recover everything, but none alone is of any use — that's intentional, nobody (including you) can steal your wallet with a single share. Simplest: save each share on its own USB drive (nothing to write down) and keep the drives in different places. Otherwise, download the files and write down the passwords, separately.",
@@ -1308,9 +1321,9 @@ const I18N = {
     "wallet.cannotArchiveLastProfile": "Cannot archive the last remaining active profile.",
     "wallet.archiveConfirm":
       "Archive profile \"{label}\"? It will disappear from the selector but stay recoverable at any time from Settings → Archived profiles.",
-    "wallet.mainnet": "Mainnet — Real funds",
-    "wallet.sepolia": "Sepolia (testnet)",
-    "wallet.testnet": "Testnet",
+    "wallet.mainnet": "Main network",
+    "wallet.sepolia": "Sepolia (test network)",
+    "wallet.testnet": "Test network",
     "wallet.devnet": "Devnet",
     "wallet.refresh": "Refresh",
     "wallet.send": "Send",
@@ -1325,30 +1338,30 @@ const I18N = {
     "wallet.showAddress": "Show address",
     "wallet.hideAddress": "Hide address",
     "wallet.addressCopied": "Address copied!",
-    "wallet.ethereumMainnet": "Ethereum — Real funds",
-    "wallet.arbitrum": "Arbitrum — Real funds",
-    "wallet.base": "Base — Real funds",
-    "net.bsc_mainnet": "BNB Chain — Real funds",
-    "net.evm_mainnet": "Ethereum — Real funds",
-    "net.arbitrum_mainnet": "Arbitrum — Real funds",
-    "net.base_mainnet": "Base — Real funds",
-    "net.sol_mainnet": "Solana — Real funds",
-    "net.zec_mainnet": "Zcash — Real funds",
+    "wallet.ethereumMainnet": "Ethereum",
+    "wallet.arbitrum": "Arbitrum",
+    "wallet.base": "Base",
+    "net.bsc_mainnet": "BNB Chain",
+    "net.evm_mainnet": "Ethereum",
+    "net.arbitrum_mainnet": "Arbitrum",
+    "net.base_mainnet": "Base",
+    "net.sol_mainnet": "Solana",
+    "net.zec_mainnet": "Zcash",
     "net.zec_shielded": "Zcash — Shielded funds",
-    "net.xmr_mainnet": "Monero — Real funds",
-    "net.doge_mainnet": "Dogecoin — Real funds",
-    "net.tron_mainnet": "Tron — Real funds",
-    "net.xrp_mainnet": "XRP Ledger — Real funds",
-    "net.xlm_mainnet": "Stellar — Real funds",
-    "net.near_mainnet": "NEAR — Real funds",
-    "net.ada_mainnet": "Cardano — Real funds",
-    "net.stx_mainnet": "Stacks — Real funds",
-    "net.tao_mainnet": "Bittensor — Real funds",
+    "net.xmr_mainnet": "Monero",
+    "net.doge_mainnet": "Dogecoin",
+    "net.tron_mainnet": "Tron",
+    "net.xrp_mainnet": "XRP Ledger",
+    "net.xlm_mainnet": "Stellar",
+    "net.near_mainnet": "NEAR",
+    "net.ada_mainnet": "Cardano",
+    "net.stx_mainnet": "Stacks",
+    "net.tao_mainnet": "Bittensor",
     "wallet.historyExplorerOnly": "No history here for this network: no free public service provides it. You can still see it on the network's explorer.",
     "wallet.historyOpenExplorer": "View on the explorer",
     "wallet.historyLimited": "This network's history is temporarily unavailable (too many requests). Try again later, or see it on the network's explorer.",
-    "net.avax_mainnet": "Avalanche — Real funds",
-    "net.polygon_mainnet": "Polygon — Real funds",
+    "net.avax_mainnet": "Avalanche",
+    "net.polygon_mainnet": "Polygon",
     "wallet.receiveAsset": "Receive {symbol}",
     "assets.manage": "Manage my cryptos",
     "assets.search": "Search a crypto…",
@@ -1368,7 +1381,7 @@ const I18N = {
     "assets.done": "Done",
     "assets.autoShown": "{symbol} shown: funds detected.",
     "charts.constantBalance": "No history on their network: {list} — current balance counted over the whole period.",
-    "charts.unavailable": "Without {list} for now: service unavailable, incomplete chart.",
+    "charts.unavailable": "{list}: data temporarily unreadable, the chart will be completed later.",
     "settings.currency": "Display currency",
     "settings.usd": "US dollar ($)",
     "settings.eur": "Euro (€)",
@@ -1523,7 +1536,10 @@ const I18N = {
     "send.title": "Send",
     "send.fromShort": "From",
     "send.available": "Available: {amount}{approx}",
-    "send.mainnetWarning": "⚠ MAINNET network — this spends real funds, irreversible.",
+    "send.mainnetWarning": "⚠ Final transfer: once sent, a transaction can neither be cancelled nor refunded. Double-check the address.",
+    "send.feeEstimate": "Estimated network fee",
+    "send.feeEstimateLoading": "calculating…",
+    "send.feeUpTo": "up to {fee}",
     "send.toAddress": "Recipient address",
     "send.destinationTag": "Destination tag (optional)",
     "send.destinationTagHint": "Required by exchanges: copy exactly the one they show. Without a tag, funds sent there may be lost.",
@@ -1557,9 +1573,11 @@ const I18N = {
     "send.previewConfirm": "Continue",
     "send.previewBack": "Edit",
     "send.txSent": "Transaction sent: {tx}",
+    "send.sentFriendly": "Sent ✓ The network usually confirms it within a few minutes (Bitcoin: up to an hour); your balance updates on its own.",
+    "send.track": "Track the transaction",
     "swap.title": "Swap",
     "swap.subtitle":
-      "Goes through an external protocol not audited by this app (see \"How it works\"). Affiliate fee included: 0.80% (THORChain, Maya, Jupiter, LI.FI), 1% (CoW, on a single EVM network), unless the confirmation says otherwise.",
+      "The swap is carried out by an external service. Each provider's fees are shown in the list, and the amount received already accounts for them.",
     "swap.fromAsset": "From",
     "swap.toAsset": "To",
     "swap.viaJupiter": "via Jupiter, same wallet",
@@ -1750,7 +1768,7 @@ const I18N = {
     "charts.hideTable": "Hide data",
     "charts.loading": "Loading chart…",
     "charts.noData": "No data for this period.",
-    "charts.portfolioEmpty": "No real funds on this profile yet.",
+    "charts.portfolioEmpty": "No funds on this profile yet. To get started, click “Receive”: your address appears, to give to whoever sends you crypto.",
     "charts.externalEmpty": "No real funds on these external wallets.",
     "charts.since": "Value rebuilt from each address's latest transactions: known since {date}.",
     "charts.loadingHistoryStart":
@@ -4251,8 +4269,7 @@ shieldedConfirmBtn.addEventListener("click", withBusyButton(shieldedConfirmBtn, 
           amount: document.getElementById("shielded-amount").value.trim().replace(",", "."),
           max: shieldedMax,
         });
-    successEl.textContent = t("send.txSent", { tx: txid });
-    successEl.classList.remove("hidden");
+    showSentTransaction(successEl, "zec_shielded", txid);
     refreshZcashCards();
   } catch (e) {
     showError(errorEl, String(e));
@@ -4586,6 +4603,42 @@ async function renderQr() {
   document.getElementById("qr-container").innerHTML = svg;
 }
 
+// Nom du réseau tel que les plateformes d'échange l'affichent au retrait
+// (Binance, Coinbase, Kraken…) : celui à choisir pour envoyer ici.
+const EXCHANGE_NETWORK_NAMES = {
+  evm_mainnet: "Ethereum (ERC20)",
+  arbitrum_mainnet: "Arbitrum One",
+  base_mainnet: "Base",
+  bsc_mainnet: "BNB Smart Chain (BEP20)",
+  avax_mainnet: "Avalanche C-Chain",
+  polygon_mainnet: "Polygon",
+  sol_mainnet: "Solana",
+  btc_mainnet: "Bitcoin",
+  zec_mainnet: "Zcash",
+  zec_shielded: "Zcash",
+  xmr_mainnet: "Monero",
+  doge_mainnet: "Dogecoin",
+  tron_mainnet: "Tron (TRC20)",
+  xrp_mainnet: "XRP Ledger",
+  xlm_mainnet: "Stellar",
+  near_mainnet: "NEAR",
+  ada_mainnet: "Cardano",
+  stx_mainnet: "Stacks",
+  tao_mainnet: "Bittensor",
+};
+
+function renderQrNetworkHint(network) {
+  const hint = document.getElementById("qr-network-hint");
+  const name = EXCHANGE_NETWORK_NAMES[network];
+  if (!name) {
+    hint.textContent = t("qr.testnetWarning");
+    return;
+  }
+  const strong = document.createElement("strong");
+  strong.textContent = name;
+  hint.replaceChildren(`${t("qr.networkChoose")} `, strong, document.createElement("br"), t("qr.networkWarning"));
+}
+
 async function openQrModal(card) {
   const address = addressForCoin(card.dataset.coin, networkForCard(card));
   if (!address) {
@@ -4600,6 +4653,7 @@ async function openQrModal(card) {
   try {
     await renderQr();
     document.getElementById("qr-address-text").textContent = address;
+    renderQrNetworkHint(networkForCard(card));
     qrModal.classList.remove("hidden");
   } catch (e) {
     alert(t("wallet.qrError", { err: e }));
@@ -4609,6 +4663,11 @@ async function openQrModal(card) {
 restrictToAmount(document.getElementById("qr-amount"));
 document.getElementById("qr-amount").addEventListener("input", () => {
   renderQr().catch((e) => console.error(e));
+});
+
+document.getElementById("qr-copy").addEventListener("click", () => {
+  const address = document.getElementById("qr-address-text").textContent;
+  if (address) copyText(address, t("wallet.addressCopied"));
 });
 
 document.getElementById("qr-close").addEventListener("click", () => {
@@ -5857,8 +5916,46 @@ sendConfirmBtn.addEventListener("click", () => {
   }
 
   showRecipientWarnings(to);
+  showSendFeeEstimate(to, amount);
   sendPreviewModal.classList.remove("hidden");
 });
+
+// Frais réseau estimés dans l'aperçu, en devise et dans la monnaie du réseau
+// (la boîte de confirmation native, ensuite, montre le montant exact) :
+// découvrir les frais au dernier moment est l'une des plaintes les plus
+// fréquentes des utilisateurs de portefeuilles. Bitcoin : vitesse déjà
+// affichée ; Monero et réseaux de test : pas d'estimation.
+let sendFeeEstimate = 0;
+async function showSendFeeEstimate(to, amount) {
+  const row = document.getElementById("send-preview-estimate-row");
+  const value = document.getElementById("send-preview-estimate");
+  const check = ++sendFeeEstimate;
+  const network = networkForCard(sendContext.card);
+  const token = sendContext.coin === "usdc" ? "usdc" : usesTokenRegistry(sendContext.coin, network) ? sendContext.coin : null;
+  if (sendContext.coin === "btc" || !network.endsWith("mainnet")) {
+    row.classList.add("hidden");
+    return;
+  }
+  value.textContent = t("send.feeEstimateLoading");
+  row.classList.remove("hidden");
+  try {
+    const fee = await invoke("estimate_send_fee", { network, token, to, amount, profileIndex: sendContext.profileIndex });
+    if (check !== sendFeeEstimate) return;
+    if (!fee) {
+      row.classList.add("hidden");
+      return;
+    }
+    const price = priceForCoin(fee.coin);
+    // 3 chiffres significatifs : « 0,0000508 ETH », pas 15 décimales.
+    const native = `${Number(fee.amount).toLocaleString(chartLocale(), { maximumSignificantDigits: 3 })} ${fee.symbol}`;
+    const text = price != null ? `${formatUsdApprox(Number(fee.amount) * price)} (${native})` : native;
+    value.textContent = fee.up_to ? t("send.feeUpTo", { fee: text }) : text;
+  } catch (e) {
+    // Solde insuffisant, adresse refusée… : dit ici déjà, plutôt qu'à la fin.
+    if (check !== sendFeeEstimate) return;
+    value.textContent = String(e);
+  }
+}
 
 document.getElementById("send-preview-back").addEventListener("click", () => {
   sendPreviewModal.classList.add("hidden");
@@ -5907,8 +6004,7 @@ sendPreviewConfirmBtn.addEventListener("click", withBusyButton(sendPreviewConfir
           destinationTag: sendDestinationTag(),
           memo: sendMemo(),
         });
-    successEl.textContent = t("send.txSent", { tx: txResult });
-    successEl.classList.remove("hidden");
+    showSentTransaction(successEl, network, txResult);
     refreshBalance(sendContext.card);
   } catch (e) {
     showError(errorEl, String(e));
@@ -5916,6 +6012,28 @@ sendPreviewConfirmBtn.addEventListener("click", withBusyButton(sendPreviewConfir
     document.getElementById("send-password").value = "";
   }
 }));
+
+// Envoi parti : ce qui va se passer (confirmation par le réseau, solde mis à
+// jour tout seul), l'identifiant, et un bouton vers l'explorateur du réseau —
+// « j'ai envoyé et rien n'est arrivé » est la plainte n°1 des utilisateurs
+// de portefeuilles.
+async function showSentTransaction(successEl, network, tx) {
+  const text = document.createElement("span");
+  text.textContent = `${t("send.sentFriendly")} `;
+  const id = document.createElement("span");
+  id.className = "mono sent-tx-id";
+  id.textContent = tx;
+  successEl.replaceChildren(text, id);
+  successEl.classList.remove("hidden");
+  const url = await invoke("tx_explorer_url", { network, tx }).catch(() => null);
+  if (!url) return;
+  const link = document.createElement("button");
+  link.type = "button";
+  link.className = "link sent-tx-link";
+  link.textContent = t("send.track");
+  link.addEventListener("click", () => invoke("open_external_link", { url }).catch((e) => alert(t("wallet.linkError", { err: e }))));
+  successEl.append(" ", link);
+}
 
 // --- Échange (« Convertir ») -------------------------------------------------
 // Passe par un protocole externe non audité par cette app : THORChain ou Maya

@@ -3423,23 +3423,23 @@ fn canonical_address_input(value: &str) -> Result<String, String> {
 /// Libellé humain du réseau pour la boîte de dialogue de confirmation.
 fn network_label(network: &str) -> String {
     match network {
-        "evm_sepolia" => "Ethereum Sepolia (testnet)".to_string(),
-        "evm_mainnet" => lang("Ethereum MAINNET — fonds réels", "Ethereum MAINNET — real funds").to_string(),
-        "btc_testnet" => lang("Bitcoin testnet", "Bitcoin testnet").to_string(),
-        "btc_mainnet" => lang("Bitcoin MAINNET — fonds réels", "Bitcoin MAINNET — real funds").to_string(),
-        "sol_devnet" => lang("Solana devnet", "Solana devnet").to_string(),
-        "sol_mainnet" => lang("Solana MAINNET — fonds réels", "Solana MAINNET — real funds").to_string(),
-        "zec_mainnet" => lang("Zcash MAINNET — fonds réels", "Zcash MAINNET — real funds").to_string(),
-        "doge_mainnet" => lang("Dogecoin MAINNET — fonds réels", "Dogecoin MAINNET — real funds").to_string(),
-        "tron_mainnet" => lang("Tron MAINNET — fonds réels", "Tron MAINNET — real funds").to_string(),
-        "xrp_mainnet" => lang("XRP Ledger MAINNET — fonds réels", "XRP Ledger MAINNET — real funds").to_string(),
-        "xlm_mainnet" => lang("Stellar MAINNET — fonds réels", "Stellar MAINNET — real funds").to_string(),
-        "near_mainnet" => lang("NEAR MAINNET — fonds réels", "NEAR MAINNET — real funds").to_string(),
-        "ada_mainnet" => lang("Cardano MAINNET — fonds réels", "Cardano MAINNET — real funds").to_string(),
-        "stx_mainnet" => lang("Stacks MAINNET — fonds réels", "Stacks MAINNET — real funds").to_string(),
-        "tao_mainnet" => lang("Bittensor MAINNET — fonds réels", "Bittensor MAINNET — real funds").to_string(),
-        "xmr_mainnet" => lang("Monero MAINNET — fonds réels", "Monero MAINNET — real funds").to_string(),
-        "zec_shielded" => lang("Zcash MAINNET — fonds protégés", "Zcash MAINNET — shielded funds").to_string(),
+        "evm_sepolia" => lang("Ethereum Sepolia (réseau de test)", "Ethereum Sepolia (test network)").to_string(),
+        "evm_mainnet" => lang("Ethereum — fonds réels", "Ethereum — real funds").to_string(),
+        "btc_testnet" => lang("Bitcoin (réseau de test)", "Bitcoin (test network)").to_string(),
+        "btc_mainnet" => lang("Bitcoin — fonds réels", "Bitcoin — real funds").to_string(),
+        "sol_devnet" => lang("Solana (réseau de test)", "Solana (test network)").to_string(),
+        "sol_mainnet" => lang("Solana — fonds réels", "Solana — real funds").to_string(),
+        "zec_mainnet" => lang("Zcash — fonds réels", "Zcash — real funds").to_string(),
+        "doge_mainnet" => lang("Dogecoin — fonds réels", "Dogecoin — real funds").to_string(),
+        "tron_mainnet" => lang("Tron — fonds réels", "Tron — real funds").to_string(),
+        "xrp_mainnet" => lang("XRP Ledger — fonds réels", "XRP Ledger — real funds").to_string(),
+        "xlm_mainnet" => lang("Stellar — fonds réels", "Stellar — real funds").to_string(),
+        "near_mainnet" => lang("NEAR — fonds réels", "NEAR — real funds").to_string(),
+        "ada_mainnet" => lang("Cardano — fonds réels", "Cardano — real funds").to_string(),
+        "stx_mainnet" => lang("Stacks — fonds réels", "Stacks — real funds").to_string(),
+        "tao_mainnet" => lang("Bittensor — fonds réels", "Bittensor — real funds").to_string(),
+        "xmr_mainnet" => lang("Monero — fonds réels", "Monero — real funds").to_string(),
+        "zec_shielded" => lang("Zcash — fonds protégés", "Zcash — shielded funds").to_string(),
         other => match wallet_flow::evm_network(other) {
             Some(net) if net.mainnet => format!("{} — {}", net.name, lang("fonds réels", "real funds")),
             Some(net) => format!("{} (testnet)", net.name),
@@ -6128,6 +6128,117 @@ fn moonpay_destination(from: &pgp_wallet_poc::moonpay_trade::Asset, to: &pgp_wal
     }
 }
 
+/// Lien de l'explorateur d'une transaction tout juste envoyée (bouton
+/// « Suivre la transaction ») : mêmes adresses que l'historique, toutes dans
+/// la liste blanche des liens externes. `None` : identifiant inattendu, ou
+/// réseau dont l'explorateur demande autre chose que l'empreinte (TAO :
+/// numéro de bloc et d'extrinsèque, connus seulement après inclusion).
+fn sent_tx_explorer_url(network: &str, tx: &str) -> Option<String> {
+    let id = tx.trim();
+    if id.is_empty() || id.len() > 130 || !id.bytes().all(|b| b.is_ascii_alphanumeric()) {
+        return None;
+    }
+    Some(match network {
+        n if is_evm(n) => format!("{}{id}", wallet_flow::evm_network(n)?.explorer_tx_prefix),
+        "btc_mainnet" | "btc_testnet" => format!("{}{id}", btc_network(network).ok()?.explorer_tx_prefix),
+        "sol_mainnet" | "sol_devnet" => {
+            let net = sol_network(network).ok()?;
+            format!("{}{id}{}", net.explorer_tx_prefix, net.explorer_tx_suffix)
+        }
+        "zec_mainnet" | "zec_shielded" => format!("https://blockchair.com/zcash/transaction/{id}"),
+        "xmr_mainnet" => format!("https://xmrchain.net/tx/{id}"),
+        "doge_mainnet" => format!("https://blockchair.com/dogecoin/transaction/{id}"),
+        "tron_mainnet" => format!("https://tronscan.org/#/transaction/{id}"),
+        "xrp_mainnet" => format!("https://livenet.xrpl.org/transactions/{id}"),
+        "xlm_mainnet" => format!("https://stellar.expert/explorer/public/tx/{id}"),
+        "near_mainnet" => format!("https://nearblocks.io/txns/{id}"),
+        "ada_mainnet" => format!("https://cardanoscan.io/transaction/{id}"),
+        "stx_mainnet" => format!("https://explorer.hiro.so/txid/0x{}?chain=mainnet", id.trim_start_matches("0x")),
+        _ => return None,
+    })
+}
+
+#[tauri::command]
+fn tx_explorer_url(network: String, tx: String) -> Option<String> {
+    sent_tx_explorer_url(&network, &tx)
+}
+
+#[derive(Serialize)]
+struct FeeEstimateDto {
+    /// Montant dans la monnaie du réseau (texte décimal).
+    amount: String,
+    symbol: &'static str,
+    /// Carte de la monnaie du réseau : cours lu par l'interface.
+    coin: &'static str,
+    /// Plafond plutôt qu'estimation (Tron : énergie et bande passante).
+    up_to: bool,
+}
+
+/// Carte de l'interface de la monnaie d'un réseau EVM.
+fn evm_native_coin(network: &wallet_flow::EvmNetwork) -> &'static str {
+    match network.native_symbol {
+        "BNB" => "bnb",
+        "AVAX" => "avax",
+        "POL" => "pol",
+        _ => "evm",
+    }
+}
+
+/// Frais réseau ESTIMÉS d'un envoi, pour l'aperçu de l'interface (plainte
+/// n°1 des utilisateurs : les frais découverts au dernier moment). Mêmes
+/// préparations que l'envoi réel, en LECTURE seule : rien n'est signé ; la
+/// boîte de confirmation native reste la référence. `None` : pas
+/// d'estimation (Bitcoin, dont la vitesse est déjà affichée ; Monero ;
+/// réseaux de test).
+#[tauri::command]
+async fn estimate_send_fee(network: String, token: Option<String>, to: String, amount: String, profile_index: u32, app: tauri::AppHandle) -> Result<Option<FeeEstimateDto>, String> {
+    use pgp_wallet_poc::tokens::format_amount;
+    run_blocking(move || {
+        let to = canonical_address_input(&to)?;
+        let estimate = |units: u128, decimals: u8, symbol: &'static str, coin: &'static str, up_to: bool| Some(FeeEstimateDto { amount: format_amount(units, decimals), symbol, coin, up_to });
+        let token = token.as_deref().filter(|t| !t.is_empty());
+        if is_evm(&network) {
+            let net = evm_network(&network)?;
+            if !net.mainnet {
+                return Ok(None);
+            }
+            let from = profile_address(&app, &network, profile_index)?;
+            let fee = match token {
+                // Solde du jeton d'abord, comme l'envoi : sans lui, l'estimation
+                // du gas échoue sur une erreur brute du contrat.
+                Some(token) => api::ensure_token_funds(token, &network, &from, &amount).and_then(|()| api::erc20_fee_for_confirmation(token, &network, &from, &to, &amount)),
+                None => api::evm_transfer_fee_for_confirmation(net, Some(&from), &to, &amount),
+            }
+            .t_err()?;
+            return Ok(estimate(fee.max_total().t_err()?, 18, net.native_symbol, evm_native_coin(net), false));
+        }
+        let from = || profile_address(&app, &network, profile_index);
+        Ok(match (network.as_str(), token) {
+            ("sol_mainnet", None) => estimate(5_000, 9, "SOL", "sol", false),
+            // Jeton : création du compte de jetons du destinataire comprise
+            // s'il n'en a pas encore.
+            ("sol_mainnet", Some(token)) => {
+                let net = sol_network("sol_mainnet")?;
+                let mint = if token == "usdc" { Ok(pgp_wallet_poc::sol_spl::usdc_mint_mainnet()) } else { api::registered_spl_mint(token) };
+                let rent = mint.ok().and_then(|mint| api::spl_ata_rent_lamports_if_missing(&to, &mint, net).ok().flatten()).unwrap_or(0);
+                estimate(u128::from(rent.saturating_add(5_000)), 9, "SOL", "sol", false)
+            }
+            ("zec_mainnet", None) => estimate(u128::from(api::zec_send_plan(&from()?, &to, &amount).t_err()?.fee), 8, "ZEC", "zec", false),
+            ("doge_mainnet", None) => estimate(u128::from(api::doge_send_plan(&from()?, &to, &amount).t_err()?.fee), 8, "DOGE", "doge", false),
+            ("tron_mainnet", None) => estimate(u128::from(api::trx_send_plan(&from()?, &to, &amount).t_err()?.fee_max), 6, "TRX", "trx", true),
+            ("tron_mainnet", Some(token)) => estimate(u128::from(api::trc20_send_plan(token, &from()?, &to, &amount).t_err()?.0.fee_max), 6, "TRX", "trx", true),
+            ("xrp_mainnet", None) => estimate(u128::from(api::xrp_send_plan(&from()?, &to, &amount, None).t_err()?.fee), 6, "XRP", "xrp", false),
+            ("xlm_mainnet", None) => estimate(u128::from(api::xlm_send_plan(&from()?, &to, &amount, &StellarMemo::None).t_err()?.fee), 7, "XLM", "xlm", false),
+            ("near_mainnet", None) => estimate(api::near_send_plan(&from()?, &to, &amount).t_err()?.fee_actual, 24, "NEAR", "near", false),
+            ("ada_mainnet", None) => estimate(u128::from(api::ada_send_plan(&from()?, &to, &amount).t_err()?.fee), 6, "ADA", "ada", false),
+            ("stx_mainnet", None) => estimate(u128::from(api::stx_send_plan(&from()?, &to, &amount).t_err()?.fee), 6, "STX", "stx", false),
+            ("tao_mainnet", None) => estimate(u128::from(api::tao_send_plan(&from()?, &to, &amount).t_err()?.fee), 9, "TAO", "tao", false),
+            _ => None,
+        })
+    })
+    .await
+}
+
 #[derive(Serialize)]
 struct MoonpayQuoteDto {
     expected_out: String,
@@ -7823,10 +7934,10 @@ fn wc_client(app: &tauri::AppHandle) -> Result<std::sync::Arc<pgp_wallet_poc::wa
 
 fn caip2_label(chain: &str) -> String {
     match dapp_requests::network_for_chain(chain) {
-        Some(dapp_requests::Network::Evm(net)) if net.mainnet => format!("{} MAINNET — {}", net.name, lang("fonds réels", "real funds")),
+        Some(dapp_requests::Network::Evm(net)) if net.mainnet => format!("{} — {}", net.name, lang("fonds réels", "real funds")),
         Some(dapp_requests::Network::Evm(net)) => format!("{} (testnet)", net.name),
         Some(dapp_requests::Network::Solana(_)) if chain == dapp_requests::SOLANA_MAINNET => {
-            lang("Solana MAINNET — fonds réels", "Solana MAINNET — real funds").to_string()
+            lang("Solana — fonds réels", "Solana — real funds").to_string()
         }
         Some(dapp_requests::Network::Solana(_)) => "Solana devnet".to_string(),
         None => lang("réseau inconnu", "unknown network").to_string(),
@@ -8430,6 +8541,8 @@ pub fn run() {
             get_lifi_quote,
             lifi_swap_transaction,
             get_moonpay_quote,
+            estimate_send_fee,
+            tx_explorer_url,
             moonpay_swap_transaction,
             lifi_status,
             get_own_certificate,
@@ -8951,6 +9064,24 @@ mod tests {
         assert!(plain["recap"]["note"].is_null());
         assert_eq!(plain["recap"]["to_label"], "Adresse d'arrivée");
         assert_eq!(DestinationNote::StellarMemo(StellarMemo::Text("abc".into())).recap(), ("Mémo (texte)".to_string(), "\"abc\"".to_string()));
+    }
+
+    /// « Suivre la transaction » : chaque lien reste dans la liste blanche des
+    /// liens externes ; un identifiant inattendu ne donne aucun lien.
+    #[test]
+    fn sent_transaction_links_stay_on_known_explorers() {
+        let networks = [
+            "evm_mainnet", "arbitrum_mainnet", "base_mainnet", "bsc_mainnet", "avax_mainnet", "polygon_mainnet", "evm_sepolia", "btc_mainnet", "btc_testnet", "sol_mainnet",
+            "sol_devnet", "zec_mainnet", "zec_shielded", "xmr_mainnet", "doge_mainnet", "tron_mainnet", "xrp_mainnet", "xlm_mainnet", "near_mainnet", "ada_mainnet", "stx_mainnet",
+        ];
+        for network in networks {
+            let url = sent_tx_explorer_url(network, "0xabc123").unwrap_or_else(|| panic!("{network} : aucun lien"));
+            assert!(external_link_allowed(&url), "{network} : {url}");
+        }
+        assert!(sent_tx_explorer_url("tao_mainnet", "0xabc").is_none());
+        for bad in ["", "abc/../evil", "abc?x=1", "a b", "https://evil.example"] {
+            assert!(sent_tx_explorer_url("evm_mainnet", bad).is_none(), "{bad}");
+        }
     }
 
     /// Messages d'erreur MoonPay Trade : présents dans le code, traduits (fixes et variables).

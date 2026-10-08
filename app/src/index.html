@@ -239,10 +239,10 @@
               <button type="button" class="stake-chip hidden" data-action="stake" data-i18n-title="staking.chipHint" title="Staker : vos cryptos vous rapportent (rendement annuel estimé)"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21v-9" /><path d="M12 12c0-4 3-7 8-7 0 5-3 7-8 7z" /><path d="M12 14c0-3.5-2.5-6-7-6 0 4 2.5 6 7 6z" /></svg><span class="stake-label" data-i18n="staking.action">Staker</span><span class="stake-rate hidden" data-field="stake-rate"></span></button>
               <div class="custom-select dropdown">
                 <select class="network-select" data-coin="evm">
-                  <option value="evm_mainnet" selected data-i18n="wallet.ethereumMainnet">Ethereum — Fonds réels</option>
-                  <option value="arbitrum_mainnet" data-i18n="wallet.arbitrum">Arbitrum — Fonds réels</option>
-                  <option value="base_mainnet" data-i18n="wallet.base">Base — Fonds réels</option>
-                  <option value="evm_sepolia" data-i18n="wallet.sepolia">Sepolia (testnet)</option>
+                  <option value="evm_mainnet" selected data-i18n="wallet.ethereumMainnet">Ethereum</option>
+                  <option value="arbitrum_mainnet" data-i18n="wallet.arbitrum">Arbitrum</option>
+                  <option value="base_mainnet" data-i18n="wallet.base">Base</option>
+                  <option value="evm_sepolia" data-i18n="wallet.sepolia">Sepolia (réseau de test)</option>
                 </select>
                 <button type="button" class="custom-select-trigger">
                   <span class="custom-select-label"></span>
@@ -346,8 +346,8 @@
               </h2>
               <div class="custom-select dropdown">
                 <select class="network-select" data-coin="btc">
-                  <option value="btc_mainnet" selected data-i18n="wallet.mainnet">Mainnet — Fonds réels</option>
-                  <option value="btc_testnet" data-i18n="wallet.testnet">Testnet</option>
+                  <option value="btc_mainnet" selected data-i18n="wallet.mainnet">Réseau principal</option>
+                  <option value="btc_testnet" data-i18n="wallet.testnet">Réseau de test</option>
                 </select>
                 <button type="button" class="custom-select-trigger">
                   <span class="custom-select-label"></span>
@@ -449,7 +449,7 @@
               <button type="button" class="stake-chip hidden" data-action="stake" data-i18n-title="staking.chipHint" title="Staker : vos cryptos vous rapportent (rendement annuel estimé)"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21v-9" /><path d="M12 12c0-4 3-7 8-7 0 5-3 7-8 7z" /><path d="M12 14c0-3.5-2.5-6-7-6 0 4 2.5 6 7 6z" /></svg><span class="stake-label" data-i18n="staking.action">Staker</span><span class="stake-rate hidden" data-field="stake-rate"></span></button>
               <div class="custom-select dropdown">
                 <select class="network-select" data-coin="sol">
-                  <option value="sol_mainnet" selected data-i18n="wallet.mainnet">Mainnet — Fonds réels</option>
+                  <option value="sol_mainnet" selected data-i18n="wallet.mainnet">Réseau principal</option>
                   <option value="sol_devnet" data-i18n="wallet.devnet">Devnet</option>
                 </select>
                 <button type="button" class="custom-select-trigger">
@@ -556,10 +556,10 @@
               </h2>
               <div class="custom-select dropdown">
                 <select class="network-select" data-coin="usdc">
-                  <option value="sol_mainnet" selected data-i18n="net.sol_mainnet">Solana — Fonds réels</option>
-                  <option value="evm_mainnet" data-i18n="net.evm_mainnet">Ethereum — Fonds réels</option>
-                  <option value="base_mainnet" data-i18n="net.base_mainnet">Base — Fonds réels</option>
-                  <option value="arbitrum_mainnet" data-i18n="net.arbitrum_mainnet">Arbitrum — Fonds réels</option>
+                  <option value="sol_mainnet" selected data-i18n="net.sol_mainnet">Solana</option>
+                  <option value="evm_mainnet" data-i18n="net.evm_mainnet">Ethereum</option>
+                  <option value="base_mainnet" data-i18n="net.base_mainnet">Base</option>
+                  <option value="arbitrum_mainnet" data-i18n="net.arbitrum_mainnet">Arbitrum</option>
                 </select>
                 <button type="button" class="custom-select-trigger">
                   <span class="custom-select-label"></span>
@@ -1202,7 +1202,7 @@
           <span id="send-network-chip" class="send-chip"></span>
         </div>
         <p id="send-mainnet-warning" class="send-banner hidden" data-i18n="send.mainnetWarning">
-          ⚠ Réseau MAINNET — ceci dépense de vrais fonds, irréversible.
+          ⚠ Envoi définitif : une fois partie, une transaction ne peut être ni annulée ni remboursée. Vérifiez bien l'adresse.
         </p>
         <label data-i18n="send.toAddress">Adresse destinataire</label>
         <input id="send-to" type="text" />
@@ -1296,6 +1296,10 @@
             <span class="send-preview-label" data-i18n="send.amount">Montant</span>
             <span id="send-preview-amount" class="send-preview-value"></span>
           </div>
+          <div id="send-preview-estimate-row" class="send-preview-row hidden">
+            <span class="send-preview-label" data-i18n="send.feeEstimate">Frais réseau estimés</span>
+            <span id="send-preview-estimate" class="send-preview-value"></span>
+          </div>
           <div id="send-preview-fee-row" class="send-preview-row hidden">
             <span class="send-preview-label" data-i18n="send.feeSpeed">Vitesse d'envoi (frais réseau)</span>
             <span id="send-preview-fee" class="send-preview-value"></span>
@@ -1320,9 +1324,8 @@
           <button type="button" id="swap-close-x" class="modal-close-btn" data-i18n-title="common.close" title="Fermer" aria-label="Fermer">×</button>
         </div>
         <p class="muted" data-i18n="swap.subtitle">
-          Passe par un protocole externe non audité par cette app — voir "Comment ça marche" pour
-          le détail. Frais d'affiliation inclus : 0,80 % (THORChain, Maya, Jupiter, LI.FI), 1 % (CoW, sur
-          un même réseau EVM), sauf mention contraire dans la confirmation.
+          L'échange est réalisé par un service externe. Les frais de chaque fournisseur sont indiqués dans
+          la liste, et le montant reçu est déjà calculé frais compris.
         </p>
         <label data-i18n="swap.fromAsset">Depuis</label>
         <div class="custom-select dropdown">
@@ -1504,6 +1507,8 @@
         <h2><span data-i18n="wallet.receive">Recevoir</span> <span id="qr-coin"></span></h2>
         <div id="qr-container" class="qr-container"></div>
         <p class="address" id="qr-address-text"></p>
+        <button id="qr-copy" type="button" class="secondary qr-copy" data-i18n="qr.copy">Copier l'adresse</button>
+        <p id="qr-network-hint" class="qr-network-hint"></p>
         <label for="qr-amount" class="qr-amount-label" data-i18n="qr.amountLabel">Montant à demander (facultatif)</label>
         <div class="qr-amount-row">
           <input id="qr-amount" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="0.00" />
@@ -1700,11 +1705,11 @@
         <div class="custom-select dropdown">
           <select id="external-wallet-network">
             <option value="evm_mainnet" data-i18n="external.netEvmMainnet">Ethereum — Mainnet</option>
-            <option value="arbitrum_mainnet" data-i18n="net.arbitrum_mainnet">Arbitrum — Fonds réels</option>
-            <option value="base_mainnet" data-i18n="net.base_mainnet">Base — Fonds réels</option>
-            <option value="bsc_mainnet" data-i18n="net.bsc_mainnet">BNB Chain — Fonds réels</option>
-            <option value="avax_mainnet" data-i18n="net.avax_mainnet">Avalanche — Fonds réels</option>
-            <option value="polygon_mainnet" data-i18n="net.polygon_mainnet">Polygon — Fonds réels</option>
+            <option value="arbitrum_mainnet" data-i18n="net.arbitrum_mainnet">Arbitrum</option>
+            <option value="base_mainnet" data-i18n="net.base_mainnet">Base</option>
+            <option value="bsc_mainnet" data-i18n="net.bsc_mainnet">BNB Chain</option>
+            <option value="avax_mainnet" data-i18n="net.avax_mainnet">Avalanche</option>
+            <option value="polygon_mainnet" data-i18n="net.polygon_mainnet">Polygon</option>
             <option value="btc_mainnet" data-i18n="external.netBtcMainnet">Bitcoin — Mainnet</option>
             <option value="sol_mainnet" data-i18n="external.netSolMainnet">Solana — Mainnet</option>
             <option value="usdc_solana" data-i18n="external.netUsdcSolana">USDC — Solana (Mainnet)</option>
@@ -1773,11 +1778,11 @@
         <div class="custom-select dropdown">
           <select id="ledger-add-network">
             <option value="evm_mainnet" data-i18n="external.netEvmMainnet">Ethereum — Mainnet</option>
-            <option value="arbitrum_mainnet" data-i18n="net.arbitrum_mainnet">Arbitrum — Fonds réels</option>
-            <option value="base_mainnet" data-i18n="net.base_mainnet">Base — Fonds réels</option>
-            <option value="bsc_mainnet" data-i18n="net.bsc_mainnet">BNB Chain — Fonds réels</option>
-            <option value="avax_mainnet" data-i18n="net.avax_mainnet">Avalanche — Fonds réels</option>
-            <option value="polygon_mainnet" data-i18n="net.polygon_mainnet">Polygon — Fonds réels</option>
+            <option value="arbitrum_mainnet" data-i18n="net.arbitrum_mainnet">Arbitrum</option>
+            <option value="base_mainnet" data-i18n="net.base_mainnet">Base</option>
+            <option value="bsc_mainnet" data-i18n="net.bsc_mainnet">BNB Chain</option>
+            <option value="avax_mainnet" data-i18n="net.avax_mainnet">Avalanche</option>
+            <option value="polygon_mainnet" data-i18n="net.polygon_mainnet">Polygon</option>
             <option value="btc_mainnet" data-i18n="external.netBtcMainnet">Bitcoin — Mainnet</option>
             <option value="sol_mainnet" data-i18n="external.netSolMainnet">Solana — Mainnet</option>
             <option value="evm_sepolia" data-i18n="external.netEvmSepolia">Ethereum — Sepolia (testnet)</option>
