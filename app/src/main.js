@@ -755,7 +755,7 @@ const I18N = {
     "wallet.feeMediumHint": "~30 min",
     "wallet.feeSlow": "Lent",
     "wallet.feeSlowHint": "~1 h",
-    "wallet.btcFeesNotLoaded": "Frais Bitcoin non chargés — patiente un instant ou réessaie.",
+    "wallet.btcFeesNotLoaded": "Frais Bitcoin pas encore chargés : patientez un instant, puis réessayez.",
     "wallet.allFieldsRequired": "Tous les champs sont requis.",
     "wallet.balanceError": "erreur",
     "message.title": "Chiffrer un message",
@@ -6112,8 +6112,9 @@ function showSendNetworkNote() {
 // Frais réseau estimés dans l'aperçu, en devise et dans la monnaie du réseau
 // (la boîte de confirmation native, ensuite, montre le montant exact) :
 // découvrir les frais au dernier moment est l'une des plaintes les plus
-// fréquentes des utilisateurs de portefeuilles. Bitcoin : vitesse déjà
-// affichée ; Monero et réseaux de test : pas d'estimation.
+// fréquentes des utilisateurs de portefeuilles. Bitcoin (vitesse déjà
+// affichée) et Monero : pas d'estimation, la ligne n'apparaît que si
+// l'adresse est refusée ; réseaux de test : rien.
 let sendFeeEstimate = 0;
 async function showSendFeeEstimate(to, amount) {
   const row = document.getElementById("send-preview-estimate-row");
@@ -6121,12 +6122,13 @@ async function showSendFeeEstimate(to, amount) {
   const check = ++sendFeeEstimate;
   const network = networkForCard(sendContext.card);
   const token = sendContext.coin === "usdc" ? "usdc" : usesTokenRegistry(sendContext.coin, network) ? sendContext.coin : null;
-  if (sendContext.coin === "btc" || !network.endsWith("mainnet")) {
-    row.classList.add("hidden");
-    return;
+  const addressOnly = sendContext.coin === "btc" || network === "xmr_mainnet";
+  row.classList.add("hidden");
+  if (!network.endsWith("mainnet")) return;
+  if (!addressOnly) {
+    value.textContent = t("send.feeEstimateLoading");
+    row.classList.remove("hidden");
   }
-  value.textContent = t("send.feeEstimateLoading");
-  row.classList.remove("hidden");
   try {
     const fee = await invoke("estimate_send_fee", { network, token, to, amount, profileIndex: sendContext.profileIndex });
     if (check !== sendFeeEstimate) return;
@@ -6143,6 +6145,7 @@ async function showSendFeeEstimate(to, amount) {
     // Solde insuffisant, adresse refusée… : dit ici déjà, plutôt qu'à la fin.
     if (check !== sendFeeEstimate) return;
     value.textContent = friendlyError(String(e)) ?? String(e);
+    row.classList.remove("hidden");
   }
 }
 

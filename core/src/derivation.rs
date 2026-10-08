@@ -285,14 +285,44 @@ pub fn derive_near_key(seed: &[u8], account_index: u32) -> ed25519_dalek::Signin
     signing_key
 }
 
+/// Refus d'une adresse Bitcoin de destination, en clair : les envois de
+/// l'app ne vont encore qu'aux adresses P2WPKH (bc1q…).
+pub const BTC_ADDRESS_UNSUPPORTED: &str = "seules les adresses Bitcoin commençant par bc1q sont prises en charge pour l'instant : demandez-en une au destinataire";
+pub const BTC_ADDRESS_MISCOPIED: &str = "adresse Bitcoin non reconnue : un caractère semble mal recopié";
+
 /// Décode une adresse Bitcoin testnet P2WPKH (bech32) en hash160 (20 octets).
 pub fn parse_btc_testnet_address(address: &str) -> Result<[u8; 20]> {
-    p2wpkh_hash160(decode_segwit(address, "tb", "testnet")?)
+    parse_p2wpkh(address, "tb", "testnet")
 }
 
 /// Décode une adresse Bitcoin MAINNET P2WPKH (bech32) en hash160 (20 octets).
 pub fn parse_btc_mainnet_address(address: &str) -> Result<[u8; 20]> {
-    p2wpkh_hash160(decode_segwit(address, "bc", "mainnet")?)
+    parse_p2wpkh(address, "bc", "mainnet")
+}
+
+/// P2WPKH seulement ; refus dits en clair : autre adresse Bitcoin bien formée
+/// de ce réseau (Taproot bc1p…, P2WSH, ancienne 1… ou 3… sur le réseau
+/// principal) pas encore prise en charge, faute de frappe dans une adresse
+/// bc1… (ou 1…/3…) ; autres refus inchangés (préfixe d'un autre réseau…).
+fn parse_p2wpkh(address: &str, hrp: &str, network: &str) -> Result<[u8; 20]> {
+    let trimmed = address.trim();
+    let legacy_prefix = network == "mainnet" && (trimmed.starts_with('1') || trimmed.starts_with('3'));
+    match decode_segwit(address, hrp, network) {
+        Ok(decoded) => p2wpkh_hash160(decoded).map_err(|_| anyhow!(BTC_ADDRESS_UNSUPPORTED)),
+        Err(_) if legacy_prefix && is_legacy_mainnet_address(trimmed) => Err(anyhow!(BTC_ADDRESS_UNSUPPORTED)),
+        Err(_) if legacy_prefix || trimmed.to_ascii_lowercase().starts_with(&format!("{hrp}1")) => Err(anyhow!(BTC_ADDRESS_MISCOPIED)),
+        Err(e) => Err(e),
+    }
+}
+
+/// Adresse Bitcoin MAINNET ancienne génération valide : base58check de
+/// 25 octets, version 0x00 (P2PKH, 1…) ou 0x05 (P2SH, 3…).
+fn is_legacy_mainnet_address(address: &str) -> bool {
+    let Ok(bytes) = bs58::decode(address).into_vec() else { return false };
+    if bytes.len() != 25 || !matches!(bytes[0], 0x00 | 0x05) {
+        return false;
+    }
+    Sha256::digest(Sha256::digest(&bytes[..21]))[..4] == bytes[21..]
 }
 
 /// Script de sortie (scriptPubKey) d'une adresse Bitcoin MAINNET SegWit
@@ -430,5 +460,27 @@ mod tests {
         assert!(btc_mainnet_script_pubkey(&encode(2, &[0x75; 16], Variant::Bech32m)).is_err(), "version future refusée");
         assert!(btc_mainnet_script_pubkey(&encode(0, &[0x75; 25], Variant::Bech32)).is_err(), "v0 : 20 ou 32 octets");
         assert!(parse_btc_mainnet_address("tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx").is_err(), "testnet");
+    }
+
+    /// Refus d'une adresse de destination dits en clair : autre forme
+    /// d'adresse Bitcoin valide (pas encore prise en charge) ou faute de
+    /// frappe ; adresse d'un autre réseau : message d'origine.
+    #[test]
+    fn rejected_bitcoin_addresses_are_explained_plainly() {
+        let message = |address: &str| parse_btc_mainnet_address(address).unwrap_err().to_string();
+        for unsupported in [
+            "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa",
+            "3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy",
+            "bc1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqzk5jj0",
+            "bc1qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3qccfmv3",
+        ] {
+            assert_eq!(message(unsupported), BTC_ADDRESS_UNSUPPORTED, "{unsupported}");
+        }
+        for miscopied in ["bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t5", "BC1QW508D6QEJXTDG4Y5R3ZARVARY0C5XW7KV8F3T", "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNb", "3J98t1WpEZ73CNmQviecrnyiWrnqRhWNL"] {
+            assert_eq!(message(miscopied), BTC_ADDRESS_MISCOPIED, "{miscopied}");
+        }
+        assert!(message("tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx").contains("non-mainnet"));
+        assert_eq!(parse_btc_testnet_address("tb1qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3q0sl5k7").unwrap_err().to_string(), BTC_ADDRESS_UNSUPPORTED);
+        assert_eq!(hex::encode(parse_btc_testnet_address("tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx").unwrap()), "751e76e8199196d454941c45d1b3a323f1433bd6");
     }
 }

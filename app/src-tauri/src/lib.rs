@@ -543,6 +543,11 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("adresse bech32 invalide", "invalid bech32 address"),
     ("adresse bech32 vide", "empty bech32 address"),
     (
+        pgp_wallet_poc::derivation::BTC_ADDRESS_UNSUPPORTED,
+        "only Bitcoin addresses starting with bc1q are supported for now: ask the recipient for one",
+    ),
+    (pgp_wallet_poc::derivation::BTC_ADDRESS_MISCOPIED, "Bitcoin address not recognized: a character seems miscopied"),
+    (
         "adresse Bitcoin mal formée (version SegWit, encodage ou longueur incohérents)",
         "malformed Bitcoin address (inconsistent SegWit version, encoding or length)",
     ),
@@ -3992,7 +3997,7 @@ async fn send_transaction(
             }
             "btc_testnet" | "btc_mainnet" => {
                 let net = btc_network(&network)?;
-                let fee_sat = send.fee_sat.ok_or_else(|| "frais Bitcoin manquants (choisis une vitesse d'envoi)".to_string())?;
+                let fee_sat = send.fee_sat.ok_or_else(|| lang("frais Bitcoin manquants : choisissez une vitesse d'envoi", "Bitcoin fee missing: choose a sending speed").to_string())?;
                 api::send_btc(&dir, &password, net, &send.to, &send.amount, fee_sat, profile_index).t_err()
             }
             "sol_devnet" | "sol_mainnet" => {
@@ -4163,7 +4168,7 @@ async fn max_send_amount(network: String, token: Option<String>, profile_index: 
             "sol_devnet" | "sol_mainnet" => api::sol_max(sol_network(&network)?, &sol).t_err(),
             "btc_mainnet" | "btc_testnet" => {
                 let address = if network == "btc_mainnet" { cached(&app.state::<ProfileBtcCache>().0)? } else { cached(&app.state::<ProfileBtcTestnetCache>().0)? };
-                let fee_sat = fee_sat.ok_or_else(|| "frais Bitcoin manquants (choisis une vitesse d'envoi)".to_string())?;
+                let fee_sat = fee_sat.ok_or_else(|| lang("frais Bitcoin manquants : choisissez une vitesse d'envoi", "Bitcoin fee missing: choose a sending speed").to_string())?;
                 api::btc_max(btc_network(&network)?, &address, fee_sat).t_err()
             }
             "zec_mainnet" => api::zec_max(&cached(&app.state::<ProfileZcashCache>().0)?).t_err(),
@@ -4415,7 +4420,7 @@ fn confirm_send(
             }
             "sol" => api::sol_max(sol_network(network)?, from.sol.ok_or_else(unknown_profile)?).t_err()?,
             "btc" => {
-                let fee_sat = fee_sat.ok_or_else(|| "frais Bitcoin manquants (choisis une vitesse d'envoi)".to_string())?;
+                let fee_sat = fee_sat.ok_or_else(|| lang("frais Bitcoin manquants : choisissez une vitesse d'envoi", "Bitcoin fee missing: choose a sending speed").to_string())?;
                 api::btc_max(btc_network(network)?, from.btc.ok_or_else(unknown_profile)?, fee_sat).t_err()?
             }
             "zec" => api::zec_max(from.zec.ok_or_else(unknown_profile)?).t_err()?,
@@ -4553,7 +4558,7 @@ fn confirm_send(
     // un "Frais : 1 sat" sans rapport avec ce qui serait payé.
     let fee_line = match coin {
         "btc" => {
-            let fee_sat = fee_sat.ok_or_else(|| "frais Bitcoin manquants (choisis une vitesse d'envoi)".to_string())?;
+            let fee_sat = fee_sat.ok_or_else(|| lang("frais Bitcoin manquants : choisissez une vitesse d'envoi", "Bitcoin fee missing: choose a sending speed").to_string())?;
             Some(format!("{} : {fee_sat} sat", lang("Frais", "Fee")))
         }
         "zec" => zec_plan.as_ref().map(|plan| {
@@ -4799,7 +4804,7 @@ async fn hardware_send(id: u32, to: String, amount: String, fee_sat: Option<u64>
                 hardware::send_evm(&dir, id, &network, &send.to, &send.amount, fee).t_err()
             }
             "btc_testnet" | "btc_mainnet" => {
-                let fee_sat = send.fee_sat.ok_or_else(|| "frais Bitcoin manquants (choisis une vitesse d'envoi)".to_string())?;
+                let fee_sat = send.fee_sat.ok_or_else(|| lang("frais Bitcoin manquants : choisissez une vitesse d'envoi", "Bitcoin fee missing: choose a sending speed").to_string())?;
                 hardware::send_btc(&dir, id, &network, &send.to, &send.amount, fee_sat).t_err()
             }
             "sol_devnet" | "sol_mainnet" => hardware::send_sol(&dir, id, &network, &send.to, &send.amount).t_err(),
@@ -6230,6 +6235,17 @@ async fn estimate_send_fee(network: String, token: Option<String>, to: String, a
             ("ada_mainnet", None) => estimate(u128::from(api::ada_send_plan(&from()?, &to, &amount).t_err()?.fee), 6, "ADA", "ada", false),
             ("stx_mainnet", None) => estimate(u128::from(api::stx_send_plan(&from()?, &to, &amount).t_err()?.fee), 6, "STX", "stx", false),
             ("tao_mainnet", None) => estimate(u128::from(api::tao_send_plan(&from()?, &to, &amount).t_err()?.fee), 9, "TAO", "tao", false),
+            // Sans estimation (Bitcoin : vitesse choisie dans la fenêtre ;
+            // Monero), mais adresse vérifiée dès l'aperçu, comme ailleurs :
+            // mêmes parseurs que l'envoi.
+            ("btc_mainnet", None) => {
+                (btc_network(&network)?.parse_address)(&to).t_err()?;
+                None
+            }
+            ("xmr_mainnet", None) => {
+                pgp_wallet_poc::monero::parse_recipient(&to).t_err()?;
+                None
+            }
             _ => None,
         })
     })
