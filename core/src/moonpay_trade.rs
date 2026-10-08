@@ -34,6 +34,12 @@ pub const API_KEY: Option<&str> = option_env!("MOONPAY_TRADE_API_KEY");
 /// partenaire de CoW (adresse du développeur, voir `cow`).
 pub const FEE_BPS: u32 = 80;
 const FEE_RECEIVER: &str = "0xae702daEd4723ac516492Bb1084F50e07e75573C";
+/// Frais propres à MoonPay sur la clé de l'app (relevés le 07/10/2026 :
+/// 0,30 %), en plus de la commission ; affichés dans la liste des
+/// fournisseurs. Le montant exact de chaque devis est lu dans le devis.
+pub const PROTOCOL_FEE_BPS: u32 = 30;
+/// Au-delà, le devis est refusé (frais MoonPay anormaux).
+const MAX_PROTOCOL_FEE_BPS: u32 = 100;
 /// Glissement toléré (points de base), garanti par le minimum de réception.
 const SLIPPAGE_BPS: u32 = 100;
 /// Identifiant des monnaies natives chez MoonPay Trade (tous réseaux).
@@ -189,6 +195,9 @@ pub struct Quote {
     pub expected_out: u128,
     pub min_out: u128,
     pub duration_secs: u64,
+    /// Frais propres à MoonPay annoncés par le devis (points de base du
+    /// montant vendu, arrondis), en plus de la commission de l'app.
+    pub protocol_fee_bps: u32,
     /// Dépôt à déclarer après diffusion (`register`).
     pub register: bool,
     pub tx: TradeTx,
@@ -257,6 +266,27 @@ pub fn erc20_transfer_data(to: &[u8; 20], amount: u128) -> Vec<u8> {
     data
 }
 
+/// Frais `field` (`applicationFee`, `protocolFee`) en points de base du
+/// montant vendu : exacts s'ils sont comptés dans la crypto vendue, sinon
+/// d'après les montants en dollars du devis. `None` : frais absents.
+fn fee_bps(body: &Value, field: &str, from: &Asset, amount: u128) -> Result<Option<f64>> {
+    if !body[field].is_object() {
+        return Ok(None);
+    }
+    let (chain, token, fee) = payment(&body[field], "commission")?;
+    if chain == from.chain && same_token(from, &token) {
+        ensure!(amount > 0, "montant nul");
+        return Ok(Some(fee as f64 * 10_000.0 / amount as f64));
+    }
+    if fee == 0 {
+        return Ok(Some(0.0));
+    }
+    match (body[field]["usdAmount"].as_f64(), body["amountIn"]["usdAmount"].as_f64()) {
+        (Some(fee_usd), Some(sold_usd)) if sold_usd > 0.0 && fee_usd >= 0.0 => Ok(Some(fee_usd * 10_000.0 / sold_usd)),
+        _ => bail!("devis MoonPay Trade illisible (commission)"),
+    }
+}
+
 /// Lit et vérifie la réponse de `getAction` pour la demande faite : paire,
 /// montant exact, minimum ≤ attendu, commission ≤ `FEE_BPS`, et transaction
 /// de la forme attendue pour la route (routeur UTB sur un même réseau EVM,
@@ -270,18 +300,20 @@ pub fn parse_action(body: &Value, from: &Asset, to: &Asset, amount: u128) -> Res
     let (chain, token, min_out) = payment(&body["amountOutMin"], "minimum reçu")?;
     ensure!(chain == to.chain && same_token(to, &token), "le devis MoonPay Trade livre une autre crypto — refus");
     ensure!(min_out > 0 && min_out <= expected_out, "minimum de réception MoonPay Trade incohérent — refus");
-    // Commission de l'app : au plus `FEE_BPS` du montant vendu (dans la
-    // crypto vendue), ou en dollars à 2 % près si elle est comptée ailleurs.
-    if body["applicationFee"].is_object() {
-        let (chain, token, fee) = payment(&body["applicationFee"], "commission")?;
-        let allowed = if chain == from.chain && same_token(from, &token) {
-            fee <= amount.saturating_mul(u128::from(FEE_BPS)).div_ceil(10_000)
-        } else {
-            let (fee_usd, sold_usd) = (body["applicationFee"]["usdAmount"].as_f64(), body["amountIn"]["usdAmount"].as_f64());
-            matches!((fee_usd, sold_usd), (Some(f), Some(s)) if f <= s * f64::from(FEE_BPS) / 10_000.0 * 1.02 + 0.01)
-        };
-        ensure!(allowed, "le devis MoonPay Trade prélève une commission supérieure à {:.2} % — refus", f64::from(FEE_BPS) / 100.0);
-    }
+    // Commission de l'app : au plus `FEE_BPS` du montant vendu ; frais propres
+    // à MoonPay : au plus `MAX_PROTOCOL_FEE_BPS` (affichés à l'utilisateur).
+    let app_fee = fee_bps(body, "applicationFee", from, amount)?;
+    ensure!(
+        app_fee.is_none_or(|bps| bps <= f64::from(FEE_BPS) + 0.5),
+        "le devis MoonPay Trade prélève une commission supérieure à {:.2} % — refus",
+        f64::from(FEE_BPS) / 100.0
+    );
+    let protocol_fee = fee_bps(body, "protocolFee", from, amount)?.unwrap_or(0.0);
+    ensure!(
+        protocol_fee <= f64::from(MAX_PROTOCOL_FEE_BPS),
+        "le devis MoonPay Trade annonce des frais MoonPay supérieurs à {:.2} % — refus",
+        f64::from(MAX_PROTOCOL_FEE_BPS) / 100.0
+    );
     ensure!(body["executionsType"].as_str().is_none_or(|t| t == "DEFAULT"), "devis MoonPay Trade d'une forme non prise en charge — refus");
     let tx_id = body["txId"].as_str().filter(|id| id.len() == 66 && id.starts_with("0x") && id[2..].bytes().all(|b| b.is_ascii_hexdigit())).context("devis MoonPay Trade sans identifiant")?;
     let tx = &body["tx"];
@@ -337,6 +369,7 @@ pub fn parse_action(body: &Value, from: &Asset, to: &Asset, amount: u128) -> Res
         expected_out,
         min_out,
         duration_secs: body["estimatedTxTime"].as_f64().filter(|s| s.is_finite() && *s >= 0.0).map(|s| s.ceil() as u64).unwrap_or(0),
+        protocol_fee_bps: protocol_fee.round() as u32,
         register: body["requiresRegisterTransaction"].as_bool().unwrap_or(false),
         tx: trade_tx,
     })
@@ -501,6 +534,7 @@ mod tests {
             "amountOut": pay(1, "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", "25449094"),
             "amountOutMin": pay(1, "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", "25194603"),
             "applicationFee": pay(1, NATIVE, "80000000000000"),
+            "protocolFee": pay(1, NATIVE, "30000000000000"),
             "estimatedTxTime": 0, "requiresRegisterTransaction": false, "executionsType": "DEFAULT"
         })
     }
@@ -535,7 +569,7 @@ mod tests {
     fn router_quote_is_read_and_checked() {
         let (eth, usdc) = (a("evm", "evm_mainnet"), a("usdc", "evm_mainnet"));
         let quote = parse_action(&eth_usdc(), &eth, &usdc, 10_000_000_000_000_000).unwrap();
-        assert_eq!((quote.expected_out, quote.min_out, quote.register), (25_449_094, 25_194_603, false));
+        assert_eq!((quote.expected_out, quote.min_out, quote.register, quote.protocol_fee_bps), (25_449_094, 25_194_603, false, 30));
         assert!(matches!(&quote.tx, TradeTx::Router { value, .. } if *value == 10_000_000_000_000_000));
         // Falsifications : chaque écart est refusé.
         let refused = |edit: &dyn Fn(&mut Value)| {
@@ -549,6 +583,9 @@ mod tests {
         assert!(refused(&|b| b["amountOut"]["address"] = json!("0xdac17f958d2ee523a2206206994597c13d831ec7")).contains("autre crypto"));
         assert!(refused(&|b| b["amountOutMin"]["amount"] = json!("99999999")).contains("incohérent"));
         assert!(refused(&|b| b["applicationFee"]["amount"] = json!("100000000000000")).contains("commission"));
+        assert!(refused(&|b| b["protocolFee"]["amount"] = json!("150000000000000")).contains("frais MoonPay"));
+        // Frais comptés dans une autre crypto : bornés d'après les dollars du devis.
+        assert!(refused(&|b| b["applicationFee"] = json!({ "chainId": 1, "address": USDC, "amount": "260000", "usdAmount": 0.26 })).contains("commission"));
         assert!(refused(&|b| b["executionsType"] = json!("GASLESS")).contains("forme"));
         assert!(refused(&|b| b["tx"]["chainId"] = json!(42161)).contains("forme"));
     }

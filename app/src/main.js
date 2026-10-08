@@ -1007,8 +1007,8 @@ const I18N = {
     "swap.previewLifiRoute": "Pont (via LI.FI)",
     "swap.viaMoonpay": "via MoonPay Trade",
     "swap.previewMoonpayRoute": "Fournisseur",
-    "swap.moonpayRoute": "MoonPay Trade — commission {fee} %, vérifié par simulation",
-    "swap.moonpayRouteUnverified": "MoonPay Trade — commission {fee} %, ~{minutes} min. Seul fournisseur pour cette paire : la livraison est gérée par MoonPay Trade, l'app ne peut pas la vérifier.",
+    "swap.moonpayRoute": "MoonPay Trade — frais {fee} %, vérifié par simulation",
+    "swap.moonpayRouteUnverified": "MoonPay Trade — frais {fee} %, ~{minutes} min. Seul fournisseur pour cette paire : la livraison est gérée par MoonPay Trade, l'app ne peut pas la vérifier.",
     "swap.moonpaySent": "Échange envoyé ({tx}).",
     "swap.moonpayDepositSent": "Dépôt envoyé ({tx}) — MoonPay Trade livre en ~{minutes} min.",
     "swap.lifiDuration": "≈ {minutes} min",
@@ -5997,7 +5997,7 @@ function selectedSwapPair() {
 // Frais d'affiliation par défaut de chaque fournisseur, en % (voir
 // core/src/cow.rs et core/src/thorchain_rpc.rs), quand Rust n'en déclare pas
 // pour la paire.
-const SWAP_PROVIDER_FEE_PERCENT = { thorchain: 0.8, maya: 0.8, jupiter: 0.8, cow: 1, lifi: 0.8, swapkit: 0.15, moonpay: 0.8 };
+const SWAP_PROVIDER_FEE_PERCENT = { thorchain: 0.8, maya: 0.8, jupiter: 0.8, cow: 1, lifi: 0.8, swapkit: 0.15, moonpay: 1.1 };
 
 function swapProviderFeePercent(pair, protocol) {
   const bps = pair?.feesBps?.[protocol];

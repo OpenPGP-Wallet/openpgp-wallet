@@ -1120,6 +1120,9 @@ fn translate_dynamic_error(msg: &str) -> Option<String> {
     if let Some(rest) = msg.strip_prefix("MoonPay Trade : enregistrement du dépôt refusé (") {
         return Some(format!("MoonPay Trade: deposit registration refused ({rest}"));
     }
+    if let Some(rest) = msg.strip_prefix("le devis MoonPay Trade annonce des frais MoonPay supérieurs à ").and_then(|r| r.strip_suffix(" % — refus")) {
+        return Some(format!("the MoonPay Trade quote announces MoonPay fees above {rest}% — refused"));
+    }
     if let Some(rest) = msg.strip_prefix("le devis MoonPay Trade prélève une commission supérieure à ").and_then(|r| r.strip_suffix(" % — refus")) {
         return Some(format!("the MoonPay Trade quote charges a fee above {rest}% — refused"));
     }
@@ -6122,7 +6125,7 @@ async fn get_moonpay_quote(
             expected_out: tokens::format_balance(quote.expected_out, to.decimals, 8),
             min_out: tokens::format_balance(quote.min_out, to.decimals, 8),
             duration_secs: quote.duration_secs,
-            fee_bps: moonpay_trade::FEE_BPS,
+            fee_bps: moonpay_trade::FEE_BPS + quote.protocol_fee_bps,
             verified: moonpay_trade::verifiable((from.coin, from.network), (to.coin, to.network)),
         })
     })
@@ -6143,16 +6146,18 @@ fn confirm_moonpay_native(
     own_destination: Option<&str>,
     refund: &str,
     fee_lines: &str,
+    protocol_fee_bps: u32,
 ) -> bool {
     let from_label = dialog_label(from_label);
     let english = UI_LANG_IS_ENGLISH.load(Ordering::Relaxed);
-    let fee = format!("{:.2}", f64::from(pgp_wallet_poc::moonpay_trade::FEE_BPS) / 100.0);
+    let percent = |bps: u32| format!("{:.2}", f64::from(bps) / 100.0);
+    let (fee, moonpay_fee) = (percent(pgp_wallet_poc::moonpay_trade::FEE_BPS), percent(protocol_fee_bps));
     let message = match (deposit, english) {
         (None, false) => format!(
-            "Échange via MoonPay Trade (protocole externe, non audité par cette app)\n\nDepuis le profil : {from_label}\nEnvoi : {sell_line}\nRéception attendue : ~{expected_line}\nMinimum garanti : {min_line}\nVérifié par simulation : ce qui est acheté arrive sur votre adresse {destination}\n{fee_lines}\nCommission de l'app : {fee} % (comprise dans le devis).\nC'est irréversible.\n\nConfirmer cet échange ?"
+            "Échange via MoonPay Trade (protocole externe, non audité par cette app)\n\nDepuis le profil : {from_label}\nEnvoi : {sell_line}\nRéception attendue : ~{expected_line}\nMinimum garanti : {min_line}\nVérifié par simulation : ce qui est acheté arrive sur votre adresse {destination}\n{fee_lines}\nFrais : MoonPay {moonpay_fee} % + commission de l'app {fee} % (compris dans le devis).\nC'est irréversible.\n\nConfirmer cet échange ?"
         ),
         (None, true) => format!(
-            "Swap via MoonPay Trade (external protocol, not audited by this app)\n\nFrom profile: {from_label}\nSending: {sell_line}\nExpected to receive: ~{expected_line}\nGuaranteed minimum: {min_line}\nVerified by simulation: what you buy arrives at your address {destination}\n{fee_lines}\nApp fee: {fee}% (included in the quote).\nThis is irreversible.\n\nConfirm this swap?"
+            "Swap via MoonPay Trade (external protocol, not audited by this app)\n\nFrom profile: {from_label}\nSending: {sell_line}\nExpected to receive: ~{expected_line}\nGuaranteed minimum: {min_line}\nVerified by simulation: what you buy arrives at your address {destination}\n{fee_lines}\nFees: MoonPay {moonpay_fee}% + app fee {fee}% (included in the quote).\nThis is irreversible.\n\nConfirm this swap?"
         ),
         (Some((address, tag)), english) => {
             let tag_line = match (tag, english) {
@@ -6168,11 +6173,11 @@ fn confirm_moonpay_native(
             };
             if english {
                 format!(
-                    "Swap via MoonPay Trade (external protocol, not audited by this app)\n\nFrom profile: {from_label}\nSending: {sell_line}\nExpected to receive: ~{expected_line}\nAnnounced minimum: {min_line}\nDeposit to: {address} (MoonPay Trade's deposit address){tag_line}\n{arrival}\nOnly provider for this pair: delivery is handled by MoonPay Trade, the app cannot verify it.\nRefund if the swap fails: {refund}\n{fee_lines}\nApp fee: {fee}% (included in the quote).\nThis is irreversible.\n\nConfirm this swap?"
+                    "Swap via MoonPay Trade (external protocol, not audited by this app)\n\nFrom profile: {from_label}\nSending: {sell_line}\nExpected to receive: ~{expected_line}\nAnnounced minimum: {min_line}\nDeposit to: {address} (MoonPay Trade's deposit address){tag_line}\n{arrival}\nOnly provider for this pair: delivery is handled by MoonPay Trade, the app cannot verify it.\nRefund if the swap fails: {refund}\n{fee_lines}\nFees: MoonPay {moonpay_fee}% + app fee {fee}% (included in the quote).\nThis is irreversible.\n\nConfirm this swap?"
                 )
             } else {
                 format!(
-                    "Échange via MoonPay Trade (protocole externe, non audité par cette app)\n\nDepuis le profil : {from_label}\nEnvoi : {sell_line}\nRéception attendue : ~{expected_line}\nMinimum annoncé : {min_line}\nDépôt vers : {address} (adresse de dépôt de MoonPay Trade){tag_line}\n{arrival}\nSeul fournisseur pour cette paire : la livraison est gérée par MoonPay Trade, l'app ne peut pas la vérifier.\nRemboursement si l'échange échoue : {refund}\n{fee_lines}\nCommission de l'app : {fee} % (comprise dans le devis).\nC'est irréversible.\n\nConfirmer cet échange ?"
+                    "Échange via MoonPay Trade (protocole externe, non audité par cette app)\n\nDepuis le profil : {from_label}\nEnvoi : {sell_line}\nRéception attendue : ~{expected_line}\nMinimum annoncé : {min_line}\nDépôt vers : {address} (adresse de dépôt de MoonPay Trade){tag_line}\n{arrival}\nSeul fournisseur pour cette paire : la livraison est gérée par MoonPay Trade, l'app ne peut pas la vérifier.\nRemboursement si l'échange échoue : {refund}\n{fee_lines}\nFrais : MoonPay {moonpay_fee} % + commission de l'app {fee} % (compris dans le devis).\nC'est irréversible.\n\nConfirmer cet échange ?"
                 )
             }
         }
@@ -6228,11 +6233,24 @@ async fn moonpay_swap_transaction(
         let recap = || GraceRecap::swap(lang("Échange via MoonPay Trade", "Swap via MoonPay Trade").to_string(), format!("{sell_line} → ~{expected_line}"), destination.clone()).on(from.network);
         match &quote.tx {
             moonpay_trade::TradeTx::Router { router, .. } => {
-                // Simulé AVANT la boîte (puis de nouveau avant la signature).
-                api::verify_moonpay_router(&from, &to, &quote, &source).t_err()?;
                 let net = evm_network(from.network)?;
                 let gas_price = api::evm_gas_price_for_confirmation(net).t_err()?;
                 let (call, approve, approvals) = api::moonpay_router_fees(&from, &quote, &source, gas_price).t_err()?;
+                // Solde vérifié d'abord (message clair), puis l'échange simulé
+                // AVANT la boîte (et de nouveau avant la signature).
+                if from.native {
+                    api::ensure_evm_transfer_funds(net, &source, &amount, call).t_err()?;
+                } else {
+                    api::ensure_token_funds(from.coin, from.network, &source, &amount).t_err()?;
+                    let count = approvals as u64;
+                    let gas = api::EvmFee {
+                        gas_price,
+                        gas_limit: call.gas_limit.saturating_add(approve.gas_limit.saturating_mul(count)),
+                        l1_fee: call.l1_fee.saturating_add(approve.l1_fee.saturating_mul(u128::from(count))),
+                    };
+                    api::ensure_evm_gas_funds(net, &source, gas).t_err()?;
+                }
+                api::verify_moonpay_router(&from, &to, &quote, &source).t_err()?;
                 let total = call.max_total().t_err()?.saturating_add(approve.max_total().t_err()?.saturating_mul(approvals as u128)) as f64 / 1e18;
                 let (gwei, symbol) = (gas_price as f64 / 1e9, net.native_symbol);
                 let mut fee_lines = lang(&format!("Frais réseau maximum : {total:.8} {symbol} ({gwei:.4} gwei)"), &format!("Maximum network fee: {total:.8} {symbol} ({gwei:.4} gwei)")).to_string();
@@ -6243,7 +6261,7 @@ async fn moonpay_swap_transaction(
                         &format!("\nPrior approval (separate transaction): MoonPay Trade's router {router} will be allowed to take exactly {sell_line}, once."),
                     ));
                 }
-                if !confirm_moonpay_native(&app, &from_label, &sell_line, &expected_line, &min_line, None, &destination, None, &source, &fee_lines) {
+                if !confirm_moonpay_native(&app, &from_label, &sell_line, &expected_line, &min_line, None, &destination, None, &source, &fee_lines, quote.protocol_fee_bps) {
                     return Err(translate_error("Échange annulé (confirmation refusée)."));
                 }
                 swap_grace_period(&app, recap())?;
@@ -6254,7 +6272,7 @@ async fn moonpay_swap_transaction(
                 let xrp_tag = memo.as_deref().map(str::parse::<u32>).transpose().map_err(|_| translate_error("mémo de dépôt MoonPay Trade non pris en charge — refus"))?;
                 let (prepared, fee_line) = prepare_deposit(from.coin, from.network, &source, address, &amount, xrp_tag)?;
                 let own_destination = own_profile_label(&app, &dir, to.network, &destination);
-                if !confirm_moonpay_native(&app, &from_label, &sell_line, &expected_line, &min_line, Some((address, xrp_tag)), &destination, own_destination.as_deref(), &source, &fee_line) {
+                if !confirm_moonpay_native(&app, &from_label, &sell_line, &expected_line, &min_line, Some((address, xrp_tag)), &destination, own_destination.as_deref(), &source, &fee_line, quote.protocol_fee_bps) {
                     return Err(translate_error("Échange annulé (confirmation refusée)."));
                 }
                 swap_grace_period(&app, recap())?;
@@ -8945,6 +8963,7 @@ mod tests {
         for (fr, en) in [
             ("montant trop faible pour MoonPay Trade (minimum 0.0012)", "amount too small for MoonPay Trade (minimum 0.0012)"),
             ("le devis MoonPay Trade prélève une commission supérieure à 0.80 % — refus", "the MoonPay Trade quote charges a fee above 0.80% — refused"),
+            ("le devis MoonPay Trade annonce des frais MoonPay supérieurs à 1.00 % — refus", "the MoonPay Trade quote announces MoonPay fees above 1.00% — refused"),
             ("l'échange MoonPay Trade ferait sortir 5 unité(s) au lieu de 4 — refus de signer", "the MoonPay Trade swap would take out 5 unit(s) instead of 4 — refusing to sign"),
             (
                 "l'échange MoonPay Trade livrerait moins que le minimum garanti à votre adresse (10 au lieu d'au moins 12) — refus de signer",

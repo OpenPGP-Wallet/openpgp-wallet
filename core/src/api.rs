@@ -3445,13 +3445,24 @@ pub fn verify_moonpay_router(from: &moonpay_trade::Asset, to: &moonpay_trade::As
     moonpay_trade::verify_router(&simulated, &expected)
 }
 
+/// Plafond du gas d'un échange MoonPay Trade par le routeur (~325 000 mesurés
+/// en simulation sur Ethereum le 07/10/2026, ETH → USDC) ; Arbitrum : la
+/// limite compte aussi la publication sur Ethereum.
+fn moonpay_gas_cap(network: &wallet_flow::EvmNetwork) -> u64 {
+    if network.transfer_gas.is_none() {
+        EVM_MAX_ESTIMATED_GAS
+    } else {
+        700_000
+    }
+}
+
 /// Frais maximum d'un échange MoonPay Trade par le routeur, montrés avant la
 /// confirmation : l'appel au plafond de gas (+ frais L1 sur Base) et les
 /// autorisations au routeur s'il en faut.
 pub fn moonpay_router_fees(from: &moonpay_trade::Asset, quote: &moonpay_trade::Quote, sender: &str, gas_price: u128) -> Result<(EvmFee, EvmFee, usize)> {
     let moonpay_trade::TradeTx::Router { router, data, value } = &quote.tx else { anyhow::bail!("devis MoonPay Trade sans routeur") };
     let network = wallet_flow::evm_network(from.network).context("réseau EVM inconnu")?;
-    let cap = lifi_gas_cap(network);
+    let cap = moonpay_gas_cap(network);
     let call = EvmFee { gas_price, gas_limit: cap, l1_fee: evm_l1_fee(network, router, *value, data, gas_price, cap)? };
     if from.native {
         return Ok((call, EvmFee { gas_price, gas_limit: 0, l1_fee: 0 }, 0));
@@ -3501,7 +3512,7 @@ pub fn send_moonpay_router(
     });
     let (mut nonce, chain_id, balance) = (nonce?, chain_id?, balance?);
     anyhow::ensure!(chain_id == network.chain_id, "le nœud RPC répond pour le réseau {chain_id}, pas {} — envoi refusé", network.chain_id);
-    let cap = lifi_gas_cap(network);
+    let cap = moonpay_gas_cap(network);
     let call_fee = gas_price
         .checked_mul(u128::from(cap))
         .and_then(|g| g.checked_add(evm_l1_fee(network, router, *value, data, gas_price, cap).ok()?))

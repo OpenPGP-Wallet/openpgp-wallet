@@ -121,7 +121,8 @@ pub fn affiliate_fee_bps(protocol: Protocol, from: SwapAsset, to: SwapAsset) -> 
         // Commission de SwapKit (l'app n'en touche pas encore, voir
         // `swapkit::AFFILIATE_FEE_BPS`).
         Protocol::Swapkit => swapkit::SERVICE_FEE_BPS + swapkit::AFFILIATE_FEE_BPS,
-        Protocol::Moonpay => moonpay_trade::FEE_BPS,
+        // Frais de MoonPay compris, comme ceux de SwapKit.
+        Protocol::Moonpay => moonpay_trade::FEE_BPS + moonpay_trade::PROTOCOL_FEE_BPS,
     }
 }
 
@@ -318,7 +319,7 @@ mod tests {
         assert_eq!(direct_all(eth, xmr), vec![Protocol::Moonpay], "XMR : aucun autre fournisseur, dernier recours");
         assert_eq!(route(eth, xmr), Some(Route { first: Protocol::Moonpay, via: None }));
         assert!(direct_all(xmr, eth).is_empty(), "pas de dépôt depuis Monero");
-        assert_eq!(affiliate_fee_bps(Protocol::Moonpay, eth, xmr), 80);
+        assert_eq!(affiliate_fee_bps(Protocol::Moonpay, eth, xmr), 110, "0,80 % pour l'app + 0,30 % pour MoonPay");
         MOONPAY_IN_TESTS.with(|m| m.set(false));
     }
 
