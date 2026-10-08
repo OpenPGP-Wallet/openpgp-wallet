@@ -72,7 +72,7 @@
         <p id="unlock-error" class="error hidden"></p>
         <button id="unlock-submit" class="primary" data-i18n="unlock.submit">Déverrouiller</button>
         <button id="goto-restore" class="link" data-i18n="unlock.gotoRestore">Restaurer depuis une sauvegarde</button>
-        <button id="reset-wallet" class="link" data-i18n="unlock.resetWallet">Réinitialiser cet appareil (supprime le coffre local)</button>
+        <button id="reset-wallet" class="link" data-i18n="unlock.resetWallet">Réinitialiser cet appareil (efface le portefeuille de cet ordinateur)</button>
       </div>
     </main>
 
@@ -95,7 +95,7 @@
             <legend data-i18n="restore.share1">Part n°1</legend>
             <label data-i18n="restore.shareFile">Fichier de part (.asc)</label>
             <input type="file" id="restore-share-1" accept=".asc" />
-            <label data-i18n="restore.privkeyFile">Fichier de clé privée (.asc)</label>
+            <label data-i18n="restore.privkeyFile">Fichier de clé de la part (.asc)</label>
             <input type="file" id="restore-privkey-1" accept=".asc" />
             <label data-i18n="restore.sharePassword">Mot de passe de cette part</label>
             <input type="password" id="restore-passphrase-1" />
@@ -104,7 +104,7 @@
             <legend data-i18n="restore.share2">Part n°2</legend>
             <label data-i18n="restore.shareFile">Fichier de part (.asc)</label>
             <input type="file" id="restore-share-2" accept=".asc" />
-            <label data-i18n="restore.privkeyFile">Fichier de clé privée (.asc)</label>
+            <label data-i18n="restore.privkeyFile">Fichier de clé de la part (.asc)</label>
             <input type="file" id="restore-privkey-2" accept=".asc" />
             <label data-i18n="restore.sharePassword">Mot de passe de cette part</label>
             <input type="password" id="restore-passphrase-2" />
@@ -189,7 +189,7 @@
                     <span data-i18n="charts.portfolioTitle">Évolution du portefeuille</span>
                   </button>
                 </h2>
-                <p class="muted chart-scope" data-i18n="charts.portfolioScope">Profil affiché, fonds réels (mainnet)</p>
+                <p class="muted chart-scope" data-i18n="charts.portfolioScope">Profil affiché, fonds réels (hors réseaux de test)</p>
               </div>
               <button type="button" class="link chart-expand" data-i18n="charts.expand">Agrandir</button>
             </div>
@@ -450,7 +450,7 @@
               <div class="custom-select dropdown">
                 <select class="network-select" data-coin="sol">
                   <option value="sol_mainnet" selected data-i18n="wallet.mainnet">Réseau principal</option>
-                  <option value="sol_devnet" data-i18n="wallet.devnet">Devnet</option>
+                  <option value="sol_devnet" data-i18n="wallet.devnet">Réseau de test</option>
                 </select>
                 <button type="button" class="custom-select-trigger">
                   <span class="custom-select-label"></span>
@@ -667,8 +667,8 @@
         <div class="card wide">
           <h1 data-i18n="nav.history">Activité</h1>
           <p class="muted" data-i18n="history.subtitle">
-            Toutes vos transactions, crypto par crypto, sur le réseau actuellement sélectionné dans
-            chaque carte du portefeuille (mainnet ou testnet).
+            Toutes vos transactions, crypto par crypto, sur le réseau choisi dans chaque carte du
+            portefeuille.
           </p>
           <div class="row-buttons">
             <button id="refresh-history-btn" class="secondary" data-i18n="wallet.refresh">Actualiser</button>
@@ -1036,7 +1036,7 @@
           <div class="settings-section">
             <h2 class="section-title" data-i18n="settings.deviceSecurity">Sécurité de l'appareil</h2>
             <button id="reset-wallet-dashboard" class="link" data-i18n="unlock.resetWallet">
-              Réinitialiser cet appareil (supprime le coffre local)
+              Réinitialiser cet appareil (efface le portefeuille de cet ordinateur)
             </button>
           </div>
         </div>
@@ -1704,15 +1704,15 @@
         <label data-i18n="external.network">Réseau</label>
         <div class="custom-select dropdown">
           <select id="external-wallet-network">
-            <option value="evm_mainnet" data-i18n="external.netEvmMainnet">Ethereum — Mainnet</option>
+            <option value="evm_mainnet" data-i18n="external.netEvmMainnet">Ethereum</option>
             <option value="arbitrum_mainnet" data-i18n="net.arbitrum_mainnet">Arbitrum</option>
             <option value="base_mainnet" data-i18n="net.base_mainnet">Base</option>
             <option value="bsc_mainnet" data-i18n="net.bsc_mainnet">BNB Chain</option>
             <option value="avax_mainnet" data-i18n="net.avax_mainnet">Avalanche</option>
             <option value="polygon_mainnet" data-i18n="net.polygon_mainnet">Polygon</option>
-            <option value="btc_mainnet" data-i18n="external.netBtcMainnet">Bitcoin — Mainnet</option>
-            <option value="sol_mainnet" data-i18n="external.netSolMainnet">Solana — Mainnet</option>
-            <option value="usdc_solana" data-i18n="external.netUsdcSolana">USDC — Solana (Mainnet)</option>
+            <option value="btc_mainnet" data-i18n="external.netBtcMainnet">Bitcoin</option>
+            <option value="sol_mainnet" data-i18n="external.netSolMainnet">Solana</option>
+            <option value="usdc_solana" data-i18n="external.netUsdcSolana">USDC — Solana</option>
           </select>
           <button type="button" class="custom-select-trigger">
             <span class="custom-select-label"></span>
@@ -1777,17 +1777,17 @@
         <label data-i18n="ledger.network">Réseau</label>
         <div class="custom-select dropdown">
           <select id="ledger-add-network">
-            <option value="evm_mainnet" data-i18n="external.netEvmMainnet">Ethereum — Mainnet</option>
+            <option value="evm_mainnet" data-i18n="external.netEvmMainnet">Ethereum</option>
             <option value="arbitrum_mainnet" data-i18n="net.arbitrum_mainnet">Arbitrum</option>
             <option value="base_mainnet" data-i18n="net.base_mainnet">Base</option>
             <option value="bsc_mainnet" data-i18n="net.bsc_mainnet">BNB Chain</option>
             <option value="avax_mainnet" data-i18n="net.avax_mainnet">Avalanche</option>
             <option value="polygon_mainnet" data-i18n="net.polygon_mainnet">Polygon</option>
-            <option value="btc_mainnet" data-i18n="external.netBtcMainnet">Bitcoin — Mainnet</option>
-            <option value="sol_mainnet" data-i18n="external.netSolMainnet">Solana — Mainnet</option>
-            <option value="evm_sepolia" data-i18n="external.netEvmSepolia">Ethereum — Sepolia (testnet)</option>
-            <option value="btc_testnet" data-i18n="external.netBtcTestnet">Bitcoin — Testnet</option>
-            <option value="sol_devnet" data-i18n="external.netSolDevnet">Solana — Devnet</option>
+            <option value="btc_mainnet" data-i18n="external.netBtcMainnet">Bitcoin</option>
+            <option value="sol_mainnet" data-i18n="external.netSolMainnet">Solana</option>
+            <option value="evm_sepolia" data-i18n="external.netEvmSepolia">Ethereum — Sepolia (réseau de test)</option>
+            <option value="btc_testnet" data-i18n="external.netBtcTestnet">Bitcoin — réseau de test</option>
+            <option value="sol_devnet" data-i18n="external.netSolDevnet">Solana — réseau de test</option>
           </select>
           <button type="button" class="custom-select-trigger">
             <span class="custom-select-label"></span>

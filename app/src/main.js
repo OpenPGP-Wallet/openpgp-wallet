@@ -507,7 +507,7 @@ const I18N = {
     "backup.statusTodo": "À sauvegarder",
     "backup.statusDone": "✓ Sauvegardée",
     "backup.shareDownloaded": "✓ Fichier de part téléchargé",
-    "backup.privkeyDownloaded": "✓ Clé privée téléchargée",
+    "backup.privkeyDownloaded": "✓ Clé de la part téléchargée",
     "backup.progress": "Parts sauvegardées : {n}/{total} — sauvegardez-les toutes pour continuer.",
     "backup.progressDone": "✓ Les {total} parts sont sauvegardées.",
     "backup.saveAllUsb": "Tout enregistrer sur une seule clé USB",
@@ -528,25 +528,25 @@ const I18N = {
     "backup.partTitle": "Part {n} — {label}",
     "backup.partPassword": "Mot de passe de cette part :",
     "backup.downloadShare": "Télécharger le fichier de part",
-    "backup.downloadPrivkey": "Télécharger la clé privée",
+    "backup.downloadPrivkey": "Télécharger la clé de cette part",
     "unlock.title": "Portefeuille verrouillé",
     "unlock.biometricButton": "Déverrouiller avec Windows Hello",
     "unlock.orPassword": "ou",
     "unlock.passwordPlaceholder": "Votre mot de passe",
     "unlock.submit": "Déverrouiller",
     "unlock.gotoRestore": "Restaurer depuis une sauvegarde",
-    "unlock.resetWallet": "Réinitialiser cet appareil (supprime le coffre local)",
+    "unlock.resetWallet": "Réinitialiser cet appareil (efface le portefeuille de cet ordinateur)",
     "restore.title": "Restaurer depuis une sauvegarde",
     "restore.subtitle":
       "Branchez 2 de vos 3 clés USB de sauvegarde, ou fournissez 2 fichiers de part avec leur mot de passe, puis choisissez un nouveau mot de passe pour cet appareil.",
     "restore.share1": "Part n°1",
     "restore.share2": "Part n°2",
     "restore.shareFile": "Fichier de part (.asc)",
-    "restore.privkeyFile": "Fichier de clé privée (.asc)",
+    "restore.privkeyFile": "Fichier de clé de la part (.asc)",
     "restore.sharePassword": "Mot de passe de cette part",
     "restore.newPasswordLabel": "Nouveau mot de passe pour cet appareil",
     "restore.submit": "Restaurer",
-    "restore.filesRequired": "Les 4 fichiers (2 parts + 2 clés privées) sont requis.",
+    "restore.filesRequired": "Les 4 fichiers (2 parts et leurs 2 clés) sont requis.",
     "nav.wallet": "Portefeuille",
     "nav.history": "Activité",
     "coinHistory.title": "Historique {name}",
@@ -578,13 +578,13 @@ const I18N = {
     "external.addWalletTitle": "Ajouter un wallet externe",
     "external.label": "Nom (pour vous y retrouver)",
     "external.network": "Réseau",
-    "external.netEvmMainnet": "Ethereum — Mainnet",
-    "external.netEvmSepolia": "Ethereum — Sepolia (testnet)",
-    "external.netBtcMainnet": "Bitcoin — Mainnet",
-    "external.netBtcTestnet": "Bitcoin — Testnet",
-    "external.netSolMainnet": "Solana — Mainnet",
-    "external.netSolDevnet": "Solana — Devnet",
-    "external.netUsdcSolana": "USDC — Solana (Mainnet)",
+    "external.netEvmMainnet": "Ethereum",
+    "external.netEvmSepolia": "Ethereum — Sepolia (réseau de test)",
+    "external.netBtcMainnet": "Bitcoin",
+    "external.netBtcTestnet": "Bitcoin — réseau de test",
+    "external.netSolMainnet": "Solana",
+    "external.netSolDevnet": "Solana — réseau de test",
+    "external.netUsdcSolana": "USDC — Solana",
     "external.address": "Adresse",
     "external.group": "Groupe (optionnel)",
     "external.noGroup": "Aucun groupe",
@@ -652,7 +652,7 @@ const I18N = {
     "wallet.mainnet": "Réseau principal",
     "wallet.sepolia": "Sepolia (réseau de test)",
     "wallet.testnet": "Réseau de test",
-    "wallet.devnet": "Devnet",
+    "wallet.devnet": "Réseau de test",
     "wallet.refresh": "Actualiser",
     "wallet.send": "Envoyer",
     "wallet.swap": "Échanger",
@@ -728,7 +728,7 @@ const I18N = {
     "wallet.restoreProfile": "Restaurer",
     "wallet.deleteProfileForever": "Supprimer définitivement",
     "history.subtitle":
-      "Toutes vos transactions, crypto par crypto, sur le réseau actuellement sélectionné dans chaque carte du portefeuille (mainnet ou testnet).",
+      "Toutes vos transactions, crypto par crypto, sur le réseau choisi dans chaque carte du portefeuille.",
     "history.ethereum": "Ethereum",
     "history.bitcoin": "Bitcoin",
     "history.solana": "Solana",
@@ -1090,7 +1090,7 @@ const I18N = {
     "ledger.sent": "Transaction envoyée : {txid}",
     "ledger.fieldsRequired": "Le destinataire et le montant sont requis.",
     "charts.portfolioTitle": "Évolution du portefeuille",
-    "charts.portfolioScope": "Profil affiché, fonds réels (mainnet)",
+    "charts.portfolioScope": "Profil affiché, fonds réels (hors réseaux de test)",
     "charts.externalTitle": "Évolution des wallets externes",
     "charts.externalAll": "Tous les wallets externes",
     "charts.expand": "Agrandir",
@@ -1185,7 +1185,7 @@ const I18N = {
     "backup.statusTodo": "Not saved yet",
     "backup.statusDone": "✓ Saved",
     "backup.shareDownloaded": "✓ Share file downloaded",
-    "backup.privkeyDownloaded": "✓ Private key downloaded",
+    "backup.privkeyDownloaded": "✓ Share key downloaded",
     "backup.progress": "Shares saved: {n}/{total} — save them all to continue.",
     "backup.progressDone": "✓ All {total} shares are saved.",
     "backup.saveAllUsb": "Save everything on a single USB drive",
@@ -1206,25 +1206,25 @@ const I18N = {
     "backup.partTitle": "Share {n} — {label}",
     "backup.partPassword": "Password for this share:",
     "backup.downloadShare": "Download the share file",
-    "backup.downloadPrivkey": "Download the private key",
+    "backup.downloadPrivkey": "Download this share's key",
     "unlock.title": "Wallet locked",
     "unlock.biometricButton": "Unlock with Windows Hello",
     "unlock.orPassword": "or",
     "unlock.passwordPlaceholder": "Your password",
     "unlock.submit": "Unlock",
     "unlock.gotoRestore": "Restore from a backup",
-    "unlock.resetWallet": "Reset this device (deletes the local vault)",
+    "unlock.resetWallet": "Reset this device (erases the wallet from this computer)",
     "restore.title": "Restore from a backup",
     "restore.subtitle":
       "Plug in 2 of your 3 backup USB drives, or provide 2 share files with their password, then choose a new password for this device.",
     "restore.share1": "Share #1",
     "restore.share2": "Share #2",
     "restore.shareFile": "Share file (.asc)",
-    "restore.privkeyFile": "Private key file (.asc)",
+    "restore.privkeyFile": "Share key file (.asc)",
     "restore.sharePassword": "Password for this share",
     "restore.newPasswordLabel": "New password for this device",
     "restore.submit": "Restore",
-    "restore.filesRequired": "All 4 files (2 shares + 2 private keys) are required.",
+    "restore.filesRequired": "The 4 files (2 shares and their 2 keys) are required.",
     "nav.wallet": "Wallet",
     "nav.history": "Activity",
     "coinHistory.title": "{name} history",
@@ -1256,13 +1256,13 @@ const I18N = {
     "external.addWalletTitle": "Add an external wallet",
     "external.label": "Name (for your own reference)",
     "external.network": "Network",
-    "external.netEvmMainnet": "Ethereum — Mainnet",
-    "external.netEvmSepolia": "Ethereum — Sepolia (testnet)",
-    "external.netBtcMainnet": "Bitcoin — Mainnet",
-    "external.netBtcTestnet": "Bitcoin — Testnet",
-    "external.netSolMainnet": "Solana — Mainnet",
-    "external.netSolDevnet": "Solana — Devnet",
-    "external.netUsdcSolana": "USDC — Solana (Mainnet)",
+    "external.netEvmMainnet": "Ethereum",
+    "external.netEvmSepolia": "Ethereum — Sepolia (test network)",
+    "external.netBtcMainnet": "Bitcoin",
+    "external.netBtcTestnet": "Bitcoin — test network",
+    "external.netSolMainnet": "Solana",
+    "external.netSolDevnet": "Solana — test network",
+    "external.netUsdcSolana": "USDC — Solana",
     "external.address": "Address",
     "external.group": "Group (optional)",
     "external.noGroup": "No group",
@@ -1330,7 +1330,7 @@ const I18N = {
     "wallet.mainnet": "Main network",
     "wallet.sepolia": "Sepolia (test network)",
     "wallet.testnet": "Test network",
-    "wallet.devnet": "Devnet",
+    "wallet.devnet": "Test network",
     "wallet.refresh": "Refresh",
     "wallet.send": "Send",
     "wallet.swap": "Swap",
@@ -1406,7 +1406,7 @@ const I18N = {
     "wallet.restoreProfile": "Restore",
     "wallet.deleteProfileForever": "Delete permanently",
     "history.subtitle":
-      "All your transactions, crypto by crypto, on the network currently selected in each wallet card (mainnet or testnet).",
+      "All your transactions, crypto by crypto, on the network chosen in each wallet card.",
     "history.ethereum": "Ethereum",
     "history.bitcoin": "Bitcoin",
     "history.solana": "Solana",
@@ -1765,7 +1765,7 @@ const I18N = {
     "ledger.sent": "Transaction sent: {txid}",
     "ledger.fieldsRequired": "Recipient and amount are required.",
     "charts.portfolioTitle": "Wallet value over time",
-    "charts.portfolioScope": "Displayed profile, real funds (mainnet)",
+    "charts.portfolioScope": "Displayed profile, real funds (test networks excluded)",
     "charts.externalTitle": "External wallets over time",
     "charts.externalAll": "All external wallets",
     "charts.expand": "Expand",
@@ -8858,7 +8858,9 @@ function mountChart(view) {
       const button = document.createElement("button");
       button.type = "button";
       button.dataset.range = range;
-      button.textContent = t(`charts.range.${range}`);
+      // Clé gardée : relibellé au changement de langue (« 1 an » → « 1y »).
+      button.dataset.i18n = `charts.range.${range}`;
+      button.textContent = t(button.dataset.i18n);
       button.addEventListener("click", () => {
         view.range = range;
         refreshChart(view);
@@ -8878,7 +8880,11 @@ async function refreshChart(view, { poll = false } = {}) {
   const token = (view.token = (view.token || 0) + 1);
   view.rangesEl.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.range === view.range)));
   if (!poll) {
-    if (!view.chartEl.firstChild) view.chartEl.replaceChildren(mutedParagraph(t("charts.loading")));
+    if (!view.chartEl.firstChild) {
+      const loading = mutedParagraph(t("charts.loading"));
+      loading.dataset.i18n = "charts.loading";
+      view.chartEl.replaceChildren(loading);
+    }
     view.chartEl.classList.add("chart-loading");
   }
   try {
