@@ -866,6 +866,8 @@ const I18N = {
     "send.available": "Disponible : {amount}{approx}",
     "send.mainnetWarning": "⚠ Envoi définitif : une fois partie, une transaction ne peut être ni annulée ni remboursée. Vérifiez bien l'adresse.",
     "send.feeEstimate": "Frais réseau estimés",
+    "send.networkNoteBefore": "Cette crypto existe sur plusieurs réseaux : elle partira sur",
+    "send.networkNoteAfter": "Pour un dépôt sur une plateforme d'échange, vérifiez que vous y avez choisi ce même réseau.",
     "send.feeEstimateLoading": "calcul…",
     "send.feeUpTo": "jusqu'à {fee}",
     "send.toAddress": "Adresse destinataire",
@@ -1544,6 +1546,8 @@ const I18N = {
     "send.available": "Available: {amount}{approx}",
     "send.mainnetWarning": "⚠ Final transfer: once sent, a transaction can neither be cancelled nor refunded. Double-check the address.",
     "send.feeEstimate": "Estimated network fee",
+    "send.networkNoteBefore": "This crypto exists on several networks: it will leave on",
+    "send.networkNoteAfter": "For a deposit to an exchange, check you chose this same network there.",
     "send.feeEstimateLoading": "calculating…",
     "send.feeUpTo": "up to {fee}",
     "send.toAddress": "Recipient address",
@@ -5943,9 +5947,28 @@ sendConfirmBtn.addEventListener("click", () => {
   }
 
   showRecipientWarnings(to);
+  showSendNetworkNote();
   showSendFeeEstimate(to, amount);
   sendPreviewModal.classList.remove("hidden");
 });
+
+// Crypto présente sur plusieurs réseaux (ETH, USDC, USDT…) : rappel du
+// réseau de départ — un dépôt sur une plateforme d'échange par un autre
+// réseau que celui qu'elle attend est l'une des pertes les plus fréquentes.
+function showSendNetworkNote() {
+  const note = document.getElementById("send-preview-network-note");
+  const asset = ASSET_BY_COIN[sendContext.coin];
+  const network = networkForCard(sendContext.card);
+  const mainnets = asset ? asset.networks.filter((n) => !TEST_NETWORKS.includes(n)) : [];
+  if (mainnets.length < 2 || TEST_NETWORKS.includes(network)) {
+    note.classList.add("hidden");
+    return;
+  }
+  const strong = document.createElement("strong");
+  strong.textContent = EXCHANGE_NETWORK_NAMES[network] ?? t(`net.${network}`);
+  note.replaceChildren(`⚠ ${t("send.networkNoteBefore")} `, strong, `. ${t("send.networkNoteAfter")}`);
+  note.classList.remove("hidden");
+}
 
 // Frais réseau estimés dans l'aperçu, en devise et dans la monnaie du réseau
 // (la boîte de confirmation native, ensuite, montre le montant exact) :

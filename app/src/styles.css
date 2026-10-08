@@ -684,6 +684,21 @@ button.link:hover {
    presque identique à une connue, sosie d'un contact), orange (nouvelle
    adresse, jamais servi, vide), vert (un de vos profils), gris (état
    impossible à vérifier). */
+/* Crypto sur plusieurs réseaux : rappel du réseau de départ. */
+.send-network-note {
+  margin: 10px 0 4px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border-left: 3px solid var(--warning);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.send-network-note strong {
+  font-weight: 600;
+}
+
 .send-warnings {
   display: flex;
   flex-direction: column;
