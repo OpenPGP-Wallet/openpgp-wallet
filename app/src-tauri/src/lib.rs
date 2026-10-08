@@ -644,7 +644,9 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
         "reconstruction failed (insufficient or corrupted shares)",
     ),
     // core/src/wallet_flow.rs (fonctions de parsing réutilisées par la GUI)
-    ("adresse invalide (hex attendu)", "invalid address (hex expected)"),
+    (wallet_flow::EVM_ADDRESS_NOT_RECOGNIZED, "address not recognized: on this network, an address is 0x followed by 40 characters"),
+    (wallet_flow::EVM_ADDRESS_WRONG_LENGTH, "address incomplete or too long: on this network, an address is 0x followed by 40 characters"),
+    (wallet_flow::EVM_ADDRESS_MISCOPIED, "address miscopied: a character doesn't match (upper and lower case matter) — copy it again"),
     ("partie entière invalide", "invalid integer part"),
     ("partie décimale invalide", "invalid decimal part"),
     ("montant ETH trop grand (dépassement arithmétique)", "ETH amount too large (arithmetic overflow)"),
@@ -1335,9 +1337,6 @@ fn translate_dynamic_error(msg: &str) -> Option<String> {
     }
     if let Some(rest) = msg.strip_prefix("profil introuvable (index ") {
         return Some(format!("profile not found (index {rest}"));
-    }
-    if msg == "une adresse EVM fait 20 octets (40 caractères hex)" {
-        return Some("an EVM address is 20 bytes (40 hex characters)".to_string());
     }
     if let Some(rest) = msg.strip_prefix("adresse non-testnet (préfixe 'tb' attendu, trouvé '") {
         return Some(format!("non-testnet address (prefix 'tb' expected, found '{rest}"));

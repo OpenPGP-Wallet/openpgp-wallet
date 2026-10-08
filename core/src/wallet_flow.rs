@@ -321,12 +321,16 @@ fn read_menu_choice() -> Result<String> {
     prompt("Choix : ")
 }
 
+// Refus d'une adresse EVM, en clair (sans « hex » ni « octets ») ; traduits
+// par l'app.
+pub const EVM_ADDRESS_NOT_RECOGNIZED: &str = "adresse non reconnue : sur ce réseau, une adresse s'écrit 0x suivi de 40 caractères";
+pub const EVM_ADDRESS_WRONG_LENGTH: &str = "adresse incomplète ou trop longue : sur ce réseau, une adresse s'écrit 0x suivi de 40 caractères";
+pub const EVM_ADDRESS_MISCOPIED: &str = "adresse mal recopiée : un caractère ne correspond pas (majuscules et minuscules comptent) — copiez-la à nouveau";
+
 pub(crate) fn parse_evm_address(input: &str) -> Result<[u8; 20]> {
     let hex_str = input.trim().trim_start_matches("0x");
-    let bytes = hex::decode(hex_str).context("adresse invalide (hex attendu)")?;
-    let address: [u8; 20] = bytes
-        .try_into()
-        .map_err(|_| anyhow!("une adresse EVM fait 20 octets (40 caractères hex)"))?;
+    let bytes = hex::decode(hex_str).context(EVM_ADDRESS_NOT_RECOGNIZED)?;
+    let address: [u8; 20] = bytes.try_into().map_err(|_| anyhow!(EVM_ADDRESS_WRONG_LENGTH))?;
 
     // EIP-55 : une adresse en casse mixte prétend porter un checksum — on le vérifie
     // pour détecter une faute de frappe (copier-coller corrompu, caractère modifié)
@@ -339,10 +343,7 @@ pub(crate) fn parse_evm_address(input: &str) -> Result<[u8; 20]> {
         hex_str.chars().any(|c| c.is_ascii_uppercase()) && hex_str.chars().any(|c| c.is_ascii_lowercase());
     if has_mixed_case {
         let expected = derivation::format_address(&address);
-        anyhow::ensure!(
-            format!("0x{hex_str}") == expected,
-            "checksum EIP-55 invalide : vérifie l'adresse, elle semble mal recopiée"
-        );
+        anyhow::ensure!(format!("0x{hex_str}") == expected, EVM_ADDRESS_MISCOPIED);
     }
 
     Ok(address)

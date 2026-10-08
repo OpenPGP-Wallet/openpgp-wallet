@@ -866,6 +866,9 @@ const I18N = {
     "send.available": "Disponible : {amount}{approx}",
     "send.mainnetWarning": "⚠ Envoi définitif : une fois partie, une transaction ne peut être ni annulée ni remboursée. Vérifiez bien l'adresse.",
     "send.feeEstimate": "Frais réseau estimés",
+    "send.evmAddressFamily": "Ethereum ou compatible (Base, BNB Chain…)",
+    "send.addressOtherNetwork": "Cette adresse est une adresse {network}, pas {cardNetwork} : l'envoi serait refusé. Demandez au destinataire son adresse {cardNetwork}.",
+    "send.addressSwitchNetwork": "Cette adresse est une adresse {network}. Pour y envoyer des {symbol}, choisissez d'abord ce réseau dans le menu de la carte, et vérifiez que le destinataire l'attend bien.",
     "send.networkNoteBefore": "Cette crypto existe sur plusieurs réseaux : elle partira sur",
     "send.networkNoteAfter": "Pour un dépôt sur une plateforme d'échange, vérifiez que vous y avez choisi ce même réseau.",
     "send.feeEstimateLoading": "calcul…",
@@ -1546,6 +1549,9 @@ const I18N = {
     "send.available": "Available: {amount}{approx}",
     "send.mainnetWarning": "⚠ Final transfer: once sent, a transaction can neither be cancelled nor refunded. Double-check the address.",
     "send.feeEstimate": "Estimated network fee",
+    "send.evmAddressFamily": "Ethereum or compatible (Base, BNB Chain…)",
+    "send.addressOtherNetwork": "This address is for {network}, not {cardNetwork}: the send would be refused. Ask the recipient for their {cardNetwork} address.",
+    "send.addressSwitchNetwork": "This address is for {network}. To send {symbol} there, first choose that network in the card's menu, and check the recipient expects it.",
     "send.networkNoteBefore": "This crypto exists on several networks: it will leave on",
     "send.networkNoteAfter": "For a deposit to an exchange, check you chose this same network there.",
     "send.feeEstimateLoading": "calculating…",
@@ -5980,7 +5986,30 @@ async function showRecipientWarnings(to) {
 // destinataire, montant, frais) — pas encore d'appel réseau ni de secret
 // impliqué ici, juste relire ce qui est déjà dans le formulaire.
 const sendConfirmBtn = document.getElementById("send-confirm");
-sendConfirmBtn.addEventListener("click", () => {
+
+// Adresse d'un autre réseau (adresse Bitcoin sur la carte Ethereum, adresse
+// Ethereum sur la carte USDC réglée sur Solana…) : dit dès cette étape, en
+// clair, plutôt qu'en fin d'envoi. Réseaux reconnus par Rust
+// (`address_networks`, mêmes parseurs que l'envoi) ; rien n'est dit si
+// l'adresse n'est reconnue nulle part (forme rare : l'envoi tranchera), ni
+// si l'adresse du portefeuille elle-même n'est pas reconnue sur ce réseau.
+async function wrongNetworkMessage(coin, network, to) {
+  try {
+    const own = addressForCoin(coin, network);
+    const [networks, ownNetworks] = await Promise.all([invoke("address_networks", { address: to }), own ? invoke("address_networks", { address: own }) : []]);
+    if (networks.length === 0 || networks.includes(network) || !ownNetworks.includes(network)) return null;
+    const found = networks.some(isEvmNetwork) ? t("send.evmAddressFamily") : contactNetworkLabel(networks[0]);
+    const symbol = COIN_SYMBOL[coin];
+    // Même crypto proposée sur ce réseau-là par la carte : il suffit d'y passer.
+    if (ASSET_BY_COIN[coin]?.networks.some((n) => networks.includes(n))) return t("send.addressSwitchNetwork", { network: found, symbol });
+    return t("send.addressOtherNetwork", { network: found, cardNetwork: contactNetworkLabel(network) });
+  } catch (e) {
+    console.error(e);
+    return null;
+  }
+}
+
+sendConfirmBtn.addEventListener("click", withBusyButton(sendConfirmBtn, async () => {
   if (!sendContext) return;
   const errorEl = document.getElementById("send-error");
   const successEl = document.getElementById("send-success");
@@ -6007,6 +6036,13 @@ sendConfirmBtn.addEventListener("click", () => {
   const memo = sendMemo();
   if (memo !== null && !(/^[\x20-\x7e]+$/.test(memo) && memo.length <= MEMO_MAX[sendContext.coin])) {
     showError(errorEl, t("send.memoInvalid"));
+    return;
+  }
+  const context = sendContext;
+  const wrongNetwork = await wrongNetworkMessage(context.coin, networkForCard(context.card), to);
+  if (sendContext !== context) return;
+  if (wrongNetwork) {
+    showError(errorEl, wrongNetwork);
     return;
   }
 
@@ -6044,7 +6080,7 @@ sendConfirmBtn.addEventListener("click", () => {
   showSendNetworkNote();
   showSendFeeEstimate(to, amount);
   sendPreviewModal.classList.remove("hidden");
-});
+}));
 
 // Crypto présente sur plusieurs réseaux (ETH, USDC, USDT…) : rappel du
 // réseau de départ — un dépôt sur une plateforme d'échange par un autre
