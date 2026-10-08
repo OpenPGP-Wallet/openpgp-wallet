@@ -395,8 +395,13 @@ fn submit_outcome(outcome: std::result::Result<Value, RpcError>, signed: &Signed
             if let Some(failure) = status.get("Failure") {
                 bail!("transaction NEAR refusée : {}", compact(failure));
             }
-            ensure!(status.get("SuccessValue").is_some() || status.get("SuccessReceiptId").is_some(), "transaction NEAR : état inattendu");
-            ensure!(result["transaction"]["hash"].as_str() == Some(signed.hash.as_str()), "le nœud NEAR a renvoyé un autre identifiant de transaction");
+            // Acceptée mais d'état inattendu, ou sous un autre identifiant que
+            // le nôtre : peut-être exécutée — jamais présentée comme refusée,
+            // un nouvel envoi la paierait deux fois (32ᵉ passage).
+            let succeeded = status.get("SuccessValue").is_some() || status.get("SuccessReceiptId").is_some();
+            if !succeeded || result["transaction"]["hash"].as_str() != Some(signed.hash.as_str()) {
+                return Err(crate::wallet_flow::maybe_sent(&signed.hash));
+            }
             Ok(signed.hash.clone())
         }
         // Délai dépassé : la transaction peut encore être exécutée.
@@ -491,6 +496,22 @@ mod tests {
     use super::*;
 
     const SEED: &str = "5eb00bbddcf069084889a8ab9155568165f5c453ccb85e70811aaed6f6da5fc19a5ac40b389cd370d086206dec8aa6c43daea6690f20ad3d8d48b2d2ce9e38e4";
+
+    /// 32ᵉ passage : une transaction ACCEPTÉE par le nœud n'est jamais
+    /// présentée comme refusée — autre identifiant ou état inattendu :
+    /// « peut-être partie » ; seul un échec d'exécution est un refus.
+    #[test]
+    fn accepted_transactions_are_never_reported_as_refused() {
+        let signed = Signed { bytes: vec![], hash: "Hash1".into() };
+        let reply = |status: Value, hash: &str| Ok(json!({ "status": status, "transaction": { "hash": hash } }));
+        assert_eq!(submit_outcome(reply(json!({ "SuccessValue": "" }), "Hash1"), &signed, false).unwrap(), "Hash1");
+        for (status, hash) in [(json!({ "SuccessValue": "" }), "Hash2"), (json!("Started"), "Hash1"), (json!({ "Unknown": {} }), "Hash1")] {
+            let error = submit_outcome(reply(status, hash), &signed, false).unwrap_err().to_string();
+            assert!(error.contains("peut-être partie") && error.contains("Hash1"), "{error}");
+        }
+        let refused = submit_outcome(reply(json!({ "Failure": { "ActionError": {} } }), "Hash1"), &signed, false).unwrap_err().to_string();
+        assert!(refused.starts_with("transaction NEAR refusée"), "{refused}");
+    }
 
     fn key(index: u32) -> SigningKey {
         crate::derivation::derive_near_key(&hex::decode(SEED).unwrap(), index)

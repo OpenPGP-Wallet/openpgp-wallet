@@ -447,7 +447,12 @@ pub fn submit(net: &Network, signed: &Signed) -> Result<String> {
         Err(_) => bail!("serveur Stellar : réponse {status}"),
     };
     if status.is_success() {
-        ensure!(value["hash"].as_str() == Some(signed.hash.as_str()), "le serveur Stellar a renvoyé un autre identifiant de transaction");
+        // Transaction acceptée : un autre identifiant que le nôtre ne doit pas
+        // la faire passer pour refusée — un nouvel envoi la paierait deux fois
+        // (32ᵉ passage).
+        if value["hash"].as_str() != Some(signed.hash.as_str()) {
+            return Err(crate::wallet_flow::maybe_sent(&signed.hash));
+        }
         ensure!(value["successful"].as_bool() != Some(false), "transaction Stellar refusée : échouée dans le registre");
         return Ok(signed.hash.clone());
     }

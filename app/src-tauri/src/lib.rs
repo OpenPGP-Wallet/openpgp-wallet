@@ -265,7 +265,6 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("ce destinataire exige un mémo (plateforme d'échange) : renseignez-le", "this recipient requires a memo (exchange): fill it in"),
     ("XLM insuffisants : tout le solde est bloqué par la réserve du réseau", "insufficient XLM: the whole balance is locked by the network reserve"),
     ("frais du réseau Stellar anormalement élevés — envoi refusé", "abnormally high Stellar network fee — transfer refused"),
-    ("le serveur Stellar a renvoyé un autre identifiant de transaction", "the Stellar server returned another transaction ID"),
     ("transaction Stellar refusée : échouée dans le registre", "Stellar transaction refused: failed in the ledger"),
     ("frais Stellar manquants", "Stellar fee missing"),
     ("mémo : réservé aux envois Stellar et Stacks", "memo: only for Stellar and Stacks transfers"),
@@ -286,8 +285,6 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("NEAR insuffisants pour couvrir les frais du réseau", "not enough NEAR to cover the network fee"),
     ("clé d'accès NEAR illisible", "unreadable NEAR access key"),
     ("bloc NEAR illisible", "unreadable NEAR block"),
-    ("transaction NEAR : état inattendu", "NEAR transaction: unexpected status"),
-    ("le nœud NEAR a renvoyé un autre identifiant de transaction", "the NEAR node returned another transaction ID"),
     ("index NEAR injoignable", "NEAR index unreachable"),
     ("réponse de l'index NEAR illisible", "unreadable NEAR index response"),
     ("frais NEAR manquants", "NEAR fee missing"),
@@ -308,7 +305,6 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("aucun ADA envoyable sur cette adresse", "no sendable ADA on this address"),
     ("ADA insuffisants pour couvrir les frais et le minimum d'une sortie", "not enough ADA to cover the fee and the minimum of an output"),
     ("les frais Cardano ont changé depuis la confirmation — relancez l'envoi", "Cardano fees changed since the confirmation — start again"),
-    ("le service Cardano a renvoyé un autre identifiant de transaction", "the Cardano service returned another transaction ID"),
     ("frais Cardano manquants", "Cardano fee missing"),
     // Stacks (core/src/stacks.rs, core/src/api.rs)
     ("service Stacks injoignable", "Stacks service unreachable"),
@@ -324,7 +320,6 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("envoi vers votre propre adresse Stacks", "sending to your own Stacks address"),
     ("STX insuffisants pour couvrir les frais du réseau", "not enough STX to cover the network fee"),
     ("nonce Stacks illisible", "unreadable Stacks nonce"),
-    ("le service Stacks a renvoyé un autre identifiant de transaction", "the Stacks service returned another transaction ID"),
     ("frais Stacks manquants", "Stacks fee missing"),
     // MoonPay Trade (core/src/moonpay_trade.rs, core/src/api.rs, lib.rs)
     ("MoonPay Trade indisponible dans cette version de l'app", "MoonPay Trade unavailable in this version of the app"),
@@ -366,6 +361,8 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("montant trop élevé pour MoonPay Trade", "amount too large for MoonPay Trade"),
     ("mémo de dépôt MoonPay Trade non pris en charge — refus", "MoonPay Trade deposit memo not supported — refused"),
     ("réponse de MoonPay Trade illisible", "unreadable MoonPay Trade response"),
+    ("la transaction MoonPay Trade ne garantit pas le minimum affiché — refus de signer", "the MoonPay Trade transaction does not guarantee the displayed minimum — refusing to sign"),
+    ("le devis MoonPay Trade a expiré pendant la confirmation — rien n'a été envoyé, relancez l'échange", "the MoonPay Trade quote expired during the confirmation — nothing was sent, start the swap again"),
     ("crypto non échangeable via MoonPay Trade", "crypto not swappable via MoonPay Trade"),
     ("échange MoonPay Trade par le routeur : même réseau seulement", "MoonPay Trade swap through the router: same network only"),
     ("transaction MoonPay Trade incohérente — échange refusé", "inconsistent MoonPay Trade transaction — swap refused"),
@@ -392,7 +389,6 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("transaction Bittensor refusée : signature invalide (format du réseau changé ?) — rien n'a été envoyé", "Bittensor transaction refused: invalid signature (network format changed?) — nothing was sent"),
     ("transaction Bittensor refusée (nonce) : une autre transaction est peut-être en cours — réessayez dans un instant", "Bittensor transaction refused (nonce): another transaction may be in progress — try again in a moment"),
     ("envoi vers votre propre adresse Bittensor", "sending to your own Bittensor address"),
-    ("le nœud Bittensor a renvoyé un autre identifiant de transaction", "the Bittensor node returned another transaction ID"),
     ("frais Bittensor manquants", "Bittensor fee missing"),
     ("historique Bittensor indisponible dans cette version de l'app", "Bittensor history unavailable in this version of the app"),
     ("historique Bittensor momentanément indisponible (limite du service atteinte) — réessayez plus tard", "Bittensor history temporarily unavailable (service limit reached) — try again later"),
@@ -1939,6 +1935,12 @@ fn secure_confirm_details(webview: tauri::Webview, state: tauri::State<SecureCon
 #[tauri::command]
 fn secure_confirm_ready(webview: tauri::Webview, theme: String, height: f64, state: tauri::State<SecureConfirmState>, app: tauri::AppHandle) -> Result<(), String> {
     let label = webview.label().to_string();
+    // Fenêtre de confirmation en attente d'abord : aucune autre fenêtre (la
+    // principale) ne peut se faire redimensionner ou montrer par cet appel
+    // (32ᵉ passage).
+    if !state.0.lock().unwrap_or_else(|p| p.into_inner()).contains_key(&label) {
+        return Err(translate_error("fenêtre de confirmation inconnue"));
+    }
     let window = app.get_webview_window(&label).ok_or_else(|| translate_error("fenêtre de confirmation inconnue"))?;
     let height = if height.is_finite() { height.clamp(200.0, 760.0) } else { 380.0 };
     apply_window_frame(&window, &theme);
@@ -6067,6 +6069,9 @@ async fn swapkit_swap_transaction(
 // dernier recours : virement de dépôt ordinaire ; la livraison sur l'autre
 // réseau est gérée par MoonPay Trade, ce que dit la boîte de confirmation.
 
+/// Âge maximum d'un devis de dépôt MoonPay Trade au moment d'envoyer.
+const MOONPAY_DEPOSIT_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
 fn moonpay_pair(
     from_coin: &str,
     from_network: &str,
@@ -6227,6 +6232,7 @@ async fn moonpay_swap_transaction(
         let from_label = api::list_profiles(&dir).into_iter().find(|p| p.index == profile_index).map(|p| p.label).unwrap_or_else(|| format!("profil #{profile_index}"));
 
         let quote = api::moonpay_quote(&from, &to, &amount, &source, &destination).t_err()?;
+        let quoted_at = std::time::Instant::now();
         let sell_line = format!("{amount} {}", from.symbol);
         let expected_line = format!("{} {}", tokens::format_balance(quote.expected_out, to.decimals, 8), to.symbol);
         let min_line = format!("{} {}", tokens::format_balance(quote.min_out, to.decimals, 8), to.symbol);
@@ -6276,6 +6282,13 @@ async fn moonpay_swap_transaction(
                     return Err(translate_error("Échange annulé (confirmation refusée)."));
                 }
                 swap_grace_period(&app, recap())?;
+                // Durée de vie de l'adresse de dépôt inconnue (aucune échéance
+                // dans le devis) : après 10 min de confirmation, nouveau devis
+                // exigé plutôt qu'un dépôt vers une adresse peut-être plus
+                // surveillée (32ᵉ passage).
+                if quoted_at.elapsed() > MOONPAY_DEPOSIT_MAX_AGE {
+                    return Err(translate_error("le devis MoonPay Trade a expiré pendant la confirmation — rien n'a été envoyé, relancez l'échange"));
+                }
                 let tx_hash = send_deposit(prepared, from.coin, from.network, &dir, &password, address, &amount, xrp_tag, profile_index)?;
                 // Déclaration du dépôt (suivi chez MoonPay Trade) : quelques
                 // essais ; un échec n'annule rien (le dépôt est parti).
@@ -8776,7 +8789,6 @@ mod tests {
             "ce destinataire exige un mémo (plateforme d'échange) : renseignez-le",
             "XLM insuffisants : tout le solde est bloqué par la réserve du réseau",
             "frais du réseau Stellar anormalement élevés — envoi refusé",
-            "le serveur Stellar a renvoyé un autre identifiant de transaction",
             "transaction Stellar refusée : échouée dans le registre",
             "frais Stellar manquants",
             "mémo : réservé aux envois Stellar et Stacks",
@@ -8824,8 +8836,6 @@ mod tests {
             "NEAR insuffisants pour couvrir les frais du réseau",
             "clé d'accès NEAR illisible",
             "bloc NEAR illisible",
-            "transaction NEAR : état inattendu",
-            "le nœud NEAR a renvoyé un autre identifiant de transaction",
             "index NEAR injoignable",
             "réponse de l'index NEAR illisible",
             "frais NEAR manquants",
@@ -8869,7 +8879,6 @@ mod tests {
             "aucun ADA envoyable sur cette adresse",
             "ADA insuffisants pour couvrir les frais et le minimum d'une sortie",
             "les frais Cardano ont changé depuis la confirmation — relancez l'envoi",
-            "le service Cardano a renvoyé un autre identifiant de transaction",
             "frais Cardano manquants",
         ] {
             assert!(sources.iter().any(|s| s.contains(&format!("\"{message}\""))), "message absent du code : {message}");
@@ -8951,6 +8960,8 @@ mod tests {
             "montant trop élevé pour MoonPay Trade",
             "mémo de dépôt MoonPay Trade non pris en charge — refus",
             "réponse de MoonPay Trade illisible",
+            "la transaction MoonPay Trade ne garantit pas le minimum affiché — refus de signer",
+            "le devis MoonPay Trade a expiré pendant la confirmation — rien n'a été envoyé, relancez l'échange",
             "crypto non échangeable via MoonPay Trade",
             "échange MoonPay Trade par le routeur : même réseau seulement",
             "transaction MoonPay Trade incohérente — échange refusé",
@@ -9000,7 +9011,6 @@ mod tests {
             "transaction Bittensor refusée : signature invalide (format du réseau changé ?) — rien n'a été envoyé",
             "transaction Bittensor refusée (nonce) : une autre transaction est peut-être en cours — réessayez dans un instant",
             "envoi vers votre propre adresse Bittensor",
-            "le nœud Bittensor a renvoyé un autre identifiant de transaction",
             "frais Bittensor manquants",
             "historique Bittensor indisponible dans cette version de l'app",
             "historique Bittensor momentanément indisponible (limite du service atteinte) — réessayez plus tard",
@@ -9047,7 +9057,6 @@ mod tests {
             "envoi vers votre propre adresse Stacks",
             "STX insuffisants pour couvrir les frais du réseau",
             "nonce Stacks illisible",
-            "le service Stacks a renvoyé un autre identifiant de transaction",
             "frais Stacks manquants",
         ] {
             assert!(sources.iter().any(|s| s.contains(&format!("\"{message}\""))), "message absent du code : {message}");

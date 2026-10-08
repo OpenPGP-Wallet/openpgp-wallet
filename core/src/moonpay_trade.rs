@@ -158,9 +158,11 @@ pub fn tradable() -> Vec<(&'static str, &'static str)> {
     natives.chain(registry).collect()
 }
 
-/// Route au destinataire vérifiable : même réseau EVM (routeur simulé).
+/// Route au destinataire vérifiable : même réseau EVM (routeur simulé),
+/// sur un réseau dont le nœud sait simuler (pas Avalanche : `eth_simulateV1`
+/// absent, relevé le 08/10/2026 — 32ᵉ passage).
 pub fn verifiable(from: (&str, &str), to: (&str, &str)) -> bool {
-    from.1 == to.1 && is_evm(from.1)
+    from.1 == to.1 && is_evm(from.1) && crate::lifi::simulates(from.1)
 }
 
 /// MoonPay Trade relie-t-il ces deux cryptos (hors activation et hors règle
@@ -256,6 +258,13 @@ fn amount_value(value: &Value) -> Option<u128> {
     }
 }
 
+/// `value` est-il l'un des mots de 32 octets des arguments d'un appel ?
+fn contains_word(args: &[u8], value: u128) -> bool {
+    let mut word = [0u8; 32];
+    word[16..].copy_from_slice(&value.to_be_bytes());
+    args.as_chunks::<32>().0.iter().any(|chunk| *chunk == word)
+}
+
 /// Appel ERC-20 `transfer(to, amount)`.
 pub fn erc20_transfer_data(to: &[u8; 20], amount: u128) -> Vec<u8> {
     let mut data = vec![0xa9, 0x05, 0x9c, 0xbb];
@@ -326,6 +335,10 @@ pub fn parse_action(body: &Value, from: &Asset, to: &Asset, amount: u128) -> Res
         ensure!(target.eq_ignore_ascii_case(expected_router), "la transaction MoonPay Trade appelle un autre contrat que son routeur — refus de signer");
         let data = hex_data(tx["data"].as_str().unwrap_or(""))?;
         ensure!(data.len() >= 4, "devis MoonPay Trade sans appel — refus");
+        // Le minimum affiché est celui que le routeur exigera
+        // (`swapParams.amountOut`, relevé le 08/10/2026 dans de vraies
+        // transactions) : sinon, refus (32ᵉ passage).
+        ensure!(contains_word(&data[4..], min_out), "la transaction MoonPay Trade ne garantit pas le minimum affiché — refus de signer");
         let value = amount_value(&tx["value"]).context("devis MoonPay Trade illisible (valeur)")?;
         ensure!(value == if from.native { amount } else { 0 }, "la transaction MoonPay Trade enverrait un autre montant — refus de signer");
         TradeTx::Router { router: wallet_flow::parse_evm_address(expected_router)?, data, value }
@@ -527,7 +540,7 @@ mod tests {
     /// Ethereum, routeur UTB ; commission ramenée à 0,80 % (`appFees`).
     fn eth_usdc() -> Value {
         json!({
-            "tx": { "to": "0x1b6257CAE4192e62B629eFCa21771be3D759183D", "chainId": 1, "data": "0x9be111d10000000000000000000000000000000000000000000000000000000000000060", "value": "10000000000000000" },
+            "tx": { "to": "0x1b6257CAE4192e62B629eFCa21771be3D759183D", "chainId": 1, "data": "0x9be111d10000000000000000000000000000000000000000000000000000000000000060000000000000000000000000000000000000000000000000000000000180706b", "value": "10000000000000000" },
             "txId": "0x531ea920437f8fa717796865c35583f9dca4659b240ba46c5517cc226dc743d9",
             "vmId": "evm",
             "amountIn": { "chainId": 1, "address": NATIVE, "amount": "10000000000000000", "usdAmount": 25.6 },
@@ -554,6 +567,10 @@ mod tests {
         // Pas de dépôt depuis Monero, Solana, Stellar… ; pas d'échange sur un même réseau non EVM.
         assert!(!links(("xmr", "xmr_mainnet"), ("evm", "evm_mainnet")) && !links(("sol", "sol_mainnet"), ("evm", "evm_mainnet")));
         assert!(!links(("sol", "sol_mainnet"), ("usdc", "sol_mainnet")));
+        // Avalanche : nœud sans simulation, routeur invérifiable — pas d'échange
+        // sur ce réseau ; dépôt possible vers un autre.
+        assert!(!verifiable(("avax", "avax_mainnet"), ("usdc", "avax_mainnet")) && !links(("avax", "avax_mainnet"), ("usdt", "avax_mainnet")));
+        assert!(links(("avax", "avax_mainnet"), ("xmr", "xmr_mainnet")));
         assert!(tradable().contains(&("xmr", "xmr_mainnet")) && tradable().contains(&("link", "evm_mainnet")));
     }
 
@@ -587,6 +604,8 @@ mod tests {
         // Frais comptés dans une autre crypto : bornés d'après les dollars du devis.
         assert!(refused(&|b| b["applicationFee"] = json!({ "chainId": 1, "address": USDC, "amount": "260000", "usdAmount": 0.26 })).contains("commission"));
         assert!(refused(&|b| b["executionsType"] = json!("GASLESS")).contains("forme"));
+        // Le routeur doit exiger le minimum affiché.
+        assert!(refused(&|b| b["amountOutMin"]["amount"] = json!("25000000")).contains("minimum affiché"));
         assert!(refused(&|b| b["tx"]["chainId"] = json!(42161)).contains("forme"));
     }
 

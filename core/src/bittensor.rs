@@ -577,8 +577,12 @@ pub fn send(pair: &Keypair, plan: &TaoPlan) -> Result<String> {
     let hash = format!("0x{}", hex::encode(blake2_256(&extrinsic)));
     match rpc("author_submitExtrinsic", json!([format!("0x{}", hex::encode(&extrinsic))])) {
         Ok(returned) => {
-            // Le nœud renvoie l'empreinte de ce qu'il a reçu : la même.
-            ensure!(returned.as_str().is_some_and(|r| r.eq_ignore_ascii_case(&hash)), "le nœud Bittensor a renvoyé un autre identifiant de transaction");
+            // Le nœud renvoie l'empreinte de ce qu'il a reçu : la même. Sinon,
+            // transaction quand même acceptée : « peut-être partie », jamais
+            // « refusée » — un nouvel envoi la paierait deux fois (32ᵉ passage).
+            if !returned.as_str().is_some_and(|r| r.eq_ignore_ascii_case(&hash)) {
+                return Err(crate::wallet_flow::maybe_sent(&hash));
+            }
             Ok(hash)
         }
         Err(e) => {

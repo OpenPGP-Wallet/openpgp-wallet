@@ -314,7 +314,12 @@ pub fn submit(net: &Network, signed: &Signed) -> Result<String> {
     }
     if status.is_success() {
         let returned = text.trim().trim_matches('"').trim_start_matches("0x").to_ascii_lowercase();
-        ensure!(returned == signed.txid, "le service Stacks a renvoyé un autre identifiant de transaction");
+        // Transaction acceptée : un autre identifiant que le nôtre ne doit pas
+        // la faire passer pour refusée — un nouvel envoi la paierait deux fois
+        // (32ᵉ passage).
+        if returned != signed.txid {
+            return Err(crate::wallet_flow::maybe_sent(&signed.txid));
+        }
         return Ok(signed.txid.clone());
     }
     let reason = serde_json::from_str::<Value>(&text).ok().and_then(|v| v["reason"].as_str().map(str::to_string)).unwrap_or(text);

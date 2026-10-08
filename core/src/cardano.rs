@@ -629,7 +629,11 @@ fn submit_full(signed: &Signed) -> Result<std::result::Result<String, String>> {
     if !status.is_success() {
         return Ok(Err(text));
     }
-    ensure!(text.trim().trim_matches('"') == signed.hash, "le service Cardano a renvoyé un autre identifiant de transaction");
+    // Transaction acceptée : un autre identifiant que le nôtre ne doit pas la faire
+    // passer pour refusée — un nouvel envoi la paierait deux fois (32ᵉ passage).
+    if text.trim().trim_matches('"') != signed.hash {
+        return Err(crate::wallet_flow::maybe_sent(&signed.hash));
+    }
     Ok(Ok(signed.hash.clone()))
 }
 
