@@ -34,6 +34,9 @@
     --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
   }
 
+  /* Passage en fondu entre les pages du site (navigateurs qui le prennent en charge). */
+  @view-transition { navigation: auto; }
+
   * { box-sizing: border-box; }
   html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
   body {
@@ -87,6 +90,13 @@
   .btn-sm { height: 40px; padding: 0 16px; font-size: 15px; border-radius: 10px; }
   .lang-switch { height: 40px; padding: 0 14px; display: inline-flex; align-items: center; border: 1px solid var(--line-2); border-radius: 10px; color: var(--muted); font-weight: 600; font-size: 14px; letter-spacing: 0.04em; transition: color 0.2s, border-color 0.2s; }
   .lang-switch:hover { color: var(--text); border-color: #3d4450; }
+  .frost-link {
+    height: 40px; padding: 0 16px; display: inline-flex; align-items: center; border-radius: 10px;
+    font-family: var(--font-display); font-weight: 700; font-size: 14px; letter-spacing: 0.18em;
+    color: var(--text); background: var(--accent-soft); border: 1px solid rgba(124, 147, 255, 0.45);
+    transition: background 0.2s, color 0.2s, border-color 0.2s;
+  }
+  .frost-link:hover { background: var(--accent); border-color: var(--accent); color: #060708; }
   .icon-btn { width: 40px; height: 40px; display: inline-grid; place-items: center; border: 1px solid var(--line-2); border-radius: 10px; color: var(--muted); transition: color 0.2s, border-color 0.2s; flex-shrink: 0; }
   .icon-btn:hover { color: var(--text); border-color: #3d4450; }
 
@@ -301,6 +311,7 @@
     .eyebrow { flex-wrap: wrap; font-size: 12px; letter-spacing: 0.1em; gap: 8px; }
     .lock-status { max-width: 100%; padding: 8px 14px; font-size: 13px; }
     .lang-switch { display: inline-flex; height: 36px; padding: 0 12px; }
+    .frost-link { height: 36px; padding: 0 12px; }
     html, body { overflow-x: hidden; }
   }
 
@@ -332,6 +343,7 @@
   <div class="nav-actions">
     <span class="badge-private">IN DEVELOPMENT<span class="badge-extra"> · PROOF OF CONCEPT</span></span>
     <a class="lang-switch" href="index.html" hreflang="fr" lang="fr" aria-label="Version française">FR</a>
+    <a class="frost-link" href="frost-en.html">FROST</a>
   </div>
 </header>
 
