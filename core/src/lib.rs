@@ -23,6 +23,7 @@ pub mod history;
 pub mod wallet_flow;
 pub mod api;
 pub mod messaging;
+pub mod custom_networks;
 pub mod external_wallets;
 pub mod address_book;
 pub mod sent_recipients;

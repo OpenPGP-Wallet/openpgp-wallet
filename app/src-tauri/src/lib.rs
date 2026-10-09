@@ -548,6 +548,13 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ),
     (pgp_wallet_poc::derivation::BTC_ADDRESS_MISCOPIED, "Bitcoin address not recognized: a character seems miscopied"),
     (pgp_wallet_poc::derivation::BTC_ADDRESS_OTHER_NETWORK, "address from another network than Bitcoin"),
+    // Réseaux ajoutés par l'utilisateur (core/src/custom_networks.rs)
+    ("nom du réseau : 1 à 30 caractères (lettres, chiffres, espaces, - _ . ( ))", "network name: 1 to 30 characters (letters, digits, spaces, - _ . ( ))"),
+    ("symbole : 1 à 10 lettres ou chiffres (ex. ETH)", "symbol: 1 to 10 letters or digits (e.g. ETH)"),
+    ("identifiant de chaîne invalide", "invalid chain ID"),
+    ("enregistrement des réseaux ajoutés", "could not save the added networks"),
+    ("20 réseaux ajoutés au plus", "20 added networks at most"),
+    ("historique indisponible : aucun explorateur indiqué pour ce réseau ajouté", "history unavailable: no explorer given for this added network"),
     (
         "adresse Bitcoin mal formée (version SegWit, encodage ou longueur incohérents)",
         "malformed Bitcoin address (inconsistent SegWit version, encoding or length)",
@@ -852,12 +859,48 @@ const LEDGER_PREFIX_TRANSLATIONS: &[(&str, &str)] = &[
 /// Messages avec une valeur interpolée (index, méthode RPC, montant...) : la
 /// correspondance exacte ne peut pas fonctionner, donc reconstruction par
 /// découpage autour de la partie fixe du message.
+/// Refus d'ajout d'un réseau (core/src/custom_networks.rs) avec une valeur.
+fn translate_custom_network_error(msg: &str) -> Option<String> {
+    let chain = |s: &str| s.replace("identifiant de chaîne", "chain ID").replace(" au lieu de ", " instead of ");
+    let url_reason = |reason: &str| match reason {
+        "https://… attendu" => Some("https://… expected"),
+        "hôte manquant" => Some("missing host"),
+        "identifiants dans l'adresse refusés" => Some("credentials in the address refused"),
+        "« # » refusé" => Some("« # » refused"),
+        "« ? » refusé" => Some("« ? » refused"),
+        "https:// obligatoire (http:// seulement pour un nœud local)" => Some("https:// required (http:// only for a local node)"),
+        _ => None,
+    };
+    if let Some(reason) = msg.strip_prefix("adresse du RPC : ") {
+        return url_reason(reason).map(|en| format!("RPC address: {en}"));
+    }
+    if let Some(reason) = msg.strip_prefix("adresse de l'explorateur : ") {
+        return url_reason(reason).map(|en| format!("explorer address: {en}"));
+    }
+    if let Some(rest) = msg.strip_prefix("ce réseau est déjà dans l'app (") {
+        return Some(format!("this network is already in the app ({}", chain(rest)));
+    }
+    if let Some(rest) = msg.strip_prefix("réseau déjà ajouté (") {
+        return Some(format!("network already added ({}", chain(rest)));
+    }
+    if let Some(rest) = msg.strip_prefix("réseau ajouté introuvable (") {
+        return Some(format!("added network not found ({}", chain(rest)));
+    }
+    if let Some(rest) = msg.strip_prefix("ce RPC répond pour un autre réseau (") {
+        return Some(format!("this RPC answers for another network ({}", chain(rest)));
+    }
+    msg.strip_prefix("RPC injoignable ou invalide : ").map(|rest| format!("RPC unreachable or invalid: {rest}"))
+}
+
 fn translate_dynamic_error(msg: &str) -> Option<String> {
     if let Some(amount) = msg.strip_prefix("ADA insuffisants : il faut au moins ").and_then(|r| r.strip_suffix(" ADA (dépôt et frais du réseau compris)")) {
         return Some(format!("not enough ADA: at least {amount} ADA needed (deposit and network fee included)"));
     }
     if let Some(amount) = msg.strip_prefix(api::BTC_DUST_PREFIX).and_then(|r| r.strip_suffix(" BTC vers cette adresse")) {
         return Some(format!("amount too small for the Bitcoin network: at least {amount} BTC to this address"));
+    }
+    if let Some(en) = translate_custom_network_error(msg) {
+        return Some(en);
     }
     use pgp_wallet_poc::wallet_flow::{MAYBE_SENT_PREFIX, MAYBE_SENT_SUFFIX};
     if let Some(id) = msg.strip_prefix(MAYBE_SENT_PREFIX).and_then(|rest| rest.strip_suffix(MAYBE_SENT_SUFFIX)) {
@@ -1721,7 +1764,14 @@ fn external_link_allowed(url: &str) -> bool {
         let rest = n.explorer_tx_prefix.strip_prefix("https://")?;
         Some(&n.explorer_tx_prefix[..8 + rest.find('/')? + 1])
     });
-    ALLOWED_EXTERNAL_LINK_PREFIXES.into_iter().chain(evm_origins).any(|prefix| url.starts_with(prefix))
+    let custom_origins: Vec<&str> = pgp_wallet_poc::custom_networks::explorer_origins()
+        .into_iter()
+        .filter_map(|prefix| {
+            let rest = prefix.strip_prefix("https://")?;
+            Some(&prefix[..8 + rest.find('/')? + 1])
+        })
+        .collect();
+    ALLOWED_EXTERNAL_LINK_PREFIXES.into_iter().chain(evm_origins).chain(custom_origins).any(|prefix| url.starts_with(prefix))
 }
 
 /// Ouvre un lien externe (explorateur de blocs) dans le navigateur système : un
@@ -3076,8 +3126,12 @@ async fn get_tx_history(network: String, address: String, app: tauri::AppHandle)
         n if is_evm(n) => {
             let net = evm_network(&network)?;
             api::validate_evm_recipient(&address).t_err()?;
-            // Valeur en dollars : la monnaie du réseau (fonds réels seulement).
-            let asset = if net.mainnet { price_history::price_asset(net.native_symbol) } else { None };
+            if net.custom && net.explorer_tx_prefix.is_empty() {
+                return Err(translate_error("historique indisponible : aucun explorateur indiqué pour ce réseau ajouté"));
+            }
+            // Valeur en dollars : la monnaie du réseau (fonds réels seulement ;
+            // jamais pour un réseau ajouté, dont le symbole ne dit rien de la valeur).
+            let asset = if net.mainnet && !net.custom { price_history::price_asset(net.native_symbol) } else { None };
             HistoryDto::evm(net, net.explorer_address_url(&address, None), || {
                 history_dtos(
                     || history::evm_history(net.chain_id, &address, HISTORY_LIMIT as usize),
@@ -3449,6 +3503,7 @@ fn network_label(network: &str) -> String {
         "xmr_mainnet" => lang("Monero — fonds réels", "Monero — real funds").to_string(),
         "zec_shielded" => lang("Zcash — fonds protégés", "Zcash — shielded funds").to_string(),
         other => match wallet_flow::evm_network(other) {
+            Some(net) if net.custom => format!("{} — {}", net.name, lang("réseau ajouté par vous", "network added by you")),
             Some(net) if net.mainnet => format!("{} — {}", net.name, lang("fonds réels", "real funds")),
             Some(net) => format!("{} (testnet)", net.name),
             None => other.to_string(),
@@ -3650,6 +3705,18 @@ struct RecipientWarning {
 /// lignes dans la boîte native et dans l'aperçu de l'interface.
 fn recipient_warning_list(app: &tauri::AppHandle, dir: &std::path::Path, network: &str, coin: &str, to: &str, activity: Option<api::RecipientActivity>) -> Vec<RecipientWarning> {
     let mut list = Vec::new();
+    // Réseau ajouté par l'utilisateur : son RPC choisit ce qu'il annonce.
+    let custom = wallet_flow::evm_network(network).is_some_and(|n| n.custom);
+    if custom {
+        list.push(RecipientWarning {
+            level: "warning",
+            text: lang(
+                "Réseau ajouté par vous : l'app ne peut vérifier ni ce réseau ni les soldes et frais annoncés par son RPC.",
+                "Network added by you: the app cannot verify this network, nor the balances and fees reported by its RPC.",
+            )
+            .to_string(),
+        });
+    }
     // Presque identique à une adresse connue : plus précis que le sosie du
     // carnet (début et fin seulement), qui n'est alors pas répété.
     if let Some(text) = near_miss_warning(app, dir, to).or_else(|| lookalike_warning(dir, to)) {
@@ -3660,6 +3727,8 @@ fn recipient_warning_list(app: &tauri::AppHandle, dir: &std::path::Path, network
         None => {
             let first_send = !sent_recipients::has_sent_to(dir, network, to);
             let unverified = activity.is_none();
+            // Réseau ajouté : « aucun fonds », pas « aucun ETH ».
+            let coin = if custom { "custom" } else { coin };
             for (i, text) in recipient_warning_lines(first_send, coin, activity).into_iter().enumerate() {
                 let level = if unverified && !(first_send && i == 0) { "info" } else { "warning" };
                 list.push(RecipientWarning { level, text });
@@ -6145,7 +6214,13 @@ fn sent_tx_explorer_url(network: &str, tx: &str) -> Option<String> {
         return None;
     }
     Some(match network {
-        n if is_evm(n) => format!("{}{id}", wallet_flow::evm_network(n)?.explorer_tx_prefix),
+        n if is_evm(n) => {
+            let prefix = wallet_flow::evm_network(n)?.explorer_tx_prefix;
+            if prefix.is_empty() {
+                return None;
+            }
+            format!("{prefix}{id}")
+        }
         "btc_mainnet" | "btc_testnet" => format!("{}{id}", btc_network(network).ok()?.explorer_tx_prefix),
         "sol_mainnet" | "sol_devnet" => {
             let net = sol_network(network).ok()?;
@@ -6182,6 +6257,9 @@ struct FeeEstimateDto {
 
 /// Carte de l'interface de la monnaie d'un réseau EVM.
 fn evm_native_coin(network: &wallet_flow::EvmNetwork) -> &'static str {
+    if network.custom {
+        return network.id;
+    }
     match network.native_symbol {
         "BNB" => "bnb",
         "AVAX" => "avax",
@@ -7730,6 +7808,47 @@ async fn xmr_status(profile_index: u32, app: tauri::AppHandle) -> Result<MoneroS
     .await
 }
 
+/// Réseau compatible Ethereum ajouté par l'utilisateur (Paramètres, « RPC
+/// personnalisé »), tel que l'interface l'affiche : une carte par réseau.
+#[derive(Serialize)]
+struct CustomNetworkDto {
+    id: String,
+    chain_id: u64,
+    name: String,
+    rpc: String,
+    symbol: String,
+    explorer: Option<String>,
+}
+
+impl From<pgp_wallet_poc::custom_networks::CustomNetwork> for CustomNetworkDto {
+    fn from(n: pgp_wallet_poc::custom_networks::CustomNetwork) -> Self {
+        Self { id: n.id(), chain_id: n.chain_id, name: n.name, rpc: n.rpc, symbol: n.symbol, explorer: n.explorer }
+    }
+}
+
+#[tauri::command]
+fn list_custom_networks(app: tauri::AppHandle) -> Result<Vec<CustomNetworkDto>, String> {
+    Ok(pgp_wallet_poc::custom_networks::list(&data_dir(&app)?).into_iter().map(Into::into).collect())
+}
+
+/// Ajoute un réseau : contrôles, puis identifiant de chaîne vérifié auprès du
+/// RPC (appel réseau, hors du fil principal).
+#[tauri::command]
+async fn add_custom_network(chain_id: u64, name: String, rpc: String, symbol: String, explorer: Option<String>, app: tauri::AppHandle) -> Result<CustomNetworkDto, String> {
+    run_blocking(move || {
+        let dir = data_dir(&app)?;
+        pgp_wallet_poc::custom_networks::add(&dir, chain_id, &name, &rpc, &symbol, explorer.as_deref()).t_err().map(Into::into)
+    })
+    .await
+}
+
+/// Retire un réseau ajouté : sa carte disparaît, les fonds restent sur la
+/// chaîne (le réajouter les fait revenir).
+#[tauri::command]
+fn remove_custom_network(chain_id: u64, app: tauri::AppHandle) -> Result<(), String> {
+    pgp_wallet_poc::custom_networks::remove(&data_dir(&app)?, chain_id).t_err()
+}
+
 /// Nœud Monero choisi dans Paramètres (`None` : nœuds publics par défaut).
 #[tauri::command]
 fn xmr_node(app: tauri::AppHandle) -> Result<Option<String>, String> {
@@ -8447,6 +8566,8 @@ pub fn run() {
             if let Ok(dir) = app.path().app_data_dir() {
                 let _ = std::fs::create_dir_all(&dir);
                 install_panic_hook(dir.clone());
+                // Réseaux compatibles Ethereum ajoutés par l'utilisateur.
+                pgp_wallet_poc::custom_networks::load(&dir);
                 // Détails des transactions Solana finalisées déjà lus (données publiques) :
                 // le nœud public n'en accorde qu'environ un par seconde.
                 pgp_wallet_poc::sol_rpc::use_details_cache_file(dir.join("solana_tx_cache.jsonl"));
@@ -8490,6 +8611,9 @@ pub fn run() {
             lock_session,
             xmr_node,
             set_xmr_node,
+            list_custom_networks,
+            add_custom_network,
+            remove_custom_network,
             zec_shield,
             zec_send_shielded,
             unlock_wallet,
@@ -8852,6 +8976,57 @@ mod tests {
         for fr in ["la transaction LI.FI envoie plus que le montant affiché — refusé", "adresse de dépôt Maya invalide", "PSBT LI.FI illisible"] {
             assert!(EXACT_ERROR_TRANSLATIONS.iter().any(|(text, _)| *text == fr), "{fr}");
         }
+    }
+
+    /// Réseau ajouté par l'utilisateur : refus traduits (messages réels du
+    /// module), libellé « réseau ajouté par vous » dans la boîte, carte de
+    /// sa monnaie à lui (jamais celle de l'ETH, donc pas de cours), lien
+    /// « Suivre la transaction » seulement avec un explorateur.
+    #[test]
+    fn custom_networks_are_labelled_and_their_errors_translated() {
+        use pgp_wallet_poc::custom_networks::validate;
+        let refusals = [
+            validate(10, "", "https://a.example.com", "ETH", None),
+            validate(10, "OP", "https://a.example.com", "E TH", None),
+            validate(0, "OP", "https://a.example.com", "ETH", None),
+            validate(1, "OP", "https://a.example.com", "ETH", None),
+            validate(10, "OP", "http://a.example.com", "ETH", None),
+            validate(10, "OP", "https://u:p@a.example.com", "ETH", None),
+            validate(10, "OP", "https://a.example.com/#x", "ETH", None),
+            validate(10, "OP", "https://a.example.com", "ETH", Some("https://b.example.com/?q=1")),
+            validate(10, "OP", "pas une adresse", "ETH", None),
+        ];
+        for refusal in refusals {
+            let fr = refusal.unwrap_err().to_string();
+            let translated = EXACT_ERROR_TRANSLATIONS.iter().any(|(text, _)| *text == fr) || translate_dynamic_error(&fr).is_some();
+            assert!(translated, "{fr}");
+        }
+        assert_eq!(
+            translate_dynamic_error("ce RPC répond pour un autre réseau (identifiant de chaîne 8453 au lieu de 10)").unwrap(),
+            "this RPC answers for another network (chain ID 8453 instead of 10)"
+        );
+        assert_eq!(translate_dynamic_error("ce réseau est déjà dans l'app (Ethereum, identifiant de chaîne 1)").unwrap(), "this network is already in the app (Ethereum, chain ID 1)");
+
+        let dir = std::env::temp_dir().join(format!("pgp_wallet_app_custom_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("custom_networks.json"),
+            r#"{"networks":[{"chain_id":888001,"name":"Chaîne A","rpc":"https://a.example.com/","symbol":"ETH","explorer":null},{"chain_id":888002,"name":"Chaîne B","rpc":"https://b.example.com/","symbol":"BBB","explorer":"https://scan.b.example.com"}]}"#,
+        )
+        .unwrap();
+        pgp_wallet_poc::custom_networks::load(&dir);
+        let a = wallet_flow::evm_network("custom_888001_mainnet").unwrap();
+        assert!(network_label("custom_888001_mainnet").contains("Chaîne A"));
+        assert!(network_label("custom_888001_mainnet").contains(lang("réseau ajouté par vous", "network added by you")));
+        assert_eq!(evm_native_coin(a), "custom_888001_mainnet", "symbole ETH : pas la carte (ni le cours) de l'ETH");
+        assert_eq!(sent_tx_explorer_url("custom_888001_mainnet", "0xabc"), None, "sans explorateur");
+        assert_eq!(sent_tx_explorer_url("custom_888002_mainnet", "0xabc").as_deref(), Some("https://scan.b.example.com/tx/0xabc"));
+        assert!(external_link_allowed("https://scan.b.example.com/tx/0xabc"));
+        assert!(!external_link_allowed("https://scan.evil.example.com/tx/0xabc"));
+        pgp_wallet_poc::custom_networks::remove(&dir, 888001).unwrap();
+        pgp_wallet_poc::custom_networks::remove(&dir, 888002).unwrap();
+        assert!(!external_link_allowed("https://scan.b.example.com/tx/0xabc"), "réseau retiré : lien refusé");
     }
 
     /// Messages d'erreur Tron et SwapKit : présents dans le code, traduits.

@@ -317,6 +317,7 @@ label {
 
 input[type="password"],
 input[type="text"],
+input[type="url"],
 input[type="file"],
 select {
   width: 100%;
@@ -331,6 +332,7 @@ select {
 
 input[type="password"]:hover,
 input[type="text"]:hover,
+input[type="url"]:hover,
 select:hover,
 textarea:hover {
   border-color: var(--border-strong);
@@ -1700,6 +1702,72 @@ textarea:focus {
   height: 30px;
   object-fit: contain;
   flex-shrink: 0;
+}
+
+/* Crypto sans logo (réseau ajouté) : initiale de son symbole. */
+.coin-icon-letter {
+  display: inline-grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-weight: 700;
+  font-size: 0.85rem;
+  line-height: 1;
+}
+
+.coin-icon-inline.coin-icon-letter {
+  font-size: 0.62rem;
+}
+
+/* Paramètres : réseaux ajoutés. */
+.custom-networks-list {
+  list-style: none;
+  margin: 12px 0 16px;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.custom-networks-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.custom-networks-list li > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.custom-networks-list li button {
+  width: auto;
+  flex: none;
+  margin: 0;
+}
+
+.custom-networks-list li .muted {
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+/* Bouton sous un champ d'adresse (réseau ajouté, nœud Monero). */
+#custom-network-add,
+#xmr-node-save {
+  margin-top: 12px;
+}
+
+.custom-network-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
 }
 
 /* Ce PNG a beaucoup de marge transparente autour du symbole (contrairement aux

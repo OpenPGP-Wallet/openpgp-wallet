@@ -88,6 +88,10 @@ pub struct EvmNetwork {
     /// Source de l'historique des transactions ; `None` : aucune source,
     /// l'app renvoie alors vers l'explorateur du réseau.
     pub history: Option<EvmHistory>,
+    /// Réseau ajouté par l'utilisateur (RPC personnalisé, voir
+    /// `custom_networks`) : jamais de cours en dollars (son symbole ne dit
+    /// rien de sa valeur), signalé dans la boîte de confirmation.
+    pub custom: bool,
 }
 
 /// Source de l'historique d'une adresse EVM (sans clé, sauf NodeReal).
@@ -131,6 +135,7 @@ pub const SEPOLIA: EvmNetwork = EvmNetwork {
     transfer_gas: Some(21_000),
     op_stack_l1_fee: false,
     history: Some(EvmHistory::Blockscout("https://eth-sepolia.blockscout.com")),
+    custom: false,
 };
 
 pub const ETHEREUM_MAINNET: EvmNetwork = EvmNetwork {
@@ -151,6 +156,7 @@ pub const ETHEREUM_MAINNET: EvmNetwork = EvmNetwork {
     transfer_gas: Some(21_000),
     op_stack_l1_fee: false,
     history: Some(EvmHistory::Blockscout("https://eth.blockscout.com")),
+    custom: false,
 };
 
 pub const ARBITRUM_MAINNET: EvmNetwork = EvmNetwork {
@@ -166,6 +172,7 @@ pub const ARBITRUM_MAINNET: EvmNetwork = EvmNetwork {
     transfer_gas: None,
     op_stack_l1_fee: false,
     history: Some(EvmHistory::Blockscout("https://arbitrum.blockscout.com")),
+    custom: false,
 };
 
 pub const BASE_MAINNET: EvmNetwork = EvmNetwork {
@@ -181,6 +188,7 @@ pub const BASE_MAINNET: EvmNetwork = EvmNetwork {
     transfer_gas: Some(21_000),
     op_stack_l1_fee: true,
     history: Some(EvmHistory::Blockscout("https://base.blockscout.com")),
+    custom: false,
 };
 
 pub const BSC_MAINNET: EvmNetwork = EvmNetwork {
@@ -196,6 +204,7 @@ pub const BSC_MAINNET: EvmNetwork = EvmNetwork {
     transfer_gas: Some(21_000),
     op_stack_l1_fee: false,
     history: Some(EvmHistory::NodeReal),
+    custom: false,
 };
 
 pub const AVALANCHE_MAINNET: EvmNetwork = EvmNetwork {
@@ -211,6 +220,7 @@ pub const AVALANCHE_MAINNET: EvmNetwork = EvmNetwork {
     transfer_gas: Some(21_000),
     op_stack_l1_fee: false,
     history: Some(EvmHistory::Routescan),
+    custom: false,
 };
 
 pub const POLYGON_MAINNET: EvmNetwork = EvmNetwork {
@@ -227,6 +237,7 @@ pub const POLYGON_MAINNET: EvmNetwork = EvmNetwork {
     transfer_gas: Some(21_000),
     op_stack_l1_fee: false,
     history: Some(EvmHistory::Blockscout("https://polygon.blockscout.com")),
+    custom: false,
 };
 
 /// Tous les réseaux EVM connus de l'app.
@@ -241,8 +252,9 @@ pub const EVM_NETWORKS: &[&EvmNetwork] = &[
 ];
 
 /// Réseau EVM par son identifiant ("evm_mainnet", "bsc_mainnet"…).
+/// Réseau EVM de l'app, ou ajouté par l'utilisateur (`custom_networks`).
 pub fn evm_network(id: &str) -> Option<&'static EvmNetwork> {
-    EVM_NETWORKS.iter().copied().find(|n| n.id == id)
+    EVM_NETWORKS.iter().copied().find(|n| n.id == id).or_else(|| crate::custom_networks::find(id))
 }
 
 /// Paramètres réseau Bitcoin, même logique que EvmNetwork/SolNetwork — sauf que

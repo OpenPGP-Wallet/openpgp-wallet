@@ -1623,9 +1623,12 @@ pub fn evm_fee_for_confirmation(network: &wallet_flow::EvmNetwork, from: &[u8; 2
         (Some(fixed), true) => fixed,
         _ => {
             // Estimation refusée faute de fonds : message clair plutôt que l'erreur
-            // brute du nœud (constaté sur Arbitrum avec un solde nul).
+            // brute du nœud, qui dépend de son logiciel (« insufficient funds »
+            // sur Arbitrum, « EVM error: OutOfFunds » sur OP Mainnet, constatés
+            // avec un solde nul).
             let estimated = rpc.estimate_gas(&derivation::format_address(from), &derivation::format_address(to), value, data).map_err(|e| {
-                if format!("{e:#}").contains("insufficient funds") {
+                let text = format!("{e:#}");
+                if text.contains("insufficient funds") || text.contains("OutOfFunds") {
                     anyhow::anyhow!("fonds insuffisants pour ce montant et les frais du réseau")
                 } else {
                     e

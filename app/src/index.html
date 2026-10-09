@@ -1005,6 +1005,36 @@
             <p id="affiliate-names-success" class="success hidden"></p>
           </div>
 
+          <div class="settings-section" id="custom-networks-section">
+            <h2 class="section-title" data-i18n="settings.customNetworksTitle">Réseaux ajoutés (RPC personnalisé)</h2>
+            <p class="muted" data-i18n="settings.customNetworksHint">
+              Ajoutez un réseau compatible Ethereum absent de l'app (Optimism, Linea…) : il utilise la même
+              adresse que vos ETH. N'indiquez qu'un RPC de confiance : l'app ne peut pas vérifier les soldes et
+              les frais qu'il annonce. Pas de valeur en dollars ni d'échange sur ces réseaux. Retirer un réseau ne
+              touche pas aux fonds, qui restent sur la chaîne.
+            </p>
+            <ul id="custom-networks-list" class="custom-networks-list hidden"></ul>
+            <label for="custom-network-name" data-i18n="settings.customNetworkName">Nom du réseau</label>
+            <input id="custom-network-name" type="text" maxlength="30" autocomplete="off" spellcheck="false" placeholder="OP Mainnet" />
+            <label for="custom-network-rpc" data-i18n="settings.customNetworkRpc">Adresse du RPC</label>
+            <input id="custom-network-rpc" type="url" autocomplete="off" spellcheck="false" placeholder="https://" />
+            <div class="custom-network-row">
+              <div>
+                <label for="custom-network-chain" data-i18n="settings.customNetworkChain">Identifiant de chaîne (chain ID)</label>
+                <input id="custom-network-chain" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" placeholder="10" />
+              </div>
+              <div>
+                <label for="custom-network-symbol" data-i18n="settings.customNetworkSymbol">Symbole de la monnaie</label>
+                <input id="custom-network-symbol" type="text" maxlength="10" autocomplete="off" spellcheck="false" placeholder="ETH" />
+              </div>
+            </div>
+            <label for="custom-network-explorer" data-i18n="settings.customNetworkExplorer">Explorateur de blocs (facultatif)</label>
+            <input id="custom-network-explorer" type="url" autocomplete="off" spellcheck="false" placeholder="https://" />
+            <p id="custom-network-error" class="error hidden"></p>
+            <p id="custom-network-success" class="success hidden"></p>
+            <button id="custom-network-add" class="secondary" data-i18n="settings.customNetworkAdd">Ajouter ce réseau</button>
+          </div>
+
           <div class="settings-section">
             <h2 class="section-title" data-i18n="settings.xmrNodeTitle">Nœud Monero</h2>
             <p class="muted" data-i18n="settings.xmrNodeHint">

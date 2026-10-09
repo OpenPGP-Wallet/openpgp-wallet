@@ -55,6 +55,20 @@ const ASSETS = [
   { coin: "steth", name: "Lido Staked ETH", symbol: "stETH", token: true, icon: "/assets/steth.png", gecko: "staked-ether", decimals: 6, unitDecimals: 18, chart: "STETH", networks: ["evm_mainnet"], contracts: { evm_mainnet: "0xae7ab96520de3a18e5e111b5eaab095312d7fe84" } },
   { coin: "render", name: "Render", symbol: "RENDER", token: true, icon: "/assets/render.png", gecko: "render-token", decimals: 6, unitDecimals: 8, chart: "RENDER", networks: ["sol_mainnet"], contracts: { sol_mainnet: "rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof" } },
 ];
+// Réseaux compatibles Ethereum ajoutés par l'utilisateur (Paramètres,
+// « RPC personnalisé ») : une carte chacun, comme une crypto de l'app (même
+// adresse que les ETH), sans logo, sans cours ni échange. Lus avant la
+// construction des cartes ; un ajout ou un retrait recharge l'interface.
+const CUSTOM_NETWORKS = await window.__TAURI__.core.invoke("list_custom_networks").catch((e) => {
+  console.error(e);
+  return [];
+});
+for (const net of CUSTOM_NETWORKS) {
+  ASSETS.push({ coin: net.id, name: net.name, symbol: net.symbol, family: "evm", icon: null, gecko: null, decimals: 6, chart: null, networks: [net.id], custom: true });
+}
+// Nom du réseau (cartes, menus, aperçu d'envoi) : libellé « net.<id> ».
+const CUSTOM_NETWORK_LABELS = Object.fromEntries(CUSTOM_NETWORKS.map((net) => [`net.${net.id}`, net.name]));
+
 const ASSET_BY_COIN = Object.fromEntries(ASSETS.map((asset) => [asset.coin, asset]));
 // Première crypto de chaque identifiant CoinGecko (Zcash, pas Zcash protégé,
 // qui a le même cours) : marchés et courbes.
@@ -77,6 +91,7 @@ const NATIVE_ASSET_BY_NETWORK = Object.fromEntries(
 function coinIconEl(coin) {
   const asset = ASSET_BY_COIN[coin];
   if (!asset) return null;
+  if (!asset.icon) return letterIcon(asset, "coin-icon-inline");
   const img = document.createElement("img");
   img.src = asset.icon;
   img.alt = "";
@@ -84,6 +99,15 @@ function coinIconEl(coin) {
   if (asset.iconRound) img.classList.add("coin-icon-round");
   if (coin === "sol") img.classList.add("coin-icon-inline-sol");
   return img;
+}
+
+// Crypto sans logo (réseau ajouté) : pastille avec l'initiale de son symbole.
+function letterIcon(asset, className) {
+  const span = document.createElement("span");
+  span.className = `${className} coin-icon-letter`;
+  span.setAttribute("aria-hidden", "true");
+  span.textContent = asset.symbol.slice(0, 1).toUpperCase();
+  return span;
 }
 
 // Logo d'un réseau : celui de sa crypto native (Arbitrum : son propre logo ;
@@ -132,7 +156,7 @@ function restrictToAmount(input, onChange) {
 // Réseau → format d'adresse : même adresse sur tous les réseaux EVM, une
 // adresse Solana (SOL et jetons SPL), Bitcoin à part.
 function isEvmNetwork(network) {
-  return network in EVM_CHAIN_IDS;
+  return network in EVM_CHAIN_IDS || CUSTOM_NETWORKS.some((net) => net.id === network);
 }
 
 // Jeton passant par le registre Rust (get_token_balance/send_token_transaction) :
@@ -152,6 +176,7 @@ const EVM_CHAIN_IDS = {
   avax_mainnet: 43114,
   polygon_mainnet: 137,
 };
+for (const net of CUSTOM_NETWORKS) EVM_CHAIN_IDS[net.id] = net.chain_id;
 
 const ICON_COPY = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" /></svg>`;
 const ICON_QR = `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M3 3h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" /><rect x="5.2" y="5.2" width="1.6" height="1.6" /><path d="M15 3h6v6h-6z" fill="none" stroke="currentColor" stroke-width="1.6" /><rect x="17.2" y="5.2" width="1.6" height="1.6" /><path d="M3 15h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" /><rect x="5.2" y="17.2" width="1.6" height="1.6" /><rect x="15" y="15" width="2.5" height="2.5" /><rect x="18.5" y="15" width="2.5" height="2.5" /><rect x="15" y="18.5" width="2.5" height="2.5" /><rect x="18.5" y="18.5" width="2.5" height="2.5" /></svg>`;
@@ -170,7 +195,7 @@ function buildAssetCard(asset) {
       <h2>
         <button type="button" class="collapse-toggle" aria-expanded="true" aria-controls="wallet-body-${asset.coin}">
           <span class="collapse-chevron" aria-hidden="true"></span>
-          <img class="${iconClass}" src="${asset.icon}" alt="" /><span class="coin-name"></span>
+          ${asset.icon ? `<img class="${iconClass}" src="${asset.icon}" alt="" />` : `<span class="coin-icon coin-icon-letter" aria-hidden="true"></span>`}<span class="coin-name"></span>
         </button>
       </h2>${asset.coin === "ada" ? `
       <button type="button" class="stake-chip" data-action="stake" data-i18n-title="staking.chipHint" title="Staker : vos cryptos vous rapportent (rendement annuel estimé)"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21v-9" /><path d="M12 12c0-4 3-7 8-7 0 5-3 7-8 7z" /><path d="M12 14c0-3.5-2.5-6-7-6 0 4 2.5 6 7 6z" /></svg><span class="stake-label" data-i18n="staking.action">Staker</span><span class="stake-rate hidden" data-field="stake-rate"></span></button>` : ""}
@@ -222,6 +247,8 @@ function buildAssetCard(asset) {
     </div>`;
   card.querySelector(".coin-name").textContent = asset.name;
   if (asset.nameKey) card.querySelector(".coin-name").dataset.i18n = asset.nameKey;
+  const letter = card.querySelector(".coin-icon-letter");
+  if (letter) letter.textContent = asset.symbol.slice(0, 1).toUpperCase();
   card.querySelector(".coin-symbol").textContent = asset.symbol;
   return card;
 }
@@ -870,6 +897,20 @@ const I18N = {
       "Monero et Zcash protégé sont analysés à partir de la création de ce portefeuille sur cet appareil. Si des fonds plus anciens n'apparaissent pas (portefeuille venu d'une autre app), relancez l'analyse depuis le début — elle peut prendre longtemps.",
     "settings.rescanButton": "Réanalyser depuis le début",
     "settings.rescanStarted": "Réanalyse lancée : les soldes Monero et Zcash protégé se mettront à jour au fil de l'analyse.",
+    "settings.customNetworksTitle": "Réseaux ajoutés (RPC personnalisé)",
+    "settings.customNetworksHint":
+      "Ajoutez un réseau compatible Ethereum absent de l'app (Optimism, Linea…) : il utilise la même adresse que vos ETH. N'indiquez qu'un RPC de confiance : l'app ne peut pas vérifier les soldes et les frais qu'il annonce. Pas de valeur en dollars ni d'échange sur ces réseaux. Retirer un réseau ne touche pas aux fonds, qui restent sur la chaîne.",
+    "settings.customNetworkName": "Nom du réseau",
+    "settings.customNetworkRpc": "Adresse du RPC",
+    "settings.customNetworkChain": "Identifiant de chaîne (chain ID)",
+    "settings.customNetworkSymbol": "Symbole de la monnaie",
+    "settings.customNetworkExplorer": "Explorateur de blocs (facultatif)",
+    "settings.customNetworkAdd": "Ajouter ce réseau",
+    "settings.customNetworkChainShort": "ID de chaîne",
+    "settings.customNetworkRemove": "Retirer",
+    "settings.customNetworkChainInvalid": "Identifiant de chaîne : un nombre entier (par exemple 10 pour OP Mainnet).",
+    "settings.customNetworkAdded": "Réseau « {name} » ajouté. L'app se recharge : déverrouillez-la pour voir sa carte.",
+    "settings.customNetworkRemoved": "Réseau retiré. L'app se recharge.",
     "settings.xmrNodeTitle": "Nœud Monero",
     "settings.xmrNodeHint":
       "L'app lit la chaîne Monero auprès de nœuds publics (Cake Wallet, Stack Wallet…) et analyse les blocs sur cet appareil : le nœud ne sait pas quelles transactions sont les vôtres, mais voit votre adresse IP et les transactions que vous envoyez. Pour plus de confidentialité, indiquez votre propre nœud (https://, ou http:// sur votre réseau local).",
@@ -1553,6 +1594,20 @@ const I18N = {
       "Monero and shielded Zcash are scanned from when this wallet was created on this device. If older funds don't show up (wallet coming from another app), restart the scan from the beginning — it can take a long time.",
     "settings.rescanButton": "Rescan from the beginning",
     "settings.rescanStarted": "Rescan started: Monero and shielded Zcash balances will update as the scan progresses.",
+    "settings.customNetworksTitle": "Added networks (custom RPC)",
+    "settings.customNetworksHint":
+      "Add an Ethereum-compatible network the app doesn't have (Optimism, Linea…): it uses the same address as your ETH. Only enter an RPC you trust: the app cannot verify the balances and fees it reports. No dollar value or swaps on these networks. Removing a network doesn't touch the funds, which stay on the chain.",
+    "settings.customNetworkName": "Network name",
+    "settings.customNetworkRpc": "RPC address",
+    "settings.customNetworkChain": "Chain ID",
+    "settings.customNetworkSymbol": "Currency symbol",
+    "settings.customNetworkExplorer": "Block explorer (optional)",
+    "settings.customNetworkAdd": "Add this network",
+    "settings.customNetworkChainShort": "Chain ID",
+    "settings.customNetworkRemove": "Remove",
+    "settings.customNetworkChainInvalid": "Chain ID: a whole number (for example 10 for OP Mainnet).",
+    "settings.customNetworkAdded": "Network \"{name}\" added. The app reloads: unlock it to see its card.",
+    "settings.customNetworkRemoved": "Network removed. The app reloads.",
     "settings.xmrNodeTitle": "Monero node",
     "settings.xmrNodeHint":
       "The app reads the Monero chain from public nodes (Cake Wallet, Stack Wallet…) and scans blocks on this device: the node does not know which transactions are yours, but sees your IP address and the transactions you send. For more privacy, set your own node (https://, or http:// on your local network).",
@@ -1847,7 +1902,7 @@ const I18N = {
 
 function t(key, vars) {
   const dict = I18N[currentLang] || I18N.fr;
-  let text = dict[key] ?? I18N.fr[key] ?? key;
+  let text = dict[key] ?? I18N.fr[key] ?? CUSTOM_NETWORK_LABELS[key] ?? key;
   if (vars) {
     for (const [name, value] of Object.entries(vars)) {
       text = text.replaceAll(`{${name}}`, value);
@@ -2934,6 +2989,96 @@ function resetAutoLockTimer() {
   document.addEventListener(evt, resetAutoLockTimer, { passive: true });
 });
 resetAutoLockTimer();
+
+// --- Réseaux ajoutés (Paramètres) ---------------------------------------------
+// Ajout : contrôles et identifiant de chaîne vérifiés par Rust (le RPC doit
+// répondre pour cette chaîne). Ajout ou retrait : session verrouillée puis
+// interface rechargée, qui reconstruit les cartes avec la nouvelle liste.
+function reloadAfterNetworkChange() {
+  setTimeout(async () => {
+    await invoke("lock_session").catch((e) => console.error(e));
+    location.reload();
+  }, 1500);
+}
+
+function renderCustomNetworks() {
+  const list = document.getElementById("custom-networks-list");
+  list.replaceChildren(
+    ...CUSTOM_NETWORKS.map((net) => {
+      const li = document.createElement("li");
+      const info = document.createElement("div");
+      const title = document.createElement("strong");
+      title.textContent = `${net.name} (${net.symbol})`;
+      const detail = document.createElement("span");
+      detail.className = "muted";
+      const chainLabel = Object.assign(document.createElement("span"), { textContent: t("settings.customNetworkChainShort") });
+      chainLabel.dataset.i18n = "settings.customNetworkChainShort";
+      let host = net.rpc;
+      try {
+        host = new URL(net.rpc).host;
+      } catch (e) {
+        // Adresse déjà validée par Rust ; affichée telle quelle sinon.
+      }
+      detail.append(chainLabel, ` ${net.chain_id} · ${host}`);
+      info.append(title, detail);
+      const remove = Object.assign(document.createElement("button"), { type: "button", className: "link", textContent: t("settings.customNetworkRemove") });
+      remove.dataset.i18n = "settings.customNetworkRemove";
+      remove.addEventListener(
+        "click",
+        withBusyButton(remove, async () => {
+          const errorEl = document.getElementById("custom-network-error");
+          hideError(errorEl);
+          try {
+            await invoke("remove_custom_network", { chainId: net.chain_id });
+            const success = document.getElementById("custom-network-success");
+            success.textContent = t("settings.customNetworkRemoved");
+            success.classList.remove("hidden");
+            reloadAfterNetworkChange();
+          } catch (e) {
+            showError(errorEl, String(e));
+          }
+        })
+      );
+      li.append(info, remove);
+      return li;
+    })
+  );
+  list.classList.toggle("hidden", CUSTOM_NETWORKS.length === 0);
+}
+renderCustomNetworks();
+
+const customNetworkAddBtn = document.getElementById("custom-network-add");
+customNetworkAddBtn.addEventListener(
+  "click",
+  withBusyButton(customNetworkAddBtn, async () => {
+    const errorEl = document.getElementById("custom-network-error");
+    const success = document.getElementById("custom-network-success");
+    hideError(errorEl);
+    success.classList.add("hidden");
+    const value = (id) => document.getElementById(id).value.trim();
+    const chain = value("custom-network-chain");
+    if (!/^\d{1,16}$/.test(chain) || !Number.isSafeInteger(Number(chain))) {
+      showError(errorEl, t("settings.customNetworkChainInvalid"));
+      return;
+    }
+    try {
+      const net = await invoke("add_custom_network", {
+        chainId: Number(chain),
+        name: value("custom-network-name"),
+        rpc: value("custom-network-rpc"),
+        symbol: value("custom-network-symbol"),
+        explorer: value("custom-network-explorer") || null,
+      });
+      assetChoices[net.id] = true;
+      saveAssetChoices();
+      success.textContent = t("settings.customNetworkAdded", { name: net.name });
+      success.classList.remove("hidden");
+      reloadAfterNetworkChange();
+    } catch (e) {
+      showError(errorEl, String(e));
+    }
+  })
+);
 
 // --- Onglets de navigation ---------------------------------------------
 
@@ -4699,7 +4844,8 @@ const EXCHANGE_NETWORK_NAMES = {
 
 function renderQrNetworkHint(network) {
   const hint = document.getElementById("qr-network-hint");
-  const name = EXCHANGE_NETWORK_NAMES[network];
+  // Réseau ajouté : son nom, tel que l'utilisateur l'a saisi.
+  const name = EXCHANGE_NETWORK_NAMES[network] ?? CUSTOM_NETWORKS.find((net) => net.id === network)?.name;
   if (!name) {
     hint.textContent = t("qr.testnetWarning");
     return;
@@ -5086,7 +5232,9 @@ document.getElementById("manage-assets-btn").addEventListener("click", () => {
       li.dataset.search = normalizeSearch(`${assetName(asset)} ${asset.name} ${asset.symbol}`);
       const label = document.createElement("label");
       label.className = "asset-choice";
-      const icon = Object.assign(document.createElement("img"), { src: asset.icon, alt: "", className: asset.iconRound ? "coin-icon coin-icon-round" : asset.coin === "sol" ? "coin-icon coin-icon-sol" : "coin-icon" });
+      const icon = asset.icon
+        ? Object.assign(document.createElement("img"), { src: asset.icon, alt: "", className: asset.iconRound ? "coin-icon coin-icon-round" : asset.coin === "sol" ? "coin-icon coin-icon-sol" : "coin-icon" })
+        : letterIcon(asset, "coin-icon");
       const name = Object.assign(document.createElement("span"), { className: "asset-choice-name", textContent: assetName(asset) });
       const symbol = Object.assign(document.createElement("span"), { className: "muted", textContent: asset.symbol });
       const box = Object.assign(document.createElement("input"), { type: "checkbox", checked: isAssetVisible(asset.coin) });
@@ -8441,7 +8589,7 @@ Object.entries(ENTER_SUBMIT_MAP).forEach(([inputId, buttonId]) => {
 
 // --- Démarrage -------------------------------------------------------------
 
-window.addEventListener("DOMContentLoaded", async () => {
+async function startApp() {
   try {
     const exists = await invoke("wallet_exists");
     if (exists) {
@@ -8453,7 +8601,16 @@ window.addEventListener("DOMContentLoaded", async () => {
     console.error(e);
     showView("onboarding");
   }
-});
+}
+
+// Le module attend la liste des réseaux ajoutés avant de construire les
+// cartes (voir CUSTOM_NETWORKS) : la page peut être déjà prête quand on
+// arrive ici, et DOMContentLoaded déjà passé.
+if (document.readyState === "loading") {
+  window.addEventListener("DOMContentLoaded", startApp);
+} else {
+  startApp();
+}
 
 // --- WalletConnect (applications connectées) ---------------------------------
 // Le frontend ne fait qu'afficher et relayer : le contenu d'une demande est

@@ -253,7 +253,9 @@ fn spec(network: &str, token: Option<&str>) -> Result<Option<Spec>> {
         "stx_mainnet" => Spec { asset: Asset::Pair("STXUSDT"), decimals: 6, max_read: STX_MAX, symbol: "STX", source: Source::Stx },
         "tao_mainnet" => Spec { asset: Asset::Pair("TAOUSDT"), decimals: 9, max_read: TAO_MAX, symbol: "TAO", source: Source::Tao },
         other => match wallet_flow::evm_network(other) {
-            Some(net) if net.mainnet => {
+            // Réseau ajouté par l'utilisateur : aucun cours (son symbole ne dit
+            // rien de sa valeur), hors de la courbe.
+            Some(net) if net.mainnet && !net.custom => {
                 let Some(asset) = price_history::price_asset(net.native_symbol) else { return Ok(None) };
                 Spec { asset, decimals: 18, max_read: EVM_MAX, symbol: net.native_symbol, source: Source::Evm(net) }
             }
