@@ -451,7 +451,7 @@
       <div class="feature-copy">
         <span class="eyebrow"><span class="num">02</span> Multi-réseau</span>
         <h2>Une seule clé, toutes vos adresses.</h2>
-        <p class="lead">Bitcoin, Ethereum et ses réseaux Arbitrum et Base, Solana, BNB Chain, Avalanche, Polygon, HyperEVM, Zcash (transparent et protégé), Monero, Dogecoin, Tron, XRP, Stellar, NEAR, Cardano et Stacks — avec leurs jetons (USDC, USDT, LINK…), tous dérivés de la même entropie maître. Un tableau de bord, un seul secret à protéger.</p>
+        <p class="lead">Bitcoin, Ethereum et ses réseaux Arbitrum et Base, Solana, BNB Chain, Avalanche, Polygon, Zcash (transparent et protégé), Monero, Dogecoin, Tron, XRP, Stellar, NEAR, Cardano, Stacks et Bittensor — avec leurs jetons (USDC, USDT, LINK…), tous dérivés de la même entropie maître. Un tableau de bord, un seul secret à protéger.</p>
       </div>
       <div class="feature-visual">
         <div class="panel list">
@@ -484,10 +484,10 @@
           <div class="dialog-body">
             <div class="dialog-title">Confirmer l'envoi</div>
             <div class="dialog-lines">
-              Réseau : Bitcoin (mainnet)<br>
+              Réseau : Bitcoin — fonds réels<br>
               Destinataire : bc1q…w4x9<br>
               Montant : 0.004 BTC<br>
-              Frais : 1 240 sat (rapide)
+              Frais : 0.0000124 BTC
             </div>
           </div>
           <div class="dialog-actions"><span class="ok">OK</span><span>Annuler</span></div>
@@ -502,15 +502,15 @@
       <div class="feature-copy">
         <span class="eyebrow"><span class="num">04</span> Frais Bitcoin</span>
         <h2>Rapide, moyen ou lent — à vous de choisir.</h2>
-        <p class="lead">Les trois paliers sont calculés en direct sur le réseau au moment de l'envoi, plutôt qu'un montant fixe qui devient insuffisant.</p>
+        <p class="lead">Les trois paliers sont calculés en direct sur le réseau au moment de l'envoi, plutôt qu'un montant fixe qui devient insuffisant, et affichés dans votre devise.</p>
       </div>
       <div class="feature-visual">
         <div class="panel">
           <div class="panel-label">Vitesse d'envoi</div>
           <div class="fees">
-            <div class="fee reveal" style="--d: 0.05s"><span class="fee-label">Rapide<span class="fee-sub">~10 min</span></span><span class="fee-sat">1 240 sat</span></div>
-            <div class="fee choose reveal" style="--d: 0.25s"><span class="fee-label">Moyen<span class="fee-sub">~30 min</span></span><span class="fee-sat">840 sat</span></div>
-            <div class="fee reveal" style="--d: 0.45s"><span class="fee-label">Lent<span class="fee-sub">~1 h</span></span><span class="fee-sat">310 sat</span></div>
+            <div class="fee reveal" style="--d: 0.05s"><span class="fee-label">Rapide<span class="fee-sub">~10 min</span></span><span class="fee-sat">≈ 0,93 $</span></div>
+            <div class="fee choose reveal" style="--d: 0.25s"><span class="fee-label">Moyen<span class="fee-sub">~30 min</span></span><span class="fee-sat">≈ 0,63 $</span></div>
+            <div class="fee reveal" style="--d: 0.45s"><span class="fee-label">Lent<span class="fee-sub">~1 h</span></span><span class="fee-sat">≈ 0,23 $</span></div>
           </div>
         </div>
       </div>
@@ -559,6 +559,7 @@
           <div class="sec-item reveal" style="--d: 0.65s"><span class="sec-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>Verrouillage automatique après 10 minutes d'inactivité</div>
           <div class="sec-item reveal" style="--d: 0.80s"><span class="sec-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>Alerte quand une adresse imite celle d'un contact (empoisonnement d'adresse)</div>
           <div class="sec-item reveal" style="--d: 0.95s"><span class="sec-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>5 secondes pour annuler un envoi après sa confirmation, avant toute signature</div>
+          <div class="sec-item reveal" style="--d: 1.10s"><span class="sec-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>Adresse d'un autre réseau signalée avant l'envoi</div>
         </div>
       </div>
     </div>
@@ -571,7 +572,7 @@
       <h2>Preuve de concept fonctionnelle. Pas encore prête pour de vrais fonds d'un inconnu.</h2>
       <div class="roadmap">
         <div class="step reveal" style="--d: 0.05s"><span class="step-badge done">✓</span>Phase 1 — PoC cryptographique CLI, terminée</div>
-        <div class="step reveal" style="--d: 0.25s"><span class="step-badge doing">●</span>Phase 2 — Application Windows fonctionnelle (envois, échanges, Ledger et Trezor, WalletConnect, Monero, Zcash protégé), en cours de finition</div>
+        <div class="step reveal" style="--d: 0.25s"><span class="step-badge doing">●</span>Phase 2 — Application Windows fonctionnelle (envois, échanges, staking, Ledger et Trezor, WalletConnect, Monero, Zcash protégé), en cours de finition</div>
         <div class="step reveal" style="--d: 0.45s"><span class="step-badge todo">○</span>Signature de code, publication open-source et audit indépendant — aucun des trois n'est encore fait</div>
         <div class="step reveal" style="--d: 0.65s"><span class="step-badge todo">○</span>Version téléchargeable publique — à venir, pas avant ces trois étapes</div>
       </div>
@@ -605,11 +606,11 @@
         <div class="group-title">B — Dérivation et signature</div>
         <div class="item">
           <h3>4. Dérivation multi-réseaux (HD)</h3>
-          <p>Depuis la même entropie maître : Ethereum et Bitcoin via BIP32/secp256k1 (<code>m/44'/60'/0'/0/i</code> et <code>m/44'/0'/0'/0/i</code>), Solana via SLIP-0010/ed25519 avec un chemin entièrement durci (<code>m/44'/501'/i'/0'</code>), Zcash transparent via <code>m/44'/133'/0'/0/i</code> et protégé (Orchard) via ZIP-32, Dogecoin via <code>m/44'/3'/0'/0/i</code>, Tron via <code>m/44'/195'/0'/0/i</code>, XRP via <code>m/44'/144'/0'/0/i</code>, Stellar via <code>m/44'/148'/i'</code> (SEP-0005), NEAR via <code>m/44'/397'/i'</code>, Cardano via CIP-1852 (<code>m/1852'/1815'/i'</code>, BIP32-Ed25519), Stacks via <code>m/44'/5757'/0'/0/i</code>, Monero selon le schéma de Ledger (<code>m/44'/128'/i'/0/0</code>). Une même adresse sert sur tous les réseaux compatibles Ethereum (Arbitrum, Base, BNB Chain, Avalanche, Polygon, HyperEVM). Un "profil" supplémentaire n'est qu'un index de dérivation de plus sur la même entropie — aucun changement du modèle de sécurité entre 1 profil et 50.</p>
+          <p>Depuis la même entropie maître : Ethereum et Bitcoin via BIP32/secp256k1 (<code>m/44'/60'/0'/0/i</code> et <code>m/44'/0'/0'/0/i</code>), Solana via SLIP-0010/ed25519 avec un chemin entièrement durci (<code>m/44'/501'/i'/0'</code>), Zcash transparent via <code>m/44'/133'/0'/0/i</code> et protégé (Orchard) via ZIP-32, Dogecoin via <code>m/44'/3'/0'/0/i</code>, Tron via <code>m/44'/195'/0'/0/i</code>, XRP via <code>m/44'/144'/0'/0/i</code>, Stellar via <code>m/44'/148'/i'</code> (SEP-0005), NEAR via <code>m/44'/397'/i'</code>, Cardano via CIP-1852 (<code>m/1852'/1815'/i'</code>, BIP32-Ed25519), Stacks via <code>m/44'/5757'/0'/0/i</code>, Bittensor via sr25519 (jonction durcie <code>//i</code>, schéma Substrate), Monero selon le schéma de Ledger (<code>m/44'/128'/i'/0/0</code>). Une même adresse sert sur tous les réseaux compatibles Ethereum (Arbitrum, Base, BNB Chain, Avalanche, Polygon). Un "profil" supplémentaire n'est qu'un index de dérivation de plus sur la même entropie — aucun changement du modèle de sécurité entre 1 profil et 50.</p>
         </div>
         <div class="item">
           <h3>5. Construction et signature des transactions</h3>
-          <p>Construites "from scratch" pour Bitcoin, Dogecoin, les réseaux compatibles Ethereum, Solana, Tron, XRP, Stellar, NEAR, Cardano et Stacks, sans SDK lourd type <code>rust-bitcoin</code> ou <code>solana-sdk</code> — pour Dogecoin, chaque montant dépensé est en plus revérifié dans sa transaction d'origine ; Zcash passe par la bibliothèque officielle de ses développeurs (librustzcash), Monero par monero-oxide. Nonces déterministes (RFC 6979) pour les signatures ECDSA, empêchant l'extraction de clé privée par réutilisation de nonce — la faille qui a coûté sa clé racine à la PlayStation 3. Signatures vérifiées en interne contre une normalisation "low-S" par une suite de 2000 tests.</p>
+          <p>Construites "from scratch" pour Bitcoin, Dogecoin, les réseaux compatibles Ethereum, Solana, Tron, XRP, Stellar, NEAR, Cardano, Stacks et Bittensor, sans SDK lourd type <code>rust-bitcoin</code> ou <code>solana-sdk</code> — pour Dogecoin, chaque montant dépensé est en plus revérifié dans sa transaction d'origine ; Zcash passe par la bibliothèque officielle de ses développeurs (librustzcash), Monero par monero-oxide. Nonces déterministes (RFC 6979) pour les signatures ECDSA, empêchant l'extraction de clé privée par réutilisation de nonce — la faille qui a coûté sa clé racine à la PlayStation 3. Signatures vérifiées en interne contre une normalisation "low-S" par une suite de 2000 tests.</p>
         </div>
       </div>
 
@@ -645,7 +646,7 @@
         </div>
         <div class="item">
           <h3>12. Confirmation native avant tout envoi</h3>
-          <p>Réseau, destinataire, montant, frais et profil source s'affichent dans une boîte de dialogue de l'OS, jamais une modale HTML — un frontend compromis ne peut ni la falsifier ni la faire disparaître silencieusement. Elle est suivie d'un délai de 5 secondes pour annuler, imposé côté Rust, avant toute signature.</p>
+          <p>Réseau, destinataire, montant, frais et profil source s'affichent dans une boîte de dialogue de l'OS, jamais une modale HTML — un frontend compromis ne peut ni la falsifier ni la faire disparaître silencieusement. Elle est suivie d'un délai de 5 secondes pour annuler, imposé côté Rust, avant toute signature. Les autres actions sensibles (supprimer le portefeuille ou un profil) passent par une fenêtre de confirmation séparée, gérée côté Rust.</p>
         </div>
       </div>
 
