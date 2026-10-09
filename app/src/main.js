@@ -557,7 +557,13 @@ const I18N = {
     "usb.write": "Écrire la part n°{n} ici",
     "usb.rewrite": "Contient déjà cette part — la réécrire",
     "usb.otherPart": "Contient déjà la part n°{part} de ce kit : une seule part par clé",
-    "usb.otherKit": "Contient déjà une autre sauvegarde",
+    "usb.nameLabel": "Nom de cette sauvegarde",
+    "usb.nameHint": "Il identifie ce portefeuille sur la clé : une même clé peut en garder plusieurs.",
+    "usb.defaultName": "Mon portefeuille",
+    "usb.nameInvalid": "Nom : 1 à 30 caractères (lettres, chiffres, espaces, - _).",
+    "usb.onDrive": "Déjà dessus : {list}",
+    "usb.sharePart": "{name} (part n°{part})",
+    "usb.unnamed": "sans nom",
     "usb.writing": "Écriture et vérification…",
     "usb.done": "Part n°{n} enregistrée et vérifiée sur « {label} ». Retirez la clé et rangez-la à part, loin des autres parts.",
     "usb.free": "{mb} Mo libres",
@@ -581,6 +587,9 @@ const I18N = {
     "restore.usbHint": "Branchez vos clés de sauvegarde, l'une après l'autre si besoin : l'app les lit toute seule. Deux parts différentes suffisent.",
     "restore.usbWaiting": "Aucune clé de sauvegarde détectée pour l'instant.",
     "restore.usbPart": "✓ Part n°{n} lue (clé « {label} »)",
+    "restore.usbPartOf": "✓ Part n°{n} de « {name} » lue (clé « {label} »)",
+    "restore.usbUnnamed": "sauvegarde sans nom",
+    "restore.usbChoose": "Plusieurs sauvegardes complètes : choisissez celle à restaurer.",
     "restore.usbReady": "Deux parts lues : choisissez un nouveau mot de passe puis restaurez. Vous pouvez retirer les clés.",
     "restore.usbSubmit": "Restaurer depuis les clés USB",
     "restore.orFiles": "ou avec les fichiers",
@@ -1254,7 +1263,13 @@ const I18N = {
     "usb.write": "Write share {n} here",
     "usb.rewrite": "Already holds this share — write it again",
     "usb.otherPart": "Already holds share {part} of this kit: one share per drive",
-    "usb.otherKit": "Already holds another backup",
+    "usb.nameLabel": "Name of this backup",
+    "usb.nameHint": "It identifies this wallet on the drive: one drive can hold several.",
+    "usb.defaultName": "My wallet",
+    "usb.nameInvalid": "Name: 1 to 30 characters (letters, digits, spaces, - _).",
+    "usb.onDrive": "Already on it: {list}",
+    "usb.sharePart": "{name} (share {part})",
+    "usb.unnamed": "unnamed",
     "usb.writing": "Writing and verifying…",
     "usb.done": "Share {n} saved and verified on \"{label}\". Unplug the drive and store it apart, away from the other shares.",
     "usb.free": "{mb} MB free",
@@ -1278,6 +1293,9 @@ const I18N = {
     "restore.usbHint": "Plug in your backup drives, one after the other if needed: the app reads them on its own. Two different shares are enough.",
     "restore.usbWaiting": "No backup drive detected yet.",
     "restore.usbPart": "✓ Share {n} read (drive \"{label}\")",
+    "restore.usbPartOf": "✓ Share {n} of \"{name}\" read (drive \"{label}\")",
+    "restore.usbUnnamed": "unnamed backup",
+    "restore.usbChoose": "Several complete backups: choose the one to restore.",
     "restore.usbReady": "Two shares read: choose a new password, then restore. You can unplug the drives.",
     "restore.usbSubmit": "Restore from the USB drives",
     "restore.orFiles": "or with the files",
@@ -3196,7 +3214,8 @@ restoreSubmitBtn.addEventListener("click", withBusyButton(restoreSubmitBtn, asyn
 // intervalle court tant que la fenêtre concernée est ouverte : brancher la clé
 // suffit. Les secrets ne font que transiter vers Rust (écriture) ; à la
 // restauration, les parts lues restent côté Rust, l'interface ne voit que le
-// numéro de part et le kit.
+// numéro de part, le kit et le nom de la sauvegarde. Une clé peut porter les
+// sauvegardes de plusieurs portefeuilles, chacune sous son nom.
 const USB_POLL_MS = 1500;
 
 function usbDriveName(drive) {
@@ -3206,6 +3225,24 @@ function usbDriveName(drive) {
 
 let usbModalTimer = null;
 const usbModal = document.getElementById("usb-modal");
+const usbNameInput = document.getElementById("usb-name");
+// Nom donné à chaque kit pendant la session : proposé pour ses autres parts.
+const usbKitNames = new Map();
+
+// Même règle que core/src/usb_backup.rs::normalize_name (qui reste le juge).
+function normalizeUsbName(value) {
+  const name = value.trim().split(/\s+/).join(" ");
+  return /^[\p{L}\p{N} _-]{1,30}$/u.test(name) ? name : null;
+}
+
+// Contenu d'une clé, par sauvegarde : « Perso (part n°1), Pro (part n°2) ».
+function usbDriveContents(shares) {
+  return shares.map((s) => t("usb.sharePart", { name: s.name || t("usb.unnamed"), part: s.part })).join(", ");
+}
+
+usbNameInput.addEventListener("input", () => {
+  usbNameInput.dataset.touched = "1";
+});
 
 // `target` : { mode: "one", backup, item } (une part, sur sa propre clé) ou
 // { mode: "all", backups, container, saved } (tout le kit sur une clé).
@@ -3216,6 +3253,9 @@ function openUsbModal(target) {
   hideError(document.getElementById("usb-error"));
   document.getElementById("usb-success").classList.add("hidden");
   document.getElementById("usb-drive-list").replaceChildren();
+  const kit = all ? target.backups[0].kit_id : target.backup.kit_id;
+  usbNameInput.value = usbKitNames.get(kit) || t("usb.defaultName");
+  delete usbNameInput.dataset.touched;
   usbModal.classList.remove("hidden");
   const refresh = () => refreshUsbDrives(target);
   refresh();
@@ -3244,6 +3284,9 @@ async function refreshUsbDrives(target) {
     console.error(e);
     return;
   }
+  // Ce kit déjà sur une clé sous un nom : ce nom est gardé, autant le montrer.
+  const knownName = drives.flatMap((d) => d.shares || []).find((s) => s.kit === kit && s.name)?.name;
+  if (knownName && !usbNameInput.dataset.touched && !usbKitNames.has(kit)) usbNameInput.value = knownName;
   const list = document.getElementById("usb-drive-list");
   if (drives.length === 0) {
     list.replaceChildren(Object.assign(document.createElement("li"), { className: "muted", textContent: t("usb.waiting") }));
@@ -3253,25 +3296,30 @@ async function refreshUsbDrives(target) {
     ...drives.map((drive) => {
       const li = document.createElement("li");
       li.className = "usb-drive";
+      const info = document.createElement("div");
+      info.className = "usb-drive-info";
       const name = document.createElement("span");
       name.textContent = `${usbDriveName(drive)} — ${t("usb.free", { mb: Math.floor(drive.free_bytes / 1048576).toLocaleString(chartLocale()) })}`;
+      info.append(name);
+      const shares = drive.shares || [];
+      if (shares.length) {
+        info.append(Object.assign(document.createElement("small"), { className: "muted", textContent: t("usb.onDrive", { list: usbDriveContents(shares) }) }));
+      }
       const button = document.createElement("button");
       button.className = "secondary";
-      const shares = drive.shares || [];
-      const otherKit = shares.some((s) => s.kit !== kit);
-      const otherPart = all ? null : shares.find((s) => s.kit === kit && s.part !== target.backup.part);
-      if (otherKit) {
-        button.disabled = true;
-        button.textContent = t("usb.otherKit");
-      } else if (otherPart) {
+      // Les sauvegardes d'autres portefeuilles n'empêchent rien ; seule une
+      // AUTRE part de ce kit bloque (deux parts sur une clé = accès complet).
+      const mine = shares.filter((s) => s.kit === kit);
+      const otherPart = all ? null : mine.find((s) => s.part !== target.backup.part);
+      if (otherPart) {
         button.disabled = true;
         button.textContent = t("usb.otherPart", { part: otherPart.part });
       } else {
-        if (all) button.textContent = shares.length ? t("usb.rewriteAll") : t("usb.writeAll");
-        else button.textContent = shares.length ? t("usb.rewrite") : t("usb.write", { n: target.backup.part });
+        if (all) button.textContent = mine.length ? t("usb.rewriteAll") : t("usb.writeAll");
+        else button.textContent = mine.length ? t("usb.rewrite") : t("usb.write", { n: target.backup.part });
         button.addEventListener("click", () => writeToUsb(target, drive, button));
       }
-      li.append(name, button);
+      li.append(info, button);
       return li;
     })
   );
@@ -3282,6 +3330,13 @@ async function writeToUsb(target, drive, button) {
   const successEl = document.getElementById("usb-success");
   hideError(errorEl);
   successEl.classList.add("hidden");
+  const backupName = normalizeUsbName(usbNameInput.value);
+  if (!backupName) {
+    showError(errorEl, t("usb.nameInvalid"));
+    usbNameInput.focus();
+    return;
+  }
+  const kit = target.mode === "all" ? target.backups[0].kit_id : target.backup.kit_id;
   usbWriting = true;
   button.disabled = true;
   button.textContent = t("usb.writing");
@@ -3294,8 +3349,9 @@ async function writeToUsb(target, drive, button) {
         privkey_armored_b64: b.privkey_armored_b64,
         passphrase: b.passphrase,
       }));
-      const label = await invoke("save_kit_to_usb", { root: drive.root, kitId: target.backups[0].kit_id, shares });
+      const label = await invoke("save_kit_to_usb", { root: drive.root, kitId: kit, name: backupName, shares });
       if (label === null) return; // refusé dans la boîte de confirmation
+      usbKitNames.set(kit, backupName);
       const name = label || drive.root;
       successEl.textContent = t("usb.doneAll", { label: name });
       successEl.classList.remove("hidden");
@@ -3311,11 +3367,13 @@ async function writeToUsb(target, drive, button) {
       const label = await invoke("save_backup_to_usb", {
         root: drive.root,
         kitId: backup.kit_id,
+        name: backupName,
         part: backup.part,
         encryptedShareB64: backup.encrypted_share_b64,
         privkeyArmoredB64: backup.privkey_armored_b64,
         passphrase: backup.passphrase,
       });
+      usbKitNames.set(kit, backupName);
       const name = label || drive.root;
       successEl.textContent = t("usb.done", { n: backup.part, label: name });
       successEl.classList.remove("hidden");
@@ -3333,11 +3391,22 @@ async function writeToUsb(target, drive, button) {
 }
 
 let usbRestoreTimer = null;
-// Parts déjà lues : "kit:part" -> nom de la clé.
+// Parts déjà lues : "kit:part" -> { kit, part, name, label } (label : nom de la clé).
 const usbRestoreLoaded = new Map();
+// Sauvegarde à restaurer (identifiant de kit) : la seule complète, ou celle
+// cochée par l'utilisateur quand plusieurs le sont — jamais une choisie d'office
+// alors qu'une autre complète est apparue depuis.
+let usbRestoreChoice = null;
+let usbRestoreUserChose = false;
+// Dernier affichage : rien n'est reconstruit tant que rien ne change (le
+// choix au clavier garde son focus entre deux détections).
+let usbRestoreRendered = "";
 
 function startUsbRestore() {
   usbRestoreLoaded.clear();
+  usbRestoreChoice = null;
+  usbRestoreUserChose = false;
+  usbRestoreRendered = "";
   invoke("usb_restore_clear").catch((e) => console.error(e));
   renderUsbRestore();
   pollUsbRestore();
@@ -3350,6 +3419,9 @@ function stopUsbRestore(forget) {
   usbRestoreTimer = null;
   if (forget) {
     usbRestoreLoaded.clear();
+    usbRestoreChoice = null;
+    usbRestoreUserChose = false;
+    usbRestoreRendered = "";
     invoke("usb_restore_clear").catch((e) => console.error(e));
   }
 }
@@ -3367,7 +3439,7 @@ async function pollUsbRestore() {
     if (shares.every((s) => usbRestoreLoaded.has(`${s.kit}:${s.part}`))) continue;
     try {
       const read = await invoke("usb_restore_load", { root: drive.root });
-      read.forEach((s) => usbRestoreLoaded.set(`${s.kit}:${s.part}`, usbDriveName(drive)));
+      read.forEach((s) => usbRestoreLoaded.set(`${s.kit}:${s.part}`, { kit: s.kit, part: s.part, name: s.name, label: usbDriveName(drive) }));
     } catch (e) {
       showError(document.getElementById("restore-error"), String(e));
     }
@@ -3375,26 +3447,70 @@ async function pollUsbRestore() {
   renderUsbRestore();
 }
 
-// Deux parts différentes d'un même kit lues : restauration possible.
-function usbRestoreReady() {
-  const byKit = new Map();
-  for (const key of usbRestoreLoaded.keys()) {
-    const kit = key.split(":")[0];
-    byKit.set(kit, (byKit.get(kit) || 0) + 1);
+// Parts lues, par sauvegarde (kit), dans l'ordre de lecture. Nom : celui
+// trouvé sur une de ses clés (vide : sauvegarde écrite avant les noms).
+function usbRestoreKits() {
+  const kits = new Map();
+  for (const share of usbRestoreLoaded.values()) {
+    const kit = kits.get(share.kit) || { kit: share.kit, name: "", parts: [] };
+    if (!kit.name && share.name) kit.name = share.name;
+    kit.parts.push(share);
+    kits.set(share.kit, kit);
   }
-  return [...byKit.values()].some((count) => count >= 2);
+  const list = [...kits.values()];
+  list.forEach((kit) => kit.parts.sort((a, b) => a.part - b.part));
+  return list;
+}
+
+// Nom affiché d'une sauvegarde ; début de l'identifiant si deux portent le même.
+function usbKitTitle(kit, kits) {
+  const name = kit.name || t("restore.usbUnnamed");
+  return kits.filter((k) => k.name === kit.name).length > 1 ? `${name} (${kit.kit.slice(0, 6)})` : name;
 }
 
 function renderUsbRestore() {
-  const list = document.getElementById("restore-usb-status");
-  const items = [...usbRestoreLoaded.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([key, name]) => Object.assign(document.createElement("li"), { textContent: t("restore.usbPart", { n: key.split(":")[1], label: name }) }));
+  const kits = usbRestoreKits();
+  // Deux parts différentes d'un même kit lues : restauration possible.
+  const complete = kits.filter((k) => new Set(k.parts.map((p) => p.part)).size >= 2);
+  if (complete.length === 1) usbRestoreChoice = complete[0].kit;
+  else if (!usbRestoreUserChose || !complete.some((k) => k.kit === usbRestoreChoice)) {
+    usbRestoreChoice = null;
+    usbRestoreUserChose = false;
+  }
+  document.getElementById("restore-usb-submit").classList.toggle("hidden", !usbRestoreChoice);
+  const signature = JSON.stringify([currentLang, kits]);
+  if (signature === usbRestoreRendered) return;
+  usbRestoreRendered = signature;
+  const several = kits.length > 1;
+  const items = kits.flatMap((kit) =>
+    kit.parts.map((share) =>
+      Object.assign(document.createElement("li"), {
+        textContent: several
+          ? t("restore.usbPartOf", { n: share.part, name: usbKitTitle(kit, kits), label: share.label })
+          : t("restore.usbPart", { n: share.part, label: share.label }),
+      })
+    )
+  );
   if (items.length === 0) items.push(Object.assign(document.createElement("li"), { className: "muted", textContent: t("restore.usbWaiting") }));
-  const ready = usbRestoreReady();
-  if (ready) items.push(Object.assign(document.createElement("li"), { className: "success", textContent: t("restore.usbReady") }));
-  list.replaceChildren(...items);
-  document.getElementById("restore-usb-submit").classList.toggle("hidden", !ready);
+  if (complete.length === 1) items.push(Object.assign(document.createElement("li"), { className: "success", textContent: t("restore.usbReady") }));
+  if (complete.length > 1) {
+    items.push(Object.assign(document.createElement("li"), { className: "success", textContent: t("restore.usbChoose") }));
+    for (const kit of complete) {
+      const li = document.createElement("li");
+      li.className = "usb-choice";
+      const label = document.createElement("label");
+      const radio = Object.assign(document.createElement("input"), { type: "radio", name: "usb-restore-kit", value: kit.kit, checked: kit.kit === usbRestoreChoice });
+      radio.addEventListener("change", () => {
+        usbRestoreChoice = kit.kit;
+        usbRestoreUserChose = true;
+        document.getElementById("restore-usb-submit").classList.remove("hidden");
+      });
+      label.append(radio, Object.assign(document.createElement("span"), { textContent: usbKitTitle(kit, kits) }));
+      li.append(label);
+      items.push(li);
+    }
+  }
+  document.getElementById("restore-usb-status").replaceChildren(...items);
 }
 
 const restoreUsbSubmitBtn = document.getElementById("restore-usb-submit");
@@ -3411,7 +3527,7 @@ restoreUsbSubmitBtn.addEventListener("click", withBusyButton(restoreUsbSubmitBtn
     return;
   }
   try {
-    const addresses = await invoke("restore_wallet_from_usb", { newPassword });
+    const addresses = await invoke("restore_wallet_from_usb", { newPassword, kit: usbRestoreChoice });
     stopUsbRestore(true);
     writePendingSwaps([]);
     renderDashboardAddresses(singleProfileList(addresses));

@@ -3660,6 +3660,33 @@ h2 .coin-icon-inline,
   word-break: normal;
 }
 
+/* Nom de la clé, puis les sauvegardes qu'elle porte déjà. */
+.usb-drive-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.usb-drive-info small {
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.usb-name-hint {
+  margin: 4px 0 0;
+  font-size: 0.85rem;
+}
+
+/* Restauration : choix de la sauvegarde quand plusieurs sont complètes. */
+.usb-choice label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  cursor: pointer;
+}
+
 .usb-restore {
   margin-bottom: 8px;
 }

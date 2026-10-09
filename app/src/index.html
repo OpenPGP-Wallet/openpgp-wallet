@@ -1495,6 +1495,9 @@
       <div class="modal">
         <h2 id="usb-modal-title"></h2>
         <p id="usb-modal-hint" class="muted"></p>
+        <label for="usb-name" data-i18n="usb.nameLabel">Nom de cette sauvegarde</label>
+        <input type="text" id="usb-name" maxlength="30" autocomplete="off" spellcheck="false" />
+        <p class="muted usb-name-hint" data-i18n="usb.nameHint">Il identifie ce portefeuille sur la clé : une même clé peut en garder plusieurs.</p>
         <ul id="usb-drive-list" class="usb-list"></ul>
         <p id="usb-error" class="error hidden"></p>
         <p id="usb-success" class="success hidden"></p>

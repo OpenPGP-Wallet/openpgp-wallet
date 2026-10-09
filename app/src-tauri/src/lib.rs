@@ -72,7 +72,9 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("la relecture de la clé USB ne correspond pas à ce qui a été écrit", "reading the USB drive back does not match what was written"),
     ("numéro de part invalide", "invalid share number"),
     ("identifiant de kit invalide", "invalid kit identifier"),
-    ("cette clé USB contient déjà une part d'une autre sauvegarde (ancienne, ou d'un autre portefeuille) : utilisez une clé vide, ou supprimez vous-même son dossier PGP-Wallet-Sauvegarde si vous n'en avez plus besoin", "this USB drive already holds a share of another backup (an older one, or another wallet's): use an empty drive, or delete its PGP-Wallet-Sauvegarde folder yourself if you no longer need it"),
+    ("nom de la sauvegarde : 1 à 30 caractères (lettres, chiffres, espaces, - _)", "backup name: 1 to 30 characters (letters, digits, spaces, - _)"),
+    ("un dossier de sauvegarde de ce nom existe déjà sur la clé USB : choisissez un autre nom", "a backup folder with this name already exists on the USB drive: choose another name"),
+    ("plusieurs sauvegardes complètes trouvées : choisissez celle à restaurer", "several complete backups found: choose the one to restore"),
     ("espace insuffisant sur la clé USB", "not enough space on the USB drive"),
     ("la part écrite sur la clé USB ne se déchiffre pas : sauvegarde inutilisable", "the share written to the USB drive cannot be decrypted: backup unusable"),
     ("aucune sauvegarde OpenPGP Wallet sur cette clé USB", "no OpenPGP Wallet backup on this USB drive"),
@@ -2525,12 +2527,14 @@ async fn list_backup_drives() -> Result<Vec<BackupDriveDto>, String> {
 /// Écrit une part COMPLÈTE du kit (fichier de part, clé privée, mot de passe)
 /// sur la clé USB `root` — seule une clé USB détectée est acceptée, jamais un
 /// chemin quelconque — puis la relit et vérifie qu'elle se déchiffre. Voir
-/// `core/src/usb_backup.rs` (une part par clé).
+/// `core/src/usb_backup.rs` (une part par clé ; `name` : nom de la sauvegarde,
+/// gardé s'il est déjà sur la clé).
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 async fn save_backup_to_usb(
     root: String,
     kit_id: String,
+    name: String,
     part: u8,
     encrypted_share_b64: String,
     privkey_armored_b64: String,
@@ -2545,7 +2549,7 @@ async fn save_backup_to_usb(
             privkey_armored: decode(&privkey_armored_b64)?,
             passphrase: Zeroizing::new(passphrase),
         };
-        let drive = pgp_wallet_poc::usb_backup::write_share(&root, &kit_id, part, &files, |written| {
+        let drive = pgp_wallet_poc::usb_backup::write_share(&root, &kit_id, &name, part, &files, |written| {
             api::verify_backup_share(&dir, &written.encrypted_share, &written.privkey_armored, &written.passphrase)
         })
         .t_err()?;
@@ -2564,16 +2568,17 @@ struct KitShareDto {
 
 /// Confirmation (fenêtre sécurisée) avant d'écrire TOUT le kit sur une seule clé : cette clé
 /// suffira à elle seule à tout récupérer, sans mot de passe.
-fn confirm_kit_on_one_drive_window(app: &tauri::AppHandle, drive: &str) -> bool {
+fn confirm_kit_on_one_drive_window(app: &tauri::AppHandle, drive: &str, name: &str) -> bool {
     let drive = dialog_label(drive);
+    let name = dialog_label(name);
     let mut details = SecureConfirmDetails::new(
         "usb",
         ("Tout mettre sur une seule clé USB ?", "Put everything on one USB drive?"),
         vec![
             if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
-                format!("The 3 shares will be saved on \"{drive}\".")
+                format!("The 3 shares of \"{name}\" will be saved on \"{drive}\".")
             } else {
-                format!("Les 3 parts seront enregistrées sur « {drive} ».")
+                format!("Les 3 parts de « {name} » seront enregistrées sur « {drive} ».")
             },
             text(
                 "Cette clé suffira à elle seule pour accéder à vos fonds, sans mot de passe. Rangez-la en lieu sûr, jamais avec l'ordinateur.",
@@ -2590,8 +2595,9 @@ fn confirm_kit_on_one_drive_window(app: &tauri::AppHandle, drive: &str) -> bool 
 /// confirmation qui en dit la conséquence, puis vérifie chaque part relue.
 /// Renvoie le nom de la clé ; `None` si l'utilisateur a refusé dans la boîte.
 #[tauri::command]
-async fn save_kit_to_usb(root: String, kit_id: String, shares: Vec<KitShareDto>, app: tauri::AppHandle) -> Result<Option<String>, String> {
+async fn save_kit_to_usb(root: String, kit_id: String, name: String, shares: Vec<KitShareDto>, app: tauri::AppHandle) -> Result<Option<String>, String> {
     run_blocking(move || {
+        let name = pgp_wallet_poc::usb_backup::normalize_name(&name).t_err()?;
         let dir = data_dir(&app)?;
         let decode = |s: &str| base64::engine::general_purpose::STANDARD.decode(s).t_err();
         let mut parts = Vec::with_capacity(shares.len());
@@ -2603,15 +2609,15 @@ async fn save_kit_to_usb(root: String, kit_id: String, shares: Vec<KitShareDto>,
             };
             parts.push((share.part, files));
         }
-        let name = pgp_wallet_poc::usb_backup::removable_drives()
+        let drive_name = pgp_wallet_poc::usb_backup::removable_drives()
             .into_iter()
             .find(|d| d.root.to_string_lossy().eq_ignore_ascii_case(root.trim()))
             .map(|d| if d.label.is_empty() { d.root.to_string_lossy().into_owned() } else { format!("{} ({})", d.label, d.root.to_string_lossy().trim_end_matches('\\')) })
             .ok_or_else(|| translate_error("clé USB introuvable : branchez-la puis réessayez"))?;
-        if !confirm_kit_on_one_drive_window(&app, &name) {
+        if !confirm_kit_on_one_drive_window(&app, &drive_name, &name) {
             return Ok(None);
         }
-        let drive = pgp_wallet_poc::usb_backup::write_kit(&root, &kit_id, &parts, |written| {
+        let drive = pgp_wallet_poc::usb_backup::write_kit(&root, &kit_id, &name, &parts, |written| {
             api::verify_backup_share(&dir, &written.encrypted_share, &written.privkey_armored, &written.passphrase)
         })
         .t_err()?;
@@ -2625,8 +2631,9 @@ async fn save_kit_to_usb(root: String, kit_id: String, shares: Vec<KitShareDto>,
 #[derive(Default)]
 struct UsbRestoreState(std::sync::Mutex<Vec<(pgp_wallet_poc::usb_backup::ShareInfo, pgp_wallet_poc::usb_backup::ShareFiles)>>);
 
-/// Lit toutes les parts de la clé USB `root` pour une restauration à venir ;
-/// renvoie celles lues (kit, numéro — aucun secret).
+/// Lit toutes les parts de la clé USB `root` (de tous les portefeuilles
+/// qu'elle porte) pour une restauration à venir ; renvoie celles lues (kit,
+/// numéro, nom — aucun secret).
 #[tauri::command]
 async fn usb_restore_load(root: String, app: tauri::AppHandle) -> Result<Vec<pgp_wallet_poc::usb_backup::ShareInfo>, String> {
     run_blocking(move || {
@@ -2637,13 +2644,13 @@ async fn usb_restore_load(root: String, app: tauri::AppHandle) -> Result<Vec<pgp
             .ok_or_else(|| translate_error("clé USB introuvable : branchez-la puis réessayez"))?;
         let mut read = Vec::with_capacity(drive_shares.len());
         for info in drive_shares {
-            read.push(pgp_wallet_poc::usb_backup::read_share(&root, info.part).t_err()?);
+            read.push(pgp_wallet_poc::usb_backup::read_share(&root, &info.kit, info.part).t_err()?);
         }
         let state = app.state::<UsbRestoreState>();
         let mut loaded = state.0.lock().unwrap_or_else(|p| p.into_inner());
         let mut infos = Vec::with_capacity(read.len());
         for (info, files) in read {
-            loaded.retain(|(i, _)| *i != info);
+            loaded.retain(|(i, _)| !(i.kit == info.kit && i.part == info.part));
             infos.push(info.clone());
             loaded.push((info, files));
         }
@@ -2659,22 +2666,40 @@ fn usb_restore_clear(app: tauri::AppHandle) {
 }
 
 /// Restauration à partir de deux parts d'un même kit lues sur des clés USB
-/// (`usb_restore_load`) — même chemin que `restore_wallet` ensuite.
+/// (`usb_restore_load`) — même chemin que `restore_wallet` ensuite. `kit` :
+/// la sauvegarde choisie, nécessaire quand plusieurs sont complètes.
 #[tauri::command]
-async fn restore_wallet_from_usb(new_password: String, app: tauri::AppHandle) -> Result<AddressesDto, String> {
-    run_blocking(move || restore_wallet_from_usb_blocking(new_password, &app)).await
+async fn restore_wallet_from_usb(new_password: String, kit: Option<String>, app: tauri::AppHandle) -> Result<AddressesDto, String> {
+    run_blocking(move || restore_wallet_from_usb_blocking(new_password, kit, &app)).await
 }
 
-fn restore_wallet_from_usb_blocking(new_password: String, app: &tauri::AppHandle) -> Result<AddressesDto, String> {
+/// Kits dont au moins deux parts différentes ont été lues, dans l'ordre de lecture.
+fn complete_kits(loaded: &[(pgp_wallet_poc::usb_backup::ShareInfo, pgp_wallet_poc::usb_backup::ShareFiles)]) -> Vec<String> {
+    let mut kits: Vec<String> = Vec::new();
+    for (a, _) in loaded {
+        if !kits.contains(&a.kit) && loaded.iter().any(|(b, _)| b.kit == a.kit && b.part != a.part) {
+            kits.push(a.kit.clone());
+        }
+    }
+    kits
+}
+
+fn restore_wallet_from_usb_blocking(new_password: String, kit: Option<String>, app: &tauri::AppHandle) -> Result<AddressesDto, String> {
     let app = app.clone();
     let new_password = Zeroizing::new(new_password);
     let dir = data_dir(&app)?;
     let state = app.state::<UsbRestoreState>();
     let (first, second) = {
         let loaded = state.0.lock().unwrap_or_else(|p| p.into_inner());
-        let pair = loaded.iter().enumerate().find_map(|(i, (a, _))| {
-            loaded.iter().enumerate().skip(i + 1).find(|(_, (b, _))| b.kit == a.kit && b.part != a.part).map(|(j, _)| (i, j))
-        });
+        let complete = complete_kits(&loaded);
+        let chosen = match kit {
+            Some(kit) => complete.into_iter().find(|k| *k == kit),
+            None if complete.len() > 1 => return Err(translate_error("plusieurs sauvegardes complètes trouvées : choisissez celle à restaurer")),
+            None => complete.into_iter().next(),
+        };
+        let chosen = chosen.ok_or_else(|| translate_error("branchez deux clés USB portant deux parts différentes d'une même sauvegarde"))?;
+        let mut indices = loaded.iter().enumerate().filter(|(_, (info, _))| info.kit == chosen).map(|(i, _)| i);
+        let pair = indices.next().and_then(|i| indices.find(|&j| loaded[j].0.part != loaded[i].0.part).map(|j| (i, j)));
         let (i, j) = pair.ok_or_else(|| translate_error("branchez deux clés USB portant deux parts différentes d'une même sauvegarde"))?;
         let copy = |k: usize| {
             let (_, f) = &loaded[k];
@@ -9569,11 +9594,14 @@ mod tests {
             "mot de passe de la part illisible sur la clé USB",
             "part de sauvegarde vide",
             "branchez deux clés USB portant deux parts différentes d'une même sauvegarde",
+            "nom de la sauvegarde : 1 à 30 caractères (lettres, chiffres, espaces, - _)",
+            "un dossier de sauvegarde de ce nom existe déjà sur la clé USB : choisissez un autre nom",
+            "plusieurs sauvegardes complètes trouvées : choisissez celle à restaurer",
         ] {
             assert!(sources.iter().any(|s| s.contains(message)), "message absent du code : {message}");
             assert!(EXACT_ERROR_TRANSLATIONS.iter().any(|(fr, _)| *fr == message), "sans traduction : {message}");
         }
-        assert!(EXACT_ERROR_TRANSLATIONS.iter().any(|(fr, _)| fr.starts_with("cette clé USB contient déjà une part d'une autre sauvegarde")));
+        assert!(!EXACT_ERROR_TRANSLATIONS.iter().any(|(fr, _)| fr.starts_with("cette clé USB contient déjà une part d'une autre sauvegarde")), "refus retiré : plusieurs portefeuilles par clé");
         for (message, english) in [
             ("cette clé USB contient déjà la part n°2 de ce kit : deux parts sur une même clé suffiraient à tout récupérer — utilisez une autre clé", "share 2 of this kit"),
             ("sauvegarde incomplète sur la clé USB (part.asc absent)", "(part.asc missing)"),
@@ -9581,6 +9609,21 @@ mod tests {
         ] {
             assert!(translate_dynamic_error(message).is_some_and(|en| en.contains(english)), "{message}");
         }
+    }
+
+    /// Restauration USB : une sauvegarde n'est complète qu'avec deux parts
+    /// DIFFÉRENTES du même kit ; plusieurs complètes → toutes proposées, dans
+    /// l'ordre de lecture.
+    #[test]
+    fn complete_usb_kits_need_two_different_shares() {
+        use pgp_wallet_poc::usb_backup::{ShareFiles, ShareInfo};
+        let share = |kit: &str, part: u8| {
+            let files = ShareFiles { encrypted_share: Vec::new(), privkey_armored: Vec::new(), passphrase: Zeroizing::new(String::new()) };
+            (ShareInfo { kit: kit.into(), part, name: String::new() }, files)
+        };
+        assert!(complete_kits(&[share("aa", 1), share("bb", 1)]).is_empty());
+        assert_eq!(complete_kits(&[share("aa", 1), share("bb", 2), share("aa", 3)]), vec!["aa"]);
+        assert_eq!(complete_kits(&[share("bb", 1), share("aa", 1), share("aa", 2), share("bb", 3)]), vec!["bb", "aa"]);
     }
 
     /// Consigne Ledger toujours séparée du montant ou des frais par une ligne
