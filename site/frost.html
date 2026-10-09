@@ -94,10 +94,31 @@
     transform: rotate(22deg);
     clip-path: inset(0 0 100% 0);
   }
-  .split.play .part { animation: frost-appear 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
-  .split.play .slash { animation: frost-cut 0.42s cubic-bezier(0.7, 0, 0.3, 1) 1.2s both; }
-  .split.play .left { animation: frost-appear 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) both, frost-left 0.8s cubic-bezier(0.2, 0.9, 0.25, 1) 1.62s forwards; }
-  .split.play .right { animation: frost-appear 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) 0.08s both, frost-right 0.8s cubic-bezier(0.2, 0.9, 0.25, 1) 1.62s forwards; }
+  .frost-content {
+    display: flex; flex-direction: column; align-items: center;
+    gap: clamp(28px, 5vw, 56px); text-align: center;
+  }
+  .frost-credit {
+    margin: 0; font-size: clamp(12px, 1.2vw, 15px); font-weight: 600;
+    letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted);
+  }
+  .frost-credit strong { color: var(--text); font-family: var(--font-display); font-weight: 700; }
+  .frost-soon {
+    margin: 0; padding: 8px 18px 8px calc(18px + 0.32em); border-radius: 999px;
+    font-family: var(--font-display); font-size: clamp(13px, 1.3vw, 16px); font-weight: 700;
+    letter-spacing: 0.32em; text-transform: uppercase; color: var(--accent);
+    background: var(--accent-soft); border: 1px solid rgba(124, 147, 255, 0.45);
+  }
+  .play .frost-credit { animation: frost-fade 0.8s ease 0.15s both; }
+  .play .frost-soon { animation: frost-fade 0.8s ease 2.5s both; }
+  @keyframes frost-fade {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: none; }
+  }
+  .play .part { animation: frost-appear 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+  .play .slash { animation: frost-cut 0.42s cubic-bezier(0.7, 0, 0.3, 1) 1.2s both; }
+  .play .left { animation: frost-appear 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) both, frost-left 0.8s cubic-bezier(0.2, 0.9, 0.25, 1) 1.62s forwards; }
+  .play .right { animation: frost-appear 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) 0.08s both, frost-right 0.8s cubic-bezier(0.2, 0.9, 0.25, 1) 1.62s forwards; }
 
   @keyframes frost-appear {
     from { opacity: 0; transform: translateY(0.25em); filter: blur(6px); }
@@ -140,20 +161,25 @@
 </header>
 
 <main class="frost-stage">
-  <div class="split play" role="img" aria-label="Divisez la signature" tabindex="0" title="Rejouer">
-    <span class="part left" aria-hidden="true">Divisez</span>
-    <span class="slash" aria-hidden="true"></span>
-    <span class="part right" aria-hidden="true">la signature</span>
+  <div class="frost-content play">
+    <p class="frost-credit" lang="en"><strong>FROST</strong> by the Zcash Foundation</p>
+    <div class="split" role="img" aria-label="Divisez la signature" tabindex="0" title="Rejouer">
+      <span class="part left" aria-hidden="true">Divisez</span>
+      <span class="slash" aria-hidden="true"></span>
+      <span class="part right" aria-hidden="true">la signature</span>
+    </div>
+    <p class="frost-soon" lang="en">Coming soon</p>
   </div>
 </main>
 
 <script>
   // Rejoue l'animation au clic (ou Entrée / Espace).
   const split = document.querySelector(".split");
+  const content = document.querySelector(".frost-content");
   const replay = () => {
-    split.classList.remove("play");
-    void split.offsetWidth;
-    split.classList.add("play");
+    content.classList.remove("play");
+    void content.offsetWidth;
+    content.classList.add("play");
   };
   split.addEventListener("click", replay);
   split.addEventListener("keydown", (e) => {
