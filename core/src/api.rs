@@ -7122,6 +7122,119 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Adresses publiques de tous les réseaux, dans l'ordre de `Addresses`.
+    fn all_public_addresses(a: &Addresses) -> Vec<(&'static str, String)> {
+        vec![
+            ("evm", a.evm.clone()),
+            ("btc_testnet", a.btc_testnet.clone()),
+            ("btc_mainnet", a.btc_mainnet.clone()),
+            ("solana", a.solana.clone()),
+            ("zcash", a.zcash.clone()),
+            ("doge", a.doge.clone()),
+            ("tron", a.tron.clone()),
+            ("xrp", a.xrp.clone()),
+            ("stellar", a.stellar.clone()),
+            ("near", a.near.clone()),
+            ("cardano", a.cardano.clone()),
+            ("stacks", a.stacks.clone()),
+            ("bittensor", a.bittensor.clone()),
+            ("thor", a.thor.clone()),
+            ("zcash_shielded", a.zcash_shielded.clone()),
+            ("monero", a.monero.clone()),
+        ]
+    }
+
+    /// Génère `testdata/backup_kit_v1.json`, le kit FIGÉ de
+    /// `frozen_backup_kit_still_restores`. Ne se relance que pour figer un
+    /// NOUVEAU format, dans un nouveau fichier : l'existant ne se régénère
+    /// jamais (`cargo test --lib export_frozen_backup_kit -- --ignored`).
+    #[test]
+    #[ignore]
+    fn export_frozen_backup_kit() {
+        let dir = std::env::temp_dir().join(format!("pgp_wallet_export_frozen_kit_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/backup_kit_v1.json");
+        assert!(!std::path::Path::new(path).exists(), "kit figé déjà présent : il ne se régénère jamais");
+        let secret: Vec<u8> = (0..32u8).map(|i| i.wrapping_mul(7).wrapping_add(3)).collect();
+        let backups = generate_backup_kit(&dir, &secret).unwrap();
+        let addresses = derive_addresses(&secret, 0).unwrap();
+        let kit = serde_json::json!({
+            "note": "Kit de sauvegarde FACTICE (secret public), figé le 2026-10-09 (code de la version 2.11.0) : toute version de l'app doit le restaurer. Ne jamais envoyer de fonds à ces adresses ; ne jamais régénérer ce fichier.",
+            "secret_hex": hex::encode(&secret),
+            "addresses": all_public_addresses(&addresses).into_iter().map(|(k, v)| (k.to_string(), serde_json::Value::String(v))).collect::<serde_json::Map<String, serde_json::Value>>(),
+            "parts": backups.iter().map(|b| serde_json::json!({
+                "label": b.label,
+                "passphrase": b.passphrase,
+                "encrypted_share_hex": hex::encode(&b.encrypted_share),
+                "privkey_armored": String::from_utf8(b.privkey_armored.clone()).unwrap(),
+            })).collect::<Vec<_>>(),
+        });
+        std::fs::write(path, serde_json::to_string_pretty(&kit).unwrap() + "\n").unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Part du kit figé : (part chiffrée, clé privée armurée, mot de passe).
+    type FrozenPart = (Vec<u8>, Vec<u8>, String);
+
+    /// Kit figé et ses parts.
+    fn frozen_backup_kit() -> (serde_json::Value, Vec<FrozenPart>) {
+        let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/backup_kit_v1.json")).expect("kit figé testdata/backup_kit_v1.json");
+        let kit: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let parts = kit["parts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| {
+                (
+                    hex::decode(p["encrypted_share_hex"].as_str().unwrap()).unwrap(),
+                    p["privkey_armored"].as_str().unwrap().as_bytes().to_vec(),
+                    p["passphrase"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect();
+        (kit, parts)
+    }
+
+    /// GARANTIE : un kit de sauvegarde fait par une version de l'app se
+    /// restaure avec toutes les suivantes. Kit factice figé
+    /// (`testdata/backup_kit_v1.json`) : chaque paire de parts (1+2, 1+3, 2+3)
+    /// passe par la vraie restauration et redonne le même secret et les mêmes
+    /// adresses sur tous les réseaux. Un échec après une mise à jour
+    /// (bibliothèque OpenPGP, Shamir, dérivation) voudrait dire que de vraies
+    /// sauvegardes ne redonneraient plus les fonds : corriger le code, JAMAIS
+    /// ce fichier.
+    #[test]
+    fn frozen_backup_kit_still_restores() {
+        let (kit, parts) = frozen_backup_kit();
+        assert_eq!(parts.len(), 3);
+        let secret = hex::decode(kit["secret_hex"].as_str().unwrap()).unwrap();
+        for (a, b) in [(0usize, 1usize), (0, 2), (1, 2)] {
+            let dir = std::env::temp_dir().join(format!("pgp_wallet_frozen_kit_{a}{b}_{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            let (pa, pb) = (&parts[a], &parts[b]);
+            let decrypted: Vec<Zeroizing<Vec<u8>>> = [pa, pb]
+                .iter()
+                .enumerate()
+                .map(|(i, p)| Zeroizing::new(decrypt_with_armored_privkey(&p.0, &dir.join(format!("tmp_frozen_{i}.asc")), &p.1, &p.2).unwrap()))
+                .collect();
+            let refs: Vec<&[u8]> = decrypted.iter().map(|s| s.as_slice()).collect();
+            assert_eq!(*shamir::reconstruct_secret(2, &refs).unwrap(), secret, "parts {} + {}", a + 1, b + 1);
+            let addresses = restore_wallet_with(
+                &dir,
+                "un nouveau mot de passe bien assez long",
+                (&pa.0, &pa.1, &pa.2),
+                (&pb.0, &pb.1, &pb.2),
+                &FakeSealer { fail_enroll: false },
+            )
+            .unwrap_or_else(|e| panic!("restauration des parts {} + {} : {e:#}", a + 1, b + 1));
+            for (network, address) in all_public_addresses(&addresses) {
+                assert_eq!(kit["addresses"][network].as_str(), Some(address.as_str()), "{network}, parts {} + {}", a + 1, b + 1);
+            }
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
     #[test]
     fn biometric_unlock_cancellation_does_not_count_toward_the_lockout() {
         let dir = std::env::temp_dir().join(format!("pgp_wallet_bio_cancel_test_{}", std::process::id()));

@@ -6,9 +6,36 @@ use openpgp::parse::Parse;
 use openpgp::policy::StandardPolicy;
 use openpgp::serialize::stream::{Encryptor, LiteralWriter, Message};
 use openpgp::types::SymmetricAlgorithm;
-use openpgp::KeyHandle;
+use openpgp::{KeyHandle, Packet};
 use sequoia_openpgp as openpgp;
 use std::io::{Read, Write};
+use std::time::SystemTime;
+
+/// Instant auquel évaluer NOS propres clés (parts de sauvegarde, coffre de
+/// l'appareil, Windows Hello) : l'heure de l'ordinateur, mais jamais avant la
+/// création de la clé. Évaluée à l'heure seule, une clé « pas encore créée »
+/// pour une horloge en retard (pile de la carte mère, PC hors ligne mal
+/// réglé) n'était plus utilisable : ni restauration, ni déverrouillage, tant
+/// que l'horloge n'était pas corrigée — même d'une minute (mesuré). Ces clés
+/// sont créées sans expiration et ne sont jamais révoquées : rien de ce que la
+/// date protège n'est perdu. Les clés d'autres personnes (`messaging.rs`)
+/// restent évaluées à l'heure de l'ordinateur (leur expiration compte).
+fn own_key_time(cert: &Cert) -> SystemTime {
+    let now = SystemTime::now();
+    let newest = cert
+        .clone()
+        .into_packets()
+        .filter_map(|packet| match packet {
+            Packet::PublicKey(k) => Some(k.creation_time()),
+            Packet::PublicSubkey(k) => Some(k.creation_time()),
+            Packet::SecretKey(k) => Some(k.creation_time()),
+            Packet::SecretSubkey(k) => Some(k.creation_time()),
+            Packet::Signature(sig) => sig.signature_creation_time(),
+            _ => None,
+        })
+        .max();
+    newest.map_or(now, |newest| newest.max(now))
+}
 
 /// Chiffre une part (bytes) pour le détenteur de la clé publique PGP donnée.
 pub fn encrypt_share(share: &[u8], pubkey_path: &str) -> Result<Vec<u8>> {
@@ -18,7 +45,7 @@ pub fn encrypt_share(share: &[u8], pubkey_path: &str) -> Result<Vec<u8>> {
 
     let recipients = cert
         .keys()
-        .with_policy(&policy, None)
+        .with_policy(&policy, Some(own_key_time(&cert)))
         .supported()
         .alive()
         .revoked(false)
@@ -65,7 +92,7 @@ pub fn encrypt_share_multi(share: &[u8], pubkeys_armored: &[&[u8]]) -> Result<Ve
     for cert in &certs {
         let cert_recipients: Vec<_> = cert
             .keys()
-            .with_policy(&policy, None)
+            .with_policy(&policy, Some(own_key_time(cert)))
             .supported()
             .alive()
             .revoked(false)
@@ -135,16 +162,21 @@ impl DecryptionHelper for DecryptionKeyHelper {
 /// la clé privée correspondante avec une passphrase saisie directement (pas de
 /// gpg-agent ni de YubiKey dans ce PoC).
 pub fn decrypt_share(encrypted: &[u8], privkey_path: &str, passphrase: &str) -> Result<Vec<u8>> {
-    let policy = StandardPolicy::new();
     let cert = Cert::from_file(privkey_path)
         .with_context(|| format!("lecture de la clé privée {privkey_path}"))?;
+    decrypt_with_cert_at(encrypted, &cert, privkey_path, passphrase, own_key_time(&cert))
+}
 
+/// `decrypt_share` avec la clé déjà lue, évaluée (clé et message) à `time` —
+/// séparé pour que les tests puissent juger une part dans plusieurs décennies.
+fn decrypt_with_cert_at(encrypted: &[u8], cert: &Cert, privkey_path: &str, passphrase: &str, time: SystemTime) -> Result<Vec<u8>> {
+    let policy = StandardPolicy::new();
     let password = Password::from(passphrase);
 
     // Première sous-clé de chiffrement utilisable.
     let key_amalgamation = cert
         .keys()
-        .with_policy(&policy, None)
+        .with_policy(&policy, Some(time))
         .supported()
         .alive()
         .revoked(false)
@@ -164,7 +196,7 @@ pub fn decrypt_share(encrypted: &[u8], privkey_path: &str, passphrase: &str) -> 
     let helper = DecryptionKeyHelper { keypair };
     let mut decryptor = DecryptorBuilder::from_bytes(encrypted)
         .context("lecture du message PGP chiffré")?
-        .with_policy(&policy, None, helper)
+        .with_policy(&policy, Some(time), helper)
         .context("échec du déchiffrement (mauvaise clé ou message corrompu)")?;
 
     let mut plaintext = Vec::new();
@@ -229,7 +261,14 @@ mod tests {
     }
 
     fn generate_test_identity(passphrase: &str) -> (Vec<u8>, Vec<u8>) {
+        generate_test_identity_created(passphrase, std::time::SystemTime::now())
+    }
+
+    /// Identité générée comme dans l'app (`api::generate_pgp_identity` :
+    /// `CertBuilder::new`, sans durée de validité), datée de `creation`.
+    fn generate_test_identity_created(passphrase: &str, creation: std::time::SystemTime) -> (Vec<u8>, Vec<u8>) {
         let (cert, _revocation) = CertBuilder::new()
+            .set_creation_time(creation)
             .add_userid("Test <test@example.invalid>")
             .add_transport_encryption_subkey()
             .set_password(Some(Password::from(passphrase)))
@@ -313,5 +352,57 @@ mod tests {
     #[test]
     fn encrypt_share_multi_requires_at_least_one_recipient() {
         assert!(encrypt_share_multi(b"peu importe", &[]).is_err());
+    }
+
+    /// Nos clés ne dépendent pas de l'horloge de l'ordinateur : horloge en
+    /// retard d'une minute, d'une heure ou de deux ans sur la création de la
+    /// clé (restauration sur un PC mal réglé), ou clé vieille de 26 ans →
+    /// chiffrement et déchiffrement fonctionnent (avant : « aucune clé de
+    /// déchiffrement trouvée » dès une minute de retard).
+    #[test]
+    fn own_keys_work_whatever_the_computer_clock_says() {
+        use std::time::{Duration, SystemTime, UNIX_EPOCH};
+        let dir = std::env::temp_dir().join(format!("pgp_engine_clock_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let year = Duration::from_secs(31_557_600);
+        let now = SystemTime::now();
+        let cases = [("1 minute", now + Duration::from_secs(60)), ("1 heure", now + Duration::from_secs(3600)), ("2 ans", now + year * 2), ("an 2000", UNIX_EPOCH + year * 30)];
+        for (name, creation) in cases {
+            let passphrase = "passphrase de test, horloge décalée";
+            let (public, private) = generate_test_identity_created(passphrase, creation);
+            let (pub_path, priv_path) = (dir.join("clock_pub.asc"), dir.join("clock_priv.asc"));
+            std::fs::write(&pub_path, &public).unwrap();
+            std::fs::write(&priv_path, &private).unwrap();
+            let encrypted = encrypt_share(b"part de test", &pub_path.to_string_lossy()).unwrap_or_else(|e| panic!("{name} : chiffrement {e:#}"));
+            let decrypted = decrypt_share(&encrypted, &priv_path.to_string_lossy(), passphrase).unwrap_or_else(|e| panic!("{name} : déchiffrement {e:#}"));
+            assert_eq!(decrypted, b"part de test", "{name}");
+            let multi = encrypt_share_multi(b"coffre de test", &[&public]).unwrap_or_else(|e| panic!("{name} : chiffrement multiple {e:#}"));
+            assert_eq!(decrypt_share(&multi, &priv_path.to_string_lossy(), passphrase).unwrap(), b"coffre de test", "{name}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Une part chiffrée aujourd'hui se déchiffre encore en 2040, 2070 et
+    /// 2100 avec cette version de la bibliothèque : aucune règle datée de la
+    /// politique de sequoia (algorithmes refusés après une date) ne la rendra
+    /// inutilisable avec le temps.
+    #[test]
+    fn todays_shares_still_decrypt_decades_later() {
+        use std::time::{Duration, UNIX_EPOCH};
+        let dir = std::env::temp_dir().join(format!("pgp_engine_decades_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let passphrase = "passphrase de test, dans plusieurs décennies";
+        let (public, private) = generate_test_identity(passphrase);
+        let (pub_path, priv_path) = (dir.join("decades_pub.asc"), dir.join("decades_priv.asc"));
+        std::fs::write(&pub_path, &public).unwrap();
+        std::fs::write(&priv_path, &private).unwrap();
+        let encrypted = encrypt_share(b"part de test", &pub_path.to_string_lossy()).unwrap();
+        let cert = Cert::from_bytes(&private).unwrap();
+        for year in [2040u64, 2070, 2100] {
+            let time = UNIX_EPOCH + Duration::from_secs((year - 1970) * 31_557_600);
+            let decrypted = decrypt_with_cert_at(&encrypted, &cert, "clé de test", passphrase, time).unwrap_or_else(|e| panic!("{year} : {e:#}"));
+            assert_eq!(decrypted, b"part de test", "{year}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

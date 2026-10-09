@@ -697,6 +697,70 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    /// Clés écrites par les versions précédentes : rangement d'origine
+    /// (`PGP-Wallet-Sauvegarde/part-N/`, format 1, sans nom) et rangement
+    /// nommé (format 2), écrits ici avec des chemins et un contenu LITTÉRAUX
+    /// (pas avec le code d'écriture actuel), à partir du kit figé
+    /// (`testdata/backup_kit_v1.json`) : reconnus, relus à l'identique, et une
+    /// part de chaque rangement restaure le portefeuille aux mêmes adresses.
+    /// Un échec voudrait dire que des clés déjà faites ne seraient plus lues.
+    #[test]
+    fn drives_written_by_earlier_versions_still_restore() {
+        let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/backup_kit_v1.json")).unwrap();
+        let kit_json: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let backups: Vec<crate::api::BackupShare> = kit_json["parts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| crate::api::BackupShare {
+                label: p["label"].as_str().unwrap().into(),
+                passphrase: p["passphrase"].as_str().unwrap().into(),
+                encrypted_share: hex::decode(p["encrypted_share_hex"].as_str().unwrap()).unwrap(),
+                privkey_armored: p["privkey_armored"].as_str().unwrap().as_bytes().to_vec(),
+            })
+            .collect();
+        let kit = crate::api::backup_kit_id(&backups);
+        let base = temp_root("earlier");
+        let write_part_literally = |dir: PathBuf, backup: &crate::api::BackupShare, info: String| {
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("part.asc"), &backup.encrypted_share).unwrap();
+            std::fs::write(dir.join("cle-privee.asc"), &backup.privkey_armored).unwrap();
+            std::fs::write(dir.join("mot-de-passe.txt"), &backup.passphrase).unwrap();
+            std::fs::write(dir.join("sauvegarde.json"), info).unwrap();
+        };
+        let v1 = base.join("v1");
+        for (i, backup) in backups.iter().enumerate().take(2) {
+            let part = i + 1;
+            write_part_literally(v1.join(format!("PGP-Wallet-Sauvegarde/part-{part}")), backup, format!("{{\n  \"format\": 1,\n  \"kit\": \"{kit}\",\n  \"part\": {part}\n}}"));
+        }
+        let v2 = base.join("v2");
+        write_part_literally(
+            v2.join(format!("PGP-Wallet-Sauvegarde/Coffre-familial-{}/part-3", &kit[..6])),
+            &backups[2],
+            format!("{{\n  \"format\": 2,\n  \"kit\": \"{kit}\",\n  \"part\": 3,\n  \"name\": \"Coffre familial\"\n}}"),
+        );
+        assert_eq!(shares_on(&v1), vec![info(&kit, 1, ""), info(&kit, 2, "")]);
+        assert_eq!(shares_on(&v2), vec![info(&kit, 3, "Coffre familial")]);
+        let (_, first) = read_share_at(&v1, &kit, 1).unwrap();
+        let (_, third) = read_share_at(&v2, &kit, 3).unwrap();
+        for (files, backup) in [(&first, &backups[0]), (&third, &backups[2])] {
+            assert_eq!(files.encrypted_share, backup.encrypted_share);
+            assert_eq!(files.privkey_armored, backup.privkey_armored);
+            assert_eq!(files.passphrase.as_str(), backup.passphrase);
+        }
+        let restored = crate::api::restore_wallet(
+            &base.join("appareil"),
+            "un nouveau mot de passe bien assez long",
+            (&first.encrypted_share, &first.privkey_armored, &first.passphrase),
+            (&third.encrypted_share, &third.privkey_armored, &third.passphrase),
+        )
+        .expect("restauration depuis une clé v1 et une clé v2");
+        assert_eq!(Some(restored.evm.as_str()), kit_json["addresses"]["evm"].as_str());
+        assert_eq!(Some(restored.btc_mainnet.as_str()), kit_json["addresses"]["btc_mainnet"].as_str());
+        assert_eq!(Some(restored.solana.as_str()), kit_json["addresses"]["solana"].as_str());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     /// Une destination qui n'est pas une clé USB détectée est refusée (le disque
     /// système, un dossier quelconque), et les paramètres invalides aussi.
     #[test]
