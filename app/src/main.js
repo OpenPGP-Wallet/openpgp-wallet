@@ -256,6 +256,39 @@ function buildHistorySection(asset) {
   }
 }
 
+// Cartes repliées d'une même rangée à la même hauteur : un nom sur deux
+// lignes (« Zcash protégé ») ou une pastille Staker faisait dépasser une
+// carte sous ses voisines. Hauteur de la plus haute carte repliée de la
+// rangée (même position verticale) ; l'en-tête prend l'écart, solde et
+// boutons restent alignés (voir styles.css). Cartes dépliées et vue liste :
+// hauteur propre. Recalculé à chaque changement de taille (repli, langue,
+// fenêtre, pastille chargée…) : remise à zéro, mesure et nouvelle hauteur
+// dans la même image, donc stable d'une image à l'autre.
+{
+  const grid = document.querySelector(".wallet-grid");
+  let frame = null;
+  const align = () => {
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(() => {
+      const cards = [...grid.querySelectorAll(".wallet-card")];
+      cards.forEach((card) => card.style.removeProperty("min-height"));
+      if (document.documentElement.dataset.walletListView === "true") return;
+      const rows = new Map();
+      for (const card of cards) {
+        if (!card.classList.contains("collapsed") || !card.getClientRects().length) continue;
+        rows.set(card.offsetTop, [...(rows.get(card.offsetTop) ?? []), card]);
+      }
+      for (const row of rows.values()) {
+        const height = Math.max(...row.map((card) => card.offsetHeight));
+        row.filter((card) => card.offsetHeight < height).forEach((card) => (card.style.minHeight = `${height}px`));
+      }
+    });
+  };
+  const observer = new ResizeObserver(align);
+  observer.observe(grid);
+  grid.querySelectorAll(".wallet-card").forEach((card) => observer.observe(card));
+}
+
 // --- Mes cryptos : cartes affichées -------------------------------------------
 // Choix explicites { coin: true|false }, retenus sur l'appareil ; sans choix :
 // les cryptos par défaut, et toute crypto sur laquelle des fonds sont

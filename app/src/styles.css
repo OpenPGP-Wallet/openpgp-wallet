@@ -4310,6 +4310,10 @@ h2 .coin-icon-inline,
 :root:not([data-wallet-list-view="true"]) .wallet-card.collapsed {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
+  /* En-tête (1re rangée) extensible : carte allongée à la hauteur de la plus
+     haute carte repliée de sa rangée (main.js), l'écart va sous l'en-tête et
+     solde, équivalence et boutons restent alignés d'une carte à l'autre. */
+  grid-template-rows: minmax(min-content, 1fr);
   grid-auto-flow: row dense;
   column-gap: 8px;
   align-content: start;
@@ -4317,6 +4321,12 @@ h2 .coin-icon-inline,
 
 :root:not([data-wallet-list-view="true"]) .wallet-card.collapsed > * {
   grid-column: 1 / -1;
+}
+
+/* En-tête en haut de sa rangée allongée : nom et réseau à la même place que
+   dans les cartes voisines. */
+:root:not([data-wallet-list-view="true"]) .wallet-card.collapsed > header {
+  align-self: start;
 }
 
 :root:not([data-wallet-list-view="true"]) .wallet-card.collapsed > .balance-row {
