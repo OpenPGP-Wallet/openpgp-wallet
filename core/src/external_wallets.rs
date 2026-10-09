@@ -65,11 +65,13 @@ pub(crate) fn validate_address(network: &str, address: &str) -> Result<()> {
         n if wallet_flow::evm_network(n).is_some() => {
             wallet_flow::parse_evm_address(address)?;
         }
+        // Tout type d'adresse standard (1…, 3…, bc1q…, bc1p…) : celles que
+        // l'app sait payer.
         "btc_mainnet" => {
-            derivation::parse_btc_mainnet_address(address)?;
+            derivation::btc_mainnet_recipient_script(address)?;
         }
         "btc_testnet" => {
-            derivation::parse_btc_testnet_address(address)?;
+            derivation::btc_testnet_recipient_script(address)?;
         }
         // "usdc_solana" : même format d'adresse que "sol_*" (l'adresse est
         // toujours celle du propriétaire — le compte de jetons USDC qui la

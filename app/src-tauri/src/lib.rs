@@ -544,9 +544,10 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("adresse bech32 vide", "empty bech32 address"),
     (
         pgp_wallet_poc::derivation::BTC_ADDRESS_UNSUPPORTED,
-        "only Bitcoin addresses starting with bc1q are supported for now: ask the recipient for one",
+        "Bitcoin address type not supported yet (future SegWit version): ask the recipient for another address",
     ),
     (pgp_wallet_poc::derivation::BTC_ADDRESS_MISCOPIED, "Bitcoin address not recognized: a character seems miscopied"),
+    (pgp_wallet_poc::derivation::BTC_ADDRESS_OTHER_NETWORK, "address from another network than Bitcoin"),
     (
         "adresse Bitcoin mal formée (version SegWit, encodage ou longueur incohérents)",
         "malformed Bitcoin address (inconsistent SegWit version, encoding or length)",
@@ -854,6 +855,9 @@ const LEDGER_PREFIX_TRANSLATIONS: &[(&str, &str)] = &[
 fn translate_dynamic_error(msg: &str) -> Option<String> {
     if let Some(amount) = msg.strip_prefix("ADA insuffisants : il faut au moins ").and_then(|r| r.strip_suffix(" ADA (dépôt et frais du réseau compris)")) {
         return Some(format!("not enough ADA: at least {amount} ADA needed (deposit and network fee included)"));
+    }
+    if let Some(amount) = msg.strip_prefix(api::BTC_DUST_PREFIX).and_then(|r| r.strip_suffix(" BTC vers cette adresse")) {
+        return Some(format!("amount too small for the Bitcoin network: at least {amount} BTC to this address"));
     }
     use pgp_wallet_poc::wallet_flow::{MAYBE_SENT_PREFIX, MAYBE_SENT_SUFFIX};
     if let Some(id) = msg.strip_prefix(MAYBE_SENT_PREFIX).and_then(|rest| rest.strip_suffix(MAYBE_SENT_SUFFIX)) {
@@ -4559,7 +4563,7 @@ fn confirm_send(
     let fee_line = match coin {
         "btc" => {
             let fee_sat = fee_sat.ok_or_else(|| lang("frais Bitcoin manquants : choisissez une vitesse d'envoi", "Bitcoin fee missing: choose a sending speed").to_string())?;
-            Some(format!("{} : {fee_sat} sat", lang("Frais", "Fee")))
+            Some(format!("{} : {} BTC", lang("Frais", "Fee"), pgp_wallet_poc::tokens::format_amount(u128::from(fee_sat), 8)))
         }
         "zec" => zec_plan.as_ref().map(|plan| {
             let mut line = format!("{} : {} ZEC", lang("Frais", "Fee"), pgp_wallet_poc::zcash::format_zec(plan.fee));
@@ -5894,10 +5898,10 @@ fn prepare_deposit(coin: &str, network: &str, source: &str, deposit: &str, amoun
         }
         "btc_mainnet" => {
             let net = btc_network("btc_mainnet")?;
-            api::validate_btc_recipient(deposit, net).t_err()?;
+            api::check_btc_recipient(net, deposit, amount).t_err()?;
             let fee_sat = api::estimate_btc_fees(source, net).t_err()?.medium_sat;
             api::ensure_btc_transfer_funds(net, source, amount, fee_sat).t_err()?;
-            Ok((DepositSend::Btc(fee_sat), format!("{} : {fee_sat} sat", lang("Frais réseau", "Network fee"))))
+            Ok((DepositSend::Btc(fee_sat), format!("{} : {} BTC", lang("Frais réseau", "Network fee"), pgp_wallet_poc::tokens::format_amount(u128::from(fee_sat), 8))))
         }
         "doge_mainnet" => {
             let plan = api::doge_send_plan(source, deposit, amount).t_err()?;
@@ -6239,7 +6243,7 @@ async fn estimate_send_fee(network: String, token: Option<String>, to: String, a
             // Monero), mais adresse vérifiée dès l'aperçu, comme ailleurs :
             // mêmes parseurs que l'envoi.
             ("btc_mainnet", None) => {
-                (btc_network(&network)?.parse_address)(&to).t_err()?;
+                api::check_btc_recipient(btc_network(&network)?, &to, &amount).t_err()?;
                 None
             }
             ("xmr_mainnet", None) => {
@@ -8837,6 +8841,14 @@ mod tests {
             "Zcash fees increased since the confirmation (0.00025000 instead of 0.00020000 ZEC) — start again"
         );
         assert_eq!(translate_dynamic_error("devis Maya refusé : amount less than dust threshold").unwrap(), "Maya quote refused: amount less than dust threshold");
+        // Destinataire Bitcoin : poussière (message réel de `api::btc_recipient`),
+        // refus d'adresse.
+        let dust = api::btc_recipient(&wallet_flow::BTC_MAINNET, "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa", 545).unwrap_err().to_string();
+        assert_eq!(translate_dynamic_error(&dust).unwrap(), "amount too small for the Bitcoin network: at least 0.00000546 BTC to this address");
+        for refused in ["bc1zw508d6qejxtdg4y5r3zarvaryvaxxpcs", "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t5", "DH5yaieqoZN36fDVciNyRueRGvGLR3mr7L"] {
+            let fr = (wallet_flow::BTC_MAINNET.recipient_script)(refused).unwrap_err().to_string();
+            assert!(EXACT_ERROR_TRANSLATIONS.iter().any(|(text, _)| *text == fr), "{fr}");
+        }
         for fr in ["la transaction LI.FI envoie plus que le montant affiché — refusé", "adresse de dépôt Maya invalide", "PSBT LI.FI illisible"] {
             assert!(EXACT_ERROR_TRANSLATIONS.iter().any(|(text, _)| *text == fr), "{fr}");
         }

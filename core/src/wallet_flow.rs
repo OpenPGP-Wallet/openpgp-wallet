@@ -257,7 +257,11 @@ pub struct BtcNetwork {
     pub explorer_tx_prefix: &'static str,
     pub derive_key: fn(&[u8], u32) -> Result<(k256::ecdsa::SigningKey, [u8; 20])>,
     pub format_address: fn(&[u8; 20]) -> Result<String>,
+    /// Adresse du portefeuille (P2WPKH) en hash160.
     pub parse_address: fn(&str) -> Result<[u8; 20]>,
+    /// Adresse de destination, de tout type standard, en script de sortie.
+    pub recipient_script: fn(&str) -> Result<Vec<u8>>,
+    pub testnet: bool,
 }
 
 pub const BTC_MAINNET: BtcNetwork = BtcNetwork {
@@ -267,6 +271,8 @@ pub const BTC_MAINNET: BtcNetwork = BtcNetwork {
     derive_key: derivation::derive_btc_mainnet_key,
     format_address: derivation::format_btc_mainnet_address,
     parse_address: derivation::parse_btc_mainnet_address,
+    recipient_script: derivation::btc_mainnet_recipient_script,
+    testnet: false,
 };
 
 pub const BTC_TESTNET: BtcNetwork = BtcNetwork {
@@ -276,6 +282,8 @@ pub const BTC_TESTNET: BtcNetwork = BtcNetwork {
     derive_key: derivation::derive_btc_testnet_key,
     format_address: derivation::format_btc_testnet_address,
     parse_address: derivation::parse_btc_testnet_address,
+    recipient_script: derivation::btc_testnet_recipient_script,
+    testnet: true,
 };
 
 /// Frais fixes, généreux pour Bitcoin testnet (évite une estimation dynamique).
@@ -499,8 +507,8 @@ fn send_btc(
         return Err(anyhow!("aucun UTXO confirmé disponible (vérifie le solde d'abord)"));
     }
 
-    let to_str = prompt("Adresse destinataire testnet (tb1...) : ")?;
-    let to_hash160 = derivation::parse_btc_testnet_address(&to_str)?;
+    let to_str = prompt("Adresse destinataire testnet (tb1…, m…, n… ou 2…) : ")?;
+    let to_script = derivation::btc_testnet_recipient_script(&to_str)?;
 
     let amount_str = prompt("Montant à envoyer en BTC (ex: 0.0001) : ")?;
     let amount_sat = parse_btc_to_sat(&amount_str)?;
@@ -519,7 +527,7 @@ fn send_btc(
 
     let tx = BtcTx {
         inputs: utxos,
-        to_hash160,
+        to_script,
         value_sat: amount_sat,
         change_hash160: *hash160,
         change_sat,

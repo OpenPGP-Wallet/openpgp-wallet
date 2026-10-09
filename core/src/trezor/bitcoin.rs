@@ -75,17 +75,10 @@ pub fn get_address(trezor: &mut Trezor, account: &Account, change: u32, index: u
     Ok(address)
 }
 
-/// Adresse d'une sortie P2WPKH (seul type de sortie construit par l'app).
+/// Adresse d'une sortie de destination (P2PKH, P2SH, P2WPKH, P2WSH ou
+/// Taproot) : le Trezor la reçoit sous cette forme et l'affiche.
 fn output_address(account: &Account, script: &[u8]) -> Result<String> {
-    let hash: [u8; 20] = script
-        .strip_prefix(&[0x00, 0x14])
-        .and_then(|h| h.try_into().ok())
-        .ok_or_else(|| anyhow!("type de sortie non pris en charge par l'app (P2WPKH seulement)"))?;
-    if account.testnet {
-        crate::derivation::format_btc_testnet_address(&hash)
-    } else {
-        crate::derivation::format_btc_mainnet_address(&hash)
-    }
+    crate::derivation::btc_script_address(script, account.testnet)
 }
 
 /// Réponse `TxAck` portant une transaction (ou un fragment) : champs 2
@@ -329,6 +322,29 @@ mod tests {
         assert!(compact.contains(&crate::derivation::format_btc_testnet_address(&[0x55; 20]).unwrap()[..12]), "destinataire affiché");
         assert!(compact.contains("0.00002"), "frais affichés");
         assert_eq!(parse_transaction(&signed).unwrap().outputs.len(), 2);
+
+        // Destinataire de chaque autre type standard (P2PKH m…, P2SH 2…,
+        // P2WSH, Taproot tb1p…) : transmis au Trezor sous forme d'adresse,
+        // affiché, et la transaction signée porte le script attendu.
+        for to_script in [
+            "76a91462e907b15cbf27d5425399ebf6f0fb50ebb88f1888ac",
+            "a914b472a266d0bd89c13706a4132ccfb16f7c3b9fcb87",
+            "00201863143c14c5166804bd19203356da136c985678cd4d27a1b8c6329604903262",
+            "512079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+        ] {
+            let to_script = hex::decode(to_script).unwrap();
+            let address = crate::derivation::btc_script_address(&to_script, true).unwrap();
+            let outputs = [
+                Output { value_sat: 60_000, script_pubkey: to_script.clone(), change_index: None },
+                Output { value_sat: 18_000, script_pubkey: script(1, 4), change_index: Some(4) },
+            ];
+            let reviewer = std::thread::spawn(|| DebugLink::connect().review(20, None));
+            let signed = sign_transaction(&mut trezor, &account, &inputs, &outputs).unwrap();
+            let screens = reviewer.join().unwrap().join(" | ");
+            println!("{address} : {screens}");
+            assert!(screens.replace(' ', "").contains(&address[..12]), "{address} affichée");
+            assert_eq!(parse_transaction(&signed).unwrap().outputs[0], (60_000, to_script));
+        }
 
         let refuser = std::thread::spawn(|| DebugLink::connect().review(20, Some("")));
         let err = sign_transaction(&mut trezor, &account, &inputs, &outputs).unwrap_err();

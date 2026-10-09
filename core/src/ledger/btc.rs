@@ -1066,6 +1066,28 @@ mod tests {
         assert_eq!(parsed.outputs, outputs.iter().map(|o| (o.value_sat, o.script_pubkey.clone())).collect::<Vec<_>>());
         speculos::back_to_home();
 
+        // Destinataire de chaque autre type standard (P2PKH m…, P2SH 2…,
+        // P2WSH, Taproot tb1p…) : adresse affichée par l'appareil,
+        // transaction signée avec ce script de sortie.
+        for to_script in [
+            "76a91462e907b15cbf27d5425399ebf6f0fb50ebb88f1888ac",
+            "a914b472a266d0bd89c13706a4132ccfb16f7c3b9fcb87",
+            "00201863143c14c5166804bd19203356da136c985678cd4d27a1b8c6329604903262",
+            "512079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+        ] {
+            let to_script = hex::decode(to_script).unwrap();
+            let address = crate::derivation::btc_script_address(&to_script, true).unwrap();
+            let mut outputs = test_transaction(&device).1;
+            outputs[0].script_pubkey = to_script.clone();
+            let approver = std::thread::spawn(|| speculos::review_and_accept(&["Sign transaction", "Accept and send", "Approve"]));
+            let signed = sign_transaction(&mut t, &device, &inputs, &outputs).unwrap();
+            let screens = approver.join().unwrap().join(" | ");
+            println!("{address} : {screens}");
+            assert!(screens.replace(' ', "").contains(&address[..16]), "{address} affichée");
+            assert_eq!(parse_transaction(&signed).unwrap().outputs[0], (60_000, to_script));
+            speculos::back_to_home();
+        }
+
         let rejecter = std::thread::spawn(|| speculos::review_and_accept(&["Reject"]));
         let err = sign_transaction(&mut t, &device, &inputs, &outputs).unwrap_err();
         rejecter.join().unwrap();

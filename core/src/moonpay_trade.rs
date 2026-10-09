@@ -364,9 +364,10 @@ pub fn parse_action(body: &Value, from: &Asset, to: &Asset, amount: u128) -> Res
         let value = amount_value(&tx["value"]).context("devis MoonPay Trade illisible (valeur)")?;
         ensure!(value == amount, "le dépôt MoonPay Trade porte sur un autre montant — refus de signer");
         let address = tx["to"].as_str().context("devis MoonPay Trade sans adresse de dépôt")?.trim().to_string();
-        // Bitcoin : l'app ne paie que des adresses SegWit P2WPKH (bc1q…) ;
-        // MoonPay Trade en donne parfois une P2SH (3…, relevé le 07/10/2026) —
-        // un nouveau devis en donne en général une autre.
+        // Adresse d'une forme que l'app ne sait pas payer (autre réseau,
+        // version SegWit future…) : un nouveau devis en donne en général une
+        // autre. Bitcoin : tous les types standard (P2SH 3… compris, donné
+        // parfois par MoonPay Trade, relevé le 07/10/2026).
         external_wallets::validate_address(from.network, &address).map_err(|_| anyhow!("adresse de dépôt MoonPay Trade d'une forme que l'app ne sait pas payer — demandez un nouveau devis"))?;
         let memo = match tx["toExtra"].as_str().map(str::trim).filter(|m| !m.is_empty()) {
             None => None,
@@ -652,10 +653,13 @@ mod tests {
         let mut bad_address = xrp_eth.clone();
         bad_address["tx"]["to"] = json!("rKKbNYZRqwPgZYkFWvqNUFBuscEyiFyCF");
         assert!(parse_action(&bad_address, &xrp, &eth, 50_000_000).unwrap_err().to_string().contains("ne sait pas payer"));
-        // BTC → ETH (réel) : dépôt P2SH, que l'app ne sait pas payer.
+        // BTC → ETH (réel) : dépôt P2SH, payable ; adresse de dépôt d'une
+        // version SegWit future : nouveau devis demandé.
         let mut p2sh = body(json!({ "to": "3PFQuK2rjdCSHxCxT7p4jeVB34Fva3qwps", "toExtra": null, "value": "100000", "chainId": 999_000_313, "chainKey": "btc" }), &btc, "100000", "alt-vm");
         p2sh["amountOut"] = pay(1, NATIVE, "31776200000000000");
         p2sh["amountOutMin"] = pay(1, NATIVE, "31776200000000000");
+        assert_eq!(parse_action(&p2sh, &btc, &eth, 100_000).unwrap().tx, TradeTx::Deposit { address: "3PFQuK2rjdCSHxCxT7p4jeVB34Fva3qwps".into(), memo: None });
+        p2sh["tx"]["to"] = json!("bc1zw508d6qejxtdg4y5r3zarvaryvaxxpcs");
         assert!(parse_action(&p2sh, &btc, &eth, 100_000).unwrap_err().to_string().contains("nouveau devis"));
         p2sh["tx"]["to"] = json!("bc1qp4lu3qxd45jv5lnw9uauhm70238fgrzlv5s8he");
         assert!(parse_action(&p2sh, &btc, &eth, 100_000).is_ok());
@@ -818,7 +822,7 @@ mod tests {
                     println!("{} → {} : {:?}, minimum {} (~{} s)", from.symbol, to.symbol, quote.tx, quote.min_out, quote.duration_secs);
                     assert!(matches!(quote.tx, TradeTx::Deposit { .. }));
                 }
-                // Bitcoin : dépôt P2SH possible, refusé proprement.
+                // Bitcoin : dépôt d'une forme non payable (version SegWit future), refusé proprement.
                 Err(e) if from.network == "btc_mainnet" && e.to_string().contains("nouveau devis") => println!("BTC → ETH : {e} ({})", body["tx"]["to"]),
                 Err(e) => panic!("{e}"),
             }

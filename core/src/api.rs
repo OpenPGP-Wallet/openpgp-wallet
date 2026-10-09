@@ -3752,6 +3752,26 @@ fn fee_rate_for_target(estimates: &[(u32, f64)], target: u32) -> f64 {
         .unwrap_or(1.0)
 }
 
+/// Début du refus d'un montant Bitcoin sous le seuil de poussière (traduit
+/// par l'app).
+pub const BTC_DUST_PREFIX: &str = "montant trop petit pour le réseau Bitcoin : au moins ";
+
+/// Script de sortie du destinataire d'un envoi Bitcoin (tout type standard,
+/// voir `derivation::btc_recipient_script`), montant au-dessus du seuil de
+/// poussière de ce type de sortie — sinon les nœuds refusent la transaction.
+pub fn btc_recipient(network: &wallet_flow::BtcNetwork, to: &str, amount_sat: u64) -> Result<Vec<u8>> {
+    let script = (network.recipient_script)(to)?;
+    let dust = crate::btc_tx::dust_threshold(&script);
+    anyhow::ensure!(amount_sat >= dust, "{BTC_DUST_PREFIX}{} BTC vers cette adresse", tokens::format_amount(u128::from(dust), 8));
+    Ok(script)
+}
+
+/// `btc_recipient` pour un montant saisi (en BTC) : vérification de l'aperçu
+/// et des dépôts, avant la boîte de confirmation.
+pub fn check_btc_recipient(network: &wallet_flow::BtcNetwork, to: &str, amount_btc: &str) -> Result<()> {
+    btc_recipient(network, to, wallet_flow::parse_btc_to_sat(amount_btc)?).map(|_| ())
+}
+
 /// Monnaie d'un envoi Bitcoin qui consomme `total_sat` : fonds suffisants
 /// exigés ; 0 sous le seuil de poussière (le reliquat part alors en frais).
 pub(crate) fn btc_change(total_sat: u64, amount_sat: u64, fee_sat: u64) -> Result<u64> {
@@ -3803,7 +3823,7 @@ pub(crate) fn estimate_btc_fees_for(addresses: &[&str], network: &wallet_flow::B
         )
     });
     let num_inputs = utxos?.iter().map(Vec::len).sum::<usize>().max(1);
-    let vsize = crate::btc_tx::estimate_p2wpkh_vsize(num_inputs, 2) as f64;
+    let vsize = crate::btc_tx::estimate_send_vsize(num_inputs) as f64;
     let estimates = estimates?;
 
     let sat_for_target = |target: u32| (fee_rate_for_target(&estimates, target) * vsize).ceil() as u64;
@@ -3834,8 +3854,8 @@ pub fn send_btc(
     let (signing_key, hash160) = (network.derive_key)(&seed, profile_index)?;
 
     let address = (network.format_address)(&hash160)?;
-    let to_hash160 = (network.parse_address)(to)?;
     let amount_sat = wallet_flow::parse_btc_to_sat(amount_btc)?;
+    let to_script = btc_recipient(network, to, amount_sat)?;
 
     let esplora = btc_rpc::EsploraClient::new(network.esplora_base);
     let utxos = esplora.utxos(&address)?;
@@ -3844,7 +3864,7 @@ pub fn send_btc(
 
     let tx = crate::btc_tx::BtcTx {
         inputs: utxos,
-        to_hash160,
+        to_script,
         value_sat: amount_sat,
         change_hash160: hash160,
         change_sat,
@@ -3927,7 +3947,7 @@ pub fn send_swap_btc(
 
     let tx = crate::btc_tx::BtcTx {
         inputs: utxos,
-        to_hash160,
+        to_script: crate::btc_tx::p2wpkh_script_pubkey(&to_hash160),
         value_sat: amount_sat,
         change_hash160: hash160,
         change_sat,
@@ -4037,7 +4057,7 @@ pub fn validate_evm_recipient(to: &str) -> Result<()> {
 
 /// Même principe que `validate_evm_recipient`, pour Bitcoin.
 pub fn validate_btc_recipient(to: &str, network: &wallet_flow::BtcNetwork) -> Result<()> {
-    (network.parse_address)(to).map(|_| ())
+    (network.recipient_script)(to).map(|_| ())
 }
 
 pub fn evm_recipient_activity(to: &str, network: &wallet_flow::EvmNetwork) -> Result<RecipientActivity> {
@@ -4056,8 +4076,12 @@ pub fn evm_recipient_activity(to: &str, network: &wallet_flow::EvmNetwork) -> Re
 
 pub fn btc_recipient_activity(to: &str, network: &wallet_flow::BtcNetwork) -> Result<RecipientActivity> {
     // Format validé d'abord : l'adresse est insérée dans le chemin de l'URL.
-    (network.parse_address)(to)?;
-    let stats = btc_rpc::EsploraClient::new(network.esplora_base).address_stats(&to.trim().to_ascii_lowercase())?;
+    // Minuscules pour une adresse bech32 seulement (insensible à la casse) :
+    // une adresse 1…/3… (base58) en minuscules serait une autre adresse.
+    (network.recipient_script)(to)?;
+    let to = to.trim();
+    let bech32 = to.get(..3).is_some_and(|p| p.eq_ignore_ascii_case("bc1") || p.eq_ignore_ascii_case("tb1"));
+    let stats = btc_rpc::EsploraClient::new(network.esplora_base).address_stats(&if bech32 { to.to_ascii_lowercase() } else { to.to_string() })?;
     Ok(classify_btc_activity(&stats))
 }
 
@@ -5479,6 +5503,28 @@ mod swap_matrix;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Destinataire Bitcoin de chaque type standard : accepté dès son seuil
+    /// de poussière, refusé en dessous avec le minimum en BTC ; adresse du
+    /// réseau de test refusée sur le réseau principal.
+    #[test]
+    fn bitcoin_recipients_of_every_type_need_an_amount_above_their_dust() {
+        let net = &wallet_flow::BTC_MAINNET;
+        for (address, dust) in [
+            ("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa", 546u64),
+            ("3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy", 540),
+            ("bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", 294),
+            ("bc1qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3qccfmv3", 330),
+            ("bc1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqzk5jj0", 330),
+        ] {
+            assert_eq!(btc_recipient(net, address, dust).unwrap(), (net.recipient_script)(address).unwrap(), "{address}");
+            let refused = btc_recipient(net, address, dust - 1).unwrap_err().to_string();
+            assert_eq!(refused, format!("{BTC_DUST_PREFIX}{} BTC vers cette adresse", tokens::format_amount(u128::from(dust), 8)), "{address}");
+            assert!(validate_btc_recipient(address, net).is_ok(), "{address}");
+        }
+        assert!(btc_recipient(net, "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx", 10_000).is_err());
+        assert!(btc_recipient(&wallet_flow::BTC_TESTNET, "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx", 10_000).is_ok());
+    }
 
     /// Glissement Jupiter (6001) reconnu ; autres échecs laissés tels quels.
     #[test]

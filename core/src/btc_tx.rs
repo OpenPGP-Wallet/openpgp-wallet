@@ -12,12 +12,12 @@ pub struct Utxo {
     pub value_sat: u64,
 }
 
-/// Transaction Bitcoin P2WPKH toute simple (un ou plusieurs UTXOs d'une même adresse
-/// vers un destinataire, avec sortie de monnaie optionnelle). Suffisant pour le test
-/// "premier virement testnet" du PoC.
+/// Transaction Bitcoin toute simple : un ou plusieurs UTXOs P2WPKH d'une même
+/// adresse vers un destinataire de type quelconque (`to_script`, voir
+/// `derivation::btc_recipient_script`), avec sortie de monnaie optionnelle.
 pub struct BtcTx {
     pub inputs: Vec<Utxo>,
-    pub to_hash160: [u8; 20],
+    pub to_script: Vec<u8>,
     pub value_sat: u64,
     pub change_hash160: [u8; 20],
     /// 0 si la monnaie est sous le seuil de poussière (part alors dans les frais).
@@ -103,6 +103,31 @@ pub fn txid(raw: &[u8]) -> Option<String> {
 
 pub fn estimate_p2wpkh_vsize(num_inputs: usize, num_outputs: usize) -> u64 {
     (10.5 + (num_inputs as f64) * 68.0 + (num_outputs as f64) * 31.0).ceil() as u64
+}
+
+/// Plus grande sortie standard qu'un envoi peut payer (P2WSH, Taproot :
+/// 8 + 1 + 34 octets), contre 31 pour une P2WPKH.
+const LARGEST_RECIPIENT_OUTPUT_VBYTES: f64 = 43.0;
+
+/// Taille virtuelle d'un envoi (`num_inputs` entrées P2WPKH, destinataire,
+/// monnaie P2WPKH), estimée avant de connaître le destinataire : frais
+/// choisis à l'ouverture de la fenêtre d'envoi, donc comptés pour la plus
+/// grande sortie possible — jamais sous le tarif prévu (au plus 12 vbytes de
+/// trop pour une adresse bc1q…).
+pub fn estimate_send_vsize(num_inputs: usize) -> u64 {
+    (10.5 + (num_inputs as f64) * 68.0 + LARGEST_RECIPIENT_OUTPUT_VBYTES + 31.0).ceil() as u64
+}
+
+/// Seuil de poussière de Bitcoin Core (tarif de relais 3 sat/vB) d'une sortie
+/// portant `script` : en dessous, les nœuds refusent la transaction. Taille
+/// de la sortie, plus celle de l'entrée qui la dépenserait (témoin compté au
+/// quart pour un programme SegWit) : 294 sat pour une P2WPKH, 330 pour
+/// P2WSH et Taproot, 540 pour P2SH, 546 pour P2PKH.
+pub fn dust_threshold(script: &[u8]) -> u64 {
+    let output = 8 + varint_len(script.len() as u64) + script.len() as u64;
+    let witness_program = (4..=42).contains(&script.len()) && (script[0] == 0x00 || (0x51..=0x60).contains(&script[0])) && usize::from(script[1]) + 2 == script.len();
+    let spend = if witness_program { 32 + 4 + 1 + 107 / 4 + 4 } else { 32 + 4 + 1 + 107 + 4 };
+    (output + spend) * 3
 }
 
 pub(crate) fn p2wpkh_script_pubkey(hash160: &[u8; 20]) -> Vec<u8> {
@@ -305,7 +330,7 @@ impl BtcTx {
     /// 0xffffffff, locktime 0 ; destinataire, monnaie (si au-dessus de la
     /// poussière) puis OP_RETURN (si présent), dans cet ordre.
     fn to_raw(&self) -> RawTx {
-        let mut outputs = vec![(self.value_sat, p2wpkh_script_pubkey(&self.to_hash160))];
+        let mut outputs = vec![(self.value_sat, self.to_script.clone())];
         if self.change_sat > 0 {
             outputs.push((self.change_sat, p2wpkh_script_pubkey(&self.change_hash160)));
         }
@@ -382,7 +407,7 @@ mod tests {
         let hash160 = [0x33u8; 20];
         let tx = BtcTx {
             inputs: vec![Utxo { txid: [0u8; 32], vout: 0, value_sat: 10_000 }],
-            to_hash160: [0x44u8; 20],
+            to_script: p2wpkh_script_pubkey(&[0x44u8; 20]),
             value_sat: 9_000,
             change_hash160: hash160,
             change_sat: 0,
@@ -399,7 +424,7 @@ mod tests {
         let hash160 = [0x11u8; 20];
         let tx = BtcTx {
             inputs: vec![Utxo { txid: [0xAAu8; 32], vout: 0, value_sat: 100_000 }],
-            to_hash160: [0x22u8; 20],
+            to_script: p2wpkh_script_pubkey(&[0x22u8; 20]),
             value_sat: 50_000,
             change_hash160: hash160,
             change_sat: 49_000,
@@ -419,7 +444,7 @@ mod tests {
         let memo = b"SWAP:BTC.BTC:bc1qxyz:0/1/0:thor1abc:80".to_vec();
         let tx = BtcTx {
             inputs: vec![Utxo { txid: [0xAAu8; 32], vout: 0, value_sat: 100_000 }],
-            to_hash160: [0x22u8; 20],
+            to_script: p2wpkh_script_pubkey(&[0x22u8; 20]),
             value_sat: 50_000,
             change_hash160: hash160,
             change_sat: 49_000,
@@ -455,7 +480,7 @@ mod tests {
 
         let tx = BtcTx {
             inputs: vec![Utxo { txid: [0xAAu8; 32], vout: 0, value_sat: 100_000 }],
-            to_hash160: [0x22u8; 20],
+            to_script: p2wpkh_script_pubkey(&[0x22u8; 20]),
             value_sat: 50_000,
             change_hash160: hash160,
             change_sat: 49_000,
@@ -508,5 +533,129 @@ mod tests {
         assert!(real_vsize <= tx.signed_vsize(), "{real_vsize} > {}", tx.signed_vsize());
         assert_eq!(op_return_output_size(55), 8 + 1 + 57);
         assert_eq!(op_return_output_size(80), 8 + 1 + 83);
+    }
+
+    fn script(hex: &str) -> Vec<u8> {
+        hex::decode(hex).unwrap()
+    }
+
+    /// Scripts de chaque type standard (vecteurs de `derivation`).
+    fn standard_scripts() -> [(&'static str, Vec<u8>); 5] {
+        [
+            ("P2PKH", script("76a91462e907b15cbf27d5425399ebf6f0fb50ebb88f1888ac")),
+            ("P2SH", script("a914b472a266d0bd89c13706a4132ccfb16f7c3b9fcb87")),
+            ("P2WPKH", script("0014751e76e8199196d454941c45d1b3a323f1433bd6")),
+            ("P2WSH", script("00201863143c14c5166804bd19203356da136c985678cd4d27a1b8c6329604903262")),
+            ("P2TR", script("512079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798")),
+        ]
+    }
+
+    /// Seuils de poussière de Bitcoin Core (`GetDustThreshold`, tarif de
+    /// relais 3 sat/vB) pour chaque type de sortie.
+    #[test]
+    fn dust_thresholds_match_bitcoin_core() {
+        let expected = [546, 540, 294, 330, 330];
+        for ((name, script), dust) in standard_scripts().into_iter().zip(expected) {
+            assert_eq!(dust_threshold(&script), dust, "{name}");
+        }
+    }
+
+    /// Envoi vers chaque type de sortie : la transaction signée porte le
+    /// script du destinataire tel quel, sa signature vérifie contre le
+    /// sighash BIP143 de cette transaction, et sa taille réelle reste sous
+    /// l'estimation faite avant de connaître le destinataire (au plus
+    /// 12 vbytes au-dessus pour la plus petite sortie).
+    #[test]
+    fn sends_to_every_standard_output_type_are_signed_and_sized() {
+        let key = SigningKey::from_slice(&[9u8; 32]).unwrap();
+        let hash160 = crate::ledger::btc::hash160(key.verifying_key().to_encoded_point(true).as_bytes());
+        for inputs in [1usize, 3] {
+            for (name, to_script) in standard_scripts() {
+                let tx = BtcTx {
+                    inputs: (0..inputs).map(|i| Utxo { txid: [i as u8 + 1; 32], vout: i as u32, value_sat: 100_000 }).collect(),
+                    to_script: to_script.clone(),
+                    value_sat: 50_000,
+                    change_hash160: hash160,
+                    change_sat: 40_000,
+                    op_return_data: None,
+                };
+                let raw = tx.sign(&key, &hash160).unwrap();
+                let parsed = crate::ledger::btc::parse_transaction(&raw).unwrap();
+                assert_eq!(parsed.outputs[0], (50_000, to_script.clone()), "{name}");
+                assert_eq!(parsed.outputs[1], (40_000, p2wpkh_script_pubkey(&hash160)), "{name}");
+
+                // Témoins : entre la partie sans témoins (version, entrées,
+                // sorties) et le verrouillage ; par entrée, 2 éléments
+                // (signature DER + type, clé compressée), longueurs < 0xfd.
+                let unsigned = tx.to_raw();
+                let mut pos = 4 + 2 + (parsed.stripped.len() - 8);
+                for index in 0..inputs {
+                    assert_eq!(raw[pos], 2, "{name}");
+                    let signature = &raw[pos + 2..pos + 2 + usize::from(raw[pos + 1])];
+                    pos += 2 + signature.len();
+                    let pubkey = &raw[pos + 1..pos + 1 + usize::from(raw[pos])];
+                    pos += 1 + pubkey.len();
+                    assert_eq!(signature.last(), Some(&0x01), "SIGHASH_ALL");
+                    let signature = Signature::from_der(&signature[..signature.len() - 1]).unwrap();
+                    VerifyingKey::from_sec1_bytes(pubkey)
+                        .unwrap()
+                        .verify_prehash(&unsigned.sighash(index, &hash160), &signature)
+                        .unwrap_or_else(|e| panic!("{name}, entrée {index} : {e}"));
+                }
+                assert_eq!(pos, raw.len() - 4, "{name} : témoins entièrement lus");
+
+                // Poids = partie sans témoins × 3 + transaction entière.
+                assert_eq!(parsed.stripped.len() as u64, unsigned.base_size(), "{name}");
+                let real_vsize = (parsed.stripped.len() as u64 * 3 + raw.len() as u64).div_ceil(4);
+                let estimate = estimate_send_vsize(inputs);
+                assert!(real_vsize <= estimate, "{name}, {inputs} entrée(s) : {real_vsize} > {estimate}");
+                assert!(estimate - real_vsize <= 12 + inputs as u64, "{name}, {inputs} entrée(s) : estimation {estimate}, réel {real_vsize}");
+            }
+        }
+    }
+
+    /// Vecteurs pour une vérification par une bibliothèque indépendante
+    /// (embit) : adresses de chaque type (réseau principal et testnet) avec
+    /// leur script, et transactions signées vers chacune. Écrits dans le
+    /// fichier `BTC_VECTORS_OUT`.
+    /// `BTC_VECTORS_OUT=… cargo test -p pgp-wallet-poc --lib -- --ignored export_btc_vectors`
+    #[test]
+    #[ignore]
+    fn export_btc_vectors() {
+        use crate::derivation::{btc_mainnet_recipient_script, btc_script_address, btc_testnet_recipient_script};
+        let recipient = |address: &str, testnet: bool| if testnet { btc_testnet_recipient_script(address) } else { btc_mainnet_recipient_script(address) };
+        let key = SigningKey::from_slice(&[9u8; 32]).unwrap();
+        let pubkey = key.verifying_key().to_encoded_point(true);
+        let hash160 = crate::ledger::btc::hash160(pubkey.as_bytes());
+        let mut addresses = Vec::new();
+        let mut transactions = Vec::new();
+        for testnet in [false, true] {
+            for (name, to_script) in standard_scripts() {
+                let address = btc_script_address(&to_script, testnet).unwrap();
+                assert_eq!(recipient(&address, testnet).unwrap(), to_script, "{address}");
+                addresses.push(serde_json::json!({ "address": address, "script": hex::encode(&to_script), "testnet": testnet }));
+                let tx = BtcTx {
+                    inputs: vec![Utxo { txid: [0x11; 32], vout: 0, value_sat: 70_000 }, Utxo { txid: [0x22; 32], vout: 3, value_sat: 30_000 }],
+                    to_script: to_script.clone(),
+                    value_sat: 60_000,
+                    change_hash160: hash160,
+                    change_sat: 38_000,
+                    op_return_data: None,
+                };
+                transactions.push(serde_json::json!({
+                    "name": format!("{name}{}", if testnet { " (testnet)" } else { "" }),
+                    "testnet": testnet,
+                    "raw": hex::encode(tx.sign(&key, &hash160).unwrap()),
+                    "to": address,
+                    "value": 60_000,
+                    "pubkey": hex::encode(pubkey.as_bytes()),
+                    "input_values": [70_000, 30_000],
+                    "estimated_vsize": estimate_send_vsize(2),
+                }));
+            }
+        }
+        let out = std::env::var("BTC_VECTORS_OUT").expect("BTC_VECTORS_OUT");
+        std::fs::write(&out, serde_json::to_string_pretty(&serde_json::json!({ "addresses": addresses, "transactions": transactions })).unwrap()).unwrap();
+        println!("vecteurs écrits dans {out}");
     }
 }

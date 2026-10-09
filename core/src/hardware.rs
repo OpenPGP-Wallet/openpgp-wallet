@@ -376,8 +376,8 @@ pub fn send_btc(data_dir: &Path, id: u32, network: &str, to: &str, amount_btc: &
     let account = account_for(data_dir, id, network)?;
     let Chain::Btc(net, testnet) = chain(network)? else { bail!("réseau Bitcoin attendu") };
     let btc = btc_account(&account, testnet)?;
-    let to_hash160 = (net.parse_address)(to)?;
     let amount_sat = wallet_flow::parse_btc_to_sat(amount_btc)?;
+    let to_script = api::btc_recipient(net, to, amount_sat)?;
 
     let esplora = btc_rpc::EsploraClient::new(net.esplora_base);
     let (receive, change) = btc_addresses(&btc)?;
@@ -406,7 +406,7 @@ pub fn send_btc(data_dir: &Path, id: u32, network: &str, to: &str, amount_btc: &
             index: BTC_ADDRESS_INDEX,
         });
     }
-    let mut outputs = vec![ledger::btc::Output { value_sat: amount_sat, script_pubkey: btc_tx::p2wpkh_script_pubkey(&to_hash160), change_index: None }];
+    let mut outputs = vec![ledger::btc::Output { value_sat: amount_sat, script_pubkey: to_script, change_index: None }];
     if change_sat > 0 {
         outputs.push(ledger::btc::Output {
             value_sat: change_sat,

@@ -67,7 +67,7 @@ fn multi_input_bitcoin_transaction_signs_every_input() {
     let values = [10_000u64, 250_000, 1, 99_999_999, 546];
     let inputs: Vec<Utxo> = values.iter().enumerate().map(|(i, v)| Utxo { txid: [i as u8 + 1; 32], vout: i as u32 * 3, value_sat: *v }).collect();
     let total: u64 = values.iter().sum();
-    let tx = BtcTx { inputs, to_hash160: [0x42; 20], value_sat: 100_000_000, change_hash160: hash160, change_sat: total - 100_000_000 - 2_000, op_return_data: None };
+    let tx = BtcTx { inputs, to_script: crate::btc_tx::p2wpkh_script_pubkey(&[0x42; 20]), value_sat: 100_000_000, change_hash160: hash160, change_sat: total - 100_000_000 - 2_000, op_return_data: None };
     let raw = tx.sign(&key, &hash160).unwrap();
 
     let mut at = 6; // version + marqueur/drapeau segwit
