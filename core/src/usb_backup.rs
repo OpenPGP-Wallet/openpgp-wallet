@@ -62,6 +62,29 @@ struct InfoFile {
     name: String,
 }
 
+/// Vérification d'une part sur la clé (« Vérifier mes clés de sauvegarde ») :
+/// relue et déchiffrée, rien n'est écrit ni restauré.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct ShareCheck {
+    /// Vide pour une part non reconnue.
+    pub kit: String,
+    pub part: u8,
+    /// Nom de la sauvegarde ; pour une part non reconnue, nom de son dossier.
+    pub name: String,
+    /// `None` : intacte. Sinon `PROBLEM_UNREADABLE`, `PROBLEM_DECRYPT` ou
+    /// `PROBLEM_UNRECOGNIZED`.
+    pub problem: Option<&'static str>,
+}
+
+/// Fichier de la part absent, anormalement gros ou illisible.
+pub const PROBLEM_UNREADABLE: &str = "unreadable";
+/// La part ne se déchiffre plus avec sa clé et son mot de passe.
+pub const PROBLEM_DECRYPT: &str = "decrypt";
+/// `sauvegarde.json` abîmé : la part n'est plus vue par la restauration par
+/// clé (ses fichiers restent peut-être utilisables par la restauration par
+/// fichiers).
+pub const PROBLEM_UNRECOGNIZED: &str = "unrecognized";
+
 /// Clé USB détectée.
 #[derive(Debug)]
 pub struct RemovableDrive {
@@ -151,6 +174,21 @@ fn part_dir(kit_dir: &Path, part: u8) -> PathBuf {
 /// connu, numéro cohérent avec le dossier, identifiant de kit valide ; un même
 /// couple (kit, part) n'est retenu qu'une fois.
 fn located_shares(root: &Path) -> Vec<Located> {
+    let mut found: Vec<Located> = Vec::new();
+    for kit_dir in kit_dirs(root) {
+        for part in 1..=3u8 {
+            let Some(info) = read_info(&kit_dir, part) else { continue };
+            if !found.iter().any(|l| l.info.kit == info.kit && l.info.part == part) {
+                found.push(Located { info, kit_dir: kit_dir.clone() });
+            }
+        }
+    }
+    found
+}
+
+/// Dossiers qui contiennent des `part-N` : le dossier de sauvegarde lui-même
+/// (ancien rangement) puis un par sauvegarde nommée.
+fn kit_dirs(root: &Path) -> Vec<PathBuf> {
     let base = root.join(BACKUP_DIR);
     let mut kit_dirs = vec![base.clone()];
     if let Ok(entries) = std::fs::read_dir(&base) {
@@ -163,26 +201,57 @@ fn located_shares(root: &Path) -> Vec<Located> {
         named.truncate(MAX_FOLDERS);
         kit_dirs.extend(named);
     }
-    let mut found: Vec<Located> = Vec::new();
-    for kit_dir in kit_dirs {
+    kit_dirs
+}
+
+/// `sauvegarde.json` de la part `part` de `kit_dir`, s'il est bien formé :
+/// format connu, numéro cohérent avec le dossier, identifiant de kit valide.
+fn read_info(kit_dir: &Path, part: u8) -> Option<ShareInfo> {
+    let path = part_dir(kit_dir, part).join(INFO_FILE);
+    let info = std::fs::metadata(&path)
+        .ok()
+        .filter(|m| m.len() <= MAX_FILE_BYTES)
+        .and_then(|_| std::fs::read(&path).ok())
+        .and_then(|bytes| serde_json::from_slice::<InfoFile>(&bytes).ok())?;
+    let well_formed = matches!(info.format, 1 | 2) && info.part == part && check_kit_id(&info.kit).is_ok();
+    let name = if info.format == 1 { String::new() } else { normalize_name(&info.name).unwrap_or_default() };
+    well_formed.then_some(ShareInfo { kit: info.kit, part, name })
+}
+
+/// Vérifie chaque part de la clé `root` (relue puis déchiffrée par `verify`),
+/// sans rien écrire : à refaire de temps en temps, une clé USB pouvant
+/// s'abîmer avec les années. Signale aussi les dossiers de part dont
+/// `sauvegarde.json` est abîmé, que la restauration par clé ne voit plus.
+pub fn check_drive(root: &str, verify: impl Fn(&ShareFiles) -> Result<()>) -> Result<Vec<ShareCheck>> {
+    let drive = detected_drive(root)?;
+    Ok(check_drive_at(&drive.root, &verify))
+}
+
+fn check_drive_at(root: &Path, verify: &impl Fn(&ShareFiles) -> Result<()>) -> Vec<ShareCheck> {
+    let mut checks: Vec<ShareCheck> = located_shares(root)
+        .iter()
+        .map(|located| ShareCheck {
+            kit: located.info.kit.clone(),
+            part: located.info.part,
+            name: located.info.name.clone(),
+            problem: match read_located(located) {
+                Err(_) => Some(PROBLEM_UNREADABLE),
+                Ok(files) => verify(&files).err().map(|_| PROBLEM_DECRYPT),
+            },
+        })
+        .collect();
+    let base = root.join(BACKUP_DIR);
+    for kit_dir in kit_dirs(root) {
         for part in 1..=3u8 {
-            let path = part_dir(&kit_dir, part).join(INFO_FILE);
-            let Some(info) = std::fs::metadata(&path)
-                .ok()
-                .filter(|m| m.len() <= MAX_FILE_BYTES)
-                .and_then(|_| std::fs::read(&path).ok())
-                .and_then(|bytes| serde_json::from_slice::<InfoFile>(&bytes).ok())
-            else {
-                continue;
-            };
-            let well_formed = matches!(info.format, 1 | 2) && info.part == part && check_kit_id(&info.kit).is_ok();
-            if well_formed && !found.iter().any(|l| l.info.kit == info.kit && l.info.part == part) {
-                let name = if info.format == 1 { String::new() } else { normalize_name(&info.name).unwrap_or_default() };
-                found.push(Located { info: ShareInfo { kit: info.kit, part, name }, kit_dir: kit_dir.clone() });
+            let dir = part_dir(&kit_dir, part);
+            let has_files = std::fs::read_dir(&dir).is_ok_and(|mut entries| entries.next().is_some());
+            if has_files && read_info(&kit_dir, part).is_none() {
+                let name = if kit_dir == base { String::new() } else { kit_dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default() };
+                checks.push(ShareCheck { kit: String::new(), part, name, problem: Some(PROBLEM_UNRECOGNIZED) });
             }
         }
     }
-    found
+    checks
 }
 
 fn shares_on(root: &Path) -> Vec<ShareInfo> {
@@ -758,6 +827,60 @@ mod tests {
         assert_eq!(Some(restored.evm.as_str()), kit_json["addresses"]["evm"].as_str());
         assert_eq!(Some(restored.btc_mainnet.as_str()), kit_json["addresses"]["btc_mainnet"].as_str());
         assert_eq!(Some(restored.solana.as_str()), kit_json["addresses"]["solana"].as_str());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Vérification d'une clé : parts intactes reconnues ; part qui ne se
+    /// déchiffre plus, fichier manquant, `sauvegarde.json` abîmé (part
+    /// invisible pour la restauration par clé) : chacun signalé, rien écrit.
+    #[test]
+    fn drive_check_reports_damaged_shares_without_writing() {
+        let base = temp_root("check");
+        let data = base.join("data");
+        let root = base.join("cle");
+        let created = crate::api::create_wallet(&data, "un mot de passe de test bien assez long").unwrap();
+        let kit = crate::api::backup_kit_id(&created.backups);
+        let verify = |files: &ShareFiles| crate::api::verify_backup_share(&data, &files.encrypted_share, &files.privkey_armored, &files.passphrase);
+        let parts: Vec<(u8, ShareFiles)> = created.backups.iter().enumerate().map(|(i, b)| (i as u8 + 1, files_of(b))).collect();
+        write_kit_at(&root, u64::MAX, &kit, "Coffre", &parts, &verify).unwrap();
+        let ok = |part| ShareCheck { kit: kit.clone(), part, name: "Coffre".into(), problem: None };
+        assert_eq!(check_drive_at(&root, &verify), vec![ok(1), ok(2), ok(3)]);
+        let kit_dir = root.join(BACKUP_DIR).join(kit_folder("Coffre", &kit, false));
+        let snapshot = |root: &Path| {
+            let mut all: Vec<(PathBuf, Vec<u8>)> = Vec::new();
+            for dir in kit_dirs(root) {
+                for part in 1..=3 {
+                    for entry in std::fs::read_dir(part_dir(&dir, part)).into_iter().flatten().flatten() {
+                        all.push((entry.path(), std::fs::read(entry.path()).unwrap_or_default()));
+                    }
+                }
+            }
+            all.sort();
+            all
+        };
+        // Part 2 : un octet du contenu chiffré changé.
+        let share_path = part_dir(&kit_dir, 2).join(SHARE_FILE);
+        let mut share = std::fs::read(&share_path).unwrap();
+        let at = share.len() - 5;
+        share[at] ^= 0x10;
+        std::fs::write(&share_path, share).unwrap();
+        // Part 3 : clé privée disparue ; part 1 : sauvegarde.json abîmé.
+        std::fs::remove_file(part_dir(&kit_dir, 3).join(KEY_FILE)).unwrap();
+        std::fs::write(part_dir(&kit_dir, 1).join(INFO_FILE), "{\"format\": 2, \"kit\": \"ab").unwrap();
+        let before = snapshot(&root);
+        let checks = check_drive_at(&root, &verify);
+        assert_eq!(snapshot(&root), before, "la vérification n'écrit rien");
+        assert_eq!(
+            checks,
+            vec![
+                ShareCheck { problem: Some(PROBLEM_DECRYPT), ..ok(2) },
+                ShareCheck { problem: Some(PROBLEM_UNREADABLE), ..ok(3) },
+                ShareCheck { kit: String::new(), part: 1, name: kit_folder("Coffre", &kit, false), problem: Some(PROBLEM_UNRECOGNIZED) },
+            ]
+        );
+        // Clé sans sauvegarde : rien à signaler.
+        assert!(check_drive_at(&base.join("vide"), &verify).is_empty());
+        assert!(check_drive("C:\\", verify).is_err(), "disque système refusé");
         let _ = std::fs::remove_dir_all(&base);
     }
 

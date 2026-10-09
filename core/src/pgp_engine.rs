@@ -2,7 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use openpgp::cert::Cert;
 use openpgp::crypto::{KeyPair, Password, SessionKey};
 use openpgp::parse::stream::{DecryptionHelper, DecryptorBuilder, MessageStructure, VerificationHelper};
-use openpgp::parse::Parse;
+use openpgp::parse::{PacketParser, Parse};
 use openpgp::policy::StandardPolicy;
 use openpgp::serialize::stream::{Encryptor, LiteralWriter, Message};
 use openpgp::types::SymmetricAlgorithm;
@@ -39,6 +39,15 @@ fn own_key_time(cert: &Cert) -> SystemTime {
 
 /// Chiffre une part (bytes) pour le détenteur de la clé publique PGP donnée.
 pub fn encrypt_share(share: &[u8], pubkey_path: &str) -> Result<Vec<u8>> {
+    encrypt_share_named(share, pubkey_path, None)
+}
+
+/// `encrypt_share` avec un nom porté par le paquet littéral : métadonnée
+/// chiffrée et protégée avec la part (même contrôle d'intégrité), que
+/// `decrypt_share` ignore — les versions de l'app qui ne la connaissent pas
+/// déchiffrent la part exactement comme avant. Sert à la marque de kit
+/// (`api::generate_backup_kit`).
+pub fn encrypt_share_named(share: &[u8], pubkey_path: &str, name: Option<&str>) -> Result<Vec<u8>> {
     let policy = StandardPolicy::new();
     let cert = Cert::from_file(pubkey_path)
         .with_context(|| format!("lecture de la clé publique {pubkey_path}"))?;
@@ -57,9 +66,11 @@ pub fn encrypt_share(share: &[u8], pubkey_path: &str) -> Result<Vec<u8>> {
         let message = Encryptor::for_recipients(message, recipients)
             .build()
             .context("initialisation du chiffreur PGP")?;
-        let mut writer = LiteralWriter::new(message)
-            .build()
-            .context("initialisation de l'écriture littérale")?;
+        let mut literal = LiteralWriter::new(message);
+        if let Some(name) = name {
+            literal = literal.filename(name).context("nom de la part trop long")?;
+        }
+        let mut writer = literal.build().context("initialisation de l'écriture littérale")?;
         writer.write_all(share)?;
         writer.finalize()?;
     }
@@ -122,9 +133,11 @@ pub fn encrypt_share_multi(share: &[u8], pubkeys_armored: &[&[u8]]) -> Result<Ve
 }
 
 /// Aide de déchiffrement pour l'API stream de sequoia : fournit la clé privée
-/// déjà déverrouillée (par passphrase) pour ouvrir le paquet de session PGP.
+/// déjà déverrouillée (par passphrase) pour ouvrir le paquet de session PGP,
+/// et relève le nom du paquet littéral au passage.
 struct DecryptionKeyHelper {
     keypair: KeyPair,
+    literal_name: Option<Vec<u8>>,
 }
 
 impl VerificationHelper for DecryptionKeyHelper {
@@ -133,6 +146,13 @@ impl VerificationHelper for DecryptionKeyHelper {
     }
 
     fn check(&mut self, _structure: MessageStructure) -> openpgp::Result<()> {
+        Ok(())
+    }
+
+    fn inspect(&mut self, pp: &PacketParser) -> openpgp::Result<()> {
+        if let Packet::Literal(literal) = &pp.packet {
+            self.literal_name = literal.filename().filter(|name| !name.is_empty()).map(<[u8]>::to_vec);
+        }
         Ok(())
     }
 }
@@ -162,14 +182,22 @@ impl DecryptionHelper for DecryptionKeyHelper {
 /// la clé privée correspondante avec une passphrase saisie directement (pas de
 /// gpg-agent ni de YubiKey dans ce PoC).
 pub fn decrypt_share(encrypted: &[u8], privkey_path: &str, passphrase: &str) -> Result<Vec<u8>> {
+    decrypt_share_named(encrypted, privkey_path, passphrase).map(|(share, _)| share)
+}
+
+/// `decrypt_share`, plus le nom porté par le paquet littéral (`None` : part
+/// sans nom, voir `encrypt_share_named`). Rendu seulement une fois tout le
+/// message déchiffré et son intégrité vérifiée : aussi sûr que la part.
+pub fn decrypt_share_named(encrypted: &[u8], privkey_path: &str, passphrase: &str) -> Result<(Vec<u8>, Option<Vec<u8>>)> {
     let cert = Cert::from_file(privkey_path)
         .with_context(|| format!("lecture de la clé privée {privkey_path}"))?;
     decrypt_with_cert_at(encrypted, &cert, privkey_path, passphrase, own_key_time(&cert))
 }
 
-/// `decrypt_share` avec la clé déjà lue, évaluée (clé et message) à `time` —
-/// séparé pour que les tests puissent juger une part dans plusieurs décennies.
-fn decrypt_with_cert_at(encrypted: &[u8], cert: &Cert, privkey_path: &str, passphrase: &str, time: SystemTime) -> Result<Vec<u8>> {
+/// `decrypt_share_named` avec la clé déjà lue, évaluée (clé et message) à
+/// `time` — séparé pour que les tests puissent juger une part dans plusieurs
+/// décennies.
+fn decrypt_with_cert_at(encrypted: &[u8], cert: &Cert, privkey_path: &str, passphrase: &str, time: SystemTime) -> Result<(Vec<u8>, Option<Vec<u8>>)> {
     let policy = StandardPolicy::new();
     let password = Password::from(passphrase);
 
@@ -193,7 +221,7 @@ fn decrypt_with_cert_at(encrypted: &[u8], cert: &Cert, privkey_path: &str, passp
     };
     let keypair = key.into_keypair().context("clé privée inutilisable pour le déchiffrement")?;
 
-    let helper = DecryptionKeyHelper { keypair };
+    let helper = DecryptionKeyHelper { keypair, literal_name: None };
     let mut decryptor = DecryptorBuilder::from_bytes(encrypted)
         .context("lecture du message PGP chiffré")?
         .with_policy(&policy, Some(time), helper)
@@ -203,7 +231,8 @@ fn decrypt_with_cert_at(encrypted: &[u8], cert: &Cert, privkey_path: &str, passp
     decryptor
         .read_to_end(&mut plaintext)
         .context("lecture du contenu déchiffré")?;
-    Ok(plaintext)
+    let name = decryptor.into_helper().literal_name;
+    Ok((plaintext, name))
 }
 
 #[cfg(test)]
@@ -382,6 +411,38 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Nom de la part (marque de kit) : rendu par `decrypt_share_named` avec
+    /// la part, ignoré par `decrypt_share` (ce que font les anciennes versions
+    /// de l'app : la part déchiffrée est exactement la même) ; part sans nom →
+    /// `None`. Une part dont un octet a changé ne rend ni part ni nom.
+    #[test]
+    fn share_name_is_carried_encrypted_and_ignored_by_plain_decryption() {
+        let dir = std::env::temp_dir().join(format!("pgp_engine_named_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let passphrase = "passphrase de test, part nommée";
+        let (public, private) = generate_test_identity(passphrase);
+        let (pub_path, priv_path) = (dir.join("named_pub.asc"), dir.join("named_priv.asc"));
+        std::fs::write(&pub_path, &public).unwrap();
+        std::fs::write(&priv_path, &private).unwrap();
+        let (pub_path, priv_path) = (pub_path.to_string_lossy().into_owned(), priv_path.to_string_lossy().into_owned());
+        let named = encrypt_share_named(b"part de test", &pub_path, Some("pgpwallet-kit-v1:0011223344556677:8899aabbccddeeff")).unwrap();
+        let (share, name) = decrypt_share_named(&named, &priv_path, passphrase).unwrap();
+        assert_eq!(share, b"part de test");
+        assert_eq!(name.as_deref(), Some(b"pgpwallet-kit-v1:0011223344556677:8899aabbccddeeff".as_slice()));
+        assert_eq!(decrypt_share(&named, &priv_path, passphrase).unwrap(), b"part de test", "lecture comme avant");
+        let plain = encrypt_share(b"part de test", &pub_path).unwrap();
+        assert_eq!(decrypt_share_named(&plain, &priv_path, passphrase).unwrap(), (b"part de test".to_vec(), None));
+        for i in (0..named.len()).step_by(7) {
+            let mut bad = named.clone();
+            bad[i] ^= 0x10;
+            if let Ok((share, name)) = decrypt_share_named(&bad, &priv_path, passphrase) {
+                assert_eq!(share, b"part de test", "octet {i} : part altérée rendue");
+                assert_eq!(name.as_deref(), Some(b"pgpwallet-kit-v1:0011223344556677:8899aabbccddeeff".as_slice()), "octet {i} : nom altéré rendu");
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Une part chiffrée aujourd'hui se déchiffre encore en 2040, 2070 et
     /// 2100 avec cette version de la bibliothèque : aucune règle datée de la
     /// politique de sequoia (algorithmes refusés après une date) ne la rendra
@@ -400,7 +461,7 @@ mod tests {
         let cert = Cert::from_bytes(&private).unwrap();
         for year in [2040u64, 2070, 2100] {
             let time = UNIX_EPOCH + Duration::from_secs((year - 1970) * 31_557_600);
-            let decrypted = decrypt_with_cert_at(&encrypted, &cert, "clé de test", passphrase, time).unwrap_or_else(|e| panic!("{year} : {e:#}"));
+            let (decrypted, _) = decrypt_with_cert_at(&encrypted, &cert, "clé de test", passphrase, time).unwrap_or_else(|e| panic!("{year} : {e:#}"));
             assert_eq!(decrypted, b"part de test", "{year}");
         }
         let _ = std::fs::remove_dir_all(&dir);

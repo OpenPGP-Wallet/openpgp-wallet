@@ -75,6 +75,9 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("nom de la sauvegarde : 1 à 30 caractères (lettres, chiffres, espaces, - _)", "backup name: 1 to 30 characters (letters, digits, spaces, - _)"),
     ("un dossier de sauvegarde de ce nom existe déjà sur la clé USB : choisissez un autre nom", "a backup folder with this name already exists on the USB drive: choose another name"),
     ("plusieurs sauvegardes complètes trouvées : choisissez celle à restaurer", "several complete backups found: choose the one to restore"),
+    // core/src/api.rs, parts de sauvegarde qui ne vont pas ensemble
+    ("ces deux parts viennent de deux kits de sauvegarde différents : utilisez deux parts d'un même kit", "these two shares come from two different backup kits: use two shares of the same kit"),
+    ("ces deux parts ne redonnent pas le portefeuille de leur kit : essayez avec une autre part de ce kit", "these two shares do not give back their kit's wallet: try another share of this kit"),
     ("espace insuffisant sur la clé USB", "not enough space on the USB drive"),
     ("la part écrite sur la clé USB ne se déchiffre pas : sauvegarde inutilisable", "the share written to the USB drive cannot be decrypted: backup unusable"),
     ("aucune sauvegarde OpenPGP Wallet sur cette clé USB", "no OpenPGP Wallet backup on this USB drive"),
@@ -2482,7 +2485,20 @@ fn list_archived_profiles(app: tauri::AppHandle) -> Result<Vec<ProfileLabelDto>,
 /// `confirm_transaction_native` : confirmation hors de la page principale (voir
 /// `secure_confirm`), donc impossible à falsifier ou à contourner depuis un
 /// frontend compromis.
-fn confirm_restore_window(app: &tauri::AppHandle) -> bool {
+/// Confirmation d'une restauration, après le contrôle des deux parts
+/// (`api::check_restore`) : elle montre les adresses que la restauration
+/// redonnera, et dit si les parts ont été prouvées du même kit (kits marqués)
+/// ou s'il faut reconnaître ces adresses (kits d'avant les marques).
+fn confirm_restore_window(app: &tauri::AppHandle, check: &api::RestoreCheck) -> bool {
+    let short = |address: &str| {
+        let chars: Vec<char> = address.chars().collect();
+        if chars.len() <= 20 {
+            address.to_string()
+        } else {
+            format!("{}…{}", chars[..10].iter().collect::<String>(), chars[chars.len() - 8..].iter().collect::<String>())
+        }
+    };
+    let english = UI_LANG_IS_ENGLISH.load(Ordering::Relaxed);
     secure_confirm(
         app,
         SecureConfirmDetails::new(
@@ -2490,6 +2506,19 @@ fn confirm_restore_window(app: &tauri::AppHandle) -> bool {
             ("Restaurer ce portefeuille ?", "Restore this wallet?"),
             vec![
                 text("Il remplacera celui de cet ordinateur.", "It will replace the one on this computer."),
+                if check.verified {
+                    text(
+                        "Parts vérifiées : elles viennent du même kit et redonnent bien son portefeuille.",
+                        "Shares verified: they come from the same kit and give back its wallet.",
+                    )
+                } else {
+                    text(
+                        "Sauvegarde faite avant les vérifications : assurez-vous que ces adresses sont bien les vôtres.",
+                        "Backup made before checks existed: make sure these addresses are yours.",
+                    )
+                },
+                if english { format!("Ethereum address: {}", short(&check.addresses.evm)) } else { format!("Adresse Ethereum : {}", short(&check.addresses.evm)) },
+                if english { format!("Bitcoin address: {}", short(&check.addresses.btc_mainnet)) } else { format!("Adresse Bitcoin : {}", short(&check.addresses.btc_mainnet)) },
                 text(
                     "Utilisez uniquement les parts de votre propre kit, jamais celles qu'on vous aurait données.",
                     "Only use the shares of your own kit, never ones someone gave you.",
@@ -2659,6 +2688,21 @@ async fn usb_restore_load(root: String, app: tauri::AppHandle) -> Result<Vec<pgp
     .await
 }
 
+/// « Vérifier mes clés de sauvegarde » : relit et déchiffre chaque part de
+/// la clé USB `root` (clé détectée seulement), sans rien écrire ni restaurer ;
+/// renvoie l'état de chacune (kit, numéro, nom, problème — aucun secret).
+#[tauri::command]
+async fn check_usb_backup(root: String, app: tauri::AppHandle) -> Result<Vec<pgp_wallet_poc::usb_backup::ShareCheck>, String> {
+    run_blocking(move || {
+        let dir = data_dir(&app)?;
+        pgp_wallet_poc::usb_backup::check_drive(&root, |files| {
+            api::verify_backup_share(&dir, &files.encrypted_share, &files.privkey_armored, &files.passphrase)
+        })
+        .t_err()
+    })
+    .await
+}
+
 /// Oublie les parts lues (restauration abandonnée).
 #[tauri::command]
 fn usb_restore_clear(app: tauri::AppHandle) {
@@ -2707,7 +2751,9 @@ fn restore_wallet_from_usb_blocking(new_password: String, kit: Option<String>, a
         };
         (copy(i), copy(j))
     };
-    if !confirm_restore_window(&app) {
+    // Parts qui ne vont pas ensemble : refusées ici, avant la confirmation.
+    let check = api::check_restore(&dir, (&first.0, &first.1, &first.2), (&second.0, &second.1, &second.2)).t_err()?;
+    if !confirm_restore_window(&app, &check) {
         return Err(translate_error("Restauration annulée (confirmation refusée)."));
     }
     // Clés de l'ancien portefeuille oubliées avant d'effacer son état.
@@ -2753,16 +2799,19 @@ fn restore_wallet_blocking(new_password: String, part1: [String; 3], part2: [Str
     let passphrase2 = Zeroizing::new(passphrase2);
     let dir = data_dir(&app)?;
 
-    if !confirm_restore_window(&app) {
-        return Err(translate_error("Restauration annulée (confirmation refusée)."));
-    }
-
     let decode = |s: &str| base64::engine::general_purpose::STANDARD.decode(s).t_err();
 
     let share1 = decode(&backup1_b64)?;
     let priv1 = decode(&privkey1_armored_b64)?;
     let share2 = decode(&backup2_b64)?;
     let priv2 = decode(&privkey2_armored_b64)?;
+
+    // Parts qui ne vont pas ensemble (deux kits différents) : refusées ici,
+    // avant la confirmation ; sinon, la confirmation montre les adresses.
+    let check = api::check_restore(&dir, (&share1, &priv1, &passphrase1), (&share2, &priv2, &passphrase2)).t_err()?;
+    if !confirm_restore_window(&app, &check) {
+        return Err(translate_error("Restauration annulée (confirmation refusée)."));
+    }
 
     // Une restauration ne recrée toujours qu'un seul profil par défaut (voir
     // `api::restore_wallet`) : les éventuelles étiquettes de profils supplémentaires
@@ -8661,6 +8710,7 @@ pub fn run() {
             save_kit_to_usb,
             usb_restore_load,
             usb_restore_clear,
+            check_usb_backup,
             get_token_balance,
             send_token_transaction,
             restore_wallet_from_usb,
@@ -9597,6 +9647,8 @@ mod tests {
             "nom de la sauvegarde : 1 à 30 caractères (lettres, chiffres, espaces, - _)",
             "un dossier de sauvegarde de ce nom existe déjà sur la clé USB : choisissez un autre nom",
             "plusieurs sauvegardes complètes trouvées : choisissez celle à restaurer",
+            "ces deux parts viennent de deux kits de sauvegarde différents : utilisez deux parts d'un même kit",
+            "ces deux parts ne redonnent pas le portefeuille de leur kit : essayez avec une autre part de ce kit",
         ] {
             assert!(sources.iter().any(|s| s.contains(message)), "message absent du code : {message}");
             assert!(EXACT_ERROR_TRANSLATIONS.iter().any(|(fr, _)| *fr == message), "sans traduction : {message}");

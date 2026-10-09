@@ -147,6 +147,15 @@
       </nav>
 
       <section class="tab-panel dashboard" data-panel="wallet">
+        <!-- Rappel annuel : vérifier les clés de sauvegarde (main.js,
+             « Vérification des clés de sauvegarde »). -->
+        <div id="backup-check-reminder" class="backup-reminder hidden" role="status">
+          <p data-i18n="backupCheck.reminder">Pensez à vérifier vos clés de sauvegarde : une clé USB peut s'abîmer avec les années.</p>
+          <div class="backup-reminder-actions">
+            <button id="backup-reminder-check" class="primary" data-i18n="backupCheck.checkNow">Vérifier maintenant</button>
+            <button id="backup-reminder-later" class="link" data-i18n="backupCheck.later">Plus tard</button>
+          </div>
+        </div>
         <!-- En-tête du portefeuille : profil, puis valeur totale (main.js,
              « Valeur totale »). -->
         <div class="portfolio-hero">
@@ -956,6 +965,13 @@
               Si vous avez perdu un ou plusieurs de vos 3 fichiers de sauvegarde d'origine, générez-en un
               nouveau jeu de 3 (mot de passe requis). Vos adresses ne changent pas.
             </p>
+            <button id="open-backup-check" class="secondary" data-i18n="settings.checkBackup">
+              Vérifier mes clés de sauvegarde
+            </button>
+            <p class="muted" data-i18n="settings.checkBackupHint">
+              Relit et déchiffre les parts d'une clé USB, sans rien modifier. À faire une fois par an : une clé
+              peut s'abîmer avec le temps.
+            </p>
           </div>
 
           <div class="settings-section">
@@ -1502,6 +1518,16 @@
         <p id="usb-error" class="error hidden"></p>
         <p id="usb-success" class="success hidden"></p>
         <button id="usb-close" class="link" data-i18n="common.close">Fermer</button>
+      </div>
+    </div>
+
+    <!-- Vérification des clés de sauvegarde : relues et déchiffrées, rien n'est écrit. -->
+    <div id="backup-check-modal" class="modal-overlay hidden">
+      <div class="modal">
+        <h2 data-i18n="backupCheck.title">Vérifier mes clés de sauvegarde</h2>
+        <p class="muted" data-i18n="backupCheck.hint">Branchez vos clés de sauvegarde, l'une après l'autre : l'app relit et déchiffre chaque part, sans rien modifier ni restaurer.</p>
+        <ul id="backup-check-list" class="usb-list"></ul>
+        <button id="backup-check-close" class="link" data-i18n="common.close">Fermer</button>
       </div>
     </div>
 

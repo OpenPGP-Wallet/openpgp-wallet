@@ -463,6 +463,11 @@ roundedButtonsToggle.addEventListener("change", () => {
 // changement de structure DOM, donc aucun autre code (refresh/historique/envoi)
 // n'a besoin de savoir dans quel mode d'affichage il tourne.
 const WALLET_LIST_VIEW_STORAGE_KEY = "pgp-wallet-list-view";
+// Dernière vérification réussie des clés de sauvegarde (ou création du kit,
+// ou restauration) : rappel au tableau de bord un an après.
+const BACKUP_CHECK_STORAGE_KEY = "pgp-wallet-backup-checked-at";
+const BACKUP_CHECK_INTERVAL_MS = 365 * 24 * 3600 * 1000;
+const BACKUP_CHECK_SNOOZE_MS = 30 * 24 * 3600 * 1000;
 
 function applyWalletListView(enabled) {
   if (enabled) {
@@ -564,6 +569,24 @@ const I18N = {
     "usb.onDrive": "Déjà dessus : {list}",
     "usb.sharePart": "{name} (part n°{part})",
     "usb.unnamed": "sans nom",
+    "settings.checkBackup": "Vérifier mes clés de sauvegarde",
+    "settings.checkBackupHint": "Relit et déchiffre les parts d'une clé USB, sans rien modifier. À faire une fois par an : une clé peut s'abîmer avec le temps.",
+    "backupCheck.title": "Vérifier mes clés de sauvegarde",
+    "backupCheck.hint": "Branchez vos clés de sauvegarde, l'une après l'autre : l'app relit et déchiffre chaque part, sans rien modifier ni restaurer.",
+    "backupCheck.checking": "Vérification…",
+    "backupCheck.none": "Aucune sauvegarde OpenPGP Wallet sur cette clé.",
+    "backupCheck.part": "Part n°{n}",
+    "backupCheck.partOf": "Part n°{n} de « {name} »",
+    "backupCheck.partFolder": "Part n°{n} (dossier « {name} »)",
+    "backupCheck.ok": "intacte",
+    "backupCheck.line": "{label} : {status}",
+    "backupCheck.unreadable": "fichier manquant ou illisible",
+    "backupCheck.decrypt": "ne se déchiffre plus",
+    "backupCheck.unrecognized": "fichier sauvegarde.json abîmé, la part n'est plus reconnue",
+    "backupCheck.advice": "Une part abîmée ne sert plus. Régénérez votre kit de sauvegarde (Paramètres → Sauvegarde), puis remplacez vos anciennes clés.",
+    "backupCheck.reminder": "Pensez à vérifier vos clés de sauvegarde : une clé USB peut s'abîmer avec les années.",
+    "backupCheck.checkNow": "Vérifier maintenant",
+    "backupCheck.later": "Plus tard",
     "usb.writing": "Écriture et vérification…",
     "usb.done": "Part n°{n} enregistrée et vérifiée sur « {label} ». Retirez la clé et rangez-la à part, loin des autres parts.",
     "usb.free": "{mb} Mo libres",
@@ -1270,6 +1293,24 @@ const I18N = {
     "usb.onDrive": "Already on it: {list}",
     "usb.sharePart": "{name} (share {part})",
     "usb.unnamed": "unnamed",
+    "settings.checkBackup": "Check my backup drives",
+    "settings.checkBackupHint": "Reads back and decrypts the shares on a USB drive, without changing anything. Do it once a year: a drive can wear out over time.",
+    "backupCheck.title": "Check my backup drives",
+    "backupCheck.hint": "Plug in your backup drives, one after the other: the app reads back and decrypts each share, without changing or restoring anything.",
+    "backupCheck.checking": "Checking…",
+    "backupCheck.none": "No OpenPGP Wallet backup on this drive.",
+    "backupCheck.part": "Share {n}",
+    "backupCheck.partOf": "Share {n} of \"{name}\"",
+    "backupCheck.partFolder": "Share {n} (folder \"{name}\")",
+    "backupCheck.ok": "intact",
+    "backupCheck.line": "{label}: {status}",
+    "backupCheck.unreadable": "file missing or unreadable",
+    "backupCheck.decrypt": "no longer decrypts",
+    "backupCheck.unrecognized": "sauvegarde.json file damaged, the share is no longer recognized",
+    "backupCheck.advice": "A damaged share is useless. Regenerate your backup kit (Settings → Backup), then replace your old drives.",
+    "backupCheck.reminder": "Remember to check your backup drives: a USB drive can wear out over the years.",
+    "backupCheck.checkNow": "Check now",
+    "backupCheck.later": "Later",
     "usb.writing": "Writing and verifying…",
     "usb.done": "Share {n} saved and verified on \"{label}\". Unplug the drive and store it apart, away from the other shares.",
     "usb.free": "{mb} MB free",
@@ -2253,6 +2294,7 @@ function showView(name) {
   for (const [key, el] of Object.entries(views)) {
     el.classList.toggle("hidden", key !== name);
   }
+  if (name === "dashboard") updateBackupReminder();
 }
 
 // Événement de fond (synchronisation, surveillance) arrivé hors du tableau de
@@ -2405,6 +2447,7 @@ onboardingSubmitBtn.addEventListener("click", withBusyButton(onboardingSubmitBtn
 
   try {
     const result = await invoke("create_wallet", { password });
+    markBackupChecked();
     pendingCreateResult = result;
     document.getElementById("backup-confirm").checked = false;
     renderBackupList(result.backups);
@@ -2776,6 +2819,7 @@ regenerateBackupConfirmBtn.addEventListener("click", withBusyButton(regenerateBa
 
   try {
     const backups = await invoke("regenerate_backup_kit", { password });
+    markBackupChecked();
     document.getElementById("regenerate-backup-password-modal").classList.add("hidden");
     renderBackupList(backups, "regenerate-backup-list");
     document.getElementById("regenerate-backup-result-modal").classList.remove("hidden");
@@ -3193,6 +3237,7 @@ restoreSubmitBtn.addEventListener("click", withBusyButton(restoreSubmitBtn, asyn
       privkey2ArmoredB64: privkey2_armored_b64,
       passphrase2,
     });
+    markBackupChecked();
 
     stopUsbRestore(true);
     writePendingSwaps([]);
@@ -3528,6 +3573,7 @@ restoreUsbSubmitBtn.addEventListener("click", withBusyButton(restoreUsbSubmitBtn
   }
   try {
     const addresses = await invoke("restore_wallet_from_usb", { newPassword, kit: usbRestoreChoice });
+    markBackupChecked();
     stopUsbRestore(true);
     writePendingSwaps([]);
     renderDashboardAddresses(singleProfileList(addresses));
@@ -3540,6 +3586,147 @@ restoreUsbSubmitBtn.addEventListener("click", withBusyButton(restoreUsbSubmitBtn
     document.getElementById("restore-new-password").value = "";
   }
 }));
+
+// --- Vérification des clés de sauvegarde (core/src/usb_backup.rs) ----------
+// Une clé USB peut s'abîmer avec les années : chaque clé branchée est relue et
+// ses parts déchiffrées (check_usb_backup), sans rien écrire ni restaurer. Une
+// part abîmée est signalée tant que les deux autres existent encore.
+
+function setBackupCheckedAt(time) {
+  try {
+    localStorage.setItem(BACKUP_CHECK_STORAGE_KEY, String(time));
+  } catch (e) {
+    // localStorage indisponible : pas de rappel.
+  }
+}
+
+function markBackupChecked() {
+  setBackupCheckedAt(Date.now());
+  updateBackupReminder();
+}
+
+// Rappel dû un an après la dernière vérification ; sans date connue (première
+// version avec ce rappel), le compte commence maintenant.
+function backupCheckDue() {
+  let last;
+  try {
+    last = Number(localStorage.getItem(BACKUP_CHECK_STORAGE_KEY));
+  } catch (e) {
+    return false;
+  }
+  if (!last) {
+    setBackupCheckedAt(Date.now());
+    return false;
+  }
+  return Date.now() - last > BACKUP_CHECK_INTERVAL_MS;
+}
+
+function updateBackupReminder() {
+  document.getElementById("backup-check-reminder").classList.toggle("hidden", !backupCheckDue());
+}
+
+let backupCheckTimer = null;
+let backupCheckDrives = [];
+// Clé (racine + parts) -> { running } | { checks } | { error } : chaque clé
+// n'est vérifiée qu'une fois tant que son contenu ne change pas.
+const backupCheckResults = new Map();
+const backupCheckModal = document.getElementById("backup-check-modal");
+
+function backupCheckKey(drive) {
+  return `${drive.root}|${(drive.shares || []).map((s) => `${s.kit}:${s.part}`).join(",")}`;
+}
+
+function openBackupCheck() {
+  backupCheckResults.clear();
+  backupCheckDrives = [];
+  document.getElementById("backup-check-list").replaceChildren();
+  backupCheckModal.classList.remove("hidden");
+  refreshBackupCheck();
+  clearInterval(backupCheckTimer);
+  backupCheckTimer = setInterval(refreshBackupCheck, USB_POLL_MS);
+}
+
+function closeBackupCheck() {
+  clearInterval(backupCheckTimer);
+  backupCheckTimer = null;
+  backupCheckModal.classList.add("hidden");
+}
+
+async function refreshBackupCheck() {
+  let drives;
+  try {
+    drives = await invoke("list_backup_drives");
+  } catch (e) {
+    console.error(e);
+    return;
+  }
+  backupCheckDrives = drives;
+  for (const drive of drives) {
+    const key = backupCheckKey(drive);
+    if (backupCheckResults.has(key)) continue;
+    backupCheckResults.set(key, { running: true });
+    invoke("check_usb_backup", { root: drive.root })
+      .then((checks) => {
+        backupCheckResults.set(key, { checks });
+        if (checks.length && checks.every((c) => !c.problem)) markBackupChecked();
+      })
+      .catch((e) => backupCheckResults.set(key, { error: String(e) }))
+      .finally(renderBackupCheck);
+  }
+  renderBackupCheck();
+}
+
+function backupCheckLine(check) {
+  const label = check.problem === "unrecognized"
+    ? t("backupCheck.partFolder", { n: check.part, name: check.name || "PGP-Wallet-Sauvegarde" })
+    : check.name
+      ? t("backupCheck.partOf", { n: check.part, name: check.name })
+      : t("backupCheck.part", { n: check.part });
+  const status = check.problem ? t(`backupCheck.${check.problem}`) : t("backupCheck.ok");
+  return Object.assign(document.createElement("p"), {
+    className: check.problem ? "backup-check-line bad" : "backup-check-line ok",
+    textContent: `${check.problem ? "✗" : "✓"} ${t("backupCheck.line", { label, status })}`,
+  });
+}
+
+function renderBackupCheck() {
+  if (backupCheckModal.classList.contains("hidden")) return;
+  const list = document.getElementById("backup-check-list");
+  if (backupCheckDrives.length === 0) {
+    list.replaceChildren(Object.assign(document.createElement("li"), { className: "muted", textContent: t("usb.waiting") }));
+    return;
+  }
+  list.replaceChildren(
+    ...backupCheckDrives.map((drive) => {
+      const li = document.createElement("li");
+      li.className = "usb-drive backup-check-drive";
+      const title = Object.assign(document.createElement("span"), { className: "backup-check-name", textContent: usbDriveName(drive) });
+      li.append(title);
+      const result = backupCheckResults.get(backupCheckKey(drive)) || { running: true };
+      if (result.running) {
+        li.append(Object.assign(document.createElement("p"), { className: "muted backup-check-line", textContent: t("backupCheck.checking") }));
+      } else if (result.error) {
+        li.append(Object.assign(document.createElement("p"), { className: "error backup-check-line", textContent: result.error }));
+      } else if (result.checks.length === 0) {
+        li.append(Object.assign(document.createElement("p"), { className: "muted backup-check-line", textContent: t("backupCheck.none") }));
+      } else {
+        li.append(...result.checks.map(backupCheckLine));
+        if (result.checks.some((c) => c.problem)) {
+          li.append(Object.assign(document.createElement("p"), { className: "backup-check-advice", textContent: t("backupCheck.advice") }));
+        }
+      }
+      return li;
+    })
+  );
+}
+
+document.getElementById("open-backup-check").addEventListener("click", openBackupCheck);
+document.getElementById("backup-check-close").addEventListener("click", closeBackupCheck);
+document.getElementById("backup-reminder-check").addEventListener("click", openBackupCheck);
+document.getElementById("backup-reminder-later").addEventListener("click", () => {
+  setBackupCheckedAt(Date.now() - BACKUP_CHECK_INTERVAL_MS + BACKUP_CHECK_SNOOZE_MS);
+  updateBackupReminder();
+});
 
 // --- Dashboard ---------------------------------------------------------
 

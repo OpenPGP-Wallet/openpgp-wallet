@@ -3678,6 +3678,69 @@ h2 .coin-icon-inline,
   font-size: 0.85rem;
 }
 
+/* Vérification des clés de sauvegarde : une clé par cadre, une ligne par part. */
+.backup-check-drive {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.backup-check-name {
+  font-weight: 600;
+}
+
+.backup-check-line {
+  margin: 0;
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.backup-check-line.ok {
+  color: var(--success);
+}
+
+.backup-check-line.bad {
+  color: var(--danger);
+}
+
+.backup-check-advice {
+  margin: 4px 0 0;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: var(--warning);
+}
+
+/* Rappel annuel au tableau de bord : vérifier les clés de sauvegarde. */
+.backup-reminder {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin: 0 0 16px;
+  padding: 12px 16px;
+  border: 1px solid var(--warning);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--warning) 8%, var(--surface-2));
+}
+
+.backup-reminder p {
+  margin: 0;
+  flex: 1 1 260px;
+  line-height: 1.45;
+}
+
+.backup-reminder-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.backup-reminder-actions button {
+  margin-top: 0;
+  width: auto;
+}
+
 /* Restauration : choix de la sauvegarde quand plusieurs sont complètes. */
 .usb-choice label {
   display: flex;

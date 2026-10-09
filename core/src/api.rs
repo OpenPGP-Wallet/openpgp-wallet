@@ -477,13 +477,15 @@ fn generate_backup_kit(data_dir: &Path, secret: &[u8]) -> Result<Vec<BackupShare
         .into_iter()
         .map(Zeroizing::new)
         .collect();
+    let kit_id = hex::encode(&Zeroizing::new(entropy::generate_master_entropy())[..8]);
+    let mark = kit_mark_name(&kit_id, &kit_check(secret));
     let mut backups = Vec::with_capacity(3);
     for (i, share) in shares.iter().enumerate() {
         let label = BACKUP_IDENTITIES[i].to_string();
         let passphrase = random_passphrase();
         let (pubkey_armored, privkey_armored) = generate_pgp_identity(&label, &passphrase)?;
         let encrypted_share =
-            encrypt_with_armored_pubkey(share, &data_dir.join(format!("tmp_{label}_pub.asc")), &pubkey_armored)?;
+            encrypt_with_armored_pubkey(share, &data_dir.join(format!("tmp_{label}_pub.asc")), &pubkey_armored, Some(&mark))?;
         backups.push(BackupShare {
             label,
             passphrase,
@@ -580,10 +582,10 @@ impl Drop for TempFileGuard<'_> {
 
 /// Encrypt_share exige un chemin de fichier pour la clé publique : petit fichier
 /// temporaire écrit puis lu immédiatement, aucun secret dedans (clé publique only).
-fn encrypt_with_armored_pubkey(data: &[u8], tmp_path: &Path, pubkey_armored: &[u8]) -> Result<Vec<u8>> {
+fn encrypt_with_armored_pubkey(data: &[u8], tmp_path: &Path, pubkey_armored: &[u8], name: Option<&str>) -> Result<Vec<u8>> {
     std::fs::write(tmp_path, pubkey_armored)?;
     let _guard = TempFileGuard(tmp_path);
-    pgp_engine::encrypt_share(data, &tmp_path.to_string_lossy())
+    pgp_engine::encrypt_share_named(data, &tmp_path.to_string_lossy(), name)
 }
 
 /// Identifiant d'un kit de sauvegarde : empreinte de ses parts CHIFFRÉES (rien
@@ -597,6 +599,46 @@ pub fn backup_kit_id(backups: &[BackupShare]) -> String {
         hasher.update(&backup.encrypted_share);
     }
     hex::encode(&hasher.finalize()[..12])
+}
+
+/// Marque d'un kit (kits créés depuis le 2026-10-09), portée CHIFFRÉE par
+/// chaque part (nom du paquet littéral, voir `pgp_engine::encrypt_share_named`) :
+/// `pgpwallet-kit-v1:<identifiant du kit>:<empreinte du portefeuille>`, 16
+/// caractères hexadécimaux chacun. Deux parts de kits différents redonnent un
+/// FAUX secret sans aucune erreur (Shamir ne contrôle rien, mesuré) : la
+/// marque les fait refuser, et l'empreinte vérifie le secret reconstruit. Les
+/// versions précédentes de l'app ignorent ce nom et restaurent ces kits comme
+/// avant ; les kits d'avant (sans marque) restent restaurables, sans preuve.
+const KIT_MARK_PREFIX: &str = "pgpwallet-kit-v1:";
+pub const KITS_DIFFERENT: &str = "ces deux parts viennent de deux kits de sauvegarde différents : utilisez deux parts d'un même kit";
+pub const KIT_CHECK_FAILED: &str = "ces deux parts ne redonnent pas le portefeuille de leur kit : essayez avec une autre part de ce kit";
+
+#[derive(Debug, PartialEq)]
+struct KitMark {
+    kit: String,
+    check: String,
+}
+
+/// Empreinte du portefeuille dans la marque : 8 octets d'un SHA-256 du
+/// secret, séparé par domaine — rien du secret ne s'en déduit.
+fn kit_check(secret: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(b"OpenPGP Wallet: empreinte de kit v1\0");
+    hasher.update(secret);
+    hex::encode(&hasher.finalize()[..8])
+}
+
+fn kit_mark_name(kit: &str, check: &str) -> String {
+    format!("{KIT_MARK_PREFIX}{kit}:{check}")
+}
+
+/// Marque lue dans le nom d'une part ; tout autre nom (ou aucun) : `None`.
+fn parse_kit_mark(name: Option<&[u8]>) -> Option<KitMark> {
+    let rest = std::str::from_utf8(name?).ok()?.strip_prefix(KIT_MARK_PREFIX)?;
+    let (kit, check) = rest.split_once(':')?;
+    let hex16 = |s: &str| s.len() == 16 && s.bytes().all(|b| b.is_ascii_hexdigit());
+    (hex16(kit) && hex16(check)).then(|| KitMark { kit: kit.to_string(), check: check.to_string() })
 }
 
 /// Vérifie qu'une part de sauvegarde se déchiffre avec sa clé privée et son mot
@@ -613,9 +655,14 @@ pub fn verify_backup_share(data_dir: &Path, encrypted: &[u8], privkey_armored: &
 }
 
 fn decrypt_with_armored_privkey(data: &[u8], tmp_path: &Path, privkey_armored: &[u8], passphrase: &str) -> Result<Vec<u8>> {
+    decrypt_with_armored_privkey_named(data, tmp_path, privkey_armored, passphrase).map(|(share, _)| share)
+}
+
+/// `decrypt_with_armored_privkey` avec le nom porté par la part (marque de kit).
+fn decrypt_with_armored_privkey_named(data: &[u8], tmp_path: &Path, privkey_armored: &[u8], passphrase: &str) -> Result<(Vec<u8>, Option<Vec<u8>>)> {
     std::fs::write(tmp_path, privkey_armored)?;
     let _guard = TempFileGuard(tmp_path);
-    pgp_engine::decrypt_share(data, &tmp_path.to_string_lossy(), passphrase)
+    pgp_engine::decrypt_share_named(data, &tmp_path.to_string_lossy(), passphrase)
 }
 
 // --- Stockage de la clé privée "device" (coffre OS plutôt qu'un simple fichier) --
@@ -827,7 +874,7 @@ pub fn create_wallet(data_dir: &Path, device_password: &str) -> Result<CreateWal
     let device_priv = Zeroizing::new(device_priv);
     std::fs::write(data_dir.join(DEVICE_PUBKEY_FILE), &device_pub)?;
     write_device_privkey(data_dir, &device_priv)?;
-    let vault = encrypt_with_armored_pubkey(&master_entropy, &data_dir.join("tmp_device_pub.asc"), &device_pub)?;
+    let vault = encrypt_with_armored_pubkey(&master_entropy, &data_dir.join("tmp_device_pub.asc"), &device_pub, None)?;
     std::fs::write(data_dir.join(DEVICE_VAULT_FILE), &vault)?;
     // Un compteur d'échecs résiduel (ex: fichier laissé par un `reset_wallet` qui
     // aurait échoué en partie, ou une manipulation manuelle des fichiers) ne doit
@@ -887,6 +934,65 @@ fn update_monero_key_images(data_dir: &Path, seed: &[u8], profile: u32) {
     }
 }
 
+/// Déchiffre deux parts et reconstruit le secret, sans rien écrire d'autre
+/// que des fichiers temporaires. Parts marquées (voir `KIT_MARK_PREFIX`) :
+/// refus si elles viennent de deux kits différents, et le secret reconstruit
+/// doit redonner l'empreinte du kit → `true`. Parts sans marque (kits
+/// d'avant) : reconstruit sans preuve possible → `false` (l'utilisateur
+/// vérifie alors l'adresse retrouvée). Une part marquée avec une part sans
+/// marque : deux kits différents, refus.
+fn recover_backup_secret(
+    data_dir: &Path,
+    backup_1: (&[u8], &[u8], &str),
+    backup_2: (&[u8], &[u8], &str),
+) -> Result<(Zeroizing<Vec<u8>>, bool)> {
+    std::fs::create_dir_all(data_dir)?;
+    // Chaque part déchiffrée est aussi sensible qu'une clé maîtresse partielle
+    // (2 sur 3 suffisent à tout reconstruire) : même traitement `Zeroizing`.
+    let mut decrypted_shares: Vec<Zeroizing<Vec<u8>>> = Vec::with_capacity(2);
+    let mut marks = Vec::with_capacity(2);
+    for (i, (encrypted, privkey_armored, passphrase)) in [backup_1, backup_2].iter().enumerate() {
+        let tmp_path = data_dir.join(format!("tmp_restore_{i}.asc"));
+        let (decrypted, name) = decrypt_with_armored_privkey_named(encrypted, &tmp_path, privkey_armored, passphrase)
+            .with_context(|| format!("échec du déchiffrement de la part de sauvegarde n°{}", i + 1))?;
+        decrypted_shares.push(Zeroizing::new(decrypted));
+        marks.push(parse_kit_mark(name.as_deref()));
+    }
+    let verified = match (&marks[0], &marks[1]) {
+        (Some(a), Some(b)) => {
+            anyhow::ensure!(a.kit == b.kit, KITS_DIFFERENT);
+            true
+        }
+        (None, None) => false,
+        _ => anyhow::bail!(KITS_DIFFERENT),
+    };
+    let share_refs: Vec<&[u8]> = decrypted_shares.iter().map(|s| s.as_slice()).collect();
+    let recovered = Zeroizing::new(shamir::reconstruct_secret(2, &share_refs)?);
+    if verified {
+        let check = kit_check(&recovered);
+        anyhow::ensure!(marks.iter().flatten().all(|mark| mark.check == check), KIT_CHECK_FAILED);
+    }
+    Ok((recovered, verified))
+}
+
+/// Contrôle de deux parts AVANT une restauration, sans rien écrire.
+pub struct RestoreCheck {
+    /// Adresses que la restauration redonnera (profil principal), à montrer
+    /// à l'utilisateur avant qu'il confirme.
+    pub addresses: Addresses,
+    /// Kit marqué : les parts vont ensemble et redonnent le portefeuille du
+    /// kit (empreinte vérifiée). `false` : kit d'avant les marques.
+    pub verified: bool,
+}
+
+/// Contrôle de deux parts avant restauration : refus de parts qui ne vont
+/// pas ensemble (`KITS_DIFFERENT`, `KIT_CHECK_FAILED`), adresses retrouvées.
+pub fn check_restore(data_dir: &Path, backup_1: (&[u8], &[u8], &str), backup_2: (&[u8], &[u8], &str)) -> Result<RestoreCheck> {
+    let (recovered, verified) = recover_backup_secret(data_dir, backup_1, backup_2)?;
+    let _recovered_lock = memory_guard::lock(&recovered);
+    Ok(RestoreCheck { addresses: derive_addresses(&recovered, 0)?, verified })
+}
+
 /// Restaure un wallet à partir de 2 parts de sauvegarde (peu importe lesquelles
 /// parmi les 3) et recrée un coffre local sur CET appareil avec un nouveau mot de
 /// passe. À utiliser quand l'appareil d'origine est perdu.
@@ -918,20 +1024,9 @@ fn restore_wallet_with(
     backup_2: (&[u8], &[u8], &str),
     sealer: &dyn SecretSealer,
 ) -> Result<Addresses> {
-    std::fs::create_dir_all(data_dir)?;
-
-    // Chaque part déchiffrée est aussi sensible qu'une clé maîtresse partielle
-    // (2 sur 3 suffisent à tout reconstruire) : même traitement `Zeroizing`.
-    let mut decrypted_shares: Vec<Zeroizing<Vec<u8>>> = Vec::with_capacity(2);
-    for (i, (encrypted, privkey_armored, passphrase)) in [backup_1, backup_2].iter().enumerate() {
-        let tmp_path = data_dir.join(format!("tmp_restore_{i}.asc"));
-        let decrypted = decrypt_with_armored_privkey(encrypted, &tmp_path, privkey_armored, passphrase)
-            .with_context(|| format!("échec du déchiffrement de la part de sauvegarde n°{}", i + 1))?;
-        decrypted_shares.push(Zeroizing::new(decrypted));
-    }
-
-    let share_refs: Vec<&[u8]> = decrypted_shares.iter().map(|s| s.as_slice()).collect();
-    let recovered = Zeroizing::new(shamir::reconstruct_secret(2, &share_refs)?);
+    // Parts qui ne vont pas ensemble : refus AVANT de toucher à l'état de
+    // l'appareil (voir `recover_backup_secret`).
+    let (recovered, _verified) = recover_backup_secret(data_dir, backup_1, backup_2)?;
     let _recovered_lock = memory_guard::lock(&recovered);
     let default_profile = Profile {
         index: 0,
@@ -953,7 +1048,7 @@ fn restore_wallet_with(
     let device_priv = Zeroizing::new(device_priv); // voir le commentaire équivalent dans create_wallet
     std::fs::write(data_dir.join(DEVICE_PUBKEY_FILE), &device_pub)?;
     write_device_privkey(data_dir, &device_priv)?;
-    let vault = encrypt_with_armored_pubkey(&recovered, &data_dir.join("tmp_device_pub.asc"), &device_pub)?;
+    let vault = encrypt_with_armored_pubkey(&recovered, &data_dir.join("tmp_device_pub.asc"), &device_pub, None)?;
     std::fs::write(data_dir.join(DEVICE_VAULT_FILE), &vault)?;
 
     // Un enrôlement biométrique éventuel référençait l'ANCIENNE identité
@@ -1329,7 +1424,7 @@ fn disable_biometric_unlock_with(data_dir: &Path, device_password: &str, sealer:
 
     let device_pub = std::fs::read(data_dir.join(DEVICE_PUBKEY_FILE)).context("lecture de la clé publique de l'appareil")?;
     let tmp_pub_path = data_dir.join("tmp_device_pub_disable.asc");
-    let new_vault = encrypt_with_armored_pubkey(&master_entropy, &tmp_pub_path, &device_pub)?;
+    let new_vault = encrypt_with_armored_pubkey(&master_entropy, &tmp_pub_path, &device_pub, None)?;
 
     let tmp_vault_path = data_dir.join("tmp_device_vault_disable.asc");
     std::fs::write(&tmp_vault_path, &new_vault)?;
@@ -7144,22 +7239,24 @@ mod tests {
         ]
     }
 
-    /// Génère `testdata/backup_kit_v1.json`, le kit FIGÉ de
-    /// `frozen_backup_kit_still_restores`. Ne se relance que pour figer un
-    /// NOUVEAU format, dans un nouveau fichier : l'existant ne se régénère
-    /// jamais (`cargo test --lib export_frozen_backup_kit -- --ignored`).
+    /// Génère `testdata/backup_kit_v2.json`, kit FIGÉ au format actuel (parts
+    /// marquées) de `frozen_backup_kits_still_restore`. `backup_kit_v1.json`
+    /// (parts sans marque) a été figé par ce même générateur avant les marques.
+    /// Ne se relance que pour figer un NOUVEAU format, dans un NOUVEAU fichier :
+    /// un fichier existant ne se régénère jamais
+    /// (`cargo test --lib export_frozen_backup_kit -- --ignored`).
     #[test]
     #[ignore]
     fn export_frozen_backup_kit() {
         let dir = std::env::temp_dir().join(format!("pgp_wallet_export_frozen_kit_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/backup_kit_v1.json");
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/backup_kit_v2.json");
         assert!(!std::path::Path::new(path).exists(), "kit figé déjà présent : il ne se régénère jamais");
         let secret: Vec<u8> = (0..32u8).map(|i| i.wrapping_mul(7).wrapping_add(3)).collect();
         let backups = generate_backup_kit(&dir, &secret).unwrap();
         let addresses = derive_addresses(&secret, 0).unwrap();
         let kit = serde_json::json!({
-            "note": "Kit de sauvegarde FACTICE (secret public), figé le 2026-10-09 (code de la version 2.11.0) : toute version de l'app doit le restaurer. Ne jamais envoyer de fonds à ces adresses ; ne jamais régénérer ce fichier.",
+            "note": "Kit de sauvegarde FACTICE (secret public), figé le 2026-10-09 au format v2 (parts marquées) : toute version de l'app doit le restaurer. Ne jamais envoyer de fonds à ces adresses ; ne jamais régénérer ce fichier.",
             "secret_hex": hex::encode(&secret),
             "addresses": all_public_addresses(&addresses).into_iter().map(|(k, v)| (k.to_string(), serde_json::Value::String(v))).collect::<serde_json::Map<String, serde_json::Value>>(),
             "parts": backups.iter().map(|b| serde_json::json!({
@@ -7176,9 +7273,10 @@ mod tests {
     /// Part du kit figé : (part chiffrée, clé privée armurée, mot de passe).
     type FrozenPart = (Vec<u8>, Vec<u8>, String);
 
-    /// Kit figé et ses parts.
-    fn frozen_backup_kit() -> (serde_json::Value, Vec<FrozenPart>) {
-        let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/backup_kit_v1.json")).expect("kit figé testdata/backup_kit_v1.json");
+    /// Kit figé `testdata/backup_kit_v{version}.json` et ses parts.
+    fn frozen_backup_kit(version: u8) -> (serde_json::Value, Vec<FrozenPart>) {
+        let path = format!("{}/testdata/backup_kit_v{version}.json", env!("CARGO_MANIFEST_DIR"));
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("kit figé {path} : {e}"));
         let kit: serde_json::Value = serde_json::from_str(&text).unwrap();
         let parts = kit["parts"]
             .as_array()
@@ -7196,20 +7294,26 @@ mod tests {
     }
 
     /// GARANTIE : un kit de sauvegarde fait par une version de l'app se
-    /// restaure avec toutes les suivantes. Kit factice figé
-    /// (`testdata/backup_kit_v1.json`) : chaque paire de parts (1+2, 1+3, 2+3)
-    /// passe par la vraie restauration et redonne le même secret et les mêmes
-    /// adresses sur tous les réseaux. Un échec après une mise à jour
-    /// (bibliothèque OpenPGP, Shamir, dérivation) voudrait dire que de vraies
-    /// sauvegardes ne redonneraient plus les fonds : corriger le code, JAMAIS
-    /// ce fichier.
+    /// restaure avec toutes les suivantes. Kits factices figés
+    /// (`testdata/backup_kit_v1.json` sans marque, `v2` marqué) : chaque paire
+    /// de parts (1+2, 1+3, 2+3) passe par le contrôle puis la vraie
+    /// restauration et redonne le même secret et les mêmes adresses sur tous
+    /// les réseaux. Un échec après une mise à jour (bibliothèque OpenPGP,
+    /// Shamir, dérivation) voudrait dire que de vraies sauvegardes ne
+    /// redonneraient plus les fonds : corriger le code, JAMAIS ces fichiers.
     #[test]
-    fn frozen_backup_kit_still_restores() {
-        let (kit, parts) = frozen_backup_kit();
+    fn frozen_backup_kits_still_restore() {
+        for version in [1u8, 2] {
+            frozen_backup_kit_restores(version);
+        }
+    }
+
+    fn frozen_backup_kit_restores(version: u8) {
+        let (kit, parts) = frozen_backup_kit(version);
         assert_eq!(parts.len(), 3);
         let secret = hex::decode(kit["secret_hex"].as_str().unwrap()).unwrap();
         for (a, b) in [(0usize, 1usize), (0, 2), (1, 2)] {
-            let dir = std::env::temp_dir().join(format!("pgp_wallet_frozen_kit_{a}{b}_{}", std::process::id()));
+            let dir = std::env::temp_dir().join(format!("pgp_wallet_frozen_kit_v{version}_{a}{b}_{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).unwrap();
             let (pa, pb) = (&parts[a], &parts[b]);
@@ -7219,7 +7323,10 @@ mod tests {
                 .map(|(i, p)| Zeroizing::new(decrypt_with_armored_privkey(&p.0, &dir.join(format!("tmp_frozen_{i}.asc")), &p.1, &p.2).unwrap()))
                 .collect();
             let refs: Vec<&[u8]> = decrypted.iter().map(|s| s.as_slice()).collect();
-            assert_eq!(*shamir::reconstruct_secret(2, &refs).unwrap(), secret, "parts {} + {}", a + 1, b + 1);
+            assert_eq!(*shamir::reconstruct_secret(2, &refs).unwrap(), secret, "v{version}, parts {} + {}", a + 1, b + 1);
+            let check = check_restore(&dir, (&pa.0, &pa.1, &pa.2), (&pb.0, &pb.1, &pb.2)).unwrap();
+            assert_eq!(check.verified, version >= 2, "v{version} : parts vérifiées par leur marque");
+            assert_eq!(all_public_addresses(&check.addresses), all_public_addresses(&derive_addresses(&secret, 0).unwrap()));
             let addresses = restore_wallet_with(
                 &dir,
                 "un nouveau mot de passe bien assez long",
@@ -7227,12 +7334,90 @@ mod tests {
                 (&pb.0, &pb.1, &pb.2),
                 &FakeSealer { fail_enroll: false },
             )
-            .unwrap_or_else(|e| panic!("restauration des parts {} + {} : {e:#}", a + 1, b + 1));
+            .unwrap_or_else(|e| panic!("restauration v{version} des parts {} + {} : {e:#}", a + 1, b + 1));
             for (network, address) in all_public_addresses(&addresses) {
-                assert_eq!(kit["addresses"][network].as_str(), Some(address.as_str()), "{network}, parts {} + {}", a + 1, b + 1);
+                assert_eq!(kit["addresses"][network].as_str(), Some(address.as_str()), "v{version} {network}, parts {} + {}", a + 1, b + 1);
             }
             let _ = std::fs::remove_dir_all(&dir);
         }
+    }
+
+    /// Parts qui ne vont pas ensemble, refusées AVANT tout changement de
+    /// l'appareil : deux kits du même portefeuille (secret reconstruit faux
+    /// sans la marque), part marquée + part sans marque, et part dont la
+    /// marque dit un autre portefeuille (empreinte). Sans refus, la
+    /// restauration aurait installé un portefeuille vide.
+    #[test]
+    fn mismatched_backup_shares_are_refused_before_anything_changes() {
+        let dir = std::env::temp_dir().join(format!("pgp_wallet_mismatched_shares_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let secret: Vec<u8> = (0..32u8).map(|i| i ^ 0x5a).collect();
+        let kit_a = generate_backup_kit(&dir, &secret).unwrap();
+        let kit_b = generate_backup_kit(&dir, &secret).unwrap();
+        let part = |b: &BackupShare| (b.encrypted_share.clone(), b.privkey_armored.clone(), b.passphrase.clone());
+        let as_ref = |p: &FrozenPart| (p.0.clone(), p.1.clone(), p.2.clone());
+        let attempt = |x: &FrozenPart, y: &FrozenPart| {
+            let device = dir.join("appareil");
+            let _ = std::fs::remove_dir_all(&device);
+            let checked = check_restore(&device, (&x.0, &x.1, &x.2), (&y.0, &y.1, &y.2)).map(|c| c.verified);
+            let restored = restore_wallet_with(&device, "un nouveau mot de passe bien assez long", (&x.0, &x.1, &x.2), (&y.0, &y.1, &y.2), &FakeSealer { fail_enroll: false });
+            if restored.is_err() {
+                assert!(!device.join(DEVICE_VAULT_FILE).exists(), "aucun coffre écrit après un refus");
+            }
+            (checked.map_err(|e| e.to_string()), restored.is_ok())
+        };
+        // Même kit : vérifié.
+        assert_eq!(attempt(&part(&kit_a[0]), &part(&kit_a[2])), (Ok(true), true));
+        // Deux kits du même portefeuille.
+        assert_eq!(attempt(&part(&kit_a[0]), &part(&kit_b[1])), (Err(KITS_DIFFERENT.to_string()), false));
+        // Part marquée + part sans marque (kit d'avant).
+        let (_, old) = frozen_backup_kit(1);
+        assert_eq!(attempt(&part(&kit_a[0]), &as_ref(&old[1])), (Err(KITS_DIFFERENT.to_string()), false));
+        // Marque d'un autre portefeuille : parts d'un secret S2 portant la marque
+        // (même identifiant de kit) du portefeuille de `secret`.
+        let other: Vec<u8> = (0..32u8).map(|i| i.wrapping_mul(3)).collect();
+        let shares = shamir::split_secret(&other, 2, 3).unwrap();
+        let mark = kit_mark_name("00112233aabbccdd", &kit_check(&secret));
+        let forged: Vec<FrozenPart> = shares
+            .iter()
+            .take(2)
+            .enumerate()
+            .map(|(i, share)| {
+                let passphrase = random_passphrase();
+                let (public, private) = generate_pgp_identity(&format!("forge{i}"), &passphrase).unwrap();
+                let encrypted = encrypt_with_armored_pubkey(share, &dir.join("tmp_forge_pub.asc"), &public, Some(&mark)).unwrap();
+                (encrypted, private, passphrase)
+            })
+            .collect();
+        assert_eq!(attempt(&forged[0], &forged[1]), (Err(KIT_CHECK_FAILED.to_string()), false));
+        // Marque illisible (autre logiciel, autre format) : traitée comme sans marque.
+        assert_eq!(parse_kit_mark(Some(b"photo.jpg")), None);
+        assert_eq!(parse_kit_mark(Some(b"pgpwallet-kit-v1:0011:22")), None);
+        assert_eq!(parse_kit_mark(None), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Les nouveaux kits restent lisibles par les versions précédentes de
+    /// l'app : leur restauration lit la part par `decrypt_share` (contenu seul)
+    /// et la passe à Shamir — exactement ce que fait ce test, qui doit
+    /// redonner le secret.
+    #[test]
+    fn new_kits_stay_restorable_by_earlier_versions() {
+        let dir = std::env::temp_dir().join(format!("pgp_wallet_new_kit_old_reader_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (kit, parts) = frozen_backup_kit(2);
+        let secret = hex::decode(kit["secret_hex"].as_str().unwrap()).unwrap();
+        let old_reader = |p: &FrozenPart, i: usize| {
+            let path = dir.join(format!("old_reader_{i}.asc"));
+            std::fs::write(&path, &p.1).unwrap();
+            Zeroizing::new(pgp_engine::decrypt_share(&p.0, &path.to_string_lossy(), &p.2).unwrap())
+        };
+        let shares = [old_reader(&parts[0], 0), old_reader(&parts[2], 2)];
+        let refs: Vec<&[u8]> = shares.iter().map(|s| s.as_slice()).collect();
+        assert_eq!(*shamir::reconstruct_secret(2, &refs).unwrap(), secret);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
