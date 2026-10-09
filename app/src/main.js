@@ -54,6 +54,29 @@ const ASSETS = [
   { coin: "jitosol", name: "Jito Staked SOL", symbol: "JitoSOL", token: true, icon: "/assets/jitosol.png", gecko: "jito-staked-sol", decimals: 6, unitDecimals: 9, chart: "JITOSOL", networks: ["sol_mainnet"], contracts: { sol_mainnet: "J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn" } },
   { coin: "steth", name: "Lido Staked ETH", symbol: "stETH", token: true, icon: "/assets/steth.png", gecko: "staked-ether", decimals: 6, unitDecimals: 18, chart: "STETH", networks: ["evm_mainnet"], contracts: { evm_mainnet: "0xae7ab96520de3a18e5e111b5eaab095312d7fe84" } },
   { coin: "render", name: "Render", symbol: "RENDER", token: true, icon: "/assets/render.png", gecko: "render-token", decimals: 6, unitDecimals: 8, chart: "RENDER", networks: ["sol_mainnet"], contracts: { sol_mainnet: "rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof" } },
+  // Actions tokenisées xStocks (`stock: true`, Solana, programme Token-2022 —
+  // core/src/tokens.rs) : masquées par défaut, cours de Jupiter par unité
+  // affichée (pas de courbe), soldes lus en une requête (get_stock_balances).
+  // Logos officiels des jetons (métadonnées de Backed).
+  { coin: "tslax", name: "Tesla xStock", symbol: "TSLAx", token: true, stock: true, icon: "/assets/xstocks/tslax.png", gecko: "xstock:tslax", decimals: 6, unitDecimals: 8, chart: null, networks: ["sol_mainnet"], contracts: { sol_mainnet: "XsDoVfqeBukxuZHWhdvWHBhgEHjGNst4MLodqsJHzoB" } },
+  { coin: "nvdax", name: "NVIDIA xStock", symbol: "NVDAx", token: true, stock: true, icon: "/assets/xstocks/nvdax.png", gecko: "xstock:nvdax", decimals: 6, unitDecimals: 8, chart: null, networks: ["sol_mainnet"], contracts: { sol_mainnet: "Xsc9qvGR1efVDFGLrVsmkzv3qi45LTBjeUKSPmx9qEh" } },
+  { coin: "aaplx", name: "Apple xStock", symbol: "AAPLx", token: true, stock: true, icon: "/assets/xstocks/aaplx.png", gecko: "xstock:aaplx", decimals: 6, unitDecimals: 8, chart: null, networks: ["sol_mainnet"], contracts: { sol_mainnet: "XsbEhLAtcf6HdfpFZ5xEMdqW8nfAvcsP5bdudRLJzJp" } },
+  { coin: "msftx", name: "Microsoft xStock", symbol: "MSFTx", token: true, stock: true, icon: "/assets/xstocks/msftx.png", gecko: "xstock:msftx", decimals: 6, unitDecimals: 8, chart: null, networks: ["sol_mainnet"], contracts: { sol_mainnet: "XspzcW1PRtgf6Wj92HCiZdjzKCyFekVD8P5Ueh3dRMX" } },
+  { coin: "googlx", name: "Alphabet xStock", symbol: "GOOGLx", token: true, stock: true, icon: "/assets/xstocks/googlx.png", gecko: "xstock:googlx", decimals: 6, unitDecimals: 8, chart: null, networks: ["sol_mainnet"], contracts: { sol_mainnet: "XsCPL9dNWBMvFtTmwcCA5v3xWPSMEBCszbQdiLLq6aN" } },
+  { coin: "amznx", name: "Amazon.com xStock", symbol: "AMZNx", token: true, stock: true, icon: "/assets/xstocks/amznx.png", gecko: "xstock:amznx", decimals: 6, unitDecimals: 8, chart: null, networks: ["sol_mainnet"], contracts: { sol_mainnet: "Xs3eBt7uRfJX8QUs4suhyU8p2M6DoUDrJyWBa8LLZsg" } },
+  { coin: "metax", name: "Meta xStock", symbol: "METAx", token: true, stock: true, icon: "/assets/xstocks/metax.png", gecko: "xstock:metax", decimals: 6, unitDecimals: 8, chart: null, networks: ["sol_mainnet"], contracts: { sol_mainnet: "Xsa62P5mvPszXL1krVUnU5ar38bBSVcWAB6fmPCo5Zu" } },
+  { coin: "spyx", name: "SP500 xStock", symbol: "SPYx", token: true, stock: true, icon: "/assets/xstocks/spyx.png", gecko: "xstock:spyx", decimals: 6, unitDecimals: 8, chart: null, networks: ["sol_mainnet"], contracts: { sol_mainnet: "XsoCS1TfEyfFhfvj8EtZ528L3CaKBDBRqRapnBbDF2W" } },
+  { coin: "qqqx", name: "Nasdaq xStock", symbol: "QQQx", token: true, stock: true, icon: "/assets/xstocks/qqqx.png", gecko: "xstock:qqqx", decimals: 6, unitDecimals: 8, chart: null, networks: ["sol_mainnet"], contracts: { sol_mainnet: "Xs8S1uUs1zvS2p7iwtsG3b6fkhpvmwz4GYU3gWAmWHZ" } },
+  { coin: "gldx", name: "Gold xStock", symbol: "GLDx", token: true, stock: true, icon: "/assets/xstocks/gldx.png", gecko: "xstock:gldx", decimals: 6, unitDecimals: 8, chart: null, networks: ["sol_mainnet"], contracts: { sol_mainnet: "Xsv9hRk1z5ystj9MhnA7Lq4vjSsLwzL2nxrwmwtD3re" } },
+  { coin: "coinx", name: "Coinbase xStock", symbol: "COINx", token: true, stock: true, icon: "/assets/xstocks/coinx.png", gecko: "xstock:coinx", decimals: 6, unitDecimals: 8, chart: null, networks: ["sol_mainnet"], contracts: { sol_mainnet: "Xs7ZdzSHLU9ftNJsii5fCeJhoRWSC32SQGzGQtePxNu" } },
+  { coin: "mstrx", name: "MicroStrategy xStock", symbol: "MSTRx", token: true, stock: true, icon: "/assets/xstocks/mstrx.png", gecko: "xstock:mstrx", decimals: 6, unitDecimals: 8, chart: null, networks: ["sol_mainnet"], contracts: { sol_mainnet: "XsP7xzNPvEHS1m6qfanPUGjNmdnmsLKEoNAnHjdxxyZ" } },
+  { coin: "crclx", name: "Circle xStock", symbol: "CRCLx", token: true, stock: true, icon: "/assets/xstocks/crclx.png", gecko: "xstock:crclx", decimals: 6, unitDecimals: 8, chart: null, networks: ["sol_mainnet"], contracts: { sol_mainnet: "XsueG8BtpquVJX9LVLLEGuViXUungE6WmK5YZ3p3bd1" } },
+  { coin: "hoodx", name: "Robinhood xStock", symbol: "HOODx", token: true, stock: true, icon: "/assets/xstocks/hoodx.png", gecko: "xstock:hoodx", decimals: 6, unitDecimals: 8, chart: null, networks: ["sol_mainnet"], contracts: { sol_mainnet: "XsvNBAYkrDRNhA7wPHQfX3ZUXZyZLdnCQDfHZ56bzpg" } },
+  { coin: "pltrx", name: "Palantir xStock", symbol: "PLTRx", token: true, stock: true, icon: "/assets/xstocks/pltrx.png", gecko: "xstock:pltrx", decimals: 6, unitDecimals: 8, chart: null, networks: ["sol_mainnet"], contracts: { sol_mainnet: "XsoBhf2ufR8fTyNSjqfU71DYGaE6Z3SUGAidpzriAA4" } },
+  { coin: "mcdx", name: "McDonald's xStock", symbol: "MCDx", token: true, stock: true, icon: "/assets/xstocks/mcdx.png", gecko: "xstock:mcdx", decimals: 6, unitDecimals: 8, chart: null, networks: ["sol_mainnet"], contracts: { sol_mainnet: "XsqE9cRRpzxcGKDXj1BJ7Xmg4GRhZoyY1KpmGSxAWT2" } },
+  { coin: "gmex", name: "Gamestop xStock", symbol: "GMEx", token: true, stock: true, icon: "/assets/xstocks/gmex.png", gecko: "xstock:gmex", decimals: 6, unitDecimals: 8, chart: null, networks: ["sol_mainnet"], contracts: { sol_mainnet: "Xsf9mBktVB9BSU5kf4nHxPq5hCBJ2j2ui3ecFGxPRGc" } },
+  { coin: "brkbx", name: "Berkshire Hathaway xStock", symbol: "BRK.Bx", token: true, stock: true, icon: "/assets/xstocks/brkbx.png", gecko: "xstock:brkbx", decimals: 6, unitDecimals: 8, chart: null, networks: ["sol_mainnet"], contracts: { sol_mainnet: "Xs6B6zawENwAbWVi7w92rjazLuAr5Az59qgWKcNb45x" } },
+  { coin: "spcxx", name: "SpaceX xStock", symbol: "SPCXx", token: true, stock: true, icon: "/assets/xstocks/spcxx.png", gecko: "xstock:spcxx", decimals: 6, unitDecimals: 8, chart: null, networks: ["sol_mainnet"], contracts: { sol_mainnet: "Xs3oZwbHvqis4NYcf4YKWmEia2eC84wSiVrcYcTqpH8" } },
 ];
 // Réseaux compatibles Ethereum ajoutés par l'utilisateur (Paramètres,
 // « RPC personnalisé ») : une carte chacun, comme une crypto de l'app (même
@@ -587,6 +610,8 @@ const I18N = {
     "backupCheck.reminder": "Pensez à vérifier vos clés de sauvegarde : une clé USB peut s'abîmer avec les années.",
     "backupCheck.checkNow": "Vérifier maintenant",
     "backupCheck.later": "Plus tard",
+    "assets.stocksGroup": "Actions tokenisées (xStocks)",
+    "assets.stocksNotice": "Émises par Backed Assets sur Solana : chaque jeton suit le cours d'une action ou d'un fonds, sans droits d'actionnaire (pas de vote). Interdites aux personnes des États-Unis, non proposées au Royaume-Uni, au Canada ni en Australie. Le prix peut s'écarter de celui de la Bourse, surtout quand elle est fermée, et l'émetteur peut suspendre les transferts.",
     "usb.writing": "Écriture et vérification…",
     "usb.done": "Part n°{n} enregistrée et vérifiée sur « {label} ». Retirez la clé et rangez-la à part, loin des autres parts.",
     "usb.free": "{mb} Mo libres",
@@ -1311,6 +1336,8 @@ const I18N = {
     "backupCheck.reminder": "Remember to check your backup drives: a USB drive can wear out over the years.",
     "backupCheck.checkNow": "Check now",
     "backupCheck.later": "Later",
+    "assets.stocksGroup": "Tokenized stocks (xStocks)",
+    "assets.stocksNotice": "Issued by Backed Assets on Solana: each token tracks the price of a stock or fund, without shareholder rights (no voting). Not for US persons, not offered in the UK, Canada or Australia. The price can drift from the stock market's, especially when it is closed, and the issuer can pause transfers.",
     "usb.writing": "Writing and verifying…",
     "usb.done": "Share {n} saved and verified on \"{label}\". Unplug the drive and store it apart, away from the other shares.",
     "usb.free": "{mb} MB free",
@@ -3944,12 +3971,27 @@ function refreshCurrencyDisplays() {
 let priceRefreshTimer = null;
 let pricesRefreshing = false;
 
+// Cours des actions tokenisées (Jupiter : prix d'une unité affichée, celui de
+// l'action) : demandés seulement si l'une est affichée.
+let stockQuotes = {};
+async function refreshStockPrices() {
+  if (!ASSETS.some((asset) => asset.stock && isAssetVisible(asset.coin))) return;
+  try {
+    const quotes = await invoke("get_stock_prices");
+    const next = Object.fromEntries(quotes.map((quote) => [quote.id, quote]));
+    if (Object.keys(next).length > 0) stockQuotes = next;
+  } catch (e) {
+    console.error(e);
+  }
+}
+
 function priceForCoin(coin) {
   // USDC est un stablecoin indexé sur le dollar : pas d'appel de prix
   // nécessaire, toujours ~1 $ — évite un cas particulier dans
   // updateFiatValue/renderQuickAmounts pour ce seul actif.
   if (coin === "usdc") return 1;
   const asset = ASSET_BY_COIN[coin];
+  if (asset?.stock) return stockQuotes[coin]?.price_usd ?? null;
   if (!latestPrices || !asset) return null;
   return latestPrices[asset.gecko] ?? null;
 }
@@ -3959,6 +4001,10 @@ function priceForCoin(coin) {
 // valeur en devise : fonds de test exclus) et variation sur 24 h pondérée par
 // la valeur de chaque crypto (variations de la liste des marchés).
 function marketChange24h(coin) {
+  if (ASSET_BY_COIN[coin]?.stock) {
+    const change = stockQuotes[coin]?.change_24h_percent;
+    return Number.isFinite(change) ? change : null;
+  }
   const gecko = ASSET_BY_COIN[coin]?.gecko;
   const market = gecko && lastMarketCoins ? lastMarketCoins.find((c) => c.id === gecko) : null;
   return market && Number.isFinite(market.change_24h_percent) ? market.change_24h_percent : null;
@@ -4059,6 +4105,7 @@ async function refreshPrices() {
     } catch (e) {
       console.error(e);
     }
+    await refreshStockPrices();
     document.querySelectorAll(".wallet-card").forEach(updateFiatValue);
     scheduleCardResort();
     renderMarkets(coins);
@@ -4567,9 +4614,25 @@ function balanceKey(card) {
 // où get_balance l'entend (pas de notion de décimales/mint par actif dans
 // cette commande) : une commande dédiée, voir core/src/api.rs::get_usdc_balance.
 function fetchBalance(coin, network, address) {
+  if (ASSET_BY_COIN[coin]?.stock) return stockBalance(coin, address);
   return usesTokenRegistry(coin, network)
     ? invoke("get_token_balance", { token: coin, network, address })
     : invoke(coin === "usdc" ? "get_usdc_balance" : "get_balance", { network, address });
+}
+
+// Soldes des actions tokenisées : une seule requête pour toutes
+// (get_stock_balances), partagée 5 s entre les cartes d'une même adresse —
+// au lieu de 19 lectures, surtout au déverrouillage (cartes masquées lues une
+// fois pour repérer des fonds).
+const stockBalanceRequests = new Map();
+function stockBalance(coin, address) {
+  let entry = stockBalanceRequests.get(address);
+  if (!entry || Date.now() - entry.at > 5000) {
+    entry = { at: Date.now(), promise: invoke("get_stock_balances", { address }).then((list) => Object.fromEntries(list)) };
+    stockBalanceRequests.set(address, entry);
+    entry.promise.catch(() => stockBalanceRequests.delete(address));
+  }
+  return entry.promise.then((balances) => balances[coin] ?? "0.000000");
 }
 
 async function refreshBalance(card) {
@@ -5508,10 +5571,14 @@ const assetsSearch = document.getElementById("assets-search");
 function filterAssetsList() {
   const query = normalizeSearch(assetsSearch.value);
   let shown = 0;
-  document.querySelectorAll("#assets-list li").forEach((li) => {
+  document.querySelectorAll("#assets-list li:not(.assets-group)").forEach((li) => {
     const match = !query || li.dataset.search.includes(query);
     li.classList.toggle("hidden", !match);
     if (match) shown += 1;
+  });
+  // En-tête du groupe des actions tokenisées : visible si l'une l'est.
+  document.querySelectorAll("#assets-list li.assets-group").forEach((li) => {
+    li.classList.toggle("hidden", !document.querySelector("#assets-list li[data-stock]:not(.hidden)"));
   });
   document.getElementById("assets-no-match").classList.toggle("hidden", shown > 0);
 }
@@ -5529,10 +5596,20 @@ assetsSearch.addEventListener("keydown", (e) => {
 document.getElementById("manage-assets-btn").addEventListener("click", () => {
   const list = document.getElementById("assets-list");
   const boxes = new Map();
+  // Actions tokenisées à la fin, sous leur en-tête (avertissement compris).
+  const ordered = orderedCoins().map((coin) => ASSET_BY_COIN[coin]);
+  const stockGroup = document.createElement("li");
+  stockGroup.className = "assets-group";
+  stockGroup.append(
+    Object.assign(document.createElement("strong"), { textContent: t("assets.stocksGroup") }),
+    Object.assign(document.createElement("p"), { className: "muted", textContent: t("assets.stocksNotice") })
+  );
   list.replaceChildren(
-    ...orderedCoins().map((coin) => ASSET_BY_COIN[coin]).map((asset) => {
+    ...[...ordered.filter((asset) => !asset.stock), "group", ...ordered.filter((asset) => asset.stock)].map((asset) => {
+      if (asset === "group") return stockGroup;
       const li = document.createElement("li");
-      li.dataset.search = normalizeSearch(`${assetName(asset)} ${asset.name} ${asset.symbol}`);
+      if (asset.stock) li.dataset.stock = "1";
+      li.dataset.search = normalizeSearch(`${assetName(asset)} ${asset.name} ${asset.symbol} ${asset.stock ? "action xstock stock" : ""}`);
       const label = document.createElement("label");
       label.className = "asset-choice";
       const icon = asset.icon
@@ -5553,6 +5630,11 @@ document.getElementById("manage-assets-btn").addEventListener("click", () => {
           if (other !== box && other.checked) refreshBalance(document.querySelector(`.wallet-card[data-coin="${coin}"]`));
         }
         if (box.checked) refreshBalance(document.querySelector(`.wallet-card[data-coin="${asset.coin}"]`));
+        // Action tokenisée affichée : son cours tout de suite, sans attendre
+        // le prochain cycle.
+        if (box.checked && asset.stock) {
+          refreshStockPrices().then(() => document.querySelectorAll(".wallet-card").forEach(updateFiatValue));
+        }
       });
       label.append(icon, name, symbol, box);
       li.appendChild(label);
@@ -7835,6 +7917,7 @@ const sameSwapAsset = (a, b) => Boolean(a && b) && a.coin === b.coin && a.networ
 
 // Solde d'une crypto sur un réseau, comme sur sa carte (texte « 0.123 »).
 function readAssetBalance(coin, network, address) {
+  if (ASSET_BY_COIN[coin]?.stock) return stockBalance(coin, address);
   return usesTokenRegistry(coin, network)
     ? invoke("get_token_balance", { token: coin, network, address })
     : invoke(coin === "usdc" ? "get_usdc_balance" : "get_balance", { network, address });

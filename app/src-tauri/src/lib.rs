@@ -75,6 +75,14 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("nom de la sauvegarde : 1 à 30 caractères (lettres, chiffres, espaces, - _)", "backup name: 1 to 30 characters (letters, digits, spaces, - _)"),
     ("un dossier de sauvegarde de ce nom existe déjà sur la clé USB : choisissez un autre nom", "a backup folder with this name already exists on the USB drive: choose another name"),
     ("plusieurs sauvegardes complètes trouvées : choisissez celle à restaurer", "several complete backups found: choose the one to restore"),
+    // core/src/api.rs, actions tokenisées xStocks
+    ("transferts de ce jeton suspendus par son émetteur : réessayez plus tard", "transfers of this token are paused by its issuer: try again later"),
+    ("l'émetteur de ce jeton a ajouté une règle de transfert que l'app ne gère pas encore : envoi refusé, rien n'a été dépensé", "this token's issuer added a transfer rule the app doesn't support yet: transfer refused, nothing was spent"),
+    ("le coefficient de ce jeton change en ce moment (dividende ou division d'action) : réessayez dans quelques minutes", "this token's multiplier is changing right now (dividend or stock split): try again in a few minutes"),
+    ("montant trop petit pour ce jeton", "amount too small for this token"),
+    ("coefficient d'affichage absent du mint", "display multiplier missing from the token"),
+    ("coefficient d'affichage illisible", "unreadable display multiplier"),
+    ("mint du jeton inattendu sur le réseau", "unexpected token on the network"),
     // core/src/api.rs, parts de sauvegarde qui ne vont pas ensemble
     ("ces deux parts viennent de deux kits de sauvegarde différents : utilisez deux parts d'un même kit", "these two shares come from two different backup kits: use two shares of the same kit"),
     ("ces deux parts ne redonnent pas le portefeuille de leur kit : essayez avec une autre part de ce kit", "these two shares do not give back their kit's wallet: try another share of this kit"),
@@ -3352,11 +3360,11 @@ async fn get_token_tx_history(token: String, network: String, address: String) -
                 decimals,
                 |id| format!("https://tronscan.org/#/transaction/{id}"),
             )),
-            pgp_wallet_poc::tokens::TokenKind::Spl { .. } => {
+            // xStocks compris : compte associé Token-2022, montants en unités affichées.
+            pgp_wallet_poc::tokens::TokenKind::Spl { .. } | pgp_wallet_poc::tokens::TokenKind::Spl2022 { .. } => {
                 let net = sol_network(&network)?;
-                let mint = api::registered_spl_mint(&token).t_err()?;
                 HistoryDto::read(history_dtos(
-                    || api::get_spl_tx_history(&address, &mint, net, HISTORY_LIMIT),
+                    || api::get_registered_spl_tx_history(&token, &address, net, HISTORY_LIMIT),
                     asset,
                     decimals,
                     |id| format!("{}{}{}", net.explorer_tx_prefix, id, net.explorer_tx_suffix),
@@ -3930,7 +3938,7 @@ async fn recipient_warnings(app: tauri::AppHandle, network: String, token: Optio
                 match deployment.kind {
                     pgp_wallet_poc::tokens::TokenKind::Erc20 { .. } => ("evm", api::evm_recipient_activity(&to, evm_network(&network)?).ok()),
                     pgp_wallet_poc::tokens::TokenKind::Trc20 { .. } => ("trx", api::trx_recipient_activity(&to).ok()),
-                    pgp_wallet_poc::tokens::TokenKind::Spl { .. } => ("sol", api::sol_recipient_activity(&to, sol_network(&network)?).ok()),
+                    pgp_wallet_poc::tokens::TokenKind::Spl { .. } | pgp_wallet_poc::tokens::TokenKind::Spl2022 { .. } => ("sol", api::sol_recipient_activity(&to, sol_network(&network)?).ok()),
                 }
             }
             None => {
@@ -6377,8 +6385,8 @@ async fn estimate_send_fee(network: String, token: Option<String>, to: String, a
             // s'il n'en a pas encore.
             ("sol_mainnet", Some(token)) => {
                 let net = sol_network("sol_mainnet")?;
-                let mint = if token == "usdc" { Ok(pgp_wallet_poc::sol_spl::usdc_mint_mainnet()) } else { api::registered_spl_mint(token) };
-                let rent = mint.ok().and_then(|mint| api::spl_ata_rent_lamports_if_missing(&to, &mint, net).ok().flatten()).unwrap_or(0);
+                // Compte du bon programme et de la bonne taille (xStocks : Token-2022, 179 octets).
+                let rent = api::token_account_rent_if_missing(token, &to, net).ok().flatten().unwrap_or(0);
                 estimate(u128::from(rent.saturating_add(5_000)), 9, "SOL", "sol", false)
             }
             ("zec_mainnet", None) => estimate(u128::from(api::zec_send_plan(&from()?, &to, &amount).t_err()?.fee), 8, "ZEC", "zec", false),
@@ -6716,11 +6724,15 @@ async fn jupiter_swap_transaction(
         let out_amount = quote.out_amount;
         let expected_out = format_native_amount(out_amount, u32::from(api::jupiter_decimals(&to_coin).t_err()?));
         let amount_line = format!("{amount} {}", api::jupiter_symbol(&from_coin).t_err()?);
+        let own_solana = app.state::<ProfileAddressCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).map(|(_, sol)| sol.clone()).unwrap_or_default();
+        // Sans fonds : refus AVANT la boîte de confirmation, comme pour un envoi.
+        if !own_solana.is_empty() {
+            api::ensure_jupiter_funds(&from_coin, &own_solana, &amount).t_err()?;
+        }
 
         if !confirm_jupiter_swap_native(&app, &from_label, &amount_line, &expected_out, api::jupiter_symbol(&to_coin).t_err()?, quote.fee_mint.map(|_| quote.fee_bps)) {
             return Err(translate_error("Échange annulé (confirmation refusée)."));
         }
-        let own_solana = app.state::<ProfileAddressCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).map(|(_, sol)| sol.clone()).unwrap_or_default();
         swap_grace_period(
             &app,
             GraceRecap::swap(lang("Solana — échange via Jupiter", "Solana — swap via Jupiter"), format!("{amount_line} → ~{expected_out} {}", api::jupiter_symbol(&to_coin).t_err()?), own_solana).on("sol_mainnet"),
@@ -7295,6 +7307,51 @@ async fn get_token_balance(token: String, network: String, address: String) -> R
     .await
 }
 
+/// Soldes des actions tokenisées xStocks de `address` (Solana) en une seule
+/// requête : `[(identifiant, solde affiché)]`, au format de `get_token_balance`
+/// (jetons sans solde absents).
+#[tauri::command]
+async fn get_stock_balances(address: String) -> Result<Vec<(String, String)>, String> {
+    run_blocking(move || {
+        Ok(api::stock_balances(&address)
+            .t_err()?
+            .into_iter()
+            .map(|(id, units)| (id.to_string(), pgp_wallet_poc::tokens::format_balance(units, 8, 6)))
+            .collect())
+    })
+    .await
+}
+
+#[derive(Serialize)]
+struct StockPriceDto {
+    /// Identifiant du jeton (`tslax`…).
+    id: String,
+    price_usd: f64,
+    change_24h_percent: Option<f64>,
+}
+
+/// Cours des actions tokenisées xStocks (prix par unité affichée, Jupiter).
+#[tauri::command]
+async fn get_stock_prices() -> Result<Vec<StockPriceDto>, String> {
+    run_blocking(move || {
+        let stocks: Vec<(&str, &str)> = pgp_wallet_poc::tokens::TOKENS
+            .iter()
+            .filter(|t| pgp_wallet_poc::tokens::is_spl2022(t.id))
+            .filter_map(|t| api::registered_solana_token(t.id).ok().map(|s| (t.id, s.mint_b58)))
+            .collect();
+        let mints: Vec<&str> = stocks.iter().map(|(_, mint)| *mint).collect();
+        let prices = pgp_wallet_poc::price_rpc::jupiter_stock_prices(&mints).t_err()?;
+        Ok(prices
+            .into_iter()
+            .filter_map(|p| {
+                let id = stocks.iter().find(|(_, mint)| *mint == p.mint)?.0;
+                Some(StockPriceDto { id: id.to_string(), price_usd: p.usd, change_24h_percent: p.change_24h_percent })
+            })
+            .collect())
+    })
+    .await
+}
+
 /// Virement d'un jeton du registre : l'interface ne donne que l'identifiant du
 /// jeton et le réseau — contrat/mint et décimales viennent du registre Rust,
 /// et la boîte native les affiche (nom, contrat, montant, frais).
@@ -7394,7 +7451,7 @@ async fn send_token_transaction(
                 send_grace_period(&app, GraceRecap::new(network_label(&network), amount_line.clone(), to.clone()).on(&network))?;
                 api::send_trc20(&dir, &password, &token, &to, &amount, plan.fee_max, profile_index).t_err()
             }
-            pgp_wallet_poc::tokens::TokenKind::Spl { mint } => {
+            pgp_wallet_poc::tokens::TokenKind::Spl { mint } | pgp_wallet_poc::tokens::TokenKind::Spl2022 { mint } => {
                 let net = sol_network(&network)?;
                 api::check_solana_recipient(&to, net).t_err()?;
                 if let Some(from) = app.state::<ProfileAddressCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).map(|(_, sol)| sol.clone()) {
@@ -7407,9 +7464,9 @@ async fn send_token_transaction(
                 .to_string();
                 let warning = send_warnings(&app, &dir, &network, "sol", &to, api::sol_recipient_activity(&to, net).ok());
                 // Compte de jetons du destinataire à créer : coût annoncé avant.
-                let rent_line = api::registered_spl_mint(&token)
+                let rent_line = api::token_account_rent_if_missing(&token, &to, net)
                     .ok()
-                    .and_then(|mint| api::spl_ata_rent_lamports_if_missing(&to, &mint, net).ok().flatten())
+                    .flatten()
                     .map(|lamports| {
                         let sol = lamports as f64 / 1e9;
                         lang(
@@ -8712,6 +8769,8 @@ pub fn run() {
             usb_restore_clear,
             check_usb_backup,
             get_token_balance,
+            get_stock_balances,
+            get_stock_prices,
             send_token_transaction,
             restore_wallet_from_usb,
             watch_balances,
@@ -9596,7 +9655,7 @@ mod tests {
         let main_js = include_str!("../../src/main.js");
         let address_of = |kind: TokenKind| match kind {
             TokenKind::Erc20 { contract } => contract,
-            TokenKind::Spl { mint } => mint,
+            TokenKind::Spl { mint } | TokenKind::Spl2022 { mint } => mint,
             TokenKind::Trc20 { contract } => contract,
         };
         for token in TOKENS {

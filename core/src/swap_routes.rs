@@ -119,6 +119,13 @@ pub fn affiliate_fee_bps(protocol: Protocol, from: SwapAsset, to: SwapAsset) -> 
     if let (Some(bps), Protocol::Jupiter | Protocol::Cow) = (staking_fee_bps((from.coin, from.network), (to.coin, to.network)), protocol) {
         return bps;
     }
+    // Achat d'un xStock via Jupiter : frais pris seulement sur le xStock reçu
+    // (sur le jeton vendu, la route échoue — voir api::jupiter_fee_mint), et
+    // l'affilié n'a pas de compte xStock : échange sans frais. À revoir si ces
+    // comptes sont créés (le devis et la confirmation disent les frais réels).
+    if protocol == Protocol::Jupiter && tokens::is_spl2022(to.coin) {
+        return 0;
+    }
     match protocol {
         Protocol::Thorchain | Protocol::Maya => {
             let cross_chain = protocol.cross_chain().expect("THORChain ou Maya");
@@ -392,6 +399,8 @@ mod tests {
             SwapAsset { coin: "sol", network: "sol_mainnet" },
         );
         assert_eq!(direct_all(usdc, tsla), vec![Protocol::Jupiter]);
+        assert_eq!(affiliate_fee_bps(Protocol::Jupiter, usdc, tsla), 0, "achat : sans frais");
+        assert_eq!(affiliate_fee_bps(Protocol::Jupiter, tsla, usdc), crate::jupiter_rpc::AFFILIATE_FEE_BPS, "vente : frais en USDC");
         assert_eq!(direct_all(tsla, sol), vec![Protocol::Jupiter]);
         assert!(assets().contains(&tsla) && assets().contains(&SwapAsset { coin: "spyx", network: "sol_mainnet" }));
         assert!(lifi::token("tslax", "sol_mainnet").is_none());

@@ -1770,6 +1770,25 @@ pub fn ensure_evm_transfer_funds(network: &wallet_flow::EvmNetwork, from: &str, 
     Ok(())
 }
 
+/// Fonds suffisants pour vendre `amount` de `from_coin` via Jupiter, vérifiés
+/// AVANT la boîte de confirmation (constaté le 10/10/2026 : sans fonds, la
+/// boîte s'ouvrait et le refus ne venait qu'après). SOL : le montant seul — la
+/// réserve exacte de frais et de rent reste vérifiée par `send_jupiter_swap`.
+pub fn ensure_jupiter_funds(from_coin: &str, owner: &str, amount: &str) -> Result<()> {
+    if from_coin != "sol" {
+        return ensure_token_funds(from_coin, "sol_mainnet", owner, amount);
+    }
+    let wanted = tokens::parse_amount(amount, 9)?;
+    let balance = u128::from(get_sol_balance(owner, &wallet_flow::SOLANA_MAINNET)?);
+    anyhow::ensure!(
+        wanted <= balance,
+        "fonds insuffisants : {} SOL disponibles, {} SOL requis",
+        tokens::format_amount(balance, 9),
+        tokens::format_amount(wanted, 9)
+    );
+    Ok(())
+}
+
 /// Solde de jeton suffisant pour un virement (registre `tokens.rs`, USDC
 /// compris), vérifié avant la boîte de confirmation.
 pub fn ensure_token_funds(token_id: &str, network: &str, owner: &str, amount: &str) -> Result<()> {
@@ -5737,6 +5756,34 @@ fn scaled_token_balance(owner: &str, mint: &'static str) -> Result<u128> {
     Ok(scaled_mint_config(&rpc, mint, false)?.effective(unix_now()).to_ui(raw))
 }
 
+/// Soldes xStocks de `owner` en UNE requête (tous ses comptes Token-2022),
+/// en unités affichées : seuls les comptes associés comptent (ceux que l'app
+/// dépense). Jetons sans solde : absents.
+pub fn stock_balances(owner: &str) -> Result<Vec<(&'static str, u128)>> {
+    let owner_bytes = solana_owner(owner)?;
+    let rpc = sol_rpc::SolRpc::new(wallet_flow::SOLANA_MAINNET.rpc);
+    let result = rpc.call(
+        "getTokenAccountsByOwner",
+        serde_json::json!([owner.trim(), {"programId": TOKEN_2022_PROGRAM_ID}, {"encoding": "jsonParsed", "commitment": "confirmed"}]),
+    )?;
+    let accounts = result["value"].as_array().cloned().unwrap_or_default();
+    let mut balances = Vec::new();
+    for token in tokens::TOKENS.iter().filter(|t| tokens::is_spl2022(t.id)) {
+        let solana = registered_solana_token(token.id)?;
+        let ata = bs58::encode(sol_spl::find_associated_token_address_for(&owner_bytes, &solana.mint, &solana.program)).into_string();
+        let raw = accounts
+            .iter()
+            .find(|a| a["pubkey"] == ata.as_str() && a["account"]["data"]["parsed"]["info"]["mint"] == solana.mint_b58)
+            .and_then(|a| a["account"]["data"]["parsed"]["info"]["tokenAmount"]["amount"].as_str())
+            .and_then(|amount| amount.parse::<u64>().ok())
+            .unwrap_or(0);
+        if raw > 0 {
+            balances.push((token.id, scaled_mint_config(&rpc, solana.mint_b58, false)?.effective(unix_now()).to_ui(raw)));
+        }
+    }
+    Ok(balances)
+}
+
 /// Montant signé en unités brutes → unités affichées.
 fn scale_signed(amount: i128, multiplier: UiMultiplier) -> i128 {
     let shown = multiplier.to_ui(u64::try_from(amount.unsigned_abs()).unwrap_or(u64::MAX)) as i128;
@@ -7297,6 +7344,12 @@ mod tests {
             compared += 1;
         }
         assert!(compared > 0);
+        // Lecture groupée (une requête) : mêmes soldes.
+        for (owner, _) in holders.iter().take(2) {
+            let grouped = stock_balances(owner).unwrap();
+            let single = get_token_balance("mcdx", "sol_mainnet", owner).unwrap().0;
+            assert_eq!(grouped.iter().find(|(id, _)| *id == "mcdx").map(|(_, units)| *units).unwrap_or(0), single, "{owner}");
+        }
     }
 
     /// Virement xStocks construit par l'app, simulé sur le réseau réel depuis un
