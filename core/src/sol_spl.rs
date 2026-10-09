@@ -36,6 +36,13 @@ pub fn token_program_id() -> [u8; 32] {
     decode_pubkey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
 }
 
+/// Programme Token-2022 (jetons à extensions : xStocks) — même identifiant
+/// que `api::TOKEN_2022_PROGRAM_ID`, relu comme propriétaire des mints xStocks
+/// sur le réseau (09/10/2026).
+pub fn token_2022_program_id() -> [u8; 32] {
+    decode_pubkey("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb")
+}
+
 /// Associated Token Program — vérifié contre le dépôt officiel
 /// `solana-program-library`.
 pub fn associated_token_program_id() -> [u8; 32] {
@@ -93,9 +100,15 @@ fn find_program_address(seeds: &[&[u8]], program_id: &[u8; 32]) -> Option<[u8; 3
 /// une erreur ici produirait une adresse valide mais UNIQUE ET FAUSSE, donc
 /// des fonds envoyés de façon irrécupérable.
 pub fn find_associated_token_address(owner: &[u8; 32], mint: &[u8; 32]) -> [u8; 32] {
-    let token_program = token_program_id();
+    find_associated_token_address_for(owner, mint, &token_program_id())
+}
+
+/// `find_associated_token_address` pour le programme de jetons `token_program`
+/// (Token ou Token-2022 : le programme fait partie des seeds, l'adresse
+/// diffère — voir le test sur un vrai compte xStocks).
+pub fn find_associated_token_address_for(owner: &[u8; 32], mint: &[u8; 32], token_program: &[u8; 32]) -> [u8; 32] {
     let program = associated_token_program_id();
-    find_program_address(&[owner, &token_program, mint], &program)
+    find_program_address(&[owner, token_program, mint], &program)
         .expect("aucun bump valide trouvé entre 255 et 0 (probabilité astronomiquement improbable)")
 }
 
@@ -108,6 +121,13 @@ pub fn find_associated_token_address(owner: &[u8; 32], mint: &[u8; 32]) -> [u8; 
 /// owner(lecture seule), mint(lecture seule), system program(lecture seule),
 /// token program(lecture seule), sysvar rent(lecture seule).
 pub fn create_ata_idempotent_instruction(payer: &[u8; 32], owner: &[u8; 32], mint: &[u8; 32], ata: &[u8; 32]) -> Instruction {
+    create_ata_idempotent_instruction_for(payer, owner, mint, ata, &token_program_id())
+}
+
+/// `create_ata_idempotent_instruction` pour le programme de jetons
+/// `token_program` (Token-2022 : le compte créé porte les extensions exigées
+/// par le mint, sa taille et son rent sont plus grands).
+pub fn create_ata_idempotent_instruction_for(payer: &[u8; 32], owner: &[u8; 32], mint: &[u8; 32], ata: &[u8; 32], token_program: &[u8; 32]) -> Instruction {
     Instruction {
         program_id: associated_token_program_id(),
         accounts: vec![
@@ -116,7 +136,7 @@ pub fn create_ata_idempotent_instruction(payer: &[u8; 32], owner: &[u8; 32], min
             (*owner, false, false),
             (*mint, false, false),
             (crate::sol_tx::SYSTEM_PROGRAM_ID, false, false),
-            (token_program_id(), false, false),
+            (*token_program, false, false),
             (sysvar_rent_id(), false, false),
         ],
         data: vec![1], // discriminant CreateIdempotent (Create=0, CreateIdempotent=1)
@@ -131,11 +151,26 @@ pub fn create_ata_idempotent_instruction(payer: &[u8; 32], owner: &[u8; 32], min
 /// source ATA(writable), mint(lecture seule), destination ATA(writable),
 /// owner(signataire).
 pub fn transfer_checked_instruction(source_ata: &[u8; 32], mint: &[u8; 32], dest_ata: &[u8; 32], owner: &[u8; 32], amount: u64, decimals: u8) -> Instruction {
+    transfer_checked_instruction_for(source_ata, mint, dest_ata, owner, amount, decimals, &token_program_id())
+}
+
+/// `transfer_checked_instruction` pour le programme de jetons `token_program`
+/// (même instruction et mêmes comptes pour Token-2022, sans compte en plus
+/// tant que le mint n'a pas de programme de crochet de transfert).
+pub fn transfer_checked_instruction_for(
+    source_ata: &[u8; 32],
+    mint: &[u8; 32],
+    dest_ata: &[u8; 32],
+    owner: &[u8; 32],
+    amount: u64,
+    decimals: u8,
+    token_program: &[u8; 32],
+) -> Instruction {
     let mut data = vec![12u8];
     data.extend_from_slice(&amount.to_le_bytes());
     data.push(decimals);
     Instruction {
-        program_id: token_program_id(),
+        program_id: *token_program,
         accounts: vec![(*source_ata, false, true), (*mint, false, false), (*dest_ata, false, true), (*owner, true, false)],
         data,
     }
@@ -175,6 +210,42 @@ mod tests {
         // Propriété structurelle en plus (pas un remplacement de la vérification
         // ci-dessus) : une PDA ne doit jamais être un point valide sur la courbe.
         assert!(CompressedEdwardsY(ata).decompress().is_none(), "une PDA doit être hors de la courbe ed25519");
+    }
+
+    /// Même vérification pour Token-2022, sur un vrai compte xStocks relu sur
+    /// le réseau le 09/10/2026 (soldes d'une transaction récente du mint TSLAx :
+    /// portefeuille ordinaire, sur la courbe ; la dérivation a retrouvé 7 des 9
+    /// comptes relevés, les 2 autres n'étant pas des comptes associés) :
+    ///
+    /// ```text
+    /// owner = GLMD3nt75DqvnJXpEXuSTy6jug3NmSnUNFYbVCVy19JB
+    /// mint  = XsDoVfqeBukxuZHWhdvWHBhgEHjGNst4MLodqsJHzoB (Tesla xStock)
+    /// ATA   = D8mtDK8cHzAKbFiEuhD42MqXYZ13Qu2sR5bBQxRnNJwd
+    /// ```
+    ///
+    /// Le programme fait partie des seeds : dérivée avec l'ancien programme,
+    /// l'adresse serait autre (compte inexistant, solde lu à 0).
+    #[test]
+    fn token_2022_associated_address_matches_a_real_xstocks_account() {
+        let owner = decode_pubkey("GLMD3nt75DqvnJXpEXuSTy6jug3NmSnUNFYbVCVy19JB");
+        let mint = decode_pubkey("XsDoVfqeBukxuZHWhdvWHBhgEHjGNst4MLodqsJHzoB");
+        let expected = decode_pubkey("D8mtDK8cHzAKbFiEuhD42MqXYZ13Qu2sR5bBQxRnNJwd");
+        assert_eq!(find_associated_token_address_for(&owner, &mint, &token_2022_program_id()), expected);
+        assert_ne!(find_associated_token_address(&owner, &mint), expected);
+    }
+
+    /// Instructions Token-2022 : même encodage, programme et compte de
+    /// programme remplacés.
+    #[test]
+    fn token_2022_instructions_target_the_token_2022_program() {
+        let (a, b, c, d) = ([1u8; 32], [2u8; 32], [3u8; 32], [4u8; 32]);
+        let program = token_2022_program_id();
+        let create = create_ata_idempotent_instruction_for(&a, &b, &c, &d, &program);
+        assert_eq!(create.program_id, associated_token_program_id());
+        assert_eq!(create.accounts[5], (program, false, false));
+        let transfer = transfer_checked_instruction_for(&a, &b, &c, &d, 42, 8, &program);
+        assert_eq!(transfer.program_id, program);
+        assert_eq!(transfer.data, transfer_checked_instruction(&a, &b, &c, &d, 42, 8).data);
     }
 
     /// Sans le test "hors-courbe", une inversion de la condition
@@ -221,3 +292,4 @@ mod tests {
         assert_eq!(ix.accounts[3], (owner, true, false));
     }
 }
+

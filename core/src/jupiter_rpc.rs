@@ -131,14 +131,28 @@ pub fn fee_mint_candidates(input_mint: &str, output_mint: &str) -> Vec<[u8; 32]>
         .collect()
 }
 
-/// Compte de frais (ATA de `AFFILIATE_ADDRESS`) pour le jeton `mint`.
+/// Programme de jetons d'un mint pour son compte de frais : Token-2022 pour
+/// les xStocks du registre, programme classique sinon.
+pub fn fee_token_program(mint: &[u8; 32]) -> [u8; 32] {
+    let token_2022 = crate::tokens::TOKENS.iter().flat_map(|t| t.deployments).any(|d| {
+        matches!(d.kind, crate::tokens::TokenKind::Spl2022 { mint: m } if bs58::decode(m).into_vec().ok().as_deref() == Some(mint.as_slice()))
+    });
+    if token_2022 {
+        crate::sol_spl::token_2022_program_id()
+    } else {
+        crate::sol_spl::token_program_id()
+    }
+}
+
+/// Compte de frais (compte associé de `AFFILIATE_ADDRESS`, du bon programme)
+/// pour le jeton `mint`.
 pub fn fee_account(mint: &[u8; 32]) -> Result<[u8; 32]> {
     let owner: [u8; 32] = bs58::decode(AFFILIATE_ADDRESS)
         .into_vec()
         .ok()
         .and_then(|v| v.try_into().ok())
         .context("adresse d'affiliation Jupiter mal formée (bug de compilation)")?;
-    Ok(crate::sol_spl::find_associated_token_address(&owner, mint))
+    Ok(crate::sol_spl::find_associated_token_address_for(&owner, mint, &fee_token_program(mint)))
 }
 
 #[derive(Deserialize)]

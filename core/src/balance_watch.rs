@@ -134,9 +134,10 @@ pub fn start(targets: Vec<Target>, notify: Notify) -> Result<BalanceWatch> {
                     polled.push((target.id, Polled::Erc20(net, contract, address)));
                 }
                 TokenKind::Trc20 { contract } => polled.push((target.id, Polled::Trc20(contract, address))),
-                TokenKind::Spl { .. } => {
+                TokenKind::Spl { .. } | TokenKind::Spl2022 { .. } => {
                     ensure!(target.network == "sol_mainnet", "jeton Solana hors du réseau principal : {token}");
-                    let account = api::spl_token_account(&address, &api::registered_spl_mint(token)?)?;
+                    // Compte associé du bon programme (Token-2022 pour les xStocks).
+                    let account = api::registered_token_account(&address, token)?;
                     solana.entry(wallet_flow::SOLANA_MAINNET.rpc).or_default().push((target.id, account));
                 }
             }

@@ -542,11 +542,15 @@ impl SolRpc {
     }
 
     /// Détail d'une transaction (`getTransaction`) ; `None` si le nœud ne l'a
-    /// plus (signature ancienne purgée).
+    /// plus (signature ancienne purgée). Transactions « version 1 » acceptées
+    /// (constaté le 09/10/2026 : demandées en version 0, le nœud les refuse
+    /// — erreur -32015 — et elles restaient sans montant dans l'historique) ;
+    /// en JSON, mêmes clés de comptes et mêmes soldes que les versions
+    /// précédentes (`compact_transaction`).
     fn transaction(&self, signature: &str) -> Result<Option<Value>> {
         let result = self.call(
             "getTransaction",
-            json!([signature, {"encoding": "json", "maxSupportedTransactionVersion": 0}]),
+            json!([signature, {"encoding": "json", "maxSupportedTransactionVersion": 1}]),
         )?;
         Ok((!result.is_null()).then_some(result))
     }

@@ -230,6 +230,9 @@ fn spec(network: &str, token: Option<&str>) -> Result<Option<Spec>> {
         let Some(asset) = price_history::price_asset(&token.symbol.to_ascii_uppercase()) else { return Ok(None) };
         let (source, max_read) = match deployment.kind {
             TokenKind::Spl { .. } => (Source::Spl(api::registered_spl_mint(token_id)?), SOL_MAX),
+            // Actions tokenisées : aucun historique de cours, hors de la courbe
+            // (leur valeur actuelle reste comptée au tableau de bord).
+            TokenKind::Spl2022 { .. } => return Ok(None),
             TokenKind::Erc20 { contract } => {
                 let net = wallet_flow::evm_network(network).ok_or_else(|| anyhow!("réseau inconnu : {network}"))?;
                 (Source::Erc20(net, contract), EVM_MAX)

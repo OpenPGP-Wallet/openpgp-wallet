@@ -60,6 +60,18 @@ const JUPITER: [SwapAsset; 6] = [
     SwapAsset { coin: "jitosol", network: "sol_mainnet" },
 ];
 
+/// Échangeable via Jupiter : la liste ci-dessus, et les actions tokenisées
+/// xStocks du registre (Token-2022, montants convertis par `api`).
+fn jupiter_supports(asset: &SwapAsset) -> bool {
+    JUPITER.contains(asset) || (asset.network == "sol_mainnet" && tokens::is_spl2022(asset.coin))
+}
+
+fn jupiter_assets() -> impl Iterator<Item = SwapAsset> {
+    JUPITER.into_iter().chain(
+        tokens::TOKENS.iter().filter(|t| tokens::is_spl2022(t.id)).map(|t| SwapAsset { coin: t.id, network: "sol_mainnet" }),
+    )
+}
+
 /// `protocol` relie-t-il `from` à `to` ? Depuis Bitcoin ou Zcash aussi :
 /// sans nom court d'affiliation, sans frais pour l'app (voir
 /// `thorchain_rpc::CrossChain::charges_affiliate`).
@@ -174,7 +186,7 @@ pub fn direct_all(from: SwapAsset, to: SwapAsset) -> Vec<Protocol> {
     if from == to {
         return all;
     }
-    if JUPITER.contains(&from) && JUPITER.contains(&to) {
+    if jupiter_supports(&from) && jupiter_supports(&to) {
         all.push(Protocol::Jupiter);
     }
     if cow_enabled() && cow_links(from, to) {
@@ -222,7 +234,7 @@ pub fn assets() -> Vec<SwapAsset> {
     let lifi_assets = lifi::tradable().into_iter().filter(|_| lifi_enabled()).map(|(coin, network)| SwapAsset { coin, network });
     let swapkit_assets = swapkit::tradable().into_iter().filter(|_| swapkit_enabled()).map(|(coin, network)| SwapAsset { coin, network });
     let moonpay_assets = moonpay_trade::tradable().into_iter().filter(|_| moonpay_enabled()).map(|(coin, network)| SwapAsset { coin, network });
-    for asset in cross_chain.chain(JUPITER).chain(cow_assets).chain(lifi_assets).chain(swapkit_assets).chain(moonpay_assets) {
+    for asset in cross_chain.chain(jupiter_assets()).chain(cow_assets).chain(lifi_assets).chain(swapkit_assets).chain(moonpay_assets) {
         if !all.contains(&asset) {
             all.push(asset);
         }
@@ -370,6 +382,24 @@ mod tests {
 
     /// CoW : même réseau EVM seulement (monnaie du réseau comprise, via
     /// EthFlow), et seulement une fois l'adresse des frais renseignée.
+    /// Actions tokenisées : échangées via Jupiter seulement (même réseau) ;
+    /// LI.FI, MoonPay et CoW, écrits pour le programme classique, les ignorent.
+    #[test]
+    fn xstocks_are_swapped_through_jupiter_only() {
+        let (usdc, tsla, sol) = (
+            SwapAsset { coin: "usdc", network: "sol_mainnet" },
+            SwapAsset { coin: "tslax", network: "sol_mainnet" },
+            SwapAsset { coin: "sol", network: "sol_mainnet" },
+        );
+        assert_eq!(direct_all(usdc, tsla), vec![Protocol::Jupiter]);
+        assert_eq!(direct_all(tsla, sol), vec![Protocol::Jupiter]);
+        assert!(assets().contains(&tsla) && assets().contains(&SwapAsset { coin: "spyx", network: "sol_mainnet" }));
+        assert!(lifi::token("tslax", "sol_mainnet").is_none());
+        assert!(moonpay_trade::asset("tslax", "sol_mainnet").is_none());
+        assert!(cow::token("tslax", "sol_mainnet").is_none());
+        assert!(direct_all(SwapAsset { coin: "evm", network: "evm_mainnet" }, tsla).is_empty(), "pas de route directe depuis un autre réseau");
+    }
+
     #[test]
     fn cow_links_same_network_tokens() {
         assert!(cow_links(a("link", "evm_mainnet"), a("usdc", "evm_mainnet")));
@@ -475,7 +505,9 @@ mod tests {
         let to_sol = route(zec, a("sol", "sol_mainnet")).expect("ZEC → SOL en deux étapes");
         let (via, _) = to_sol.via.expect("deux étapes");
         assert!(!matches!(via.network, "btc_mainnet" | "zec_mainnet"), "intermédiaire lent : {via:?}");
-        for to in assets().into_iter().filter(|t| *t != zec) {
+        // Actions tokenisées : achetées depuis Solana (Jupiter) — depuis ZEC, il
+        // faudrait trois étapes (ZEC → ETH → SOL → xStock).
+        for to in assets().into_iter().filter(|t| *t != zec && !tokens::is_spl2022(t.coin)) {
             assert!(route(zec, to).is_some(), "aucune route ZEC → {to:?}");
         }
     }

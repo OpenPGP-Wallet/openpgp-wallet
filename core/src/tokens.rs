@@ -1,5 +1,6 @@
 //! Jetons que l'app sait afficher et envoyer : ERC-20 sur les réseaux EVM, SPL
-//! (programme SPL Token classique) sur Solana, TRC-20 sur Tron.
+//! (programme SPL Token classique) sur Solana, TRC-20 sur Tron, et les actions
+//! tokenisées xStocks (programme Token-2022 sur Solana, voir `TokenKind::Spl2022`).
 //!
 //! Registre FIXÉ ICI, côté Rust : l'interface ne désigne un jeton que par son
 //! identifiant et un réseau, jamais par une adresse de contrat — un frontend
@@ -22,7 +23,28 @@ pub enum TokenKind {
     Spl { mint: &'static str },
     /// Contrat TRC-20 sur Tron (adresse T…).
     Trc20 { contract: &'static str },
+    /// Mint du programme Token-2022 avec coefficient d'affichage (extension
+    /// « Scaled UI Amount ») : les actions tokenisées xStocks. Le solde
+    /// affiché est le solde brut multiplié par le coefficient en vigueur
+    /// (dividendes réinvestis, divisions d'actions) ; l'app compte et affiche
+    /// en unités AFFICHÉES et ne convertit en unités brutes qu'au moment de
+    /// signer (`api::send_registered_spl`, échanges Jupiter). Variante à part :
+    /// tout code écrit pour le programme classique (LI.FI, MoonPay…) les
+    /// ignore tant qu'il n'a pas été adapté.
+    Spl2022 { mint: &'static str },
 }
+
+/// Autorité de mise à jour des métadonnées de tous les xStocks sur Solana
+/// (relue sur chaque mint le 09/10/2026, voir `xstocks_match_the_real_mints`) :
+/// avec l'adresse des métadonnées chez Backed, ce qui distingue un vrai xStock
+/// d'une copie au même nom.
+pub const XSTOCKS_UPDATE_AUTHORITY: &str = "5aMNNLQJwAEeoemTEMkv5NVjqKwvvefRYCQ5Z67HFvEq";
+
+/// Taille d'un compte de jetons xStocks (extensions immutableOwner,
+/// pausableAccount, transferHookAccount exigées par le mint) : 179 octets,
+/// relus sur de vrais comptes le 09/10/2026 — base du rent payé pour créer
+/// le compte d'un destinataire.
+pub const XSTOCK_ACCOUNT_SIZE: u64 = 179;
 
 #[derive(Debug)]
 pub struct Deployment {
@@ -51,6 +73,11 @@ const fn spl(mint: &'static str, decimals: u8) -> Deployment {
 
 const fn trc20(contract: &'static str, decimals: u8) -> Deployment {
     Deployment { network: "tron_mainnet", kind: TokenKind::Trc20 { contract }, decimals }
+}
+
+/// Action tokenisée xStocks sur Solana : mint Token-2022, 8 décimales.
+const fn xstock(mint: &'static str) -> Deployment {
+    Deployment { network: "sol_mainnet", kind: TokenKind::Spl2022 { mint }, decimals: 8 }
 }
 
 pub const TOKENS: &[Token] = &[
@@ -140,7 +167,37 @@ pub const TOKENS: &[Token] = &[
     // jour avec les récompenses).
     Token { id: "jitosol", symbol: "JitoSOL", name: "Jito Staked SOL", deployments: &[spl("J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn", 9)] },
     Token { id: "steth", symbol: "stETH", name: "Lido Staked ETH", deployments: &[erc20("evm_mainnet", "0xae7ab96520de3a18e5e111b5eaab095312d7fe84", 18)] },
+    // Actions tokenisées xStocks (Backed Assets) sur Solana : liste vérifiée
+    // de Jupiter (étiquettes « verified » et « xstocks »), puis chaque mint relu
+    // sur le réseau le 09/10/2026 — programme Token-2022, 8 décimales, nom et
+    // symbole des métadonnées, autorité `XSTOCKS_UPDATE_AUTHORITY`, métadonnées
+    // chez Backed (voir `xstocks_match_the_real_mints`). Écartées : actions
+    // préférentielles (STRCx) et titres peu échangés.
+    Token { id: "tslax", symbol: "TSLAx", name: "Tesla xStock", deployments: &[xstock("XsDoVfqeBukxuZHWhdvWHBhgEHjGNst4MLodqsJHzoB")] },
+    Token { id: "nvdax", symbol: "NVDAx", name: "NVIDIA xStock", deployments: &[xstock("Xsc9qvGR1efVDFGLrVsmkzv3qi45LTBjeUKSPmx9qEh")] },
+    Token { id: "aaplx", symbol: "AAPLx", name: "Apple xStock", deployments: &[xstock("XsbEhLAtcf6HdfpFZ5xEMdqW8nfAvcsP5bdudRLJzJp")] },
+    Token { id: "msftx", symbol: "MSFTx", name: "Microsoft xStock", deployments: &[xstock("XspzcW1PRtgf6Wj92HCiZdjzKCyFekVD8P5Ueh3dRMX")] },
+    Token { id: "googlx", symbol: "GOOGLx", name: "Alphabet xStock", deployments: &[xstock("XsCPL9dNWBMvFtTmwcCA5v3xWPSMEBCszbQdiLLq6aN")] },
+    Token { id: "amznx", symbol: "AMZNx", name: "Amazon.com xStock", deployments: &[xstock("Xs3eBt7uRfJX8QUs4suhyU8p2M6DoUDrJyWBa8LLZsg")] },
+    Token { id: "metax", symbol: "METAx", name: "Meta xStock", deployments: &[xstock("Xsa62P5mvPszXL1krVUnU5ar38bBSVcWAB6fmPCo5Zu")] },
+    Token { id: "spyx", symbol: "SPYx", name: "SP500 xStock", deployments: &[xstock("XsoCS1TfEyfFhfvj8EtZ528L3CaKBDBRqRapnBbDF2W")] },
+    Token { id: "qqqx", symbol: "QQQx", name: "Nasdaq xStock", deployments: &[xstock("Xs8S1uUs1zvS2p7iwtsG3b6fkhpvmwz4GYU3gWAmWHZ")] },
+    Token { id: "gldx", symbol: "GLDx", name: "Gold xStock", deployments: &[xstock("Xsv9hRk1z5ystj9MhnA7Lq4vjSsLwzL2nxrwmwtD3re")] },
+    Token { id: "coinx", symbol: "COINx", name: "Coinbase xStock", deployments: &[xstock("Xs7ZdzSHLU9ftNJsii5fCeJhoRWSC32SQGzGQtePxNu")] },
+    Token { id: "mstrx", symbol: "MSTRx", name: "MicroStrategy xStock", deployments: &[xstock("XsP7xzNPvEHS1m6qfanPUGjNmdnmsLKEoNAnHjdxxyZ")] },
+    Token { id: "crclx", symbol: "CRCLx", name: "Circle xStock", deployments: &[xstock("XsueG8BtpquVJX9LVLLEGuViXUungE6WmK5YZ3p3bd1")] },
+    Token { id: "hoodx", symbol: "HOODx", name: "Robinhood xStock", deployments: &[xstock("XsvNBAYkrDRNhA7wPHQfX3ZUXZyZLdnCQDfHZ56bzpg")] },
+    Token { id: "pltrx", symbol: "PLTRx", name: "Palantir xStock", deployments: &[xstock("XsoBhf2ufR8fTyNSjqfU71DYGaE6Z3SUGAidpzriAA4")] },
+    Token { id: "mcdx", symbol: "MCDx", name: "McDonald's xStock", deployments: &[xstock("XsqE9cRRpzxcGKDXj1BJ7Xmg4GRhZoyY1KpmGSxAWT2")] },
+    Token { id: "gmex", symbol: "GMEx", name: "Gamestop xStock", deployments: &[xstock("Xsf9mBktVB9BSU5kf4nHxPq5hCBJ2j2ui3ecFGxPRGc")] },
+    Token { id: "brkbx", symbol: "BRK.Bx", name: "Berkshire Hathaway xStock", deployments: &[xstock("Xs6B6zawENwAbWVi7w92rjazLuAr5Az59qgWKcNb45x")] },
+    Token { id: "spcxx", symbol: "SPCXx", name: "SpaceX xStock", deployments: &[xstock("Xs3oZwbHvqis4NYcf4YKWmEia2eC84wSiVrcYcTqpH8")] },
 ];
+
+/// Jeton du registre géré par le programme Token-2022 (xStocks) ?
+pub fn is_spl2022(id: &str) -> bool {
+    TOKENS.iter().any(|t| t.id == id && t.deployments.iter().any(|d| matches!(d.kind, TokenKind::Spl2022 { .. })))
+}
 
 /// Jeton `id` sur `network`, s'il est dans le registre.
 pub fn find(id: &str, network: &str) -> Option<(&'static Token, &'static Deployment)> {
@@ -229,6 +286,11 @@ mod tests {
                         assert_eq!(d.network, "sol_mainnet", "{}", token.id);
                         assert_eq!(bs58::decode(mint).into_vec().map(|b| b.len()).ok(), Some(32), "{} : {mint}", token.id);
                     }
+                    TokenKind::Spl2022 { mint } => {
+                        assert_eq!((d.network, d.decimals), ("sol_mainnet", 8), "{}", token.id);
+                        assert_eq!(bs58::decode(mint).into_vec().map(|b| b.len()).ok(), Some(32), "{} : {mint}", token.id);
+                        assert!(mint.starts_with("Xs") && token.name.ends_with(" xStock") && token.symbol.ends_with('x'), "{}", token.id);
+                    }
                     TokenKind::Trc20 { contract } => {
                         assert_eq!(d.network, "tron_mainnet", "{}", token.id);
                         assert!(crate::tron::parse_address(contract).is_ok(), "{} : {contract}", token.id);
@@ -242,6 +304,44 @@ mod tests {
         assert!(find("inconnu", "evm_mainnet").is_none());
         assert!(is_known_contract(" 0xDAC17F958D2EE523A2206206994597C13D831EC7 "));
         assert!(!is_known_contract("0x000000000000000000000000000000000000dEaD"));
+    }
+
+    /// Chaque xStock du registre, relu sur le réseau (lecture seule) : mint du
+    /// programme Token-2022, 8 décimales, nom et symbole des métadonnées
+    /// on-chain, autorité de mise à jour de Backed, métadonnées hébergées chez
+    /// Backed, coefficient d'affichage présent, aucun frais de transfert ni
+    /// crochet de transfert actif.
+    #[test]
+    #[ignore]
+    fn xstocks_match_the_real_mints() {
+        let rpc = crate::sol_rpc::SolRpc::new(crate::wallet_flow::SOLANA_MAINNET.rpc);
+        let mut checked = 0;
+        for token in TOKENS {
+            for d in token.deployments {
+                let TokenKind::Spl2022 { mint } = d.kind else { continue };
+                let result = (0..5)
+                    .find_map(|attempt| {
+                        std::thread::sleep(std::time::Duration::from_millis(1200 * attempt));
+                        rpc.call("getAccountInfo", serde_json::json!([mint, {"encoding": "jsonParsed"}])).ok()
+                    })
+                    .unwrap_or_else(|| panic!("{} : nœud injoignable", token.id));
+                let value = &result["value"];
+                assert_eq!(value["owner"], "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb", "{}", token.id);
+                let info = &value["data"]["parsed"]["info"];
+                assert_eq!(info["decimals"].as_u64(), Some(u64::from(d.decimals)), "{}", token.id);
+                let extension = |name: &str| info["extensions"].as_array().and_then(|list| list.iter().find(|e| e["extension"] == name)).map(|e| e["state"].clone());
+                let metadata = extension("tokenMetadata").unwrap_or_else(|| panic!("{} : métadonnées absentes", token.id));
+                assert_eq!((metadata["name"].as_str(), metadata["symbol"].as_str()), (Some(token.name), Some(token.symbol)), "{}", token.id);
+                assert_eq!(metadata["updateAuthority"], XSTOCKS_UPDATE_AUTHORITY, "{}", token.id);
+                assert_eq!(metadata["uri"].as_str(), Some(format!("https://xstocks-metadata.backed.fi/tokens/Solana/{}/metadata.json", token.symbol).as_str()), "{}", token.id);
+                assert!(extension("scaledUiAmountConfig").is_some(), "{} : coefficient d'affichage absent", token.id);
+                assert!(extension("transferFeeConfig").is_none(), "{} : frais de transfert", token.id);
+                assert!(extension("transferHook").is_none_or(|hook| hook["programId"].is_null()), "{} : crochet de transfert actif", token.id);
+                checked += 1;
+            }
+        }
+        assert_eq!(checked, TOKENS.iter().filter(|t| is_spl2022(t.id)).count());
+        assert!(checked >= 19);
     }
 
     #[test]

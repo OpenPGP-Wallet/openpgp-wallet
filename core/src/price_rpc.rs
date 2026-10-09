@@ -133,6 +133,39 @@ impl PriceRpc {
     }
 }
 
+/// Cours d'une action tokenisée xStocks.
+#[derive(Debug, Clone)]
+pub struct StockPrice {
+    pub mint: String,
+    /// Prix d'une unité AFFICHÉE en dollars (mesuré le 09/10/2026 : `usdPrice`
+    /// de Jupiter suit le cours de l'action ; le prix d'un jeton brut est
+    /// `usdPricePrescaled`, coefficient d'affichage compris).
+    pub usd: f64,
+    pub change_24h_percent: Option<f64>,
+}
+
+/// Cours des xStocks `mints` via l'API de prix de Jupiter (gratuite, sans
+/// clé ; aucune donnée sur l'utilisateur). Purement informatif : ne sert ni à
+/// construire ni à signer une transaction. Mint sans cours valable : absent.
+pub fn jupiter_stock_prices(mints: &[&str]) -> Result<Vec<StockPrice>> {
+    anyhow::ensure!(mints.len() <= 50, "trop de jetons pour un seul appel de prix");
+    if mints.is_empty() {
+        return Ok(Vec::new());
+    }
+    let url = format!("https://lite-api.jup.ag/price/v3?ids={}", mints.join(","));
+    let response = shared_client().get(url).send().context("appel des prix Jupiter impossible")?;
+    anyhow::ensure!(response.status().is_success(), "les prix Jupiter ont répondu {}", response.status());
+    let body: serde_json::Value = response.json().context("réponse des prix Jupiter illisible")?;
+    Ok(mints
+        .iter()
+        .filter_map(|mint| {
+            let entry = body.get(*mint)?;
+            let usd = entry["usdPrice"].as_f64().filter(|p| p.is_finite() && *p > 0.0)?;
+            Some(StockPrice { mint: mint.to_string(), usd, change_24h_percent: entry["priceChange24h"].as_f64().filter(|c| c.is_finite()) })
+        })
+        .collect())
+}
+
 /// Cryptos dont l'app affiche le cours (identifiants CoinGecko) : un seul
 /// appel pour toutes, trié par capitalisation.
 pub const MARKET_IDS: &[&str] = &[

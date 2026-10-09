@@ -4325,7 +4325,7 @@ fn jupiter_mint_bytes_for_coin(coin: &str) -> Result<[u8; 32]> {
             .ok()
             .and_then(|v| v.try_into().ok())
             .context("mint SOL mal formé (bug de compilation)"),
-        token => registered_spl_mint(token).context("crypto non échangeable via Jupiter"),
+        token => registered_solana_token(token).map(|t| t.mint).context("crypto non échangeable via Jupiter"),
     }
 }
 
@@ -4349,9 +4349,11 @@ pub fn jupiter_symbol(coin: &str) -> Result<&'static str> {
     Ok(registered_token(coin, "sol_mainnet")?.0.symbol)
 }
 
-/// Montant (texte) → plus petite unité de la crypto vendue via Jupiter.
+/// Montant (texte) → plus petite unité de la crypto vendue via Jupiter
+/// (xStocks : unité BRUTE, voir `jupiter_raw_amount`).
 fn jupiter_amount(coin: &str, amount: &str) -> Result<u64> {
-    tokens::parse_amount(amount, jupiter_decimals(coin)?)?.try_into().context("montant trop grand")
+    let shown: u64 = tokens::parse_amount(amount, jupiter_decimals(coin)?)?.try_into().context("montant trop grand")?;
+    jupiter_raw_amount(coin, shown)
 }
 
 /// Montant d'un échange Jupiter sous sa forme canonique (affichée ET signée,
@@ -4372,7 +4374,8 @@ pub fn get_jupiter_quote(from_coin: &str, to_coin: &str, amount: &str, slippage_
     let fee_mint = jupiter_fee_mint(&sol_rpc::SolRpc::new(wallet_flow::SOLANA_MAINNET.rpc), &input_mint, &output_mint)?;
     let fee_bps = jupiter_fee_bps(from_coin, to_coin);
     let quote = jupiter_rpc::quote_with_fee(&input_mint, &output_mint, amount_native, slippage_bps, fee_mint, fee_bps)?;
-    Ok(JupiterQuoteInfo { out_amount: quote.out_amount, fee_mint, fee_bps })
+    // Sortie montrée (et rendue à `send_jupiter_swap`) en unités affichées.
+    Ok(JupiterQuoteInfo { out_amount: jupiter_shown_out(to_coin, quote.out_amount)?, fee_mint, fee_bps })
 }
 
 /// Frais d'affiliation Jupiter de la paire : ceux du staking liquide
@@ -4396,7 +4399,21 @@ pub struct JupiterQuoteInfo {
 /// plutôt que de faire payer à l'utilisateur la création du compte de frais
 /// du développeur, ou d'échouer (Jupiter refuse un compte absent).
 fn jupiter_fee_mint(rpc: &sol_rpc::SolRpc, input_mint: &str, output_mint: &str) -> Result<Option<[u8; 32]>> {
-    for mint in jupiter_rpc::fee_mint_candidates(input_mint, output_mint) {
+    // xStocks (Token-2022), mesuré par simulation le 09/10/2026 : à l'achat,
+    // les frais pris sur le jeton VENDU font échouer la route Jupiter (erreur
+    // 6014, IncorrectTokenProgramID) ; pris sur le xStock reçu (compte de
+    // frais Token-2022), elle passe. Vers un xStock : frais sur lui seulement
+    // (sans compte de frais xStock de l'affilié : échange sans frais). Depuis
+    // un xStock : frais sur le jeton reçu (USDC…), jamais sur le xStock vendu.
+    let candidates = jupiter_rpc::fee_mint_candidates(input_mint, output_mint);
+    let is_2022 = |mint: &[u8; 32]| jupiter_rpc::fee_token_program(mint) == sol_spl::token_2022_program_id();
+    let output_2022 = bs58::decode(output_mint).into_vec().ok().and_then(|v| <[u8; 32]>::try_from(v).ok()).is_some_and(|m| is_2022(&m));
+    let candidates: Vec<[u8; 32]> = if output_2022 {
+        candidates.into_iter().take(1).filter(|m| is_2022(m)).collect()
+    } else {
+        candidates.into_iter().filter(|m| !is_2022(m)).collect()
+    };
+    for mint in candidates {
         if rpc.account_exists(&bs58::encode(jupiter_rpc::fee_account(&mint)?).into_string())? {
             return Ok(Some(mint));
         }
@@ -4428,12 +4445,12 @@ fn jupiter_sol_reserve(rpc: &sol_rpc::SolRpc, owner: &[u8; 32], from_coin: &str,
     // l'inclut alors dans la transaction, voir CreateIdempotent côté ATA) :
     // même coût de rent si le compte n'existe pas encore.
     if to_coin != "sol" {
-        let output_mint = jupiter_mint_bytes_for_coin(to_coin)?;
-        let dest_ata = sol_spl::find_associated_token_address(owner, &output_mint);
+        let output = registered_solana_token(to_coin)?;
+        let dest_ata = sol_spl::find_associated_token_address_for(owner, &output.mint, &output.program);
         let dest_ata_b58 = bs58::encode(dest_ata).into_string();
         if !rpc.account_exists(&dest_ata_b58)? {
             reserve = reserve
-                .checked_add(rpc.minimum_rent_exempt_balance(165)?)
+                .checked_add(rpc.minimum_rent_exempt_balance(output.account_size())?)
                 .context("réserve de frais dépasse la capacité représentable")?;
         }
     }
@@ -4534,7 +4551,7 @@ pub fn send_jupiter_swap(
 
     let input_mint = jupiter_mint_for_coin(from_coin)?;
     let output_mint = jupiter_mint_for_coin(to_coin)?;
-    let amount_native = jupiter_amount(from_coin, amount)?;
+    let mut amount_native = jupiter_amount(from_coin, amount)?;
 
     let rpc = sol_rpc::SolRpc::new(network.rpc);
     let sol_balance = rpc.balance_lamports(&owner_address)?;
@@ -4562,10 +4579,16 @@ pub fn send_jupiter_swap(
         // Source autre que SOL natif (USDC) : le solde de jetons lui-même
         // n'est jamais couvert par la vérification de solde SOL ci-dessus,
         // qui ne porte que sur les frais/rent — vérifié séparément ici.
-        let input_mint_bytes = jupiter_mint_bytes_for_coin(from_coin)?;
-        let source_ata = sol_spl::find_associated_token_address(&owner, &input_mint_bytes);
+        let input = registered_solana_token(from_coin)?;
+        let source_ata = sol_spl::find_associated_token_address_for(&owner, &input.mint, &input.program);
         let source_ata_b58 = bs58::encode(source_ata).into_string();
         let source_balance = rpc.token_account_balance(&source_ata_b58)?.unwrap_or(0);
+        // xStocks, tout le solde affiché : tout le solde brut, sans reste.
+        if input.scaled {
+            let shown = tokens::parse_amount(amount, input.decimals)?;
+            let multiplier = scaled_mint_config(&rpc, input.mint_b58, false)?.effective(unix_now());
+            amount_native = scaled_raw_amount(shown, multiplier, source_balance)?;
+        }
         anyhow::ensure!(
             amount_native <= source_balance,
             "fonds insuffisants : {source_balance} unité(s) disponibles, {amount_native} unité(s) requises"
@@ -4573,7 +4596,12 @@ pub fn send_jupiter_swap(
     }
 
     // Même décision de frais que celle AFFICHÉE dans la confirmation (`fee_mint`).
-    let min_out = shown_out_amount.saturating_mul(u64::from(10_000 - slippage_bps.min(10_000))) / 10_000;
+    // Sortie montrée en unités affichées (xStocks) : plancher vérifié en brut.
+    let min_out_shown = shown_out_amount.saturating_mul(u64::from(10_000 - slippage_bps.min(10_000))) / 10_000;
+    let min_out = match registered_solana_token(to_coin) {
+        Ok(output) if output.scaled => scaled_mint_config(&rpc, output.mint_b58, true)?.effective(unix_now()).to_raw(u128::from(min_out_shown))?,
+        _ => min_out_shown,
+    };
     let limits = swap_effect_limits(owner, from_coin, amount_native, to_coin, min_out)?;
     // Prix qui a bougé entre le devis et la simulation : un devis neuf, une
     // seule fois. Rien n'est signé avant une simulation réussie.
@@ -4818,7 +4846,10 @@ pub(crate) fn user_effects(
             // et y livrer la sortie du swap. Rien de volé, mais des fonds que
             // l'app n'affiche ni ne dépense jamais (elle ne lit que le compte
             // associé) : pour l'utilisateur, un swap qui n'a "rien rendu".
-            let canonical = bs58::encode(sol_spl::find_associated_token_address(user, &after.mint)).into_string();
+            // Programme du compte créé (Token, ou Token-2022 pour les xStocks) :
+            // il fait partie de l'adresse du compte associé.
+            let program = if p.owner == TOKEN_2022_PROGRAM_ID { sol_spl::token_2022_program_id() } else { sol_spl::token_program_id() };
+            let canonical = bs58::encode(sol_spl::find_associated_token_address_for(user, &after.mint, &program)).into_string();
             anyhow::ensure!(
                 addresses[i] == canonical,
                 "la transaction livrerait vos jetons sur un compte non standard, invisible dans l'app — refus de signer"
@@ -5379,6 +5410,7 @@ pub fn get_token_balance(token_id: &str, network: &str, owner: &str) -> Result<(
             let mint = sol_spl_mint(mint)?;
             u128::from(get_spl_balance(owner, &mint, &wallet_flow::SOLANA_MAINNET)?)
         }
+        tokens::TokenKind::Spl2022 { mint } => scaled_token_balance(owner, mint)?,
         tokens::TokenKind::Trc20 { contract } => tron::trc20_balance(owner, contract)?,
     };
     Ok((units, deployment.decimals))
@@ -5488,12 +5520,346 @@ pub fn send_erc20(
     rpc.send_raw_transaction(&tx.sign(&signing_key)?)
 }
 
-/// Virement d'un jeton SPL du registre (Solana).
+/// Virement d'un jeton Solana du registre (programme classique, ou
+/// Token-2022 pour les xStocks : voir `send_scaled_token`).
 pub fn send_registered_spl(data_dir: &Path, device_password: &str, token_id: &str, to: &str, amount: &str, profile_index: u32) -> Result<String> {
     let (token, deployment) = registered_token(token_id, "sol_mainnet")?;
-    let tokens::TokenKind::Spl { mint } = deployment.kind else { anyhow::bail!("jeton SPL attendu") };
-    let units = u64::try_from(tokens::parse_amount(amount, deployment.decimals)?).context("montant trop grand")?;
-    send_spl(data_dir, device_password, &wallet_flow::SOLANA_MAINNET, &sol_spl_mint(mint)?, deployment.decimals, token.symbol, to, units, profile_index)
+    match deployment.kind {
+        tokens::TokenKind::Spl { mint } => {
+            let units = u64::try_from(tokens::parse_amount(amount, deployment.decimals)?).context("montant trop grand")?;
+            send_spl(data_dir, device_password, &wallet_flow::SOLANA_MAINNET, &sol_spl_mint(mint)?, deployment.decimals, token.symbol, to, units, profile_index)
+        }
+        tokens::TokenKind::Spl2022 { mint } => send_scaled_token(data_dir, device_password, token.symbol, mint, deployment.decimals, to, amount, profile_index),
+        _ => anyhow::bail!("jeton SPL attendu"),
+    }
+}
+
+// --- Actions tokenisées xStocks (Token-2022, coefficient d'affichage) ---------
+// Voir `tokens::TokenKind::Spl2022`. Mesuré le 09/10/2026 : le nœud applique le
+// coefficient en vigueur au solde (getTokenAccountBalance), PAS aux soldes des
+// transactions passées ; les prix de Jupiter sont par unité affichée
+// (usdPrice), ses devis et les virements en unités brutes. L'app compte en
+// unités affichées partout et convertit au moment de signer.
+
+/// Coefficient d'affichage en décimal exact : valeur = `num` / 10^`scale`.
+/// Lu tel que le nœud l'écrit (« 1 », « 1.0211807004882871 ») — pas de
+/// calcul en virgule flottante sur un montant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UiMultiplier {
+    num: u128,
+    scale: u32,
+}
+
+impl UiMultiplier {
+    pub const ONE: Self = Self { num: 1, scale: 0 };
+
+    /// Au plus 18 décimales, entre 0,01 et 100 : au-delà, refus plutôt qu'un
+    /// montant faux.
+    pub fn parse(text: &str) -> Result<Self> {
+        let text = text.trim();
+        let (whole, frac) = text.split_once('.').unwrap_or((text, ""));
+        anyhow::ensure!(
+            !whole.is_empty() && whole.len() <= 3 && whole.bytes().all(|b| b.is_ascii_digit()) && frac.len() <= 18 && frac.bytes().all(|b| b.is_ascii_digit()),
+            "coefficient d'affichage illisible : {text}"
+        );
+        let scale = frac.len() as u32;
+        let num: u128 = format!("{whole}{frac}").parse().context("coefficient d'affichage illisible")?;
+        let unit = 10u128.pow(scale);
+        anyhow::ensure!(num > 0 && num >= unit / 100 && num <= unit * 100, "coefficient d'affichage hors limites : {text}");
+        Ok(Self { num, scale })
+    }
+
+    fn unit(self) -> u128 {
+        10u128.pow(self.scale)
+    }
+
+    /// Unités brutes → unités affichées, tronqué (comme le nœud). Sans
+    /// dépassement pour tout montant u64.
+    pub fn to_ui(self, raw: u64) -> u128 {
+        let (raw, unit) = (u128::from(raw), self.unit());
+        raw / unit * self.num + raw % unit * self.num / unit
+    }
+
+    /// Unités affichées → unités brutes, arrondi vers le bas : jamais plus que
+    /// le montant demandé.
+    pub fn to_raw(self, ui: u128) -> Result<u64> {
+        let raw = ui.checked_mul(self.unit()).context("montant trop grand")? / self.num;
+        u64::try_from(raw).context("montant trop grand")
+    }
+}
+
+/// Ce que l'app lit d'un mint xStocks.
+#[derive(Clone, Debug, PartialEq)]
+struct ScaledMintConfig {
+    current: UiMultiplier,
+    next: UiMultiplier,
+    /// Heure (Unix) d'entrée en vigueur de `next`.
+    next_at: i64,
+    paused: bool,
+    transfer_hook: Option<String>,
+}
+
+impl ScaledMintConfig {
+    /// Coefficient en vigueur à `now` : le nouveau dès son heure (constaté : le
+    /// rapport des prix brut/affiché de Jupiter est le nouveau coefficient une
+    /// fois son heure passée).
+    fn effective(&self, now: i64) -> UiMultiplier {
+        if now >= self.next_at {
+            self.next
+        } else {
+            self.current
+        }
+    }
+}
+
+pub const XSTOCK_PAUSED: &str = "transferts de ce jeton suspendus par son émetteur : réessayez plus tard";
+pub const XSTOCK_TRANSFER_HOOK: &str = "l'émetteur de ce jeton a ajouté une règle de transfert que l'app ne gère pas encore : envoi refusé, rien n'a été dépensé";
+pub const XSTOCK_MULTIPLIER_SWITCH: &str = "le coefficient de ce jeton change en ce moment (dividende ou division d'action) : réessayez dans quelques minutes";
+
+/// Champs `info` d'un mint lu en `jsonParsed` → configuration utile.
+fn parse_scaled_mint(info: &serde_json::Value) -> Result<ScaledMintConfig> {
+    let extension = |name: &str| info["extensions"].as_array().and_then(|list| list.iter().find(|e| e["extension"] == name)).map(|e| &e["state"]);
+    let scaled = extension("scaledUiAmountConfig").context("coefficient d'affichage absent du mint")?;
+    let current = UiMultiplier::parse(scaled["multiplier"].as_str().context("coefficient d'affichage illisible")?)?;
+    let next = UiMultiplier::parse(scaled["newMultiplier"].as_str().context("coefficient d'affichage illisible")?)?;
+    Ok(ScaledMintConfig {
+        current,
+        next,
+        next_at: scaled["newMultiplierEffectiveTimestamp"].as_i64().unwrap_or(0),
+        paused: extension("pausableConfig").and_then(|p| p["paused"].as_bool()).unwrap_or(false),
+        transfer_hook: extension("transferHook").and_then(|h| h["programId"].as_str()).map(str::to_string),
+    })
+}
+
+/// Mouvement de ce jeton possible à `now` ? Refus si l'émetteur a suspendu
+/// les transferts, si un crochet de transfert est actif (le virement simple
+/// échouerait), ou à moins de 5 minutes d'un changement de coefficient
+/// (montant converti avec l'un, exécuté avec l'autre).
+fn check_scaled_transfer(config: &ScaledMintConfig, now: i64) -> Result<()> {
+    anyhow::ensure!(!config.paused, XSTOCK_PAUSED);
+    anyhow::ensure!(config.transfer_hook.is_none(), XSTOCK_TRANSFER_HOOK);
+    anyhow::ensure!(config.next == config.current || (now - config.next_at).abs() >= 300, XSTOCK_MULTIPLIER_SWITCH);
+    Ok(())
+}
+
+fn unix_now() -> i64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+}
+
+/// Configuration du mint xStocks `mint` ; gardée 10 minutes pour les soldes et
+/// l'historique (le coefficient change quelques fois par an, et son heure est
+/// connue d'avance), relue (`fresh`) avant tout mouvement.
+fn scaled_mint_config(rpc: &sol_rpc::SolRpc, mint: &str, fresh: bool) -> Result<ScaledMintConfig> {
+    type Cache = std::collections::HashMap<String, (std::time::Instant, ScaledMintConfig)>;
+    static CACHE: std::sync::OnceLock<Mutex<Cache>> = std::sync::OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(Cache::new()));
+    if !fresh {
+        if let Some((read, config)) = cache.lock().unwrap_or_else(|p| p.into_inner()).get(mint) {
+            if read.elapsed() < std::time::Duration::from_secs(600) {
+                return Ok(config.clone());
+            }
+        }
+    }
+    let result = rpc.call("getAccountInfo", serde_json::json!([mint, {"encoding": "jsonParsed"}]))?;
+    let value = &result["value"];
+    anyhow::ensure!(value["owner"] == TOKEN_2022_PROGRAM_ID, "mint du jeton inattendu sur le réseau");
+    let config = parse_scaled_mint(&value["data"]["parsed"]["info"])?;
+    cache.lock().unwrap_or_else(|p| p.into_inner()).insert(mint.to_string(), (std::time::Instant::now(), config.clone()));
+    Ok(config)
+}
+
+/// Jeton Solana du registre (programme classique ou Token-2022).
+pub struct SolanaToken {
+    pub mint: [u8; 32],
+    pub mint_b58: &'static str,
+    /// Programme de jetons (fait partie de l'adresse du compte associé).
+    pub program: [u8; 32],
+    pub decimals: u8,
+    pub symbol: &'static str,
+    /// Coefficient d'affichage (xStocks).
+    pub scaled: bool,
+}
+
+impl SolanaToken {
+    /// Taille d'un compte de jetons de ce jeton (rent de sa création).
+    pub fn account_size(&self) -> u64 {
+        if self.scaled {
+            tokens::XSTOCK_ACCOUNT_SIZE
+        } else {
+            165
+        }
+    }
+}
+
+pub fn registered_solana_token(token_id: &str) -> Result<SolanaToken> {
+    let (token, deployment) = registered_token(token_id, "sol_mainnet")?;
+    let (mint, program, scaled) = match deployment.kind {
+        tokens::TokenKind::Spl { mint } => (mint, sol_spl::token_program_id(), false),
+        tokens::TokenKind::Spl2022 { mint } => (mint, sol_spl::token_2022_program_id(), true),
+        _ => anyhow::bail!("jeton SPL attendu"),
+    };
+    Ok(SolanaToken { mint: sol_spl_mint(mint)?, mint_b58: mint, program, decimals: deployment.decimals, symbol: token.symbol, scaled })
+}
+
+fn solana_owner(address: &str) -> Result<[u8; 32]> {
+    let bytes = bs58::decode(address.trim()).into_vec().context("adresse Solana invalide (base58 attendu)")?;
+    bytes.try_into().map_err(|_| anyhow::anyhow!("une adresse Solana fait 32 octets"))
+}
+
+/// Compte de jetons associé (base58) de `owner_address` pour le jeton
+/// `token_id` du registre, avec le bon programme.
+pub fn registered_token_account(owner_address: &str, token_id: &str) -> Result<String> {
+    let token = registered_solana_token(token_id)?;
+    Ok(bs58::encode(sol_spl::find_associated_token_address_for(&solana_owner(owner_address)?, &token.mint, &token.program)).into_string())
+}
+
+/// Rent du compte de jetons `token_id` du destinataire s'il n'existe pas
+/// encore (créé et payé par l'expéditeur) ; `None` s'il existe.
+pub fn token_account_rent_if_missing(token_id: &str, to_address: &str, network: &wallet_flow::SolNetwork) -> Result<Option<u64>> {
+    let token = registered_solana_token(token_id)?;
+    let account = bs58::encode(sol_spl::find_associated_token_address_for(&solana_owner(to_address)?, &token.mint, &token.program)).into_string();
+    let rpc = sol_rpc::SolRpc::new(network.rpc);
+    if rpc.account_exists(&account)? {
+        return Ok(None);
+    }
+    Ok(Some(rpc.minimum_rent_exempt_balance(token.account_size())?))
+}
+
+/// Solde xStocks de `owner`, en unités affichées (coefficient lu seulement
+/// s'il y a un solde).
+fn scaled_token_balance(owner: &str, mint: &'static str) -> Result<u128> {
+    let account = sol_spl::find_associated_token_address_for(&solana_owner(owner)?, &sol_spl_mint(mint)?, &sol_spl::token_2022_program_id());
+    let rpc = sol_rpc::SolRpc::new(wallet_flow::SOLANA_MAINNET.rpc);
+    let raw = rpc.token_account_balance(&bs58::encode(account).into_string())?.unwrap_or(0);
+    if raw == 0 {
+        return Ok(0);
+    }
+    Ok(scaled_mint_config(&rpc, mint, false)?.effective(unix_now()).to_ui(raw))
+}
+
+/// Montant signé en unités brutes → unités affichées.
+fn scale_signed(amount: i128, multiplier: UiMultiplier) -> i128 {
+    let shown = multiplier.to_ui(u64::try_from(amount.unsigned_abs()).unwrap_or(u64::MAX)) as i128;
+    if amount < 0 {
+        -shown
+    } else {
+        shown
+    }
+}
+
+/// Historique d'un jeton Solana du registre (compte associé du bon
+/// programme). xStocks : montants en unités affichées au coefficient EN
+/// VIGUEUR (les soldes des transactions passées sont bruts) — cohérents avec
+/// le solde affiché.
+pub fn get_registered_spl_tx_history(token_id: &str, owner_address: &str, network: &wallet_flow::SolNetwork, limit: u32) -> Result<Vec<history::TxEntry>> {
+    let token = registered_solana_token(token_id)?;
+    let account = registered_token_account(owner_address, token_id)?;
+    let mut entries = history::spl_history(network.rpc, &account, limit)?;
+    if token.scaled && entries.iter().any(|e| e.net_amount_minor.is_some()) {
+        let multiplier = scaled_mint_config(&sol_rpc::SolRpc::new(network.rpc), token.mint_b58, false)?.effective(unix_now());
+        for entry in &mut entries {
+            entry.net_amount_minor = entry.net_amount_minor.map(|amount| scale_signed(amount, multiplier));
+        }
+    }
+    Ok(entries)
+}
+
+/// Montant d'un mouvement xStocks : unités affichées `shown` → brutes. Tout le
+/// solde (`shown` égal au solde affiché) : tout le solde brut, sans reste.
+fn scaled_raw_amount(shown: u128, multiplier: UiMultiplier, raw_balance: u64) -> Result<u64> {
+    if shown == multiplier.to_ui(raw_balance) {
+        return Ok(raw_balance);
+    }
+    let raw = multiplier.to_raw(shown)?;
+    anyhow::ensure!(raw > 0, "montant trop petit pour ce jeton");
+    Ok(raw)
+}
+
+/// Virement d'un xStock : compte associé du programme Token-2022 (créé chez
+/// le destinataire si besoin, rent annoncé dans la confirmation), montant
+/// saisi en unités affichées converti au coefficient en vigueur, mint relu
+/// juste avant (suspension, crochet de transfert, changement de coefficient).
+#[allow(clippy::too_many_arguments)]
+fn send_scaled_token(data_dir: &Path, device_password: &str, symbol: &str, mint: &'static str, decimals: u8, to: &str, amount: &str, profile_index: u32) -> Result<String> {
+    let network = &wallet_flow::SOLANA_MAINNET;
+    check_solana_recipient(to, network)?;
+    let shown = tokens::parse_amount(amount, decimals)?;
+    let rpc = sol_rpc::SolRpc::new(network.rpc);
+    let config = scaled_mint_config(&rpc, mint, true)?;
+    let now = unix_now();
+    check_scaled_transfer(&config, now)?;
+    let multiplier = config.effective(now);
+
+    let seed = unlock_seed(data_dir, device_password)?;
+    let _seed_lock = memory_guard::lock(&seed);
+    let signing_key = derivation::derive_solana_key(&seed, profile_index);
+    let owner = signing_key.verifying_key().to_bytes();
+    let to_owner = solana_owner(to)?;
+    let (mint_bytes, program) = (sol_spl_mint(mint)?, sol_spl::token_2022_program_id());
+    let source = sol_spl::find_associated_token_address_for(&owner, &mint_bytes, &program);
+    let dest = sol_spl::find_associated_token_address_for(&to_owner, &mint_bytes, &program);
+    let (source_b58, dest_b58, owner_b58) = (bs58::encode(source).into_string(), bs58::encode(dest).into_string(), bs58::encode(owner).into_string());
+
+    let (sol_balance, raw_balance, blockhash, dest_exists) = std::thread::scope(|scope| {
+        let sol = scope.spawn(|| rpc.balance_lamports(&owner_b58));
+        let token = scope.spawn(|| rpc.token_account_balance(&source_b58));
+        let blockhash = scope.spawn(|| rpc.latest_blockhash());
+        let dest = scope.spawn(|| rpc.account_exists(&dest_b58));
+        (
+            sol.join().expect("le thread solde SOL ne doit pas paniquer"),
+            token.join().expect("le thread solde du jeton ne doit pas paniquer"),
+            blockhash.join().expect("le thread blockhash ne doit pas paniquer"),
+            dest.join().expect("le thread compte destinataire ne doit pas paniquer"),
+        )
+    });
+    let (sol_balance, blockhash, dest_exists) = (sol_balance?, blockhash?, dest_exists?);
+    let raw_balance = raw_balance?.ok_or_else(|| anyhow::anyhow!("aucun compte {symbol} trouvé pour cette adresse (solde 0)"))?;
+    let raw = scaled_raw_amount(shown, multiplier, raw_balance)?;
+    anyhow::ensure!(
+        raw <= raw_balance,
+        "fonds {symbol} insuffisants : {} disponibles, {} requis",
+        tokens::format_amount(multiplier.to_ui(raw_balance), decimals),
+        tokens::format_amount(shown, decimals)
+    );
+    const SOL_FEE_LAMPORTS: u64 = 5_000;
+    let rent = if dest_exists { 0 } else { rpc.minimum_rent_exempt_balance(tokens::XSTOCK_ACCOUNT_SIZE)? };
+    let needed = SOL_FEE_LAMPORTS.checked_add(rent).context("frais + rent dépasse la capacité représentable")?;
+    anyhow::ensure!(
+        needed <= sol_balance,
+        "SOL insuffisant pour les frais{} : {sol_balance} lamports disponibles, {needed} lamports requis",
+        if dest_exists { String::new() } else { " + création du compte de jetons du destinataire".to_string() }
+    );
+    let create = sol_spl::create_ata_idempotent_instruction_for(&owner, &to_owner, &mint_bytes, &dest, &program);
+    let transfer = sol_spl::transfer_checked_instruction_for(&source, &mint_bytes, &dest, &owner, raw, decimals, &program);
+    let raw_tx = sol_tx::build_and_sign_transaction(&signing_key, &owner, &[create, transfer], &blockhash);
+    rpc.send_transaction(&raw_tx)
+}
+
+/// Unités brutes d'un montant d'échange Jupiter : xStocks convertis au
+/// coefficient en vigueur (mint relu), autres jetons inchangés.
+fn jupiter_raw_amount(coin: &str, shown: u64) -> Result<u64> {
+    if coin == "sol" {
+        return Ok(shown);
+    }
+    let token = registered_solana_token(coin)?;
+    if !token.scaled {
+        return Ok(shown);
+    }
+    let rpc = sol_rpc::SolRpc::new(wallet_flow::SOLANA_MAINNET.rpc);
+    let config = scaled_mint_config(&rpc, token.mint_b58, true)?;
+    let now = unix_now();
+    check_scaled_transfer(&config, now)?;
+    config.effective(now).to_raw(u128::from(shown))
+}
+
+/// Sortie d'un devis Jupiter (brute) en unités affichées.
+fn jupiter_shown_out(coin: &str, raw: u64) -> Result<u64> {
+    if coin == "sol" || !registered_solana_token(coin)?.scaled {
+        return Ok(raw);
+    }
+    let token = registered_solana_token(coin)?;
+    let multiplier = scaled_mint_config(&sol_rpc::SolRpc::new(wallet_flow::SOLANA_MAINNET.rpc), token.mint_b58, false)?.effective(unix_now());
+    u64::try_from(multiplier.to_ui(raw)).context("montant trop grand")
 }
 
 // --- Signatures demandées par des dApps (WalletConnect) ---------------------
@@ -6642,6 +7008,8 @@ mod tests {
                         assert_eq!(decimals[31], d.decimals, "{} sur {}", token.id, d.network);
                     }
                     tokens::TokenKind::Spl { mint } => mints.push((token, d, mint.to_string())),
+                    // Vérifiés à part, métadonnées comprises : tokens::xstocks_match_the_real_mints.
+                    tokens::TokenKind::Spl2022 { .. } => {}
                     tokens::TokenKind::Trc20 { contract } => {
                         let decimals = tron::trc20_decimals(contract).unwrap();
                         println!("{:>7} {:>17} TRC-20 {} décimales", token.symbol, d.network, decimals);
@@ -6784,6 +7152,9 @@ mod tests {
             ("sol", "eurc", 100_000_000),
             ("sol", "render", 100_000_000),
             ("usdc", "render", 10_000_000),
+            // Actions tokenisées (Token-2022, compte de destination de 179 octets).
+            ("usdc", "aaplx", 10_000_000),
+            ("sol", "tslax", 100_000_000),
         ] {
             let (input, output) = (jupiter_mint_for_coin(from).unwrap(), jupiter_mint_for_coin(to).unwrap());
             let fee_mint = jupiter_fee_mint(&rpc, &input, &output).unwrap();
@@ -6827,6 +7198,167 @@ mod tests {
                 panic!("faux rejet {from}->{to} : {e:#}");
             }
         }
+    }
+
+    /// Coefficient d'affichage exact : relu tel que le nœud l'écrit, converti
+    /// sans flottant. Vecteur réel (09/10/2026) : compte MCDx de 22 906 601 081
+    /// unités brutes, coefficient 1.0211807004882871 → le nœud affiche
+    /// 233.91778937 (tronqué). Retour en brut arrondi vers le bas ; tout le
+    /// solde affiché → tout le solde brut, sans reste.
+    #[test]
+    fn scaled_amounts_are_exact() {
+        let one = UiMultiplier::parse("1").unwrap();
+        assert_eq!((one.to_ui(123), one.to_raw(123).unwrap()), (123, 123));
+        let mcd = UiMultiplier::parse("1.0211807004882871").unwrap();
+        assert_eq!(mcd.to_ui(22_906_601_081), 23_391_778_937, "comme le nœud");
+        assert_eq!(mcd.to_raw(23_391_778_937).unwrap(), 22_906_601_080, "arrondi vers le bas");
+        assert_eq!(scaled_raw_amount(23_391_778_937, mcd, 22_906_601_081).unwrap(), 22_906_601_081, "tout le solde");
+        assert_eq!(scaled_raw_amount(100_000_000, mcd, 22_906_601_081).unwrap(), 97_925_861, "1 action affichée");
+        assert!(scaled_raw_amount(1, UiMultiplier::parse("1.5").unwrap(), 10).is_err(), "trop petit pour une unité brute");
+        for amount in [1u128, 7, 99_999, 123_456_789, 10_000_000_000_000] {
+            assert!(mcd.to_ui(mcd.to_raw(amount).unwrap()) <= amount, "jamais plus que demandé : {amount}");
+        }
+        assert!(UiMultiplier::parse("99.999999999999999999").unwrap().to_ui(u64::MAX) > u128::from(u64::MAX), "sans dépassement");
+        for bad in ["", " ", "abc", "1e5", "-1", "+1", "0", "0.0", "1000", "0.001", "1.0000000000000000001", "1,5", "1.2.3"] {
+            assert!(UiMultiplier::parse(bad).is_err(), "{bad:?}");
+        }
+        assert_eq!(scale_signed(-200, UiMultiplier::parse("1.5").unwrap()), -300);
+        assert_eq!(scale_signed(0, mcd), 0);
+    }
+
+    /// Configuration lue sur un vrai mint (AAPLx, `getAccountInfo` jsonParsed du
+    /// 09/10/2026) : coefficient en vigueur selon l'heure, refus d'un mouvement
+    /// si les transferts sont suspendus, si un crochet de transfert est actif,
+    /// ou autour d'un changement de coefficient.
+    #[test]
+    fn scaled_mint_config_is_read_from_a_real_mint() {
+        let info = serde_json::json!({"decimals": 8, "extensions": [
+            {"extension": "permanentDelegate", "state": {"delegate": "5aMNNLQJwAEeoemTEMkv5NVjqKwvvefRYCQ5Z67HFvEq"}},
+            {"extension": "scaledUiAmountConfig", "state": {"authority": "S7vYFFWH6BjJyEsdrPQpqpYTqLTrPRK6KW3VwsJuRaS", "multiplier": "1.0026642075893797", "newMultiplier": "1.0032690125398187", "newMultiplierEffectiveTimestamp": 1786149000}},
+            {"extension": "pausableConfig", "state": {"authority": "JDq14BWvqCRFNu1krb12bcRpbGtJZ1FLEakMw6FdxJNs", "paused": false}},
+            {"extension": "transferHook", "state": {"authority": "5aMNNLQJwAEeoemTEMkv5NVjqKwvvefRYCQ5Z67HFvEq", "programId": null}}
+        ]});
+        let config = parse_scaled_mint(&info).unwrap();
+        assert_eq!(config.effective(1_786_148_999), UiMultiplier::parse("1.0026642075893797").unwrap());
+        assert_eq!(config.effective(1_786_149_000), UiMultiplier::parse("1.0032690125398187").unwrap());
+        assert!(check_scaled_transfer(&config, 1_791_500_000).is_ok());
+        assert_eq!(check_scaled_transfer(&config, 1_786_149_120).unwrap_err().to_string(), XSTOCK_MULTIPLIER_SWITCH);
+        assert_eq!(check_scaled_transfer(&config, 1_786_148_800).unwrap_err().to_string(), XSTOCK_MULTIPLIER_SWITCH);
+        let paused = ScaledMintConfig { paused: true, ..config.clone() };
+        assert_eq!(check_scaled_transfer(&paused, 1_791_500_000).unwrap_err().to_string(), XSTOCK_PAUSED);
+        let hooked = ScaledMintConfig { transfer_hook: Some("Hook111".into()), ..config.clone() };
+        assert_eq!(check_scaled_transfer(&hooked, 1_791_500_000).unwrap_err().to_string(), XSTOCK_TRANSFER_HOOK);
+        let steady = ScaledMintConfig { next: config.current, ..config };
+        assert!(check_scaled_transfer(&steady, 1_786_149_000).is_ok(), "pas de changement réel : pas de fenêtre");
+        assert!(parse_scaled_mint(&serde_json::json!({"extensions": []})).is_err(), "sans coefficient : refus");
+        // Jetons du registre : programme et taille de compte.
+        let tsla = registered_solana_token("tslax").unwrap();
+        assert!(tsla.scaled && tsla.program == sol_spl::token_2022_program_id() && tsla.account_size() == 179 && tsla.decimals == 8);
+        let usdc = registered_solana_token("usdc").unwrap();
+        assert!(!usdc.scaled && usdc.program == sol_spl::token_program_id() && usdc.account_size() == 165);
+        assert!(registered_spl_mint("tslax").is_err(), "les chemins du programme classique refusent un xStock");
+    }
+
+    /// Comptes xStocks réels dont l'adresse est le compte associé de leur
+    /// propriétaire, relevés dans les transactions récentes du mint.
+    fn real_xstock_holders(rpc: &sol_rpc::SolRpc, token_id: &str) -> Vec<(String, String)> {
+        let token = registered_solana_token(token_id).unwrap();
+        let signatures = rpc.call("getSignaturesForAddress", serde_json::json!([token.mint_b58, {"limit": 12}])).unwrap();
+        let mut holders = Vec::new();
+        for entry in signatures.as_array().unwrap() {
+            std::thread::sleep(std::time::Duration::from_millis(400));
+            let Ok(tx) = rpc.call("getTransaction", serde_json::json!([entry["signature"], {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 1}])) else { continue };
+            for balance in tx["meta"]["postTokenBalances"].as_array().into_iter().flatten() {
+                let (Some(owner), Some(index)) = (balance["owner"].as_str(), balance["accountIndex"].as_u64()) else { continue };
+                let account = tx["transaction"]["message"]["accountKeys"][index as usize]["pubkey"].as_str().unwrap_or_default();
+                if balance["mint"] == token.mint_b58 && registered_token_account(owner, token_id).ok().as_deref() == Some(account) && !holders.iter().any(|(o, _): &(String, String)| o == owner) {
+                    holders.push((owner.to_string(), account.to_string()));
+                }
+            }
+        }
+        holders
+    }
+
+    /// Soldes xStocks lus par l'app = soldes affichés par le nœud (coefficient
+    /// ≠ 1 : MCDx), sur de vrais comptes.
+    #[test]
+    #[ignore]
+    fn xstock_balances_match_the_node() {
+        let rpc = sol_rpc::SolRpc::new(wallet_flow::SOLANA_MAINNET.rpc);
+        let holders = real_xstock_holders(&rpc, "mcdx");
+        assert!(!holders.is_empty(), "aucun détenteur trouvé");
+        let mut compared = 0;
+        for (owner, account) in holders.iter().take(4) {
+            let node = rpc.call("getTokenAccountBalance", serde_json::json!([account])).unwrap();
+            let shown = tokens::parse_amount(node["value"]["uiAmountString"].as_str().unwrap(), 8).unwrap_or(0);
+            let (units, decimals) = get_token_balance("mcdx", "sol_mainnet", owner).unwrap();
+            println!("{owner} : nœud {shown}, app {units} (brut {})", node["value"]["amount"]);
+            assert_eq!((units, decimals), (shown, 8), "{owner}");
+            compared += 1;
+        }
+        assert!(compared > 0);
+    }
+
+    /// Virement xStocks construit par l'app, simulé sur le réseau réel depuis un
+    /// vrai détenteur (signature non vérifiée par la simulation) vers un
+    /// destinataire neuf : création du compte associé Token-2022 puis
+    /// TransferChecked acceptés, compte créé de `XSTOCK_ACCOUNT_SIZE` octets
+    /// avec exactement le montant brut envoyé.
+    #[test]
+    #[ignore]
+    fn xstock_transfer_simulates_on_mainnet() {
+        let rpc = sol_rpc::SolRpc::new(wallet_flow::SOLANA_MAINNET.rpc);
+        let token = registered_solana_token("mcdx").unwrap();
+        let holders = real_xstock_holders(&rpc, "mcdx");
+        let recipient = derivation::derive_solana_key(&[9u8; 64], 0).verifying_key().to_bytes();
+        let dest = sol_spl::find_associated_token_address_for(&recipient, &token.mint, &token.program);
+        let dest_b58 = bs58::encode(dest).into_string();
+        for (owner, account) in holders {
+            let owner_bytes = solana_owner(&owner).unwrap();
+            let balance = rpc.token_account_balance(&account).unwrap().unwrap_or(0);
+            if balance < 1_000 || rpc.balance_lamports(&owner).unwrap_or(0) < 10_000_000 {
+                continue;
+            }
+            let source = sol_spl::find_associated_token_address_for(&owner_bytes, &token.mint, &token.program);
+            let create = sol_spl::create_ata_idempotent_instruction_for(&owner_bytes, &recipient, &token.mint, &dest, &token.program);
+            let transfer = sol_spl::transfer_checked_instruction_for(&source, &token.mint, &dest, &owner_bytes, 1_000, token.decimals, &token.program);
+            let dummy = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+            let tx = sol_tx::build_and_sign_transaction(&dummy, &owner_bytes, &[create, transfer], &rpc.latest_blockhash().unwrap());
+            match rpc.simulate_with_account_states(&tx, std::slice::from_ref(&dest_b58)).unwrap() {
+                sol_rpc::SimulationOutcome::Succeeded { post_states } => {
+                    let created = post_states[0].as_ref().expect("compte du destinataire créé");
+                    assert_eq!(created.owner, TOKEN_2022_PROGRAM_ID);
+                    assert_eq!(created.data.len() as u64, tokens::XSTOCK_ACCOUNT_SIZE, "taille du compte créé");
+                    let view = parse_token_account(created).expect("compte de jetons");
+                    assert_eq!((view.mint, view.owner, view.amount), (token.mint, recipient, 1_000));
+                    println!("simulation réussie depuis {owner} : compte de {} octets créé", created.data.len());
+                    return;
+                }
+                sol_rpc::SimulationOutcome::Failed { err, logs } => panic!("simulation en échec depuis {owner} ({err}) :\n{logs}"),
+            }
+        }
+        panic!("aucun détenteur avec assez de jetons et de SOL");
+    }
+
+    /// Devis Jupiter vers un xStock (coefficient ≠ 1 : AAPLx) : sortie montrée
+    /// en unités affichées, cohérente avec le cours par unité affichée
+    /// (100 USDC ≈ 100 / cours, moins frais et impact).
+    #[test]
+    #[ignore]
+    fn jupiter_quotes_xstocks_in_shown_units() {
+        let quote = get_jupiter_quote("usdc", "aaplx", "100", 50).unwrap();
+        let token = registered_solana_token("aaplx").unwrap();
+        let price = crate::price_rpc::jupiter_stock_prices(&[token.mint_b58]).unwrap()[0].usd;
+        let shown = quote.out_amount as f64 / 1e8;
+        let value = shown * price;
+        println!("100 USDC → {shown} AAPLx affichés (cours {price} $) = {value} $, frais {:?}", quote.fee_mint.map(|m| bs58::encode(m).into_string()));
+        assert!((96.0..=100.5).contains(&value), "valeur {value} $ pour 100 USDC");
+        // À l'achat : frais sur le xStock reçu (compte de frais Token-2022 de
+        // l'affilié) ou aucun — jamais sur l'USDC vendu (route refusée).
+        assert!(quote.fee_mint.is_none() || quote.fee_mint == Some(token.mint), "frais à l'achat : {:?}", quote.fee_mint);
+        // À la vente : frais sur l'USDC reçu.
+        let sale = get_jupiter_quote("aaplx", "usdc", "0.1", 50).unwrap();
+        assert_eq!(sale.fee_mint, Some(sol_spl::usdc_mint_mainnet()), "frais de vente en USDC");
     }
 
     #[test]
