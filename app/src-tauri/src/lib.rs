@@ -3379,8 +3379,9 @@ fn chart_range(range: &str) -> Result<price_history::ChartRange, String> {
     price_history::ChartRange::parse(range).ok_or_else(|| translate_error(&format!("période inconnue : {range}")))
 }
 
-/// Courbe de prix (instant, prix en dollars) d'une crypto sur la période
-/// ("1d", "7d", "30d", "1y", "all") ; `symbol` : "BTC", "ETH", "SOL" ou "USDC".
+/// Courbe de prix (instant, prix en dollars) d'une crypto ou d'une action
+/// tokenisée sur la période ("1d", "7d", "30d", "1y", "all") ; `symbol` :
+/// "BTC", "ETH"…, ou le symbole en majuscules d'une action (« TSLAX »).
 #[tauri::command]
 async fn get_price_chart(symbol: String, range: String) -> Result<Vec<(i64, f64)>, String> {
     run_blocking(move || {
@@ -7328,6 +7329,7 @@ struct StockPriceDto {
     id: String,
     price_usd: f64,
     change_24h_percent: Option<f64>,
+    market_cap_usd: Option<f64>,
 }
 
 /// Cours des actions tokenisées xStocks (prix par unité affichée, Jupiter).
@@ -7345,7 +7347,7 @@ async fn get_stock_prices() -> Result<Vec<StockPriceDto>, String> {
             .into_iter()
             .filter_map(|p| {
                 let id = stocks.iter().find(|(_, mint)| *mint == p.mint)?.0;
-                Some(StockPriceDto { id: id.to_string(), price_usd: p.usd, change_24h_percent: p.change_24h_percent })
+                Some(StockPriceDto { id: id.to_string(), price_usd: p.usd, change_24h_percent: p.change_24h_percent, market_cap_usd: p.market_cap_usd })
             })
             .collect())
     })

@@ -690,6 +690,21 @@
         </div>
         <p id="stocks-empty" class="muted stocks-empty" data-i18n="stocks.empty"></p>
         <div class="wallet-grid stocks-grid"></div>
+
+        <section class="markets-section" data-collapse-key="stocks-markets">
+          <h2 class="section-title">
+            <button type="button" class="collapse-toggle" aria-expanded="true" aria-controls="stocks-markets-body">
+              <span class="collapse-chevron" aria-hidden="true"></span>
+              <span data-i18n="stocks.marketsTitle">Cours des actions en direct</span>
+            </button>
+          </h2>
+          <div class="collapsible-body" id="stocks-markets-body">
+            <div class="collapsible-inner">
+              <p class="muted chart-scope" data-i18n="stocks.marketsHint">Cliquez sur une action pour voir sa courbe en grand.</p>
+              <div id="stocks-markets-list" class="markets-list"></div>
+            </div>
+          </div>
+        </section>
       </section>
 
       <section class="tab-panel hidden" data-panel="history">

@@ -9,6 +9,13 @@
 //! Crypto absente de Binance (VVV) : l'API publique OHLC de Kraken (sans clé,
 //! en dollars), 720 bougies au plus par intervalle (≈ 2 ans en journalier :
 //! tout l'historique de VVV, coté depuis février 2025).
+//! Actions tokenisées xStocks (absentes de Binance et de l'API publique de
+//! Kraken) : courbes de Jupiter (`datapi.jup.ag`, celles de son site, sans
+//! clé ; non documentées), prix par unité AFFICHÉE — mesuré le 10/10/2026 :
+//! dernière clôture AAPLx = prix par unité affichée de Jupiter, historique
+//! journalier complet depuis la cotation (juin 2025), 25 appels rapides
+//! acceptés. Secours : GeckoTerminal (pool Solana le plus liquide, même
+//! unité), limité à environ 6 appels rapprochés (mesuré).
 //! CoinGecko, déjà utilisé pour le prix courant, a été écarté ici : sa limite
 //! gratuite a refusé le 3ᵉ appel consécutif lors des essais, alors qu'il en
 //! faut plusieurs pour l'historique.
@@ -26,6 +33,8 @@ use std::time::{Duration, Instant};
 
 const KLINES_URL: &str = "https://data-api.binance.vision/api/v3/klines";
 const KRAKEN_OHLC_URL: &str = "https://api.kraken.com/0/public/OHLC";
+const GECKO_TERMINAL_URL: &str = "https://api.geckoterminal.com/api/v2/networks/solana";
+const JUPITER_CHARTS_URL: &str = "https://datapi.jup.ag/v2/charts";
 const HOUR: i64 = 3600;
 const DAY: i64 = 86_400;
 /// Au-delà, les séries sont relues (la dernière bougie horaire avance).
@@ -44,6 +53,9 @@ pub enum Asset {
     Pair(&'static str),
     /// Crypto absente de Binance : paire en dollars de Kraken.
     Kraken(&'static str),
+    /// Action tokenisée xStocks (mint Solana du registre) : courbes de
+    /// Jupiter, GeckoTerminal en secours.
+    Solana(&'static str),
     /// Dollar stable sans paire de marché (USDT, monnaie de cotation des paires
     /// Binance ; USDG) : 1 $, pour la valeur d'un solde ou d'une transaction.
     /// Pas de courbe.
@@ -51,8 +63,21 @@ pub enum Asset {
 }
 
 /// Série de prix d'une crypto de l'app, par son symbole (`None` : aucune
-/// source de prix).
+/// source de prix). Actions tokenisées : par leur symbole en majuscules
+/// (« TSLAX »).
 pub fn price_asset(symbol: &str) -> Option<Asset> {
+    listed_asset(symbol).or_else(|| xstock_asset(symbol))
+}
+
+/// Action tokenisée du registre dont le symbole (en majuscules) est `symbol`.
+fn xstock_asset(symbol: &str) -> Option<Asset> {
+    crate::tokens::TOKENS.iter().filter(|t| t.symbol.to_ascii_uppercase() == symbol).flat_map(|t| t.deployments).find_map(|d| match d.kind {
+        crate::tokens::TokenKind::Spl2022 { mint } => Some(Asset::Solana(mint)),
+        _ => None,
+    })
+}
+
+fn listed_asset(symbol: &str) -> Option<Asset> {
     Some(match symbol {
         "BTC" => Asset::Btc,
         "ETH" => Asset::Eth,
@@ -109,7 +134,7 @@ impl Asset {
             Asset::Usdc => "USDCUSDT",
             Asset::Eur => "EURUSDT",
             Asset::Pair(pair) => pair,
-            Asset::Kraken(_) | Asset::Usd => return None,
+            Asset::Kraken(_) | Asset::Solana(_) | Asset::Usd => return None,
         })
     }
 
@@ -225,6 +250,135 @@ fn parse_kraken_ohlc(body: &str) -> Result<Vec<Candle>> {
     Ok(candles)
 }
 
+/// Réponse OHLCV de GeckoTerminal : `{"data": {"attributes": {"ohlcv_list":
+/// [[ouverture_s, open, high, low, close, volume], ...]}}}`, la plus récente
+/// d'abord — remise dans l'ordre. Mêmes refus que `parse_klines`.
+fn parse_gecko_ohlcv(body: &str) -> Result<Vec<Candle>> {
+    let value: serde_json::Value = serde_json::from_str(body).context("réponse de prix illisible")?;
+    let rows = value.pointer("/data/attributes/ohlcv_list").and_then(serde_json::Value::as_array).ok_or_else(|| anyhow!("réponse de prix illisible"))?;
+    let mut candles = Vec::with_capacity(rows.len());
+    for row in rows {
+        let open_time = row.get(0).and_then(serde_json::Value::as_i64).ok_or_else(|| anyhow!("bougie de prix mal formée"))?;
+        let price = |i: usize| -> Result<f64> {
+            let value = row.get(i).and_then(serde_json::Value::as_f64).ok_or_else(|| anyhow!("bougie de prix mal formée"))?;
+            ensure!(value.is_finite() && value > 0.0, "prix invalide dans la série");
+            Ok(value)
+        };
+        candles.push(Candle { open_time, open: price(1)?, close: price(4)? });
+    }
+    candles.reverse();
+    ensure!(candles.windows(2).all(|w| w[0].open_time < w[1].open_time), "série de prix non ordonnée");
+    Ok(candles)
+}
+
+/// Réponse des courbes de Jupiter : `{"candles": [{"time": s, "open": o,
+/// "close": c, ...}, ...]}`, de la plus ancienne à la plus récente. Mêmes
+/// refus que `parse_klines`.
+fn parse_jupiter_chart(body: &str) -> Result<Vec<Candle>> {
+    let value: serde_json::Value = serde_json::from_str(body).context("réponse de prix illisible")?;
+    let rows = value.get("candles").and_then(serde_json::Value::as_array).ok_or_else(|| anyhow!("réponse de prix illisible"))?;
+    let mut candles = Vec::with_capacity(rows.len());
+    for row in rows {
+        let open_time = row.get("time").and_then(serde_json::Value::as_i64).ok_or_else(|| anyhow!("bougie de prix mal formée"))?;
+        let price = |field: &str| -> Result<f64> {
+            let value = row.get(field).and_then(serde_json::Value::as_f64).ok_or_else(|| anyhow!("bougie de prix mal formée"))?;
+            ensure!(value.is_finite() && value > 0.0, "prix invalide dans la série");
+            Ok(value)
+        };
+        candles.push(Candle { open_time, open: price("open")?, close: price("close")? });
+    }
+    ensure!(!candles.is_empty(), "aucun prix pour cette action");
+    ensure!(candles.windows(2).all(|w| w[0].open_time < w[1].open_time), "série de prix non ordonnée");
+    Ok(candles)
+}
+
+/// Bougies Jupiter de l'action `mint` (les `limit` dernières, au plus 1000).
+fn fetch_jupiter_chart(mint: &str, interval: &str, limit: usize) -> Result<Vec<Candle>> {
+    let interval = match interval {
+        "15m" => "15_MINUTE",
+        "1h" => "1_HOUR",
+        "4h" => "4_HOUR",
+        "1d" => "1_DAY",
+        other => anyhow::bail!("intervalle non pris en charge : {other}"),
+    };
+    let now_ms = unix_now().saturating_mul(1000);
+    let response = shared_client()
+        .get(format!("{JUPITER_CHARTS_URL}/{mint}"))
+        .query(&[("interval", interval.to_string()), ("to", now_ms.to_string()), ("candles", limit.min(1000).to_string()), ("type", "price".to_string()), ("quote", "usd".to_string())])
+        .send()
+        .context("appel du service de prix impossible")?;
+    ensure!(response.status().is_success(), "le service de prix a répondu {}", response.status());
+    parse_jupiter_chart(&response.text().context("réponse de prix illisible")?)
+}
+
+/// Bougies d'une action tokenisée : Jupiter, sinon GeckoTerminal.
+fn fetch_xstock(mint: &str, interval: &str, limit: usize, start: Option<i64>) -> Result<Vec<Candle>> {
+    match fetch_jupiter_chart(mint, interval, limit) {
+        Ok(candles) => Ok(match start {
+            Some(start) => candles.into_iter().filter(|c| c.open_time >= start).collect(),
+            None => candles,
+        }),
+        Err(_) => fetch_gecko(mint, interval, limit, start),
+    }
+}
+
+/// Pool le plus liquide où l'action `mint` est le jeton de base (prix lu pour
+/// elle), choisi une fois par session.
+fn gecko_pool(mint: &str) -> Result<String> {
+    static POOLS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    let pools = POOLS.get_or_init(Default::default);
+    if let Some(pool) = pools.lock().unwrap_or_else(|p| p.into_inner()).get(mint) {
+        return Ok(pool.clone());
+    }
+    let response = shared_client()
+        .get(format!("{GECKO_TERMINAL_URL}/tokens/{mint}/pools"))
+        .header("accept", "application/json")
+        .send()
+        .context("appel du service de prix impossible")?;
+    ensure!(response.status().is_success(), "le service de prix a répondu {}", response.status());
+    let body: serde_json::Value = response.json().context("réponse de prix illisible")?;
+    let base = format!("solana_{mint}");
+    let pool = body["data"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|p| p.pointer("/relationships/base_token/data/id").and_then(serde_json::Value::as_str) == Some(base.as_str()))
+        .max_by(|a, b| {
+            let liquidity = |p: &serde_json::Value| p.pointer("/attributes/reserve_in_usd").and_then(serde_json::Value::as_str).and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0);
+            liquidity(a).total_cmp(&liquidity(b))
+        })
+        .and_then(|p| p.pointer("/attributes/address").and_then(serde_json::Value::as_str))
+        .ok_or_else(|| anyhow!("aucun marché trouvé pour cette action"))?
+        .to_string();
+    pools.lock().unwrap_or_else(|p| p.into_inner()).insert(mint.to_string(), pool.clone());
+    Ok(pool)
+}
+
+/// Bougies GeckoTerminal de l'action `mint`, mêmes paramètres que
+/// `fetch_klines` (les `limit` dernières, au plus 1000 ; `start` : celles
+/// d'après, parmi elles).
+fn fetch_gecko(mint: &str, interval: &str, limit: usize, start: Option<i64>) -> Result<Vec<Candle>> {
+    let (timeframe, aggregate) = match interval {
+        "15m" => ("minute", 15),
+        "1h" => ("hour", 1),
+        "4h" => ("hour", 4),
+        "1d" => ("day", 1),
+        other => anyhow::bail!("intervalle non pris en charge : {other}"),
+    };
+    let response = shared_client()
+        .get(format!("{GECKO_TERMINAL_URL}/pools/{}/ohlcv/{timeframe}", gecko_pool(mint)?))
+        .header("accept", "application/json")
+        .query(&[("aggregate", aggregate.to_string()), ("limit", limit.min(1000).to_string()), ("currency", "usd".to_string()), ("token", "base".to_string())])
+        .send()
+        .context("appel du service de prix impossible")?;
+    ensure!(response.status().is_success(), "le service de prix a répondu {}", response.status());
+    let candles = parse_gecko_ohlcv(&response.text().context("réponse de prix illisible")?)?;
+    Ok(match start {
+        Some(start) => candles.into_iter().filter(|c| c.open_time >= start).collect(),
+        None => candles,
+    })
+}
+
 fn shared_client() -> &'static reqwest::blocking::Client {
     static CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
@@ -240,6 +394,7 @@ fn shared_client() -> &'static reqwest::blocking::Client {
 fn fetch_klines(asset: Asset, interval: &str, limit: usize, start: Option<i64>) -> Result<Vec<Candle>> {
     let symbol = match asset {
         Asset::Kraken(pair) => return fetch_kraken(pair, interval, limit, start),
+        Asset::Solana(mint) => return fetch_xstock(mint, interval, limit, start),
         Asset::Usd => anyhow::bail!("pas de série de prix pour un dollar stable"),
         other => other.binance_symbol().expect("paire Binance"),
     };
@@ -284,6 +439,10 @@ fn fetch_kraken(pair: &str, interval: &str, limit: usize, start: Option<i64>) ->
 /// 1000 à partir de l'origine (≈ 4 requêtes pour Bitcoin).
 fn fetch_daily_history(asset: Asset) -> Result<Vec<Candle>> {
     const PAGE: usize = 1000;
+    // Actions tokenisées : cotées depuis juin 2025, moins de 1000 jours.
+    if let Asset::Solana(mint) = asset {
+        return fetch_xstock(mint, "1d", PAGE, None);
+    }
     let mut candles: Vec<Candle> = Vec::new();
     loop {
         let start = candles.last().map_or(0, |c| c.open_time + DAY);
@@ -506,6 +665,52 @@ mod tests {
 
     /// Format réel de Kraken (réponse relevée sur l'API, tronquée) ; erreur
     /// du service et séries incohérentes refusées.
+    #[test]
+    fn jupiter_chart_is_parsed_and_checked() {
+        // Extrait réel (AAPLx, 10/10/2026) : de la plus ancienne à la plus récente.
+        let body = r#"{"candles":[{"time":1791622800,"open":335.5460055405212,"high":336.2,"low":335.2,"close":335.52725591416214,"volume":17859.1},{"time":1791626400,"open":335.52725591416214,"high":336.2,"low":335.2,"close":335.5189133638771,"volume":150.2}]}"#;
+        assert_eq!(parse_jupiter_chart(body).unwrap(), vec![candle(1_791_622_800, 335.5460055405212, 335.52725591416214), candle(1_791_626_400, 335.52725591416214, 335.5189133638771)]);
+        assert!(parse_jupiter_chart(r#"{"candles":[]}"#).is_err(), "vide");
+        assert!(parse_jupiter_chart(r#"{"error":"not found"}"#).is_err());
+        assert!(parse_jupiter_chart(r#"{"candles":[{"time":2,"open":1,"close":1},{"time":1,"open":1,"close":1}]}"#).is_err(), "désordre");
+        assert!(parse_jupiter_chart(r#"{"candles":[{"time":1,"open":1,"close":-1}]}"#).is_err(), "prix négatif");
+    }
+
+    #[test]
+    fn gecko_ohlcv_is_parsed_and_checked() {
+        // Extrait réel (AAPLx/USDC, 10/10/2026) : la plus récente d'abord.
+        let body = r#"{"data":{"attributes":{"ohlcv_list":[[1791590400,340.3661461621266,340.3661461621266,334.9319465990773,335.70110571415927,30710.65],[1791504000,338.644787845157,345.02710016742776,328.74819935392355,340.3661461621266,161181.43]]}}}"#;
+        assert_eq!(parse_gecko_ohlcv(body).unwrap(), vec![candle(1_791_504_000, 338.644787845157, 340.3661461621266), candle(1_791_590_400, 340.3661461621266, 335.70110571415927)]);
+        assert!(parse_gecko_ohlcv(r#"{"errors":[{"status":"429"}]}"#).is_err());
+        assert!(parse_gecko_ohlcv(r#"{"data":{"attributes":{"ohlcv_list":[[1,1,1,1,0,1]]}}}"#).is_err(), "prix nul");
+        assert!(parse_gecko_ohlcv(r#"{"data":{"attributes":{"ohlcv_list":[[1,1,1,1,1,1],[2,1,1,1,1,1]]}}}"#).is_err(), "désordre");
+        assert_eq!(price_asset("TSLAX"), Some(Asset::Solana("XsDoVfqeBukxuZHWhdvWHBhgEHjGNst4MLodqsJHzoB")));
+        assert_eq!(price_asset("BRK.BX"), Some(Asset::Solana("Xs6B6zawENwAbWVi7w92rjazLuAr5Az59qgWKcNb45x")));
+        assert_eq!(price_asset("BTC"), Some(Asset::Btc));
+        assert_eq!(price_asset("TSLA"), None);
+    }
+
+    /// Courbes réelles d'une action tokenisée (GeckoTerminal) : chaque période
+    /// donne une série ordonnée, au dernier prix proche du cours par unité
+    /// affichée de Jupiter.
+    /// `cargo test -- --ignored real_xstock_charts --nocapture`
+    #[test]
+    #[ignore]
+    fn real_xstock_charts() {
+        let asset = price_asset("AAPLX").unwrap();
+        let Asset::Solana(mint) = asset else { panic!("action attendue") };
+        let jupiter = crate::price_rpc::jupiter_stock_prices(&[mint]).unwrap()[0].usd;
+        for range in [ChartRange::Day, ChartRange::Week, ChartRange::Month, ChartRange::Year, ChartRange::All] {
+            let points = chart(asset, range).unwrap();
+            let last = points.last().unwrap().1;
+            println!("{range:?} : {} points, dernier {last:.2} $ (Jupiter {jupiter:.2} $)", points.len());
+            assert!(points.len() >= 2 && points.windows(2).all(|w| w[0].0 < w[1].0), "{range:?}");
+            assert!((last / jupiter - 1.0).abs() < 0.03, "{range:?} : {last} contre {jupiter}");
+            std::thread::sleep(std::time::Duration::from_millis(2500));
+        }
+        assert!(series(asset).unwrap().usd_at(Some(unix_now() - 3 * DAY)).is_some(), "prix d'il y a 3 jours");
+    }
+
     #[test]
     fn kraken_ohlc_is_parsed_and_checked() {
         let body = r#"{"error":[],"result":{"VVVUSD":[[1740614400,"4.214","4.244","3.992","4.000","4.165","4296.32432",35],

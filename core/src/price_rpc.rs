@@ -142,6 +142,8 @@ pub struct StockPrice {
     /// `usdPricePrescaled`, coefficient d'affichage compris).
     pub usd: f64,
     pub change_24h_percent: Option<f64>,
+    /// Capitalisation boursière de l'entreprise (ou du fonds), si Jupiter la donne.
+    pub market_cap_usd: Option<f64>,
 }
 
 /// Cours des xStocks `mints` via l'API de prix de Jupiter (gratuite, sans
@@ -161,7 +163,12 @@ pub fn jupiter_stock_prices(mints: &[&str]) -> Result<Vec<StockPrice>> {
         .filter_map(|mint| {
             let entry = body.get(*mint)?;
             let usd = entry["usdPrice"].as_f64().filter(|p| p.is_finite() && *p > 0.0)?;
-            Some(StockPrice { mint: mint.to_string(), usd, change_24h_percent: entry["priceChange24h"].as_f64().filter(|c| c.is_finite()) })
+            Some(StockPrice {
+                mint: mint.to_string(),
+                usd,
+                change_24h_percent: entry["priceChange24h"].as_f64().filter(|c| c.is_finite()),
+                market_cap_usd: entry["stockData"]["mcap"].as_f64().filter(|m| m.is_finite() && *m > 0.0),
+            })
         })
         .collect())
 }
