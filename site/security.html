@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Security in detail — OpenPGP Wallet</title>
+<meta name="description" content="OpenPGP Wallet's security architecture, point by point: key generation, local vault, OpenPGP-encrypted 2-of-3 Shamir backup, signatures, active protections and limits.">
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+<link rel="alternate" hreflang="fr" href="securite.html">
+<link rel="alternate" hreflang="en" href="security.html">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+
+<header class="nav">
+  <a class="brand" href="en.html" aria-label="OpenPGP Wallet, home">
+    <span class="brand-mark" aria-hidden="true">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f4f5f7" stroke-width="2" stroke-linecap="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg>
+    </span>
+    OpenPGP Wallet
+  </a>
+  <div class="nav-actions">
+    <span class="badge-private">IN DEVELOPMENT<span class="badge-extra"> · PROOF OF CONCEPT</span></span>
+    <a class="lang-switch" href="securite.html" hreflang="fr" lang="fr" aria-label="Version française">FR</a>
+    <a class="frost-link" href="frost-en.html">FROST</a>
+  </div>
+</header>
+
+<main>
+  <section class="deep">
+    <div class="deep-inner">
+      <a class="back" href="en.html#sec-security">← Back to home</a>
+      <div style="margin-top: 36px"><span class="eyebrow">Security in detail</span></div>
+      <h2>The security architecture, point by point.</h2>
+      <p class="lead">The home page shows the effect; this page shows the mechanism, for the curious and for experts. Nothing is left out, including what stays beyond the reach of software alone.</p>
+
+      <div class="group">
+        <div class="group-title">A — The master key</div>
+        <div class="item">
+          <h3>1. Entropy generation</h3>
+          <p>256 bits generated once, when the wallet is created, by the operating system's cryptographic generator (<code>BCryptGenRandom</code> on Windows), never a homemade one. This entropy is never displayed, never written down, never typed by the user, not even at creation time.</p>
+        </div>
+        <div class="item">
+          <h3>2. The device's local vault</h3>
+          <p>The full entropy is encrypted with an OpenPGP identity specific to this device; that identity's private key, protected by your password, is stored in the system vault (Windows Credential Manager). The key derivation cost (S2K) is set to the OpenPGP format's maximum, neither configurable nor lowerable through the API used. The vault is decrypted on the fly for each sensitive operation and never kept in memory between two actions.</p>
+        </div>
+        <div class="item">
+          <h3>3. Windows Hello unlock (TPM)</h3>
+          <p>Optionally, a random secret is sealed in a key held by the PC's security chip (TPM 2.0), with a rule that makes the TPM itself refuse any decryption without a fresh Windows Hello check (fingerprint, face or PIN). Unlike DPAPI-style protection, another program in the session can't silently obtain it. The password remains available as a fallback.</p>
+        </div>
+        <div class="item">
+          <h3>4. 2-of-3 Shamir backup kit</h3>
+          <p>Generated once at creation, independent of the local vault. The entropy is split into 3 shares (Shamir's secret sharing): any 2 rebuild everything, a single one reveals nothing. Each share is encrypted with its own OpenPGP identity and a random passphrase, stored <strong>alongside it</strong> on its medium: protection against a stolen medium therefore relies on the 2-share threshold, not on that encryption. Shares are written to folders or USB drives, read back and checked after writing; several wallets can share one drive, each in a folder under its own name.</p>
+        </div>
+        <div class="item">
+          <h3>5. Backups that stay usable</h3>
+          <p>OpenPGP encryption authenticates each share: the slightest damage (a corrupted bit on a USB drive) is detected instead of yielding a wrong secret. Each kit carries a mark: mixing shares from two different kits is refused, whereas Shamir's scheme alone would silently produce a wrong secret. Share keys don't depend on the computer's clock, and a frozen kit of every past format is restored in every automated test run. Before any restore, the recovered addresses are shown for you to check; "Check my backup drives" re-reads a kit without writing anything, with a yearly reminder.</p>
+        </div>
+      </div>
+
+      <div class="group">
+        <div class="group-title">B — Derivation and signing</div>
+        <div class="item">
+          <h3>6. Multi-network (HD) derivation</h3>
+          <p>From the same master entropy: Ethereum and Bitcoin via BIP32/secp256k1 (<code>m/44'/60'/0'/0/i</code> and <code>m/44'/0'/0'/0/i</code>), Solana via SLIP-0010/ed25519 with a fully hardened path (<code>m/44'/501'/i'/0'</code>), transparent Zcash via <code>m/44'/133'/0'/0/i</code> and shielded (Orchard) via ZIP-32, Dogecoin, Tron, XRP, Stellar (SEP-0005), NEAR, Cardano via CIP-1852 (BIP32-Ed25519), Stacks, Bittensor via sr25519 (Substrate scheme) and Monero following Ledger's scheme. The same address works on every Ethereum-compatible network. An extra profile is just one more derivation index: no change to the security model between 1 profile and 50.</p>
+        </div>
+        <div class="item">
+          <h3>7. Building and signing transactions</h3>
+          <p>Built by the app for Bitcoin, Dogecoin, Ethereum-compatible networks, Solana, Tron, XRP, Stellar, NEAR, Cardano, Stacks and Bittensor, without heavy SDKs; Zcash goes through its developers' official library (librustzcash), Monero through monero-oxide. Deterministic nonces (RFC 6979) for ECDSA signatures, which prevents key extraction through nonce reuse, and "low-S" normalized signatures, checked against official vectors. Tokenized stocks (Token-2022) are refused at send time if the issuer has paused transfers or added a transfer rule the app doesn't handle.</p>
+        </div>
+        <div class="item">
+          <h3>8. Swaps checked before signing</h3>
+          <p>A quote from a third-party service is never signed as is. Depending on the service: THORChain/Maya memo re-read (destination, minimum amount, affiliate); Jupiter transaction simulated and its effects checked (only the sold token leaves, the purchase lands on your address); CoW order signed (EIP-712) with every field verified; LI.FI Bitcoin transaction re-read output by output (single deposit, change back to you, capped fees). App fees are shown before the native confirmation.</p>
+        </div>
+      </div>
+
+      <div class="group">
+        <div class="group-title">C — Active protections</div>
+        <div class="item">
+          <h3>9. Memory wiping</h3>
+          <p>Every plaintext secret (entropy, shares, passwords) is wiped from memory as soon as it's no longer used, whatever the exit path, early error return or panic included. Memory locking (the equivalent of <code>mlock</code>/<code>VirtualLock</code>) also keeps these areas from being written to disk through the swap file.</p>
+        </div>
+        <div class="item">
+          <h3>10. Anti-guessing lockout</h3>
+          <p>A persisted failure counter imposes a growing delay after 5 wrong passwords, doubled with each new failure and capped at 5 minutes. An internal lock keeps a script trying several passwords in parallel from losing that count.</p>
+        </div>
+        <div class="item">
+          <h3>11. Checked addresses</h3>
+          <p>An Ethereum address whose EIP-55 checksum doesn't match is rejected. An address one character away from a contact or an already-paid address triggers a warning (address poisoning), and an address from another network is flagged before sending, with the network to pick.</p>
+        </div>
+        <div class="item">
+          <h3>12. External link allowlist</h3>
+          <p>Only the block explorers actually used by the app can be opened from the history: a real list of known domains, not just a check of the <code>https://</code> scheme.</p>
+        </div>
+        <div class="item">
+          <h3>13. Automatic lock</h3>
+          <p>After 10 minutes of inactivity, back to the unlock screen, and derived keys are forgotten on the Rust side.</p>
+        </div>
+      </div>
+
+      <div class="group">
+        <div class="group-title">D — Trust boundary</div>
+        <div class="item">
+          <h3>14. The interface is never trusted</h3>
+          <p>A strict CSP keeps the interface from contacting any server directly. It never receives a secret, only public addresses, balances and transaction IDs. Its permissions are cut to the bare minimum: no direct access to the file system or the network.</p>
+        </div>
+        <div class="item">
+          <h3>15. Native confirmation before every send</h3>
+          <p>Network, recipient, amount, fee and profile are shown in a Windows dialog, never an HTML window: a compromised interface can neither fake it nor make it disappear. It's followed by a 5-second window to cancel, enforced on the Rust side, before any signature. Other sensitive actions (deleting the wallet or a profile) go through a separate confirmation window, handled on the Rust side.</p>
+        </div>
+      </div>
+
+      <div class="group">
+        <div class="group-title warn">E — What these protections don't cover</div>
+        <div class="item">
+          <h3>16. Active malware on the device during use</h3>
+          <p>A keylogger capturing the password, or a read of the process memory at the exact moment of a signature, bypasses these protections without breaking anything. The TPM doesn't change that for the signature itself: it only knows the NIST curves (P-256, P-384), while Bitcoin and Ethereum use secp256k1 and Solana ed25519. <strong>This isn't a weakness specific to this project</strong>: no purely software wallet can fully protect against it. That's the point of hardware wallets (Ledger, Trezor, supported by the app), where the key never leaves a separate device with its own screen.</p>
+        </div>
+      </div>
+
+      <div class="todo-box">
+        <h3>What's not done yet</h3>
+        <p>Code signing, source code release for public review, and above all a security audit by an independent firm. None of the protections described here has been validated by a third party yet.</p>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="footer">
+  <span class="brand" style="font-size: 17px;">OpenPGP Wallet</span>
+  <span>Project in development: proof of concept, not audited. Don't trust it with significant funds. · <a href="en.html">Home</a> · <a href="frost-en.html">FROST</a> · <a href="securite.html" hreflang="fr" lang="fr">Français</a></span>
+</footer>
+
+<script src="assets/site.js"></script>
+</body>
+</html>

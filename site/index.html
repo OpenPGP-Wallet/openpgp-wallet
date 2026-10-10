@@ -1,10 +1,10 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="fr">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>OpenPGP Wallet — portefeuille crypto sans phrase de récupération</title>
-<meta name="description" content="OpenPGP Wallet : portefeuille crypto non-custodial multi-réseau pour Windows, sans phrase de récupération à noter. Projet en cours de développement.">
+<title>OpenPGP Wallet — vos cryptos et vos actions, sans phrase de récupération</title>
+<meta name="description" content="Portefeuille crypto non-custodial pour Windows : 18 réseaux, actions tokenisées, échanges et staking, sans phrase de 12 mots à noter. Une sauvegarde en trois morceaux, dont deux suffisent. Projet en développement.">
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
 <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
 <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
@@ -13,313 +13,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-<style>
-  :root {
-    --bg: #060708;
-    --surface: #0f1216;
-    --surface-2: #141920;
-    --line: #1c2128;
-    --line-2: #2a3039;
-    --text: #f4f5f7;
-    --muted: #a3aab5;
-    --dim: #6f7682;
-    --accent: #7c93ff;
-    --accent-soft: rgba(124, 147, 255, 0.14);
-    --ok: #4ade80;
-    --warn: #ffb648;
-    --maxw: 1200px;
-    --gutter: clamp(20px, 5vw, 64px);
-    --font-display: 'Space Grotesk', 'IBM Plex Sans', system-ui, sans-serif;
-    --font-body: 'IBM Plex Sans', system-ui, sans-serif;
-    --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
-  }
-
-  /* Passage en fondu entre les pages du site (navigateurs qui le prennent en charge). */
-  @view-transition { navigation: auto; }
-
-  * { box-sizing: border-box; }
-  html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
-  body {
-    margin: 0;
-    background: var(--bg);
-    color: var(--text);
-    font-family: var(--font-body);
-    font-size: 18px;
-    line-height: 1.65;
-    -webkit-font-smoothing: antialiased;
-    overflow-x: hidden;
-  }
-  h1, h2, h3 { font-family: var(--font-display); margin: 0; font-weight: 700; }
-  p { margin: 0; }
-  a { color: inherit; text-decoration: none; }
-  code, .mono { font-family: var(--font-mono); }
-  ::selection { background: var(--accent); color: #060708; }
-  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
-
-  /* ===== Navigation ===== */
-  .nav {
-    position: fixed; inset: 0 0 auto 0; z-index: 40;
-    height: 72px; display: flex; align-items: center; gap: 24px;
-    padding: 0 clamp(20px, 3vw, 40px);
-    background: rgba(6, 7, 8, 0.72);
-    backdrop-filter: saturate(140%) blur(14px);
-    -webkit-backdrop-filter: saturate(140%) blur(14px);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-  }
-  .brand { display: flex; align-items: center; gap: 11px; font-family: var(--font-display); font-weight: 700; font-size: 19px; letter-spacing: -0.01em; white-space: nowrap; }
-  .brand-mark { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; background: linear-gradient(145deg, #1d2330, #0d1016); border: 1px solid var(--line-2); }
-  .nav-links { display: flex; gap: 18px; }
-  .nav-links a { color: var(--muted); font-size: 15px; font-weight: 500; transition: color 0.2s; white-space: nowrap; }
-  .nav-links a:hover { color: var(--text); }
-  .nav-actions { margin-left: auto; display: flex; align-items: center; gap: 12px; }
-  .badge-private {
-    font-size: 12px; font-weight: 700; letter-spacing: 0.08em; white-space: nowrap;
-    color: var(--warn); border: 1px solid rgba(255, 182, 72, 0.35); background: rgba(255, 182, 72, 0.06);
-    padding: 6px 12px; border-radius: 999px;
-  }
-
-  .btn {
-    display: inline-flex; align-items: center; gap: 10px; height: 52px; padding: 0 24px;
-    border-radius: 12px; font-weight: 600; font-size: 17px; white-space: nowrap;
-    transition: transform 0.15s ease, background 0.2s, border-color 0.2s;
-  }
-  .btn-primary { background: var(--text); color: #060708; }
-  .btn-primary:hover { transform: translateY(-1px); background: #fff; }
-  .btn-ghost { border: 1px solid var(--line-2); color: var(--text); }
-  .btn-ghost:hover { border-color: #3d4450; background: rgba(255, 255, 255, 0.03); }
-  .btn-sm { height: 40px; padding: 0 16px; font-size: 15px; border-radius: 10px; }
-  .lang-switch { height: 40px; padding: 0 14px; display: inline-flex; align-items: center; border: 1px solid var(--line-2); border-radius: 10px; color: var(--muted); font-weight: 600; font-size: 14px; letter-spacing: 0.04em; transition: color 0.2s, border-color 0.2s; }
-  .lang-switch:hover { color: var(--text); border-color: #3d4450; }
-  .frost-link {
-    height: 40px; padding: 0 16px; display: inline-flex; align-items: center; border-radius: 10px;
-    font-family: var(--font-display); font-weight: 700; font-size: 14px; letter-spacing: 0.18em;
-    color: var(--text); background: var(--accent-soft); border: 1px solid rgba(124, 147, 255, 0.45);
-    transition: background 0.2s, color 0.2s, border-color 0.2s;
-  }
-  .frost-link:hover { background: var(--accent); border-color: var(--accent); color: #060708; }
-  .icon-btn { width: 40px; height: 40px; display: inline-grid; place-items: center; border: 1px solid var(--line-2); border-radius: 10px; color: var(--muted); transition: color 0.2s, border-color 0.2s; flex-shrink: 0; }
-  .icon-btn:hover { color: var(--text); border-color: #3d4450; }
-
-  /* ===== Hero ===== */
-  .hero { position: relative; min-height: 100vh; display: flex; align-items: center; padding: 120px var(--gutter) 90px; overflow: hidden; }
-  .hero::before {
-    content: ""; position: absolute; inset: 0; pointer-events: none;
-    background:
-      radial-gradient(ellipse 45% 55% at 74% 46%, rgba(124, 147, 255, 0.17), transparent 70%),
-      radial-gradient(ellipse 40% 35% at 12% 8%, rgba(167, 139, 250, 0.07), transparent 70%);
-  }
-  .hero-grid {
-    position: absolute; inset: 0; pointer-events: none;
-    background-image: linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
-    background-size: 64px 64px;
-    -webkit-mask-image: radial-gradient(ellipse 65% 60% at 62% 45%, #000 25%, transparent 75%);
-    mask-image: radial-gradient(ellipse 65% 60% at 62% 45%, #000 25%, transparent 75%);
-  }
-  .hero-inner { position: relative; width: 100%; max-width: var(--maxw); margin: 0 auto; display: grid; grid-template-columns: 1.08fr 0.92fr; gap: clamp(32px, 5vw, 72px); align-items: center; }
-  .eyebrow { display: inline-flex; align-items: center; gap: 12px; font-size: 14px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
-  .eyebrow::before { content: ""; width: 24px; height: 1px; background: currentColor; opacity: 0.6; }
-  .eyebrow .num { font-family: var(--font-mono); color: var(--accent); letter-spacing: 0.04em; }
-  h1 { font-size: clamp(44px, 4.9vw, 72px); line-height: 1.04; letter-spacing: -0.036em; margin-top: 22px; text-wrap: balance; }
-  h1 .strike { position: relative; color: var(--dim); white-space: nowrap; }
-  h1 .strike::after {
-    content: ""; position: absolute; left: -2%; right: -2%; top: 54%; height: 0.07em; border-radius: 1em;
-    background: var(--accent); transform: scaleX(0); transform-origin: left center;
-    animation: strike 0.9s cubic-bezier(0.65, 0, 0.35, 1) 0.7s forwards;
-  }
-  @keyframes strike { to { transform: scaleX(1); } }
-
-  .pgp { margin-top: 32px; max-width: 580px; padding: 20px 22px; border: 1px solid var(--line); border-radius: 16px; background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.01)); }
-  .pgp-armor { font-family: var(--font-mono); font-size: 13px; letter-spacing: 0.04em; color: var(--dim); }
-  .pgp-text { font-family: var(--font-mono); font-size: 16.5px; line-height: 1.72; color: #cdd2da; margin: 12px 0; letter-spacing: 0.01em; }
-  .cta { margin-top: 34px; display: flex; flex-wrap: wrap; gap: 14px; }
-
-  .hero-visual { position: relative; display: flex; flex-direction: column; align-items: center; }
-  .lock-stage { position: relative; width: min(100%, 560px); aspect-ratio: 1 / 1; }
-  .lock-stage canvas, .lock-stage .lock-fallback { position: absolute; inset: 0; width: 100%; height: 100%; }
-  /* Un seul des deux à la fois : le dessin seulement sans WebGL (sinon il
-     recouvrait le cadenas 3D). */
-  .lock-stage canvas { display: block; }
-  .lock-stage .lock-fallback { display: none; }
-  .lock-stage.no-webgl canvas { display: none; }
-  .lock-stage.no-webgl .lock-fallback { display: block; }
-  .lock-floor { position: absolute; left: 50%; bottom: 5%; width: 56%; height: 10%; transform: translateX(-50%); background: radial-gradient(ellipse at center, rgba(124, 147, 255, 0.30), rgba(124, 147, 255, 0) 70%); filter: blur(10px); pointer-events: none; }
-  .lock-status {
-    display: inline-flex; align-items: center; gap: 11px; margin-top: 6px;
-    padding: 10px 18px; border: 1px solid var(--line-2); border-radius: 999px;
-    background: rgba(12, 14, 17, 0.75); font-size: 15px; font-weight: 600; color: var(--muted);
-  }
-  .led { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px rgba(124, 147, 255, 0.15); transition: background 0.3s, box-shadow 0.3s; }
-  .lock-status.open .led { background: var(--ok); box-shadow: 0 0 0 4px rgba(74, 222, 128, 0.15), 0 0 14px rgba(74, 222, 128, 0.6); }
-
-  .scroll-hint { position: absolute; left: 50%; bottom: 28px; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 8px; color: var(--dim); font-size: 14px; font-weight: 500; }
-  .scroll-hint svg { animation: bounce 1.8s ease-in-out infinite; }
-  @keyframes bounce { 0%, 100% { transform: translateY(0); opacity: 0.55; } 50% { transform: translateY(7px); opacity: 1; } }
-
-  /* ===== Bandeau de chiffres clés ===== */
-  .strip { padding: 0 var(--gutter); }
-  .strip-inner { max-width: var(--maxw); margin: 0 auto; display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid var(--line); border-radius: 22px; background: linear-gradient(180deg, rgba(255, 255, 255, 0.025), rgba(255, 255, 255, 0.008)); }
-  .stat { padding: 32px 30px; }
-  .stat + .stat { border-left: 1px solid var(--line); }
-  .stat-k { font-family: var(--font-display); font-weight: 700; font-size: clamp(36px, 3.4vw, 48px); letter-spacing: -0.03em; line-height: 1; }
-  .stat-l { margin-top: 12px; font-size: 16.5px; line-height: 1.5; color: var(--muted); }
-
-  /* ===== Sections présentées ===== */
-  .feature { min-height: 92vh; display: flex; align-items: center; padding: 110px var(--gutter); }
-  .feature-inner { width: 100%; max-width: var(--maxw); margin: 0 auto; display: grid; grid-template-columns: 1fr 1fr; gap: clamp(40px, 7vw, 110px); align-items: center; }
-  .feature.reverse .feature-copy { order: 2; }
-  h2 { font-size: clamp(36px, 4.1vw, 56px); line-height: 1.07; letter-spacing: -0.032em; margin-top: 18px; max-width: 560px; text-wrap: balance; }
-  .lead { font-size: 19.5px; line-height: 1.7; color: var(--muted); margin-top: 22px; max-width: 520px; text-wrap: pretty; }
-  .feature-visual { display: flex; justify-content: center; }
-
-  .panel {
-    width: 100%; max-width: 450px; padding: 32px;
-    background: linear-gradient(180deg, #11151b, #0c0f13);
-    border: 1px solid var(--line); border-radius: 24px;
-    box-shadow: 0 40px 90px -40px rgba(0, 0, 0, 0.9), inset 0 1px 0 rgba(255, 255, 255, 0.04);
-  }
-  .panel-title { font-family: var(--font-display); font-weight: 600; font-size: 20px; letter-spacing: -0.01em; }
-  .panel-label { font-size: 15px; color: var(--dim); }
-
-  /* Révélations : état de départ, puis `.play` posé par le script quand la
-     section arrive à l'écran (délais en cascade, voir --d). */
-  .reveal { opacity: 0; transform: translateY(14px); transition: opacity 0.55s ease, transform 0.55s cubic-bezier(0.2, 0.8, 0.2, 1); }
-  .play .reveal { opacity: 1; transform: none; transition-delay: var(--d, 0s); }
-
-  /* 01 — Déverrouillage */
-  .lock-head { display: flex; align-items: center; gap: 12px; }
-  .pw-dots { display: flex; gap: 8px; margin-top: 12px; }
-  .pw-dot { flex: 1; height: 46px; border-radius: 10px; border: 1.5px solid var(--line-2); position: relative; transition: border-color 0.2s; }
-  .pw-dot::after { content: ""; position: absolute; left: 50%; top: 50%; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%; background: var(--text); transform: scale(0); transition: transform 0.2s ease; }
-  .play .pw-dot { border-color: #4a525e; transition-delay: var(--d); }
-  .play .pw-dot::after { transform: scale(1); transition-delay: var(--d); }
-  .unlock-btn { margin-top: 22px; height: 52px; display: grid; place-items: center; border-radius: 12px; background: var(--text); color: #060708; font-weight: 600; font-size: 17px; }
-  .unlock-ok { margin-top: 16px; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 16px; font-weight: 600; color: var(--ok); }
-
-  /* 02 — Multi-réseau */
-  .panel.list { padding: 0; overflow: hidden; }
-  .panel-bar { display: flex; justify-content: space-between; align-items: center; padding: 18px 24px; border-bottom: 1px solid var(--line); font-size: 15px; color: var(--dim); }
-  .rows { padding: 16px; display: flex; flex-direction: column; gap: 10px; }
-  .coin-row { display: flex; align-items: center; gap: 14px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 14px; background: rgba(255, 255, 255, 0.015); }
-  /* Logos officiels, les mêmes que dans l'app (app/src/assets). */
-  .coin-logo { width: 36px; height: 36px; object-fit: contain; flex-shrink: 0; }
-  /* Ce PNG a une large marge transparente autour du symbole : agrandi pour
-     paraître à la même taille que les autres (comme dans l'app). */
-  .coin-logo.sol { transform: scale(2.05); }
-  .coin-name { font-weight: 600; font-size: 17px; line-height: 1.25; }
-  .coin-net { font-size: 14px; color: var(--dim); }
-  .coin-amount { margin-left: auto; font-family: var(--font-mono); font-size: 16px; color: var(--text); }
-
-  /* 03 — Confirmation native */
-  .dialog { width: 100%; max-width: 450px; background: #f3f3f3; color: #1b1b1b; border-radius: 12px; overflow: hidden; box-shadow: 0 50px 100px -30px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(255, 255, 255, 0.08); opacity: 0; transform: scale(0.94) translateY(10px); transition: opacity 0.5s ease, transform 0.6s cubic-bezier(0.2, 0.8, 0.2, 1); }
-  .play .dialog { opacity: 1; transform: none; transition-delay: 0.15s; }
-  .dialog-bar { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; font-size: 13.5px; color: #333; background: #fff; border-bottom: 1px solid #e3e3e3; font-family: 'Segoe UI', var(--font-body); }
-  .dialog-body { padding: 24px 26px 8px; font-family: 'Segoe UI', var(--font-body); }
-  .dialog-title { font-size: 19px; font-weight: 600; color: #003e92; }
-  .dialog-lines { margin-top: 14px; font-family: var(--font-mono); font-size: 15px; line-height: 1.95; color: #2a2a2a; }
-  .dialog-actions { display: flex; justify-content: flex-end; gap: 10px; padding: 18px 22px; background: #eaeaea; margin-top: 18px; }
-  .dialog-actions span { min-width: 104px; text-align: center; padding: 8px 0; border-radius: 5px; font-size: 15px; border: 1px solid #c8c8c8; background: #fdfdfd; font-family: 'Segoe UI', var(--font-body); }
-  .dialog-actions .ok { background: #0067c0; border-color: #0067c0; color: #fff; }
-
-  /* 04 — Frais */
-  .fees { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
-  .fee { display: flex; justify-content: space-between; align-items: center; padding: 16px 18px; border: 1.5px solid var(--line); border-radius: 14px; color: var(--muted); transition: border-color 0.35s, color 0.35s, background 0.35s; }
-  .fee-label { font-weight: 600; font-size: 17px; }
-  .fee-sub { display: block; font-weight: 400; font-size: 14px; color: var(--dim); }
-  .fee-sat { font-family: var(--font-mono); font-size: 16px; }
-  .play .fee.choose { border-color: var(--accent); color: var(--text); background: var(--accent-soft); transition-delay: 1.5s; }
-
-  /* 05 — Messagerie */
-  .recipients { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
-  .recipient { display: flex; align-items: center; gap: 14px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 14px; font-size: 17px; color: var(--dim); transition: color 0.3s; }
-  .check { width: 22px; height: 22px; border-radius: 6px; border: 1.5px solid var(--line-2); display: grid; place-items: center; transition: background 0.3s, border-color 0.3s; }
-  .check svg { opacity: 0; transition: opacity 0.2s; }
-  .play .recipient.pick { color: var(--text); transition-delay: var(--d); }
-  .play .recipient.pick .check { background: var(--text); border-color: var(--text); transition-delay: var(--d); }
-  .play .recipient.pick .check svg { opacity: 1; transition-delay: var(--d); }
-  .key-id { margin-left: auto; font-family: var(--font-mono); font-size: 13.5px; color: var(--dim); }
-  .encrypted { margin-top: 18px; display: flex; align-items: center; gap: 9px; font-size: 16px; font-weight: 600; color: var(--ok); }
-
-  /* 06 — Sécurité */
-  .sec-list { display: flex; flex-direction: column; }
-  .sec-item { display: flex; gap: 16px; align-items: flex-start; padding: 20px 0; border-bottom: 1px solid var(--line); font-size: 18px; line-height: 1.55; color: #d2d6dd; }
-  .sec-item:first-child { border-top: 1px solid var(--line); }
-  .sec-icon { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); flex-shrink: 0; margin-top: -1px; }
-
-  /* 07 — Statut */
-  .status { padding: 140px var(--gutter); display: flex; justify-content: center; }
-  .status-inner { max-width: 820px; width: 100%; text-align: center; }
-  .status-inner h2 { margin: 18px auto 0; max-width: 760px; font-size: clamp(32px, 3.6vw, 48px); }
-  .roadmap { margin-top: 48px; text-align: left; border-top: 1px solid var(--line); }
-  .step { display: flex; gap: 18px; align-items: center; padding: 22px 0; border-bottom: 1px solid var(--line); font-size: 18.5px; color: #d2d6dd; }
-  .step-badge { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 15px; flex-shrink: 0; }
-  .step-badge.done { background: var(--text); color: #060708; }
-  .step-badge.doing { border: 1.5px solid var(--accent); color: var(--accent); }
-  .step-badge.todo { border: 1.5px solid var(--line-2); color: var(--dim); }
-
-  /* ===== Comment ça marche ===== */
-  .how { padding: 130px var(--gutter); border-top: 1px solid var(--line); background: linear-gradient(180deg, #08090b, var(--bg)); }
-  .how-inner { max-width: 900px; margin: 0 auto; }
-  .how-inner h2 { max-width: 720px; }
-  .group { margin-top: 64px; }
-  .group-title { font-family: var(--font-display); font-weight: 700; font-size: 15px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); margin-bottom: 8px; }
-  .group-title.warn { color: var(--warn); }
-  .item { padding: 24px 0; border-bottom: 1px solid var(--line); }
-  .item h3 { font-size: 21px; letter-spacing: -0.01em; }
-  .item p { margin-top: 8px; font-size: 17px; line-height: 1.75; color: #aab1bc; }
-  .item code { color: #dfe3ea; font-size: 0.92em; background: rgba(255, 255, 255, 0.05); padding: 1px 6px; border-radius: 5px; }
-  .item strong { color: #e4e7ec; }
-  .todo-box { margin-top: 56px; padding: 26px 28px; background: rgba(255, 182, 72, 0.06); border: 1px solid rgba(255, 182, 72, 0.25); border-radius: 16px; }
-  .todo-box h3 { font-size: 19px; color: #f0c98a; }
-  .todo-box p { margin-top: 8px; font-size: 17px; line-height: 1.7; color: #d8c2a0; }
-
-  .footer { padding: 56px var(--gutter); border-top: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 16px; justify-content: space-between; align-items: center; color: var(--dim); font-size: 15px; }
-
-  /* ===== Points de navigation ===== */
-  .dots { position: fixed; right: 24px; top: 50%; transform: translateY(-50%); z-index: 30; display: flex; flex-direction: column; gap: 16px; }
-  .dot { width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid #3a404a; transition: all 0.25s ease; }
-  .dot.active { background: var(--text); border-color: var(--text); transform: scale(1.3); }
-
-  /* ===== Écrans étroits ===== */
-  /* Les 8 liens tiennent à partir de ~1360 px (mesuré), avec le badge
-     raccourci sous 1600 px ; en dessous, les points de navigation à droite de
-     la page prennent le relais. */
-  @media (max-width: 1599px) { .badge-extra { display: none; } }
-  @media (max-width: 1359px) { .nav-links { display: none; } }
-  @media (max-width: 960px) {
-    .hero { padding-top: 104px; }
-    .hero-inner, .feature-inner { grid-template-columns: 1fr; }
-    .hero-visual { order: -1; }
-    .lock-stage { width: min(78vw, 420px); }
-    .feature.reverse .feature-copy { order: 0; }
-    .feature { min-height: 0; padding: 90px var(--gutter); }
-    .strip-inner { grid-template-columns: 1fr 1fr; }
-    .stat:nth-child(3) { border-left: 0; }
-    .stat:nth-child(n + 3) { border-top: 1px solid var(--line); }
-    .dots { display: none; }
-    .scroll-hint { display: none; }
-  }
-  @media (max-width: 640px) {
-    body { font-size: 17px; }
-    .nav { height: 64px; gap: 12px; }
-    .badge-private, .nav-actions .icon-btn { display: none; }
-    .strip-inner { grid-template-columns: 1fr; }
-    .stat + .stat { border-left: 0; border-top: 1px solid var(--line); }
-    .panel { padding: 24px; }
-    .btn { height: 50px; font-size: 16px; }
-    /* Rien ne dépasse de l'écran : sur-titres sur plusieurs lignes, pastille
-       d'état plus compacte ; le choix de langue reste visible. */
-    .eyebrow { flex-wrap: wrap; font-size: 12px; letter-spacing: 0.1em; gap: 8px; }
-    .lock-status { max-width: 100%; padding: 8px 14px; font-size: 13px; }
-    .lang-switch { display: inline-flex; height: 36px; padding: 0 12px; }
-    .frost-link { height: 36px; padding: 0 12px; }
-    html, body { overflow-x: hidden; }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    html { scroll-behavior: auto; }
-    *, *::before, *::after { animation-duration: 0.01ms !important; animation-delay: 0s !important; transition-duration: 0.01ms !important; transition-delay: 0s !important; }
-  }
-</style>
+<link rel="stylesheet" href="assets/site.css">
 </head>
 <body>
 
@@ -331,14 +25,14 @@
     OpenPGP Wallet
   </a>
   <nav class="nav-links" aria-label="Sections">
-    <a href="#sec-lock">Déverrouillage</a>
-    <a href="#sec-networks">Multi-réseau</a>
-    <a href="#sec-confirm">Confirmation</a>
-    <a href="#sec-fees">Frais</a>
-    <a href="#sec-messaging">Messagerie</a>
+    <a href="#sec-why">Pourquoi</a>
+    <a href="#sec-backup">Sauvegarde</a>
+    <a href="#sec-features">Fonctionnalités</a>
+    <a href="#sec-stocks">Actions</a>
+    <a href="#sec-swap">Échanges</a>
     <a href="#sec-security">Sécurité</a>
-    <a href="#sec-status">Statut</a>
-    <a href="#sec-howitworks">Comment ça marche</a>
+    <a href="#sec-status">Projet</a>
+    <a href="#sec-faq">FAQ</a>
   </nav>
   <div class="nav-actions">
     <span class="badge-private">EN DÉVELOPPEMENT<span class="badge-extra"> · PREUVE DE CONCEPT</span></span>
@@ -348,31 +42,33 @@
 </header>
 
 <nav class="dots" aria-label="Navigation par section">
-  <a class="dot" href="#sec-lock" title="Déverrouillage" aria-label="Déverrouillage"></a>
-  <a class="dot" href="#sec-networks" title="Multi-réseau" aria-label="Multi-réseau"></a>
-  <a class="dot" href="#sec-confirm" title="Confirmation" aria-label="Confirmation"></a>
-  <a class="dot" href="#sec-fees" title="Frais" aria-label="Frais"></a>
-  <a class="dot" href="#sec-messaging" title="Messagerie" aria-label="Messagerie"></a>
+  <a class="dot" href="#sec-why" title="Pourquoi" aria-label="Pourquoi"></a>
+  <a class="dot" href="#sec-backup" title="Sauvegarde" aria-label="Sauvegarde"></a>
+  <a class="dot" href="#sec-features" title="Fonctionnalités" aria-label="Fonctionnalités"></a>
+  <a class="dot" href="#sec-stocks" title="Actions tokenisées" aria-label="Actions tokenisées"></a>
+  <a class="dot" href="#sec-swap" title="Échanges" aria-label="Échanges"></a>
   <a class="dot" href="#sec-security" title="Sécurité" aria-label="Sécurité"></a>
-  <a class="dot" href="#sec-status" title="Statut" aria-label="Statut"></a>
+  <a class="dot" href="#sec-how" title="En pratique" aria-label="En pratique"></a>
+  <a class="dot" href="#sec-status" title="Où en est le projet" aria-label="Où en est le projet"></a>
+  <a class="dot" href="#sec-faq" title="Questions fréquentes" aria-label="Questions fréquentes"></a>
 </nav>
 
 <main id="top">
 
-  <!-- ===== Héro : cadenas 3D (WebGL, rendu par le script en bas de page) ===== -->
+  <!-- ===== Héro : cadenas 3D (WebGL, rendu par assets/site.js) ===== -->
   <section class="hero">
     <div class="hero-grid" aria-hidden="true"></div>
     <div class="hero-inner">
       <div class="hero-copy">
-        <span class="eyebrow">Portefeuille non-custodial · Multi-réseau</span>
+        <span class="eyebrow">Portefeuille crypto non-custodial · Windows</span>
         <h1>Plus jamais <span class="strike">12 mots</span> à recopier sur un bout de papier.</h1>
         <div class="pgp">
           <div class="pgp-armor" aria-hidden="true">-----BEGIN PGP MESSAGE-----</div>
-          <p id="hero-decrypt-text" class="pgp-text">La clé maîtresse qui génère toutes vos adresses est protégée par un partage de secret de Shamir, chiffré par OpenPGP — deux techniques éprouvées, assemblées pour qu'aucune part seule ne suffise jamais à vider un portefeuille.</p>
+          <p id="hero-decrypt-text" class="pgp-text">Vos cryptos et vos actions tokenisées dans une seule app. Un mot de passe pour l'ouvrir, une sauvegarde en trois morceaux pour ne jamais rien perdre, et personne d'autre que vous ne détient vos fonds.</p>
           <div class="pgp-armor" aria-hidden="true">-----END PGP MESSAGE-----</div>
         </div>
         <div class="cta">
-          <a class="btn btn-primary" href="#sec-howitworks">Comment ça marche</a>
+          <a class="btn btn-primary" href="#sec-why">Pourquoi c'est différent</a>
           <a class="btn btn-ghost" href="#sec-status">Où en est le projet</a>
         </div>
       </div>
@@ -394,7 +90,7 @@
             <circle cx="100" cy="128" r="3" fill="#7c93ff" opacity="0.8"/>
           </svg>
         </div>
-        <div class="lock-status" id="lock-status" role="status">
+        <div class="lock-status" id="lock-status" role="status" data-locked="Coffre verrouillé · chiffré OpenPGP" data-open="Déverrouillé par votre mot de passe">
           <span class="led" aria-hidden="true"></span>
           <span id="lock-status-text">Coffre verrouillé · chiffré OpenPGP</span>
         </div>
@@ -409,133 +105,226 @@
   <!-- ===== Chiffres clés ===== -->
   <section class="strip" id="strip" aria-label="En bref">
     <div class="strip-inner">
-      <div class="stat"><div class="stat-k">0</div><div class="stat-l">phrase de récupération à noter, à voir ou à saisir</div></div>
-      <div class="stat"><div class="stat-k">2 sur 3</div><div class="stat-l">parts de sauvegarde Shamir suffisent pour tout restaurer</div></div>
-      <div class="stat"><div class="stat-k">18</div><div class="stat-l">réseaux, dérivés d'une seule clé maîtresse</div></div>
-      <div class="stat"><div class="stat-k">OS</div><div class="stat-l">chaque envoi confirmé par Windows, pas par une page web</div></div>
+      <div class="stat"><div class="stat-k">0</div><div class="stat-l">mot à noter, à voir ou à retaper</div></div>
+      <div class="stat"><div class="stat-k">2 sur 3</div><div class="stat-l">morceaux de sauvegarde suffisent pour tout récupérer</div></div>
+      <div class="stat"><div class="stat-k">18</div><div class="stat-l">réseaux : Bitcoin, Ethereum, Solana…</div></div>
+      <div class="stat"><div class="stat-k">19</div><div class="stat-l">actions tokenisées : Apple, NVIDIA, Tesla…</div></div>
     </div>
   </section>
 
-  <!-- ===== 01 — Déverrouillage ===== -->
-  <section class="feature" id="sec-lock">
+  <!-- ===== 01 — Le problème ===== -->
+  <section class="section" id="sec-why">
+    <div class="section-inner">
+      <div class="section-head">
+        <span class="eyebrow"><span class="num">01</span> Le problème</span>
+        <h2>La phrase de 12 mots, c'est tout votre argent écrit sur un papier.</h2>
+        <p class="lead">Presque tous les portefeuilles crypto vous demandent de la recopier à la main. Et le jour où il faut s'en servir, c'est souvent trop tard.</p>
+      </div>
+      <div class="problems">
+        <div class="problem reveal" style="--d: 0.05s">
+          <span class="problem-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/><path d="M10 11v5M14 11v5"/></svg></span>
+          <h3>Vous la perdez</h3>
+          <p>Un déménagement, un incendie, un papier jeté par erreur : vos fonds sont perdus pour toujours. Personne ne peut les récupérer pour vous.</p>
+        </div>
+        <div class="problem reveal" style="--d: 0.15s">
+          <span class="problem-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></span>
+          <h3>Quelqu'un la trouve</h3>
+          <p>Une photo dans votre téléphone, un carnet dans un tiroir : quiconque la lit peut vider votre portefeuille en quelques minutes.</p>
+        </div>
+        <div class="problem reveal" style="--d: 0.25s">
+          <span class="problem-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg></span>
+          <h3>Vous la retapez</h3>
+          <p>Sur un faux site ou un ordinateur infecté, la saisir suffit à la donner aux voleurs. C'est l'arnaque la plus courante.</p>
+        </div>
+      </div>
+      <div class="answer reveal" style="--d: 0.35s">
+        <span class="answer-icon" aria-hidden="true"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 4.5-3.2 8.3-8 9-4.8-.7-8-4.5-8-9V6z"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg></span>
+        <p>Avec OpenPGP Wallet, cette phrase n'existe pas. <span>Vous ne la voyez jamais, vous ne la notez jamais, vous ne la tapez jamais : il n'y a rien à perdre, rien à voler.</span></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 02 — La sauvegarde ===== -->
+  <section class="feature" id="sec-backup">
     <div class="feature-inner">
       <div class="feature-copy">
-        <span class="eyebrow"><span class="num">01</span> À l'ouverture</span>
-        <h2>Un mot de passe. Rien à noter, rien à retenir de plus.</h2>
-        <p class="lead">Il déverrouille le coffre local de cet appareil et valide chaque transaction. La clé qu'il protège, vous ne la voyez jamais.</p>
+        <span class="eyebrow"><span class="num">02</span> La sauvegarde</span>
+        <h2>Trois morceaux. Deux suffisent. Un seul ne sert à rien.</h2>
+        <p class="lead">À la création, l'app découpe la clé de votre portefeuille en trois morceaux, comme une carte au trésor déchirée en trois. Deux morceaux suffisent pour tout reconstruire ; un morceau seul ne révèle rien, même à un expert.</p>
+        <ul class="ticks">
+          <li><strong>Rangez-les sur des clés USB</strong> : une chez vous, une chez un proche, une au bureau. Perdez-en une, rien de grave.</li>
+          <li>Chaque morceau est scellé au format <strong>OpenPGP</strong>, le standard qui chiffre des e-mails depuis plus de 30 ans : la moindre altération est détectée.</li>
+          <li>Plusieurs portefeuilles peuvent partager les mêmes clés USB, chacun rangé sous son nom.</li>
+          <li>L'app vérifie vos clés de sauvegarde quand vous le voulez, et vous le rappelle chaque année.</li>
+        </ul>
       </div>
       <div class="feature-visual">
         <div class="panel">
-          <div class="lock-head">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#a3aab5" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg>
-            <span class="panel-title">Portefeuille verrouillé</span>
+          <div class="panel-title">Restaurer le portefeuille</div>
+          <div class="panel-label">Sur un nouvel ordinateur</div>
+          <div class="keys">
+            <div class="key read reveal" style="--d: 0.1s">
+              <span class="key-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="9" width="10" height="13" rx="2"/><path d="M9 9V3h6v6M10.5 5.5h.01M13.5 5.5h.01"/></svg></span>
+              <span><span class="key-name">Clé USB n° 1</span><br><span class="key-where">À la maison</span></span>
+              <span class="key-state">Lue ✓</span>
+            </div>
+            <div class="key read reveal" style="--d: 0.45s">
+              <span class="key-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="9" width="10" height="13" rx="2"/><path d="M9 9V3h6v6M10.5 5.5h.01M13.5 5.5h.01"/></svg></span>
+              <span><span class="key-name">Clé USB n° 2</span><br><span class="key-where">Chez un proche</span></span>
+              <span class="key-state">Lue ✓</span>
+            </div>
+            <div class="key lost reveal" style="--d: 0.8s">
+              <span class="key-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="9" width="10" height="13" rx="2"/><path d="M9 9V3h6v6M10.5 5.5h.01M13.5 5.5h.01"/></svg></span>
+              <span><span class="key-name">Clé USB n° 3</span><br><span class="key-where">Au bureau</span></span>
+              <span class="key-state">Perdue</span>
+            </div>
           </div>
-          <div class="panel-label" style="margin-top: 24px;">Mot de passe</div>
-          <div class="pw-dots" aria-hidden="true">
-            <span class="pw-dot" style="--d: 0.10s"></span><span class="pw-dot" style="--d: 0.22s"></span><span class="pw-dot" style="--d: 0.34s"></span><span class="pw-dot" style="--d: 0.46s"></span>
-            <span class="pw-dot" style="--d: 0.58s"></span><span class="pw-dot" style="--d: 0.70s"></span><span class="pw-dot" style="--d: 0.82s"></span><span class="pw-dot" style="--d: 0.94s"></span>
-          </div>
-          <div class="unlock-btn">Déverrouiller</div>
-          <div class="unlock-ok reveal" style="--d: 1.45s">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
-            Coffre déverrouillé
+          <div class="restored reveal" style="--d: 1.15s">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
+            <span>Portefeuille restauré<small>Deux morceaux sur trois ont suffi. Vos adresses s'affichent pour vérification.</small></span>
           </div>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- ===== 02 — Multi-réseau ===== -->
-  <section class="feature reverse" id="sec-networks">
+  <!-- ===== 03 — Au quotidien ===== -->
+  <section class="section" id="sec-features">
+    <div class="section-inner">
+      <div class="section-head">
+        <span class="eyebrow"><span class="num">03</span> Au quotidien</span>
+        <h2>Tout ce qu'il vous faut, au même endroit.</h2>
+        <p class="lead">Une seule app et une seule sauvegarde pour l'ensemble de vos avoirs numériques, sans compte à ouvrir nulle part.</p>
+      </div>
+      <div class="cards">
+        <div class="card wide reveal" style="--d: 0.05s">
+          <span class="card-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg></span>
+          <h3>18 réseaux, une seule sauvegarde</h3>
+          <p>Bitcoin, Ethereum, Solana, BNB Chain, Arbitrum, Base, Polygon, Avalanche, Zcash, Monero, Dogecoin, Tron, XRP, Stellar, NEAR, Cardano, Stacks et Bittensor, avec leurs jetons (USDC, USDT, LINK…). Vous pouvez même ajouter vous-même un réseau compatible Ethereum.</p>
+          <div class="logos" aria-hidden="true">
+            <img src="assets/btc.webp" alt=""><img src="assets/eth.svg" alt=""><img src="assets/sol.png" alt="" style="transform: scale(1.6)"><img src="assets/bnb.png" alt=""><img src="assets/arb.jpg" alt=""><span class="logo-base"></span><img src="assets/pol.png" alt=""><img src="assets/avax.png" alt=""><img src="assets/zec.png" alt=""><img src="assets/xmr.png" alt=""><img src="assets/doge.png" alt=""><img src="assets/trx.png" alt=""><img src="assets/xrp.svg" alt=""><img src="assets/xlm.jpg" alt=""><img src="assets/near.jpg" alt=""><img src="assets/ada.png" alt=""><img src="assets/stx.png" alt=""><img src="assets/tao.jpg" alt="">
+          </div>
+        </div>
+        <div class="card reveal" style="--d: 0.12s">
+          <span class="card-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4L3 8l4 4"/><path d="M3 8h13a4 4 0 0 1 4 4"/><path d="M17 20l4-4-4-4"/><path d="M21 16H8a4 4 0 0 1-4-4"/></svg></span>
+          <h3>Échanger sans plateforme</h3>
+          <p>Passez du Bitcoin à l'Ethereum, ou de SOL à USDC, sans ouvrir de compte ni confier vos fonds à qui que ce soit.</p>
+          <a class="more" href="#sec-swap">Voir comment →</a>
+        </div>
+        <div class="card reveal" style="--d: 0.19s">
+          <span class="card-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V11"/><path d="M12 11c0-4 3-7 8-7 0 5-3 8-8 7z"/><path d="M12 14c0-3-2.5-5.5-7-5.5 0 4 2.5 6.5 7 5.5z"/></svg></span>
+          <h3>Faire fructifier</h3>
+          <p>Placez vos SOL, ETH ou ADA (staking) pour toucher un rendement annuel affiché à l'avance. Ils restent à votre nom, pas sur une plateforme.</p>
+        </div>
+        <div class="card reveal" style="--d: 0.26s">
+          <span class="card-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg></span>
+          <h3>Suivre son patrimoine</h3>
+          <p>Valeur totale et sa courbe, historique lisible, alerte quand de l'argent arrive, profils séparés (personnel, épargne…) et portefeuilles d'ailleurs suivis en lecture seule.</p>
+        </div>
+        <div class="card reveal" style="--d: 0.33s">
+          <span class="card-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 5.1A10.9 10.9 0 0 1 12 5c6.5 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.2M6.6 6.6C3.9 8.4 2 12 2 12s3.5 7 10 7a10 10 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg></span>
+          <h3>Vie privée</h3>
+          <p>Zcash protégé et Monero pour des paiements dont montants et destinataires restent invisibles, et des messages chiffrés que seuls vos destinataires peuvent lire.</p>
+        </div>
+        <div class="card reveal" style="--d: 0.4s">
+          <span class="card-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="15" height="10" rx="2"/><path d="M18 10h3v4h-3M7 12h5"/></svg></span>
+          <h3>Votre Ledger ou Trezor</h3>
+          <p>Branchez votre portefeuille matériel : il signe, l'app affiche. Le bon réflexe pour les gros montants.</p>
+        </div>
+        <div class="card reveal" style="--d: 0.47s">
+          <span class="card-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg></span>
+          <h3>Ouvert aux applis décentralisées</h3>
+          <p>Avec WalletConnect, utilisez vos fonds sur les sites de finance décentralisée, en validant chaque demande dans l'app.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 04 — Actions tokenisées ===== -->
+  <section class="feature reverse" id="sec-stocks">
     <div class="feature-inner">
       <div class="feature-copy">
-        <span class="eyebrow"><span class="num">02</span> Multi-réseau</span>
-        <h2>Une seule clé, toutes vos adresses.</h2>
-        <p class="lead">Bitcoin, Ethereum et ses réseaux Arbitrum et Base, Solana, BNB Chain, Avalanche, Polygon, Zcash (transparent et protégé), Monero, Dogecoin, Tron, XRP, Stellar, NEAR, Cardano, Stacks et Bittensor — avec leurs jetons (USDC, USDT, LINK…), tous dérivés de la même entropie maître. Un tableau de bord, un seul secret à protéger.</p>
+        <span class="eyebrow"><span class="num">04</span> <span class="new">Nouveau</span> · Actions tokenisées</span>
+        <h2>Apple, NVIDIA, Tesla… à côté de vos cryptos.</h2>
+        <p class="lead">Des jetons qui suivent le cours de vraies actions et de fonds, sur la blockchain Solana. Achetables à toute heure, même le week-end, en quelques secondes, depuis l'app.</p>
+        <ul class="ticks">
+          <li><strong>19 actions et fonds</strong> : Apple, NVIDIA, Microsoft, Alphabet, Amazon, Meta, Tesla, S&amp;P 500, Nasdaq 100…</li>
+          <li>Un onglet à part, pour ne pas les mélanger à vos cryptos, classé par capitalisation.</li>
+          <li>Cours en direct, variation du jour et courbe sur un an.</li>
+          <li><strong>Achat sans frais de l'app</strong> ; vente et envoi en quelques clics.</li>
+        </ul>
+        <p class="note"><strong>À savoir :</strong> émises par Backed Assets (xStocks), sans droit de vote. Interdites aux personnes des États-Unis, non proposées au Royaume-Uni, au Canada ni en Australie. Le prix peut s'écarter de celui de la Bourse quand elle est fermée.</p>
       </div>
       <div class="feature-visual">
         <div class="panel list">
-          <div class="panel-bar"><span>Portefeuille</span><span>Profil principal</span></div>
+          <div class="panel-bar"><strong>Mes actions</strong><span>Exemple</span></div>
           <div class="rows">
-            <div class="coin-row reveal" style="--d: 0.05s"><img class="coin-logo" src="assets/eth.svg" alt="" width="36" height="36"><div><div class="coin-name">Ethereum</div><div class="coin-net">Ethereum</div></div><span class="coin-amount">0.842 ETH</span></div>
-            <div class="coin-row reveal" style="--d: 0.20s"><img class="coin-logo" src="assets/btc.webp" alt="" width="36" height="36"><div><div class="coin-name">Bitcoin</div><div class="coin-net">Bitcoin</div></div><span class="coin-amount">0.041 BTC</span></div>
-            <div class="coin-row reveal" style="--d: 0.35s"><img class="coin-logo sol" src="assets/sol.png" alt="" width="36" height="36"><div><div class="coin-name">Solana</div><div class="coin-net">Solana</div></div><span class="coin-amount">12.4 SOL</span></div>
-            <div class="coin-row reveal" style="--d: 0.50s"><img class="coin-logo" src="assets/usdc.png" alt="" width="36" height="36"><div><div class="coin-name">USDC</div><div class="coin-net">Base</div></div><span class="coin-amount">250.00 USDC</span></div>
-            <div class="coin-row reveal" style="--d: 0.65s"><img class="coin-logo" src="assets/zec.png" alt="" width="36" height="36"><div><div class="coin-name">Zcash</div><div class="coin-net">Zcash</div></div><span class="coin-amount">1.20 ZEC</span></div>
-            <div class="coin-row reveal" style="--d: 0.80s"><img class="coin-logo" src="assets/xmr.png" alt="" width="36" height="36"><div><div class="coin-name">Monero</div><div class="coin-net">Monero</div></div><span class="coin-amount">3.50 XMR</span></div>
-            <div class="coin-row reveal" style="--d: 0.95s"><img class="coin-logo" src="assets/doge.png" alt="" width="36" height="36"><div><div class="coin-name">Dogecoin</div><div class="coin-net">Dogecoin</div></div><span class="coin-amount">420.00 DOGE</span></div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ===== 03 — Confirmation native ===== -->
-  <section class="feature" id="sec-confirm">
-    <div class="feature-inner">
-      <div class="feature-copy">
-        <span class="eyebrow"><span class="num">03</span> À l'envoi</span>
-        <h2>Confirmé par le système, pas par une page web.</h2>
-        <p class="lead">Réseau, destinataire, montant et frais s'affichent dans une vraie boîte de dialogue de l'OS — infalsifiable par un frontend compromis.</p>
-      </div>
-      <div class="feature-visual">
-        <div class="dialog" role="img" aria-label="Boîte de dialogue Windows de confirmation d'envoi">
-          <div class="dialog-bar"><span>OpenPGP Wallet</span><span aria-hidden="true">✕</span></div>
-          <div class="dialog-body">
-            <div class="dialog-title">Confirmer l'envoi</div>
-            <div class="dialog-lines">
-              Réseau : Bitcoin — fonds réels<br>
-              Destinataire : bc1q…w4x9<br>
-              Montant : 0.004 BTC<br>
-              Frais : 0.0000124 BTC
+            <div class="stock-row reveal" style="--d: 0.1s">
+              <img class="stock-logo" src="assets/xstocks/aaplx.png" alt="">
+              <span><span class="stock-name">Apple</span><br><span class="stock-sym">AAPLx</span></span>
+              <svg class="spark up" viewBox="0 0 76 28" aria-hidden="true" style="--d: 0.2s"><path d="M2 20 L10 18 L17 21 L25 15 L33 16 L41 11 L49 13 L57 8 L65 9 L74 5"/></svg>
+              <span class="stock-price">336,45 $<span class="up">▲ 0,64 %</span></span>
+            </div>
+            <div class="stock-row reveal" style="--d: 0.2s">
+              <img class="stock-logo" src="assets/xstocks/nvdax.png" alt="">
+              <span><span class="stock-name">NVIDIA</span><br><span class="stock-sym">NVDAx</span></span>
+              <svg class="spark up" viewBox="0 0 76 28" aria-hidden="true" style="--d: 0.3s"><path d="M2 23 L10 21 L17 22 L25 17 L33 18 L41 13 L49 10 L57 12 L65 6 L74 4"/></svg>
+              <span class="stock-price">186,20 $<span class="up">▲ 1,12 %</span></span>
+            </div>
+            <div class="stock-row reveal" style="--d: 0.3s">
+              <img class="stock-logo" src="assets/xstocks/tslax.png" alt="">
+              <span><span class="stock-name">Tesla</span><br><span class="stock-sym">TSLAx</span></span>
+              <svg class="spark down" viewBox="0 0 76 28" aria-hidden="true" style="--d: 0.4s"><path d="M2 8 L10 10 L17 7 L25 12 L33 11 L41 15 L49 13 L57 18 L65 17 L74 21"/></svg>
+              <span class="stock-price">382,79 $<span class="down">▼ 0,45 %</span></span>
+            </div>
+            <div class="stock-row reveal" style="--d: 0.4s">
+              <img class="stock-logo" src="assets/xstocks/spyx.png" alt="">
+              <span><span class="stock-name">S&amp;P 500</span><br><span class="stock-sym">SPYx</span></span>
+              <svg class="spark up" viewBox="0 0 76 28" aria-hidden="true" style="--d: 0.5s"><path d="M2 18 L10 17 L17 18 L25 15 L33 15 L41 13 L49 13 L57 11 L65 10 L74 9"/></svg>
+              <span class="stock-price">778,97 $<span class="up">▲ 0,26 %</span></span>
             </div>
           </div>
-          <div class="dialog-actions"><span class="ok">OK</span><span>Annuler</span></div>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- ===== 04 — Frais ===== -->
-  <section class="feature reverse" id="sec-fees">
+  <!-- ===== 05 — Échanges ===== -->
+  <section class="feature" id="sec-swap">
     <div class="feature-inner">
       <div class="feature-copy">
-        <span class="eyebrow"><span class="num">04</span> Frais Bitcoin</span>
-        <h2>Rapide, moyen ou lent — à vous de choisir.</h2>
-        <p class="lead">Les trois paliers sont calculés en direct sur le réseau au moment de l'envoi, plutôt qu'un montant fixe qui devient insuffisant, et affichés dans votre devise.</p>
+        <span class="eyebrow"><span class="num">05</span> Échanges</span>
+        <h2>Changez de crypto sans ouvrir de compte nulle part.</h2>
+        <p class="lead">L'app interroge plusieurs services d'échange décentralisés et vous propose le meilleur prix. Vos fonds partent de votre portefeuille et y reviennent : aucune plateforme ne les garde entre-temps.</p>
+        <ul class="ticks">
+          <li>THORChain, Maya, Jupiter, CoW Protocol, LI.FI, NEAR Intents, Chainflip et MoonPay Trade.</li>
+          <li><strong>Chaque transaction est vérifiée avant d'être signée</strong> : l'app contrôle que ce qui part et ce qui revient correspond bien au devis.</li>
+          <li>Frais de l'app de 0 à 1 % selon le service, toujours affichés avant de confirmer.</li>
+        </ul>
       </div>
       <div class="feature-visual">
         <div class="panel">
-          <div class="panel-label">Vitesse d'envoi</div>
-          <div class="fees">
-            <div class="fee reveal" style="--d: 0.05s"><span class="fee-label">Rapide<span class="fee-sub">~10 min</span></span><span class="fee-sat">≈ 0,93 $</span></div>
-            <div class="fee choose reveal" style="--d: 0.25s"><span class="fee-label">Moyen<span class="fee-sub">~30 min</span></span><span class="fee-sat">≈ 0,63 $</span></div>
-            <div class="fee reveal" style="--d: 0.45s"><span class="fee-label">Lent<span class="fee-sub">~1 h</span></span><span class="fee-sat">≈ 0,23 $</span></div>
+          <div class="panel-title">Convertir</div>
+          <div class="panel-label">Exemple : de Bitcoin vers Ethereum</div>
+          <div style="margin-top: 16px">
+            <div class="swap-box">
+              <div class="swap-label">Vous envoyez</div>
+              <div class="swap-amount"><img src="assets/btc.webp" alt="">0,01 BTC</div>
+            </div>
+            <div class="swap-arrow" aria-hidden="true"><span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M6 13l6 6 6-6"/></svg></span></div>
+            <div class="swap-box">
+              <div class="swap-label">Vous recevez, sur votre adresse Ethereum</div>
+              <div class="swap-amount"><img src="assets/eth.svg" alt="">≈ 0,3021 ETH</div>
+            </div>
           </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ===== 05 — Messagerie ===== -->
-  <section class="feature" id="sec-messaging">
-    <div class="feature-inner">
-      <div class="feature-copy">
-        <span class="eyebrow"><span class="num">05</span> Messagerie</span>
-        <h2>Le même protocole, pour son usage d'origine.</h2>
-        <p class="lead">PGP servait d'abord à chiffrer des messages, avant d'être détourné ici pour protéger une clé. L'app le propose aussi tel quel, pour plusieurs destinataires à la fois.</p>
-      </div>
-      <div class="feature-visual">
-        <div class="panel">
-          <div class="panel-label">Destinataires (un ou plusieurs)</div>
-          <div class="recipients">
-            <div class="recipient pick" style="--d: 0.35s"><span class="check"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#060708" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>Alice<span class="key-id">0x8F3A…21C4</span></div>
-            <div class="recipient pick" style="--d: 0.95s"><span class="check"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#060708" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>Bob<span class="key-id">0x1D97…B0E2</span></div>
-            <div class="recipient"><span class="check"></span>Mowgli<span class="key-id">0x5C02…7A9F</span></div>
+          <div class="quotes">
+            <div class="quote best reveal" style="--d: 0.3s"><b>THORChain<span class="q-best">MEILLEUR PRIX</span></b><span class="q-out">0,3021 ETH</span></div>
+            <div class="quote reveal" style="--d: 0.45s"><b>NEAR Intents</b><span class="q-out">0,3012 ETH</span></div>
+            <div class="quote reveal" style="--d: 0.6s"><b>Chainflip</b><span class="q-out">0,3009 ETH</span></div>
           </div>
-          <div class="encrypted reveal" style="--d: 1.6s">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg>
-            Message chiffré pour 2 destinataires
+          <div class="verified reveal" style="--d: 1.4s">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.2 8.3-8 9-4.8-.7-8-4.5-8-9V6z"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg>
+            Transaction vérifiée avant signature
           </div>
         </div>
       </div>
@@ -543,124 +332,153 @@
   </section>
 
   <!-- ===== 06 — Sécurité ===== -->
-  <section class="feature reverse" id="sec-security">
-    <div class="feature-inner">
-      <div class="feature-copy">
-        <span class="eyebrow"><span class="num">06</span> Sécurité</span>
-        <h2>Ce qui protège vraiment vos fonds.</h2>
-        <p class="lead">Chacune de ces protections répond à une attaque réelle, déjà documentée sur d'autres wallets.</p>
-      </div>
-      <div class="feature-visual">
-        <div class="sec-list" style="width: 100%; max-width: 500px;">
-          <div class="sec-item reveal" style="--d: 0.05s"><span class="sec-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>Effacement mémoire et verrouillage anti-swap sur tout secret en clair</div>
-          <div class="sec-item reveal" style="--d: 0.20s"><span class="sec-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>Verrouillage anti-brute-force à délai croissant sur le mot de passe</div>
-          <div class="sec-item reveal" style="--d: 0.35s"><span class="sec-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>Checksum EIP-55 contre une adresse Ethereum mal recopiée</div>
-          <div class="sec-item reveal" style="--d: 0.50s"><span class="sec-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>Liste blanche de domaines pour tout lien ouvert hors de l'app</div>
-          <div class="sec-item reveal" style="--d: 0.65s"><span class="sec-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>Verrouillage automatique après 10 minutes d'inactivité</div>
-          <div class="sec-item reveal" style="--d: 0.80s"><span class="sec-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>Alerte quand une adresse imite celle d'un contact (empoisonnement d'adresse)</div>
-          <div class="sec-item reveal" style="--d: 0.95s"><span class="sec-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>5 secondes pour annuler un envoi après sa confirmation, avant toute signature</div>
-          <div class="sec-item reveal" style="--d: 1.10s"><span class="sec-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>Adresse d'un autre réseau signalée avant l'envoi</div>
+  <section class="section" id="sec-security">
+    <div class="section-inner">
+      <div class="feature-inner">
+        <div class="feature-copy">
+          <span class="eyebrow"><span class="num">06</span> Sécurité</span>
+          <h2>Des protections que vous voyez, pas seulement des promesses.</h2>
+          <p class="lead">Chacune répond à une arnaque ou à une attaque réelle, déjà vue sur d'autres portefeuilles. La plus importante : avant chaque envoi, c'est Windows qui vous montre le destinataire et le montant, pas une page que l'on pourrait truquer.</p>
         </div>
+        <div class="feature-visual" style="flex-direction: column; align-items: center;">
+          <div class="dialog" role="img" aria-label="Fenêtre de confirmation Windows : réseau Bitcoin, destinataire, montant 0,004 BTC, frais environ 0,13 dollar, boutons OK et Annuler">
+            <div class="dialog-bar"><span>OpenPGP Wallet</span><span aria-hidden="true">✕</span></div>
+            <div class="dialog-body">
+              <div class="dialog-title">Confirmer l'envoi</div>
+              <div class="dialog-lines">
+                Réseau : Bitcoin — fonds réels<br>
+                Destinataire : bc1q…w4x9<br>
+                Montant : 0,004 BTC<br>
+                Frais : ≈ 0,13 $
+              </div>
+            </div>
+            <div class="dialog-actions"><span class="ok">OK</span><span>Annuler</span></div>
+          </div>
+          <p class="dialog-caption">Une vraie fenêtre de Windows : même un affichage piraté ne peut pas la falsifier.</p>
+        </div>
+      </div>
+
+      <div class="shields">
+        <div class="shield reveal" style="--d: 0.05s">
+          <span class="shield-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9 2h6"/></svg></span>
+          <div><h3>5 secondes pour changer d'avis</h3><p>Après avoir confirmé un envoi, un compte à rebours vous laisse l'annuler avant que quoi que ce soit ne soit signé.</p></div>
+        </div>
+        <div class="shield reveal" style="--d: 0.1s">
+          <span class="shield-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+          <div><h3>Adresse piégée repérée</h3><p>Une adresse qui ressemble à celle d'un contact à un caractère près ? L'app vous prévient avant l'envoi (« empoisonnement d'adresse »).</p></div>
+        </div>
+        <div class="shield reveal" style="--d: 0.15s">
+          <span class="shield-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="19" r="2"/><circle cx="18" cy="5" r="2"/><path d="M8 19h8a3 3 0 0 0 0-6H8a3 3 0 0 1 0-6h8"/></svg></span>
+          <div><h3>Mauvais réseau signalé</h3><p>Coller l'adresse d'un autre réseau est signalé avant l'envoi, pas après la perte, avec le bon réseau à choisir.</p></div>
+        </div>
+        <div class="shield reveal" style="--d: 0.2s">
+          <span class="shield-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 11c0 3.5-1 6.5-3 9M8 6.5A6 6 0 0 1 18 11c0 2-.2 4-.7 5.8M5 9.5A8 8 0 0 0 4 13M12 15c-.3 2-1 4-2 5.5M15 19.5c.5-1.3.8-2.7 1-4.2"/><path d="M9 11a3 3 0 0 1 6 0"/></svg></span>
+          <div><h3>Ouvrir d'un regard</h3><p>Windows Hello : votre empreinte ou votre visage déverrouille l'app, protégé par la puce de sécurité (TPM) de votre PC.</p></div>
+        </div>
+        <div class="shield reveal" style="--d: 0.25s">
+          <span class="shield-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg></span>
+          <div><h3>Verrouillage automatique</h3><p>L'app se referme après 10 minutes d'inactivité, et les erreurs de mot de passe répétées allongent l'attente avant le prochain essai.</p></div>
+        </div>
+        <div class="shield reveal" style="--d: 0.3s">
+          <span class="shield-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M2 2l20 20"/></svg></span>
+          <div><h3>Rien chez nous</h3><p>Pas de compte, pas de serveur : votre clé ne quitte jamais votre ordinateur, et personne ne peut vous en fermer l'accès.</p></div>
+        </div>
+      </div>
+
+      <div class="honest reveal" style="--d: 0.1s">
+        <span class="honest-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg></span>
+        <div>
+          <h3>Ce qu'aucun logiciel ne peut garantir</h3>
+          <p>Si un virus contrôle déjà votre ordinateur pendant que vous l'utilisez, il peut épier ce que vous faites. C'est vrai pour tous les portefeuilles logiciels. Pour les gros montants, associez l'app à un Ledger ou à un Trezor : la clé ne quitte jamais l'appareil, et vous vérifiez sur son propre écran.</p>
+        </div>
+        <a class="deep-link" href="securite.html">La sécurité en détail →</a>
       </div>
     </div>
   </section>
 
-  <!-- ===== 07 — Statut ===== -->
+  <!-- ===== 07 — En pratique ===== -->
+  <section class="section" id="sec-how">
+    <div class="section-inner">
+      <div class="section-head center">
+        <span class="eyebrow"><span class="num">07</span> En pratique</span>
+        <h2>Trois étapes, et c'est tout.</h2>
+      </div>
+      <div class="steps">
+        <div class="step-card reveal" style="--d: 0.05s">
+          <span class="step-num">1</span>
+          <h3>Créez</h3>
+          <p>Choisissez un mot de passe. L'app génère votre portefeuille : toutes vos adresses sont prêtes, sur tous les réseaux.</p>
+        </div>
+        <div class="step-card reveal" style="--d: 0.15s">
+          <span class="step-num">2</span>
+          <h3>Sauvegardez</h3>
+          <p>Branchez vos clés USB (ou choisissez des dossiers) : l'app y range les trois morceaux et vérifie qu'ils se relisent bien.</p>
+        </div>
+        <div class="step-card reveal" style="--d: 0.25s">
+          <span class="step-num">3</span>
+          <h3>Utilisez</h3>
+          <p>Recevez, envoyez, échangez, placez. Votre mot de passe valide chaque envoi, et Windows vous le fait confirmer.</p>
+        </div>
+      </div>
+      <p class="restore-line reveal" style="--d: 0.35s">Nouvel ordinateur ? <strong>Branchez deux de vos trois clés : tout revient</strong>, adresses comprises.</p>
+    </div>
+  </section>
+
+  <!-- ===== 08 — Statut ===== -->
   <section class="status" id="sec-status">
     <div class="status-inner">
-      <span class="eyebrow"><span class="num">07</span> Statut</span>
+      <span class="eyebrow"><span class="num">08</span> Où en est le projet</span>
       <h2>Preuve de concept fonctionnelle. Pas encore prête pour de vrais fonds.</h2>
       <div class="roadmap">
-        <div class="step reveal" style="--d: 0.05s"><span class="step-badge done">✓</span>Phase 1 — PoC cryptographique CLI, terminée</div>
-        <div class="step reveal" style="--d: 0.25s"><span class="step-badge doing">●</span>Phase 2 — Application Windows fonctionnelle (envois, échanges, staking, Ledger et Trezor, WalletConnect, Monero, Zcash protégé), en cours de finition</div>
-        <div class="step reveal" style="--d: 0.45s"><span class="step-badge todo">○</span>Signature de code, publication open-source et audit indépendant — aucun des trois n'est encore fait</div>
-        <div class="step reveal" style="--d: 0.65s"><span class="step-badge todo">○</span>Version téléchargeable publique — à venir, pas avant ces trois étapes</div>
+        <div class="step reveal" style="--d: 0.05s"><span class="step-badge done">✓</span><span>Cœur cryptographique (sauvegarde, chiffrement, signatures) : terminé</span></div>
+        <div class="step reveal" style="--d: 0.12s"><span class="step-badge doing">●</span><span>Application Windows complète (envois, échanges, staking, actions tokenisées, Ledger et Trezor, WalletConnect, Monero, Zcash protégé) : en finition</span></div>
+        <div class="step reveal" style="--d: 0.19s"><span class="step-badge todo">○</span><span>Audit de sécurité indépendant, signature du logiciel et publication du code source : aucun n'est encore fait</span></div>
+        <div class="step reveal" style="--d: 0.26s"><span class="step-badge todo">○</span><span>Version téléchargeable publique : après ces trois étapes</span></div>
+        <div class="step reveal" style="--d: 0.33s"><span class="step-badge todo">○</span><span>Application mobile et signature partagée <a href="frost.html">FROST</a> : en préparation</span></div>
       </div>
     </div>
   </section>
 
-  <!-- ===== Comment ça marche : le détail, hors de la présentation ===== -->
-  <section class="how" id="sec-howitworks">
-    <div class="how-inner">
-      <span class="eyebrow">Comment ça marche</span>
-      <h2>L'architecture de sécurité, en détail — point par point.</h2>
-      <p class="lead" style="max-width: 680px;">Les sections précédentes montrent l'effet ; celle-ci montre le mécanisme. Rien n'est passé sous silence, y compris ce qui reste hors de portée d'un logiciel seul.</p>
-
-      <div class="group">
-        <div class="group-title">A — La clé maîtresse</div>
-        <div class="item">
-          <h3>1. Génération de l'entropie</h3>
-          <p>256 bits générés une seule fois, à la création du portefeuille, par le générateur cryptographique de l'OS (<code>BCryptGenRandom</code> sous Windows) — jamais un générateur maison. Cette entropie n'est jamais affichée, jamais notée, jamais saisie par l'utilisateur, y compris au moment de la création.</p>
-        </div>
-        <div class="item">
-          <h3>2. Coffre local de l'appareil</h3>
-          <p>L'entropie complète est chiffrée avec une identité OpenPGP propre à cet appareil, protégée par un seul mot de passe. Le coût de dérivation de clé (S2K) est fixé au maximum du format OpenPGP — environ 350 ms par tentative sur un CPU de 2011, bien plus sur du matériel actuel — et n'est ni paramétrable ni abaissable via l'API utilisée. Le coffre est redéchiffré à la volée à chaque opération sensible et n'est jamais mis en cache entre deux actions.</p>
-        </div>
-        <div class="item">
-          <h3>3. Kit de sauvegarde Shamir 2-sur-3</h3>
-          <p>Généré une seule fois à la création, indépendant du coffre local. L'entropie est découpée en 3 parts mathématiques (partage de secret de Shamir) : 2 suffisent à tout reconstruire, mais aucune part seule n'a de valeur. Chaque part est elle-même chiffrée avec sa propre identité PGP et sa propre passphrase générée aléatoirement, distribuable sur 3 supports séparés sans qu'aucun, pris isolément, ne représente un risque.</p>
-        </div>
+  <!-- ===== 09 — Questions fréquentes ===== -->
+  <section class="section" id="sec-faq">
+    <div class="section-inner">
+      <div class="section-head">
+        <span class="eyebrow"><span class="num">09</span> Questions fréquentes</span>
+        <h2>Les vraies questions, des réponses claires.</h2>
       </div>
-
-      <div class="group">
-        <div class="group-title">B — Dérivation et signature</div>
-        <div class="item">
-          <h3>4. Dérivation multi-réseaux (HD)</h3>
-          <p>Depuis la même entropie maître : Ethereum et Bitcoin via BIP32/secp256k1 (<code>m/44'/60'/0'/0/i</code> et <code>m/44'/0'/0'/0/i</code>), Solana via SLIP-0010/ed25519 avec un chemin entièrement durci (<code>m/44'/501'/i'/0'</code>), Zcash transparent via <code>m/44'/133'/0'/0/i</code> et protégé (Orchard) via ZIP-32, Dogecoin via <code>m/44'/3'/0'/0/i</code>, Tron via <code>m/44'/195'/0'/0/i</code>, XRP via <code>m/44'/144'/0'/0/i</code>, Stellar via <code>m/44'/148'/i'</code> (SEP-0005), NEAR via <code>m/44'/397'/i'</code>, Cardano via CIP-1852 (<code>m/1852'/1815'/i'</code>, BIP32-Ed25519), Stacks via <code>m/44'/5757'/0'/0/i</code>, Bittensor via sr25519 (jonction durcie <code>//i</code>, schéma Substrate), Monero selon le schéma de Ledger (<code>m/44'/128'/i'/0/0</code>). Une même adresse sert sur tous les réseaux compatibles Ethereum (Arbitrum, Base, BNB Chain, Avalanche, Polygon). Un "profil" supplémentaire n'est qu'un index de dérivation de plus sur la même entropie — aucun changement du modèle de sécurité entre 1 profil et 50.</p>
-        </div>
-        <div class="item">
-          <h3>5. Construction et signature des transactions</h3>
-          <p>Construites "from scratch" pour Bitcoin, Dogecoin, les réseaux compatibles Ethereum, Solana, Tron, XRP, Stellar, NEAR, Cardano, Stacks et Bittensor, sans SDK lourd type <code>rust-bitcoin</code> ou <code>solana-sdk</code> — pour Dogecoin, chaque montant dépensé est en plus revérifié dans sa transaction d'origine ; Zcash passe par la bibliothèque officielle de ses développeurs (librustzcash), Monero par monero-oxide. Nonces déterministes (RFC 6979) pour les signatures ECDSA, empêchant l'extraction de clé privée par réutilisation de nonce — la faille qui a coûté sa clé racine à la PlayStation 3. Signatures vérifiées en interne contre une normalisation "low-S" par une suite de 2000 tests.</p>
-        </div>
-      </div>
-
-      <div class="group">
-        <div class="group-title">C — Protections actives</div>
-        <div class="item">
-          <h3>6. Effacement mémoire</h3>
-          <p>Tout secret en clair (entropie, parts, mots de passe) est effacé de la mémoire dès qu'il n'est plus utilisé, quel que soit le chemin de sortie — retour anticipé sur erreur ou panique incluse. Un verrouillage mémoire réel (équivalent de <code>mlock</code>/<code>VirtualLock</code>) empêche en plus ces zones d'être écrites sur le disque via le swap.</p>
-        </div>
-        <div class="item">
-          <h3>7. Verrouillage anti-brute-force</h3>
-          <p>Un compteur d'échecs persisté déclenche un délai croissant après 5 tentatives incorrectes, doublé à chaque nouvel échec et plafonné à 5 minutes. Un verrou interne empêche qu'un script tentant plusieurs mots de passe en parallèle ne fasse perdre ce compte.</p>
-        </div>
-        <div class="item">
-          <h3>8. Vérification d'adresse (EIP-55)</h3>
-          <p>Une adresse Ethereum en casse mixte dont le checksum ne correspond pas est rejetée — la protection standard contre une adresse mal recopiée à la main, avec un seul caractère changé.</p>
-        </div>
-        <div class="item">
-          <h3>9. Liste blanche des liens externes</h3>
-          <p>Seuls les explorateurs de blocs réellement utilisés par l'app peuvent être ouverts depuis l'historique de transactions — pas de contrôle de schéma seul (<code>https://</code>), une vraie liste de domaines connus.</p>
-        </div>
-        <div class="item">
-          <h3>10. Verrouillage automatique</h3>
-          <p>Après 10 minutes d'inactivité sur le tableau de bord, retour automatique à l'écran de mot de passe — l'hygiène standard attendue de n'importe quel wallet en cas d'accès physique à l'appareil en votre absence.</p>
-        </div>
-      </div>
-
-      <div class="group">
-        <div class="group-title">D — Frontière de confiance</div>
-        <div class="item">
-          <h3>11. Le frontend n'est jamais digne de confiance</h3>
-          <p>Une CSP stricte (<code>connect-src 'self'</code>) empêche le frontend de contacter un serveur directement. Il ne reçoit jamais un secret — seulement des adresses publiques, des soldes et des identifiants de transaction. Les permissions accordées au frontend sont réduites au strict minimum (<code>core:default</code> uniquement) : aucun accès direct au système de fichiers ou au réseau.</p>
-        </div>
-        <div class="item">
-          <h3>12. Confirmation native avant tout envoi</h3>
-          <p>Réseau, destinataire, montant, frais et profil source s'affichent dans une boîte de dialogue de l'OS, jamais une modale HTML — un frontend compromis ne peut ni la falsifier ni la faire disparaître silencieusement. Elle est suivie d'un délai de 5 secondes pour annuler, imposé côté Rust, avant toute signature. Les autres actions sensibles (supprimer le portefeuille ou un profil) passent par une fenêtre de confirmation séparée, gérée côté Rust.</p>
-        </div>
-      </div>
-
-      <div class="group">
-        <div class="group-title warn">E — Ce que ces protections ne couvrent pas</div>
-        <div class="item">
-          <h3>13. Un malware actif sur l'appareil pendant l'usage</h3>
-          <p>Un keylogger qui capture le mot de passe au clavier, ou une lecture directe de la mémoire du processus au moment précis du déverrouillage, contournent ces protections sans avoir besoin de casser quoi que ce soit. <strong>Ce n'est pas une faiblesse propre à ce projet</strong> — aucun wallet purement logiciel (celui-ci comme les plus connus du marché) ne peut s'en protéger totalement. C'est la raison d'être des wallets matériels, où la clé ne quitte jamais un appareil séparé doté de son propre écran de confirmation. Le dire clairement ici plutôt que de le passer sous silence, c'est aussi ça, la transparence.</p>
-        </div>
-      </div>
-
-      <div class="todo-box">
-        <h3>Ce qui n'est pas encore fait</h3>
-        <p>Signature de code du binaire, publication open-source pour revue communautaire, et surtout audit de sécurité par un prestataire professionnel indépendant — voir le statut ci-dessus. Aucune des protections listées ici n'a été validée par un tiers.</p>
+      <div class="faq">
+        <details>
+          <summary>Et si je perds mon ordinateur ?</summary>
+          <p>Rien n'est perdu. Installez l'app sur un autre ordinateur et branchez deux de vos trois clés de sauvegarde : votre portefeuille revient à l'identique, et l'app vous montre vos adresses pour vérifier avant de confirmer.</p>
+        </details>
+        <details>
+          <summary>Et si on me vole une clé USB ?</summary>
+          <p>Un seul morceau ne permet rien : il en faut deux pour reconstruire le portefeuille. Gardez les deux autres en sécurité. Par précaution, vous pouvez aussi transférer vos fonds vers un nouveau portefeuille.</p>
+        </details>
+        <details>
+          <summary>J'ai oublié mon mot de passe. C'est fini ?</summary>
+          <p>Non. Restaurez votre portefeuille avec deux de vos clés de sauvegarde et choisissez un nouveau mot de passe. Vos fonds ne sont perdus que si vous perdez à la fois votre mot de passe et deux de vos trois sauvegardes.</p>
+        </details>
+        <details>
+          <summary>Qui détient mes fonds ?</summary>
+          <p>Vous seul. L'app est « non-custodial » : pas de compte, pas de serveur, rien n'est conservé chez nous. Personne ne peut fermer votre portefeuille (seuls certains émetteurs de jetons, comme ceux de l'USDC ou des actions tokenisées, peuvent bloquer leurs propres jetons)… et personne ne peut le récupérer à votre place, d'où l'importance de vos sauvegardes.</p>
+        </details>
+        <details>
+          <summary>Combien ça coûte ?</summary>
+          <p>L'app est gratuite. Elle se rémunère seulement par une petite commission sur les échanges et le staking (de 0 à 1 % selon le service), toujours affichée avant que vous confirmiez. Les frais du réseau, payés aux blockchains, restent dus comme partout.</p>
+        </details>
+        <details>
+          <summary>Les actions tokenisées, ce sont de vraies actions ?</summary>
+          <p>Ce sont des jetons émis par Backed Assets (xStocks) qui suivent le cours d'une action ou d'un fonds ; selon leur émetteur, ils sont adossés aux titres correspondants. Ils ne donnent pas de droit de vote. Ils sont interdits aux personnes des États-Unis et ne sont pas proposés au Royaume-Uni, au Canada ni en Australie.</p>
+        </details>
+        <details>
+          <summary>Pourquoi seulement Windows ?</summary>
+          <p>Pour bien faire une plateforme avant d'en ouvrir d'autres. Une version mobile est en préparation.</p>
+        </details>
+        <details>
+          <summary>Puis-je l'utiliser dès maintenant ?</summary>
+          <p>Pas encore avec de vrais montants : le logiciel n'a pas été audité par un expert indépendant. La version publique viendra après cet audit, la signature du logiciel et la publication du code source.</p>
+        </details>
       </div>
     </div>
   </section>
@@ -668,392 +486,9 @@
 
 <footer class="footer">
   <span class="brand" style="font-size: 17px;">OpenPGP Wallet</span>
-  <span>Projet en cours de développement — preuve de concept, non auditée. N'y confiez pas de fonds importants. · <a href="en.html" hreflang="en" lang="en">English</a></span>
+  <span>Projet en développement : preuve de concept, non auditée. N'y confiez pas de fonds importants. · <a href="securite.html">Sécurité en détail</a> · <a href="frost.html">FROST</a> · <a href="en.html" hreflang="en" lang="en">English</a></span>
 </footer>
 
-<script>
-(function () {
-  "use strict";
-
-  var reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-
-  // ===== Cadenas 3D =========================================================
-  // Rendu par lancer de rayons sur une scène décrite par des fonctions de
-  // distance (WebGL 1, aucune bibliothèque) : corps en aluminium anodisé
-  // graphite aux arêtes très arrondies, barillet chromé et serrure éclairée de
-  // l'intérieur, anse en acier poli qui se soulève puis pivote autour de sa
-  // branche longue. Éclairage de studio simulé (boîte à lumière au-dessus,
-  // bande blanche à gauche, contre-jour bleuté à droite) : les reflets
-  // glissent sur les arêtes quand le cadenas tourne. Sans WebGL, un cadenas
-  // dessiné (SVG) prend sa place.
-  var VERT = "attribute vec2 p; void main() { gl_Position = vec4(p, 0.0, 1.0); }";
-  var FRAG = [
-    "precision highp float;",
-    "uniform vec2 uRes;",
-    "uniform float uLift, uSwing, uGlow, uYaw, uPitch, uBob;",
-    "uniform vec3 uAccent;",
-    "const float R = 0.40;",            // demi-écart des branches de l'anse
-    "const float TR = 0.095;",          // rayon du tube de l'anse
-    "const vec3 BODY = vec3(0.70, 0.56, 0.30);",
-    "const vec3 BODY_C = vec3(0.0, -0.40, 0.0);",
-    "const vec3 CENTER = vec3(0.0, 0.22, 0.0);",
-    "mat2 rot(float a) { float c = cos(a), s = sin(a); return mat2(c, s, -s, c); }",
-    "float sdRoundBox(vec3 p, vec3 b, float r) { vec3 q = abs(p) - b + r; return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0) - r; }",
-    "float sdRoundRect(vec2 p, vec2 b, float r) { vec2 q = abs(p) - b + r; return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r; }",
-    "float sdCapsule(vec3 p, vec3 a, vec3 b, float r) { vec3 pa = p - a, ba = b - a; float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0); return length(pa - ba * h) - r; }",
-    "float sdRoundCyl(vec3 p, float ra, float rb, float h) { vec2 d = vec2(length(p.xy) - ra + rb, abs(p.z) - h + rb); return min(max(d.x, d.y), 0.0) + length(max(d, 0.0)) - rb; }",
-    "float shackle(vec3 p) {",
-    "  p.y -= 0.64 + 0.32 * uLift;",
-    "  p.x += R; p.xz = rot(uSwing) * p.xz; p.x -= R;",
-    "  float arc = p.y > 0.0 ? length(vec2(length(p.xy) - R, p.z)) - TR : 1e5;",
-    "  float legL = sdCapsule(p, vec3(-R, 0.0, 0.0), vec3(-R, -1.12, 0.0), TR);",
-    "  float legR = sdCapsule(p, vec3(R, 0.0, 0.0), vec3(R, -0.60, 0.0), TR);",
-    "  return min(arc, min(legL, legR));",
-    "}",
-    // Distance et matière : 1 corps, 2 chrome (anse, barillet), 3 serrure.
-    "vec2 map(vec3 p) {",
-    "  p.y -= uBob;",
-    "  p -= CENTER; p.xz = rot(uYaw) * p.xz; p.yz = rot(uPitch) * p.yz; p += CENTER;",
-    "  vec3 q = p - BODY_C;",
-    "  float body = sdRoundBox(q, BODY, 0.22);",
-    "  body = max(body, -max(length(vec2(abs(q.x) - R, q.z)) - (TR + 0.012), abs(q.y - BODY.y) - 0.08));",
-    "  vec3 k = q - vec3(0.0, -0.05, BODY.z);",
-    "  float bezel = sdRoundCyl(k, 0.17, 0.025, 0.04);",
-    "  float wall = -max(min(length(k.xy - vec2(0.0, 0.03)) - 0.05, sdRoundRect(k.xy - vec2(0.0, -0.045), vec2(0.021, 0.065), 0.01)), abs(k.z) - 0.16);",
-    "  vec2 res = vec2(max(body, wall), 1.0);",
-    "  float cyl = max(bezel, wall);",
-    "  if (cyl < res.x) res = vec2(cyl, 2.0);",
-    "  if (res.x == wall) res.y = 3.0;",
-    "  float s = shackle(p);",
-    "  if (s < res.x) res = vec2(s, 2.0);",
-    "  return res;",
-    "}",
-    "vec3 calcNormal(vec3 p) {",
-    "  const vec2 e = vec2(1.0, -1.0) * 0.0007;",
-    "  return normalize(e.xyy * map(p + e.xyy).x + e.yyx * map(p + e.yyx).x + e.yxy * map(p + e.yxy).x + e.xxx * map(p + e.xxx).x);",
-    "}",
-    "float calcAO(vec3 p, vec3 n) {",
-    "  float occ = 0.0, sca = 1.0;",
-    "  for (int i = 0; i < 5; i++) { float h = 0.01 + 0.07 * float(i); occ += (h - map(p + h * n).x) * sca; sca *= 0.8; }",
-    "  return clamp(1.0 - 2.2 * occ, 0.0, 1.0);",
-    "}",
-    // Studio ; `w` élargit les transitions pour une matière plus mate.
-    "vec3 env(vec3 r, float w) {",
-    "  vec3 c = mix(vec3(0.008, 0.009, 0.012), vec3(0.05, 0.055, 0.07), smoothstep(-0.4, 0.8, r.y));",
-    "  c += vec3(1.0) * 2.2 * smoothstep(0.62 - w, 0.86 + 0.5 * w, dot(r, normalize(vec3(-0.3, 1.0, 0.5))));",
-    "  float az = atan(r.x, r.z);",
-    "  c += vec3(1.0, 0.98, 0.95) * 1.7 * (1.0 - smoothstep(0.03, 0.12 + w, abs(az + 1.2))) * smoothstep(-0.35 - w, 0.25, r.y) * (1.0 - smoothstep(0.45 - w, 0.9, r.y));",
-    "  c += uAccent * 1.5 * (1.0 - smoothstep(0.05, 0.2 + w, abs(az - 1.95))) * smoothstep(-0.5, 0.2, r.y);",
-    "  c += vec3(0.75, 0.8, 0.9) * 0.3 * pow(max(dot(r, normalize(vec3(0.15, 0.2, 1.0))), 0.0), 3.0);",
-    "  return c;",
-    "}",
-    "void main() {",
-    "  vec2 uv = (2.0 * gl_FragCoord.xy - uRes) / uRes.y;",
-    "  vec3 ro = vec3(0.0, 0.45, 4.2);",
-    "  vec3 ww = normalize(CENTER - ro);",
-    "  vec3 uu = normalize(cross(ww, vec3(0.0, 1.0, 0.0)));",
-    "  vec3 vv = cross(uu, ww);",
-    "  const float FL = 2.55;",
-    "  vec3 rd = normalize(uv.x * uu + uv.y * vv + FL * ww);",
-    "  vec3 oc = ro - CENTER;",
-    "  float bq = dot(oc, rd);",
-    "  float disc = bq * bq - (dot(oc, oc) - 1.55 * 1.55);",
-    "  if (disc < 0.0) { gl_FragColor = vec4(0.0); return; }",
-    "  disc = sqrt(disc);",
-    "  float t = max(-bq - disc, 0.0), tEnd = -bq + disc;",
-    "  float px = 2.0 / (uRes.y * FL);",
-    "  float minD = 1e9, tMin = t, tHit = -1.0, mat = 1.0;",
-    "  for (int i = 0; i < 110; i++) {",
-    "    vec2 m = map(ro + rd * t);",
-    "    if (m.x < minD) { minD = m.x; tMin = t; }",
-    "    if (m.x < 0.0003 * t) { tHit = t; mat = m.y; break; }",
-    "    t += m.x * 0.85;",
-    "    if (t > tEnd) break;",
-    "  }",
-    "  float alpha = tHit > 0.0 ? 1.0 : 1.0 - smoothstep(0.0, 1.5 * px * tMin, minD);",
-    "  if (alpha <= 0.0) { gl_FragColor = vec4(0.0); return; }",
-    "  vec3 pos = ro + rd * (tHit > 0.0 ? tHit : tMin);",
-    "  if (tHit < 0.0) mat = map(pos).y;",
-    "  vec3 n = calcNormal(pos);",
-    "  float ao = calcAO(pos, n);",
-    "  vec3 col;",
-    "  if (mat > 2.5) {",
-    "    col = vec3(0.004) + uAccent * uGlow * (0.25 + 0.75 * ao);",
-    "  } else {",
-    "    bool chrome = mat > 1.5;",
-    "    vec3 tint = chrome ? vec3(0.95, 0.95, 0.97) : vec3(0.30, 0.32, 0.37);",
-    "    float rough = chrome ? 0.04 : 0.28;",
-    "    vec3 rf = reflect(rd, n);",
-    "    float ndv = max(dot(n, -rd), 0.0);",
-    "    vec3 F = tint + (1.0 - tint) * pow(1.0 - ndv, 5.0);",
-    "    col = env(normalize(mix(rf, n, 0.5 * rough)), rough) * F;",
-    "    vec3 L = normalize(vec3(-0.5, 0.9, 0.7));",
-    "    vec3 H = normalize(L - rd);",
-    "    col += F * pow(max(dot(n, H), 0.0), chrome ? 400.0 : 60.0) * (chrome ? 2.0 : 0.6);",
-    "    col += tint * 0.03 * max(dot(n, L), 0.0);",
-    "    col *= mix(0.35, 1.0, ao);",
-    "  }",
-    "  col = clamp((col * (2.51 * col + 0.03)) / (col * (2.43 * col + 0.59) + 0.14), 0.0, 1.0);",
-    "  col = pow(col, vec3(0.4545));",
-    "  gl_FragColor = vec4(col * alpha, alpha);",
-    "}"
-  ].join("\n");
-
-  var stage = document.getElementById("lock-stage");
-  var canvas = document.getElementById("lock-canvas");
-  var statusEl = document.getElementById("lock-status");
-  var statusTextEl = document.getElementById("lock-status-text");
-  var renderer = createRenderer();
-  if (!renderer) stage.classList.add("no-webgl");
-
-  function createRenderer() {
-    var gl;
-    try {
-      gl = canvas.getContext("webgl", { alpha: true, premultipliedAlpha: true, antialias: false, powerPreference: "high-performance" });
-    } catch (e) {
-      gl = null;
-    }
-    if (!gl) return null;
-    function shader(type, source) {
-      var s = gl.createShader(type);
-      gl.shaderSource(s, source);
-      gl.compileShader(s);
-      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
-        console.error("cadenas 3D :", gl.getShaderInfoLog(s));
-        return null;
-      }
-      return s;
-    }
-    var vs = shader(gl.VERTEX_SHADER, VERT);
-    var fs = shader(gl.FRAGMENT_SHADER, FRAG);
-    if (!vs || !fs) return null;
-    var program = gl.createProgram();
-    gl.attachShader(program, vs);
-    gl.attachShader(program, fs);
-    gl.linkProgram(program);
-    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-      console.error("cadenas 3D :", gl.getProgramInfoLog(program));
-      return null;
-    }
-    gl.useProgram(program);
-    var buffer = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
-    var loc = gl.getAttribLocation(program, "p");
-    gl.enableVertexAttribArray(loc);
-    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-    var u = {};
-    ["uRes", "uLift", "uSwing", "uGlow", "uYaw", "uPitch", "uBob", "uAccent"].forEach(function (name) { u[name] = gl.getUniformLocation(program, name); });
-    gl.uniform3f(u.uAccent, 0.486, 0.576, 1.0);
-    gl.clearColor(0, 0, 0, 0);
-
-    // Résolution adaptative : moins de pixels si l'image prend trop de temps.
-    var scale = Math.min(window.devicePixelRatio || 1, 1.5);
-    function resize() {
-      var r = canvas.getBoundingClientRect();
-      var w = Math.max(1, Math.round(r.width * scale));
-      var h = Math.max(1, Math.round(r.height * scale));
-      if (canvas.width !== w || canvas.height !== h) {
-        canvas.width = w;
-        canvas.height = h;
-        gl.viewport(0, 0, w, h);
-      }
-    }
-    resize();
-    return {
-      resize: resize,
-      draw: function (s) {
-        gl.uniform2f(u.uRes, canvas.width, canvas.height);
-        gl.uniform1f(u.uLift, s.lift);
-        gl.uniform1f(u.uSwing, s.swing);
-        gl.uniform1f(u.uGlow, s.glow);
-        gl.uniform1f(u.uYaw, s.yaw);
-        gl.uniform1f(u.uPitch, s.pitch);
-        gl.uniform1f(u.uBob, s.bob || 0);
-        gl.clear(gl.COLOR_BUFFER_BIT);
-        gl.drawArrays(gl.TRIANGLES, 0, 3);
-      },
-      slower: function () {
-        if (scale <= 0.6) return;
-        scale = Math.max(0.6, scale * 0.8);
-        resize();
-      }
-    };
-  }
-
-  // ===== Cycle verrouillé → ouvert → verrouillé (20 s) ======================
-  // Le texte de l'accroche suit le cadenas : chiffré quand il est fermé, il
-  // se déchiffre quand l'anse se soulève et se rechiffre quand elle retombe.
-  var CYCLE = 20;
-  var SWING_OPEN = -2.3;
-  // Étapes, en secondes dans le cycle.
-  var T_UNLOCK = 1.0, T_SWING = 1.55, T_SWING_BACK = 14.6, T_DROP = 15.45, T_SHUT = 15.75;
-  function clamp01(x) { return x < 0 ? 0 : x > 1 ? 1 : x; }
-  function smooth(x) { x = clamp01(x); return x * x * (3 - 2 * x); }
-  function easeIn(x) { x = clamp01(x); return x * x * x; }
-  function easeInOut(x) { x = clamp01(x); return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2; }
-  // Arrivée avec un léger dépassement (ressort), `k` : son ampleur.
-  function easeOutBack(x, k) { x = clamp01(x); return 1 + (k + 1) * Math.pow(x - 1, 3) + k * Math.pow(x - 1, 2); }
-
-  function lockState(c) {
-    var lift = 0, swing = 0, jolt = 0;
-    if (c >= T_UNLOCK && c < T_DROP) lift = easeOutBack((c - T_UNLOCK) / 0.5, 1.6);
-    else if (c >= T_DROP && c < T_SHUT) lift = 1 - easeIn((c - T_DROP) / (T_SHUT - T_DROP));
-    if (c >= T_SWING && c < T_SWING_BACK) swing = SWING_OPEN * easeOutBack((c - T_SWING) / 1.0, 0.9);
-    else if (c >= T_SWING_BACK && c < T_DROP) swing = SWING_OPEN * (1 - easeInOut((c - T_SWING_BACK) / (T_DROP - T_SWING_BACK - 0.05)));
-    // « Clac » de la fermeture : rebond amorti de tout le cadenas.
-    if (c >= T_SHUT && c < T_SHUT + 1) jolt = Math.exp(-(c - T_SHUT) * 6) * Math.sin((c - T_SHUT) * 34);
-    var open = c >= T_UNLOCK && c < T_SHUT;
-    var glow = open ? 0.25 + 0.75 * smooth((c - T_UNLOCK) / 0.5) : 0.25 + 0.75 * (c >= T_SHUT ? Math.max(0, 1 - (c - T_SHUT) / 0.6) : 0);
-    return { lift: lift, swing: swing, jolt: jolt, open: open, glow: glow };
-  }
-
-  // Avancement du déchiffrement (0 = tout chiffré, 1 = tout clair).
-  function textProgress(c) {
-    if (c < T_UNLOCK) return 0;
-    if (c < T_UNLOCK + 1.8) return (c - T_UNLOCK) / 1.8;
-    if (c < T_SWING_BACK) return 1;
-    if (c < T_SHUT) return 1 - (c - T_SWING_BACK) / (T_SHUT - T_SWING_BACK);
-    return 0;
-  }
-
-  var textEl = document.getElementById("hero-decrypt-text");
-  var plain = textEl.textContent;
-  var CIPHER_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  function randomChar() { return CIPHER_CHARS.charAt(Math.floor(Math.random() * CIPHER_CHARS.length)); }
-  function newCipher() {
-    var out = "";
-    for (var i = 0; i < plain.length; i++) out += plain.charAt(i) === " " ? " " : randomChar();
-    return out;
-  }
-  var cipher = newCipher();
-  var lastText = null;
-  function renderText(k) {
-    var text;
-    if (k >= 1) {
-      text = plain;
-    } else {
-      // Front de déchiffrement de gauche à droite, quelques caractères qui
-      // s'agitent juste devant lui. Chasse fixe et espaces gardés : le
-      // paragraphe ne change jamais de forme.
-      var n = plain.length;
-      var parts = [];
-      for (var i = 0; i < n; i++) {
-        var ch = plain.charAt(i);
-        var at = (i / n) * 1.05;
-        if (ch === " ") parts.push(" ");
-        else if (k >= at + 0.05) parts.push(ch);
-        else if (k >= at - 0.01 && k > 0) parts.push(randomChar());
-        else parts.push(cipher.charAt(i));
-      }
-      text = parts.join("");
-    }
-    if (text !== lastText) {
-      textEl.textContent = text;
-      lastText = text;
-    }
-  }
-
-  var lastOpen = null;
-  function renderStatus(open) {
-    if (open === lastOpen) return;
-    lastOpen = open;
-    statusEl.classList.toggle("open", open);
-    statusTextEl.textContent = open ? "Déverrouillé par votre mot de passe" : "Coffre verrouillé · chiffré OpenPGP";
-  }
-
-  // Orientation : le cadenas se tourne vers le curseur (jusqu'à ~50° de côté,
-  // ~25° en hauteur) ; sans pointeur sur la page, lent balancement. Position
-  // du curseur relative au centre du cadenas, en demi-fenêtres.
-  var FOLLOW_YAW = 0.85, FOLLOW_PITCH = 0.45;
-  var pointer = { x: 0, y: 0, active: false }, tilt = { x: 0, y: 0 }, follow = 0;
-  window.addEventListener("pointermove", function (e) {
-    var r = stage.getBoundingClientRect();
-    pointer.x = Math.max(-1, Math.min(1, (e.clientX - (r.left + r.width / 2)) / (window.innerWidth / 2)));
-    pointer.y = Math.max(-1, Math.min(1, (e.clientY - (r.top + r.height / 2)) / (window.innerHeight / 2)));
-    pointer.active = true;
-  }, { passive: true });
-  var pointerGone = function () { pointer.active = false; pointer.x = 0; pointer.y = 0; };
-  document.documentElement.addEventListener("pointerleave", pointerGone);
-  window.addEventListener("blur", pointerGone);
-
-  if (reducedMotion) {
-    // Image fixe : cadenas fermé de trois quarts, texte en clair.
-    renderText(1);
-    renderStatus(false);
-    var still = function () {
-      if (!renderer) return;
-      renderer.resize();
-      renderer.draw({ lift: 0, swing: 0, glow: 0.3, yaw: -0.12, pitch: -0.15, bob: 0 });
-    };
-    still();
-    window.addEventListener("resize", still);
-  } else {
-    renderText(0);
-    var visible = true;
-    if ("IntersectionObserver" in window) {
-      new IntersectionObserver(function (entries) { visible = entries[0].isIntersecting; }).observe(stage);
-    }
-    if (renderer && "ResizeObserver" in window) new ResizeObserver(renderer.resize).observe(canvas);
-    var start = performance.now();
-    var previous = start, slowFrames = 0, prevCycle = 0;
-    var loop = function (now) {
-      requestAnimationFrame(loop);
-      var dt = now - previous;
-      previous = now;
-      var time = (now - start) / 1000;
-      var c = time % CYCLE;
-      if (c < prevCycle) cipher = newCipher(); // nouveau message chiffré à chaque tour
-      prevCycle = c;
-      var s = lockState(c);
-      renderText(textProgress(c));
-      renderStatus(s.open);
-      if (!renderer || !visible || document.hidden) return;
-      // Suivi lissé (réponse vive mais sans à-coups) ; le balancement
-      // s'efface pendant le suivi et revient quand le curseur quitte la page.
-      tilt.x += (pointer.x - tilt.x) * 0.12;
-      tilt.y += (pointer.y - tilt.y) * 0.12;
-      follow += ((pointer.active ? 1 : 0) - follow) * 0.05;
-      var sway = 1 - 0.75 * follow;
-      s.yaw = -0.12 + sway * 0.16 * Math.sin(time * 0.3) + tilt.x * FOLLOW_YAW;
-      s.pitch = -0.15 + sway * 0.04 * Math.sin(time * 0.45) + tilt.y * FOLLOW_PITCH + s.jolt * 0.03;
-      s.bob = 0.025 * Math.sin(time * 0.9) - s.jolt * 0.015;
-      renderer.draw(s);
-      // Images trop lentes (plus de 28 ms) plusieurs fois de suite : résolution réduite.
-      if (dt > 28 && dt < 200) slowFrames++; else slowFrames = Math.max(0, slowFrames - 1);
-      if (slowFrames > 20) { renderer.slower(); slowFrames = 0; }
-    };
-    requestAnimationFrame(loop);
-  }
-
-  // ===== Sections : animation jouée à l'arrivée à l'écran ===================
-  var sections = Array.prototype.slice.call(document.querySelectorAll(".feature, .status"));
-  var dots = Array.prototype.slice.call(document.querySelectorAll(".dots .dot"));
-  if (reducedMotion || !("IntersectionObserver" in window)) {
-    sections.forEach(function (s) { s.classList.add("play"); });
-  } else {
-    var playObserver = new IntersectionObserver(function (entries) {
-      entries.forEach(function (entry) {
-        // Rejouée à chaque visite : réarmée une fois la section sortie de l'écran.
-        if (entry.intersectionRatio >= 0.3) entry.target.classList.add("play");
-        else if (!entry.isIntersecting) entry.target.classList.remove("play");
-      });
-    }, { threshold: [0, 0.3] });
-    sections.forEach(function (s) { playObserver.observe(s); });
-  }
-
-  // Point de navigation actif : la section qui occupe le plus l'écran.
-  var ratios = new Map();
-  if ("IntersectionObserver" in window) {
-    var dotObserver = new IntersectionObserver(function (entries) {
-      entries.forEach(function (entry) { ratios.set(entry.target.id, entry.intersectionRatio); });
-      var best = null, bestRatio = 0;
-      ratios.forEach(function (ratio, id) { if (ratio > bestRatio) { bestRatio = ratio; best = id; } });
-      dots.forEach(function (dot) { dot.classList.toggle("active", bestRatio > 0 && dot.getAttribute("href") === "#" + best); });
-    }, { threshold: [0, 0.2, 0.4, 0.6, 0.8, 1] });
-    sections.forEach(function (s) { dotObserver.observe(s); });
-  }
-})();
-</script>
+<script src="assets/site.js"></script>
 </body>
 </html>

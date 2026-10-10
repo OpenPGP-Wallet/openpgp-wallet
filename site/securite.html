@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sécurité en détail — OpenPGP Wallet</title>
+<meta name="description" content="L'architecture de sécurité d'OpenPGP Wallet, point par point : génération de la clé, coffre local, sauvegarde Shamir 2 sur 3 chiffrée OpenPGP, signatures, protections actives et limites.">
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+<link rel="alternate" hreflang="fr" href="securite.html">
+<link rel="alternate" hreflang="en" href="security.html">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+
+<header class="nav">
+  <a class="brand" href="index.html" aria-label="OpenPGP Wallet, accueil">
+    <span class="brand-mark" aria-hidden="true">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f4f5f7" stroke-width="2" stroke-linecap="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg>
+    </span>
+    OpenPGP Wallet
+  </a>
+  <div class="nav-actions">
+    <span class="badge-private">EN DÉVELOPPEMENT<span class="badge-extra"> · PREUVE DE CONCEPT</span></span>
+    <a class="lang-switch" href="security.html" hreflang="en" lang="en" aria-label="English version">EN</a>
+    <a class="frost-link" href="frost.html">FROST</a>
+  </div>
+</header>
+
+<main>
+  <section class="deep">
+    <div class="deep-inner">
+      <a class="back" href="index.html#sec-security">← Retour à l'accueil</a>
+      <div style="margin-top: 36px"><span class="eyebrow">La sécurité en détail</span></div>
+      <h2>L'architecture de sécurité, point par point.</h2>
+      <p class="lead">La page d'accueil montre l'effet ; celle-ci montre le mécanisme, pour les curieux et les experts. Rien n'est passé sous silence, y compris ce qui reste hors de portée d'un logiciel seul.</p>
+
+      <div class="group">
+        <div class="group-title">A — La clé maîtresse</div>
+        <div class="item">
+          <h3>1. Génération de l'entropie</h3>
+          <p>256 bits générés une seule fois, à la création du portefeuille, par le générateur cryptographique du système (<code>BCryptGenRandom</code> sous Windows), jamais un générateur maison. Cette entropie n'est jamais affichée, jamais notée, jamais saisie par l'utilisateur, y compris au moment de la création.</p>
+        </div>
+        <div class="item">
+          <h3>2. Coffre local de l'appareil</h3>
+          <p>L'entropie complète est chiffrée avec une identité OpenPGP propre à cet appareil ; la clé privée de cette identité, protégée par votre mot de passe, est rangée dans le coffre du système (Gestionnaire d'identification Windows). Le coût de dérivation de clé (S2K) est fixé au maximum du format OpenPGP, ni paramétrable ni abaissable par l'API utilisée. Le coffre est redéchiffré à la volée à chaque opération sensible et n'est jamais gardé en mémoire entre deux actions.</p>
+        </div>
+        <div class="item">
+          <h3>3. Déverrouillage Windows Hello (TPM)</h3>
+          <p>En option, un secret aléatoire est scellé dans une clé gardée par la puce de sécurité du PC (TPM 2.0), avec une règle qui fait refuser au TPM lui-même tout déchiffrement sans vérification Windows Hello fraîche (empreinte, visage ou code). Contrairement à une protection de type DPAPI, un autre programme de la session ne peut pas l'obtenir en silence. Le mot de passe reste disponible en secours.</p>
+        </div>
+        <div class="item">
+          <h3>4. Kit de sauvegarde Shamir 2 sur 3</h3>
+          <p>Généré une seule fois à la création, indépendant du coffre local. L'entropie est découpée en 3 parts (partage de secret de Shamir) : 2 suffisent à tout reconstruire, une seule ne révèle rien. Chaque part est chiffrée avec sa propre identité OpenPGP et une passphrase aléatoire, rangée <strong>avec elle</strong> sur son support : la protection d'un support volé repose donc sur le seuil de 2 parts, pas sur ce chiffrement. Les parts s'écrivent dans des dossiers ou sur des clés USB, relues et vérifiées après écriture ; plusieurs portefeuilles peuvent partager une même clé, chacun dans un dossier à son nom.</p>
+        </div>
+        <div class="item">
+          <h3>5. Des sauvegardes qui restent utilisables</h3>
+          <p>Le chiffrement OpenPGP authentifie chaque part : la moindre altération (bit corrompu sur une clé USB) est détectée au lieu de produire un secret faux. Chaque kit porte une marque : mélanger des parts de deux kits différents est refusé, alors que le partage de Shamir seul donnerait un mauvais secret sans prévenir. Les clés des parts ne dépendent pas de l'horloge de l'ordinateur, et un kit figé de chaque format passé est restauré à chaque test automatique. Avant toute restauration, les adresses retrouvées s'affichent pour vérification ; « Vérifier mes clés de sauvegarde » relit un kit sans rien écrire, avec un rappel annuel.</p>
+        </div>
+      </div>
+
+      <div class="group">
+        <div class="group-title">B — Dérivation et signature</div>
+        <div class="item">
+          <h3>6. Dérivation multi-réseaux (HD)</h3>
+          <p>Depuis la même entropie maître : Ethereum et Bitcoin via BIP32/secp256k1 (<code>m/44'/60'/0'/0/i</code> et <code>m/44'/0'/0'/0/i</code>), Solana via SLIP-0010/ed25519 avec un chemin entièrement durci (<code>m/44'/501'/i'/0'</code>), Zcash transparent via <code>m/44'/133'/0'/0/i</code> et protégé (Orchard) via ZIP-32, Dogecoin, Tron, XRP, Stellar (SEP-0005), NEAR, Cardano via CIP-1852 (BIP32-Ed25519), Stacks, Bittensor via sr25519 (schéma Substrate) et Monero selon le schéma de Ledger. Une même adresse sert sur tous les réseaux compatibles Ethereum. Un profil supplémentaire n'est qu'un index de dérivation de plus : aucun changement du modèle de sécurité entre 1 profil et 50.</p>
+        </div>
+        <div class="item">
+          <h3>7. Construction et signature des transactions</h3>
+          <p>Construites par l'app pour Bitcoin, Dogecoin, les réseaux compatibles Ethereum, Solana, Tron, XRP, Stellar, NEAR, Cardano, Stacks et Bittensor, sans SDK lourd ; Zcash passe par la bibliothèque officielle de ses développeurs (librustzcash), Monero par monero-oxide. Nonces déterministes (RFC 6979) pour les signatures ECDSA, ce qui empêche l'extraction de clé par réutilisation de nonce, et signatures normalisées « low-S », vérifiées par des vecteurs officiels. Les actions tokenisées (Token-2022) sont refusées à l'envoi si l'émetteur a suspendu les transferts ou ajouté une règle de transfert que l'app ne gère pas.</p>
+        </div>
+        <div class="item">
+          <h3>8. Échanges vérifiés avant signature</h3>
+          <p>Un devis venu d'un service tiers n'est jamais signé tel quel. Selon le service : memo THORChain/Maya relu (destination, montant minimum, affiliation) ; transaction Jupiter simulée et ses effets contrôlés (seul le jeton vendu sort, l'achat arrive sur votre adresse) ; ordre CoW signé (EIP-712) dont chaque champ est vérifié ; transaction Bitcoin LI.FI relue sortie par sortie (dépôt unique, monnaie vers soi, frais plafonnés). Les frais de l'app sont affichés avant la confirmation native.</p>
+        </div>
+      </div>
+
+      <div class="group">
+        <div class="group-title">C — Protections actives</div>
+        <div class="item">
+          <h3>9. Effacement mémoire</h3>
+          <p>Tout secret en clair (entropie, parts, mots de passe) est effacé de la mémoire dès qu'il n'est plus utilisé, quel que soit le chemin de sortie, retour anticipé sur erreur ou panique compris. Un verrouillage mémoire (équivalent de <code>mlock</code>/<code>VirtualLock</code>) empêche en plus ces zones d'être écrites sur le disque via le fichier d'échange.</p>
+        </div>
+        <div class="item">
+          <h3>10. Verrouillage anti-essais</h3>
+          <p>Un compteur d'échecs persisté impose un délai croissant après 5 mots de passe incorrects, doublé à chaque nouvel échec et plafonné à 5 minutes. Un verrou interne empêche qu'un script tentant plusieurs mots de passe en parallèle fasse perdre ce compte.</p>
+        </div>
+        <div class="item">
+          <h3>11. Adresses vérifiées</h3>
+          <p>Une adresse Ethereum dont le checksum EIP-55 ne correspond pas est rejetée. Une adresse qui ressemble à un contact ou à une adresse déjà payée à un caractère près déclenche une alerte (empoisonnement d'adresse), et une adresse d'un autre réseau est signalée avant l'envoi, avec le réseau à choisir.</p>
+        </div>
+        <div class="item">
+          <h3>12. Liste blanche des liens externes</h3>
+          <p>Seuls les explorateurs de blocs réellement utilisés par l'app peuvent être ouverts depuis l'historique : une vraie liste de domaines connus, pas un simple contrôle du schéma <code>https://</code>.</p>
+        </div>
+        <div class="item">
+          <h3>13. Verrouillage automatique</h3>
+          <p>Après 10 minutes d'inactivité, retour à l'écran de déverrouillage, et les clés dérivées sont oubliées côté Rust.</p>
+        </div>
+      </div>
+
+      <div class="group">
+        <div class="group-title">D — Frontière de confiance</div>
+        <div class="item">
+          <h3>14. L'interface n'est jamais digne de confiance</h3>
+          <p>Une CSP stricte empêche l'interface de contacter un serveur directement. Elle ne reçoit jamais un secret, seulement des adresses publiques, des soldes et des identifiants de transaction. Ses permissions sont réduites au strict minimum : aucun accès direct au système de fichiers ou au réseau.</p>
+        </div>
+        <div class="item">
+          <h3>15. Confirmation native avant tout envoi</h3>
+          <p>Réseau, destinataire, montant, frais et profil s'affichent dans une boîte de dialogue de Windows, jamais une fenêtre HTML : une interface compromise ne peut ni la falsifier ni la faire disparaître. Elle est suivie d'un délai de 5 secondes pour annuler, imposé côté Rust, avant toute signature. Les autres actions sensibles (supprimer le portefeuille ou un profil) passent par une fenêtre de confirmation séparée, gérée côté Rust.</p>
+        </div>
+      </div>
+
+      <div class="group">
+        <div class="group-title warn">E — Ce que ces protections ne couvrent pas</div>
+        <div class="item">
+          <h3>16. Un malware actif sur l'appareil pendant l'usage</h3>
+          <p>Un enregistreur de frappe qui capture le mot de passe, ou une lecture de la mémoire du processus au moment précis d'une signature, contournent ces protections sans rien casser. Le TPM n'y change rien pour la signature elle-même : il ne connaît que les courbes NIST (P-256, P-384), alors que Bitcoin et Ethereum utilisent secp256k1, Solana ed25519. <strong>Ce n'est pas une faiblesse propre à ce projet</strong> : aucun portefeuille purement logiciel ne peut s'en protéger totalement. C'est la raison d'être des portefeuilles matériels (Ledger, Trezor, pris en charge par l'app), où la clé ne quitte jamais un appareil séparé doté de son propre écran.</p>
+        </div>
+      </div>
+
+      <div class="todo-box">
+        <h3>Ce qui n'est pas encore fait</h3>
+        <p>Signature du logiciel, publication du code source pour revue publique, et surtout audit de sécurité par un prestataire indépendant. Aucune des protections décrites ici n'a encore été validée par un tiers.</p>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="footer">
+  <span class="brand" style="font-size: 17px;">OpenPGP Wallet</span>
+  <span>Projet en développement : preuve de concept, non auditée. N'y confiez pas de fonds importants. · <a href="index.html">Accueil</a> · <a href="frost.html">FROST</a> · <a href="security.html" hreflang="en" lang="en">English</a></span>
+</footer>
+
+<script src="assets/site.js"></script>
+</body>
+</html>
