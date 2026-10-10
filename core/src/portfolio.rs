@@ -392,13 +392,13 @@ fn fetch_first(spec: &Spec, address: &str) -> Result<HoldingData> {
     match first {
         Ok(page) => data.absorb(page, price_history::unix_now()),
         // NodeReal momentanément indisponible (limite de l'offre gratuite
-        // atteinte…), ou explorateur Blockscout derrière une vérification
-        // anti-robots (Arbitrum et Base, constaté le 10/10/2026 : l'adresse
-        // restait « momentanément illisible » à chaque courbe) : solde compté
-        // constant plutôt qu'une courbe entière en échec — l'interface le dit
-        // (`constant`) s'il y a un solde.
+        // atteinte…), ou historique Blockscout indisponible (site public
+        // derrière la vérification anti-robots sans clé de l'API officielle
+        // — Arbitrum, Base et Polygon depuis le 10/10/2026 —, ou crédits du
+        // jour épuisés) : solde compté constant plutôt qu'une courbe entière
+        // en échec — l'interface le dit (`constant`) s'il y a un solde.
         Err(_) if spec.uses_nodereal() => data.constant = true,
-        Err(e) if e.to_string() == crate::blockscout::BLOCKSCOUT_BLOCKED => data.constant = true,
+        Err(e) if crate::blockscout::unavailable(&e) => data.constant = true,
         Err(e) => return Err(e),
     }
     Ok(data)

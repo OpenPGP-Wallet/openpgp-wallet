@@ -77,6 +77,7 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("plusieurs sauvegardes complètes trouvées : choisissez celle à restaurer", "several complete backups found: choose the one to restore"),
     // core/src/blockscout.rs
     ("l'explorateur de ce réseau refuse pour l'instant les requêtes automatiques : historique indisponible", "this network's explorer currently refuses automated requests: history unavailable"),
+    ("historique de ce réseau momentanément indisponible (limite du service atteinte) — réessayez plus tard", "this network's history is temporarily unavailable (service limit reached) — try again later"),
     // core/src/api.rs, actions tokenisées xStocks
     ("transferts de ce jeton suspendus par son émetteur : réessayez plus tard", "transfers of this token are paused by its issuer: try again later"),
     ("l'émetteur de ce jeton a ajouté une règle de transfert que l'app ne gère pas encore : envoi refusé, rien n'a été dépensé", "this token's issuer added a transfer rule the app doesn't support yet: transfer refused, nothing was spent"),

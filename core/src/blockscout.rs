@@ -6,10 +6,94 @@
 //! externe. Les instances publiques Blockscout (contrairement à Etherscan) ne
 //! demandent aucune clé API, ce qui les rend cohérentes avec Bitcoin/Solana : zéro
 //! configuration requise de la part de l'utilisateur.
+//!
+//! Depuis octobre 2026, les sites publics d'Arbitrum, de Base et de Polygon
+//! sont derrière la vérification anti-robots de Cloudflare (403, constaté le
+//! 10/10/2026 ; Ethereum et Sepolia répondent encore). Un réseau dont le site
+//! refuse passe par l'API officielle de Blockscout (`api.blockscout.com`, mêmes
+//! routes v2), avec la clé gratuite de l'app : 100 000 crédits par jour et 5
+//! requêtes par seconde, partagés par tous ses utilisateurs (20 crédits par
+//! page de transactions, 30 par page de virements de jeton).
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
+use reqwest::StatusCode;
 use serde::Deserialize;
-use std::sync::OnceLock;
+use std::collections::HashSet;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
+
+/// Clé de l'API officielle (offre gratuite), intégrée À LA COMPILATION
+/// (`BLOCKSCOUT_API_KEY` dans `partner-keys.env`, voir build.rs) ; absente :
+/// historique des réseaux bloqués indisponible (`BLOCKSCOUT_BLOCKED`).
+pub const API_KEY: Option<&str> = option_env!("BLOCKSCOUT_API_KEY");
+const PRO_API: &str = "https://api.blockscout.com";
+/// Écart minimal entre deux appels à l'API officielle (5 requêtes par
+/// seconde pour tous les utilisateurs : pas de rafale).
+const PRO_SPACING: Duration = Duration::from_millis(250);
+/// Plus longue attente acceptée avant une seconde tentative (limite de débit).
+const PRO_MAX_RETRY_WAIT: Duration = Duration::from_secs(2);
+
+fn pace() {
+    static LAST: Mutex<Option<Instant>> = Mutex::new(None);
+    let mut last = LAST.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some(wait) = last.map(|t| PRO_SPACING.saturating_sub(t.elapsed())) {
+        std::thread::sleep(wait);
+    }
+    *last = Some(Instant::now());
+}
+
+/// Sites publics vus bloqués pendant cette session : leurs appels suivants
+/// vont directement à l'API officielle (pas une requête perdue à chaque fois).
+fn blocked_sites() -> &'static Mutex<HashSet<&'static str>> {
+    static SITES: OnceLock<Mutex<HashSet<&'static str>>> = OnceLock::new();
+    SITES.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// Ce que dit une réponse de l'API officielle, selon son statut.
+#[derive(Debug, PartialEq)]
+enum ProReply {
+    Ok,
+    /// Débit dépassé : une seconde tentative après cette attente.
+    RetryAfter(Duration),
+    /// Crédits du jour épuisés, ou débit dépassé pour longtemps.
+    Limited,
+    /// Clé absente, invalide ou révoquée.
+    Refused,
+    Other(StatusCode),
+}
+
+/// `credits_left` et `reset_ms` : en-têtes `x-credits-remaining` et
+/// `x-ratelimit-reset` (millisecondes), s'ils sont là.
+fn pro_reply(status: StatusCode, credits_left: Option<i64>, reset_ms: Option<i64>) -> ProReply {
+    match status {
+        s if s.is_success() => ProReply::Ok,
+        StatusCode::TOO_MANY_REQUESTS => match (credits_left, reset_ms) {
+            (Some(credits), _) if credits <= 0 => ProReply::Limited,
+            (_, Some(ms)) if (0..=PRO_MAX_RETRY_WAIT.as_millis() as i64).contains(&ms) => ProReply::RetryAfter(Duration::from_millis(ms as u64)),
+            _ => ProReply::Limited,
+        },
+        StatusCode::UNAUTHORIZED | StatusCode::PAYMENT_REQUIRED | StatusCode::FORBIDDEN => ProReply::Refused,
+        s => ProReply::Other(s),
+    }
+}
+
+fn header_number(response: &reqwest::blocking::Response, name: &str) -> Option<i64> {
+    response.headers().get(name)?.to_str().ok()?.trim().parse().ok()
+}
+
+/// Page de vérification anti-robots de Cloudflare (403 en HTML) au lieu de JSON.
+fn is_challenge(response: &reqwest::blocking::Response) -> bool {
+    let html = response.headers().get(reqwest::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).is_some_and(|v| v.starts_with("text/html"));
+    html && response.status() == StatusCode::FORBIDDEN
+}
+
+/// Historique indisponible du côté de l'explorateur (site bloqué sans clé,
+/// clé refusée, limite du jour atteinte) plutôt qu'une panne de l'app : la
+/// courbe du portefeuille compte alors le solde constant.
+pub fn unavailable(error: &anyhow::Error) -> bool {
+    let text = error.to_string();
+    text == BLOCKSCOUT_BLOCKED || text == BLOCKSCOUT_LIMITED
+}
 
 // Voir eth_rpc::shared_client : un `reqwest::Client` reconstruit à chaque appel de
 // commande jette son pool de connexions keep-alive et repaie une poignée de main
@@ -27,6 +111,8 @@ fn shared_client() -> &'static reqwest::blocking::Client {
 pub struct BlockscoutClient {
     client: reqwest::blocking::Client,
     base_url: &'static str,
+    /// Réseau, pour l'API officielle (`api.blockscout.com/<réseau>/…`).
+    chain_id: u64,
 }
 
 #[derive(Deserialize)]
@@ -83,10 +169,11 @@ pub struct EvmTx {
 impl BlockscoutClient {
     /// `base_url` : `https://eth.blockscout.com` (mainnet) ou
     /// `https://eth-sepolia.blockscout.com` (Sepolia) — voir `history::evm_history`.
-    pub fn new(base_url: &'static str) -> Self {
+    pub fn new(base_url: &'static str, chain_id: u64) -> Self {
         Self {
             client: shared_client().clone(),
             base_url,
+            chain_id,
         }
     }
 
@@ -96,22 +183,47 @@ impl BlockscoutClient {
         Ok(txs)
     }
 
-    /// Réponse JSON de `url` ; page de vérification anti-robots (constaté le
-    /// 10/10/2026 sur arbitrum.blockscout.com et base.blockscout.com : 403 et
-    /// page « Just a moment… » de Cloudflare, quel que soit l'en-tête) :
-    /// `BLOCKSCOUT_BLOCKED`, plutôt qu'une réponse « illisible » sans cause.
-    fn get_json<T: serde::de::DeserializeOwned>(&self, url: &str, query: &[(String, String)]) -> Result<T> {
-        let response = self.client.get(url).query(query).send().context("appel Blockscout impossible")?;
-        let html = response.headers().get(reqwest::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).is_some_and(|v| v.starts_with("text/html"));
-        anyhow::ensure!(!(html && response.status() == reqwest::StatusCode::FORBIDDEN), BLOCKSCOUT_BLOCKED);
-        response.json().context("réponse Blockscout illisible")
+    /// Réponse JSON de `path` (`/api/v2/…`) : le site public d'abord ; s'il
+    /// renvoie la page de vérification anti-robots de Cloudflare (403 « Just a
+    /// moment… », quel que soit l'en-tête), l'API officielle avec la clé de
+    /// l'app — sans clé, `BLOCKSCOUT_BLOCKED`, plutôt qu'une réponse
+    /// « illisible » sans cause.
+    fn get_json<T: serde::de::DeserializeOwned>(&self, path: &str, query: &[(String, String)]) -> Result<T> {
+        let blocked = blocked_sites().lock().unwrap_or_else(|p| p.into_inner()).contains(self.base_url);
+        if !blocked {
+            let response = self.client.get(format!("{}{path}", self.base_url)).query(query).send().context("appel Blockscout impossible")?;
+            if !is_challenge(&response) {
+                return response.json().context("réponse Blockscout illisible");
+            }
+            blocked_sites().lock().unwrap_or_else(|p| p.into_inner()).insert(self.base_url);
+        }
+        let key = API_KEY.ok_or_else(|| anyhow!(BLOCKSCOUT_BLOCKED))?;
+        self.pro_json(key, path, query)
+    }
+
+    /// Réponse JSON de l'API officielle. La clé voyage dans l'en-tête
+    /// `authorization`, jamais dans l'URL (que les erreurs réseau citent).
+    fn pro_json<T: serde::de::DeserializeOwned>(&self, key: &str, path: &str, query: &[(String, String)]) -> Result<T> {
+        let url = format!("{PRO_API}/{}{path}", self.chain_id);
+        for attempt in 0..2 {
+            pace();
+            let response = self.client.get(&url).query(query).bearer_auth(key).send().context("appel Blockscout impossible")?;
+            match pro_reply(response.status(), header_number(&response, "x-credits-remaining"), header_number(&response, "x-ratelimit-reset")) {
+                ProReply::Ok => return response.json().context("réponse Blockscout illisible"),
+                ProReply::RetryAfter(wait) if attempt == 0 => std::thread::sleep(wait),
+                ProReply::RetryAfter(_) | ProReply::Limited => bail!(BLOCKSCOUT_LIMITED),
+                ProReply::Refused => bail!(BLOCKSCOUT_BLOCKED),
+                ProReply::Other(status) => bail!("Blockscout a répondu {status}"),
+            }
+        }
+        bail!(BLOCKSCOUT_LIMITED)
     }
 
     /// Une page d'historique (50 transactions, de la plus récente à la plus
     /// ancienne) et le curseur de la suivante, `None` après la dernière.
     pub fn tx_history_page(&self, address: &str, page: Option<&PageParams>) -> Result<(Vec<EvmTx>, Option<PageParams>)> {
-        let url = format!("{}/api/v2/addresses/{address}/transactions", self.base_url);
-        let resp: TxListResponse = self.get_json(&url, page.map(Vec::as_slice).unwrap_or_default())?;
+        let path = format!("/api/v2/addresses/{address}/transactions");
+        let resp: TxListResponse = self.get_json(&path, page.map(Vec::as_slice).unwrap_or_default())?;
 
         let next = resp.next_page_params.map(page_params);
         let address_lower = address.to_lowercase();
@@ -151,12 +263,12 @@ impl BlockscoutClient {
     /// Mesuré : 0,45 s pour une adresse ordinaire, 21 s pour une adresse très
     /// active (vitalik.eth) — d'où le long délai d'attente du client.
     pub fn token_transfers_page(&self, address: &str, contract: &str, page: Option<&PageParams>) -> Result<(Vec<TokenMove>, Option<PageParams>)> {
-        let url = format!("{}/api/v2/addresses/{address}/token-transfers", self.base_url);
+        let path = format!("/api/v2/addresses/{address}/token-transfers");
         let mut query: PageParams = vec![("type".into(), "ERC-20".into()), ("token".into(), contract.into())];
         if let Some(page) = page {
             query.extend(page.iter().filter(|(key, _)| key != "type" && key != "token").cloned());
         }
-        let resp: TokenTransferListResponse = self.get_json(&url, &query)?;
+        let resp: TokenTransferListResponse = self.get_json(&path, &query)?;
         let moves = token_moves(resp.items, address, contract)?;
         Ok((moves, resp.next_page_params.map(page_params)))
     }
@@ -165,6 +277,9 @@ impl BlockscoutClient {
 /// L'explorateur refuse les requêtes automatiques (page de vérification
 /// anti-robots) : historique de ce réseau indisponible tant qu'il le fait.
 pub const BLOCKSCOUT_BLOCKED: &str = "l'explorateur de ce réseau refuse pour l'instant les requêtes automatiques : historique indisponible";
+
+/// Crédits du jour de l'API officielle épuisés (ou débit dépassé).
+pub const BLOCKSCOUT_LIMITED: &str = "historique de ce réseau momentanément indisponible (limite du service atteinte) — réessayez plus tard";
 
 /// Mouvement net d'un jeton pour l'adresse interrogée dans une transaction
 /// (Blockscout ou Routescan).
@@ -311,6 +426,55 @@ mod tests {
     /// Méthodes lues sur de vraies transactions (Blockscout) : dépôt THORChain
     /// (0xfce530aa…), paiement THORChain vu du coffre (transferOut, pas un swap
     /// de l'utilisateur), virement de jeton.
+    /// Statuts de l'API officielle (documentation du 10/10/2026 : 402 sans
+    /// clé, 429 au-delà du débit ou des crédits du jour).
+    #[test]
+    fn pro_api_replies_are_understood() {
+        assert_eq!(pro_reply(StatusCode::OK, Some(99_980), None), ProReply::Ok);
+        assert_eq!(pro_reply(StatusCode::TOO_MANY_REQUESTS, Some(5_000), Some(400)), ProReply::RetryAfter(Duration::from_millis(400)));
+        assert_eq!(pro_reply(StatusCode::TOO_MANY_REQUESTS, None, Some(2_000)), ProReply::RetryAfter(Duration::from_secs(2)));
+        // Crédits épuisés : attendre ne sert à rien avant minuit UTC.
+        assert_eq!(pro_reply(StatusCode::TOO_MANY_REQUESTS, Some(0), Some(300)), ProReply::Limited);
+        assert_eq!(pro_reply(StatusCode::TOO_MANY_REQUESTS, Some(10), Some(60_000)), ProReply::Limited);
+        assert_eq!(pro_reply(StatusCode::TOO_MANY_REQUESTS, None, None), ProReply::Limited);
+        assert_eq!(pro_reply(StatusCode::TOO_MANY_REQUESTS, None, Some(-1)), ProReply::Limited);
+        for refused in [StatusCode::UNAUTHORIZED, StatusCode::PAYMENT_REQUIRED, StatusCode::FORBIDDEN] {
+            assert_eq!(pro_reply(refused, None, None), ProReply::Refused);
+        }
+        assert_eq!(pro_reply(StatusCode::BAD_GATEWAY, None, None), ProReply::Other(StatusCode::BAD_GATEWAY));
+        assert!(unavailable(&anyhow!(BLOCKSCOUT_BLOCKED)) && unavailable(&anyhow!(BLOCKSCOUT_LIMITED)));
+        assert!(!unavailable(&anyhow!("appel Blockscout impossible")));
+    }
+
+    /// Service réel : Arbitrum, Base et Polygon (sites publics bloqués depuis
+    /// le 10/10/2026) par l'API officielle avec la clé de l'app — transactions
+    /// et virements USDC, pages successives sans doublon.
+    /// `cargo test -- --ignored real_blocked_networks_through_pro_api --nocapture`
+    #[test]
+    #[ignore]
+    fn real_blocked_networks_through_pro_api() {
+        if API_KEY.is_none() {
+            println!("BLOCKSCOUT_API_KEY absente de partner-keys.env : rien à vérifier");
+            return;
+        }
+        let networks = [
+            ("https://arbitrum.blockscout.com", 42_161, "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"),
+            ("https://base.blockscout.com", 8_453, "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"),
+            ("https://polygon.blockscout.com", 137, "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"),
+        ];
+        for (site, chain, usdc) in networks {
+            let client = BlockscoutClient::new(site, chain);
+            let (txs, next) = client.tx_history_page(ME, None).unwrap();
+            println!("{site} : {} transactions, suivante {}", txs.len(), next.is_some());
+            assert!(!txs.is_empty() && txs.iter().all(|tx| tx.hash.starts_with("0x") && tx.timestamp_unix.is_some()));
+            let (second, _) = client.tx_history_page(ME, next.as_ref()).unwrap();
+            assert!(second.iter().all(|tx| !txs.iter().any(|t| t.hash == tx.hash)), "pages sans doublon");
+            let (moves, _) = client.token_transfers_page(ME, usdc, None).unwrap();
+            println!("  USDC : {} mouvements", moves.len());
+            println!("  site public bloqué : {}", blocked_sites().lock().unwrap().contains(site));
+        }
+    }
+
     #[test]
     fn swap_methods_are_recognised() {
         for swap in ["depositWithExpiry", "swapExactETHForTokens", "swapETHForExactTokens", "multiSwap"] {
@@ -364,7 +528,7 @@ mod tests {
     #[test]
     #[ignore]
     fn real_token_transfers() {
-        let client = BlockscoutClient::new("https://eth.blockscout.com");
+        let client = BlockscoutClient::new("https://eth.blockscout.com", 1);
         for address in ["0x34deb5AF3e37BD0495dDc1bb1C53c14d7CE064c3", ME] {
             let started = std::time::Instant::now();
             let (first, next) = client.token_transfers_page(address, USDC, None).unwrap();

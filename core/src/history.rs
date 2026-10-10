@@ -208,7 +208,7 @@ pub fn evm_history_page(chain_id: u64, address: &str, cursor: Option<&EvmCursor>
                 Some(EvmCursor::Blockscout(params)) => Some(params),
                 _ => None,
             };
-            let (txs, next) = BlockscoutClient::new(base_url).tx_history_page(address, page)?;
+            let (txs, next) = BlockscoutClient::new(base_url, chain_id).tx_history_page(address, page)?;
             (txs, next.map(EvmCursor::Blockscout))
         }
         EvmHistory::Routescan => {
@@ -244,7 +244,7 @@ pub fn erc20_history_page(chain_id: u64, address: &str, contract: &str, cursor: 
                 Some(EvmCursor::Blockscout(params)) => Some(params),
                 _ => None,
             };
-            let (moves, next) = BlockscoutClient::new(base_url).token_transfers_page(address, contract, page)?;
+            let (moves, next) = BlockscoutClient::new(base_url, chain_id).token_transfers_page(address, contract, page)?;
             (moves, next.map(EvmCursor::Blockscout))
         }
         EvmHistory::Routescan => {
