@@ -20,6 +20,24 @@
   font-display: swap;
   unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
 }
+/* Space Grotesk (variable, licence OFL : assets/fonts/SpaceGrotesk-OFL.txt), la
+   police des titres du site vitrine : titres, noms des cryptos, grands montants. */
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("./assets/fonts/SpaceGrotesk-latin.woff2") format("woff2");
+  font-weight: 300 700;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("./assets/fonts/SpaceGrotesk-latin-ext.woff2") format("woff2");
+  font-weight: 300 700;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
 @font-face {
   font-family: "IBM Plex Mono";
   src: url("./assets/fonts/IBMPlexMono-Regular.woff2") format("woff2");
@@ -30,12 +48,12 @@
 
 :root {
   color-scheme: dark;
-  --bg: #0b0d10;
-  --surface: #12151a;
-  --surface-2: #181c23;
-  --border: #242932;
-  --text: #eef0f3;
-  --muted: #9aa2ae;
+  --bg: #08090c;
+  --surface: #101318;
+  --surface-2: #161a21;
+  --border: #1f242c;
+  --text: #f2f4f7;
+  --muted: #a1a9b5;
   --accent: #7c93ff;
   --accent-hover: #6b84f7;
   --danger: #ff6b6b;
@@ -50,13 +68,15 @@
   --dim: color-mix(in srgb, var(--muted) 72%, var(--bg));
   --radius-sm: 9px;
   --radius: 12px;
-  --radius-lg: 16px;
-  --radius-xl: 20px;
+  --radius-lg: 18px;
+  --radius-xl: 22px;
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
   --shadow: 0 12px 32px -14px rgba(0, 0, 0, 0.7);
   --shadow-lg: 0 32px 80px -24px rgba(0, 0, 0, 0.8);
   /* Largeur de la barre latérale (voir « Barre latérale »). */
   --sidebar-w: 232px;
+  /* Titres, noms des cryptos et grands montants (voir « Allure moderne »). */
+  --font-display: "Space Grotesk", "Inter", "Segoe UI", system-ui, sans-serif;
   font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
   /* Chiffres de même largeur : montants et soldes alignés chiffre à chiffre. */
   font-variant-numeric: tabular-nums;
@@ -4638,6 +4658,243 @@ h2 .coin-icon-inline,
   margin-bottom: 12px;
 }
 
+/* --- Allure moderne -------------------------------------------------------------
+   Reprise du langage du site vitrine et de la fenêtre de confirmation sécurisée :
+   titres en Space Grotesk, fond plus profond éclairé de halos d'accent, cartes
+   « verre » (léger dégradé, reflet en haut, coins plus ronds), fenêtres avec la
+   lueur de la fenêtre sécurisée, barre latérale translucide. Apparence seule :
+   aucune mise en page ni structure changée ; tous les thèmes en profitent (les
+   couleurs viennent de leurs jetons), le thème Blanc ajuste le reste plus bas. */
+h1,
+h2,
+.brand-mark,
+.nav-brand,
+.hero-total,
+.assets-heading,
+.section-title,
+.modal h2,
+.secure-confirm-title,
+.wallet-card h2 {
+  font-family: var(--font-display);
+}
+
+h1 {
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+
+.assets-heading {
+  font-size: 1.4rem;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+}
+
+.section-title {
+  font-size: 1.1rem;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+}
+
+.wallet-card h2 {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.hero-total {
+  font-weight: 700;
+  letter-spacing: -0.045em;
+}
+
+.modal h2 {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+/* Fond du tableau de bord : halos d'accent fixes, comme le haut du site. */
+.view-shell {
+  background:
+    radial-gradient(ellipse 55% 40% at 88% -6%, color-mix(in srgb, var(--accent) 11%, transparent), transparent 70%),
+    radial-gradient(ellipse 45% 35% at 20% 108%, color-mix(in srgb, var(--accent) 6%, transparent), transparent 70%),
+    var(--bg);
+  background-attachment: fixed;
+}
+
+/* Écrans d'accueil (déverrouillage, création, restauration) : la grille fine du
+   site, estompée vers les bords, derrière la carte. */
+.view:not(.view-shell) {
+  isolation: isolate;
+  position: relative;
+}
+
+.view:not(.view-shell)::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--text) 4.5%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--text) 4.5%, transparent) 1px, transparent 1px);
+  background-size: 64px 64px;
+  -webkit-mask-image: radial-gradient(ellipse 60% 55% at 50% 40%, #000 20%, transparent 75%);
+  mask-image: radial-gradient(ellipse 60% 55% at 50% 40%, #000 20%, transparent 75%);
+}
+
+/* Cartes et fenêtres « verre » : reflet d'un pixel en haut, bordure adoucie. */
+.card,
+.modal,
+.wallet-card,
+.portfolio-hero {
+  border-color: color-mix(in srgb, var(--border), var(--text) 3%);
+  box-shadow: var(--shadow), inset 0 1px 0 color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.card,
+.modal,
+.portfolio-hero {
+  border-radius: 24px;
+}
+
+.wallet-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+  box-shadow: var(--shadow), 0 0 0 1px color-mix(in srgb, var(--accent) 10%, transparent), inset 0 1px 0 color-mix(in srgb, var(--text) 7%, transparent);
+}
+
+/* Total du portefeuille : la grille du site, dans le coin éclairé. */
+.portfolio-hero {
+  isolation: isolate;
+}
+
+.portfolio-hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--text) 5%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--text) 5%, transparent) 1px, transparent 1px);
+  background-size: 44px 44px;
+  -webkit-mask-image: radial-gradient(ellipse 55% 95% at 100% 0%, #000 5%, transparent 70%);
+  mask-image: radial-gradient(ellipse 55% 95% at 100% 0%, #000 5%, transparent 70%);
+}
+
+/* Fenêtres : la lueur d'accent en haut de la fenêtre sécurisée, voile plus flou. */
+.modal {
+  background:
+    radial-gradient(ellipse 90% 55% at 50% -12%, color-mix(in srgb, var(--accent) 13%, transparent), transparent 70%),
+    linear-gradient(180deg, color-mix(in srgb, var(--surface), white 3%), var(--surface));
+}
+
+.modal-overlay {
+  background: color-mix(in srgb, var(--bg) 66%, transparent);
+  backdrop-filter: blur(10px) saturate(120%);
+  -webkit-backdrop-filter: blur(10px) saturate(120%);
+}
+
+/* Barre latérale translucide ; onglet actif : teinte d'accent et trait lumineux. */
+.navbar {
+  background: color-mix(in srgb, var(--bg) 80%, transparent);
+  backdrop-filter: saturate(140%) blur(16px);
+  -webkit-backdrop-filter: saturate(140%) blur(16px);
+  border-right-color: color-mix(in srgb, var(--border), transparent 25%);
+}
+
+.nav-tab {
+  position: relative;
+}
+
+.nav-tab.active {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 20%, transparent), color-mix(in srgb, var(--accent) 6%, transparent));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+.nav-tab.active::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 25%;
+  bottom: 25%;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent);
+  box-shadow: 0 0 10px var(--accent);
+}
+
+/* Boutons : principal plus lumineux, secondaire en « verre ». */
+button.primary:not(:disabled) {
+  box-shadow: 0 10px 24px -12px color-mix(in srgb, var(--accent) 85%, transparent), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+button.secondary {
+  background: color-mix(in srgb, var(--surface-2) 75%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text) 4%, transparent);
+}
+
+/* Champs : un cran plus sombres que la carte, anneau d'accent au focus. */
+input[type="password"],
+input[type="text"],
+input[type="url"],
+input[type="file"],
+select,
+textarea {
+  background: color-mix(in srgb, var(--surface-2), var(--bg) 35%);
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+
+/* Allure moderne, suite : chiffres en Space Grotesk, cartes plus « verre »,
+   liseré lumineux en haut d'une carte survolée, libellés en petits sur-titres. */
+.balance,
+.hero-total {
+  font-family: var(--font-display);
+  font-variant-numeric: tabular-nums;
+}
+
+.wallet-card .balance {
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.hero-label {
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.hero-total {
+  font-size: clamp(2.7rem, 5vw, 3.8rem);
+}
+
+.wallet-card {
+  position: relative;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--surface), var(--text) 3.5%), color-mix(in srgb, var(--surface), var(--bg) 45%));
+}
+
+.wallet-card::before {
+  content: "";
+  position: absolute;
+  left: 18%;
+  right: 18%;
+  top: -1px;
+  height: 1px;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) 80%, white), transparent);
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+
+.wallet-card:hover::before {
+  opacity: 1;
+}
+
 /* --- Thème « Blanc » ----------------------------------------------------------
    Clair, repris de la boîte de confirmation Windows du site vitrine (section
    « À l'envoi ») : fond gris très clair, surfaces blanches, bordures #e3e3e3,
@@ -4671,6 +4928,16 @@ h2 .coin-icon-inline,
 
 :root[data-theme="light"] .modal-overlay {
   background: rgba(20, 24, 32, 0.32);
+}
+
+:root[data-theme="light"] .navbar {
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
+}
+
+:root[data-theme="light"] .modal {
+  background:
+    radial-gradient(ellipse 90% 55% at 50% -12%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 70%),
+    var(--surface);
 }
 
 /* Nom d'affiliation (Paramètres) : une ligne par réseau. */
