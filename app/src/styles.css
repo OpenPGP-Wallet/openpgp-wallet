@@ -1814,7 +1814,8 @@ textarea:focus {
 }
 
 /* Mode « Organiser » actif. */
-#organize-btn[aria-pressed="true"] {
+#organize-btn[aria-pressed="true"],
+#stocks-organize-btn[aria-pressed="true"] {
   background: var(--accent-soft);
   border-color: color-mix(in srgb, var(--accent) 40%, transparent);
   color: var(--accent-text);
@@ -2132,21 +2133,28 @@ h2 .coin-icon-inline,
    ou moins longue) : rien ne garantissait que la colonne "solde" de la ligne
    ETH commence au même endroit que celle de la ligne BTC. Le subgrid force
    toutes les lignes à partager exactement les mêmes largeurs de colonnes. */
-/* `.tab-panel` plafonne normalement le contenu à 960px — bien pour les cartes
-   (qui s'enroulent sur plusieurs lignes), mais ça écrasait la colonne adresse
-   en vue liste, où en-tête/solde/boutons se disputent maintenant la même
-   largeur totale sur une seule ligne. Élargi seulement quand la vue liste est
-   active. */
-:root[data-wallet-list-view="true"] .tab-panel[data-panel="wallet"] {
+/* Vue liste (compacte) : une ligne par crypto ou action — nom, solde, adresse
+   et ses outils, actions. Revue le 10/10/2026 (jugée « catastrophique ») :
+   adresse réduite à un caractère, noms sur trois lignes, menu réseau
+   d'Ethereum posé sur le solde, boutons sur une seconde ligne. Désormais :
+   réseau et « Staker » à la ligne SOUS le nom (dans sa colonne), nom trop
+   long coupé, copier, QR et Convertir en icônes à côté de l'adresse,
+   Actualiser et Historique en icônes (libellé en info-bulle), Envoyer avec
+   son libellé. `.tab-panel` plafonne le contenu à 960px : élargi ici. */
+:root[data-wallet-list-view="true"] .tab-panel[data-panel="wallet"],
+:root[data-wallet-list-view="true"] .tab-panel[data-panel="stocks"] {
   max-width: 1150px;
 }
 
 :root[data-wallet-list-view="true"] .wallet-grid {
-  grid-template-columns: minmax(170px, auto) minmax(120px, auto) minmax(160px, 1fr) auto;
-  /* row-gap puis column-gap : `gap` seul (une valeur) aurait écrasé le
-     column-gap voulu, les deux devant différer ici (lignes plus rapprochées
-     que les colonnes). */
-  gap: 12px 28px;
+  /* Adresse : au moins 9 caractères et ses trois outils (sinon « Convertir »
+     débordait sur « Actualiser ») ; c'est le nom, coupé, qui cède la place.
+     Pas `min-content` : celui d'une adresse sur une ligne est sa longueur
+     entière. Fenêtre large : l'adresse a la plus grosse part (le réseau passe
+     sous le nom au besoin). */
+  grid-template-columns: minmax(0, 1fr) minmax(130px, auto) minmax(210px, 1.3fr) auto;
+  /* row-gap puis column-gap : lignes plus rapprochées que les colonnes. */
+  gap: 10px 22px;
 }
 
 :root[data-wallet-list-view="true"] .wallet-card {
@@ -2154,19 +2162,45 @@ h2 .coin-icon-inline,
   grid-column: 1 / -1;
   grid-template-columns: subgrid;
   align-items: center;
-  column-gap: 28px;
+  column-gap: 22px;
   row-gap: 2px;
-  padding: 12px 18px;
+  padding: 10px 16px;
 }
 
 :root[data-wallet-list-view="true"] .wallet-card header {
   grid-column: 1;
   grid-row: 1 / span 2;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   justify-content: flex-start;
-  gap: 10px;
+  align-items: center;
+  gap: 4px 10px;
   margin-bottom: 0;
   min-height: 0;
+  min-width: 0;
+}
+
+:root[data-wallet-list-view="true"] .wallet-card header h2 {
+  min-width: 0;
+  max-width: 100%;
+}
+
+:root[data-wallet-list-view="true"] .wallet-card header .collapse-toggle {
+  min-width: 0;
+  max-width: 100%;
+}
+
+:root[data-wallet-list-view="true"] .wallet-card header .coin-name,
+:root[data-wallet-list-view="true"] .wallet-card header .network-fixed-label {
+  min-width: 0;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+:root[data-wallet-list-view="true"] .wallet-card header .custom-select {
+  min-width: 0;
+  max-width: 100%;
 }
 
 :root[data-wallet-list-view="true"] .wallet-card .balance {
@@ -2185,12 +2219,8 @@ h2 .coin-icon-inline,
   margin: 0;
 }
 
-/* Le badge "transaction en attente" réserve normalement sa place même invisible
-   (voir son commentaire plus haut) pour éviter un saut de mise en page — un
-   compromis pensé pour des cartes verticales. En ligne compacte, cet espace
-   réservé gâcherait justement la largeur qu'on cherche à gagner ici ; on
-   accepte donc un léger réajustement de la ligne dans le rare cas où il
-   apparaît vraiment, plutôt que de lui réserver sa place en permanence. */
+/* Le badge "transaction en attente" réserve normalement sa place même
+   invisible (cartes verticales) ; en ligne compacte, seulement s'il est là. */
 :root[data-wallet-list-view="true"] .wallet-card .pending-badge {
   display: none;
 }
@@ -2200,22 +2230,45 @@ h2 .coin-icon-inline,
   visibility: visible;
 }
 
-:root[data-wallet-list-view="true"] .wallet-card .address-row {
+/* Adresse puis ses outils sur une ligne (avec ou sans « Convertir »). */
+:root[data-wallet-list-view="true"] .wallet-card .address-row,
+:root[data-wallet-list-view="true"] .wallet-card .address-row:has(> .convert-btn:not(.hidden)) {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   grid-column: 3;
   grid-row: 1 / span 2;
   min-width: 0;
 }
 
-/* Seule dérogation, ici, à la règle "adresse toujours entière, quitte à passer
-   sur plusieurs lignes" (voir `.address`) : le but explicite de cette vue est
-   de gagner de la place. Le texte complet reste sélectionnable/copiable
-   malgré la troncature visuelle, et le bouton QR affiche toujours l'adresse
-   entière en un clic. */
+/* Seule dérogation à la règle "adresse toujours entière" : le but de cette
+   vue est de gagner de la place. Le texte complet reste copiable, et le
+   bouton QR affiche l'adresse entière en un clic. */
 :root[data-wallet-list-view="true"] .wallet-card .address {
+  flex: 1 1 auto;
+  min-width: 9ch;
+  margin: 0;
+  padding: 7px 9px;
+  font-size: 0.78rem;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   display: block;
+}
+
+:root[data-wallet-list-view="true"] .wallet-card .address-row .qr-btn,
+:root[data-wallet-list-view="true"] .wallet-card .address-row .convert-btn {
+  flex: 0 0 34px;
+  width: 34px;
+  height: 34px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  font-size: 0;
+}
+
+:root[data-wallet-list-view="true"] .wallet-card .address-row .convert-btn > span {
+  display: none;
 }
 
 :root[data-wallet-list-view="true"] .wallet-card .row-buttons {
@@ -2223,6 +2276,9 @@ h2 .coin-icon-inline,
   grid-column: 4;
   grid-row: 1 / span 2;
   flex-wrap: nowrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
   margin-top: 0;
   width: auto;
 }
@@ -2230,18 +2286,55 @@ h2 .coin-icon-inline,
 :root[data-wallet-list-view="true"] .wallet-card .row-buttons button {
   flex: 0 0 auto;
   width: auto;
-  padding: 6px 12px;
+  height: 34px;
+  margin: 0;
+  padding: 0 12px;
   font-size: 0.8rem;
 }
 
-/* En dessous de ~1120px, nom + réseau, solde, adresse et les 3 boutons ne
-   tiennent plus sur une ligne sans réduire l'adresse à quelques caractères —
-   et sous ~1030px la ligne dépassait de la fenêtre (Envoyer coupé, adresse
-   réduite à « 0xE… »). Les boutons passent alors sous la ligne, alignés à
-   droite. */
-@media (max-width: 1120px) {
+/* Actualiser, Protéger (Zcash protégé) et Historique : icône seule (libellé
+   en info-bulle) ; « Envoyer » aligné d'une ligne à l'autre. */
+:root[data-wallet-list-view="true"] .wallet-card .row-buttons [data-action="refresh"],
+:root[data-wallet-list-view="true"] .wallet-card .row-buttons [data-action="shield"],
+:root[data-wallet-list-view="true"] .wallet-card .row-buttons [data-action="history"] {
+  width: 34px;
+  padding: 0;
+  font-size: 0;
+  gap: 0;
+}
+
+/* Fenêtre moyenne ou étroite (une adresse sur une ligne n'y montrerait que 4 ou 5
+   caractères) : adresse sur la première ligne, ses outils, plus petits, en
+   dessous — les lignes ont de toute façon deux étages (réseau sous le nom,
+   valeur sous le solde). */
+@media (max-width: 1180px) {
   :root[data-wallet-list-view="true"] .wallet-grid {
-    grid-template-columns: minmax(170px, auto) minmax(120px, auto) minmax(120px, 1fr);
+    grid-template-columns: minmax(0, 1.3fr) minmax(130px, auto) minmax(150px, 1fr) auto;
+  }
+
+  :root[data-wallet-list-view="true"] .wallet-card .address-row,
+  :root[data-wallet-list-view="true"] .wallet-card .address-row:has(> .convert-btn:not(.hidden)) {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  :root[data-wallet-list-view="true"] .wallet-card .address {
+    flex: 1 0 100%;
+    padding: 4px 8px;
+  }
+
+  :root[data-wallet-list-view="true"] .wallet-card .address-row .qr-btn,
+  :root[data-wallet-list-view="true"] .wallet-card .address-row .convert-btn {
+    flex-basis: 28px;
+    width: 28px;
+    height: 28px;
+  }
+}
+
+/* Fenêtre étroite : les actions passent sous la ligne, alignées à droite. */
+@media (max-width: 760px) {
+  :root[data-wallet-list-view="true"] .wallet-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(110px, auto) minmax(110px, 1fr);
   }
 
   :root[data-wallet-list-view="true"] .wallet-card .row-buttons {
@@ -3997,7 +4090,8 @@ h2 .coin-icon-inline,
 
 #manage-assets-btn,
 #manage-stocks-btn { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Crect%20x%3D'3.5'%20y%3D'3.5'%20width%3D'7'%20height%3D'7'%20rx%3D'1.5'%2F%3E%3Crect%20x%3D'13.5'%20y%3D'3.5'%20width%3D'7'%20height%3D'7'%20rx%3D'1.5'%2F%3E%3Crect%20x%3D'3.5'%20y%3D'13.5'%20width%3D'7'%20height%3D'7'%20rx%3D'1.5'%2F%3E%3Cpath%20d%3D'M14%2017h6M17%2014v6'%2F%3E%3C%2Fsvg%3E"); }
-#organize-btn { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M7%204v16M3.5%207.5%207%204l3.5%203.5'%2F%3E%3Cpath%20d%3D'M17%2020V4M13.5%2016.5%2017%2020l3.5-3.5'%2F%3E%3C%2Fsvg%3E"); }
+#organize-btn,
+#stocks-organize-btn { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M7%204v16M3.5%207.5%207%204l3.5%203.5'%2F%3E%3Cpath%20d%3D'M17%2020V4M13.5%2016.5%2017%2020l3.5-3.5'%2F%3E%3C%2Fsvg%3E"); }
 
 /* Actions d'une carte : icône devant le libellé. */
 .wallet-card .row-buttons button[data-action] {

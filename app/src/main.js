@@ -264,7 +264,7 @@ function buildAssetCard(asset) {
           <button class="secondary" data-action="shield" data-i18n="shielded.shieldAction" data-i18n-title="shielded.shieldTitle">Protéger</button>`
               : ""
           }
-          <button class="secondary" data-action="history" data-i18n="wallet.history">Historique</button>
+          <button class="secondary" data-action="history" data-i18n="wallet.history" data-i18n-title="wallet.history">Historique</button>
           <button class="primary" data-action="send" data-i18n="wallet.send">Envoyer</button>
         </div>
       </div>
@@ -819,6 +819,7 @@ const I18N = {
     "wallet.receiveAsset": "Recevoir {symbol}",
     "assets.manage": "Gérer mes cryptos",
     "assets.search": "Rechercher une crypto…",
+    "stocks.search": "Rechercher une action…",
     "assets.noMatch": "Aucune crypto ne correspond.",
     "assets.organize": "Organiser",
     "organize.sortBy": "Trier :",
@@ -1257,6 +1258,7 @@ const I18N = {
     "charts.priceSourceKraken": "Prix Kraken (en dollars).",
     "charts.priceSourceJupiter": "Prix Jupiter (en dollars, par action).",
     "stocks.marketsTitle": "Cours des actions en direct",
+    "organize.cap": "Capitalisation",
     "stocks.marketsHint": "Cliquez sur une action pour voir sa courbe en grand.",
     "charts.delta": "{arrow} {pct} % {period}",
     "charts.deltaUsd": "{arrow} {amount} {period}",
@@ -1554,6 +1556,7 @@ const I18N = {
     "wallet.receiveAsset": "Receive {symbol}",
     "assets.manage": "Manage my cryptos",
     "assets.search": "Search a crypto…",
+    "stocks.search": "Search a stock…",
     "assets.noMatch": "No crypto matches.",
     "assets.organize": "Organize",
     "organize.sortBy": "Sort:",
@@ -1988,6 +1991,7 @@ const I18N = {
     "charts.priceSourceKraken": "Kraken prices (in dollars).",
     "charts.priceSourceJupiter": "Jupiter prices (in dollars, per share).",
     "stocks.marketsTitle": "Live stock prices",
+    "organize.cap": "Market cap",
     "stocks.marketsHint": "Click a stock to see its chart in full.",
     "charts.delta": "{arrow} {pct}% {period}",
     "charts.deltaUsd": "{arrow} {amount} {period}",
@@ -3212,6 +3216,7 @@ document.querySelectorAll(".nav-tab").forEach((tab) => {
     if (target === "stocks") {
       refreshStockPrices().then(() => {
         document.querySelectorAll(".stocks-grid .wallet-card").forEach(updateFiatValue);
+        scheduleCardResort();
         renderStockMarkets();
       });
     }
@@ -4001,8 +4006,9 @@ let pricesRefreshing = false;
 // Cours des actions tokenisées (Jupiter : prix d'une unité affichée, celui de
 // l'action) : demandés seulement si l'une est affichée.
 let stockQuotes = {};
-async function refreshStockPrices() {
-  if (!ASSETS.some((asset) => asset.stock && isAssetVisible(asset.coin))) return;
+// `force` : même sans action affichée (« Gérer mes actions », trié par capitalisation).
+async function refreshStockPrices(force = false) {
+  if (!force && !ASSETS.some((asset) => asset.stock && isAssetVisible(asset.coin))) return;
   try {
     const quotes = await invoke("get_stock_prices");
     const next = Object.fromEntries(quotes.map((quote) => [quote.id, quote]));
@@ -4290,7 +4296,10 @@ function renderStockMarkets() {
   const container = document.getElementById("stocks-markets-list");
   if (!container) return;
   const existing = new Map([...container.querySelectorAll(".market-row")].map((row) => [row.dataset.symbol, row]));
-  const rows = ASSETS.filter((asset) => asset.stock && isAssetVisible(asset.coin) && stockQuotes[asset.coin]).map((asset) => {
+  // Par capitalisation, décroissante, comme la liste des cryptos.
+  const cap = (asset) => stockQuotes[asset.coin].market_cap_usd ?? -1;
+  const visible = ASSETS.filter((asset) => asset.stock && isAssetVisible(asset.coin) && stockQuotes[asset.coin]);
+  const rows = visible.sort((a, b) => cap(b) - cap(a)).map((asset) => {
     const quote = stockQuotes[asset.coin];
     const coin = { id: asset.gecko, symbol: asset.symbol, name: asset.name, price_usd: quote.price_usd, market_cap_usd: quote.market_cap_usd ?? 0, change_24h_percent: quote.change_24h_percent ?? null };
     const row = existing.get(coin.symbol) || createMarketRow(coin);
@@ -5655,10 +5664,20 @@ function openAssetsModal(stocks) {
   hint.dataset.i18n = stocks ? "stocks.manageHint" : "assets.hint";
   title.textContent = t(title.dataset.i18n);
   hint.textContent = t(hint.dataset.i18n);
-  const coins = stocks ? ASSETS.filter((asset) => asset.stock).map((asset) => asset.coin) : orderedCoins().filter((coin) => !ASSET_BY_COIN[coin].stock);
+  const search = stocks ? "stocks.search" : "assets.search";
+  assetsSearch.dataset.i18nPlaceholder = search;
+  assetsSearch.dataset.i18nAriaLabel = search;
+  assetsSearch.placeholder = t(search);
+  assetsSearch.setAttribute("aria-label", t(search));
+  // Actions : par capitalisation de l'entreprise, décroissante (sans cours : à la suite).
+  const cap = (coin) => stockQuotes[coin]?.market_cap_usd ?? -1;
+  const coins = stocks
+    ? ASSETS.filter((asset) => asset.stock).map((asset) => asset.coin).sort((a, b) => cap(b) - cap(a))
+    : orderedCoins().filter((coin) => !ASSET_BY_COIN[coin].stock);
   list.replaceChildren(
     ...coins.map((coin) => ASSET_BY_COIN[coin]).map((asset) => {
       const li = document.createElement("li");
+      li.dataset.coin = asset.coin;
       if (asset.stock) li.dataset.stock = "1";
       li.dataset.search = normalizeSearch(`${assetName(asset)} ${asset.name} ${asset.symbol} ${asset.stock ? "action xstock stock" : ""}`);
       const label = document.createElement("label");
@@ -5686,6 +5705,7 @@ function openAssetsModal(stocks) {
         if (box.checked && asset.stock) {
           refreshStockPrices().then(() => {
             document.querySelectorAll(".wallet-card").forEach(updateFiatValue);
+            scheduleCardResort();
             renderStockMarkets();
           });
         }
@@ -5699,6 +5719,14 @@ function openAssetsModal(stocks) {
   filterAssetsList();
   assetsModal.classList.remove("hidden");
   assetsSearch.focus();
+  // Cours pas encore demandés (aucune action affichée) : la fenêtre s'ouvre
+  // tout de suite, puis la liste se trie dès qu'ils arrivent.
+  if (stocks && Object.keys(stockQuotes).length === 0) {
+    refreshStockPrices(true).then(() => {
+      if (assetsModal.classList.contains("hidden") || title.dataset.i18n !== "stocks.title") return;
+      list.append(...[...list.children].sort((a, b) => cap(b.dataset.coin) - cap(a.dataset.coin)));
+    });
+  }
 }
 
 document.getElementById("manage-assets-btn").addEventListener("click", () => openAssetsModal(false));
@@ -5728,28 +5756,54 @@ document.addEventListener("keydown", (e) => {
 // des éléments dans la grille (et dans l'onglet Historique, et la liste
 // « Gérer mes cryptos ») : aucun autre code n'en dépend.
 
+// Deux « tableaux », chacun sa grille, son ordre et sa barre « Organiser » :
+// les cryptos (onglet « Portefeuille ») et les actions tokenisées (onglet
+// « Actions », avec en plus le tri « Capitalisation », par défaut).
 const CARD_ORDER_STORAGE_KEY = "pgp-wallet-card-order";
-const CARD_ORDER_MODES = ["custom", "value", "name"];
+const STOCK_ORDER_STORAGE_KEY = "pgp-wallet-stock-order";
 const walletGrid = document.querySelector(".wallet-grid");
-// Ordre d'origine (cartes d'index.html, puis celles générées depuis ASSETS) :
-// base de « Mon ordre » pour les cryptos jamais déplacées.
-const DEFAULT_CARD_ORDER = [...walletGrid.querySelectorAll(".wallet-card")].map((card) => card.dataset.coin);
-let cardOrder = { mode: "custom", custom: [] };
-try {
-  const saved = JSON.parse(localStorage.getItem(CARD_ORDER_STORAGE_KEY) || "null");
-  if (saved && CARD_ORDER_MODES.includes(saved.mode) && Array.isArray(saved.custom)) {
-    cardOrder = { mode: saved.mode, custom: saved.custom.filter((coin) => DEFAULT_CARD_ORDER.includes(coin)) };
-  }
-} catch (e) {
-  // localStorage indisponible : ordre d'origine.
-}
-let organizing = false;
-let draggingCard = null;
-let cardResortTimer = null;
 
-function saveCardOrder() {
+function makeBoard({ grid, storageKey, modes, defaultMode, bar, button, done }) {
+  // Ordre d'origine (cartes d'index.html, puis celles générées depuis
+  // ASSETS) : base de « Mon ordre » pour les cartes jamais déplacées.
+  const defaultOrder = [...grid.querySelectorAll(".wallet-card")].map((card) => card.dataset.coin);
+  let order = { mode: defaultMode, custom: [] };
   try {
-    localStorage.setItem(CARD_ORDER_STORAGE_KEY, JSON.stringify(cardOrder));
+    const saved = JSON.parse(localStorage.getItem(storageKey) || "null");
+    if (saved && modes.includes(saved.mode) && Array.isArray(saved.custom)) {
+      order = { mode: saved.mode, custom: saved.custom.filter((coin) => defaultOrder.includes(coin)) };
+    }
+  } catch (e) {
+    // localStorage indisponible : ordre d'origine.
+  }
+  return { grid, storageKey, defaultOrder, order, bar, button, done, organizing: false, resortTimer: null };
+}
+
+const BOARDS = {
+  wallet: makeBoard({
+    grid: walletGrid,
+    storageKey: CARD_ORDER_STORAGE_KEY,
+    modes: ["custom", "value", "name"],
+    defaultMode: "custom",
+    bar: document.getElementById("organize-bar"),
+    button: document.getElementById("organize-btn"),
+    done: document.getElementById("organize-done"),
+  }),
+  stocks: makeBoard({
+    grid: document.querySelector(".stocks-grid"),
+    storageKey: STOCK_ORDER_STORAGE_KEY,
+    modes: ["cap", "custom", "value", "name"],
+    defaultMode: "cap",
+    bar: document.getElementById("stocks-organize-bar"),
+    button: document.getElementById("stocks-organize-btn"),
+    done: document.getElementById("stocks-organize-done"),
+  }),
+};
+let draggingCard = null;
+
+function saveCardOrder(board) {
+  try {
+    localStorage.setItem(board.storageKey, JSON.stringify(board.order));
   } catch (e) {
     // Best-effort : l'ordre reste appliqué pour cette session.
   }
@@ -5757,35 +5811,41 @@ function saveCardOrder() {
 
 // « Mon ordre » complet : l'ordre enregistré, puis les cryptos qui n'y sont
 // pas encore (ajoutées depuis), à leur place d'origine.
-function customOrder() {
-  const order = [...cardOrder.custom];
+function customOrder(board) {
+  const order = [...board.order.custom];
   // Crypto ajoutée depuis (Zcash protégé…) : juste après celle qui la
   // précède dans l'ordre d'origine, pas en fin de liste.
-  DEFAULT_CARD_ORDER.forEach((coin, i) => {
+  board.defaultOrder.forEach((coin, i) => {
     if (order.includes(coin)) return;
-    const before = DEFAULT_CARD_ORDER.slice(0, i).reverse().find((c) => order.includes(c));
+    const before = board.defaultOrder.slice(0, i).reverse().find((c) => order.includes(c));
     order.splice(before ? order.indexOf(before) + 1 : 0, 0, coin);
   });
   return order;
 }
 
 // Valeur en devise du solde affiché par la carte (réseau de test : aucune).
-function cardValue(coin) {
-  const card = walletGrid.querySelector(`.wallet-card[data-coin="${coin}"]`);
+function cardValue(board, coin) {
+  const card = board.grid.querySelector(`.wallet-card[data-coin="${coin}"]`);
   if (!card || TEST_NETWORKS.includes(networkForCard(card))) return 0;
   const amount = Number.parseFloat(card.querySelector('[data-field="balance"]').textContent);
   const price = priceForCoin(coin);
   return Number.isFinite(amount) && price != null ? amount * price : 0;
 }
 
-function orderedCoins() {
-  const custom = customOrder();
-  if (cardOrder.mode === "value") {
-    const values = new Map(custom.map((coin) => [coin, cardValue(coin)]));
-    const rank = new Map(custom.map((coin, i) => [coin, i]));
+function orderedCoins(board = BOARDS.wallet) {
+  const custom = customOrder(board);
+  const rank = new Map(custom.map((coin, i) => [coin, i]));
+  if (board.order.mode === "value") {
+    const values = new Map(custom.map((coin) => [coin, cardValue(board, coin)]));
     return [...custom].sort((a, b) => values.get(b) - values.get(a) || rank.get(a) - rank.get(b));
   }
-  if (cardOrder.mode === "name") {
+  // Capitalisation de l'entreprise (cours de Jupiter), décroissante ; sans
+  // cours : à la suite, dans « Mon ordre ».
+  if (board.order.mode === "cap") {
+    const cap = (coin) => stockQuotes[coin]?.market_cap_usd ?? -1;
+    return [...custom].sort((a, b) => cap(b) - cap(a) || rank.get(a) - rank.get(b));
+  }
+  if (board.order.mode === "name") {
     const collator = new Intl.Collator(currentLang);
     return [...custom].sort((a, b) => collator.compare(assetName(ASSET_BY_COIN[a]), assetName(ASSET_BY_COIN[b])));
   }
@@ -5800,32 +5860,42 @@ function placeInOrder(container, elements) {
   for (const el of elements) container.appendChild(el);
 }
 
-function applyCardOrder() {
+// Sans tableau : les deux.
+function applyCardOrder(board) {
   if (draggingCard) return;
-  const coins = orderedCoins();
-  placeInOrder(walletGrid, coins.map((coin) => walletGrid.querySelector(`.wallet-card[data-coin="${coin}"]`)).filter(Boolean));
+  if (!board) {
+    Object.values(BOARDS).forEach(applyCardOrder);
+    return;
+  }
+  const coins = orderedCoins(board);
+  placeInOrder(board.grid, coins.map((coin) => board.grid.querySelector(`.wallet-card[data-coin="${coin}"]`)).filter(Boolean));
+  // Onglet Historique : les cryptos, puis les actions, chacune dans l'ordre
+  // de son onglet.
   const historyCard = document.querySelector('.tab-panel[data-panel="history"] .card');
-  placeInOrder(historyCard, coins.map((coin) => document.getElementById(`history-section-${coin}`)).filter(Boolean));
+  const all = [...orderedCoins(BOARDS.wallet), ...orderedCoins(BOARDS.stocks)];
+  placeInOrder(historyCard, all.map((coin) => document.getElementById(`history-section-${coin}`)).filter(Boolean));
 }
 
-// « Valeur détenue » : recalcul après un nouveau solde ou cours, regroupé
-// (plusieurs soldes arrivent presque ensemble).
+// « Valeur détenue » et « Capitalisation » : recalcul après un nouveau solde
+// ou cours, regroupé (plusieurs soldes arrivent presque ensemble).
 function scheduleCardResort() {
-  if (cardOrder.mode !== "value") return;
-  clearTimeout(cardResortTimer);
-  cardResortTimer = setTimeout(applyCardOrder, 500);
+  for (const board of Object.values(BOARDS)) {
+    if (board.order.mode !== "value" && board.order.mode !== "cap") continue;
+    clearTimeout(board.resortTimer);
+    board.resortTimer = setTimeout(() => applyCardOrder(board), 500);
+  }
 }
 
-function setCardOrderMode(mode) {
-  cardOrder.mode = mode;
-  saveCardOrder();
-  applyCardOrder();
-  renderOrganizeModes();
+function setCardOrderMode(board, mode) {
+  board.order.mode = mode;
+  saveCardOrder(board);
+  applyCardOrder(board);
+  renderOrganizeModes(board);
 }
 
-function renderOrganizeModes() {
-  document.querySelectorAll("[data-order-mode]").forEach((button) => {
-    const active = button.dataset.orderMode === cardOrder.mode;
+function renderOrganizeModes(board) {
+  board.bar.querySelectorAll("[data-order-mode]").forEach((button) => {
+    const active = button.dataset.orderMode === board.order.mode;
     button.classList.toggle("primary", active);
     button.classList.toggle("secondary", !active);
     button.setAttribute("aria-pressed", String(active));
@@ -5833,13 +5903,13 @@ function renderOrganizeModes() {
 }
 
 // Ordre affiché actuel → « Mon ordre » (après un glisser ou une flèche).
-function adoptDisplayedOrder() {
-  cardOrder.custom = [...walletGrid.querySelectorAll(".wallet-card")].map((card) => card.dataset.coin);
-  setCardOrderMode("custom");
+function adoptDisplayedOrder(board) {
+  board.order.custom = [...board.grid.querySelectorAll(".wallet-card")].map((card) => card.dataset.coin);
+  setCardOrderMode(board, "custom");
 }
 
 // Poignée et flèches de chaque carte, visibles seulement en mode « Organiser ».
-function addOrganizeControls(card) {
+function addOrganizeControls(board, card) {
   const controls = document.createElement("div");
   controls.className = "organize-controls";
   controls.innerHTML = `
@@ -5848,42 +5918,45 @@ function addOrganizeControls(card) {
     <button type="button" class="organize-move" data-move="1" data-i18n-title="organize.moveDown" aria-label="${t("organize.moveDown")}">↓</button>`;
   controls.querySelectorAll("[data-move]").forEach((button) => {
     button.title = t(button.dataset.move === "-1" ? "organize.moveUp" : "organize.moveDown");
-    button.addEventListener("click", () => moveCard(card, Number(button.dataset.move), button));
+    button.addEventListener("click", () => moveCard(board, card, Number(button.dataset.move), button));
   });
   card.prepend(controls);
 }
-walletGrid.querySelectorAll(".wallet-card").forEach(addOrganizeControls);
+for (const board of Object.values(BOARDS)) board.grid.querySelectorAll(".wallet-card").forEach((card) => addOrganizeControls(board, card));
 
 // Déplace une carte d'un cran parmi les cartes AFFICHÉES (les masquées
 // gardent leur place relative).
-function moveCard(card, step, focusAfter) {
+function moveCard(board, card, step, focusAfter) {
   if (draggingCard) return;
-  const visible = [...walletGrid.querySelectorAll(".wallet-card:not(.asset-hidden)")];
+  const visible = [...board.grid.querySelectorAll(".wallet-card:not(.asset-hidden)")];
   const neighbor = visible[visible.indexOf(card) + step];
   if (!neighbor) return;
-  animateLayout(() => walletGrid.insertBefore(card, step < 0 ? neighbor : neighbor.nextSibling));
-  adoptDisplayedOrder();
+  animateLayout(board, () => board.grid.insertBefore(card, step < 0 ? neighbor : neighbor.nextSibling));
+  adoptDisplayedOrder(board);
   focusAfter?.focus();
 }
 
-function setOrganizing(on) {
-  if (!on && pointerDrag) cancelCardDrag();
-  organizing = on;
-  document.getElementById("organize-bar").classList.toggle("hidden", !on);
-  document.getElementById("organize-btn").setAttribute("aria-pressed", String(on));
-  walletGrid.classList.toggle("organizing", on);
-  renderOrganizeModes();
+function setOrganizing(board, on) {
+  if (!on && pointerDrag?.board === board) cancelCardDrag();
+  board.organizing = on;
+  board.bar.classList.toggle("hidden", !on);
+  board.button.setAttribute("aria-pressed", String(on));
+  board.grid.classList.toggle("organizing", on);
+  renderOrganizeModes(board);
 }
 
-document.getElementById("organize-btn").addEventListener("click", () => setOrganizing(!organizing));
-document.getElementById("organize-done").addEventListener("click", () => setOrganizing(false));
-document.querySelectorAll("[data-order-mode]").forEach((button) => {
-  button.addEventListener("click", () => setCardOrderMode(button.dataset.orderMode));
-});
+for (const board of Object.values(BOARDS)) {
+  board.button.addEventListener("click", () => setOrganizing(board, !board.organizing));
+  board.done.addEventListener("click", () => setOrganizing(board, false));
+  board.bar.querySelectorAll("[data-order-mode]").forEach((button) => {
+    button.addEventListener("click", () => setCardOrderMode(board, button.dataset.orderMode));
+  });
+}
 document.addEventListener("keydown", (e) => {
-  if (e.key !== "Escape" || !organizing || document.querySelector(".modal-overlay:not(.hidden)")) return;
+  const board = Object.values(BOARDS).find((b) => b.organizing);
+  if (e.key !== "Escape" || !board || document.querySelector(".modal-overlay:not(.hidden)")) return;
   if (pointerDrag) cancelCardDrag();
-  else setOrganizing(false);
+  else setOrganizing(board, false);
 });
 
 // Glisser-déposer au pointeur (souris, stylet, tactile) — pas le
@@ -5916,8 +5989,8 @@ function layoutRect(el) {
 // Réordonne (`change`) puis fait glisser chaque carte et l'emplacement de leur
 // ancienne position visuelle à la nouvelle (technique FLIP), animations en
 // cours comprises.
-function animateLayout(change) {
-  const items = [...walletGrid.querySelectorAll(".wallet-card:not(.asset-hidden):not(.drag-floating), .card-placeholder")];
+function animateLayout(board, change) {
+  const items = [...board.grid.querySelectorAll(".wallet-card:not(.asset-hidden):not(.drag-floating), .card-placeholder")];
   const before = new Map(items.map((el) => [el, el.getBoundingClientRect()]));
   change();
   if (prefersReducedMotion()) return;
@@ -5958,9 +6031,9 @@ function animateLayout(change) {
 // sous-grille (`subgrid`) qui n'a plus de colonnes une fois hors de la grille :
 // elle reçoit celles de la grille, moins sa marge intérieure et sa bordure aux
 // bords (que le sous-grille reporte sur les éléments des colonnes extrêmes).
-function frozenColumns(style) {
+function frozenColumns(board, style) {
   if (!style.gridTemplateColumns.startsWith("subgrid")) return style.gridTemplateColumns;
-  const tracks = (getComputedStyle(walletGrid).gridTemplateColumns.match(/[\d.]+px/g) || []).map(parseFloat);
+  const tracks = (getComputedStyle(board.grid).gridTemplateColumns.match(/[\d.]+px/g) || []).map(parseFloat);
   if (!tracks.length) return "";
   tracks[0] -= parseFloat(style.paddingLeft) + parseFloat(style.borderLeftWidth);
   tracks[tracks.length - 1] -= parseFloat(style.paddingRight) + parseFloat(style.borderRightWidth);
@@ -5968,20 +6041,20 @@ function frozenColumns(style) {
 }
 
 function startCardDrag(drag) {
-  const { card } = drag;
+  const { card, board } = drag;
   const rect = card.getBoundingClientRect();
   const style = getComputedStyle(card);
   // Colonnes de la grille figées le temps du glisser : en vue liste, leur
   // largeur dépend du contenu de toutes les cartes, et les autres cartes
   // changeraient de colonnes en perdant la carte soulevée.
-  walletGrid.style.gridTemplateColumns = getComputedStyle(walletGrid).gridTemplateColumns;
+  board.grid.style.gridTemplateColumns = getComputedStyle(board.grid).gridTemplateColumns;
   const placeholder = document.createElement("div");
   placeholder.className = "card-placeholder";
   placeholder.style.height = `${rect.height}px`;
-  walletGrid.insertBefore(placeholder, card);
+  board.grid.insertBefore(placeholder, card);
   // La carte sort de la grille (position fixe) en gardant sa taille et ses
   // colonnes.
-  card.style.gridTemplateColumns = frozenColumns(style);
+  card.style.gridTemplateColumns = frozenColumns(board, style);
   card.style.left = `${rect.left}px`;
   card.style.top = `${rect.top}px`;
   card.style.width = `${rect.width}px`;
@@ -6004,19 +6077,19 @@ function followPointer(drag) {
 // verticale quand elle occupe toute la largeur (une colonne, vue liste), à
 // l'horizontale sinon.
 function placePlaceholder(drag) {
-  const { placeholder, lastX: x, lastY: y } = drag;
-  const candidates = [...walletGrid.querySelectorAll(".wallet-card:not(.asset-hidden):not(.drag-floating)")];
+  const { placeholder, lastX: x, lastY: y, board } = drag;
+  const candidates = [...board.grid.querySelectorAll(".wallet-card:not(.asset-hidden):not(.drag-floating)")];
   const target = candidates.find((el) => {
     const r = layoutRect(el);
     return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
   });
   if (!target) return;
   const r = layoutRect(target);
-  const fullRow = r.width > walletGrid.clientWidth * 0.75;
+  const fullRow = r.width > board.grid.clientWidth * 0.75;
   const before = fullRow ? y < r.top + r.height / 2 : x < r.left + r.width / 2;
   const reference = before ? target : target.nextSibling;
   if (reference === placeholder || placeholder.nextSibling === reference) return;
-  animateLayout(() => walletGrid.insertBefore(placeholder, reference));
+  animateLayout(board, () => board.grid.insertBefore(placeholder, reference));
 }
 
 // Défilement continu près du bord de la fenêtre, plus rapide tout au bord.
@@ -6033,14 +6106,16 @@ function autoScroll(drag) {
   drag.scrollFrame = requestAnimationFrame(() => autoScroll(drag));
 }
 
-walletGrid.addEventListener("pointerdown", (e) => {
-  if (!organizing || e.button !== 0 || pointerDrag || draggingCard || e.target.closest(".organize-move")) return;
-  const card = e.target.closest(".wallet-card");
-  if (!card) return;
-  pointerDrag = { card, pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, started: false };
-  card.setPointerCapture(e.pointerId);
-  e.preventDefault();
-});
+for (const board of Object.values(BOARDS)) {
+  board.grid.addEventListener("pointerdown", (e) => {
+    if (!board.organizing || e.button !== 0 || pointerDrag || draggingCard || e.target.closest(".organize-move")) return;
+    const card = e.target.closest(".wallet-card");
+    if (!card) return;
+    pointerDrag = { board, card, pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, started: false };
+    card.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+}
 
 // Mouvement et relâchement écoutés sur toute la page : la carte soulevée
 // n'est plus sous le pointeur, et le relâchement peut avoir lieu hors de la
@@ -6062,7 +6137,7 @@ document.addEventListener("pointermove", (e) => {
 // place dans la grille ; `draggingCard` reste posé jusque-là (pas de tri ni de
 // nouveau glisser pendant qu'elle se pose).
 function finishCardDrag(drag, { adopt }) {
-  const { card, placeholder } = drag;
+  const { card, placeholder, board } = drag;
   pointerDrag = null;
   if (card.hasPointerCapture(drag.pointerId)) card.releasePointerCapture(drag.pointerId);
   if (!drag.started) return;
@@ -6071,9 +6146,9 @@ function finishCardDrag(drag, { adopt }) {
     card.classList.remove("drag-floating", "drag-landing");
     for (const property of ["gridTemplateColumns", "left", "top", "width", "height", "transform", "transition"]) card.style[property] = "";
     placeholder.replaceWith(card);
-    walletGrid.style.gridTemplateColumns = "";
+    board.grid.style.gridTemplateColumns = "";
     draggingCard = null;
-    if (adopt) adoptDisplayedOrder();
+    if (adopt) adoptDisplayedOrder(board);
   };
   if (prefersReducedMotion()) {
     settle();
@@ -6091,7 +6166,7 @@ function finishCardDrag(drag, { adopt }) {
 // l'emplacement a bougé — et le mode de tri ne change pas.
 function cancelCardDrag() {
   const drag = pointerDrag;
-  if (drag.started) animateLayout(() => walletGrid.insertBefore(drag.placeholder, drag.card));
+  if (drag.started) animateLayout(drag.board, () => drag.board.grid.insertBefore(drag.placeholder, drag.card));
   finishCardDrag(drag, { adopt: false });
 }
 
@@ -6105,7 +6180,7 @@ document.addEventListener("pointercancel", (e) => {
 
 // Ordre initial une fois tout le module chargé (« Valeur détenue » lit des
 // constantes déclarées plus bas dans ce fichier).
-setTimeout(applyCardOrder, 0);
+setTimeout(() => applyCardOrder(), 0);
 
 // --- Historique d'une crypto (fenêtre) --------------------------------------
 // Bouton « Historique » d'une carte : grande fenêtre au-dessus du portefeuille,

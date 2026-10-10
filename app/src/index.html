@@ -339,7 +339,7 @@
                 <div class="row-buttons">
                   <button class="secondary" data-action="refresh" data-i18n="wallet.refresh" data-i18n-title="wallet.refresh">Actualiser</button>
                   <button class="secondary receive-action" data-action="qr" data-i18n="wallet.receive">Recevoir</button>
-                  <button class="secondary" data-action="history" data-i18n="wallet.history">Historique</button>
+                  <button class="secondary" data-action="history" data-i18n="wallet.history" data-i18n-title="wallet.history">Historique</button>
                   <button class="primary" data-action="send" data-i18n="wallet.send">Envoyer</button>
                 </div>
               </div>
@@ -440,7 +440,7 @@
                 <div class="row-buttons">
                   <button class="secondary" data-action="refresh" data-i18n="wallet.refresh" data-i18n-title="wallet.refresh">Actualiser</button>
                   <button class="secondary receive-action" data-action="qr" data-i18n="wallet.receive">Recevoir</button>
-                  <button class="secondary" data-action="history" data-i18n="wallet.history">Historique</button>
+                  <button class="secondary" data-action="history" data-i18n="wallet.history" data-i18n-title="wallet.history">Historique</button>
                   <button class="primary" data-action="send" data-i18n="wallet.send">Envoyer</button>
                 </div>
               </div>
@@ -545,7 +545,7 @@
                 <div class="row-buttons">
                   <button class="secondary" data-action="refresh" data-i18n="wallet.refresh" data-i18n-title="wallet.refresh">Actualiser</button>
                   <button class="secondary receive-action" data-action="qr" data-i18n="wallet.receive">Recevoir</button>
-                  <button class="secondary" data-action="history" data-i18n="wallet.history">Historique</button>
+                  <button class="secondary" data-action="history" data-i18n="wallet.history" data-i18n-title="wallet.history">Historique</button>
                   <button class="primary" data-action="send" data-i18n="wallet.send">Envoyer</button>
                 </div>
               </div>
@@ -649,7 +649,7 @@
                 <div class="row-buttons">
                   <button class="secondary" data-action="refresh" data-i18n="wallet.refresh" data-i18n-title="wallet.refresh">Actualiser</button>
                   <button class="secondary receive-action" data-action="qr" data-i18n="wallet.receive">Recevoir</button>
-                  <button class="secondary" data-action="history" data-i18n="wallet.history">Historique</button>
+                  <button class="secondary" data-action="history" data-i18n="wallet.history" data-i18n-title="wallet.history">Historique</button>
                   <button class="primary" data-action="send" data-i18n="wallet.send">Envoyer</button>
                 </div>
               </div>
@@ -687,6 +687,18 @@
         <div class="manage-assets-row">
           <h2 class="assets-heading" data-i18n="stocks.title">Mes actions</h2>
           <button id="manage-stocks-btn" class="secondary" data-i18n="stocks.manage">Gérer mes actions</button>
+          <button id="stocks-organize-btn" class="secondary" data-i18n="assets.organize">Organiser</button>
+        </div>
+        <div id="stocks-organize-bar" class="organize-bar hidden">
+          <span class="organize-label" data-i18n="organize.sortBy">Trier :</span>
+          <div class="organize-modes" role="group">
+            <button type="button" class="secondary" data-order-mode="cap" data-i18n="organize.cap">Capitalisation</button>
+            <button type="button" class="secondary" data-order-mode="custom" data-i18n="organize.custom">Mon ordre</button>
+            <button type="button" class="secondary" data-order-mode="value" data-i18n="organize.value">Valeur détenue</button>
+            <button type="button" class="secondary" data-order-mode="name" data-i18n="organize.name">Nom</button>
+          </div>
+          <span class="muted organize-hint" data-i18n="organize.hint">Glissez les cartes pour les réordonner (ou utilisez les flèches).</span>
+          <button type="button" id="stocks-organize-done" class="primary" data-i18n="organize.done">Terminé</button>
         </div>
         <p id="stocks-empty" class="muted stocks-empty" data-i18n="stocks.empty"></p>
         <div class="wallet-grid stocks-grid"></div>
