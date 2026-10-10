@@ -242,8 +242,10 @@ h2 { font-size: clamp(36px, 4.1vw, 56px); line-height: 1.07; letter-spacing: -0.
 .key-where { font-size: 14px; color: var(--dim); }
 .key-state { margin-left: auto; font-size: 14px; font-weight: 600; color: var(--dim); white-space: nowrap; }
 .play .key.read .key-state { color: var(--ok); }
-.key.lost { opacity: 0.45; }
-.key.idle { opacity: 0.55; }
+/* Atténuées une fois apparues (avant : la règle l'emportait sur l'état caché de
+   l'animation, et la case se montrait avant son tour). */
+.play .key.lost { opacity: 0.45; }
+.play .key.idle { opacity: 0.55; }
 .key.lost .key-name { text-decoration: line-through; text-decoration-color: var(--bad); }
 .key.lost .key-state { color: var(--bad); }
 .restored {
