@@ -128,6 +128,7 @@
         <span class="nav-brand"><img class="brand-logo" src="/assets/logo.svg" alt="" />OpenPGP Wallet</span>
         <div class="nav-tabs">
           <button class="nav-tab active" data-tab="wallet" data-i18n="nav.wallet">Portefeuille</button>
+          <button class="nav-tab" data-tab="stocks" data-i18n="nav.stocks">Actions</button>
           <button class="nav-tab" data-tab="history" data-i18n="nav.history">Activité</button>
           <button class="nav-tab" data-tab="message" data-i18n="nav.message">Message</button>
           <button class="nav-tab" data-tab="certificate" data-i18n="nav.certificate">Certificat</button>
@@ -670,6 +671,25 @@
             </div>
           </div>
         </section>
+      </section>
+
+      <!-- Actions tokenisées (xStocks) : leur propre onglet, à part des cryptos
+           (main.js, « Actions tokenisées »). Cartes générées depuis ASSETS. -->
+      <section class="tab-panel dashboard hidden" data-panel="stocks">
+        <div class="portfolio-hero stocks-hero">
+          <div class="hero-figures">
+            <div class="hero-label" data-i18n="stocks.total">Valeur des actions</div>
+            <div class="hero-total" id="stocks-total">—</div>
+            <div class="hero-change" id="stocks-change"></div>
+          </div>
+          <p class="muted stocks-notice" data-i18n="assets.stocksNotice"></p>
+        </div>
+        <div class="manage-assets-row">
+          <h2 class="assets-heading" data-i18n="stocks.title">Mes actions</h2>
+          <button id="manage-stocks-btn" class="secondary" data-i18n="stocks.manage">Gérer mes actions</button>
+        </div>
+        <p id="stocks-empty" class="muted stocks-empty" data-i18n="stocks.empty"></p>
+        <div class="wallet-grid stocks-grid"></div>
       </section>
 
       <section class="tab-panel hidden" data-panel="history">

@@ -298,10 +298,12 @@ function buildHistorySection(asset) {
 
 {
   const grid = document.querySelector(".wallet-grid");
+  // Actions tokenisées : leur propre onglet (« Actions »), à part des cryptos.
+  const stocksGrid = document.querySelector(".stocks-grid");
   const historyCard = document.querySelector('.tab-panel[data-panel="history"] .card');
   for (const asset of ASSETS) {
     if (document.querySelector(`.wallet-card[data-coin="${asset.coin}"]`)) continue; // carte d'index.html
-    grid.appendChild(buildAssetCard(asset));
+    (asset.stock ? stocksGrid : grid).appendChild(buildAssetCard(asset));
     historyCard.appendChild(buildHistorySection(asset));
   }
 }
@@ -314,8 +316,7 @@ function buildHistorySection(asset) {
 // hauteur propre. Recalculé à chaque changement de taille (repli, langue,
 // fenêtre, pastille chargée…) : remise à zéro, mesure et nouvelle hauteur
 // dans la même image, donc stable d'une image à l'autre.
-{
-  const grid = document.querySelector(".wallet-grid");
+for (const grid of document.querySelectorAll(".wallet-grid")) {
   let frame = null;
   const align = () => {
     cancelAnimationFrame(frame);
@@ -379,6 +380,7 @@ function applyAssetVisibility() {
     document.querySelector(`.wallet-card[data-coin="${asset.coin}"]`)?.classList.toggle("asset-hidden", !visible);
     document.getElementById(`history-section-${asset.coin}`)?.classList.toggle("asset-hidden", !visible);
   }
+  document.getElementById("stocks-empty")?.classList.toggle("hidden", ASSETS.some((asset) => asset.stock && isAssetVisible(asset.coin)));
   // Monero : blocs téléchargés et analysés seulement si sa carte est affichée
   // (ou si des fonds ont déjà été reçus, voir `set_xmr_sync`) — par
   // `window.__TAURI__` : appelée au chargement, avant `invoke` ci-dessous.
@@ -611,6 +613,12 @@ const I18N = {
     "backupCheck.checkNow": "Vérifier maintenant",
     "backupCheck.later": "Plus tard",
     "assets.stocksGroup": "Actions tokenisées (xStocks)",
+    "nav.stocks": "Actions",
+    "stocks.title": "Mes actions",
+    "stocks.total": "Valeur des actions",
+    "stocks.manage": "Gérer mes actions",
+    "stocks.manageHint": "Cochez les actions tokenisées à afficher. Une action sur laquelle des fonds arrivent s'affiche d'elle-même.",
+    "stocks.empty": "Aucune action affichée pour l'instant : choisissez-en dans « Gérer mes actions ».",
     "assets.stocksNotice": "Émises par Backed Assets sur Solana : chaque jeton suit le cours d'une action ou d'un fonds, sans droits d'actionnaire (pas de vote). Interdites aux personnes des États-Unis, non proposées au Royaume-Uni, au Canada ni en Australie. Le prix peut s'écarter de celui de la Bourse, surtout quand elle est fermée, et l'émetteur peut suspendre les transferts.",
     "usb.writing": "Écriture et vérification…",
     "usb.done": "Part n°{n} enregistrée et vérifiée sur « {label} ». Retirez la clé et rangez-la à part, loin des autres parts.",
@@ -1337,6 +1345,12 @@ const I18N = {
     "backupCheck.checkNow": "Check now",
     "backupCheck.later": "Later",
     "assets.stocksGroup": "Tokenized stocks (xStocks)",
+    "nav.stocks": "Stocks",
+    "stocks.title": "My stocks",
+    "stocks.total": "Stocks value",
+    "stocks.manage": "Manage my stocks",
+    "stocks.manageHint": "Tick the tokenized stocks to show. A stock that receives funds shows up on its own.",
+    "stocks.empty": "No stocks shown yet: pick some in \"Manage my stocks\".",
     "assets.stocksNotice": "Issued by Backed Assets on Solana: each token tracks the price of a stock or fund, without shareholder rights (no voting). Not for US persons, not offered in the UK, Canada or Australia. The price can drift from the stock market's, especially when it is closed, and the issuer can pause transfers.",
     "usb.writing": "Writing and verifying…",
     "usb.done": "Share {n} saved and verified on \"{label}\". Unplug the drive and store it apart, away from the other shares.",
@@ -3188,6 +3202,7 @@ document.querySelectorAll(".nav-tab").forEach((tab) => {
       panel.classList.toggle("hidden", panel.dataset.panel !== target);
     });
     if (target === "history") loadAllHistory();
+    if (target === "stocks") refreshStockPrices().then(() => document.querySelectorAll(".stocks-grid .wallet-card").forEach(updateFiatValue));
     if (target === "certificate") loadCertificate();
     if (target === "message") loadRecipients();
     if (target === "external") loadExternalWallets();
@@ -4024,14 +4039,22 @@ function cardTotalBalance(card) {
 }
 
 function updatePortfolioTotal() {
-  const totalEl = document.getElementById("portfolio-total");
-  const changeEl = document.getElementById("portfolio-change");
+  renderCardsTotal("portfolio-total", "portfolio-change", false);
+  renderCardsTotal("stocks-total", "stocks-change", true);
+}
+
+// Valeur et variation sur 24 h des cartes affichées, cryptos (`stocks` faux)
+// ou actions tokenisées : chaque onglet a la sienne.
+function renderCardsTotal(totalId, changeId, stocks) {
+  const totalEl = document.getElementById(totalId);
+  const changeEl = document.getElementById(changeId);
   if (!totalEl) return;
   let usd = 0;
   let weighted = 0;
   let weight = 0;
   let known = false;
   document.querySelectorAll(".wallet-card:not(.asset-hidden)").forEach((card) => {
+    if (Boolean(ASSET_BY_COIN[card.dataset.coin]?.stock) !== stocks) return;
     if (!networkForCard(card).endsWith("mainnet")) return;
     const balance = cardTotalBalance(card);
     const price = priceForCoin(card.dataset.coin);
@@ -5537,7 +5560,7 @@ document.getElementById("refresh-history-btn").addEventListener("click", loadAll
 // fenêtre de réception dit le réseau de sa carte, à choisir à l'envoi).
 function renderReceiveMenu() {
   const list = document.querySelector(".action-menu .custom-select-options");
-  const items = ASSETS.filter((asset) => isAssetVisible(asset.coin)).map((asset) => {
+  const items = ASSETS.filter((asset) => !asset.stock && isAssetVisible(asset.coin)).map((asset) => {
     const li = document.createElement("li");
     li.dataset.coin = asset.coin;
     setWithCoinIcon(li, asset.coin, t("wallet.receiveAsset", { symbol: asset.nameKey ? assetName(asset) : asset.symbol }));
@@ -5571,14 +5594,10 @@ const assetsSearch = document.getElementById("assets-search");
 function filterAssetsList() {
   const query = normalizeSearch(assetsSearch.value);
   let shown = 0;
-  document.querySelectorAll("#assets-list li:not(.assets-group)").forEach((li) => {
+  document.querySelectorAll("#assets-list li").forEach((li) => {
     const match = !query || li.dataset.search.includes(query);
     li.classList.toggle("hidden", !match);
     if (match) shown += 1;
-  });
-  // En-tête du groupe des actions tokenisées : visible si l'une l'est.
-  document.querySelectorAll("#assets-list li.assets-group").forEach((li) => {
-    li.classList.toggle("hidden", !document.querySelector("#assets-list li[data-stock]:not(.hidden)"));
   });
   document.getElementById("assets-no-match").classList.toggle("hidden", shown > 0);
 }
@@ -5593,20 +5612,19 @@ assetsSearch.addEventListener("keydown", (e) => {
   }
 });
 
-document.getElementById("manage-assets-btn").addEventListener("click", () => {
+// `stocks` : actions tokenisées (onglet « Actions »), sinon cryptos.
+function openAssetsModal(stocks) {
   const list = document.getElementById("assets-list");
   const boxes = new Map();
-  // Actions tokenisées à la fin, sous leur en-tête (avertissement compris).
-  const ordered = orderedCoins().map((coin) => ASSET_BY_COIN[coin]);
-  const stockGroup = document.createElement("li");
-  stockGroup.className = "assets-group";
-  stockGroup.append(
-    Object.assign(document.createElement("strong"), { textContent: t("assets.stocksGroup") }),
-    Object.assign(document.createElement("p"), { className: "muted", textContent: t("assets.stocksNotice") })
-  );
+  const title = assetsModal.querySelector(".modal-header-row h2");
+  const hint = assetsModal.querySelector(".modal-header-row + p");
+  title.dataset.i18n = stocks ? "stocks.title" : "assets.title";
+  hint.dataset.i18n = stocks ? "stocks.manageHint" : "assets.hint";
+  title.textContent = t(title.dataset.i18n);
+  hint.textContent = t(hint.dataset.i18n);
+  const coins = stocks ? ASSETS.filter((asset) => asset.stock).map((asset) => asset.coin) : orderedCoins().filter((coin) => !ASSET_BY_COIN[coin].stock);
   list.replaceChildren(
-    ...[...ordered.filter((asset) => !asset.stock), "group", ...ordered.filter((asset) => asset.stock)].map((asset) => {
-      if (asset === "group") return stockGroup;
+    ...coins.map((coin) => ASSET_BY_COIN[coin]).map((asset) => {
       const li = document.createElement("li");
       if (asset.stock) li.dataset.stock = "1";
       li.dataset.search = normalizeSearch(`${assetName(asset)} ${asset.name} ${asset.symbol} ${asset.stock ? "action xstock stock" : ""}`);
@@ -5645,7 +5663,10 @@ document.getElementById("manage-assets-btn").addEventListener("click", () => {
   filterAssetsList();
   assetsModal.classList.remove("hidden");
   assetsSearch.focus();
-});
+}
+
+document.getElementById("manage-assets-btn").addEventListener("click", () => openAssetsModal(false));
+document.getElementById("manage-stocks-btn").addEventListener("click", () => openAssetsModal(true));
 // Fermée par « Terminé », la croix, Échap, ou un clic à côté — seulement si
 // le clic a aussi COMMENCÉ à côté : un geste commencé dans la fenêtre (faire
 // défiler la liste, sélectionner du texte) et relâché dehors ne la ferme pas.

@@ -3678,20 +3678,15 @@ h2 .coin-icon-inline,
   font-size: 0.85rem;
 }
 
-/* « Gérer mes cryptos » : en-tête du groupe des actions tokenisées. */
-#assets-list li.assets-group {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-top: 12px;
-  padding: 10px 4px 6px;
-  border-top: 1px solid var(--border);
+/* Onglet « Actions » : valeur des actions, avertissement, onglet vide. */
+.stocks-hero .stocks-notice {
+  margin: 14px 0 0;
+  font-size: 0.85rem;
+  line-height: 1.5;
 }
 
-#assets-list li.assets-group p {
-  margin: 0;
-  font-size: 0.82rem;
-  line-height: 1.45;
+.stocks-empty {
+  margin: 8px 0 16px;
 }
 
 /* Vérification des clés de sauvegarde : une clé par cadre, une ligne par part. */
@@ -3989,6 +3984,7 @@ h2 .coin-icon-inline,
    `currentColor` : aucune balise ajoutée dans les boutons, dont le texte est
    réécrit par la traduction. */
 .nav-tab[data-tab="wallet"] { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Crect%20x%3D'3'%20y%3D'6'%20width%3D'18'%20height%3D'14'%20rx%3D'3'%2F%3E%3Cpath%20d%3D'M3%2010h18'%2F%3E%3Cpath%20d%3D'M7%206V5a2%202%200%200%201%202-2h8'%2F%3E%3Ccircle%20cx%3D'16.5'%20cy%3D'15'%20r%3D'1.2'%2F%3E%3C%2Fsvg%3E"); }
+.nav-tab[data-tab="stocks"] { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M3%203v18h18'%2F%3E%3Cpath%20d%3D'M7%2015l4-4%203%203%205-6'%2F%3E%3Cpath%20d%3D'M15%208h4v4'%2F%3E%3C%2Fsvg%3E"); }
 .nav-tab[data-tab="history"] { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M3%2012a9%209%200%201%200%202.6-6.4L3%208'%2F%3E%3Cpath%20d%3D'M3%203v5h5'%2F%3E%3Cpath%20d%3D'M12%207.5V12l3%202'%2F%3E%3C%2Fsvg%3E"); }
 .nav-tab[data-tab="message"] { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Crect%20x%3D'3'%20y%3D'5'%20width%3D'18'%20height%3D'14'%20rx%3D'2.5'%2F%3E%3Cpath%20d%3D'm3.5%207%208.5%206%208.5-6'%2F%3E%3C%2Fsvg%3E"); }
 .nav-tab[data-tab="certificate"] { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Ccircle%20cx%3D'12'%20cy%3D'9'%20r%3D'5.5'%2F%3E%3Cpath%20d%3D'M8.8%2013.5%207.5%2021l4.5-2.4%204.5%202.4-1.3-7.5'%2F%3E%3C%2Fsvg%3E"); }
@@ -3999,7 +3995,8 @@ h2 .coin-icon-inline,
 .nav-tab[data-tab="settings"] { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M4%207h9M17%207h3M4%2012h3M11%2012h9M4%2017h11M19%2017h1'%2F%3E%3Ccircle%20cx%3D'15'%20cy%3D'7'%20r%3D'2'%2F%3E%3Ccircle%20cx%3D'9'%20cy%3D'12'%20r%3D'2'%2F%3E%3Ccircle%20cx%3D'17'%20cy%3D'17'%20r%3D'2'%2F%3E%3C%2Fsvg%3E"); }
 .navbar button#lock-wallet { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Crect%20x%3D'5'%20y%3D'11'%20width%3D'14'%20height%3D'10'%20rx%3D'2.5'%2F%3E%3Cpath%20d%3D'M8%2011V8a4%204%200%200%201%208%200v3'%2F%3E%3C%2Fsvg%3E"); }
 
-#manage-assets-btn { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Crect%20x%3D'3.5'%20y%3D'3.5'%20width%3D'7'%20height%3D'7'%20rx%3D'1.5'%2F%3E%3Crect%20x%3D'13.5'%20y%3D'3.5'%20width%3D'7'%20height%3D'7'%20rx%3D'1.5'%2F%3E%3Crect%20x%3D'3.5'%20y%3D'13.5'%20width%3D'7'%20height%3D'7'%20rx%3D'1.5'%2F%3E%3Cpath%20d%3D'M14%2017h6M17%2014v6'%2F%3E%3C%2Fsvg%3E"); }
+#manage-assets-btn,
+#manage-stocks-btn { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Crect%20x%3D'3.5'%20y%3D'3.5'%20width%3D'7'%20height%3D'7'%20rx%3D'1.5'%2F%3E%3Crect%20x%3D'13.5'%20y%3D'3.5'%20width%3D'7'%20height%3D'7'%20rx%3D'1.5'%2F%3E%3Crect%20x%3D'3.5'%20y%3D'13.5'%20width%3D'7'%20height%3D'7'%20rx%3D'1.5'%2F%3E%3Cpath%20d%3D'M14%2017h6M17%2014v6'%2F%3E%3C%2Fsvg%3E"); }
 #organize-btn { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M7%204v16M3.5%207.5%207%204l3.5%203.5'%2F%3E%3Cpath%20d%3D'M17%2020V4M13.5%2016.5%2017%2020l3.5-3.5'%2F%3E%3C%2Fsvg%3E"); }
 
 /* Actions d'une carte : icône devant le libellé. */
