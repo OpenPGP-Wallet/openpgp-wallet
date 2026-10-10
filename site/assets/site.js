@@ -388,4 +388,24 @@
     }, { threshold: [0, 0.2, 0.4, 0.6, 0.8, 1] });
     sections.forEach(function (s) { dotObserver.observe(s); });
   }
+  // ===== Thème clair / sombre =============================================
+  // Choix gardé dans le navigateur (le thème est posé avant l'affichage par
+  // un petit script en tête de page) ; libellé du bouton selon la langue.
+  var toggle = document.getElementById("theme-toggle");
+  if (toggle) {
+    var syncToggle = function () {
+      var light = document.documentElement.getAttribute("data-theme") === "light";
+      var label = toggle.getAttribute(light ? "data-to-dark" : "data-to-light");
+      toggle.setAttribute("aria-label", label);
+      toggle.setAttribute("title", label);
+    };
+    syncToggle();
+    toggle.addEventListener("click", function () {
+      var light = document.documentElement.getAttribute("data-theme") !== "light";
+      if (light) document.documentElement.setAttribute("data-theme", "light");
+      else document.documentElement.removeAttribute("data-theme");
+      try { localStorage.setItem("openpgp-site-theme", light ? "light" : "dark"); } catch (e) {}
+      syncToggle();
+    });
+  }
 })();
