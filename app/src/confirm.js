@@ -6,7 +6,7 @@
 const { invoke } = window.__TAURI__.core;
 
 // Même thème que l'app (même stockage local).
-const THEMES = ["default", "purple", "orange", "dark", "light"];
+const THEMES = ["default", "purple", "emerald", "ocean", "rose", "orange", "dark", "light"];
 let theme = "default";
 try {
   const saved = localStorage.getItem("pgp-wallet-theme");

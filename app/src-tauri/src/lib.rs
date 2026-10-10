@@ -4051,11 +4051,14 @@ fn set_window_frame(theme: String, window: tauri::WebviewWindow) {
 fn apply_window_frame(window: &tauri::WebviewWindow, theme: &str) {
     // Fond de chaque thème (styles.css, `--bg`), en 0xRRGGBB.
     let (dark, background) = match theme {
-        "light" => (false, 0xf3f3f3u32),
-        "purple" => (true, 0x140f1f),
-        "orange" => (true, 0x1a120a),
+        "light" => (false, 0xf5f6f8u32),
+        "purple" => (true, 0x0a090e),
+        "emerald" => (true, 0x070a09),
+        "ocean" => (true, 0x070a0d),
+        "rose" => (true, 0x0c080a),
+        "orange" => (true, 0x0b0908),
         "dark" => (true, 0x000000),
-        _ => (true, 0x0b0d10),
+        _ => (true, 0x08090c),
     };
     let _ = window.set_theme(Some(if dark { tauri::Theme::Dark } else { tauri::Theme::Light }));
     #[cfg(windows)]

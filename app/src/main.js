@@ -403,7 +403,7 @@ const { invoke } = window.__TAURI__.core;
 // (localStorage peut être bloqué selon la configuration) : le thème par défaut
 // s'applique alors sans jamais faire planter l'app.
 const THEME_STORAGE_KEY = "pgp-wallet-theme";
-const VALID_THEMES = ["default", "purple", "orange", "dark", "light"];
+const VALID_THEMES = ["default", "purple", "emerald", "ocean", "rose", "orange", "dark", "light"];
 
 // Changer `data-theme` sur <html> invalide le style de TOUTE la page (les
 // variables CSS sont héritées partout) et force un recalcul complet. Choisir
@@ -928,6 +928,9 @@ const I18N = {
     "settings.theme": "Thème",
     "settings.blue": "Bleu",
     "settings.purple": "Violet",
+    "settings.emerald": "Émeraude",
+    "settings.ocean": "Océan",
+    "settings.rose": "Rose",
     "settings.orange": "Orange",
     "settings.dark": "Sombre",
     "settings.light": "Blanc",
@@ -1665,6 +1668,9 @@ const I18N = {
     "settings.theme": "Theme",
     "settings.blue": "Blue",
     "settings.purple": "Purple",
+    "settings.emerald": "Emerald",
+    "settings.ocean": "Ocean",
+    "settings.rose": "Rose",
     "settings.orange": "Orange",
     "settings.dark": "Dark",
     "settings.light": "White",

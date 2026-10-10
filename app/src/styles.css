@@ -56,6 +56,8 @@
   --muted: #a1a9b5;
   --accent: #7c93ff;
   --accent-hover: #6b84f7;
+  /* Teinte secondaire des halos (deux couleurs par thème, comme sur le site). */
+  --accent-2: #a78bfa;
   --danger: #ff6b6b;
   --success: #4ade80;
   --warning: #fbbf24;
@@ -86,37 +88,84 @@
    déroulant des Paramètres, voir main.js) — ne changent que les jetons de couleur,
    jamais la mise en page ni la structure. Le thème par défaut ("Bleu") est celui
    déjà défini dans :root ci-dessus, pas besoin de bloc séparé pour lui. */
+/* Sur le modèle du Bleu (refait le 11/10/2026, à la demande de l'utilisateur :
+   « la version bleue fait beaucoup plus pro ») : fond très profond à peine
+   teinté plutôt que saturé, surfaces et bordures discrètes, accent lumineux,
+   teinte secondaire pour les halos. Accents assez soutenus pour le texte blanc
+   fixe des boutons principaux. */
 :root[data-theme="purple"] {
-  --bg: #140f1f;
-  --surface: #1f1730;
-  --surface-2: #281e3d;
-  --border: #3d2e5c;
-  --accent: #a855f7;
-  --accent-hover: #9333ea;
+  --bg: #0a090e;
+  --surface: #13111a;
+  --surface-2: #1a1722;
+  --border: #262131;
+  --text: #f4f2f8;
+  --muted: #aba4b8;
+  --accent: #a78bfa;
+  --accent-hover: #9575f5;
+  --accent-2: #f472b6;
+}
+
+:root[data-theme="emerald"] {
+  --bg: #070a09;
+  --surface: #0f1513;
+  --surface-2: #141c19;
+  --border: #1d2823;
+  --text: #eff6f2;
+  --muted: #9eb1a8;
+  --accent: #22b07f;
+  --accent-hover: #1c9a6f;
+  --accent-2: #22d3ee;
+}
+
+:root[data-theme="ocean"] {
+  --bg: #070a0d;
+  --surface: #0e1419;
+  --surface-2: #131b22;
+  --border: #1b2731;
+  --text: #eef5f9;
+  --muted: #9aadbb;
+  --accent: #2aa5d8;
+  --accent-hover: #1f91c2;
+  --accent-2: #818cf8;
+}
+
+:root[data-theme="rose"] {
+  --bg: #0c080a;
+  --surface: #161013;
+  --surface-2: #1d151a;
+  --border: #2c1f26;
+  --text: #f8f1f4;
+  --muted: #b7a3ae;
+  --accent: #e65f9c;
+  --accent-hover: #d24d89;
+  --accent-2: #a78bfa;
 }
 
 :root[data-theme="orange"] {
-  --bg: #1a120a;
-  --surface: #241a10;
-  --surface-2: #2e2115;
-  --border: #4a3420;
-  --accent: #f97316;
-  --accent-hover: #ea580c;
+  --bg: #0b0908;
+  --surface: #15110e;
+  --surface-2: #1c1713;
+  --border: #2a221c;
+  --text: #f7f3ef;
+  --muted: #b5aa9e;
+  --accent: #f0782a;
+  --accent-hover: #dc6a1f;
+  --accent-2: #f43f5e;
 }
 
-/* Noir quasi pur, monochrome (pas de teinte de couleur) — plus sombre que le bleu
-   par défaut, pensé pour les écrans OLED/faible luminosité. Accent gris foncé (pas
-   clair) : les boutons ".primary" ont un texte blanc fixe (voir plus bas), un accent
-   trop clair rendrait ce texte illisible. */
+/* Noir quasi pur, monochrome (pas de teinte de couleur) — pensé pour les écrans
+   OLED/faible luminosité. Accent gris moyen : les boutons ".primary" ont un
+   texte blanc fixe, un accent trop clair le rendrait illisible. */
 :root[data-theme="dark"] {
   --bg: #000000;
-  --surface: #0a0a0a;
-  --surface-2: #141414;
-  --border: #262626;
-  --text: #f4f4f5;
-  --muted: #8a8a8e;
-  --accent: #3f3f46;
-  --accent-hover: #52525b;
+  --surface: #0a0a0b;
+  --surface-2: #121214;
+  --border: #1f1f23;
+  --text: #f5f5f6;
+  --muted: #9b9ba3;
+  --accent: #5b5b66;
+  --accent-hover: #6d6d78;
+  --accent-2: #3f3f46;
 }
 
 /* Option "Boutons arrondis" (Paramètres > Apparence, voir main.js) : activée via
@@ -3447,10 +3496,19 @@ h2 .coin-icon-inline,
   --chart-line: #6c8bff;
 }
 :root[data-theme="purple"] {
-  --chart-line: #a855f7;
+  --chart-line: #a78bfa;
+}
+:root[data-theme="emerald"] {
+  --chart-line: #34d399;
+}
+:root[data-theme="ocean"] {
+  --chart-line: #38bdf8;
+}
+:root[data-theme="rose"] {
+  --chart-line: #f472b6;
 }
 :root[data-theme="orange"] {
-  --chart-line: #e36410;
+  --chart-line: #f08a3c;
 }
 :root[data-theme="dark"] {
   --chart-line: #3987e5;
@@ -4195,7 +4253,7 @@ h2 .coin-icon-inline,
   border-radius: var(--radius-xl);
   background:
     radial-gradient(ellipse 65% 130% at 100% 0%, color-mix(in srgb, var(--accent) 24%, transparent), transparent 62%),
-    radial-gradient(ellipse 45% 90% at 0% 100%, color-mix(in srgb, var(--accent) 9%, transparent), transparent 70%),
+    radial-gradient(ellipse 45% 90% at 0% 100%, color-mix(in srgb, var(--accent-2) 10%, transparent), transparent 70%),
     linear-gradient(180deg, color-mix(in srgb, var(--surface), white 3%), var(--surface));
   box-shadow: var(--shadow);
 }
@@ -4714,7 +4772,7 @@ h1 {
 .view-shell {
   background:
     radial-gradient(ellipse 55% 40% at 88% -6%, color-mix(in srgb, var(--accent) 11%, transparent), transparent 70%),
-    radial-gradient(ellipse 45% 35% at 20% 108%, color-mix(in srgb, var(--accent) 6%, transparent), transparent 70%),
+    radial-gradient(ellipse 45% 35% at 20% 108%, color-mix(in srgb, var(--accent-2) 7%, transparent), transparent 70%),
     var(--bg);
   background-attachment: fixed;
 }
@@ -4904,26 +4962,27 @@ textarea:focus {
    l'emporte sur les blocs de même spécificité plus haut (courbes). */
 :root[data-theme="light"] {
   color-scheme: light;
-  --bg: #f3f3f3;
+  --bg: #f5f6f8;
   --surface: #ffffff;
-  --surface-2: #f7f7f8;
-  --border: #e3e3e3;
-  --text: #1b1b1b;
-  --muted: #5b6270;
+  --surface-2: #f3f4f6;
+  --border: #e3e5e9;
+  --text: #0f1216;
+  --muted: #555c68;
   --dim: #6e7581;
-  --accent: #0067c0;
-  --accent-hover: #005aa8;
+  --accent: #4a63e7;
+  --accent-hover: #3b52d4;
+  --accent-2: #8b5cf6;
   --danger: #c42b1c;
   --success: #107c10;
   --warning: #9d5d00;
   --surface-3: color-mix(in srgb, var(--surface-2), black 4%);
   --border-strong: color-mix(in srgb, var(--border), black 12%);
   --accent-soft: color-mix(in srgb, var(--accent) 10%, transparent);
-  --accent-text: #005aa8;
+  --accent-text: #3b52d4;
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06);
   --shadow: 0 10px 28px -16px rgba(0, 0, 0, 0.22);
   --shadow-lg: 0 28px 70px -28px rgba(0, 0, 0, 0.3);
-  --chart-line: #0067c0;
+  --chart-line: #4a63e7;
 }
 
 :root[data-theme="light"] .modal-overlay {
