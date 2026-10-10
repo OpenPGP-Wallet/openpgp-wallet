@@ -205,9 +205,10 @@ enum Source {
 }
 
 impl Spec {
-    /// Historique lu chez NodeReal (offre gratuite partagée, voir `nodereal`).
-    fn uses_nodereal(&self) -> bool {
-        matches!(self.source, Source::Evm(net) | Source::Erc20(net, _) if matches!(net.history, Some(wallet_flow::EvmHistory::NodeReal)))
+    /// Historique lu chez NodeReal ou Alchemy (offres gratuites partagées,
+    /// voir `nodereal` et `alchemy`).
+    fn uses_shared_quota(&self) -> bool {
+        matches!(self.source, Source::Evm(net) | Source::Erc20(net, _) if matches!(net.history, Some(wallet_flow::EvmHistory::NodeReal | wallet_flow::EvmHistory::Alchemy)))
     }
 
     /// Une source d'historique existe pour cet avoir (voir `EvmNetwork::history`).
@@ -391,13 +392,13 @@ fn fetch_first(spec: &Spec, address: &str) -> Result<HoldingData> {
     data.balance = balance?;
     match first {
         Ok(page) => data.absorb(page, price_history::unix_now()),
-        // NodeReal momentanément indisponible (limite de l'offre gratuite
+        // NodeReal ou Alchemy momentanément indisponible (limite de l'offre gratuite
         // atteinte…), ou historique Blockscout indisponible (site public
         // derrière la vérification anti-robots sans clé de l'API officielle
         // — Arbitrum, Base et Polygon depuis le 10/10/2026 —, ou crédits du
         // jour épuisés) : solde compté constant plutôt qu'une courbe entière
         // en échec — l'interface le dit (`constant`) s'il y a un solde.
-        Err(_) if spec.uses_nodereal() => data.constant = true,
+        Err(_) if spec.uses_shared_quota() => data.constant = true,
         Err(e) if crate::blockscout::unavailable(&e) => data.constant = true,
         Err(e) => return Err(e),
     }

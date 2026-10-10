@@ -9,6 +9,10 @@
 //! LA COMPILATION (`NODEREAL_API_KEY` dans `partner-keys.env`, voir build.rs) ;
 //! absente : historique indisponible, l'app renvoie vers BscScan. Lecture
 //! seule, purement informatif ; seule l'adresse publique est envoyée.
+//!
+//! Lecture dans les deux sens, regroupement par transaction et filtrage des
+//! jetons servent aussi à `alchemy` (Base, Polygon) : `nr_getAssetTransfers`
+//! reproduit `alchemy_getAssetTransfers`.
 
 use crate::blockscout::{EvmTx, TokenMove};
 use anyhow::{anyhow, bail, Context, Result};
@@ -52,7 +56,7 @@ fn pace() {
 }
 
 /// Nombre d'une réponse : chaîne hexadécimale (« 0x1f »), décimale, ou nombre.
-fn number(value: &Value) -> Option<u128> {
+pub(crate) fn number(value: &Value) -> Option<u128> {
     match value {
         Value::Number(n) => n.as_u64().map(u128::from),
         Value::String(s) => match s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
@@ -66,22 +70,22 @@ fn number(value: &Value) -> Option<u128> {
 
 /// Un virement de la réponse, réduit à ce qui sert.
 #[derive(Clone, Debug, PartialEq)]
-struct Transfer {
+pub(crate) struct Transfer {
     /// Identifiant du virement chez NodeReal (un même virement apparaît dans
     /// les deux sens s'il va de l'adresse vers elle-même).
-    id: String,
+    pub(crate) id: String,
     /// « external », « internal » ou « 20 ».
-    category: String,
-    block: u64,
-    from: String,
-    to: String,
-    value: u128,
-    hash: String,
-    contract: Option<String>,
-    timestamp: Option<i64>,
+    pub(crate) category: String,
+    pub(crate) block: u64,
+    pub(crate) from: String,
+    pub(crate) to: String,
+    pub(crate) value: u128,
+    pub(crate) hash: String,
+    pub(crate) contract: Option<String>,
+    pub(crate) timestamp: Option<i64>,
     /// Frais de la transaction (virement externe seulement), en wei.
-    fee: u128,
-    failed: bool,
+    pub(crate) fee: u128,
+    pub(crate) failed: bool,
 }
 
 fn transfer(value: &Value) -> Result<Transfer> {
@@ -184,7 +188,7 @@ impl Stream {
 /// seuls les virements plus récents que la frontière des deux sens sont
 /// rendus (un virement plus ancien d'un sens peut encore manquer de l'autre),
 /// le reste attend la page suivante.
-fn next_page(
+pub(crate) fn next_page(
     address: &str,
     sent_params: Value,
     received_params: Value,
@@ -227,7 +231,7 @@ fn base_params(categories: &[&str]) -> Value {
 /// Virements BNB de la page regroupés par transaction, du point de vue de
 /// `address` : montant net (reçu moins envoyé, rien pour une transaction
 /// échouée), frais si elle l'a émise.
-fn transactions(page: &[Transfer], address: &str) -> Vec<EvmTx> {
+pub(crate) fn transactions(page: &[Transfer], address: &str) -> Vec<EvmTx> {
     let address = address.to_lowercase();
     let mut txs: Vec<EvmTx> = Vec::new();
     for t in page {
@@ -283,11 +287,11 @@ pub fn token_history_page(address: &str, contract: &str, cursor: Option<&Cursor>
     token_moves(&page, address, &contract).map(|moves| (moves, next))
 }
 
-fn token_moves(page: &[Transfer], address: &str, contract: &str) -> Result<Vec<TokenMove>> {
+pub(crate) fn token_moves(page: &[Transfer], address: &str, contract: &str) -> Result<Vec<TokenMove>> {
     let address = address.to_lowercase();
     let mut moves: Vec<TokenMove> = Vec::new();
     for t in page {
-        anyhow::ensure!(t.contract.as_deref() == Some(contract), "NodeReal a renvoyé un autre jeton que celui demandé");
+        anyhow::ensure!(t.contract.as_deref() == Some(contract), "le service d'historique a renvoyé un autre jeton que celui demandé");
         let value = i128::try_from(t.value).unwrap_or(i128::MAX);
         let delta = match (t.from == address, t.to == address) {
             (true, false) => -value,

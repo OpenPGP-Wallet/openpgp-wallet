@@ -105,6 +105,10 @@ pub enum EvmHistory {
     /// NodeReal, avec la clé intégrée à l'app (voir `nodereal`) : BNB Chain,
     /// qu'aucun service public sans clé ne couvre.
     NodeReal,
+    /// Alchemy, avec la clé intégrée à l'app (voir `alchemy`) : Base et
+    /// Polygon, dont l'instance Blockscout est bloquée et réservée aux offres
+    /// payantes de son API officielle (constaté le 10/10/2026).
+    Alchemy,
 }
 
 impl EvmNetwork {
@@ -187,7 +191,7 @@ pub const BASE_MAINNET: EvmNetwork = EvmNetwork {
     max_gas_price_wei: Some(10 * GWEI),
     transfer_gas: Some(21_000),
     op_stack_l1_fee: true,
-    history: Some(EvmHistory::Blockscout("https://base.blockscout.com")),
+    history: Some(EvmHistory::Alchemy),
     custom: false,
 };
 
@@ -236,7 +240,7 @@ pub const POLYGON_MAINNET: EvmNetwork = EvmNetwork {
     max_gas_price_wei: Some(10_000 * GWEI),
     transfer_gas: Some(21_000),
     op_stack_l1_fee: false,
-    history: Some(EvmHistory::Blockscout("https://polygon.blockscout.com")),
+    history: Some(EvmHistory::Alchemy),
     custom: false,
 };
 

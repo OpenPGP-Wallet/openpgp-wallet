@@ -1,9 +1,9 @@
-//! Clés de partenaires (SwapKit, MoonPay Trade, NodeReal, Taostats, Blockscout) lues À LA COMPILATION dans
+//! Clés de partenaires (SwapKit, MoonPay Trade, NodeReal, Taostats, Blockscout, Alchemy) lues À LA COMPILATION dans
 //! `partner-keys.env`, à la racine du dépôt (ignoré par git), ou à défaut dans
 //! l'environnement : jamais dans le code ni dans l'historique. Clé absente :
 //! le fournisseur correspondant n'est simplement pas proposé.
 
-const KEYS: &[&str] = &["SWAPKIT_API_KEY", "MOONPAY_TRADE_API_KEY", "NODEREAL_API_KEY", "TAOSTATS_API_KEY", "BLOCKSCOUT_API_KEY"];
+const KEYS: &[&str] = &["SWAPKIT_API_KEY", "MOONPAY_TRADE_API_KEY", "NODEREAL_API_KEY", "TAOSTATS_API_KEY", "BLOCKSCOUT_API_KEY", "ALCHEMY_API_KEY"];
 
 fn main() {
     let manifest = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR fourni par cargo");

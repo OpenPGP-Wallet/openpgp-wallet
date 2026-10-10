@@ -78,6 +78,9 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     // core/src/blockscout.rs
     ("l'explorateur de ce réseau refuse pour l'instant les requêtes automatiques : historique indisponible", "this network's explorer currently refuses automated requests: history unavailable"),
     ("historique de ce réseau momentanément indisponible (limite du service atteinte) — réessayez plus tard", "this network's history is temporarily unavailable (service limit reached) — try again later"),
+    // core/src/alchemy.rs, core/src/nodereal.rs
+    ("historique de ce réseau indisponible dans cette version de l'app", "this network's history is unavailable in this version of the app"),
+    ("le service d'historique a renvoyé un autre jeton que celui demandé", "the history service returned a different token than the one requested"),
     // core/src/api.rs, actions tokenisées xStocks
     ("transferts de ce jeton suspendus par son émetteur : réessayez plus tard", "transfers of this token are paused by its issuer: try again later"),
     ("l'émetteur de ce jeton a ajouté une règle de transfert que l'app ne gère pas encore : envoi refusé, rien n'a été dépensé", "this token's issuer added a transfer rule the app doesn't support yet: transfer refused, nothing was spent"),
@@ -3181,8 +3184,9 @@ struct HistoryDto {
     /// Réseau sans source d'historique utilisable : page de l'adresse sur
     /// l'explorateur du réseau, à ouvrir à la place (`entries` vide).
     explorer_url: Option<String>,
-    /// Pourquoi, s'il est connu : « limited » (limite de l'offre gratuite de
-    /// NodeReal atteinte, historique BNB Chain).
+    /// Pourquoi, s'il est connu : « limited » (limite de l'offre gratuite
+    /// atteinte : NodeReal pour BNB Chain, Alchemy pour Base et Polygon, API
+    /// officielle de Blockscout pour Arbitrum).
     reason: Option<&'static str>,
 }
 
@@ -3199,7 +3203,11 @@ impl HistoryDto {
             return Ok(Self { entries: Vec::new(), explorer_url: Some(explorer_url), reason: None });
         }
         match read() {
-            Err(e) if e == translate_error(pgp_wallet_poc::nodereal::LIMITED) => Ok(Self { entries: Vec::new(), explorer_url: Some(explorer_url), reason: Some("limited") }),
+            Err(e) if e == translate_error(pgp_wallet_poc::nodereal::LIMITED) || e == translate_error(pgp_wallet_poc::blockscout::BLOCKSCOUT_LIMITED) => {
+                Ok(Self { entries: Vec::new(), explorer_url: Some(explorer_url), reason: Some("limited") })
+            }
+            // Explorateur bloqué sans clé utilisable : sa page, sans erreur.
+            Err(e) if e == translate_error(pgp_wallet_poc::blockscout::BLOCKSCOUT_BLOCKED) => Ok(Self { entries: Vec::new(), explorer_url: Some(explorer_url), reason: None }),
             entries => Self::read(entries),
         }
     }

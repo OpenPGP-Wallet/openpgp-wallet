@@ -170,6 +170,8 @@ pub enum EvmCursor {
     Page(u32),
     /// Suite NodeReal (BNB Chain) : les deux sens et ce qui reste à rendre.
     NodeReal(nodereal::Cursor),
+    /// Suite Alchemy (Base, Polygon), même forme que celle de NodeReal.
+    Alchemy(nodereal::Cursor),
 }
 
 /// Historique lisible sur `net` : une source existe, et pour NodeReal la
@@ -178,6 +180,7 @@ pub fn evm_history_available(net: &wallet_flow::EvmNetwork) -> bool {
     match net.history {
         None => false,
         Some(EvmHistory::NodeReal) => nodereal::available(),
+        Some(EvmHistory::Alchemy) => crate::alchemy::available(net.chain_id),
         Some(_) => true,
     }
 }
@@ -219,6 +222,10 @@ pub fn evm_history_page(chain_id: u64, address: &str, cursor: Option<&EvmCursor>
             let (txs, next) = nodereal::tx_history_page(address, nodereal_cursor(cursor))?;
             (txs, next.map(EvmCursor::NodeReal))
         }
+        EvmHistory::Alchemy => {
+            let (txs, next) = crate::alchemy::tx_history_page(chain_id, address, alchemy_cursor(cursor))?;
+            (txs, next.map(EvmCursor::Alchemy))
+        }
     };
     Ok((txs.into_iter().map(evm_entry).collect(), next))
 }
@@ -255,6 +262,10 @@ pub fn erc20_history_page(chain_id: u64, address: &str, contract: &str, cursor: 
             let (moves, next) = nodereal::token_history_page(address, contract, nodereal_cursor(cursor))?;
             (moves, next.map(EvmCursor::NodeReal))
         }
+        EvmHistory::Alchemy => {
+            let (moves, next) = crate::alchemy::token_history_page(chain_id, address, contract, alchemy_cursor(cursor))?;
+            (moves, next.map(EvmCursor::Alchemy))
+        }
     };
     let entries = moves
         .into_iter()
@@ -269,6 +280,14 @@ pub fn erc20_history_page(chain_id: u64, address: &str, contract: &str, cursor: 
         })
         .collect();
     Ok((entries, next))
+}
+
+/// Suite Alchemy demandée par `cursor` (la première page sans).
+fn alchemy_cursor(cursor: Option<&EvmCursor>) -> Option<&nodereal::Cursor> {
+    match cursor {
+        Some(EvmCursor::Alchemy(next)) => Some(next),
+        _ => None,
+    }
 }
 
 /// Suite NodeReal demandée par `cursor` (la première page sans).
