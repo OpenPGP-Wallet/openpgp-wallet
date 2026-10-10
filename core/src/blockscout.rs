@@ -96,18 +96,22 @@ impl BlockscoutClient {
         Ok(txs)
     }
 
+    /// Réponse JSON de `url` ; page de vérification anti-robots (constaté le
+    /// 10/10/2026 sur arbitrum.blockscout.com et base.blockscout.com : 403 et
+    /// page « Just a moment… » de Cloudflare, quel que soit l'en-tête) :
+    /// `BLOCKSCOUT_BLOCKED`, plutôt qu'une réponse « illisible » sans cause.
+    fn get_json<T: serde::de::DeserializeOwned>(&self, url: &str, query: &[(String, String)]) -> Result<T> {
+        let response = self.client.get(url).query(query).send().context("appel Blockscout impossible")?;
+        let html = response.headers().get(reqwest::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).is_some_and(|v| v.starts_with("text/html"));
+        anyhow::ensure!(!(html && response.status() == reqwest::StatusCode::FORBIDDEN), BLOCKSCOUT_BLOCKED);
+        response.json().context("réponse Blockscout illisible")
+    }
+
     /// Une page d'historique (50 transactions, de la plus récente à la plus
     /// ancienne) et le curseur de la suivante, `None` après la dernière.
     pub fn tx_history_page(&self, address: &str, page: Option<&PageParams>) -> Result<(Vec<EvmTx>, Option<PageParams>)> {
         let url = format!("{}/api/v2/addresses/{address}/transactions", self.base_url);
-        let resp: TxListResponse = self
-            .client
-            .get(&url)
-            .query(page.map(Vec::as_slice).unwrap_or_default())
-            .send()
-            .context("appel Blockscout impossible")?
-            .json()
-            .context("réponse Blockscout illisible")?;
+        let resp: TxListResponse = self.get_json(&url, page.map(Vec::as_slice).unwrap_or_default())?;
 
         let next = resp.next_page_params.map(page_params);
         let address_lower = address.to_lowercase();
@@ -152,18 +156,15 @@ impl BlockscoutClient {
         if let Some(page) = page {
             query.extend(page.iter().filter(|(key, _)| key != "type" && key != "token").cloned());
         }
-        let resp: TokenTransferListResponse = self
-            .client
-            .get(&url)
-            .query(&query)
-            .send()
-            .context("appel Blockscout impossible")?
-            .json()
-            .context("réponse Blockscout illisible")?;
+        let resp: TokenTransferListResponse = self.get_json(&url, &query)?;
         let moves = token_moves(resp.items, address, contract)?;
         Ok((moves, resp.next_page_params.map(page_params)))
     }
 }
+
+/// L'explorateur refuse les requêtes automatiques (page de vérification
+/// anti-robots) : historique de ce réseau indisponible tant qu'il le fait.
+pub const BLOCKSCOUT_BLOCKED: &str = "l'explorateur de ce réseau refuse pour l'instant les requêtes automatiques : historique indisponible";
 
 /// Mouvement net d'un jeton pour l'adresse interrogée dans une transaction
 /// (Blockscout ou Routescan).

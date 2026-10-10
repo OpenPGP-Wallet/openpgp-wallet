@@ -392,9 +392,13 @@ fn fetch_first(spec: &Spec, address: &str) -> Result<HoldingData> {
     match first {
         Ok(page) => data.absorb(page, price_history::unix_now()),
         // NodeReal momentanément indisponible (limite de l'offre gratuite
-        // atteinte…) : solde compté constant plutôt qu'une courbe entière en
-        // échec — l'interface le dit (`constant`).
+        // atteinte…), ou explorateur Blockscout derrière une vérification
+        // anti-robots (Arbitrum et Base, constaté le 10/10/2026 : l'adresse
+        // restait « momentanément illisible » à chaque courbe) : solde compté
+        // constant plutôt qu'une courbe entière en échec — l'interface le dit
+        // (`constant`) s'il y a un solde.
         Err(_) if spec.uses_nodereal() => data.constant = true,
+        Err(e) if e.to_string() == crate::blockscout::BLOCKSCOUT_BLOCKED => data.constant = true,
         Err(e) => return Err(e),
     }
     Ok(data)
@@ -932,4 +936,31 @@ mod tests {
         assert!(!portfolio_history(&holdings, ChartRange::Month).unwrap().loading);
         assert!(again.elapsed() < Duration::from_secs(2), "changement de période servi par le cache");
     }
+
+    /// Explorateurs derrière une vérification anti-robots (Arbitrum et Base
+    /// sur Blockscout, constaté le 10/10/2026) : solde compté constant, plus
+    /// d'adresse « momentanément illisible » à chaque courbe. Valable aussi
+    /// quand le blocage sera levé (aucune adresse indisponible).
+    /// `cargo test -- --ignored blocked_explorers_do_not_break_the_curve --nocapture`
+    #[test]
+    #[ignore]
+    fn blocked_explorers_do_not_break_the_curve() {
+        let address = "0x9458AF2B720Ecf1bB18f525d864A28Af5c818cfA";
+        let holdings: Vec<Holding> = ["evm_mainnet", "arbitrum_mainnet", "base_mainnet"]
+            .into_iter()
+            .flat_map(|network| [None, Some("usdc".to_string())].map(|token| Holding { network: network.into(), address: address.into(), token }))
+            .collect();
+        let mut history = portfolio_history(&holdings, ChartRange::Week).unwrap();
+        for _ in 0..10 {
+            if !history.loading {
+                break;
+            }
+            std::thread::sleep(Duration::from_secs(3));
+            history = portfolio_history(&holdings, ChartRange::Week).unwrap();
+        }
+        println!("{} points, indisponibles {:?}, constants {:?}", history.points.len(), history.unavailable, history.constant);
+        assert!(history.unavailable.is_empty(), "adresses illisibles : {:?}", history.unavailable);
+        assert!(!history.points.is_empty());
+    }
 }
+

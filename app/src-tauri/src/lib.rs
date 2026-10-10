@@ -75,6 +75,8 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("nom de la sauvegarde : 1 à 30 caractères (lettres, chiffres, espaces, - _)", "backup name: 1 to 30 characters (letters, digits, spaces, - _)"),
     ("un dossier de sauvegarde de ce nom existe déjà sur la clé USB : choisissez un autre nom", "a backup folder with this name already exists on the USB drive: choose another name"),
     ("plusieurs sauvegardes complètes trouvées : choisissez celle à restaurer", "several complete backups found: choose the one to restore"),
+    // core/src/blockscout.rs
+    ("l'explorateur de ce réseau refuse pour l'instant les requêtes automatiques : historique indisponible", "this network's explorer currently refuses automated requests: history unavailable"),
     // core/src/api.rs, actions tokenisées xStocks
     ("transferts de ce jeton suspendus par son émetteur : réessayez plus tard", "transfers of this token are paused by its issuer: try again later"),
     ("l'émetteur de ce jeton a ajouté une règle de transfert que l'app ne gère pas encore : envoi refusé, rien n'a été dépensé", "this token's issuer added a transfer rule the app doesn't support yet: transfer refused, nothing was spent"),
