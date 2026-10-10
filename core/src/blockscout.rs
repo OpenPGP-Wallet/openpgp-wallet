@@ -473,22 +473,21 @@ mod tests {
             return;
         }
         for (site, chain) in [("https://base.blockscout.com", 8_453), ("https://polygon.blockscout.com", 137)] {
-            let error = BlockscoutClient::new(site, chain).tx_history_page(ME, None).err().expect("offre payante exigée");
+            let error = BlockscoutClient::new(site, chain).tx_history_page(ME, None).expect_err("offre payante exigée");
             assert_eq!(error.to_string(), BLOCKSCOUT_BLOCKED, "{site}");
             assert!(refused_chains().lock().unwrap().contains(&chain), "{site} : plus redemandé");
             println!("{site} : refusé à l'offre gratuite");
         }
-        for (site, chain, usdc) in [("https://arbitrum.blockscout.com", 42_161, "0xaf88d065e77c8cC2239327C5EDb3A432268e5831")] {
-            let client = BlockscoutClient::new(site, chain);
-            let (txs, next) = client.tx_history_page(ME, None).unwrap();
-            println!("{site} : {} transactions, suivante {}", txs.len(), next.is_some());
-            assert!(!txs.is_empty() && txs.iter().all(|tx| tx.hash.starts_with("0x") && tx.timestamp_unix.is_some()));
-            let (second, _) = client.tx_history_page(ME, next.as_ref()).unwrap();
-            assert!(second.iter().all(|tx| !txs.iter().any(|t| t.hash == tx.hash)), "pages sans doublon");
-            let (moves, _) = client.token_transfers_page(ME, usdc, None).unwrap();
-            println!("  USDC : {} mouvements", moves.len());
-            println!("  site public bloqué : {}", blocked_sites().lock().unwrap().contains(site));
-        }
+        let (site, usdc) = ("https://arbitrum.blockscout.com", "0xaf88d065e77c8cC2239327C5EDb3A432268e5831");
+        let client = BlockscoutClient::new(site, 42_161);
+        let (txs, next) = client.tx_history_page(ME, None).unwrap();
+        println!("{site} : {} transactions, suivante {}", txs.len(), next.is_some());
+        assert!(!txs.is_empty() && txs.iter().all(|tx| tx.hash.starts_with("0x") && tx.timestamp_unix.is_some()));
+        let (second, _) = client.tx_history_page(ME, next.as_ref()).unwrap();
+        assert!(second.iter().all(|tx| !txs.iter().any(|t| t.hash == tx.hash)), "pages sans doublon");
+        let (moves, _) = client.token_transfers_page(ME, usdc, None).unwrap();
+        println!("  USDC : {} mouvements", moves.len());
+        println!("  site public bloqué : {}", blocked_sites().lock().unwrap().contains(site));
     }
 
     #[test]
