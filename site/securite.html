@@ -119,7 +119,7 @@
         <div class="group-title warn">E — Ce que ces protections ne couvrent pas</div>
         <div class="item">
           <h3>16. Un malware actif sur l'appareil pendant l'usage</h3>
-          <p>Un enregistreur de frappe qui capture le mot de passe, ou une lecture de la mémoire du processus au moment précis d'une signature, contournent ces protections sans rien casser. Le TPM n'y change rien pour la signature elle-même : il ne connaît que les courbes NIST (P-256, P-384), alors que Bitcoin et Ethereum utilisent secp256k1, Solana ed25519. <strong>Ce n'est pas une faiblesse propre à ce projet</strong> : aucun portefeuille purement logiciel ne peut s'en protéger totalement. C'est la raison d'être des portefeuilles matériels (Ledger, Trezor, pris en charge par l'app), où la clé ne quitte jamais un appareil séparé doté de son propre écran.</p>
+          <p>Un enregistreur de frappe qui capture le mot de passe, ou une lecture de la mémoire du processus au moment précis d'une signature, contournent ces protections sans rien casser. Le TPM n'y change rien pour la signature elle-même : il ne connaît que les courbes NIST (P-256, P-384), alors que Bitcoin et Ethereum utilisent secp256k1, Solana ed25519. <strong>Ce n'est pas une faiblesse propre à ce projet</strong> : aucun portefeuille purement logiciel ne peut s'en protéger totalement. C'est la raison d'être des portefeuilles matériels (Ledger, Trezor, pris en charge par l'app), où la clé ne quitte jamais un appareil séparé doté de son propre écran. La réponse prévue dans l'app est <a href="frost.html" style="color: var(--accent)">FROST</a> : une signature partagée entre l'ordinateur et le téléphone, sans que la clé entière n'existe jamais.</p>
         </div>
       </div>
 

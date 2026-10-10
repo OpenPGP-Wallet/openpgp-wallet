@@ -13,6 +13,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/site.css">
 <style>
   :root {
     --bg: #060708;
@@ -111,6 +112,8 @@
   }
   .play .frost-credit { animation: frost-fade 0.8s ease 0.15s both; }
   .play .frost-soon { animation: frost-fade 0.8s ease 2.5s both; }
+  .frost-stage { position: relative; }
+  .frost-stage .scroll-hint { animation: frost-fade 0.8s ease 3s both; }
   @keyframes frost-fade {
     from { opacity: 0; transform: translateY(8px); }
     to { opacity: 1; transform: none; }
@@ -170,7 +173,155 @@
     </div>
     <p class="frost-soon" lang="en">Coming soon</p>
   </div>
+  <a class="scroll-hint" href="#frost-idea" aria-label="Faire défiler">
+    <span>Comprendre</span>
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v13M6 13l6 6 6-6"/></svg>
+  </a>
 </main>
+
+<!-- ===== L'idée ===== -->
+<section class="section" id="frost-idea">
+  <div class="section-inner">
+    <div class="section-head">
+      <span class="eyebrow"><span class="num">01</span> L'idée</span>
+      <h2>Après la sauvegarde, diviser la signature.</h2>
+      <p class="lead">OpenPGP Wallet découpe déjà votre sauvegarde en trois morceaux, dont deux suffisent. FROST pousse la même logique jusqu'au moment le plus sensible : la signature d'un envoi. Plusieurs appareils signent chacun leur part, et la clé entière n'est jamais reconstituée.</p>
+    </div>
+    <div class="compare">
+      <div class="compare-col reveal" style="--d: 0.05s">
+        <div class="compare-title">Aujourd'hui</div>
+        <div class="compare-row ok"><span>Sauvegarde</span><b>3 morceaux, 2 suffisent</b></div>
+        <div class="compare-row warn"><span>Signature</span><b>Sur l'ordinateur, la clé est reconstituée un court instant</b></div>
+        <div class="compare-row warn"><span>Un virus sur l'ordinateur</span><b>Peut, en théorie, attraper la clé à ce moment-là</b></div>
+      </div>
+      <div class="compare-col next reveal" style="--d: 0.2s">
+        <div class="compare-title">Avec FROST</div>
+        <div class="compare-row ok"><span>Sauvegarde</span><b>3 morceaux, 2 suffisent</b></div>
+        <div class="compare-row ok"><span>Signature</span><b>Ordinateur + téléphone, chacun sa part : la clé n'existe jamais entière</b></div>
+        <div class="compare-row ok"><span>Un virus sur l'ordinateur</span><b>Ne peut rien envoyer seul : il lui faudrait aussi le téléphone</b></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== Pourquoi ===== -->
+<section class="feature reverse" id="frost-why">
+  <div class="feature-inner">
+    <div class="feature-copy">
+      <span class="eyebrow"><span class="num">02</span> Pourquoi</span>
+      <h2>La protection d'un Ledger, avec le téléphone que vous avez déjà.</h2>
+      <p class="lead">La seule limite d'un portefeuille logiciel, c'est un ordinateur déjà infecté. Les portefeuilles matériels la règlent avec un appareil séparé et son propre écran. FROST offre la même garantie sans rien acheter : votre téléphone devient le second appareil et l'écran de confiance.</p>
+      <ul class="ticks">
+        <li>Le téléphone affiche le vrai destinataire et le vrai montant, même si l'ordinateur ment.</li>
+        <li>Vous validez d'un regard (Face ID ou empreinte) : rien de plus à faire qu'aujourd'hui.</li>
+        <li>Téléphone perdu ou cassé ? La part de secours, gardée à l'abri, prend le relais : deux sur trois suffisent toujours.</li>
+      </ul>
+    </div>
+    <div class="feature-visual">
+      <div class="phone reveal" style="--d: 0.1s" role="img" aria-label="Téléphone : demande de signature, 0,25 SOL vers un destinataire, bouton valider">
+        <div class="phone-notch" aria-hidden="true"></div>
+        <div class="phone-app">OpenPGP Wallet</div>
+        <div class="phone-title">Demande de signature</div>
+        <div class="phone-sub">depuis votre ordinateur</div>
+        <div class="phone-lines">
+          <div><span>Réseau</span><b>Solana</b></div>
+          <div><span>Destinataire</span><b>7xKp…Q2mF</b></div>
+          <div><span>Montant</span><b>0,25 SOL</b></div>
+        </div>
+        <div class="phone-btn">Valider avec Face ID</div>
+        <div class="phone-cancel">Refuser</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== Comment ===== -->
+<section class="section" id="frost-how">
+  <div class="section-inner">
+    <div class="section-head center">
+      <span class="eyebrow"><span class="num">03</span> Comment ça marchera</span>
+      <h2>Trois gestes, dont un seul une fois pour toutes.</h2>
+    </div>
+    <div class="steps">
+      <div class="step-card reveal" style="--d: 0.05s">
+        <span class="step-num">1</span>
+        <h3>Appairer</h3>
+        <p>Une seule fois : l'ordinateur affiche un QR code, le téléphone le scanne. Les deux appareils créent ensemble leurs parts, puis communiquent par un canal chiffré de bout en bout.</p>
+      </div>
+      <div class="step-card reveal" style="--d: 0.15s">
+        <span class="step-num">2</span>
+        <h3>Demander</h3>
+        <p>Vous préparez un envoi sur l'ordinateur, comme aujourd'hui. Il signe sa part et envoie la demande au téléphone.</p>
+      </div>
+      <div class="step-card reveal" style="--d: 0.25s">
+        <span class="step-num">3</span>
+        <h3>Valider</h3>
+        <p>Le téléphone affiche l'envoi, vous le validez d'un regard, il signe sa part. Les deux parts forment une signature ordinaire, acceptée par le réseau.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== Sur quelles bases ===== -->
+<section class="section" id="frost-base">
+  <div class="section-inner">
+    <div class="section-head">
+      <span class="eyebrow"><span class="num">04</span> Sur des bases solides</span>
+      <h2>Pas de cryptographie maison.</h2>
+      <p class="lead">La signature à plusieurs est l'endroit où l'on ne bricole pas. Le projet s'appuie sur ce qui existe de plus sérieux.</p>
+    </div>
+    <div class="shields">
+      <div class="shield reveal" style="--d: 0.05s">
+        <span class="shield-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg></span>
+        <div><h3>Un standard public</h3><p>FROST (Flexible Round-Optimized Schnorr Threshold) est normalisé par l'IETF sous le numéro RFC 9591.</p></div>
+      </div>
+      <div class="shield reveal" style="--d: 0.1s">
+        <span class="shield-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg></span>
+        <div><h3>L'implémentation de la Zcash Foundation</h3><p>Ses bibliothèques open source en Rust, que nous utiliserons telles quelles, vérifiées contre les vecteurs de test officiels.</p></div>
+      </div>
+      <div class="shield reveal" style="--d: 0.15s">
+        <span class="shield-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9 9h6l-6 6h6"/></svg></span>
+        <div><h3>Déjà dans l'écosystème Zcash</h3><p>L'app utilise déjà la bibliothèque officielle de Zcash (librustzcash) pour Zcash transparent et protégé (Orchard).</p></div>
+      </div>
+      <div class="shield reveal" style="--d: 0.2s">
+        <span class="shield-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>
+        <div><h3>Réseaux visés en premier</h3><p>Zcash protégé, Solana, NEAR, Stellar et Bitcoin (adresses Taproot) : tous utilisent des signatures de type Schnorr, celles que FROST produit.</p></div>
+      </div>
+      <div class="shield reveal" style="--d: 0.25s">
+        <span class="shield-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg></span>
+        <div><h3>Ce que FROST ne couvre pas</h3><p>Ethereum et les réseaux compatibles, Tron, XRP et Dogecoin signent autrement (ECDSA) : ils demandent une autre famille de protocoles, plus lourde, envisagée plus tard.</p></div>
+      </div>
+      <div class="shield reveal" style="--d: 0.3s">
+        <span class="shield-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg></span>
+        <div><h3>Sans toucher à ce qui marche</h3><p>FROST sera développé à part, dans un module isolé : le portefeuille actuel et sa sauvegarde resteront tels quels pendant toute la recherche.</p></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== Où on en est ===== -->
+<section class="status" id="frost-status">
+  <div class="status-inner">
+    <span class="eyebrow"><span class="num">05</span> Où on en est</span>
+    <h2>Principes arrêtés. Développement à venir.</h2>
+    <div class="roadmap">
+      <div class="step reveal" style="--d: 0.05s"><span class="step-badge done">✓</span><span>Conception : appareils, réseaux couverts et canal d'appairage choisis</span></div>
+      <div class="step next reveal" style="--d: 0.12s"><span class="step-badge next">1</span><span><strong>Module de recherche isolé</strong>, téléphone simulé par un second programme, vérifié contre les vecteurs officiels</span></div>
+      <div class="step reveal" style="--d: 0.19s"><span class="step-badge todo">2</span><span>Appairage par QR code et canal chiffré de bout en bout entre l'ordinateur et le téléphone</span></div>
+      <div class="step reveal" style="--d: 0.26s"><span class="step-badge todo">3</span><span>Application mobile : afficher la demande, valider d'un regard</span></div>
+      <div class="step reveal" style="--d: 0.33s"><span class="step-badge todo">4</span><span>Audit de sécurité indépendant, avant toute utilisation avec de vrais fonds</span></div>
+    </div>
+    <div class="cta" style="justify-content: center; margin-top: 48px;">
+      <a class="btn btn-primary" href="index.html">Découvrir OpenPGP Wallet</a>
+      <a class="btn btn-ghost" href="index.html#sec-status">Où en est le portefeuille</a>
+    </div>
+  </div>
+</section>
+
+<footer class="footer">
+  <span class="brand" style="font-size: 17px;">OpenPGP Wallet</span>
+  <span>Projet en développement : preuve de concept, non auditée. N'y confiez pas de fonds importants. · <a href="index.html">Accueil</a> · <a href="securite.html">Sécurité en détail</a> · <a href="frost-en.html" hreflang="en" lang="en">English</a></span>
+</footer>
 
 <script>
   // Rejoue l'animation au clic (ou Entrée / Espace).
@@ -189,5 +340,6 @@
     }
   });
 </script>
+<script src="assets/site.js"></script>
 </body>
 </html>

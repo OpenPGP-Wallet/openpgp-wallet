@@ -119,7 +119,7 @@
         <div class="group-title warn">E — What these protections don't cover</div>
         <div class="item">
           <h3>16. Active malware on the device during use</h3>
-          <p>A keylogger capturing the password, or a read of the process memory at the exact moment of a signature, bypasses these protections without breaking anything. The TPM doesn't change that for the signature itself: it only knows the NIST curves (P-256, P-384), while Bitcoin and Ethereum use secp256k1 and Solana ed25519. <strong>This isn't a weakness specific to this project</strong>: no purely software wallet can fully protect against it. That's the point of hardware wallets (Ledger, Trezor, supported by the app), where the key never leaves a separate device with its own screen.</p>
+          <p>A keylogger capturing the password, or a read of the process memory at the exact moment of a signature, bypasses these protections without breaking anything. The TPM doesn't change that for the signature itself: it only knows the NIST curves (P-256, P-384), while Bitcoin and Ethereum use secp256k1 and Solana ed25519. <strong>This isn't a weakness specific to this project</strong>: no purely software wallet can fully protect against it. That's the point of hardware wallets (Ledger, Trezor, supported by the app), where the key never leaves a separate device with its own screen. The answer planned in the app is <a href="frost-en.html" style="color: var(--accent)">FROST</a>: a signature shared between the computer and the phone, without the whole key ever existing.</p>
         </div>
       </div>
 

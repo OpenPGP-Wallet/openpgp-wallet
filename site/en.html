@@ -48,6 +48,7 @@
   <a class="dot" href="#sec-stocks" title="Tokenized stocks" aria-label="Tokenized stocks"></a>
   <a class="dot" href="#sec-swap" title="Swaps" aria-label="Swaps"></a>
   <a class="dot" href="#sec-security" title="Security" aria-label="Security"></a>
+  <a class="dot" href="#sec-frost" title="FROST, what's next" aria-label="FROST, what's next"></a>
   <a class="dot" href="#sec-how" title="How it works" aria-label="How it works"></a>
   <a class="dot" href="#sec-status" title="Project status" aria-label="Project status"></a>
   <a class="dot" href="#sec-faq" title="FAQ" aria-label="FAQ"></a>
@@ -202,7 +203,7 @@
           <h3>18 networks, one backup</h3>
           <p>Bitcoin, Ethereum, Solana, BNB Chain, Arbitrum, Base, Polygon, Avalanche, Zcash, Monero, Dogecoin, Tron, XRP, Stellar, NEAR, Cardano, Stacks and Bittensor, with their tokens (USDC, USDT, LINK…). You can even add an Ethereum-compatible network yourself.</p>
           <div class="logos" aria-hidden="true">
-            <img src="assets/btc.webp" alt=""><img src="assets/eth.svg" alt=""><img src="assets/sol.png" alt="" style="transform: scale(1.6)"><img src="assets/bnb.png" alt=""><img src="assets/arb.jpg" alt=""><span class="logo-base"></span><img src="assets/pol.png" alt=""><img src="assets/avax.png" alt=""><img src="assets/zec.png" alt=""><img src="assets/xmr.png" alt=""><img src="assets/doge.png" alt=""><img src="assets/trx.png" alt=""><img src="assets/xrp.svg" alt=""><img src="assets/xlm.jpg" alt=""><img src="assets/near.jpg" alt=""><img src="assets/ada.png" alt=""><img src="assets/stx.png" alt=""><img src="assets/tao.jpg" alt="">
+            <img src="assets/btc.webp" alt=""><img src="assets/eth.svg" alt=""><img src="assets/sol-mark.png" alt=""><img src="assets/bnb.png" alt=""><img src="assets/arb.jpg" alt=""><span class="logo-base"><svg viewBox="0 0 111 111"><path fill="#0052FF" d="M54.921 110.034C85.359 110.034 110.034 85.402 110.034 55.017C110.034 24.6319 85.359 0 54.921 0C26.0432 0 2.35281 22.1714 0 50.3923H72.8467V59.6416H3.9565e-07C2.35281 87.8625 26.0432 110.034 54.921 110.034Z"/></svg></span><img src="assets/pol.png" alt=""><img src="assets/avax.png" alt=""><img src="assets/zec.png" alt=""><img src="assets/xmr.png" alt=""><img src="assets/doge.png" alt=""><img src="assets/trx.png" alt=""><img src="assets/xrp.svg" alt=""><img src="assets/xlm.jpg" alt=""><img src="assets/near.jpg" alt=""><img src="assets/ada.png" alt=""><img src="assets/stx.png" alt=""><img src="assets/tao.jpg" alt="">
           </div>
         </div>
         <div class="card reveal" style="--d: 0.12s">
@@ -306,7 +307,7 @@
         <div class="panel">
           <div class="panel-title">Convert</div>
           <div class="panel-label">Example: from Bitcoin to Ethereum</div>
-          <div style="margin-top: 16px">
+          <div style="margin-top: 22px">
             <div class="swap-box">
               <div class="swap-label">You send</div>
               <div class="swap-amount"><img src="assets/btc.webp" alt="">0.01 BTC</div>
@@ -389,18 +390,67 @@
         <span class="honest-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg></span>
         <div>
           <h3>What no software can guarantee</h3>
-          <p>If malware already controls your computer while you use it, it can spy on what you do. That's true of every software wallet. For large amounts, pair the app with a Ledger or a Trezor: the key never leaves the device, and you check on its own screen.</p>
+          <p>If malware already controls your computer while you use it, it can spy on what you do. That's true of every software wallet. Today, the answer is a Ledger or a Trezor: the key never leaves the device, and you check on its own screen. Tomorrow, it will be <strong>FROST</strong>: a signature shared between your computer and your phone, so an infected computer can no longer send anything on its own.</p>
         </div>
-        <a class="deep-link" href="security.html">Security in detail →</a>
+        <div class="honest-links">
+          <a class="deep-link accent" href="#sec-frost">Discover FROST →</a>
+          <a class="deep-link" href="security.html">Security in detail →</a>
+        </div>
       </div>
     </div>
   </section>
 
-  <!-- ===== 07 — En pratique ===== -->
+  <!-- ===== 07 — FROST ===== -->
+  <section class="feature frost-feature" id="sec-frost">
+    <div class="feature-inner">
+      <div class="feature-copy">
+        <span class="eyebrow"><span class="num">07</span> <span class="new">What's next</span> · FROST</span>
+        <h2>Tomorrow, the signature will be split too.</h2>
+        <p class="lead">Today, the backup is split into three pieces. With FROST, every send will be signed jointly: your computer and your phone each produce their share of the signature, without ever bringing the key together. Malware on the computer will no longer be enough to move your funds.</p>
+        <ul class="ticks">
+          <li><strong>The whole key no longer exists anywhere</strong>, neither on the computer nor on the phone, not even while signing.</li>
+          <li>Your phone shows the recipient and the amount, and you approve at a glance: a Ledger's trusted screen, with the device already in your pocket.</li>
+          <li>A public protocol, standardized by the IETF (RFC 9591), with an open-source Rust implementation developed by the <strong>Zcash Foundation</strong>: we'll reuse it rather than reinvent cryptography.</li>
+          <li>Planned first for shielded Zcash, Solana, NEAR, Stellar and Bitcoin (Taproot addresses).</li>
+        </ul>
+        <div class="cta"><a class="btn btn-primary" href="frost-en.html">Discover FROST</a></div>
+      </div>
+      <div class="feature-visual">
+        <div class="panel">
+          <div class="panel-title">Signing a send with FROST</div>
+          <div class="panel-label">Two devices out of three sign together</div>
+          <div class="keys">
+            <div class="key read reveal" style="--d: 0.1s">
+              <span class="key-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></span>
+              <span><span class="key-name">Your computer</span><br><span class="key-where">Prepares the send, signs its share</span></span>
+              <span class="key-state">Share 1 ✓</span>
+            </div>
+            <div class="key read reveal" style="--d: 0.5s">
+              <span class="key-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M11 18h2"/></svg></span>
+              <span><span class="key-name">Your phone</span><br><span class="key-where">Shows the send, approved at a glance</span></span>
+              <span class="key-state">Share 2 ✓</span>
+            </div>
+            <div class="key idle reveal" style="--d: 0.9s">
+              <span class="key-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="9" width="10" height="13" rx="2"/><path d="M9 9V3h6v6M10.5 5.5h.01M13.5 5.5h.01"/></svg></span>
+              <span><span class="key-name">Backup</span><br><span class="key-where">Kept safe, in case of loss</span></span>
+              <span class="key-state">Not needed</span>
+            </div>
+          </div>
+          <div class="restored reveal" style="--d: 1.25s">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
+            <span>Valid signature<small>The whole key never existed, at any moment.</small></span>
+          </div>
+          <p class="frost-by" lang="en"><strong>FROST</strong> by the Zcash Foundation</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 08 — En pratique ===== -->
   <section class="section" id="sec-how">
     <div class="section-inner">
       <div class="section-head center">
-        <span class="eyebrow"><span class="num">07</span> How it works</span>
+        <span class="eyebrow"><span class="num">08</span> How it works</span>
         <h2>Three steps, and that's it.</h2>
       </div>
       <div class="steps">
@@ -424,26 +474,26 @@
     </div>
   </section>
 
-  <!-- ===== 08 — Statut ===== -->
+  <!-- ===== 09 — Statut ===== -->
   <section class="status" id="sec-status">
     <div class="status-inner">
-      <span class="eyebrow"><span class="num">08</span> Project status</span>
+      <span class="eyebrow"><span class="num">09</span> Project status</span>
       <h2>Working proof of concept. Not ready for real funds yet.</h2>
       <div class="roadmap">
         <div class="step reveal" style="--d: 0.05s"><span class="step-badge done">✓</span><span>Cryptographic core (backup, encryption, signatures): done</span></div>
         <div class="step reveal" style="--d: 0.12s"><span class="step-badge doing">●</span><span>Complete Windows app (sends, swaps, staking, tokenized stocks, Ledger and Trezor, WalletConnect, Monero, shielded Zcash): being polished</span></div>
-        <div class="step reveal" style="--d: 0.19s"><span class="step-badge todo">○</span><span>Independent security audit, code signing and source code release: none of them done yet</span></div>
-        <div class="step reveal" style="--d: 0.26s"><span class="step-badge todo">○</span><span>Public download: after those three steps</span></div>
-        <div class="step reveal" style="--d: 0.33s"><span class="step-badge todo">○</span><span>Mobile app and <a href="frost-en.html">FROST</a> shared signing: in preparation</span></div>
+        <div class="step next reveal" style="--d: 0.19s"><span class="step-badge next">→</span><span><strong>Next big step: <a href="frost-en.html">FROST</a></strong>, a signature shared between your computer and your phone, with the mobile app that goes with it: design settled, development ahead</span></div>
+        <div class="step reveal" style="--d: 0.26s"><span class="step-badge todo">○</span><span>Independent security audit, code signing and source code release: none of them done yet</span></div>
+        <div class="step reveal" style="--d: 0.33s"><span class="step-badge todo">○</span><span>Public download: after those three steps</span></div>
       </div>
     </div>
   </section>
 
-  <!-- ===== 09 — Questions fréquentes ===== -->
+  <!-- ===== 10 — Questions fréquentes ===== -->
   <section class="section" id="sec-faq">
     <div class="section-inner">
       <div class="section-head">
-        <span class="eyebrow"><span class="num">09</span> FAQ</span>
+        <span class="eyebrow"><span class="num">10</span> FAQ</span>
         <h2>Real questions, clear answers.</h2>
       </div>
       <div class="faq">
@@ -472,8 +522,12 @@
           <p>They are tokens issued by Backed Assets (xStocks) that track the price of a stock or fund; according to their issuer, they are backed by the corresponding securities. They carry no voting rights. They are not for US persons and are not offered in the UK, Canada or Australia.</p>
         </details>
         <details>
+          <summary>What is FROST, in a nutshell?</summary>
+          <p>A way of signing jointly. Today, your key is rebuilt for a brief moment on the computer to sign a send. With FROST, the computer and the phone each sign their share and the whole key never exists: to steal your funds, someone would have to hack both devices at the same time.</p>
+        </details>
+        <details>
           <summary>Why only Windows?</summary>
-          <p>To get one platform right before opening others. A mobile version is in preparation.</p>
+          <p>To get one platform right before opening others. A mobile version is in preparation: it will also be the second device for FROST.</p>
         </details>
         <details>
           <summary>Can I use it now?</summary>

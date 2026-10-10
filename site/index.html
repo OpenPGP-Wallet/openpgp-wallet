@@ -48,6 +48,7 @@
   <a class="dot" href="#sec-stocks" title="Actions tokenisées" aria-label="Actions tokenisées"></a>
   <a class="dot" href="#sec-swap" title="Échanges" aria-label="Échanges"></a>
   <a class="dot" href="#sec-security" title="Sécurité" aria-label="Sécurité"></a>
+  <a class="dot" href="#sec-frost" title="FROST, la suite" aria-label="FROST, la suite"></a>
   <a class="dot" href="#sec-how" title="En pratique" aria-label="En pratique"></a>
   <a class="dot" href="#sec-status" title="Où en est le projet" aria-label="Où en est le projet"></a>
   <a class="dot" href="#sec-faq" title="Questions fréquentes" aria-label="Questions fréquentes"></a>
@@ -202,7 +203,7 @@
           <h3>18 réseaux, une seule sauvegarde</h3>
           <p>Bitcoin, Ethereum, Solana, BNB Chain, Arbitrum, Base, Polygon, Avalanche, Zcash, Monero, Dogecoin, Tron, XRP, Stellar, NEAR, Cardano, Stacks et Bittensor, avec leurs jetons (USDC, USDT, LINK…). Vous pouvez même ajouter vous-même un réseau compatible Ethereum.</p>
           <div class="logos" aria-hidden="true">
-            <img src="assets/btc.webp" alt=""><img src="assets/eth.svg" alt=""><img src="assets/sol.png" alt="" style="transform: scale(1.6)"><img src="assets/bnb.png" alt=""><img src="assets/arb.jpg" alt=""><span class="logo-base"></span><img src="assets/pol.png" alt=""><img src="assets/avax.png" alt=""><img src="assets/zec.png" alt=""><img src="assets/xmr.png" alt=""><img src="assets/doge.png" alt=""><img src="assets/trx.png" alt=""><img src="assets/xrp.svg" alt=""><img src="assets/xlm.jpg" alt=""><img src="assets/near.jpg" alt=""><img src="assets/ada.png" alt=""><img src="assets/stx.png" alt=""><img src="assets/tao.jpg" alt="">
+            <img src="assets/btc.webp" alt=""><img src="assets/eth.svg" alt=""><img src="assets/sol-mark.png" alt=""><img src="assets/bnb.png" alt=""><img src="assets/arb.jpg" alt=""><span class="logo-base"><svg viewBox="0 0 111 111"><path fill="#0052FF" d="M54.921 110.034C85.359 110.034 110.034 85.402 110.034 55.017C110.034 24.6319 85.359 0 54.921 0C26.0432 0 2.35281 22.1714 0 50.3923H72.8467V59.6416H3.9565e-07C2.35281 87.8625 26.0432 110.034 54.921 110.034Z"/></svg></span><img src="assets/pol.png" alt=""><img src="assets/avax.png" alt=""><img src="assets/zec.png" alt=""><img src="assets/xmr.png" alt=""><img src="assets/doge.png" alt=""><img src="assets/trx.png" alt=""><img src="assets/xrp.svg" alt=""><img src="assets/xlm.jpg" alt=""><img src="assets/near.jpg" alt=""><img src="assets/ada.png" alt=""><img src="assets/stx.png" alt=""><img src="assets/tao.jpg" alt="">
           </div>
         </div>
         <div class="card reveal" style="--d: 0.12s">
@@ -306,7 +307,7 @@
         <div class="panel">
           <div class="panel-title">Convertir</div>
           <div class="panel-label">Exemple : de Bitcoin vers Ethereum</div>
-          <div style="margin-top: 16px">
+          <div style="margin-top: 22px">
             <div class="swap-box">
               <div class="swap-label">Vous envoyez</div>
               <div class="swap-amount"><img src="assets/btc.webp" alt="">0,01 BTC</div>
@@ -389,18 +390,67 @@
         <span class="honest-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg></span>
         <div>
           <h3>Ce qu'aucun logiciel ne peut garantir</h3>
-          <p>Si un virus contrôle déjà votre ordinateur pendant que vous l'utilisez, il peut épier ce que vous faites. C'est vrai pour tous les portefeuilles logiciels. Pour les gros montants, associez l'app à un Ledger ou à un Trezor : la clé ne quitte jamais l'appareil, et vous vérifiez sur son propre écran.</p>
+          <p>Si un virus contrôle déjà votre ordinateur pendant que vous l'utilisez, il peut épier ce que vous faites. C'est vrai pour tous les portefeuilles logiciels. Aujourd'hui, la parade est un Ledger ou un Trezor : la clé ne quitte jamais l'appareil, et vous vérifiez sur son propre écran. Demain, ce sera <strong>FROST</strong> : la signature partagée entre votre ordinateur et votre téléphone, pour qu'un ordinateur infecté ne puisse plus rien envoyer seul.</p>
         </div>
-        <a class="deep-link" href="securite.html">La sécurité en détail →</a>
+        <div class="honest-links">
+          <a class="deep-link accent" href="#sec-frost">Découvrir FROST →</a>
+          <a class="deep-link" href="securite.html">La sécurité en détail →</a>
+        </div>
       </div>
     </div>
   </section>
 
-  <!-- ===== 07 — En pratique ===== -->
+  <!-- ===== 07 — FROST ===== -->
+  <section class="feature frost-feature" id="sec-frost">
+    <div class="feature-inner">
+      <div class="feature-copy">
+        <span class="eyebrow"><span class="num">07</span> <span class="new">La suite</span> · FROST</span>
+        <h2>Demain, la signature aussi sera divisée.</h2>
+        <p class="lead">Aujourd'hui, la sauvegarde est découpée en trois morceaux. Avec FROST, chaque envoi sera signé à plusieurs : votre ordinateur et votre téléphone produisent chacun leur part de signature, sans jamais réunir la clé. Un virus sur l'ordinateur ne suffira plus pour déplacer vos fonds.</p>
+        <ul class="ticks">
+          <li><strong>La clé entière n'existe plus nulle part</strong>, ni sur l'ordinateur ni sur le téléphone, même au moment de signer.</li>
+          <li>Votre téléphone affiche le destinataire et le montant, et vous validez d'un regard : l'écran de confiance d'un Ledger, avec l'appareil que vous avez déjà en poche.</li>
+          <li>Un protocole public, normalisé par l'IETF (RFC 9591), dont la <strong>Zcash Foundation</strong> développe une implémentation open source en Rust : nous la réutiliserons plutôt que de réinventer la cryptographie.</li>
+          <li>Prévu d'abord pour Zcash protégé, Solana, NEAR, Stellar et Bitcoin (adresses Taproot).</li>
+        </ul>
+        <div class="cta"><a class="btn btn-primary" href="frost.html">Découvrir FROST</a></div>
+      </div>
+      <div class="feature-visual">
+        <div class="panel">
+          <div class="panel-title">Signer un envoi avec FROST</div>
+          <div class="panel-label">Deux appareils sur trois signent ensemble</div>
+          <div class="keys">
+            <div class="key read reveal" style="--d: 0.1s">
+              <span class="key-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></span>
+              <span><span class="key-name">Votre ordinateur</span><br><span class="key-where">Prépare l'envoi, signe sa part</span></span>
+              <span class="key-state">Part 1 ✓</span>
+            </div>
+            <div class="key read reveal" style="--d: 0.5s">
+              <span class="key-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M11 18h2"/></svg></span>
+              <span><span class="key-name">Votre téléphone</span><br><span class="key-where">Affiche l'envoi, validé d'un regard</span></span>
+              <span class="key-state">Part 2 ✓</span>
+            </div>
+            <div class="key idle reveal" style="--d: 0.9s">
+              <span class="key-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="9" width="10" height="13" rx="2"/><path d="M9 9V3h6v6M10.5 5.5h.01M13.5 5.5h.01"/></svg></span>
+              <span><span class="key-name">Secours</span><br><span class="key-where">Gardé à l'abri, en cas de perte</span></span>
+              <span class="key-state">Pas utile</span>
+            </div>
+          </div>
+          <div class="restored reveal" style="--d: 1.25s">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
+            <span>Signature valide<small>La clé entière n'a jamais existé, à aucun moment.</small></span>
+          </div>
+          <p class="frost-by" lang="en"><strong>FROST</strong> by the Zcash Foundation</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 08 — En pratique ===== -->
   <section class="section" id="sec-how">
     <div class="section-inner">
       <div class="section-head center">
-        <span class="eyebrow"><span class="num">07</span> En pratique</span>
+        <span class="eyebrow"><span class="num">08</span> En pratique</span>
         <h2>Trois étapes, et c'est tout.</h2>
       </div>
       <div class="steps">
@@ -424,26 +474,26 @@
     </div>
   </section>
 
-  <!-- ===== 08 — Statut ===== -->
+  <!-- ===== 09 — Statut ===== -->
   <section class="status" id="sec-status">
     <div class="status-inner">
-      <span class="eyebrow"><span class="num">08</span> Où en est le projet</span>
+      <span class="eyebrow"><span class="num">09</span> Où en est le projet</span>
       <h2>Preuve de concept fonctionnelle. Pas encore prête pour de vrais fonds.</h2>
       <div class="roadmap">
         <div class="step reveal" style="--d: 0.05s"><span class="step-badge done">✓</span><span>Cœur cryptographique (sauvegarde, chiffrement, signatures) : terminé</span></div>
         <div class="step reveal" style="--d: 0.12s"><span class="step-badge doing">●</span><span>Application Windows complète (envois, échanges, staking, actions tokenisées, Ledger et Trezor, WalletConnect, Monero, Zcash protégé) : en finition</span></div>
-        <div class="step reveal" style="--d: 0.19s"><span class="step-badge todo">○</span><span>Audit de sécurité indépendant, signature du logiciel et publication du code source : aucun n'est encore fait</span></div>
-        <div class="step reveal" style="--d: 0.26s"><span class="step-badge todo">○</span><span>Version téléchargeable publique : après ces trois étapes</span></div>
-        <div class="step reveal" style="--d: 0.33s"><span class="step-badge todo">○</span><span>Application mobile et signature partagée <a href="frost.html">FROST</a> : en préparation</span></div>
+        <div class="step next reveal" style="--d: 0.19s"><span class="step-badge next">→</span><span><strong>Prochaine grande étape : <a href="frost.html">FROST</a></strong>, la signature partagée entre votre ordinateur et votre téléphone, avec l'application mobile qui l'accompagne : principes arrêtés, développement à venir</span></div>
+        <div class="step reveal" style="--d: 0.26s"><span class="step-badge todo">○</span><span>Audit de sécurité indépendant, signature du logiciel et publication du code source : aucun n'est encore fait</span></div>
+        <div class="step reveal" style="--d: 0.33s"><span class="step-badge todo">○</span><span>Version téléchargeable publique : après ces trois étapes</span></div>
       </div>
     </div>
   </section>
 
-  <!-- ===== 09 — Questions fréquentes ===== -->
+  <!-- ===== 10 — Questions fréquentes ===== -->
   <section class="section" id="sec-faq">
     <div class="section-inner">
       <div class="section-head">
-        <span class="eyebrow"><span class="num">09</span> Questions fréquentes</span>
+        <span class="eyebrow"><span class="num">10</span> Questions fréquentes</span>
         <h2>Les vraies questions, des réponses claires.</h2>
       </div>
       <div class="faq">
@@ -472,8 +522,12 @@
           <p>Ce sont des jetons émis par Backed Assets (xStocks) qui suivent le cours d'une action ou d'un fonds ; selon leur émetteur, ils sont adossés aux titres correspondants. Ils ne donnent pas de droit de vote. Ils sont interdits aux personnes des États-Unis et ne sont pas proposés au Royaume-Uni, au Canada ni en Australie.</p>
         </details>
         <details>
+          <summary>C'est quoi, FROST, en deux mots ?</summary>
+          <p>Une façon de signer à plusieurs. Aujourd'hui, votre clé est reconstituée un court instant sur l'ordinateur pour signer un envoi. Avec FROST, l'ordinateur et le téléphone signent chacun leur part et la clé entière n'existe jamais : pour voler vos fonds, il faudrait pirater les deux appareils en même temps.</p>
+        </details>
+        <details>
           <summary>Pourquoi seulement Windows ?</summary>
-          <p>Pour bien faire une plateforme avant d'en ouvrir d'autres. Une version mobile est en préparation.</p>
+          <p>Pour bien faire une plateforme avant d'en ouvrir d'autres. Une version mobile est en préparation : elle servira aussi de second appareil pour FROST.</p>
         </details>
         <details>
           <summary>Puis-je l'utiliser dès maintenant ?</summary>

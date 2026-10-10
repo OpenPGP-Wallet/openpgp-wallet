@@ -13,6 +13,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/site.css">
 <style>
   :root {
     --bg: #060708;
@@ -111,6 +112,8 @@
   }
   .play .frost-credit { animation: frost-fade 0.8s ease 0.15s both; }
   .play .frost-soon { animation: frost-fade 0.8s ease 2.5s both; }
+  .frost-stage { position: relative; }
+  .frost-stage .scroll-hint { animation: frost-fade 0.8s ease 3s both; }
   @keyframes frost-fade {
     from { opacity: 0; transform: translateY(8px); }
     to { opacity: 1; transform: none; }
@@ -170,7 +173,155 @@
     </div>
     <p class="frost-soon">Coming soon</p>
   </div>
+  <a class="scroll-hint" href="#frost-idea" aria-label="Scroll down">
+    <span>Learn more</span>
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v13M6 13l6 6 6-6"/></svg>
+  </a>
 </main>
+
+<!-- ===== The idea ===== -->
+<section class="section" id="frost-idea">
+  <div class="section-inner">
+    <div class="section-head">
+      <span class="eyebrow"><span class="num">01</span> The idea</span>
+      <h2>After the backup, split the signature.</h2>
+      <p class="lead">OpenPGP Wallet already splits your backup into three pieces, any two of which are enough. FROST takes the same logic to the most sensitive moment: signing a send. Several devices each sign their share, and the whole key is never rebuilt.</p>
+    </div>
+    <div class="compare">
+      <div class="compare-col reveal" style="--d: 0.05s">
+        <div class="compare-title">Today</div>
+        <div class="compare-row ok"><span>Backup</span><b>3 pieces, any 2 are enough</b></div>
+        <div class="compare-row warn"><span>Signature</span><b>On the computer, the key is rebuilt for a brief moment</b></div>
+        <div class="compare-row warn"><span>Malware on the computer</span><b>Could, in theory, catch the key at that moment</b></div>
+      </div>
+      <div class="compare-col next reveal" style="--d: 0.2s">
+        <div class="compare-title">With FROST</div>
+        <div class="compare-row ok"><span>Backup</span><b>3 pieces, any 2 are enough</b></div>
+        <div class="compare-row ok"><span>Signature</span><b>Computer + phone, each its own share: the key never exists whole</b></div>
+        <div class="compare-row ok"><span>Malware on the computer</span><b>Can't send anything on its own: it would also need the phone</b></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== Why ===== -->
+<section class="feature reverse" id="frost-why">
+  <div class="feature-inner">
+    <div class="feature-copy">
+      <span class="eyebrow"><span class="num">02</span> Why</span>
+      <h2>A Ledger's protection, with the phone you already own.</h2>
+      <p class="lead">The one limit of a software wallet is a computer that's already infected. Hardware wallets solve it with a separate device and its own screen. FROST offers the same guarantee without buying anything: your phone becomes the second device and the trusted screen.</p>
+      <ul class="ticks">
+        <li>The phone shows the real recipient and the real amount, even if the computer lies.</li>
+        <li>You approve at a glance (Face ID or fingerprint): nothing more to do than today.</li>
+        <li>Phone lost or broken? The backup share, kept safe, takes over: any two out of three are always enough.</li>
+      </ul>
+    </div>
+    <div class="feature-visual">
+      <div class="phone reveal" style="--d: 0.1s" role="img" aria-label="Phone: signing request, 0.25 SOL to a recipient, approve button">
+        <div class="phone-notch" aria-hidden="true"></div>
+        <div class="phone-app">OpenPGP Wallet</div>
+        <div class="phone-title">Signing request</div>
+        <div class="phone-sub">from your computer</div>
+        <div class="phone-lines">
+          <div><span>Network</span><b>Solana</b></div>
+          <div><span>Recipient</span><b>7xKp…Q2mF</b></div>
+          <div><span>Amount</span><b>0.25 SOL</b></div>
+        </div>
+        <div class="phone-btn">Approve with Face ID</div>
+        <div class="phone-cancel">Decline</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== How ===== -->
+<section class="section" id="frost-how">
+  <div class="section-inner">
+    <div class="section-head center">
+      <span class="eyebrow"><span class="num">03</span> How it will work</span>
+      <h2>Three steps, one of them once and for all.</h2>
+    </div>
+    <div class="steps">
+      <div class="step-card reveal" style="--d: 0.05s">
+        <span class="step-num">1</span>
+        <h3>Pair</h3>
+        <p>Just once: the computer shows a QR code, the phone scans it. The two devices create their shares together, then talk over an end-to-end encrypted channel.</p>
+      </div>
+      <div class="step-card reveal" style="--d: 0.15s">
+        <span class="step-num">2</span>
+        <h3>Request</h3>
+        <p>You prepare a send on the computer, just like today. It signs its share and sends the request to the phone.</p>
+      </div>
+      <div class="step-card reveal" style="--d: 0.25s">
+        <span class="step-num">3</span>
+        <h3>Approve</h3>
+        <p>The phone shows the send, you approve it at a glance, it signs its share. The two shares form an ordinary signature, accepted by the network.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== Foundations ===== -->
+<section class="section" id="frost-base">
+  <div class="section-inner">
+    <div class="section-head">
+      <span class="eyebrow"><span class="num">04</span> Solid foundations</span>
+      <h2>No homemade cryptography.</h2>
+      <p class="lead">Joint signing is no place to improvise. The project builds on the most serious work available.</p>
+    </div>
+    <div class="shields">
+      <div class="shield reveal" style="--d: 0.05s">
+        <span class="shield-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg></span>
+        <div><h3>A public standard</h3><p>FROST (Flexible Round-Optimized Schnorr Threshold) is standardized by the IETF as RFC 9591.</p></div>
+      </div>
+      <div class="shield reveal" style="--d: 0.1s">
+        <span class="shield-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg></span>
+        <div><h3>The Zcash Foundation's implementation</h3><p>Its open-source Rust libraries, which we'll use as is, checked against the official test vectors.</p></div>
+      </div>
+      <div class="shield reveal" style="--d: 0.15s">
+        <span class="shield-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9 9h6l-6 6h6"/></svg></span>
+        <div><h3>Already in the Zcash ecosystem</h3><p>The app already uses Zcash's official library (librustzcash) for transparent and shielded (Orchard) Zcash.</p></div>
+      </div>
+      <div class="shield reveal" style="--d: 0.2s">
+        <span class="shield-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>
+        <div><h3>First networks targeted</h3><p>Shielded Zcash, Solana, NEAR, Stellar and Bitcoin (Taproot addresses): all use Schnorr-type signatures, the kind FROST produces.</p></div>
+      </div>
+      <div class="shield reveal" style="--d: 0.25s">
+        <span class="shield-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg></span>
+        <div><h3>What FROST doesn't cover</h3><p>Ethereum and compatible networks, Tron, XRP and Dogecoin sign differently (ECDSA): they need another, heavier family of protocols, considered later.</p></div>
+      </div>
+      <div class="shield reveal" style="--d: 0.3s">
+        <span class="shield-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg></span>
+        <div><h3>Without touching what works</h3><p>FROST will be developed separately, in an isolated module: the current wallet and its backup will stay as they are throughout the research.</p></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== Status ===== -->
+<section class="status" id="frost-status">
+  <div class="status-inner">
+    <span class="eyebrow"><span class="num">05</span> Where we stand</span>
+    <h2>Design settled. Development ahead.</h2>
+    <div class="roadmap">
+      <div class="step reveal" style="--d: 0.05s"><span class="step-badge done">✓</span><span>Design: devices, covered networks and pairing channel chosen</span></div>
+      <div class="step next reveal" style="--d: 0.12s"><span class="step-badge next">1</span><span><strong>Isolated research module</strong>, with the phone simulated by a second program, checked against the official vectors</span></div>
+      <div class="step reveal" style="--d: 0.19s"><span class="step-badge todo">2</span><span>QR-code pairing and an end-to-end encrypted channel between the computer and the phone</span></div>
+      <div class="step reveal" style="--d: 0.26s"><span class="step-badge todo">3</span><span>Mobile app: show the request, approve at a glance</span></div>
+      <div class="step reveal" style="--d: 0.33s"><span class="step-badge todo">4</span><span>Independent security audit, before any use with real funds</span></div>
+    </div>
+    <div class="cta" style="justify-content: center; margin-top: 48px;">
+      <a class="btn btn-primary" href="en.html">Discover OpenPGP Wallet</a>
+      <a class="btn btn-ghost" href="en.html#sec-status">Wallet project status</a>
+    </div>
+  </div>
+</section>
+
+<footer class="footer">
+  <span class="brand" style="font-size: 17px;">OpenPGP Wallet</span>
+  <span>Project in development: proof of concept, not audited. Don't trust it with significant funds. · <a href="en.html">Home</a> · <a href="security.html">Security in detail</a> · <a href="frost.html" hreflang="fr" lang="fr">Français</a></span>
+</footer>
 
 <script>
   // Rejoue l'animation au clic (ou Entrée / Espace).
@@ -189,5 +340,6 @@
     }
   });
 </script>
+<script src="assets/site.js"></script>
 </body>
 </html>
