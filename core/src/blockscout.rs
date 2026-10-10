@@ -473,7 +473,7 @@ mod tests {
             return;
         }
         for (site, chain) in [("https://base.blockscout.com", 8_453), ("https://polygon.blockscout.com", 137)] {
-            let error = BlockscoutClient::new(site, chain).tx_history_page(ME, None).expect_err("offre payante exigée");
+            let Err(error) = BlockscoutClient::new(site, chain).tx_history_page(ME, None) else { panic!("{site} : offre payante exigée") };
             assert_eq!(error.to_string(), BLOCKSCOUT_BLOCKED, "{site}");
             assert!(refused_chains().lock().unwrap().contains(&chain), "{site} : plus redemandé");
             println!("{site} : refusé à l'offre gratuite");
