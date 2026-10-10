@@ -13,7 +13,10 @@
 //! refuse passe par l'API officielle de Blockscout (`api.blockscout.com`, mêmes
 //! routes v2), avec la clé gratuite de l'app : 100 000 crédits par jour et 5
 //! requêtes par seconde, partagés par tous ses utilisateurs (20 crédits par
-//! page de transactions, 30 par page de virements de jeton).
+//! page de transactions, 30 par page de virements de jeton). Mesuré le
+//! 10/10/2026 : Arbitrum et Ethereum servis avec la clé gratuite ; Base et
+//! Polygon refusés (402 « Featured chain … requires one of the following
+//! plans: Builder, Business, Pro »).
 
 use anyhow::{anyhow, bail, Context, Result};
 use reqwest::StatusCode;
@@ -47,6 +50,13 @@ fn pace() {
 fn blocked_sites() -> &'static Mutex<HashSet<&'static str>> {
     static SITES: OnceLock<Mutex<HashSet<&'static str>>> = OnceLock::new();
     SITES.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// Réseaux que l'API officielle refuse à la clé de l'app (offre payante
+/// exigée, clé invalide) : plus redemandés pendant cette session.
+fn refused_chains() -> &'static Mutex<HashSet<u64>> {
+    static CHAINS: OnceLock<Mutex<HashSet<u64>>> = OnceLock::new();
+    CHAINS.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
 /// Ce que dit une réponse de l'API officielle, selon son statut.
@@ -198,6 +208,7 @@ impl BlockscoutClient {
             blocked_sites().lock().unwrap_or_else(|p| p.into_inner()).insert(self.base_url);
         }
         let key = API_KEY.ok_or_else(|| anyhow!(BLOCKSCOUT_BLOCKED))?;
+        anyhow::ensure!(!refused_chains().lock().unwrap_or_else(|p| p.into_inner()).contains(&self.chain_id), BLOCKSCOUT_BLOCKED);
         self.pro_json(key, path, query)
     }
 
@@ -212,7 +223,10 @@ impl BlockscoutClient {
                 ProReply::Ok => return response.json().context("réponse Blockscout illisible"),
                 ProReply::RetryAfter(wait) if attempt == 0 => std::thread::sleep(wait),
                 ProReply::RetryAfter(_) | ProReply::Limited => bail!(BLOCKSCOUT_LIMITED),
-                ProReply::Refused => bail!(BLOCKSCOUT_BLOCKED),
+                ProReply::Refused => {
+                    refused_chains().lock().unwrap_or_else(|p| p.into_inner()).insert(self.chain_id);
+                    bail!(BLOCKSCOUT_BLOCKED)
+                }
                 ProReply::Other(status) => bail!("Blockscout a répondu {status}"),
             }
         }
@@ -446,9 +460,10 @@ mod tests {
         assert!(!unavailable(&anyhow!("appel Blockscout impossible")));
     }
 
-    /// Service réel : Arbitrum, Base et Polygon (sites publics bloqués depuis
-    /// le 10/10/2026) par l'API officielle avec la clé de l'app — transactions
-    /// et virements USDC, pages successives sans doublon.
+    /// Service réel : Arbitrum (site public bloqué depuis le 10/10/2026) par
+    /// l'API officielle avec la clé de l'app — transactions et virements
+    /// USDC, pages successives sans doublon ; Base et Polygon (offre payante
+    /// exigée) : `BLOCKSCOUT_BLOCKED`, puis plus redemandés.
     /// `cargo test -- --ignored real_blocked_networks_through_pro_api --nocapture`
     #[test]
     #[ignore]
@@ -457,12 +472,13 @@ mod tests {
             println!("BLOCKSCOUT_API_KEY absente de partner-keys.env : rien à vérifier");
             return;
         }
-        let networks = [
-            ("https://arbitrum.blockscout.com", 42_161, "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"),
-            ("https://base.blockscout.com", 8_453, "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"),
-            ("https://polygon.blockscout.com", 137, "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"),
-        ];
-        for (site, chain, usdc) in networks {
+        for (site, chain) in [("https://base.blockscout.com", 8_453), ("https://polygon.blockscout.com", 137)] {
+            let error = BlockscoutClient::new(site, chain).tx_history_page(ME, None).err().expect("offre payante exigée");
+            assert_eq!(error.to_string(), BLOCKSCOUT_BLOCKED, "{site}");
+            assert!(refused_chains().lock().unwrap().contains(&chain), "{site} : plus redemandé");
+            println!("{site} : refusé à l'offre gratuite");
+        }
+        for (site, chain, usdc) in [("https://arbitrum.blockscout.com", 42_161, "0xaf88d065e77c8cC2239327C5EDb3A432268e5831")] {
             let client = BlockscoutClient::new(site, chain);
             let (txs, next) = client.tx_history_page(ME, None).unwrap();
             println!("{site} : {} transactions, suivante {}", txs.len(), next.is_some());
