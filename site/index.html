@@ -32,6 +32,7 @@
     <a href="#sec-stocks">Actions</a>
     <a href="#sec-swap">Échanges</a>
     <a href="#sec-security">Sécurité</a>
+    <a href="#sec-privacy">Privacy</a>
     <a href="#sec-frost" class="nav-frost">FROST</a>
     <a href="#sec-status">Projet</a>
     <a href="#sec-faq">FAQ</a>
@@ -54,6 +55,7 @@
   <a class="dot" href="#sec-stocks" title="Actions tokenisées" aria-label="Actions tokenisées"></a>
   <a class="dot" href="#sec-swap" title="Échanges" aria-label="Échanges"></a>
   <a class="dot" href="#sec-security" title="Sécurité" aria-label="Sécurité"></a>
+  <a class="dot" href="#sec-privacy" title="Privacy is normal" aria-label="Privacy is normal"></a>
   <a class="dot" href="#sec-frost" title="FROST, la suite" aria-label="FROST, la suite"></a>
   <a class="dot" href="#sec-how" title="En pratique" aria-label="En pratique"></a>
   <a class="dot" href="#sec-status" title="Où en est le projet" aria-label="Où en est le projet"></a>
@@ -232,6 +234,7 @@
           <span class="card-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 5.1A10.9 10.9 0 0 1 12 5c6.5 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.2M6.6 6.6C3.9 8.4 2 12 2 12s3.5 7 10 7a10 10 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg></span>
           <h3>Vie privée</h3>
           <p>Zcash protégé et Monero pour des paiements dont montants et destinataires restent invisibles, et des messages chiffrés que seuls vos destinataires peuvent lire.</p>
+          <a class="more" href="#sec-privacy">Tout voir →</a>
         </div>
         <div class="card reveal" style="--d: 0.4s">
           <span class="card-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="15" height="10" rx="2"/><path d="M18 10h3v4h-3M7 12h5"/></svg></span>
@@ -406,11 +409,84 @@
     </div>
   </section>
 
-  <!-- ===== 07 — FROST ===== -->
+  <!-- ===== 07 — Privacy is normal ===== -->
+  <section class="section privacy" id="sec-privacy">
+    <div class="section-inner">
+      <div class="feature-inner privacy-top">
+        <div class="feature-copy">
+          <span class="eyebrow"><span class="num">07</span> Vie privée</span>
+          <h2 class="privacy-title">Privacy is <span class="privacy-word">normal.</span></h2>
+          <p class="lead">Votre argent ne regarde que vous. Sur la plupart des blockchains, n'importe qui peut lire vos soldes et vos paiements, pour toujours. OpenPGP Wallet vous donne les outils pour que ce ne soit plus le cas.</p>
+        </div>
+        <div class="feature-visual">
+          <div class="ledgers">
+            <div class="ledger reveal" style="--d: 0.1s">
+              <div class="ledger-head"><span>Paiement sur une blockchain publique</span><b class="ledger-tag open">Visible par tous</b></div>
+              <div class="ledger-row"><span>De</span><code>0x9458…8cfA</code></div>
+              <div class="ledger-row"><span>À</span><code>0x5C02…7A9F</code></div>
+              <div class="ledger-row"><span>Montant</span><code>1 250,00 USDC</code></div>
+            </div>
+            <div class="ledger shielded reveal" style="--d: 0.45s">
+              <div class="ledger-head"><span>Paiement Zcash protégé</span><b class="ledger-tag closed">Chiffré</b></div>
+              <div class="ledger-row"><span>De</span><code class="masked">●●●●●●●●●●</code></div>
+              <div class="ledger-row"><span>À</span><code class="masked">●●●●●●●●●●</code></div>
+              <div class="ledger-row"><span>Montant</span><code class="masked">●●●●●● ZEC</code></div>
+              <p class="ledger-foot">Seuls vous et votre destinataire pouvez le lire.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="cards privacy-cards">
+        <div class="card reveal" style="--d: 0.05s">
+          <span class="card-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9 9h6l-6 6h6"/></svg></span>
+          <h3>Zcash protégé</h3>
+          <p>Montant, expéditeur et destinataire chiffrés sur la blockchain (Orchard). Vos ZEC transparents se protègent en un clic.</p>
+        </div>
+        <div class="card reveal" style="--d: 0.11s">
+          <span class="card-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 4.5-3.2 8.3-8 9-4.8-.7-8-4.5-8-9V6z"/><path d="M9 12h6"/></svg></span>
+          <h3>Monero</h3>
+          <p>Privé par défaut : chaque paiement se fond parmi d'autres, chaque réception arrive sur une adresse à usage unique.</p>
+        </div>
+        <div class="card reveal" style="--d: 0.17s">
+          <span class="card-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/><path d="M3 3l18 18"/></svg></span>
+          <h3>Aucun compte</h3>
+          <p>Ni e-mail, ni téléphone, ni pièce d'identité : rien à fournir pour utiliser l'app.</p>
+        </div>
+        <div class="card reveal" style="--d: 0.23s">
+          <span class="card-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/><path d="M3 3l18 18"/></svg></span>
+          <h3>Aucun traqueur</h3>
+          <p>Pas de mesure d'audience ni de télémétrie : l'app ne nous envoie rien, jamais.</p>
+        </div>
+        <div class="card reveal" style="--d: 0.29s">
+          <span class="card-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></span>
+          <h3>Vos données restent chez vous</h3>
+          <p>Soldes, contacts, historiques et réglages sont stockés sur votre ordinateur, pas sur un serveur.</p>
+        </div>
+        <div class="card reveal" style="--d: 0.35s">
+          <span class="card-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg></span>
+          <h3>Seulement des adresses publiques</h3>
+          <p>Pour lire vos soldes, l'app envoie aux réseaux vos adresses publiques, rien d'autre : jamais votre clé ni votre mot de passe.</p>
+        </div>
+        <div class="card reveal" style="--d: 0.41s">
+          <span class="card-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="9" r="3"/><circle cx="16" cy="9" r="3"/><path d="M3 20c.8-3 2.8-5 5-5M21 20c-.8-3-2.8-5-5-5"/></svg></span>
+          <h3>Profils séparés</h3>
+          <p>Une adresse différente par usage (personnel, épargne, pro) : rien ne les relie sur la blockchain tant que vous ne mélangez pas les fonds.</p>
+        </div>
+        <div class="card reveal" style="--d: 0.47s">
+          <span class="card-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg></span>
+          <h3>Messages chiffrés</h3>
+          <p>OpenPGP de bout en bout, pour un ou plusieurs destinataires : personne d'autre ne peut les lire.</p>
+        </div>
+      </div>
+      <p class="note privacy-note"><strong>À savoir :</strong> les nœuds publics que l'app interroge voient votre adresse IP, comme pour tout portefeuille. Un VPN sur votre ordinateur la masque.</p>
+    </div>
+  </section>
+
+  <!-- ===== 08 — FROST ===== -->
   <section class="feature frost-feature" id="sec-frost">
     <div class="feature-inner">
       <div class="feature-copy">
-        <span class="eyebrow"><span class="num">07</span> <span class="new">La suite</span> · FROST</span>
+        <span class="eyebrow"><span class="num">08</span> <span class="new">La suite</span> · FROST</span>
         <h2>Demain, la signature aussi sera divisée.</h2>
         <p class="lead">Aujourd'hui, la sauvegarde est découpée en trois morceaux. Avec FROST, chaque envoi sera signé à plusieurs : votre ordinateur et votre téléphone produisent chacun leur part de signature, sans jamais réunir la clé. Un virus sur l'ordinateur ne suffira plus pour déplacer vos fonds.</p>
         <ul class="ticks">
@@ -452,11 +528,11 @@
     </div>
   </section>
 
-  <!-- ===== 08 — En pratique ===== -->
+  <!-- ===== 09 — En pratique ===== -->
   <section class="section" id="sec-how">
     <div class="section-inner">
       <div class="section-head center">
-        <span class="eyebrow"><span class="num">08</span> En pratique</span>
+        <span class="eyebrow"><span class="num">09</span> En pratique</span>
         <h2>Trois étapes, et c'est tout.</h2>
       </div>
       <div class="steps">
@@ -480,10 +556,10 @@
     </div>
   </section>
 
-  <!-- ===== 09 — Statut ===== -->
+  <!-- ===== 10 — Statut ===== -->
   <section class="status" id="sec-status">
     <div class="status-inner">
-      <span class="eyebrow"><span class="num">09</span> Où en est le projet</span>
+      <span class="eyebrow"><span class="num">10</span> Où en est le projet</span>
       <h2>Preuve de concept fonctionnelle. Pas encore prête pour de vrais fonds.</h2>
       <div class="roadmap">
         <div class="step reveal" style="--d: 0.05s"><span class="step-badge done">✓</span><span>Cœur cryptographique (sauvegarde, chiffrement, signatures) : terminé</span></div>
@@ -495,11 +571,11 @@
     </div>
   </section>
 
-  <!-- ===== 10 — Questions fréquentes ===== -->
+  <!-- ===== 11 — Questions fréquentes ===== -->
   <section class="section" id="sec-faq">
     <div class="section-inner">
       <div class="section-head">
-        <span class="eyebrow"><span class="num">10</span> Questions fréquentes</span>
+        <span class="eyebrow"><span class="num">11</span> Questions fréquentes</span>
         <h2>Les vraies questions, des réponses claires.</h2>
       </div>
       <div class="faq">

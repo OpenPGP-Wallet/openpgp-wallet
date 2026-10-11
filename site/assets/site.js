@@ -408,4 +408,46 @@
       syncToggle();
     });
   }
+  // ===== Liens vers une section : bien cadrée ================================
+  // Le contenu de la section (sans ses grandes marges) est centré dans la zone
+  // sous le menu s'il y tient ; sinon son haut s'aligne juste sous le menu. Avant :
+  // le haut de la section, marges comprises, arrivait sous le menu, avec du vide
+  // en haut et le bas coupé.
+  var GAP = 28;
+  function navHeight() {
+    var nav = document.querySelector(".nav");
+    return nav ? nav.getBoundingClientRect().height : 0;
+  }
+  function contentOf(section) {
+    return section.querySelector(":scope > .section-inner, :scope > .feature-inner, :scope > .status-inner, :scope > .deep-inner, :scope > .strip-inner") || section;
+  }
+  function frameTop(section) {
+    if (section.id === "top" || section.classList.contains("hero")) return 0;
+    var box = contentOf(section).getBoundingClientRect();
+    var nav = navHeight();
+    var room = window.innerHeight - nav;
+    var top = box.top + window.scrollY;
+    var y = box.height + 2 * GAP <= room ? top - nav - (room - box.height) / 2 : top - nav - GAP;
+    return Math.max(0, Math.min(y, document.documentElement.scrollHeight - window.innerHeight));
+  }
+  document.addEventListener("click", function (e) {
+    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    var link = e.target.closest ? e.target.closest('a[href^="#"]') : null;
+    if (!link) return;
+    var id = link.getAttribute("href").slice(1);
+    var target = id ? document.getElementById(id) : null;
+    if (!target) return;
+    e.preventDefault();
+    window.scrollTo({ top: frameTop(target), behavior: reducedMotion ? "auto" : "smooth" });
+    if (window.history && history.replaceState) history.replaceState(null, "", "#" + id);
+  });
+  // Arrivée avec une ancre (lien depuis une autre page) : même cadrage.
+  if (location.hash.length > 1) {
+    var initial = document.getElementById(decodeURIComponent(location.hash.slice(1)));
+    if (initial) {
+      window.addEventListener("load", function () {
+        setTimeout(function () { window.scrollTo({ top: frameTop(initial), behavior: "auto" }); }, 80);
+      });
+    }
+  }
 })();

@@ -85,7 +85,7 @@ section[id] { scroll-margin-top: 72px; }
 }
 .brand { display: flex; align-items: center; gap: 11px; font-family: var(--font-display); font-weight: 700; font-size: 19px; letter-spacing: -0.01em; white-space: nowrap; }
 .brand-mark { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; background: var(--brand-grad); border: 1px solid var(--line-2); }
-.nav-links { display: flex; gap: 18px; }
+.nav-links { display: flex; gap: 16px; }
 .nav-links a { color: var(--muted); font-size: 15px; font-weight: 500; transition: color 0.2s; white-space: nowrap; }
 .nav-links a:hover { color: var(--text); }
 /* FROST, la prochaine grande étape : mis en avant dans le menu. */
@@ -382,6 +382,35 @@ h2 { font-size: clamp(36px, 4.1vw, 56px); line-height: 1.07; letter-spacing: -0.
 .faq summary::after { content: "+"; font-family: var(--font-body); font-weight: 400; font-size: 28px; line-height: 1; color: var(--dim); transition: transform 0.25s; }
 .faq details[open] summary::after { transform: rotate(45deg); color: var(--text); }
 .faq details p { padding: 0 0 26px; max-width: 760px; font-size: 17px; line-height: 1.7; color: var(--muted); }
+
+/* ===== 07 — Privacy is normal ===== */
+.privacy { position: relative; border-top: 1px solid var(--line); background: radial-gradient(ellipse 55% 60% at 85% 20%, rgba(244, 183, 40, 0.07), transparent 70%), var(--bg); }
+.privacy-title { font-size: clamp(44px, 5.4vw, 76px); letter-spacing: -0.04em; line-height: 1.02; }
+/* « normal. » en doré, clin d'œil au slogan de la communauté Zcash. */
+.privacy-word { background: linear-gradient(90deg, #f4b728, #ffd36e); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.ledgers { width: 100%; max-width: 470px; display: flex; flex-direction: column; gap: 14px; }
+.ledger { padding: 20px 22px; border: 1px solid var(--line); border-radius: 18px; background: linear-gradient(180deg, var(--panel-1), var(--panel-2)); box-shadow: var(--panel-shadow); }
+.ledger.shielded { border-color: rgba(244, 183, 40, 0.35); }
+.ledger-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 10px; font-size: 14.5px; color: var(--muted); }
+.ledger-tag { font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; padding: 4px 10px; border-radius: 999px; white-space: nowrap; }
+.ledger-tag.open { color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, transparent); }
+.ledger-tag.closed { color: #f4b728; background: rgba(244, 183, 40, 0.12); }
+.ledger-row { display: flex; justify-content: space-between; padding: 10px 0; border-top: 1px solid var(--line); font-size: 15.5px; }
+.ledger-row span { color: var(--dim); }
+.ledger-row code { font-size: 14.5px; color: var(--text); }
+.ledger-row code.masked { color: #f4b728; letter-spacing: 0.12em; }
+.ledger-foot { margin-top: 10px; font-size: 14px; color: var(--muted); }
+.privacy-cards { margin-top: 64px; }
+.privacy-cards .card-icon { background: rgba(244, 183, 40, 0.12); color: #f4b728; }
+.privacy-note { max-width: none; margin-top: 28px; }
+:root[data-theme="light"] .privacy { background: radial-gradient(ellipse 55% 60% at 85% 20%, rgba(201, 138, 0, 0.08), transparent 70%), var(--bg); }
+:root[data-theme="light"] .privacy-word { background-image: linear-gradient(90deg, #b87800, #d99a00); }
+:root[data-theme="light"] .ledger.shielded { border-color: rgba(184, 120, 0, 0.35); }
+:root[data-theme="light"] .ledger-tag.closed,
+:root[data-theme="light"] .ledger-row code.masked,
+:root[data-theme="light"] .privacy-cards .card-icon { color: #a86d00; }
+:root[data-theme="light"] .ledger-tag.closed,
+:root[data-theme="light"] .privacy-cards .card-icon { background: rgba(184, 120, 0, 0.1); }
 
 /* ===== Page FROST ===== */
 .compare { margin-top: 56px; display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
