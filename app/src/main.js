@@ -4679,6 +4679,15 @@ function balanceKey(card) {
   return `${network}|${addressForCoin(card.dataset.coin, network)}`;
 }
 
+// Quantité affichée sans zéros inutiles après le point (« 0.24000000 » →
+// « 0.24 », « 5000.000000 » → « 5000 »). Rien n'est arrondi : Rust a déjà
+// tronqué au nombre de décimales montrées, seuls les zéros finaux partent.
+// Les lectures du texte affiché (tri par valeur, Max, pourcentages, reçu)
+// restent justes : parseFloat et balanceIncrease acceptent cette forme.
+function displayAmount(raw) {
+  return /^\d+\.\d+$/.test(raw) ? raw.replace(/\.?0+$/, "") : raw;
+}
+
 // Solde de `coin` sur `network` à `address`, tel que Rust le formate
 // (« 0.500000 », sans symbole). USDC est un jeton SPL, pas un "réseau" au sens
 // où get_balance l'entend (pas de notion de décimales/mint par actif dans
@@ -4742,7 +4751,8 @@ async function refreshBalance(card) {
         // Solde précédent de CETTE adresse sur CE réseau (pas au premier
         // affichage, ni après un changement de profil ou de réseau).
         const previous = card.dataset.balanceKey === key ? balanceEl.textContent : null;
-        if (balanceEl.textContent !== balance) balanceEl.textContent = balance;
+        const text = displayAmount(balance);
+        if (balanceEl.textContent !== text) balanceEl.textContent = text;
         card.dataset.balanceKey = key;
         const received = previous == null ? null : balanceIncrease(previous, balance);
         if (received) announceReceived(card, network, received);
@@ -5195,8 +5205,12 @@ let qrRenderToken = 0;
 // Montant saisi (« 0,01 » accepté) → décimal normalisé (« 0.01 »), `null` si
 // vide ou nul ; lève une erreur s'il est invalide.
 function parseRequestAmount(raw, decimals) {
-  const text = raw.trim().replace(",", ".");
-  if (!text) return null;
+  let text = raw.trim().replace(",", ".");
+  // Saisie en cours (« 0. », « . ») : pas encore de montant, mais pas une
+  // erreur — le message rouge apparaissait puis disparaissait à chaque
+  // montant décimal tapé. « .5 » vaut 0.5.
+  if (!text || text === "." || /^\d+\.$/.test(text)) return null;
+  if (/^\.\d+$/.test(text)) text = `0${text}`;
   if (!/^\d+(\.\d+)?$/.test(text)) throw new Error("invalid");
   const [whole, fraction = ""] = text.split(".");
   if (fraction.length > decimals) throw new Error("invalid");
@@ -7691,7 +7705,7 @@ async function loadSwapBalance() {
   renderSwapBalance();
 }
 
-// « Disponible : 0.500000 ETH (≈ 1 234,56 €) », signalé quand le montant
+// « Disponible : 0.5 ETH (≈ 1 234,56 €) », signalé quand le montant
 // saisi le dépasse (simple aide : les frais du réseau ne sont pas déduits).
 function renderSwapBalance() {
   const el = document.getElementById("swap-balance");
@@ -7711,7 +7725,7 @@ function renderSwapBalance() {
   }
   const rate = fiatRate(coin, network);
   const fiat = rate && Number.isFinite(swapBalance.amount) ? ` (${formatUsdApprox(swapBalance.amount * rate.price)})` : "";
-  el.textContent = t("swap.balance", { balance: `${swapBalance.text} ${COIN_SYMBOL[coin] ?? ""}${fiat}` });
+  el.textContent = t("swap.balance", { balance: `${displayAmount(swapBalance.text)} ${COIN_SYMBOL[coin] ?? ""}${fiat}` });
   const amount = parseAmountInput(swapAmountInput.value);
   if (amount != null && Number.isFinite(swapBalance.amount) && amount > swapBalance.amount) {
     el.textContent += ` — ${t("swap.balanceShort")}`;
@@ -8734,7 +8748,7 @@ async function refreshExternalWalletBalances() {
             : await invoke("get_balance", { network: wallet.network, address: wallet.address });
         const price = priceForCoin(externalWalletPriceCoin(wallet.network));
         const usd = price != null ? Number.parseFloat(balance) * price : null;
-        balanceEl.textContent = balance;
+        balanceEl.textContent = displayAmount(balance);
         row.dataset.usd = usd != null && Number.isFinite(usd) ? String(usd) : "";
       } catch (e) {
         balanceEl.textContent = t("wallet.balanceError");
@@ -9493,7 +9507,7 @@ async function refreshLedgerBalances() {
       const balanceEl = document.querySelector(`[data-ledger-row="${account.id}"] [data-field="ledger-balance"]`);
       if (!balanceEl) return;
       try {
-        balanceEl.textContent = `${await invoke("hardware_balance", { id: account.id })} ${ledgerUnit(account.network)}`;
+        balanceEl.textContent = `${displayAmount(await invoke("hardware_balance", { id: account.id }))} ${ledgerUnit(account.network)}`;
       } catch (e) {
         balanceEl.textContent = t("wallet.balanceError");
       }
