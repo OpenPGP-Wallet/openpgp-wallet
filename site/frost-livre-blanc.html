@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>try { if (localStorage.getItem("openpgp-site-theme") === "light") document.documentElement.dataset.theme = "light"; } catch (e) {}</script>
+<title>Livre blanc FROST — OpenPGP Wallet</title>
+<meta name="description" content="Livre blanc d'OpenPGP Wallet : la signature FROST 2 sur 3 pour le ZEC protégé dans le pool Ironwood, entre votre ordinateur, votre téléphone et une sauvegarde hors ligne.">
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+<link rel="alternate" hreflang="fr" href="frost-livre-blanc.html">
+<link rel="alternate" hreflang="en" href="frost-white-paper.html">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body class="frost-page">
+
+<header class="nav">
+  <a class="brand" href="index.html" aria-label="OpenPGP Wallet, accueil">
+    <span class="brand-mark" aria-hidden="true">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f4f5f7" stroke-width="2" stroke-linecap="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg>
+    </span>
+    OpenPGP Wallet
+  </a>
+  <div class="nav-actions">
+    <span class="badge-private">EN DÉVELOPPEMENT</span>
+    <button class="theme-toggle" type="button" id="theme-toggle" data-to-light="Passer en thème clair" data-to-dark="Passer en thème sombre" aria-label="Passer en thème clair" title="Passer en thème clair">
+      <svg class="moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+      <svg class="sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+    </button>
+    <a class="lang-switch" href="frost-white-paper.html" hreflang="en" lang="en" aria-label="English version">EN</a>
+    <a class="guide-link" href="guide.html">Mode d'emploi</a>
+    <a class="frost-link" href="frost.html" aria-current="true">FROST</a>
+  </div>
+</header>
+
+<main>
+  <!-- ===== En-tête ===== -->
+  <section class="guide-hero paper-hero">
+    <div class="guide-inner">
+      <a class="back" href="frost.html">← Retour à FROST</a>
+      <div class="guide-eyebrow"><span class="eyebrow"><span class="num">v0.1</span> Livre blanc</span></div>
+      <h1>FROST pour le ZEC protégé, <span class="gold">dans le pool Ironwood.</span></h1>
+      <p class="lead">Comment OpenPGP Wallet va supprimer le point faible d'un portefeuille qui signe sur un seul appareil : la clé qui autorise les dépenses est partagée entre votre ordinateur, votre téléphone et une sauvegarde chiffrée hors ligne, et n'est jamais reconstituée, même au moment de signer.</p>
+      <p class="paper-meta">Khadim · octobre 2026 · 7 pages · <span lang="en">PDF</span> en anglais</p>
+      <div class="cta">
+        <a class="btn btn-primary" href="docs/OpenPGP-Wallet-FROST-Ironwood-White-Paper-v0.1.pdf" target="_blank" rel="noopener">Lire le livre blanc</a>
+        <a class="btn btn-ghost" href="docs/OpenPGP-Wallet-FROST-Ironwood-White-Paper-v0.1.pdf" download>Télécharger (PDF, 91 Ko)</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== L'essentiel ===== -->
+  <section class="section paper-points">
+    <div class="section-inner">
+      <div class="section-head">
+        <span class="eyebrow">L'essentiel</span>
+        <h2>Deux appareils, <span class="gold">une seule signature.</span></h2>
+      </div>
+      <div class="shields">
+        <div class="shield reveal" style="--d: 0.05s">
+          <span class="shield-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg></span>
+          <div><h3>Une clé jamais entière</h3><p>Créée à plusieurs (DKG) et signée à deux sur trois (FROST) : aucun appareil ne la détient jamais en entier, ni à la création ni à la signature.</p></div>
+        </div>
+        <div class="shield reveal" style="--d: 0.1s">
+          <span class="shield-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M10.5 18.5h3"/></svg></span>
+          <div><h3>Le téléphone vérifie lui-même</h3><p>Il décode la transaction et recalcule ce qu'il signe : destinataire, montant, frais et monnaie rendue. Un ordinateur infecté ne peut pas lui faire signer autre chose.</p></div>
+        </div>
+        <div class="shield reveal" style="--d: 0.15s">
+          <span class="shield-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3h-3zM20 14v.01M14 20h.01M17 20h4v-3"/></svg></span>
+          <div><h3>Sans serveur</h3><p>Appairage et signature par QR codes chiffrés entre vos deux appareils : aucun tiers, aucun serveur entre eux.</p></div>
+        </div>
+        <div class="shield reveal" style="--d: 0.2s">
+          <span class="shield-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 4v5c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V7z"/><path d="M9 12l2 2 4-4"/></svg></span>
+          <div><h3>Un appareil perdu, rien de perdu</h3><p>La troisième part, chiffrée et rangée hors ligne, remplace l'appareil manquant pour déplacer les fonds vers un nouveau compte.</p></div>
+        </div>
+        <div class="shield reveal" style="--d: 0.25s">
+          <span class="shield-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg></span>
+          <div><h3>Sur les standards de Zcash</h3><p>ZIP 312 (FROST pour les signatures de dépense), ZIP 374 (transactions partiellement construites) et les bibliothèques FROST de la Zcash Foundation.</p></div>
+        </div>
+        <div class="shield reveal" style="--d: 0.3s">
+          <span class="shield-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>
+          <div><h3>Un plan en six étapes</h3><p>Du passage au pool Ironwood jusqu'à l'audit indépendant, avec l'application de signature pour iPhone puis Android.</p></div>
+        </div>
+      </div>
+      <div class="honest paper-honest reveal">
+        <span class="honest-icon" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16.5v.01"/></svg></span>
+        <div>
+          <h3>Où on en est</h3>
+          <p>Rien de ce qui est décrit n'est encore implémenté, et rien n'a été relu par un auditeur indépendant. Ce document présente la conception, pour qu'elle puisse être discutée publiquement.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== Le document ===== -->
+  <section class="section paper-doc" id="paper">
+    <div class="section-inner">
+      <iframe class="paper-frame" src="docs/OpenPGP-Wallet-FROST-Ironwood-White-Paper-v0.1.pdf#view=FitH" title="Livre blanc FROST (PDF, en anglais)" loading="lazy"></iframe>
+    </div>
+  </section>
+</main>
+
+<footer class="footer">
+  <span class="brand" style="font-size: 17px;">OpenPGP Wallet</span>
+  <span>Projet en développement : preuve de concept, non auditée. N'y confiez pas de fonds importants. · <a href="index.html">Accueil</a> · <a href="guide.html">Mode d'emploi</a> · <a href="securite.html">Sécurité en détail</a> · <a href="frost.html">FROST</a> · <a href="frost-white-paper.html" hreflang="en" lang="en">English</a></span>
+  <span class="footer-copy">© 2026 Khadim. Tous droits réservés.</span>
+</footer>
+
+<script src="assets/site.js"></script>
+</body>
+</html>

@@ -863,3 +863,27 @@ h2 { font-size: clamp(36px, 4.1vw, 56px); line-height: 1.07; letter-spacing: -0.
 :root[data-theme="light"] .frost-page .compare-col.next { border-color: rgba(184, 120, 0, 0.35); background: linear-gradient(180deg, rgba(184, 120, 0, 0.07), rgba(184, 120, 0, 0.015)); }
 :root[data-theme="light"] .frost-page .ticks li::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23b87800' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E"); }
 :root[data-theme="light"] .frost-page .btn-primary:hover { background: #8a5a00; }
+
+/* ===== Livre blanc FROST (frost-livre-blanc.html / frost-white-paper.html) ===== */
+.frost-page .frost-link[aria-current="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+:root[data-theme="light"] .frost-page .frost-link[aria-current="true"] { color: #ffffff; }
+.paper-hero h1 { max-width: 900px; }
+.paper-meta { margin-top: 18px; font-size: 15px; color: var(--dim); font-family: var(--font-mono); letter-spacing: 0.01em; }
+.paper-points { padding-top: 70px; padding-bottom: 40px; }
+.paper-honest { margin-top: 48px; grid-template-columns: auto 1fr; }
+.paper-doc { padding-top: 40px; }
+.paper-frame { display: block; width: 100%; height: min(88vh, 1200px); border: 1px solid var(--line-2); border-radius: 18px; background: #ffffff; box-shadow: 0 30px 80px -40px rgba(0, 0, 0, 0.6); }
+@media (max-width: 767px) { .paper-doc { display: none; } }
+@media (max-width: 640px) { .paper-honest { grid-template-columns: 1fr; } }
+.paper-hero .guide-inner { max-width: var(--maxw); }
+.paper-hero .eyebrow .num { text-transform: none; }
+.frost-page .paper-hero::before {
+  background:
+    radial-gradient(ellipse 45% 60% at 82% 30%, rgba(244, 183, 40, 0.12), transparent 70%),
+    radial-gradient(ellipse 35% 40% at 8% 0%, rgba(255, 214, 102, 0.06), transparent 70%);
+}
+:root[data-theme="light"] .frost-page .paper-hero::before {
+  background:
+    radial-gradient(ellipse 45% 60% at 82% 30%, rgba(201, 138, 0, 0.10), transparent 70%),
+    radial-gradient(ellipse 35% 40% at 8% 0%, rgba(201, 138, 0, 0.05), transparent 70%);
+}
