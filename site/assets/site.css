@@ -550,7 +550,8 @@ h2 { font-size: clamp(36px, 4.1vw, 56px); line-height: 1.07; letter-spacing: -0.
 :root[data-theme="light"] .theme-toggle .moon { display: none; }
 @media (max-width: 640px) { .theme-toggle { width: 36px; height: 36px; } }
 /* Très petits téléphones : le logo seul, sans le nom, pour garder les boutons. */
-@media (max-width: 369px) { .nav .brand { font-size: 0; gap: 0; } }
+/* Téléphones : le cadenas seul, pour que thème, langue, Mode d'emploi et FROST tiennent. */
+@media (max-width: 439px) { .nav .brand { font-size: 0; gap: 0; } }
 
 /* ===== Thème clair (« version blanche ») ===== */
 :root[data-theme="light"] {
@@ -720,7 +721,12 @@ h2 { font-size: clamp(36px, 4.1vw, 56px); line-height: 1.07; letter-spacing: -0.
   .guide-cat-head p { margin-left: 0; width: 100%; text-align: left; }
 }
 /* Bouton masqué tant que la barre manque de place (lien gardé en section 09 et en pied de page). */
-@media (max-width: 767px) { .guide-link { display: none; } }
+/* Téléphones : « Mode d'emploi » en icône (livre ouvert) au format du bouton thème ; le texte reste lu par les lecteurs d'écran. */
+@media (max-width: 767px) {
+  .guide-link { width: 40px; padding: 0; justify-content: center; font-size: 0; }
+  .guide-link::before { content: ""; width: 18px; height: 18px; background: currentColor; -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2 4h6a4 4 0 0 1 4 4v13a3 3 0 0 0-3-3H2z'/%3E%3Cpath d='M22 4h-6a4 4 0 0 0-4 4v13a3 3 0 0 1 3-3h7z'/%3E%3C/svg%3E") center / contain no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2 4h6a4 4 0 0 1 4 4v13a3 3 0 0 0-3-3H2z'/%3E%3Cpath d='M22 4h-6a4 4 0 0 0-4 4v13a3 3 0 0 1 3-3h7z'/%3E%3C/svg%3E") center / contain no-repeat; }
+}
+@media (max-width: 640px) { .guide-link { width: 36px; height: 36px; } }
 @media (max-width: 640px) {
   .guide-hero { padding-top: 120px; }
   .guide-cat { padding-top: 64px; }
