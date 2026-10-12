@@ -1,0 +1,859 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>try { if (localStorage.getItem("openpgp-site-theme") === "light") document.documentElement.dataset.theme = "light"; } catch (e) {}</script>
+<title>Mode d'emploi — OpenPGP Wallet</title>
+<meta name="description" content="Le mode d'emploi d'OpenPGP Wallet, fonction par fonction : de courtes vidéos filmées dans l'application et les étapes à suivre.">
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+<link rel="alternate" hreflang="fr" href="guide.html">
+<link rel="alternate" hreflang="en" href="how-it-works.html">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+
+<header class="nav">
+  <a class="brand" href="index.html" aria-label="OpenPGP Wallet, accueil">
+    <span class="brand-mark" aria-hidden="true">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f4f5f7" stroke-width="2" stroke-linecap="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg>
+    </span>
+    OpenPGP Wallet
+  </a>
+  <div class="nav-actions">
+    <span class="badge-private">EN DÉVELOPPEMENT</span>
+    <button class="theme-toggle" type="button" id="theme-toggle" data-to-light="Passer en thème clair" data-to-dark="Passer en thème sombre" aria-label="Passer en thème clair" title="Passer en thème clair">
+      <svg class="moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+      <svg class="sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+    </button>
+    <a class="lang-switch" href="how-it-works.html" hreflang="en" lang="en" aria-label="English version">EN</a>
+    <a class="guide-link" href="guide.html" aria-current="page">Mode d'emploi</a>
+    <a class="frost-link" href="frost.html">FROST</a>
+  </div>
+</header>
+
+<!-- guide-side -->
+<button class="guide-side-toggle" type="button" aria-expanded="false" aria-controls="guide-side" data-open="Ouvrir le sommaire" data-close="Fermer le sommaire" aria-label="Ouvrir le sommaire">
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+  <span>Sommaire</span>
+</button>
+<nav class="guide-side" id="guide-side" aria-label="Sommaire">
+  <p class="guide-side-title">Sommaire</p>
+  <ul>
+      <li class="side-cat"><a href="#g-start"><span class="num">01</span> Premiers pas</a></li>
+      <li class="side-cat"><a href="#g-move"><span class="num">02</span> Recevoir et envoyer</a></li>
+      <li class="side-cat"><a href="#g-swap"><span class="num">03</span> Échanger</a></li>
+      <li class="side-cat"><a href="#g-organize"><span class="num">04</span> Organiser</a></li>
+      <li class="side-cat"><a href="#g-stocks"><span class="num">05</span> Actions tokenisées</a></li>
+      <li class="side-cat"><a href="#g-security"><span class="num">06</span> Sécurité</a></li>
+      <li class="side-cat"><a href="#g-privacy"><span class="num">07</span> Vie privée</a></li>
+      <li class="side-cat"><a href="#g-settings"><span class="num">08</span> Réglages</a></li>
+  </ul>
+</nav>
+<!-- /guide-side -->
+
+<main>
+  <!-- ===== En-tête ===== -->
+  <section class="guide-hero">
+    <div class="guide-grid" aria-hidden="true"></div>
+    <div class="guide-inner">
+      <a class="back" href="index.html">← Retour à l'accueil</a>
+      <div class="guide-eyebrow"><span class="eyebrow">Mode d'emploi</span></div>
+      <h1>Chaque fonction, pas à pas.</h1>
+      <p class="lead">De courtes vidéos filmées dans l'application, et les étapes à suivre à côté. Cliquez sur une étape pour revoir le passage.</p>
+      <p class="guide-platform">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 5.5l7.5-1v7H3zM11.5 4.4L21 3v8.5h-9.5zM3 12.5h7.5v7L3 18.5zM11.5 12.5H21V21l-9.5-1.4z"/></svg>
+        <span><strong>Version Windows.</strong> Apple, Android et Linux viendront plus tard.</span>
+      </p>
+      <nav class="guide-toc" aria-label="Catégories">
+        <a href="#g-start"><span class="num">01</span> Premiers pas</a>
+        <a href="#g-move"><span class="num">02</span> Recevoir et envoyer</a>
+        <a href="#g-swap"><span class="num">03</span> Échanger</a>
+        <a href="#g-organize"><span class="num">04</span> Organiser</a>
+        <a href="#g-stocks"><span class="num">05</span> Actions</a>
+        <a href="#g-security"><span class="num">06</span> Sécurité</a>
+        <a href="#g-privacy"><span class="num">07</span> Vie privée</a>
+        <a href="#g-settings"><span class="num">08</span> Réglages</a>
+      </nav>
+      <p class="guide-demo">Vidéos tournées avec un portefeuille de démonstration : les soldes affichés sont fictifs, et la création, la sauvegarde, la restauration ainsi que les connexions à un appareil ou à un site sont simulées.</p>
+    </div>
+  </section>
+
+  <!-- ===== 01 — Premiers pas ===== -->
+  <section class="guide-cat" id="g-start">
+    <div class="guide-inner">
+      <div class="guide-cat-head">
+        <span class="num">01</span>
+        <h2>Premiers pas</h2>
+        <p>Créer votre portefeuille et le sauvegarder.</p>
+      </div>
+      <article class="howto" id="creer">
+        <div class="howto-copy">
+          <h3>Créer votre portefeuille</h3>
+          <p class="howto-sub">Un mot de passe, et c'est prêt. Aucune phrase de 12 mots à noter.</p>
+          <ol class="howto-steps">
+            <li data-t="0"><button type="button"><span class="n">1</span><span>Au premier lancement, choisissez un <b>mot de passe</b> d'au moins 12 caractères.</span></button></li>
+            <li data-t="5.9"><button type="button"><span class="n">2</span><span>Retapez-le pour le confirmer.</span></button></li>
+            <li data-t="9.9"><button type="button"><span class="n">3</span><span>Cliquez sur <b>Créer mon portefeuille</b> : vos adresses sont prêtes sur tous les réseaux, et l'app vous propose aussitôt de sauvegarder votre kit.</span></button></li>
+          </ol>
+        </div>
+        <figure class="howto-video">
+          <div class="app-window">
+            <div class="app-titlebar" aria-hidden="true">
+              <span class="app-ico"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg></span>
+              OpenPGP Wallet
+              <span class="app-ctrl"><i class="min"></i><i class="max"></i><i class="close"></i></span>
+            </div>
+            <video muted playsinline loop preload="none" poster="assets/guide/creer-fr.jpg" aria-label="Vidéo : créer son portefeuille dans OpenPGP Wallet">
+              <source src="assets/guide/creer-fr-2048.mp4" type="video/mp4" media="(min-resolution: 1.2dppx) and (min-width: 700px)">
+              <source src="assets/guide/creer-fr-1024.mp4" type="video/mp4">
+            </video>
+          </div>
+          <figcaption class="howto-bar">
+            <button class="howto-play" type="button" aria-label="Lecture" data-play="Lecture" data-pause="Pause">
+              <svg class="i-play" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"/></svg>
+              <svg class="i-pause" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4h4.5v16H6zM13.5 4H18v16h-4.5z"/></svg>
+            </button>
+            <span class="howto-progress"><span class="fill"></span></span>
+            <span class="howto-demo">Démo · simulation, rien n'est écrit</span>
+          </figcaption>
+        </figure>
+      </article>
+
+      <article class="howto" id="sauvegarder">
+        <div class="howto-copy">
+          <h3>Sauvegarder sur vos clés USB</h3>
+          <p class="howto-sub">Trois morceaux, trois clés : deux suffisent pour tout retrouver.</p>
+          <ol class="howto-steps">
+            <li data-t="0"><button type="button"><span class="n">1</span><span>Votre kit compte <b>3 parts</b> : 2 suffisent pour tout retrouver, une seule ne sert à rien.</span></button></li>
+            <li data-t="3.3"><button type="button"><span class="n">2</span><span>Part 1 : choisissez <b>Enregistrer sur une clé USB</b>, gardez ou changez le nom de la sauvegarde, branchez une clé et cliquez sur <b>Écrire la part n°1 ici</b>. La part est relue après écriture.</span></button></li>
+            <li data-t="11.5"><button type="button"><span class="n">3</span><span>Même chose pour les parts 2 et 3, <b>chacune sur une clé différente</b>.</span></button></li>
+            <li data-t="23.5"><button type="button"><span class="n">4</span><span>Cochez la case de confirmation, puis <b>Continuer vers mon portefeuille</b>. Rangez les clés dans des endroits différents.</span></button></li>
+          </ol>
+        </div>
+        <figure class="howto-video">
+          <div class="app-window">
+            <div class="app-titlebar" aria-hidden="true">
+              <span class="app-ico"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg></span>
+              OpenPGP Wallet
+              <span class="app-ctrl"><i class="min"></i><i class="max"></i><i class="close"></i></span>
+            </div>
+            <video muted playsinline loop preload="none" poster="assets/guide/sauvegarder-fr.jpg" aria-label="Vidéo : sauvegarder son kit sur des clés USB dans OpenPGP Wallet">
+              <source src="assets/guide/sauvegarder-fr-2048.mp4" type="video/mp4" media="(min-resolution: 1.2dppx) and (min-width: 700px)">
+              <source src="assets/guide/sauvegarder-fr-1024.mp4" type="video/mp4">
+            </video>
+          </div>
+          <figcaption class="howto-bar">
+            <button class="howto-play" type="button" aria-label="Lecture" data-play="Lecture" data-pause="Pause">
+              <svg class="i-play" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"/></svg>
+              <svg class="i-pause" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4h4.5v16H6zM13.5 4H18v16h-4.5z"/></svg>
+            </button>
+            <span class="howto-progress"><span class="fill"></span></span>
+            <span class="howto-demo">Démo · simulation, rien n'est écrit</span>
+          </figcaption>
+        </figure>
+      </article>
+
+      <article class="howto" id="deverrouiller">
+        <div class="howto-copy">
+          <h3>Déverrouiller l'app</h3>
+          <p class="howto-sub">Votre mot de passe, ou Windows Hello.</p>
+          <ol class="howto-steps">
+            <li data-t="0"><button type="button"><span class="n">1</span><span><b>Verrouiller</b>, en bas de la barre latérale : l'app se ferme à clé.</span></button></li>
+            <li data-t="3.2"><button type="button"><span class="n">2</span><span>Pour la rouvrir, saisissez votre <b>mot de passe</b>.</span></button></li>
+            <li data-t="6.9"><button type="button"><span class="n">3</span><span>Cliquez sur <b>Déverrouiller</b>. Avec Windows Hello activé dans les Paramètres, votre empreinte ou votre visage suffisent.</span></button></li>
+          </ol>
+        </div>
+        <figure class="howto-video">
+          <div class="app-window">
+            <div class="app-titlebar" aria-hidden="true">
+              <span class="app-ico"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg></span>
+              OpenPGP Wallet
+              <span class="app-ctrl"><i class="min"></i><i class="max"></i><i class="close"></i></span>
+            </div>
+            <video muted playsinline loop preload="none" poster="assets/guide/deverrouiller-fr.jpg" aria-label="Vidéo : verrouiller et déverrouiller l'app dans OpenPGP Wallet">
+              <source src="assets/guide/deverrouiller-fr-2048.mp4" type="video/mp4" media="(min-resolution: 1.2dppx) and (min-width: 700px)">
+              <source src="assets/guide/deverrouiller-fr-1024.mp4" type="video/mp4">
+            </video>
+          </div>
+          <figcaption class="howto-bar">
+            <button class="howto-play" type="button" aria-label="Lecture" data-play="Lecture" data-pause="Pause">
+              <svg class="i-play" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"/></svg>
+              <svg class="i-pause" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4h4.5v16H6zM13.5 4H18v16h-4.5z"/></svg>
+            </button>
+            <span class="howto-progress"><span class="fill"></span></span>
+            <span class="howto-demo">Démo · soldes fictifs</span>
+          </figcaption>
+        </figure>
+      </article>
+    </div>
+  </section>
+
+  <!-- ===== 02 — Recevoir et envoyer ===== -->
+  <section class="guide-cat" id="g-move">
+    <div class="guide-inner">
+      <div class="guide-cat-head">
+        <span class="num">02</span>
+        <h2>Recevoir et envoyer</h2>
+        <p>Votre adresse, vos envois, vos contacts.</p>
+      </div>
+      <article class="howto" id="recevoir">
+        <div class="howto-copy">
+          <h3>Recevoir des cryptos</h3>
+          <p class="howto-sub">Votre adresse, en QR code ou à copier.</p>
+          <ol class="howto-steps">
+            <li data-t="0"><button type="button"><span class="n">1</span><span>Sur la carte de la crypto, cliquez sur <b>Recevoir</b>.</span></button></li>
+            <li data-t="2.9"><button type="button"><span class="n">2</span><span>Montrez le <b>QR code</b> à la personne qui paie, ou copiez l'adresse avec <b>Copier l'adresse</b>.</span></button></li>
+            <li data-t="7.6"><button type="button"><span class="n">3</span><span>Vérifiez le <b>réseau</b> indiqué : depuis une plateforme d'échange, choisissez exactement celui-là pour le retrait.</span></button></li>
+            <li data-t="9.3"><button type="button"><span class="n">4</span><span>Facultatif : saisissez un <b>montant à demander</b> : le QR code le contient aussi.</span></button></li>
+            <li data-t="13.5"><button type="button"><span class="n">5</span><span>Cliquez sur <b>Fermer</b>. Les fonds apparaissent sur la carte dès leur arrivée.</span></button></li>
+          </ol>
+        </div>
+        <figure class="howto-video">
+          <div class="app-window">
+            <div class="app-titlebar" aria-hidden="true">
+              <span class="app-ico"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg></span>
+              OpenPGP Wallet
+              <span class="app-ctrl"><i class="min"></i><i class="max"></i><i class="close"></i></span>
+            </div>
+            <video muted playsinline loop preload="none" poster="assets/guide/recevoir-fr.jpg" aria-label="Vidéo : recevoir des cryptos dans OpenPGP Wallet">
+              <source src="assets/guide/recevoir-fr-2048.mp4" type="video/mp4" media="(min-resolution: 1.2dppx) and (min-width: 700px)">
+              <source src="assets/guide/recevoir-fr-1024.mp4" type="video/mp4">
+            </video>
+          </div>
+          <figcaption class="howto-bar">
+            <button class="howto-play" type="button" aria-label="Lecture" data-play="Lecture" data-pause="Pause">
+              <svg class="i-play" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"/></svg>
+              <svg class="i-pause" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4h4.5v16H6zM13.5 4H18v16h-4.5z"/></svg>
+            </button>
+            <span class="howto-progress"><span class="fill"></span></span>
+            <span class="howto-demo">Démo · soldes fictifs</span>
+          </figcaption>
+        </figure>
+      </article>
+
+      <article class="howto" id="envoyer">
+        <div class="howto-copy">
+          <h3>Envoyer des cryptos</h3>
+          <p class="howto-sub">Un récapitulatif, puis la confirmation de Windows.</p>
+          <ol class="howto-steps">
+            <li data-t="0"><button type="button"><span class="n">1</span><span>Sur la carte de la crypto, cliquez sur <b>Envoyer</b>.</span></button></li>
+            <li data-t="2.9"><button type="button"><span class="n">2</span><span>Collez l'adresse du <b>destinataire</b>, ou choisissez-la dans votre carnet d'adresses.</span></button></li>
+            <li data-t="5.5"><button type="button"><span class="n">3</span><span>Saisissez le <b>montant</b>, en crypto ou en dollars, et choisissez la <b>vitesse d'envoi</b> : les frais de chacune s'affichent.</span></button></li>
+            <li data-t="10.1"><button type="button"><span class="n">4</span><span>Entrez votre <b>mot de passe</b>.</span></button></li>
+            <li data-t="13.8"><button type="button"><span class="n">5</span><span>Cliquez sur <b>Confirmer l'envoi</b> : l'app affiche un récapitulatif.</span></button></li>
+            <li data-t="16"><button type="button"><span class="n">6</span><span>Vérifiez-le puis cliquez sur <b>Continuer</b> : Windows affiche sa propre confirmation, puis vous avez 5 secondes pour annuler.</span></button></li>
+          </ol>
+        </div>
+        <figure class="howto-video">
+          <div class="app-window">
+            <div class="app-titlebar" aria-hidden="true">
+              <span class="app-ico"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg></span>
+              OpenPGP Wallet
+              <span class="app-ctrl"><i class="min"></i><i class="max"></i><i class="close"></i></span>
+            </div>
+            <video muted playsinline loop preload="none" poster="assets/guide/envoyer-fr.jpg" aria-label="Vidéo : envoyer des cryptos dans OpenPGP Wallet">
+              <source src="assets/guide/envoyer-fr-2048.mp4" type="video/mp4" media="(min-resolution: 1.2dppx) and (min-width: 700px)">
+              <source src="assets/guide/envoyer-fr-1024.mp4" type="video/mp4">
+            </video>
+          </div>
+          <figcaption class="howto-bar">
+            <button class="howto-play" type="button" aria-label="Lecture" data-play="Lecture" data-pause="Pause">
+              <svg class="i-play" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"/></svg>
+              <svg class="i-pause" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4h4.5v16H6zM13.5 4H18v16h-4.5z"/></svg>
+            </button>
+            <span class="howto-progress"><span class="fill"></span></span>
+            <span class="howto-demo">Démo · soldes fictifs</span>
+          </figcaption>
+        </figure>
+      </article>
+
+      <article class="howto" id="carnet">
+        <div class="howto-copy">
+          <h3>Enregistrer une adresse dans le carnet</h3>
+          <p class="howto-sub">Vos destinataires habituels, sans recopier d'adresse.</p>
+          <ol class="howto-steps">
+            <li data-t="0"><button type="button"><span class="n">1</span><span>Ouvrez <b>Carnet d'adresses</b>.</span></button></li>
+            <li data-t="3"><button type="button"><span class="n">2</span><span>Cliquez sur <b>+ Ajouter une adresse</b>.</span></button></li>
+            <li data-t="5.3"><button type="button"><span class="n">3</span><span>Donnez un <b>nom</b>, collez l'<b>adresse</b> et vérifiez le réseau.</span></button></li>
+            <li data-t="10.6"><button type="button"><span class="n">4</span><span>Cliquez sur <b>Ajouter</b> : l'adresse se choisit ensuite en un clic au moment d'envoyer.</span></button></li>
+          </ol>
+        </div>
+        <figure class="howto-video">
+          <div class="app-window">
+            <div class="app-titlebar" aria-hidden="true">
+              <span class="app-ico"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg></span>
+              OpenPGP Wallet
+              <span class="app-ctrl"><i class="min"></i><i class="max"></i><i class="close"></i></span>
+            </div>
+            <video muted playsinline loop preload="none" poster="assets/guide/carnet-fr.jpg" aria-label="Vidéo : enregistrer une adresse dans le carnet dans OpenPGP Wallet">
+              <source src="assets/guide/carnet-fr-2048.mp4" type="video/mp4" media="(min-resolution: 1.2dppx) and (min-width: 700px)">
+              <source src="assets/guide/carnet-fr-1024.mp4" type="video/mp4">
+            </video>
+          </div>
+          <figcaption class="howto-bar">
+            <button class="howto-play" type="button" aria-label="Lecture" data-play="Lecture" data-pause="Pause">
+              <svg class="i-play" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"/></svg>
+              <svg class="i-pause" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4h4.5v16H6zM13.5 4H18v16h-4.5z"/></svg>
+            </button>
+            <span class="howto-progress"><span class="fill"></span></span>
+            <span class="howto-demo">Démo · soldes fictifs</span>
+          </figcaption>
+        </figure>
+      </article>
+    </div>
+  </section>
+
+  <!-- ===== 03 — Échanger ===== -->
+  <section class="guide-cat" id="g-swap">
+    <div class="guide-inner">
+      <div class="guide-cat-head">
+        <span class="num">03</span>
+        <h2>Échanger</h2>
+        <p>Convertir une crypto en une autre, même d'un réseau à l'autre.</p>
+      </div>
+      <article class="howto" id="convertir">
+        <div class="howto-copy">
+          <h3>Convertir une crypto</h3>
+          <p class="howto-sub">Vers une autre crypto, même sur un autre réseau, sans plateforme d'échange.</p>
+          <ol class="howto-steps">
+            <li data-t="0"><button type="button"><span class="n">1</span><span>Sur la carte de la crypto, cliquez sur <b>Convertir</b>.</span></button></li>
+            <li data-t="3.6"><button type="button"><span class="n">2</span><span>Choisissez la crypto à <b>recevoir</b>, même sur un autre réseau.</span></button></li>
+            <li data-t="7.6"><button type="button"><span class="n">3</span><span>Saisissez le <b>montant</b> à échanger.</span></button></li>
+            <li data-t="10.8"><button type="button"><span class="n">4</span><span>Cliquez sur <b>Obtenir un devis</b>.</span></button></li>
+            <li data-t="13"><button type="button"><span class="n">5</span><span>Vérifiez la <b>réception estimée</b>, le <b>minimum garanti</b> et les <b>frais</b>, puis <b>Continuer</b> : Windows confirme l'échange.</span></button></li>
+          </ol>
+        </div>
+        <figure class="howto-video">
+          <div class="app-window">
+            <div class="app-titlebar" aria-hidden="true">
+              <span class="app-ico"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg></span>
+              OpenPGP Wallet
+              <span class="app-ctrl"><i class="min"></i><i class="max"></i><i class="close"></i></span>
+            </div>
+            <video muted playsinline loop preload="none" poster="assets/guide/convertir-fr.jpg" aria-label="Vidéo : convertir une crypto dans OpenPGP Wallet">
+              <source src="assets/guide/convertir-fr-2048.mp4" type="video/mp4" media="(min-resolution: 1.2dppx) and (min-width: 700px)">
+              <source src="assets/guide/convertir-fr-1024.mp4" type="video/mp4">
+            </video>
+          </div>
+          <figcaption class="howto-bar">
+            <button class="howto-play" type="button" aria-label="Lecture" data-play="Lecture" data-pause="Pause">
+              <svg class="i-play" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"/></svg>
+              <svg class="i-pause" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4h4.5v16H6zM13.5 4H18v16h-4.5z"/></svg>
+            </button>
+            <span class="howto-progress"><span class="fill"></span></span>
+            <span class="howto-demo">Démo · soldes fictifs</span>
+          </figcaption>
+        </figure>
+      </article>
+    </div>
+  </section>
+
+  <!-- ===== 04 — Organiser ===== -->
+  <section class="guide-cat" id="g-organize">
+    <div class="guide-inner">
+      <div class="guide-cat-head">
+        <span class="num">04</span>
+        <h2>Organiser</h2>
+        <p>Un portefeuille rangé comme vous le voulez.</p>
+      </div>
+      <article class="howto" id="organiser">
+        <div class="howto-copy">
+          <h3>Ranger ses cryptos</h3>
+          <p class="howto-sub">Mettez en premier ce qui compte pour vous, ou laissez l'app trier.</p>
+          <ol class="howto-steps">
+            <li data-t="0"><button type="button"><span class="n">1</span><span>Dans <b>Portefeuille</b>, cliquez sur <b>Organiser</b>, au-dessus de vos cartes.</span></button></li>
+            <li data-t="3.3"><button type="button"><span class="n">2</span><span>Attrapez une carte par sa poignée <b>⠿</b> et déposez-la où vous voulez. Les flèches <b>↑ ↓</b> font la même chose.</span></button></li>
+            <li data-t="8.1"><button type="button"><span class="n">3</span><span>Ou choisissez un tri : <b>Valeur détenue</b> met en premier ce qui vaut le plus, <b>Nom</b> range par ordre alphabétique.</span></button></li>
+            <li data-t="12.1"><button type="button"><span class="n">4</span><span>Cliquez sur <b>Terminé</b>. L'ordre est gardé, même après un redémarrage.</span></button></li>
+          </ol>
+        </div>
+        <figure class="howto-video">
+          <div class="app-window">
+            <div class="app-titlebar" aria-hidden="true">
+              <span class="app-ico"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg></span>
+              OpenPGP Wallet
+              <span class="app-ctrl"><i class="min"></i><i class="max"></i><i class="close"></i></span>
+            </div>
+            <video muted playsinline loop preload="none" poster="assets/guide/organiser-fr.jpg" aria-label="Vidéo : ranger ses cryptos dans OpenPGP Wallet">
+              <source src="assets/guide/organiser-fr-2048.mp4" type="video/mp4" media="(min-resolution: 1.2dppx) and (min-width: 700px)">
+              <source src="assets/guide/organiser-fr-1024.mp4" type="video/mp4">
+            </video>
+          </div>
+          <figcaption class="howto-bar">
+            <button class="howto-play" type="button" aria-label="Lecture" data-play="Lecture" data-pause="Pause">
+              <svg class="i-play" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"/></svg>
+              <svg class="i-pause" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4h4.5v16H6zM13.5 4H18v16h-4.5z"/></svg>
+            </button>
+            <span class="howto-progress"><span class="fill"></span></span>
+            <span class="howto-demo">Démo · soldes fictifs</span>
+          </figcaption>
+        </figure>
+      </article>
+
+      <article class="howto" id="choisir">
+        <div class="howto-copy">
+          <h3>Choisir les cryptos affichées</h3>
+          <p class="howto-sub">N'affichez que ce qui vous sert.</p>
+          <ol class="howto-steps">
+            <li data-t="0"><button type="button"><span class="n">1</span><span>Cliquez sur <b>Gérer mes cryptos</b>, au-dessus de vos cartes.</span></button></li>
+            <li data-t="2.9"><button type="button"><span class="n">2</span><span>Décochez une crypto pour la masquer.</span></button></li>
+            <li data-t="5.1"><button type="button"><span class="n">3</span><span>Cherchez-en une par son nom et cochez-la pour l'afficher.</span></button></li>
+            <li data-t="10.6"><button type="button"><span class="n">4</span><span>Cliquez sur <b>Terminé</b>. Une crypto masquée qui reçoit des fonds réapparaît d'elle-même.</span></button></li>
+          </ol>
+        </div>
+        <figure class="howto-video">
+          <div class="app-window">
+            <div class="app-titlebar" aria-hidden="true">
+              <span class="app-ico"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg></span>
+              OpenPGP Wallet
+              <span class="app-ctrl"><i class="min"></i><i class="max"></i><i class="close"></i></span>
+            </div>
+            <video muted playsinline loop preload="none" poster="assets/guide/choisir-fr.jpg" aria-label="Vidéo : choisir les cryptos affichées dans OpenPGP Wallet">
+              <source src="assets/guide/choisir-fr-2048.mp4" type="video/mp4" media="(min-resolution: 1.2dppx) and (min-width: 700px)">
+              <source src="assets/guide/choisir-fr-1024.mp4" type="video/mp4">
+            </video>
+          </div>
+          <figcaption class="howto-bar">
+            <button class="howto-play" type="button" aria-label="Lecture" data-play="Lecture" data-pause="Pause">
+              <svg class="i-play" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"/></svg>
+              <svg class="i-pause" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4h4.5v16H6zM13.5 4H18v16h-4.5z"/></svg>
+            </button>
+            <span class="howto-progress"><span class="fill"></span></span>
+            <span class="howto-demo">Démo · soldes fictifs</span>
+          </figcaption>
+        </figure>
+      </article>
+
+      <article class="howto" id="liste">
+        <div class="howto-copy">
+          <h3>Passer en vue liste</h3>
+          <p class="howto-sub">Tout votre portefeuille d'un coup d'œil.</p>
+          <ol class="howto-steps">
+            <li data-t="0"><button type="button"><span class="n">1</span><span>Ouvrez <b>Paramètres</b>.</span></button></li>
+            <li data-t="2.9"><button type="button"><span class="n">2</span><span>Cochez <b>Affichage compact (liste) du portefeuille</b>.</span></button></li>
+            <li data-t="5.1"><button type="button"><span class="n">3</span><span>Revenez au <b>Portefeuille</b> : une ligne par crypto, avec son solde et sa valeur.</span></button></li>
+          </ol>
+        </div>
+        <figure class="howto-video">
+          <div class="app-window">
+            <div class="app-titlebar" aria-hidden="true">
+              <span class="app-ico"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg></span>
+              OpenPGP Wallet
+              <span class="app-ctrl"><i class="min"></i><i class="max"></i><i class="close"></i></span>
+            </div>
+            <video muted playsinline loop preload="none" poster="assets/guide/liste-fr.jpg" aria-label="Vidéo : passer en vue liste dans OpenPGP Wallet">
+              <source src="assets/guide/liste-fr-2048.mp4" type="video/mp4" media="(min-resolution: 1.2dppx) and (min-width: 700px)">
+              <source src="assets/guide/liste-fr-1024.mp4" type="video/mp4">
+            </video>
+          </div>
+          <figcaption class="howto-bar">
+            <button class="howto-play" type="button" aria-label="Lecture" data-play="Lecture" data-pause="Pause">
+              <svg class="i-play" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"/></svg>
+              <svg class="i-pause" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4h4.5v16H6zM13.5 4H18v16h-4.5z"/></svg>
+            </button>
+            <span class="howto-progress"><span class="fill"></span></span>
+            <span class="howto-demo">Démo · soldes fictifs</span>
+          </figcaption>
+        </figure>
+      </article>
+
+      <article class="howto" id="profil">
+        <div class="howto-copy">
+          <h3>Créer un deuxième profil</h3>
+          <p class="howto-sub">Séparez vos usages : épargne, dépenses, projets.</p>
+          <ol class="howto-steps">
+            <li data-t="0"><button type="button"><span class="n">1</span><span>En haut du portefeuille, cliquez sur <b>+ Nouveau profil</b>.</span></button></li>
+            <li data-t="3"><button type="button"><span class="n">2</span><span>Donnez-lui un <b>nom</b>, par exemple « Épargne ».</span></button></li>
+            <li data-t="6"><button type="button"><span class="n">3</span><span>Facultatif : votre <b>mot de passe</b>, pour voir ses adresses tout de suite.</span></button></li>
+            <li data-t="9.7"><button type="button"><span class="n">4</span><span>Cliquez sur <b>Créer</b> : le profil a ses propres adresses, couvertes par la même sauvegarde.</span></button></li>
+            <li data-t="13.2"><button type="button"><span class="n">5</span><span>Passez d'un profil à l'autre avec le menu <b>Profil</b>.</span></button></li>
+          </ol>
+        </div>
+        <figure class="howto-video">
+          <div class="app-window">
+            <div class="app-titlebar" aria-hidden="true">
+              <span class="app-ico"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg></span>
+              OpenPGP Wallet
+              <span class="app-ctrl"><i class="min"></i><i class="max"></i><i class="close"></i></span>
+            </div>
+            <video muted playsinline loop preload="none" poster="assets/guide/profil-fr.jpg" aria-label="Vidéo : créer un deuxième profil dans OpenPGP Wallet">
+              <source src="assets/guide/profil-fr-2048.mp4" type="video/mp4" media="(min-resolution: 1.2dppx) and (min-width: 700px)">
+              <source src="assets/guide/profil-fr-1024.mp4" type="video/mp4">
+            </video>
+          </div>
+          <figcaption class="howto-bar">
+            <button class="howto-play" type="button" aria-label="Lecture" data-play="Lecture" data-pause="Pause">
+              <svg class="i-play" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"/></svg>
+              <svg class="i-pause" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4h4.5v16H6zM13.5 4H18v16h-4.5z"/></svg>
+            </button>
+            <span class="howto-progress"><span class="fill"></span></span>
+            <span class="howto-demo">Démo · soldes fictifs</span>
+          </figcaption>
+        </figure>
+      </article>
+    </div>
+  </section>
+
+  <!-- ===== 05 — Actions tokenisées ===== -->
+  <section class="guide-cat" id="g-stocks">
+    <div class="guide-inner">
+      <div class="guide-cat-head">
+        <span class="num">05</span>
+        <h2>Actions tokenisées</h2>
+        <p>Apple, NVIDIA, Tesla… en quelques clics.</p>
+      </div>
+      <article class="howto" id="acheter">
+        <div class="howto-copy">
+          <h3>Acheter une action</h3>
+          <p class="howto-sub">Depuis vos USDC ou vos SOL.</p>
+          <ol class="howto-steps">
+            <li data-t="0"><button type="button"><span class="n">1</span><span>Sur la carte <b>USDC</b> (ou SOL), cliquez sur <b>Convertir</b>.</span></button></li>
+            <li data-t="3.6"><button type="button"><span class="n">2</span><span>Choisissez l'<b>action</b> à recevoir, par exemple NVIDIA xStock.</span></button></li>
+            <li data-t="7.6"><button type="button"><span class="n">3</span><span>Saisissez le <b>montant</b>.</span></button></li>
+            <li data-t="10.6"><button type="button"><span class="n">4</span><span>Cliquez sur <b>Obtenir un devis</b>.</span></button></li>
+            <li data-t="12.9"><button type="button"><span class="n">5</span><span>Vérifiez le récapitulatif puis <b>Continuer</b> : Windows confirme, et l'action apparaît dans l'onglet <b>Actions</b>.</span></button></li>
+          </ol>
+        </div>
+        <figure class="howto-video">
+          <div class="app-window">
+            <div class="app-titlebar" aria-hidden="true">
+              <span class="app-ico"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg></span>
+              OpenPGP Wallet
+              <span class="app-ctrl"><i class="min"></i><i class="max"></i><i class="close"></i></span>
+            </div>
+            <video muted playsinline loop preload="none" poster="assets/guide/acheter-fr.jpg" aria-label="Vidéo : acheter une action tokenisée dans OpenPGP Wallet">
+              <source src="assets/guide/acheter-fr-2048.mp4" type="video/mp4" media="(min-resolution: 1.2dppx) and (min-width: 700px)">
+              <source src="assets/guide/acheter-fr-1024.mp4" type="video/mp4">
+            </video>
+          </div>
+          <figcaption class="howto-bar">
+            <button class="howto-play" type="button" aria-label="Lecture" data-play="Lecture" data-pause="Pause">
+              <svg class="i-play" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"/></svg>
+              <svg class="i-pause" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4h4.5v16H6zM13.5 4H18v16h-4.5z"/></svg>
+            </button>
+            <span class="howto-progress"><span class="fill"></span></span>
+            <span class="howto-demo">Démo · soldes fictifs</span>
+          </figcaption>
+        </figure>
+      </article>
+
+      <article class="howto" id="actions">
+        <div class="howto-copy">
+          <h3>Suivre et ranger ses actions</h3>
+          <p class="howto-sub">Leur valeur, leur courbe, les cours en direct.</p>
+          <ol class="howto-steps">
+            <li data-t="0"><button type="button"><span class="n">1</span><span>Ouvrez <b>Actions</b> : la valeur de vos actions et sa courbe.</span></button></li>
+            <li data-t="4.8"><button type="button"><span class="n">2</span><span>Chaque carte donne la quantité détenue et sa valeur.</span></button></li>
+            <li data-t="8.6"><button type="button"><span class="n">3</span><span><b>Organiser</b> : triez par valeur détenue, capitalisation ou nom, ou glissez les cartes.</span></button></li>
+            <li data-t="15.7"><button type="button"><span class="n">4</span><span>Plus bas, <b>Cours des actions en direct</b> : les cours de toutes les actions proposées.</span></button></li>
+          </ol>
+        </div>
+        <figure class="howto-video">
+          <div class="app-window">
+            <div class="app-titlebar" aria-hidden="true">
+              <span class="app-ico"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg></span>
+              OpenPGP Wallet
+              <span class="app-ctrl"><i class="min"></i><i class="max"></i><i class="close"></i></span>
+            </div>
+            <video muted playsinline loop preload="none" poster="assets/guide/actions-fr.jpg" aria-label="Vidéo : suivre et ranger ses actions dans OpenPGP Wallet">
+              <source src="assets/guide/actions-fr-2048.mp4" type="video/mp4" media="(min-resolution: 1.2dppx) and (min-width: 700px)">
+              <source src="assets/guide/actions-fr-1024.mp4" type="video/mp4">
+            </video>
+          </div>
+          <figcaption class="howto-bar">
+            <button class="howto-play" type="button" aria-label="Lecture" data-play="Lecture" data-pause="Pause">
+              <svg class="i-play" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"/></svg>
+              <svg class="i-pause" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4h4.5v16H6zM13.5 4H18v16h-4.5z"/></svg>
+            </button>
+            <span class="howto-progress"><span class="fill"></span></span>
+            <span class="howto-demo">Démo · soldes fictifs</span>
+          </figcaption>
+        </figure>
+      </article>
+    </div>
+  </section>
+
+  <!-- ===== 06 — Sécurité ===== -->
+  <section class="guide-cat" id="g-security">
+    <div class="guide-inner">
+      <div class="guide-cat-head">
+        <span class="num">06</span>
+        <h2>Sécurité</h2>
+        <p>Vérifier, restaurer, signer avec un appareil.</p>
+      </div>
+      <article class="howto" id="verifier">
+        <div class="howto-copy">
+          <h3>Vérifier ses clés de sauvegarde</h3>
+          <p class="howto-sub">Les clés USB s'abîment avec les années : vérifiez-les de temps en temps.</p>
+          <ol class="howto-steps">
+            <li data-t="0"><button type="button"><span class="n">1</span><span>Ouvrez <b>Paramètres</b>.</span></button></li>
+            <li data-t="2.9"><button type="button"><span class="n">2</span><span>Cliquez sur <b>Vérifier mes clés de sauvegarde</b>.</span></button></li>
+            <li data-t="5.2"><button type="button"><span class="n">3</span><span>Branchez vos clés une à une : chacune est relue, sans rien écrire.</span></button></li>
+            <li data-t="9"><button type="button"><span class="n">4</span><span>Une part abîmée est signalée tant que les deux autres sont encore intactes. L'app vous le rappelle une fois par an.</span></button></li>
+          </ol>
+        </div>
+        <figure class="howto-video">
+          <div class="app-window">
+            <div class="app-titlebar" aria-hidden="true">
+              <span class="app-ico"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg></span>
+              OpenPGP Wallet
+              <span class="app-ctrl"><i class="min"></i><i class="max"></i><i class="close"></i></span>
+            </div>
+            <video muted playsinline loop preload="none" poster="assets/guide/verifier-fr.jpg" aria-label="Vidéo : vérifier ses clés de sauvegarde dans OpenPGP Wallet">
+              <source src="assets/guide/verifier-fr-2048.mp4" type="video/mp4" media="(min-resolution: 1.2dppx) and (min-width: 700px)">
+              <source src="assets/guide/verifier-fr-1024.mp4" type="video/mp4">
+            </video>
+          </div>
+          <figcaption class="howto-bar">
+            <button class="howto-play" type="button" aria-label="Lecture" data-play="Lecture" data-pause="Pause">
+              <svg class="i-play" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"/></svg>
+              <svg class="i-pause" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4h4.5v16H6zM13.5 4H18v16h-4.5z"/></svg>
+            </button>
+            <span class="howto-progress"><span class="fill"></span></span>
+            <span class="howto-demo">Démo · simulation, rien n'est écrit</span>
+          </figcaption>
+        </figure>
+      </article>
+
+      <article class="howto" id="restaurer">
+        <div class="howto-copy">
+          <h3>Tout retrouver sur un nouvel ordinateur</h3>
+          <p class="howto-sub">Deux de vos trois clés suffisent.</p>
+          <ol class="howto-steps">
+            <li data-t="0"><button type="button"><span class="n">1</span><span>Sur le nouvel ordinateur, cliquez sur <b>J'ai déjà un portefeuille</b>.</span></button></li>
+            <li data-t="3.6"><button type="button"><span class="n">2</span><span>Branchez <b>2 de vos 3 clés</b> de sauvegarde : l'app les reconnaît.</span></button></li>
+            <li data-t="6.8"><button type="button"><span class="n">3</span><span>Choisissez un <b>mot de passe</b> pour cet ordinateur.</span></button></li>
+            <li data-t="11.6"><button type="button"><span class="n">4</span><span>Cliquez sur <b>Restaurer depuis les clés USB</b> : après une confirmation de sécurité, tout revient, adresses comprises.</span></button></li>
+          </ol>
+        </div>
+        <figure class="howto-video">
+          <div class="app-window">
+            <div class="app-titlebar" aria-hidden="true">
+              <span class="app-ico"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg></span>
+              OpenPGP Wallet
+              <span class="app-ctrl"><i class="min"></i><i class="max"></i><i class="close"></i></span>
+            </div>
+            <video muted playsinline loop preload="none" poster="assets/guide/restaurer-fr.jpg" aria-label="Vidéo : restaurer son portefeuille sur un nouvel ordinateur dans OpenPGP Wallet">
+              <source src="assets/guide/restaurer-fr-2048.mp4" type="video/mp4" media="(min-resolution: 1.2dppx) and (min-width: 700px)">
+              <source src="assets/guide/restaurer-fr-1024.mp4" type="video/mp4">
+            </video>
+          </div>
+          <figcaption class="howto-bar">
+            <button class="howto-play" type="button" aria-label="Lecture" data-play="Lecture" data-pause="Pause">
+              <svg class="i-play" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"/></svg>
+              <svg class="i-pause" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4h4.5v16H6zM13.5 4H18v16h-4.5z"/></svg>
+            </button>
+            <span class="howto-progress"><span class="fill"></span></span>
+            <span class="howto-demo">Démo · simulation, rien n'est écrit</span>
+          </figcaption>
+        </figure>
+      </article>
+
+      <article class="howto" id="ledger">
+        <div class="howto-copy">
+          <h3>Utiliser un Ledger ou un Trezor</h3>
+          <p class="howto-sub">La clé reste dans l'appareil : c'est lui qui signe.</p>
+          <ol class="howto-steps">
+            <li data-t="0"><button type="button"><span class="n">1</span><span>Ouvrez <b>Ledger / Trezor</b>.</span></button></li>
+            <li data-t="2.8"><button type="button"><span class="n">2</span><span>Cliquez sur <b>+ Ajouter un compte</b> : choisissez l'appareil (Ledger ou Trezor), un nom et le réseau.</span></button></li>
+            <li data-t="12.5"><button type="button"><span class="n">3</span><span>Branchez l'appareil, déverrouillez-le et ouvrez l'application du réseau, puis cliquez sur <b>Lire le compte sur l'appareil</b>.</span></button></li>
+            <li data-t="13.8"><button type="button"><span class="n">4</span><span>Le compte apparaît avec son solde. <b>Vérifier sur l'appareil</b> affiche l'adresse sur son écran ; pour envoyer, c'est l'appareil qui signe.</span></button></li>
+          </ol>
+        </div>
+        <figure class="howto-video">
+          <div class="app-window">
+            <div class="app-titlebar" aria-hidden="true">
+              <span class="app-ico"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg></span>
+              OpenPGP Wallet
+              <span class="app-ctrl"><i class="min"></i><i class="max"></i><i class="close"></i></span>
+            </div>
+            <video muted playsinline loop preload="none" poster="assets/guide/ledger-fr.jpg" aria-label="Vidéo : ajouter un compte Ledger ou Trezor dans OpenPGP Wallet">
+              <source src="assets/guide/ledger-fr-2048.mp4" type="video/mp4" media="(min-resolution: 1.2dppx) and (min-width: 700px)">
+              <source src="assets/guide/ledger-fr-1024.mp4" type="video/mp4">
+            </video>
+          </div>
+          <figcaption class="howto-bar">
+            <button class="howto-play" type="button" aria-label="Lecture" data-play="Lecture" data-pause="Pause">
+              <svg class="i-play" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"/></svg>
+              <svg class="i-pause" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4h4.5v16H6zM13.5 4H18v16h-4.5z"/></svg>
+            </button>
+            <span class="howto-progress"><span class="fill"></span></span>
+            <span class="howto-demo">Démo · simulation, aucun appareil branché</span>
+          </figcaption>
+        </figure>
+      </article>
+
+      <article class="howto" id="walletconnect">
+        <div class="howto-copy">
+          <h3>Se connecter à une application web</h3>
+          <p class="howto-sub">WalletConnect : utilisez votre portefeuille sur un site, sans y mettre vos clés.</p>
+          <ol class="howto-steps">
+            <li data-t="0"><button type="button"><span class="n">1</span><span>Ouvrez <b>WalletConnect</b>.</span></button></li>
+            <li data-t="2.8"><button type="button"><span class="n">2</span><span>Sur le site, choisissez WalletConnect, copiez son lien <b>wc:</b>, collez-le ici et cliquez sur <b>Se connecter</b>.</span></button></li>
+            <li data-t="7.3"><button type="button"><span class="n">3</span><span>Vérifiez le <b>nom</b> et l'<b>adresse du site</b> et les réseaux demandés, puis cliquez sur <b>Connecter</b> et confirmez dans la fenêtre de Windows.</span></button></li>
+            <li data-t="10.5"><button type="button"><span class="n">4</span><span>La connexion apparaît dans la liste. Chaque demande du site s'affiche dans l'app pour que vous la validiez.</span></button></li>
+          </ol>
+        </div>
+        <figure class="howto-video">
+          <div class="app-window">
+            <div class="app-titlebar" aria-hidden="true">
+              <span class="app-ico"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg></span>
+              OpenPGP Wallet
+              <span class="app-ctrl"><i class="min"></i><i class="max"></i><i class="close"></i></span>
+            </div>
+            <video muted playsinline loop preload="none" poster="assets/guide/walletconnect-fr.jpg" aria-label="Vidéo : se connecter à une application web avec WalletConnect dans OpenPGP Wallet">
+              <source src="assets/guide/walletconnect-fr-2048.mp4" type="video/mp4" media="(min-resolution: 1.2dppx) and (min-width: 700px)">
+              <source src="assets/guide/walletconnect-fr-1024.mp4" type="video/mp4">
+            </video>
+          </div>
+          <figcaption class="howto-bar">
+            <button class="howto-play" type="button" aria-label="Lecture" data-play="Lecture" data-pause="Pause">
+              <svg class="i-play" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"/></svg>
+              <svg class="i-pause" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4h4.5v16H6zM13.5 4H18v16h-4.5z"/></svg>
+            </button>
+            <span class="howto-progress"><span class="fill"></span></span>
+            <span class="howto-demo">Démo · simulation, application web fictive</span>
+          </figcaption>
+        </figure>
+      </article>
+    </div>
+  </section>
+
+  <!-- ===== 07 — Vie privée ===== -->
+  <section class="guide-cat" id="g-privacy">
+    <div class="guide-inner">
+      <div class="guide-cat-head">
+        <span class="num">07</span>
+        <h2>Vie privée</h2>
+        <p>Monero et Zcash protégé : des fonds que vous seul voyez.</p>
+      </div>
+      <article class="howto" id="fondsprives">
+        <div class="howto-copy">
+          <h3>Retrouver ses fonds protégés</h3>
+          <p class="howto-sub">Des fonds Monero ou Zcash protégé reçus auparavant n'apparaissent pas ? Relancez l'analyse.</p>
+          <ol class="howto-steps">
+            <li data-t="0"><button type="button"><span class="n">1</span><span>Monero et Zcash protégé sont analysés depuis la création du portefeuille sur cet appareil : des fonds plus anciens (portefeuille venu d'une autre app) peuvent manquer.</span></button></li>
+            <li data-t="3.1"><button type="button"><span class="n">2</span><span>Ouvrez <b>Paramètres</b>, section <b>Réanalyser les fonds privés</b>.</span></button></li>
+            <li data-t="7.8"><button type="button"><span class="n">3</span><span>Cliquez sur <b>Réanalyser depuis le début</b>. L'analyse peut prendre longtemps, l'app reste utilisable.</span></button></li>
+            <li data-t="10.8"><button type="button"><span class="n">4</span><span>Dans le <b>Portefeuille</b>, la carte indique « Synchronisation des fonds protégés… », puis les fonds retrouvés apparaissent.</span></button></li>
+          </ol>
+        </div>
+        <figure class="howto-video">
+          <div class="app-window">
+            <div class="app-titlebar" aria-hidden="true">
+              <span class="app-ico"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg></span>
+              OpenPGP Wallet
+              <span class="app-ctrl"><i class="min"></i><i class="max"></i><i class="close"></i></span>
+            </div>
+            <video muted playsinline loop preload="none" poster="assets/guide/fondsprives-fr.jpg" aria-label="Vidéo : réanalyser les fonds privés dans OpenPGP Wallet">
+              <source src="assets/guide/fondsprives-fr-2048.mp4" type="video/mp4" media="(min-resolution: 1.2dppx) and (min-width: 700px)">
+              <source src="assets/guide/fondsprives-fr-1024.mp4" type="video/mp4">
+            </video>
+          </div>
+          <figcaption class="howto-bar">
+            <button class="howto-play" type="button" aria-label="Lecture" data-play="Lecture" data-pause="Pause">
+              <svg class="i-play" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"/></svg>
+              <svg class="i-pause" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4h4.5v16H6zM13.5 4H18v16h-4.5z"/></svg>
+            </button>
+            <span class="howto-progress"><span class="fill"></span></span>
+            <span class="howto-demo">Démo · simulation, analyse accélérée</span>
+          </figcaption>
+        </figure>
+      </article>
+    </div>
+  </section>
+
+  <!-- ===== 08 — Réglages ===== -->
+  <section class="guide-cat" id="g-settings">
+    <div class="guide-inner">
+      <div class="guide-cat-head">
+        <span class="num">08</span>
+        <h2>Réglages</h2>
+        <p>L'app à votre goût.</p>
+      </div>
+      <article class="howto" id="reglages">
+        <div class="howto-copy">
+          <h3>Thème, langue et devise</h3>
+          <p class="howto-sub">Huit thèmes, le français ou l'anglais, le dollar ou l'euro.</p>
+          <ol class="howto-steps">
+            <li data-t="0"><button type="button"><span class="n">1</span><span>Ouvrez <b>Paramètres</b>.</span></button></li>
+            <li data-t="2.9"><button type="button"><span class="n">2</span><span><b>Thème</b> : choisissez une couleur parmi huit, dont une version blanche.</span></button></li>
+            <li data-t="7.4"><button type="button"><span class="n">3</span><span><b>Devise d'affichage</b> : dollar ou euro, pour tous les montants.</span></button></li>
+            <li data-t="11.2"><button type="button"><span class="n">4</span><span>Le changement s'applique tout de suite, partout dans l'app.</span></button></li>
+            <li data-t="15.6"><button type="button"><span class="n">5</span><span><b>Langue</b> : <b>FR</b> ou <b>EN</b>, en bas de la barre latérale.</span></button></li>
+          </ol>
+        </div>
+        <figure class="howto-video">
+          <div class="app-window">
+            <div class="app-titlebar" aria-hidden="true">
+              <span class="app-ico"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg></span>
+              OpenPGP Wallet
+              <span class="app-ctrl"><i class="min"></i><i class="max"></i><i class="close"></i></span>
+            </div>
+            <video muted playsinline loop preload="none" poster="assets/guide/reglages-fr.jpg" aria-label="Vidéo : changer le thème, la langue et la devise dans OpenPGP Wallet">
+              <source src="assets/guide/reglages-fr-2048.mp4" type="video/mp4" media="(min-resolution: 1.2dppx) and (min-width: 700px)">
+              <source src="assets/guide/reglages-fr-1024.mp4" type="video/mp4">
+            </video>
+          </div>
+          <figcaption class="howto-bar">
+            <button class="howto-play" type="button" aria-label="Lecture" data-play="Lecture" data-pause="Pause">
+              <svg class="i-play" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"/></svg>
+              <svg class="i-pause" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4h4.5v16H6zM13.5 4H18v16h-4.5z"/></svg>
+            </button>
+            <span class="howto-progress"><span class="fill"></span></span>
+            <span class="howto-demo">Démo · soldes fictifs</span>
+          </figcaption>
+        </figure>
+      </article>
+
+      <article class="howto" id="reseau">
+        <div class="howto-copy">
+          <h3>Ajouter un réseau personnalisé</h3>
+          <p class="howto-sub">Un réseau compatible Ethereum que l'app ne propose pas encore.</p>
+          <ol class="howto-steps">
+            <li data-t="0"><button type="button"><span class="n">1</span><span>Ouvrez <b>Paramètres</b>, section <b>Réseaux ajoutés (RPC personnalisé)</b>.</span></button></li>
+            <li data-t="3.8"><button type="button"><span class="n">2</span><span>Indiquez le <b>nom du réseau</b> et l'<b>adresse de son RPC</b>.</span></button></li>
+            <li data-t="8.3"><button type="button"><span class="n">3</span><span>Ajoutez l'<b>identifiant de chaîne</b> (chain ID), le <b>symbole</b> de la monnaie et, si vous voulez, l'explorateur.</span></button></li>
+            <li data-t="14.3"><button type="button"><span class="n">4</span><span>Cliquez sur <b>Ajouter ce réseau</b> : l'app vérifie que le RPC correspond bien à ce chain ID.</span></button></li>
+          </ol>
+        </div>
+        <figure class="howto-video">
+          <div class="app-window">
+            <div class="app-titlebar" aria-hidden="true">
+              <span class="app-ico"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg></span>
+              OpenPGP Wallet
+              <span class="app-ctrl"><i class="min"></i><i class="max"></i><i class="close"></i></span>
+            </div>
+            <video muted playsinline loop preload="none" poster="assets/guide/reseau-fr.jpg" aria-label="Vidéo : ajouter un réseau personnalisé dans OpenPGP Wallet">
+              <source src="assets/guide/reseau-fr-2048.mp4" type="video/mp4" media="(min-resolution: 1.2dppx) and (min-width: 700px)">
+              <source src="assets/guide/reseau-fr-1024.mp4" type="video/mp4">
+            </video>
+          </div>
+          <figcaption class="howto-bar">
+            <button class="howto-play" type="button" aria-label="Lecture" data-play="Lecture" data-pause="Pause">
+              <svg class="i-play" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"/></svg>
+              <svg class="i-pause" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4h4.5v16H6zM13.5 4H18v16h-4.5z"/></svg>
+            </button>
+            <span class="howto-progress"><span class="fill"></span></span>
+            <span class="howto-demo">Démo · soldes fictifs</span>
+          </figcaption>
+        </figure>
+      </article>
+    </div>
+  </section>
+</main>
+
+<footer class="footer">
+  <span class="brand" style="font-size: 17px;">OpenPGP Wallet</span>
+  <span>Projet en développement : preuve de concept, non auditée. N'y confiez pas de fonds importants. · <a href="index.html">Accueil</a> · <a href="securite.html">Sécurité en détail</a> · <a href="frost.html">FROST</a> · <a href="how-it-works.html" hreflang="en" lang="en">English</a></span>
+</footer>
+
+<script src="assets/site.js"></script>
+</body>
+</html>

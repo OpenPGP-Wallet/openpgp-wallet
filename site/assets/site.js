@@ -419,7 +419,7 @@
     return nav ? nav.getBoundingClientRect().height : 0;
   }
   function contentOf(section) {
-    return section.querySelector(":scope > .section-inner, :scope > .feature-inner, :scope > .status-inner, :scope > .deep-inner, :scope > .strip-inner") || section;
+    return section.querySelector(":scope > .section-inner, :scope > .feature-inner, :scope > .status-inner, :scope > .deep-inner, :scope > .strip-inner, :scope > .guide-inner") || section;
   }
   function frameTop(section) {
     if (section.id === "top" || section.classList.contains("hero")) return 0;
@@ -449,5 +449,138 @@
         setTimeout(function () { window.scrollTo({ top: frameTop(initial), behavior: "auto" }); }, 80);
       });
     }
+  }
+  // ===== Mode d'emploi : vidéos et étapes synchronisées =====================
+  // Chaque vidéo se lit seule (muette, en boucle) quand elle est bien à l'écran
+  // et s'arrête dès qu'elle en sort ; l'étape en cours s'allume, un clic sur une
+  // étape y ramène la vidéo. Mouvement réduit demandé : rien ne démarre seul.
+  Array.prototype.slice.call(document.querySelectorAll(".howto")).forEach(function (howto) {
+    var video = howto.querySelector("video");
+    if (!video) return;
+    var steps = Array.prototype.slice.call(howto.querySelectorAll(".howto-steps li"));
+    var times = steps.map(function (li) { return parseFloat(li.getAttribute("data-t")) || 0; });
+    var fill = howto.querySelector(".howto-progress .fill");
+    var progress = howto.querySelector(".howto-progress");
+    var playBtn = howto.querySelector(".howto-play");
+    var userPaused = reducedMotion;
+    var onScreen = false;
+    var frame = 0;
+    function sync() {
+      var t = video.currentTime, active = 0;
+      times.forEach(function (start, i) { if (t >= start - 0.05) active = i; });
+      steps.forEach(function (li, i) {
+        li.classList.toggle("active", i === active);
+        li.classList.toggle("done", i < active);
+      });
+      if (fill && video.duration) fill.style.transform = "scaleX(" + Math.min(1, t / video.duration) + ")";
+    }
+    function tick() { sync(); frame = video.paused ? 0 : requestAnimationFrame(tick); }
+    function play() {
+      if (video.preload !== "auto") video.preload = "auto";
+      var p = video.play();
+      if (p && p.catch) p.catch(function () {});
+    }
+    function update() { if (onScreen && !userPaused) play(); else if (!video.paused) video.pause(); }
+    video.addEventListener("play", function () {
+      howto.classList.add("playing");
+      if (playBtn) playBtn.setAttribute("aria-label", playBtn.getAttribute("data-pause"));
+      if (!frame) frame = requestAnimationFrame(tick);
+    });
+    video.addEventListener("pause", function () {
+      howto.classList.remove("playing");
+      if (playBtn) playBtn.setAttribute("aria-label", playBtn.getAttribute("data-play"));
+      sync();
+    });
+    video.addEventListener("seeked", sync);
+    // Repères des étapes sur la barre de progression.
+    video.addEventListener("loadedmetadata", function () {
+      if (!progress || progress.querySelector(".tick")) return;
+      times.slice(1).forEach(function (start) {
+        var mark = document.createElement("span");
+        mark.className = "tick";
+        mark.style.left = (100 * start / video.duration) + "%";
+        progress.appendChild(mark);
+      });
+    });
+    steps.forEach(function (li, i) {
+      var button = li.querySelector("button");
+      if (!button) return;
+      button.addEventListener("click", function () {
+        video.currentTime = times[i];
+        userPaused = false;
+        play();
+        sync();
+      });
+    });
+    if (playBtn) playBtn.addEventListener("click", function () {
+      if (video.paused) { userPaused = false; play(); } else { userPaused = true; video.pause(); }
+    });
+    sync();
+    if ("IntersectionObserver" in window) {
+      // Préchargement un peu avant l'arrivée à l'écran, lecture à moitié visible.
+      new IntersectionObserver(function (entries) {
+        if (entries[0].isIntersecting && video.preload === "none") video.preload = "metadata";
+      }, { rootMargin: "400px 0px" }).observe(video);
+      new IntersectionObserver(function (entries) {
+        onScreen = entries[0].intersectionRatio >= 0.5;
+        update();
+      }, { threshold: [0, 0.5] }).observe(video);
+    }
+  });
+  // ===== Mode d'emploi : barre latérale (sommaire) ===========================
+  // Lien de la fonction (et de la catégorie) en cours de lecture surligné ;
+  // sur petit écran, panneau ouvert par le bouton « Sommaire », refermé par un
+  // lien, Échap ou un clic à côté.
+  var side = document.getElementById("guide-side");
+  if (side) {
+    var sideToggle = document.querySelector(".guide-side-toggle");
+    var setOpen = function (open) {
+      side.classList.toggle("open", open);
+      if (!sideToggle) return;
+      sideToggle.setAttribute("aria-expanded", String(open));
+      sideToggle.setAttribute("aria-label", sideToggle.getAttribute(open ? "data-close" : "data-open"));
+    };
+    if (sideToggle) sideToggle.addEventListener("click", function () { setOpen(!side.classList.contains("open")); });
+    side.addEventListener("click", function (e) { if (e.target.closest && e.target.closest("a")) setOpen(false); });
+    document.addEventListener("keydown", function (e) { if (e.key === "Escape") setOpen(false); });
+    document.addEventListener("click", function (e) {
+      if (side.classList.contains("open") && !side.contains(e.target) && !(sideToggle && sideToggle.contains(e.target))) setOpen(false);
+    });
+    var links = Array.prototype.slice.call(side.querySelectorAll("a[href^='#']"));
+    var byId = {};
+    links.forEach(function (a) { byId[a.getAttribute("href").slice(1)] = a; });
+    var targets = links.map(function (a) { return document.getElementById(a.getAttribute("href").slice(1)); }).filter(Boolean);
+    var markCurrent = function () {
+      // Dernière cible dont le haut est passé sous le premier tiers de l'écran.
+      var line = window.innerHeight * 0.35, howto = null, cat = null;
+      targets.forEach(function (el) {
+        if (el.getBoundingClientRect().top <= line) {
+          if (el.classList.contains("guide-cat")) { cat = el; howto = null; } else howto = el;
+        }
+      });
+      links.forEach(function (a) { a.classList.remove("current"); });
+      if (cat && byId[cat.id]) byId[cat.id].classList.add("current");
+      if (howto && byId[howto.id]) {
+        var link = byId[howto.id];
+        link.classList.add("current");
+      }
+    };
+    // Sommaire affiché seulement une fois qu'on a commencé à descendre : dès
+    // que le bas de l'en-tête remonte au-dessus des deux tiers de l'écran.
+    var hero = document.querySelector(".guide-hero");
+    var markScrolled = function () {
+      var scrolled = hero ? hero.getBoundingClientRect().bottom < window.innerHeight * 0.66 : window.scrollY > 200;
+      document.documentElement.classList.toggle("guide-scrolled", scrolled);
+      if (!scrolled) setOpen(false);
+    };
+    var ticking = false;
+    window.addEventListener("scroll", function () {
+      if (ticking) return;
+      ticking = true;
+      requestAnimationFrame(function () { ticking = false; markCurrent(); markScrolled(); });
+    }, { passive: true });
+    markScrolled();
+    window.addEventListener("resize", markCurrent);
+    markCurrent();
   }
 })();

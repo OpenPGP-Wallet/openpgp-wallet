@@ -26,12 +26,13 @@
     OpenPGP Wallet
   </a>
   <div class="nav-actions">
-    <span class="badge-private">IN DEVELOPMENT<span class="badge-extra"> · PROOF OF CONCEPT</span></span>
+    <span class="badge-private">IN DEVELOPMENT</span>
     <button class="theme-toggle" type="button" id="theme-toggle" data-to-light="Switch to light theme" data-to-dark="Switch to dark theme" aria-label="Switch to light theme" title="Switch to light theme">
       <svg class="moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
       <svg class="sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
     </button>
     <a class="lang-switch" href="securite.html" hreflang="fr" lang="fr" aria-label="Version française">FR</a>
+    <a class="guide-link" href="how-it-works.html">How it works</a>
     <a class="frost-link" href="frost-en.html">FROST</a>
   </div>
 </header>
@@ -52,7 +53,7 @@
         </div>
         <div class="item">
           <h3>2. The device's local vault</h3>
-          <p>The full entropy is encrypted with an OpenPGP identity specific to this device; that identity's private key, protected by your password, is stored in the system vault (Windows Credential Manager). The key derivation cost (S2K) is set to the OpenPGP format's maximum, neither configurable nor lowerable through the API used. The vault is decrypted on the fly for each sensitive operation and never kept in memory between two actions.</p>
+          <p>The full entropy is encrypted with an OpenPGP identity specific to this device; that identity's private key, protected by your password, is stored in the system vault (Windows Credential Manager). The key derivation cost (S2K) is set to the OpenPGP format's maximum and cannot be configured or lowered through the API used. The vault is decrypted on the fly for each sensitive operation and never kept in memory between two actions.</p>
         </div>
         <div class="item">
           <h3>3. Windows Hello unlock (TPM)</h3>
@@ -92,7 +93,7 @@
         </div>
         <div class="item">
           <h3>10. Anti-guessing lockout</h3>
-          <p>A persisted failure counter imposes a growing delay after 5 wrong passwords, doubled with each new failure and capped at 5 minutes. An internal lock keeps a script trying several passwords in parallel from losing that count.</p>
+          <p>A persisted failure counter imposes a growing delay after 5 wrong passwords, doubled with each new failure and capped at 5 minutes. An internal lock stops a script that tries several passwords in parallel from getting around that counter.</p>
         </div>
         <div class="item">
           <h3>11. Checked addresses</h3>
@@ -116,7 +117,7 @@
         </div>
         <div class="item">
           <h3>15. Native confirmation before every send</h3>
-          <p>Network, recipient, amount, fee and profile are shown in a Windows dialog, never an HTML window: a compromised interface can neither fake it nor make it disappear. It's followed by a 5-second window to cancel, enforced on the Rust side, before any signature. Other sensitive actions (deleting the wallet or a profile) go through a separate confirmation window, handled on the Rust side.</p>
+          <p>Network, recipient, amount, fee and profile are shown in a Windows dialog, never an HTML window: a compromised interface can neither fake it nor make it disappear. It's followed by a 5-second delay to cancel, enforced on the Rust side, before any signature. Other sensitive actions (deleting the wallet or a profile) go through a separate confirmation window, handled on the Rust side.</p>
         </div>
       </div>
 
@@ -138,7 +139,7 @@
 
 <footer class="footer">
   <span class="brand" style="font-size: 17px;">OpenPGP Wallet</span>
-  <span>Project in development: proof of concept, not audited. Don't trust it with significant funds. · <a href="en.html">Home</a> · <a href="frost-en.html">FROST</a> · <a href="securite.html" hreflang="fr" lang="fr">Français</a></span>
+  <span>Project in development: proof of concept, not audited. Don't trust it with significant funds. · <a href="en.html">Home</a> · <a href="how-it-works.html">How it works</a> · <a href="frost-en.html">FROST</a> · <a href="securite.html" hreflang="fr" lang="fr">Français</a></span>
 </footer>
 
 <script src="assets/site.js"></script>

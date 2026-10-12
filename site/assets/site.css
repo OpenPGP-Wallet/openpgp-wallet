@@ -476,7 +476,17 @@ h2 { font-size: clamp(36px, 4.1vw, 56px); line-height: 1.07; letter-spacing: -0.
 .dot.active { background: var(--text); border-color: var(--text); transform: scale(1.3); }
 
 /* ===== Écrans étroits ===== */
-@media (max-width: 1599px) { .badge-extra { display: none; } }
+@media (max-width: 1759px) { .badge-extra { display: none; } }
+/* Écrans de 1400 à 1599 px : liens de section ET bouton « Mode d'emploi » ; barre resserrée pour que tout tienne. */
+@media (min-width: 1400px) and (max-width: 1599px) {
+  .nav { gap: 16px; padding: 0 28px; }
+  .nav-links { gap: 12px; }
+  .nav-links a { font-size: 14px; }
+  .nav-actions { gap: 8px; }
+  .badge-private { padding: 6px 10px; letter-spacing: 0.05em; }
+  .guide-link { padding: 0 12px; font-size: 13.5px; }
+  .frost-link { padding: 0 13px; letter-spacing: 0.12em; }
+}
 @media (max-width: 1399px) { .nav-links { display: none; } }
 @media (max-width: 1100px) {
   .cards { grid-template-columns: repeat(2, 1fr); }
@@ -513,7 +523,11 @@ h2 { font-size: clamp(36px, 4.1vw, 56px); line-height: 1.07; letter-spacing: -0.
   .eyebrow { flex-wrap: wrap; font-size: 12px; letter-spacing: 0.1em; gap: 8px; }
   .lock-status { max-width: 100%; padding: 8px 14px; font-size: 13px; }
   .lang-switch { display: inline-flex; height: 36px; padding: 0 12px; }
-  .frost-link { height: 36px; padding: 0 12px; }
+  .frost-link { height: 36px; padding: 0 11px; letter-spacing: 0.1em; }
+  /* Menu des téléphones : tout tient sans déborder (FROST était coupé sous 402 px). */
+  .nav { padding: 0 16px; }
+  .nav-actions { gap: 8px; }
+  .nav .brand { font-size: 16px; gap: 9px; }
   .answer { flex-direction: column; align-items: flex-start; padding: 22px; }
   .honest { grid-template-columns: 1fr; padding: 22px; }
   .spark { display: none; }
@@ -534,6 +548,8 @@ h2 { font-size: clamp(36px, 4.1vw, 56px); line-height: 1.07; letter-spacing: -0.
 :root[data-theme="light"] .theme-toggle .sun { display: block; }
 :root[data-theme="light"] .theme-toggle .moon { display: none; }
 @media (max-width: 640px) { .theme-toggle { width: 36px; height: 36px; } }
+/* Très petits téléphones : le logo seul, sans le nom, pour garder les boutons. */
+@media (max-width: 369px) { .nav .brand { font-size: 0; gap: 0; } }
 
 /* ===== Thème clair (« version blanche ») ===== */
 :root[data-theme="light"] {
@@ -604,3 +620,239 @@ h2 { font-size: clamp(36px, 4.1vw, 56px); line-height: 1.07; letter-spacing: -0.
 :root[data-theme="light"] .nav { background: var(--nav-bg); border-bottom-color: var(--nav-line); }
 :root[data-theme="light"] .brand-mark { background: var(--brand-grad); border-color: var(--line-2); }
 :root[data-theme="light"] .badge-private { color: #92400e; }
+
+/* ===== Mode d'emploi (guide.html, how-it-works.html) ===== */
+.guide-link { height: 40px; padding: 0 14px; display: inline-flex; align-items: center; border: 1px solid var(--line-2); border-radius: 10px; color: var(--body-strong); font-weight: 600; font-size: 14px; white-space: nowrap; transition: color 0.2s, border-color 0.2s, background 0.2s; }
+.guide-link:hover { color: var(--text); border-color: var(--hover-line); background: var(--tint-hover); }
+.guide-link[aria-current="page"] { color: var(--text); border-color: rgba(124, 147, 255, 0.45); background: var(--accent-soft); }
+.guide-hero { position: relative; padding: 150px var(--gutter) 40px; overflow: hidden; }
+.guide-hero::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background:
+    radial-gradient(ellipse 45% 60% at 82% 30%, rgba(124, 147, 255, 0.14), transparent 70%),
+    radial-gradient(ellipse 35% 40% at 8% 0%, rgba(167, 139, 250, 0.07), transparent 70%);
+}
+.guide-grid {
+  position: absolute; inset: 0; pointer-events: none;
+  background-image: linear-gradient(var(--grid-line) 1px, transparent 1px), linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: 64px 64px;
+  -webkit-mask-image: radial-gradient(ellipse 55% 70% at 80% 30%, #000 20%, transparent 75%);
+  mask-image: radial-gradient(ellipse 55% 70% at 80% 30%, #000 20%, transparent 75%);
+}
+/* Plus large que les autres pages : sur un écran de 1920 px, la vidéo fait
+   exactement 1024 px (fichier 1024 × 640 affiché pixel pour pixel). */
+.guide-inner { position: relative; max-width: 1400px; margin: 0 auto; }
+.guide-eyebrow { margin-top: 36px; }
+.guide-hero h1 { max-width: 820px; }
+.guide-platform { display: inline-flex; align-items: center; gap: 10px; margin-top: 28px; padding: 9px 16px; border: 1px solid var(--line-2); border-radius: 999px; background: var(--tint); color: var(--muted); font-size: 15px; line-height: 1.4; }
+.guide-platform svg { color: var(--accent); flex: none; }
+.guide-platform strong { color: var(--text); font-weight: 600; }
+.guide-toc { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 44px; }
+.guide-toc a { display: inline-flex; align-items: center; gap: 10px; height: 44px; padding: 0 16px; border: 1px solid var(--line-2); border-radius: 12px; background: var(--tint); color: var(--body-strong); font-weight: 600; font-size: 15.5px; white-space: nowrap; transition: color 0.2s, border-color 0.2s, background 0.2s; }
+.guide-toc a:hover { color: var(--text); border-color: var(--hover-line); background: var(--tint-hover); }
+.guide-toc .num { font-family: var(--font-mono); font-size: 13px; color: var(--accent); }
+.guide-demo { margin-top: 20px; font-size: 14.5px; color: var(--dim); }
+/* Accueil, section 09 : lien vers le mode d'emploi. */
+.guide-cta { margin-top: 30px; display: flex; justify-content: center; }
+
+.guide-cat { padding: 90px var(--gutter) 20px; scroll-margin-top: 72px; }
+.guide-cat-head { display: flex; align-items: baseline; gap: 18px; padding-bottom: 22px; border-bottom: 1px solid var(--line); }
+.guide-cat-head .num { font-family: var(--font-mono); font-size: 15px; color: var(--accent); }
+.guide-cat-head h2 { margin: 0; font-size: clamp(30px, 3.2vw, 42px); }
+.guide-cat-head p { margin-left: auto; max-width: 400px; text-align: right; color: var(--muted); font-size: 16px; }
+
+.howto { display: grid; grid-template-columns: minmax(250px, 330px) minmax(0, 1026px); justify-content: space-between; gap: clamp(28px, 3vw, 44px); align-items: center; padding: 56px 0; border-bottom: 1px solid var(--line); scroll-margin-top: 90px; }
+.howto h3 { font-size: 28px; letter-spacing: -0.02em; }
+.howto-sub { margin-top: 10px; color: var(--muted); font-size: 17px; line-height: 1.6; }
+.howto-steps { list-style: none; margin: 26px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.howto-steps button {
+  width: 100%; display: flex; gap: 14px; align-items: flex-start; padding: 13px 16px; text-align: left;
+  border: 1px solid transparent; border-radius: 14px; background: none; color: var(--muted);
+  font: inherit; font-size: 16.5px; line-height: 1.55; cursor: pointer;
+  transition: background 0.25s, border-color 0.25s, color 0.25s;
+}
+.howto-steps button:hover { background: var(--tint-hover); color: var(--body-strong); }
+.howto-steps .n {
+  flex: none; width: 28px; height: 28px; margin-top: -1px; display: grid; place-items: center;
+  border: 1px solid var(--line-2); border-radius: 9px; font-family: var(--font-display); font-weight: 700; font-size: 14px; color: var(--muted);
+  transition: background 0.25s, border-color 0.25s, color 0.25s;
+}
+.howto-steps b { color: var(--body-strong); font-weight: 600; }
+.howto-steps li.done .n { color: var(--accent); border-color: rgba(124, 147, 255, 0.45); }
+.howto-steps li.active button { background: var(--accent-soft); border-color: rgba(124, 147, 255, 0.35); color: var(--text); }
+.howto-steps li.active .n { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.howto-steps li.active b { color: var(--text); }
+
+.howto-video { margin: 0; }
+/* Fenêtre Windows de l'app (barre de titre aux couleurs du thème Bleu). */
+.app-window { border: 1px solid var(--line-2); border-radius: 14px; overflow: hidden; background: #08090c; box-shadow: var(--panel-shadow), 0 0 0 1px rgba(0, 0, 0, 0.2); }
+.app-titlebar { height: 34px; display: flex; align-items: center; gap: 9px; padding: 0 0 0 13px; background: #08090c; border-bottom: 1px solid rgba(255, 255, 255, 0.05); color: #9aa1ad; font-size: 12.5px; letter-spacing: 0.01em; user-select: none; }
+.app-ico { width: 18px; height: 18px; display: grid; place-items: center; border-radius: 5px; background: linear-gradient(145deg, #6d84ff, #4a63e7); }
+.app-ctrl { margin-left: auto; display: flex; height: 100%; }
+.app-ctrl i { width: 46px; height: 100%; position: relative; }
+.app-ctrl .min::before { content: ""; position: absolute; left: 18px; top: 16px; width: 10px; height: 1px; background: #9aa1ad; }
+.app-ctrl .max::before { content: ""; position: absolute; left: 18px; top: 12px; width: 8px; height: 8px; border: 1px solid #9aa1ad; }
+.app-ctrl .close::before, .app-ctrl .close::after { content: ""; position: absolute; left: 17px; top: 16px; width: 12px; height: 1px; background: #9aa1ad; transform: rotate(45deg); }
+.app-ctrl .close::after { transform: rotate(-45deg); }
+.app-window video { display: block; width: 100%; height: auto; aspect-ratio: 16 / 10; background: #08090c; }
+.howto-bar { display: flex; align-items: center; gap: 14px; margin-top: 14px; }
+.howto-play { flex: none; width: 36px; height: 36px; display: grid; place-items: center; border: 1px solid var(--line-2); border-radius: 10px; background: var(--tint); color: var(--text); cursor: pointer; transition: border-color 0.2s, background 0.2s; }
+.howto-play:hover { border-color: var(--hover-line); background: var(--tint-hover); }
+.howto-play .i-pause, .howto.playing .howto-play .i-play { display: none; }
+.howto.playing .howto-play .i-pause { display: block; }
+.howto-progress { position: relative; flex: 1; height: 4px; border-radius: 4px; background: var(--line); }
+.howto-progress .fill { position: absolute; inset: 0; border-radius: inherit; background: var(--accent); transform: scaleX(0); transform-origin: left; }
+.howto-progress .tick { position: absolute; top: -3px; width: 2px; height: 10px; margin-left: -1px; border-radius: 2px; background: var(--line-2); }
+.howto-demo { flex: none; font-size: 13px; color: var(--dim); white-space: nowrap; }
+
+/* Fonctions pas encore filmées. */
+.howto-soon-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; padding: 32px 0 20px; }
+.howto-soon { padding: 20px 22px; border: 1px dashed var(--line-2); border-radius: 16px; background: var(--tint); }
+.howto-soon h3 { font-size: 17.5px; letter-spacing: -0.01em; color: var(--body-strong); }
+.howto-soon span { display: block; margin-top: 6px; font-size: 14px; color: var(--dim); }
+
+/* Étapes sous la vidéo dès que les deux colonnes seraient trop serrées. */
+@media (max-width: 1180px) {
+  .howto { grid-template-columns: 1fr; padding: 44px 0; }
+  .howto-video { order: -1; }
+  .guide-cat-head { flex-wrap: wrap; }
+  .guide-cat-head p { margin-left: 0; width: 100%; text-align: left; }
+}
+/* Bouton masqué tant que la barre manque de place (lien gardé en section 09 et en pied de page). */
+@media (max-width: 767px) { .guide-link { display: none; } }
+@media (max-width: 640px) {
+  .guide-hero { padding-top: 120px; }
+  .guide-cat { padding-top: 64px; }
+  .howto h3 { font-size: 24px; }
+  .howto-steps button { padding: 12px; font-size: 16px; }
+  .howto-demo { display: none; }
+  .app-titlebar { height: 28px; font-size: 11.5px; }
+  .app-ctrl i { width: 34px; }
+  .app-ctrl .min::before, .app-ctrl .max::before { left: 12px; }
+  .app-ctrl .min::before { top: 13px; }
+  .app-ctrl .max::before { top: 9px; }
+  .app-ctrl .close::before, .app-ctrl .close::after { left: 11px; top: 13px; }
+}
+:root[data-theme="light"] .guide-hero::before {
+  background:
+    radial-gradient(ellipse 45% 60% at 82% 30%, rgba(74, 99, 231, 0.1), transparent 70%),
+    radial-gradient(ellipse 35% 40% at 8% 0%, rgba(167, 139, 250, 0.08), transparent 70%);
+}
+:root[data-theme="light"] .howto-steps li.done .n,
+:root[data-theme="light"] .guide-link[aria-current="page"] { border-color: rgba(74, 99, 231, 0.4); }
+:root[data-theme="light"] .howto-steps li.active button { border-color: rgba(74, 99, 231, 0.3); }
+:root[data-theme="light"] .app-window { border-color: #c9ced6; }
+
+/* Mode d'emploi : sommaire. Sur grand écran, dans la marge DROITE, épuré :
+   une fine ligne verticale, les grands titres en petit, la partie en cours
+   marquée d'un trait de couleur sur la ligne (pas de boîte : la colonne vidéo
+   garde ses 1024 px, image nette au pixel près). Sinon, un bouton
+   « Sommaire » en bas à droite ouvre le même contenu en panneau. */
+.guide-side {
+  position: fixed; z-index: 35; top: 50%; right: 28px; width: 200px;
+  transform: translate(10px, -50%); opacity: 0; visibility: hidden;
+  transition: opacity 0.35s ease, transform 0.35s ease, visibility 0.35s;
+}
+/* Visible seulement une fois qu'on a commencé à descendre (classe posée par
+   site.js au-delà de l'en-tête). */
+.guide-scrolled .guide-side { opacity: 1; visibility: visible; transform: translate(0, -50%); }
+.guide-side-title { margin: 0 0 14px 18px; font-size: 11.5px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--dim); }
+.guide-side ul { list-style: none; margin: 0; padding: 0; border-left: 1px solid var(--line-2); }
+.guide-side .side-cat > a {
+  position: relative; display: flex; gap: 10px; align-items: baseline;
+  padding: 7px 0 7px 18px; color: var(--dim); font-size: 13.5px; font-weight: 500; line-height: 1.35;
+  transition: color 0.2s;
+}
+.guide-side .side-cat > a .num { font-family: var(--font-mono); font-size: 11px; color: var(--dim); transition: color 0.2s; }
+.guide-side .side-cat > a::before {
+  content: ""; position: absolute; left: -1px; top: 6px; bottom: 6px; width: 2px; border-radius: 2px;
+  background: var(--accent); transform: scaleY(0); transition: transform 0.25s ease;
+}
+.guide-side .side-cat > a:hover { color: var(--text); }
+.guide-side .side-cat > a.current { color: var(--text); font-weight: 600; }
+.guide-side .side-cat > a.current .num { color: var(--accent); }
+.guide-side .side-cat > a.current::before { transform: scaleY(1); }
+.guide-side-toggle { display: none; }
+@media (max-width: 1879px) {
+  .guide-side-toggle {
+    display: inline-flex; align-items: center; gap: 8px; position: fixed; z-index: 36; right: 16px; bottom: 16px;
+    height: 44px; padding: 0 16px; border: 1px solid var(--line-2); border-radius: 12px;
+    background: color-mix(in srgb, var(--bg) 88%, transparent); color: var(--text); font: inherit; font-weight: 600; font-size: 14.5px; cursor: pointer;
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); box-shadow: var(--panel-shadow);
+    opacity: 0; visibility: hidden; transform: translateY(8px); transition: opacity 0.3s, transform 0.3s, visibility 0.3s;
+  }
+  .guide-scrolled .guide-side-toggle { opacity: 1; visibility: visible; transform: none; }
+  .guide-side, .guide-scrolled .guide-side {
+    top: auto; bottom: 70px; right: 16px; width: min(280px, calc(100vw - 32px));
+    padding: 18px 20px 16px; border: 1px solid var(--line-2); border-radius: 16px;
+    background: color-mix(in srgb, var(--bg) 94%, transparent);
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); box-shadow: var(--panel-shadow);
+    opacity: 0; visibility: hidden; transform: translateY(8px); transition: opacity 0.2s, transform 0.2s, visibility 0.2s;
+  }
+  .guide-side .side-cat > a { font-size: 14.5px; padding: 9px 0 9px 18px; }
+  .guide-side.open { opacity: 1; visibility: visible; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) { .guide-side, .guide-side .side-cat > a::before { transition: none; } }
+
+/* ===== Page FROST : style Zcash (doré, comme « Privacy is normal ») =====
+   Variables redéfinies sur <body class="frost-page"> : tout ce qui suit
+   l'accent (numéros, icônes, étapes, badges, bouton du téléphone) passe au
+   doré ; les bleus écrits en dur sont repris ici. */
+.frost-page {
+  --accent: #f4b728;
+  --accent-soft: rgba(244, 183, 40, 0.12);
+  --frost-hover: #ffd36e;
+  --on-accent: #0b0903;
+  --gold-1: #f4b728;
+  --gold-2: #ffd36e;
+}
+/* Retour à l'accueil, en haut à gauche de l'en-tête (comme sur les pages
+   Sécurité et Mode d'emploi). */
+.frost-back { position: absolute; z-index: 2; top: 100px; left: var(--gutter); animation: frost-fade 0.6s ease 0.2s both; }
+@media (max-width: 640px) { .frost-back { top: 84px; } }
+/* Section 03 : titre long (trois idées), colonne élargie pour qu'il tienne en trois lignes. */
+.frost-page #frost-how .section-head { max-width: 1000px; }
+.frost-page #frost-how .section-head h2 { max-width: none; }
+/* « Comprendre » centré : l'animation d'apparition des pages FROST finissait
+   sur transform: none, qui annulait le translateX(-50%) du centrage. */
+.frost-page .frost-stage .scroll-hint { animation-name: frost-hint-fade; }
+@keyframes frost-hint-fade { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
+/* Point de navigation actif en doré. */
+.frost-page .dot.active { background: var(--accent); border-color: var(--accent); }
+.frost-page .gold { background: linear-gradient(90deg, var(--gold-1), var(--gold-2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.frost-page .frost-stage {
+  background:
+    radial-gradient(ellipse 52% 42% at 50% 54%, rgba(244, 183, 40, 0.11), transparent 70%),
+    radial-gradient(ellipse 38% 34% at 88% 12%, rgba(244, 183, 40, 0.05), transparent 70%);
+}
+.frost-page .slash { background: linear-gradient(180deg, #ffe39a, #f4b728); box-shadow: 0 0 0.35em rgba(244, 183, 40, 0.55); }
+.frost-page .frost-credit strong { color: var(--gold-1); }
+.frost-page .frost-soon { border-color: rgba(244, 183, 40, 0.45); }
+.frost-page .frost-link { border-color: rgba(244, 183, 40, 0.45); }
+.frost-page .frost-link:hover, .frost-page .frost-link[aria-current="page"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.frost-page .section, .frost-page .feature, .frost-page .status { border-top: 1px solid var(--line); }
+.frost-page #frost-idea { background: radial-gradient(ellipse 55% 60% at 85% 20%, rgba(244, 183, 40, 0.06), transparent 70%), var(--bg); }
+.frost-page #frost-why { background: radial-gradient(ellipse 50% 60% at 18% 50%, rgba(244, 183, 40, 0.06), transparent 70%), var(--bg); }
+.frost-page #frost-status { background: radial-gradient(ellipse 50% 70% at 50% 100%, rgba(244, 183, 40, 0.07), transparent 70%), var(--bg); }
+.frost-page .compare-col.next { border-color: rgba(244, 183, 40, 0.4); background: linear-gradient(180deg, rgba(244, 183, 40, 0.09), rgba(244, 183, 40, 0.02)); }
+.frost-page .ticks li::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23f4b728' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E"); }
+.frost-page .step-num { background: var(--accent); color: var(--on-accent); }
+.frost-page .phone { --accent: #f4b728; --on-accent: #0b0903; border-color: rgba(244, 183, 40, 0.28); }
+.frost-page .btn-primary { background: var(--accent); color: var(--on-accent); }
+.frost-page .btn-primary:hover { background: var(--gold-2); }
+:root[data-theme="light"] .frost-page { --accent: #b87800; --accent-soft: rgba(184, 120, 0, 0.10); --frost-hover: #8a5a00; --on-accent: #ffffff; --gold-1: #b87800; --gold-2: #d99a00; }
+:root[data-theme="light"] .frost-page .frost-stage {
+  background:
+    radial-gradient(ellipse 52% 42% at 50% 54%, rgba(201, 138, 0, 0.10), transparent 70%),
+    radial-gradient(ellipse 38% 34% at 88% 12%, rgba(201, 138, 0, 0.05), transparent 70%);
+}
+:root[data-theme="light"] .frost-page .frost-stage .slash { background: linear-gradient(180deg, #e2b450, #b87800); box-shadow: 0 0 0.3em rgba(184, 120, 0, 0.35); }
+:root[data-theme="light"] .frost-page .frost-soon,
+:root[data-theme="light"] .frost-page .frost-link { border-color: rgba(184, 120, 0, 0.4); }
+:root[data-theme="light"] .frost-page .frost-link[aria-current="page"] { color: #ffffff; }
+:root[data-theme="light"] .frost-page #frost-idea { background: radial-gradient(ellipse 55% 60% at 85% 20%, rgba(201, 138, 0, 0.07), transparent 70%), var(--bg); }
+:root[data-theme="light"] .frost-page #frost-why { background: radial-gradient(ellipse 50% 60% at 18% 50%, rgba(201, 138, 0, 0.07), transparent 70%), var(--bg); }
+:root[data-theme="light"] .frost-page #frost-status { background: radial-gradient(ellipse 50% 70% at 50% 100%, rgba(201, 138, 0, 0.08), transparent 70%), var(--bg); }
+:root[data-theme="light"] .frost-page .compare-col.next { border-color: rgba(184, 120, 0, 0.35); background: linear-gradient(180deg, rgba(184, 120, 0, 0.07), rgba(184, 120, 0, 0.015)); }
+:root[data-theme="light"] .frost-page .ticks li::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23b87800' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E"); }
+:root[data-theme="light"] .frost-page .btn-primary:hover { background: #8a5a00; }
