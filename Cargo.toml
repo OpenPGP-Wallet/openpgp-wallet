@@ -4,39 +4,37 @@ members = ["core", "app/src-tauri"]
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 #
-# `panic = "abort"` volontairement RETIRÉ malgré la recommandation de taille : chaque
-# commande Tauri tourne sur son propre thread/tâche, donc avec le comportement par
-# défaut (unwind), un panic imprévu dans une commande fait juste échouer CETTE
-# commande (le frontend reçoit une erreur) au lieu de tuer instantanément tout le
-# processus sans message ni trace — ce qui était la cause des crashs de l'app.
+# `panic = "abort"` deliberately REMOVED despite the size recommendation: each Tauri
+# command runs on its own thread/task, so with the default behavior (unwind), an
+# unexpected panic in a command only makes THAT command fail (the frontend gets an
+# error) instead of instantly killing the whole process with no message or trace,
+# which is what caused the app's crashes.
 [profile.release]
 codegen-units = 1
 lto = true
 opt-level = 3
 strip = true
 
-# La crate `region` (verrouillage mémoire réel, voir core/src/memory_guard.rs) contient
-# un `debug_assert!` dans le Drop de son LockGuard qui échoue par intermittence sous
-# `cargo test` : nos buffers verrouillés sont minuscules (32 octets pour l'entropie),
-# donc plusieurs buffers de tests DIFFÉRENTS tournant en parallèle peuvent partager la
-# même page mémoire (arrondi à la page, 4 Ko) — le second déverrouillage d'une page déjà
-# déverrouillée par un autre thread échoue côté OS, ce que `region` détecte via
-# `debug_assert!` seulement (pas une vraie erreur remontée). Ce n'est PAS un bug qui
-# peut se produire dans le binaire release réel : `debug-assertions` y est déjà à
-# `false` par défaut (nulle part activé explicitement ci-dessus), donc l'assertion ne
-# s'exécute jamais dans l'app livrée — uniquement un faux positif de parallélisme des
-# tests. On aligne le profil `test` sur ce même comportement plutôt que de contourner
-# artificiellement les tests (ex: --test-threads=1), et ça ne désactive AUCUNE de nos
-# propres assertions (`assert!`/`assert_eq!` dans nos tests ne sont pas concernées,
-# seules les macros `debug_assert!` le sont).
+# The `region` crate (real memory locking, see core/src/memory_guard.rs) has a
+# `debug_assert!` in its LockGuard's Drop that fails intermittently under
+# `cargo test`: our locked buffers are tiny (32 bytes for the entropy), so several
+# DIFFERENT test buffers running in parallel can share the same memory page (rounded
+# to the page, 4 KB). The second unlock of a page already unlocked by another thread
+# fails on the OS side, which `region` only detects through `debug_assert!` (not a
+# real error returned). This is NOT a bug that can happen in the real release binary:
+# `debug-assertions` is already `false` there by default (never enabled explicitly
+# above), so the assertion never runs in the shipped app; it is only a false positive
+# caused by running tests in parallel. The `test` profile is aligned with that same
+# behavior rather than working around it artificially (e.g. --test-threads=1), and it
+# disables NONE of our own assertions (`assert!`/`assert_eq!` in our tests are not
+# affected, only `debug_assert!` macros are).
 [profile.test]
 debug-assertions = false
 
-# Monero : l'analyse des blocs (une multiplication de courbe par transaction)
-# prend ~27 ms par transaction sans optimisation — une journée de blocs
-# (~20 000 transactions) prendrait 10 minutes dans l'app de développement et
-# les tests. Seules les crates de calcul sont optimisées ; l'app livrée l'est
-# déjà entièrement (profil release).
+# Monero: scanning blocks (one curve multiplication per transaction) takes ~27 ms
+# per transaction without optimization, so a day of blocks (~20,000 transactions)
+# would take 10 minutes in the development app and the tests. Only the compute
+# crates are optimized; the shipped app is already fully optimized (release profile).
 [profile.dev.package.curve25519-dalek]
 opt-level = 3
 [profile.dev.package.keccak]

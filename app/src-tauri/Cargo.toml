@@ -19,30 +19,30 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
-# Boîte de dialogue native "Enregistrer sous" pour le téléchargement des parts de
-# sauvegarde : les liens <a download> classiques ne fonctionnent pas de façon fiable
-# dans la webview Tauri (navigation interceptée pour raisons de sécurité).
+# Native "Save as" dialog for downloading backup shares: regular <a download> links
+# do not work reliably in the Tauri webview (navigation intercepted for security
+# reasons).
 tauri-plugin-dialog = "2"
-# Ouvre les liens externes (explorateurs de blocs) dans le navigateur système : un
-# <a target="_blank"> classique ne fonctionne pas de façon fiable dans la webview
-# Tauri (navigation interceptée pour raisons de sécurité), même problème déjà
-# rencontré pour les téléchargements (voir tauri-plugin-dialog ci-dessus).
+# Opens external links (block explorers) in the system browser: a regular
+# <a target="_blank"> does not work reliably in the Tauri webview (navigation
+# intercepted for security reasons), the same problem already hit for downloads (see
+# tauri-plugin-dialog above).
 tauri-plugin-opener = "2"
-# Génération de QR code pour l'affichage des adresses (publiques, aucune donnée
-# sensible) : fait côté Rust pour ne pas ajouter de dépendance JS au frontend.
+# QR code generation for displaying addresses (public, no sensitive data): done on
+# the Rust side so the frontend gets no extra JS dependency.
 qrcode = "0.14"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# Le worker crypto (Shamir, PGP, dérivation, RPC) : toute la logique sensible reste
-# dans ce crate séparé, jamais dans le frontend web.
+# The crypto worker (Shamir, PGP, derivation, RPC): all the sensitive logic stays in
+# this separate crate, never in the web frontend.
 openpgp-wallet-core = { path = "../../core" }
 base64 = "0.22"
-# Efface les mots de passe reçus du frontend (String) dès qu'ils ne servent plus,
-# y compris sur un retour anticipé/panic — mêmes buffers sensibles que core/, qui
-# utilise déjà zeroize pour l'entropie/seed.
+# Wipes the passwords received from the frontend (String) as soon as they are no
+# longer needed, including on an early return/panic; the same sensitive buffers as
+# core/, which already uses zeroize for the entropy/seed.
 zeroize = "1.7"
 
-# Barre de titre et contour de la fenêtre aux couleurs du thème (DWM, Windows
-# 11) : même version que celle du cœur, aucune bibliothèque de plus.
+# Window title bar and border in the theme's colors (DWM, Windows 11): the same
+# version as the core's, no extra library.
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm"] }

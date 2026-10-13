@@ -4,37 +4,35 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-# blahaj (pas "sharks") : Shamir's Secret Sharing, seuil configurable. `sharks` a
-# un biais connu et non corrigé dans le tirage des coefficients polynomiaux
-# (RUSTSEC-2024-0398, trouvé via `cargo audit`) — exploitable si le même secret
-# est partagé des centaines de fois, ce qui reste peu probable ici (un split à la
-# création + régénérations protégées par mot de passe et confirmation native),
-# mais sans correctif amont disponible pour `sharks` lui-même. `blahaj` est le
-# fork officiellement recommandé par l'avis RustSec, avec la faille corrigée et
-# une API strictement identique (Sharks/Share/dealer/recover) — migration sans
-# changement de logique métier, seulement le nom du crate importé.
+# blahaj (not "sharks"): Shamir's Secret Sharing with a configurable threshold.
+# `sharks` has a known, unfixed bias in how it draws the polynomial coefficients
+# (RUSTSEC-2024-0398, found through `cargo audit`), exploitable if the same secret
+# is split hundreds of times. That is unlikely here (one split at creation, plus
+# regenerations guarded by the password and a native confirmation), but there is
+# no upstream fix for `sharks` itself. `blahaj` is the fork the RustSec advisory
+# officially recommends, with the flaw fixed and a strictly identical API
+# (Sharks/Share/dealer/recover): migrating only changed the imported crate name.
 blahaj = "0.6"
-getrandom = "0.2"          # source d'entropie sécurisée
-zeroize = { version = "1.7", features = ["derive"] }  # effacement mémoire garanti
-anyhow = "1.0"             # gestion d'erreurs simplifiée pour le PoC
+getrandom = "0.2"          # secure entropy source
+zeroize = { version = "1.7", features = ["derive"] }  # guaranteed memory wiping
+anyhow = "1.0"             # simpler error handling
 
-# --- Ajouts pour l'expérimentation "wallet_demo" (dérivation + virement EVM sans PGP) ---
-# bip32   : dérivation HD (BIP32) de la clé maîtresse -> clé privée par chemin de dérivation.
-#           Déjà prévu dans la roadmap du projet (src/derivation.rs).
-# k256    : implémentation secp256k1 (signature ECDSA) utilisée par `bip32` ; on en a besoin
-#           explicitement pour signer le hash de transaction Ethereum.
-# sha3    : Keccak256, requis pour calculer l'adresse EVM et le hash de transaction.
-# rlp     : encodage RLP, format binaire imposé par les transactions Ethereum legacy.
-# reqwest : client HTTP pour parler en JSON-RPC à un nœud Sepolia (interroger le solde,
-#           le nonce, et diffuser la transaction signée).
-# serde/serde_json : (dé)sérialisation des requêtes/réponses JSON-RPC.
-# hex     : conversions hexadécimales (adresses, clés, tx brutes) pour l'affichage et le RPC.
-# bip39   : génération optionnelle d'une phrase mnémonique (12 mots) dans `wallet_demo`, à but
-#           pédagogique/comparatif uniquement — le projet évite ce concept en production,
-#           l'utilisateur ne voit et ne saisit jamais de mots de récupération.
-# bech32/sha2/ripemd : nécessaires pour dériver une adresse Bitcoin testnet (P2WPKH,
-#           préfixe "tb1q...") depuis la même seed maîtresse : hash160 = RIPEMD160(SHA256(pubkey)),
-#           puis encodage bech32 (BIP173) avec le préfixe "tb" (testnet).
+# --- Key derivation, EVM and Bitcoin ---
+# bip32   : HD derivation (BIP32) from the master key -> private key per derivation path.
+# k256    : secp256k1 implementation (ECDSA signatures) used by `bip32`; also needed
+#           directly to sign Ethereum transaction hashes.
+# sha3    : Keccak256, required to compute EVM addresses and transaction hashes.
+# rlp     : RLP encoding, the binary format of legacy Ethereum transactions.
+# reqwest : HTTP client for JSON-RPC calls to nodes (balance, nonce, broadcasting
+#           signed transactions).
+# serde/serde_json : (de)serialization of JSON-RPC requests/responses.
+# hex     : hex conversions (addresses, keys, raw transactions) for display and RPC.
+# bip39   : optional 12-word mnemonic generation in the `wallet_demo` example, for
+#           teaching/comparison only. The project avoids this concept in production:
+#           the user never sees or types recovery words.
+# bech32/sha2/ripemd : needed to derive Bitcoin addresses (P2WPKH, "bc1q..."/"tb1q...")
+#           from the same master seed: hash160 = RIPEMD160(SHA256(pubkey)), then
+#           bech32 encoding (BIP173).
 bip32 = "0.5"
 bip39 = "2"
 bech32 = "0.9"
@@ -47,51 +45,49 @@ reqwest = { version = "0.12", features = ["blocking", "json"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 hex = "0.4"
-# num-bigint : calculs de montants CoW en précision étendue (déjà présent via
-# les dépendances Zcash, voir `cow::mul_div`).
+# num-bigint: extended-precision CoW amount calculations (already present through
+# the Zcash dependencies, see `cow::mul_div`).
 num-bigint = "0.4"
 
-# --- Ajouts pour la démo Solana (ed25519, pas secp256k1 : dérivation et signature
-# totalement différentes de BTC/EVM) ---
-# ed25519-dalek : signature ed25519, algorithme natif de Solana.
-# hmac          : dérivation SLIP-0010 (HMAC-SHA512), seul schéma HD valable pour ed25519
-#                 (BIP32 classique ne fonctionne pas sur cette courbe : dérivation non-durcie
-#                 impossible, d'où un chemin entièrement durci m/44'/501'/0'/0').
-# bs58          : encodage des adresses et clés Solana (base58, sans checksum contrairement
-#                 à l'adresse Bitcoin legacy).
-# base64        : encodage requis par l'API JSON-RPC de Solana pour soumettre une transaction.
+# --- Solana (ed25519, not secp256k1: derivation and signing are entirely different
+# from BTC/EVM) ---
+# ed25519-dalek : ed25519 signatures, Solana's native algorithm.
+# hmac          : SLIP-0010 derivation (HMAC-SHA512), the only valid HD scheme for
+#                 ed25519 (classic BIP32 does not work on this curve: non-hardened
+#                 derivation is impossible, hence a fully hardened m/44'/501'/0'/0' path).
+# bs58          : encoding of Solana addresses and keys (base58, without the checksum
+#                 that legacy Bitcoin addresses have).
+# base64        : encoding required by Solana's JSON-RPC API to submit a transaction.
 ed25519-dalek = "2"
 hmac = "0.12"
 bs58 = "0.5"
 base64 = "0.22"
-# curve25519-dalek : déjà présent transitivement (via ed25519-dalek) à la
-# même version — ajouté ici en dépendance directe uniquement pour
-# CompressedEdwardsY::decompress(), le test "point sur la courbe" utilisé par
-# find_program_address (dérivation d'Associated Token Account Solana, voir
-# sol_spl.rs). Ce test doit être correct bit-à-bit — une erreur produit une
-# adresse de destination différente, potentiellement irrécupérable — donc on
-# réutilise l'implémentation déjà auditée de la crate plutôt que de recoder la
-# validation de point elliptique à la main, seule exception au principe
-# "from scratch" du reste de ce module (agencement d'octets, pas de
-# cryptographie sur courbe).
+# curve25519-dalek: already present transitively (through ed25519-dalek) at the same
+# version; added as a direct dependency only for CompressedEdwardsY::decompress(),
+# the "point on the curve" test used by find_program_address (Solana Associated
+# Token Account derivation, see sol_spl.rs). That test must be bit-exact (a mistake
+# produces a different destination address, possibly unrecoverable), so we reuse the
+# crate's already audited implementation rather than recoding elliptic point
+# validation by hand: the only exception to the "from scratch" approach of the rest
+# of that module (byte layout, no curve cryptography).
 curve25519-dalek = "4.1.3"
 blake2b_simd = "1"
-# Bittensor (TAO, chaîne Substrate) : signatures sr25519, encodage SCALE,
-# métadonnées du réseau (format des transactions), graine depuis l'entropie.
+# Bittensor (TAO, a Substrate chain): sr25519 signatures, SCALE encoding, network
+# metadata (transaction format), seed from the entropy.
 schnorrkel = "0.11"
 parity-scale-codec = { version = "3", features = ["derive"] }
 frame-metadata = { version = "23", features = ["decode", "current"] }
 scale-info = { version = "2", default-features = false, features = ["decode"] }
 pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
 
-# --- Zcash (adresses transparentes t1) ---
-# Bibliothèques officielles librustzcash (Zcash Foundation / ECC) plutôt qu'un
-# format recodé à la main : transaction v5, signature ZIP-244, frais ZIP-317,
-# branches de consensus et formats d'adresse (t1, t3, tex1). Sans les circuits
-# de preuve (transparent seulement).
-# tonic/tonic-prost/prost/tokio : client gRPC des serveurs lightwalletd (seule
-# infrastructure officielle des portefeuilles Zcash ; pas de gRPC-web), messages
-# définis à la main (sans protoc), petit runtime tokio par appel.
+# --- Zcash (transparent t1 addresses) ---
+# The official librustzcash libraries (Zcash Foundation / ECC) rather than a format
+# recoded by hand: v5 transactions, ZIP-244 signatures, ZIP-317 fees, consensus
+# branches and address formats (t1, t3, tex1). Without the proving circuits
+# (transparent only).
+# tonic/tonic-prost/prost/tokio: gRPC client for the lightwalletd servers (the only
+# official infrastructure for Zcash wallets; no gRPC-web), messages defined by hand
+# (no protoc), a small tokio runtime per call.
 zcash_primitives = { version = "0.30", default-features = false, features = ["std", "transparent-inputs"] }
 zcash_transparent = { version = "0.10", default-features = false, features = ["std", "transparent-inputs"] }
 zcash_protocol = "0.10"
@@ -100,113 +96,110 @@ tonic = { version = "0.14", default-features = false, features = ["channel", "co
 tonic-prost = "0.14"
 prost = "0.14"
 tokio = { version = "1", features = ["rt", "time", "macros"] }
-# Types nommés par le module Zcash (mêmes versions que celles de zcash_primitives) :
-# clé de signature transparente (secp256k1), bundles protégés toujours absents
-# (sapling-crypto, orchard), script de sortie et vérification des signatures dans
-# les tests (zcash_script, interpréteur officiel utilisé par Zebra).
+# Types named by the Zcash module (the same versions as zcash_primitives'):
+# transparent signing key (secp256k1), shielded bundles that are always absent
+# (sapling-crypto, orchard), output scripts and signature verification in the tests
+# (zcash_script, the official interpreter used by Zebra).
 secp256k1 = "0.29"
 sapling-crypto = { version = "0.7", default-features = false }
 orchard = { version = "0.15", default-features = false }
 zcash_script = "0.4"
-# Zcash protégé (Orchard) : pile officielle des portefeuilles légers (celle de
-# Zashi) — synchronisation par les serveurs lightwalletd, base de portefeuille
-# SQLite (clés de VISUALISATION seulement : la clé de dépense est dérivée de la
-# seed au moment de signer), import de l'adresse t1 existante de chaque profil
-# pour la protéger. rusqlite « bundled » : SQLite compilé avec l'app (Windows
-# n'en fournit pas).
+# Shielded Zcash (Orchard and Ironwood): the official light wallet stack (the one
+# Zashi uses). Sync through the lightwalletd servers, a SQLite wallet database
+# (VIEWING keys only: the spending key is derived from the seed at signing time),
+# and import of each profile's existing t1 address so it can be shielded.
+# rusqlite "bundled": SQLite compiled into the app (Windows does not ship one).
 zcash_client_backend = { version = "0.24", default-features = false, features = ["orchard", "sync", "transparent-inputs", "transparent-key-import"] }
 zcash_client_sqlite = { version = "0.22", default-features = false, features = ["orchard", "multicore", "transparent-inputs", "transparent-key-import"] }
 zcash_keys = { version = "0.16", features = ["orchard", "transparent-inputs"] }
 rusqlite = { version = "0.37", features = ["bundled"] }
-# zip32 : index de compte et empreinte de seed ; async-trait : cache de blocs
-# de la synchronisation ; rand_core : générateur système exigé par la base.
+# zip32: account index and seed fingerprint; async-trait: the sync's block cache;
+# rand_core: the system generator the database requires.
 zip32 = "0.2"
 async-trait = "0.1"
-# Types de l'interface du prouveur Sapling, remplacé par un prouveur qui refuse
-# (Orchard seul, voir zcash_shielded::NoSapling).
+# Types of the Sapling prover interface, replaced by a prover that refuses
+# (no Sapling, see zcash_shielded::NoSapling).
 jubjub = "0.10"
 bls12_381 = "0.8"
 
 # --- Monero ---
-# monero-wallet / monero-oxide (Serai, issus de monero-serai audité) : clés,
-# adresses, recherche des sorties reçues avec la clé de VISUALISATION,
-# transactions CLSAG + Bulletproofs+ ; monero-simple-request-rpc : nœud
-# Monero (public par défaut, modifiable dans Paramètres).
+# monero-wallet / monero-oxide (Serai, derived from the audited monero-serai): keys,
+# addresses, scanning for received outputs with the VIEW key, CLSAG + Bulletproofs+
+# transactions; monero-simple-request-rpc: Monero node (public by default, can be
+# changed in Settings).
 monero-wallet = "0.2"
 monero-simple-request-rpc = "0.1"
 rand_core = { version = "0.6", features = ["getrandom"] }
 
-# --- WalletConnect v2 (voir core/src/walletconnect/) ---
-# Protocole implémenté en Rust plutôt que via le SDK JavaScript officiel (choix de
-# l'utilisateur) : aucune dépendance npm dans la webview où le mot de passe est
-# saisi, CSP inchangée. Primitives exigées par la spécification, vérifiées octet
-# par octet contre des vecteurs produits par les bibliothèques du SDK officiel :
-# chacha20poly1305 : chiffrement des enveloppes (RustCrypto).
-# hkdf             : dérivation de la clé symétrique d'une session (déjà présent
-#                    transitivement, même version).
-# L'échange X25519 réutilise `curve25519-dalek` ci-dessus (`MontgomeryPoint`,
-# clampage RFC 7748), sans crate supplémentaire.
+# --- WalletConnect v2 (see core/src/walletconnect/) ---
+# The protocol is implemented in Rust rather than through the official JavaScript SDK
+# (a deliberate choice): no npm dependency in the webview where the password is
+# typed, and an unchanged CSP. The primitives the specification requires are checked
+# byte for byte against vectors produced by the official SDK's libraries:
+# chacha20poly1305 : envelope encryption (RustCrypto).
+# hkdf             : derivation of a session's symmetric key (already present
+#                    transitively, same version).
+# The X25519 exchange reuses `curve25519-dalek` above (`MontgomeryPoint`, RFC 7748
+# clamping), with no extra crate.
 chacha20poly1305 = "0.10"
 hkdf = "0.12"
-# tungstenite : WebSocket (synchrone) vers le relais WalletConnect, TLS via
-# `native-tls` — la même pile que reqwest dans ce projet (magasin de
-# certificats de Windows), aucune seconde implémentation TLS ajoutée.
-# Version 0.29 (mars 2026), pas 0.30 : la 0.30 exige sha1/digest 0.11, en
-# conflit avec la pile Zcash officielle stable (bip32 0.6.0-pre.1 →
-# digest 0.11.0-pre.9) ; l'API utilisée ici (client_tls, Message) est la même.
+# tungstenite: (synchronous) WebSocket to the WalletConnect relay, TLS through
+# `native-tls`, the same stack as reqwest in this project (the Windows certificate
+# store), so no second TLS implementation is added.
+# Version 0.29 (March 2026), not 0.30: 0.30 requires sha1/digest 0.11, which
+# conflicts with the stable official Zcash stack (bip32 0.6.0-pre.1 ->
+# digest 0.11.0-pre.9); the API used here (client_tls, Message) is the same.
 tungstenite = { version = "0.29", features = ["native-tls"] }
 
-# region : verrouillage mémoire réel (mlock Unix / VirtualLock Windows) pour les buffers
-# sensibles (entropie, seed reconstruite) — zeroize efface mais ne protège pas contre le
-# swap disque pendant la durée de vie du buffer. Complète memory_guard::wipe, ne le remplace pas.
+# region: real memory locking (mlock on Unix / VirtualLock on Windows) for sensitive
+# buffers (entropy, rebuilt seed). zeroize wipes, but does not protect against the
+# buffer being swapped to disk during its lifetime. Complements memory_guard::wipe,
+# does not replace it.
 region = "3"
 
-# keyring : stocke la clé privée PGP de l'appareil dans le coffre natif de l'OS
-# (Windows Credential Manager / macOS Keychain / Linux Secret Service) plutôt
-# qu'un simple fichier .asc — un vrai contrôle d'accès du système d'exploitation
-# (lié à la session utilisateur), pas seulement un chemin de fichier à deviner.
-# Voir core/src/secure_storage.rs : repli automatique sur un fichier si le
-# coffre OS est indisponible, jamais de blocage de la création/du
-# déverrouillage du wallet à cause de ça.
+# keyring: stores the device's PGP private key in the OS's native vault (Windows
+# Credential Manager / macOS Keychain / Linux Secret Service) rather than a plain
+# .asc file: real access control by the operating system (tied to the user
+# session), not just a file path to guess. See core/src/secure_storage.rs: automatic
+# fallback to a file if the OS vault is unavailable, so wallet creation/unlock is
+# never blocked because of it.
 #
-# Sans feature explicite, `keyring` retombe sur un backend qui n'écrit nulle
-# part de réel — vérifié empiriquement (`cargo run --bin keyring_spike --
-# write` puis `read` échouait avec "No matching entry found" avant cet ajout,
-# malgré une écriture "réussie"). Les 3 features ci-dessous correspondent
-# chacune à un backend spécifique à un OS (`dep:` cible elle-même restreinte à
-# cet OS dans le Cargo.toml de `keyring`) : les activer toutes les 3 sans
-# condition est sans risque, Cargo n'inclut de toute façon que celle(s)
-# pertinente(s) pour la cible réellement compilée.
+# Without an explicit feature, `keyring` falls back to a backend that writes nowhere
+# real, as checked empirically (`cargo run --example keyring_spike -- write`, then
+# `read`, failed with "No matching entry found" before this was added, despite a
+# "successful" write). Each of the 3 features below matches an OS-specific backend
+# (a `dep:` target itself restricted to that OS in `keyring`'s Cargo.toml):
+# enabling all 3 unconditionally is safe, since Cargo only includes the one(s)
+# relevant to the target actually being compiled.
 keyring = { version = "3", features = ["windows-native", "apple-native", "linux-native-sync-persistent"] }
 
-# hidapi : communication USB HID avec un portefeuille matériel Ledger (voir
-# core/src/ledger/). Bibliothèque de référence multiplateforme (API HID native de
-# Windows, IOKit, hidraw) ; le protocole Ledger au-dessus est implémenté ici.
+# hidapi: USB HID communication with a Ledger hardware wallet (see core/src/ledger/).
+# The reference cross-platform library (native Windows HID API, IOKit, hidraw); the
+# Ledger protocol on top is implemented here.
 hidapi = "2"
-# rusb : accès USB direct (libusb, compilée depuis ses sources) à un Trezor
-# (modèle T, Safe 3, Safe 5 : interface WebUSB, pilote WinUSB installé
-# automatiquement par Windows). Le protocole Trezor au-dessus est implémenté
-# ici (voir core/src/trezor/).
+# rusb: direct USB access (libusb, compiled from source) to a Trezor (Model T,
+# Safe 3, Safe 5: WebUSB interface, WinUSB driver installed automatically by
+# Windows). The Trezor protocol on top is implemented here (see core/src/trezor/).
 rusb = { version = "0.9", features = ["vendored"] }
 
-# --- Backend crypto de sequoia-openpgp : un par famille d'OS, jamais "crypto-rust" ---
-# (marqué "non production ready"/"non constant-time" par sequoia lui-même). Les deux backends
-# ci-dessous sont considérés production-ready par sequoia (pas de flag
-# "allow-experimental-crypto"/"allow-variable-time-crypto" à activer).
+# --- sequoia-openpgp crypto backend: one per OS family, never "crypto-rust" ---
+# (which sequoia itself flags as "not production ready"/"not constant-time"). Both
+# backends below are considered production-ready by sequoia (no
+# "allow-experimental-crypto"/"allow-variable-time-crypto" flag to enable).
 #
-# Windows : "crypto-cng", l'API native CNG (Cryptography API: Next Generation), déjà
-# présente sur le système, sans dépendance externe à installer.
+# Windows: "crypto-cng", the native CNG API (Cryptography API: Next Generation),
+# already present on the system, with no external dependency to install.
 [target.'cfg(windows)'.dependencies]
 sequoia-openpgp = { version = "2.1", default-features = false, features = ["crypto-cng", "compression"] }
-# Déverrouillage biométrique (Windows Hello/TPM, voir windows_hello.rs) : liaisons
-# officielles Microsoft pour NCrypt/BCrypt (clé persistée dans le TPM via le
-# fournisseur "Microsoft Platform Crypto Provider") et UserConsentVerifier (simple
-# heuristique d'affichage, pas la barrière de sécurité elle-même). Déjà présent
-# *transitivement* (v0.61.3, via Tauri/WebView2/tao pour le fenêtrage) mais sans ces
-# feature flags : ceci en fait une dépendance directe.
-# "Win32_Storage_FileSystem" : détection des clés USB (lecteurs amovibles) pour la
-# sauvegarde du kit de récupération, voir usb_backup.rs ("Win32_System_Diagnostics_Debug" :
-# SetThreadErrorMode, pas de boîte système pour un lecteur vide).
+# Biometric unlock (Windows Hello/TPM, see windows_hello.rs): Microsoft's official
+# bindings for NCrypt/BCrypt (key persisted in the TPM through the "Microsoft
+# Platform Crypto Provider") and UserConsentVerifier (just a display heuristic, not
+# the security barrier itself). Already present *transitively* (v0.61.3, through
+# Tauri/WebView2/tao for windowing) but without these feature flags: this makes it a
+# direct dependency.
+# "Win32_Storage_FileSystem": detecting USB drives (removable drives) for backing up
+# the recovery kit, see usb_backup.rs ("Win32_System_Diagnostics_Debug":
+# SetThreadErrorMode, so no system dialog for an empty drive).
 windows = { version = "0.61", features = [
     "Win32_Security_Cryptography",
     "Win32_Foundation",
@@ -215,16 +208,16 @@ windows = { version = "0.61", features = [
     "Win32_System_Diagnostics_Debug",
 ] }
 
-# macOS/Linux/iOS/Android : "crypto-cng" n'existe pas hors Windows (API Windows
-# uniquement) ; "crypto-nettle" (utilisé par défaut sur Linux) demanderait de
-# cross-compiler libnettle+GMP en C pour la cible iOS/Android, plus pénible que
-# "crypto-openssl" ici. OpenSSL se cross-compile nativement pour iOS/Android via le
-# feature "vendored" (construit depuis les sources, pas besoin d'installation système —
-# indispensable sur iOS, qui n'a pas de gestionnaire de paquets).
+# macOS/Linux/iOS/Android: "crypto-cng" does not exist outside Windows (a
+# Windows-only API); "crypto-nettle" (the Linux default) would require
+# cross-compiling libnettle+GMP in C for iOS/Android, more painful than
+# "crypto-openssl" here. OpenSSL cross-compiles natively for iOS/Android through the
+# "vendored" feature (built from source, no system install needed, which is
+# essential on iOS, as it has no package manager).
 [target.'cfg(not(windows))'.dependencies]
 sequoia-openpgp = { version = "2.1", default-features = false, features = ["crypto-openssl", "compression"] }
 openssl = { version = "0.10", features = ["vendored"] }
 
 [dev-dependencies]
-# Tests Zcash : dérivation officielle (AccountId de ZIP-32) comparée à la nôtre.
+# Zcash tests: the official derivation (ZIP-32 AccountId) compared with ours.
 zip32 = "0.2"
