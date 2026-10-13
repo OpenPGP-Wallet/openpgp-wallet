@@ -1,41 +1,42 @@
 import { renderLineChart, renderSparkline } from "./charts.js";
 
-// --- Cryptos du portefeuille --------------------------------------------------
-// Une carte par crypto, un ou plusieurs réseaux par carte (menu réseau).
-// `family` : format d'adresse et chemin d'envoi — « evm » : même adresse sur
-// tous les réseaux EVM, virement natif par `send_transaction` (le backend
-// valide le réseau et affiche la confirmation). Les 4 premières ont leur carte
-// dans index.html ; les autres sont générées ci-dessous, avec exactement la
-// même structure (tout le reste du code les traite de la même façon).
-// `decimals` : décimales affichées pour les montants rapides de l'envoi.
+// --- Wallet cryptos ----------------------------------------------------------
+//
+// One card per crypto, one or more networks per card (network menu). `family`:
+// address format and send path. "evm": the same address on every EVM network,
+// native transfer through `send_transaction` (the backend validates the network
+// and shows the confirmation). The first 4 have their card in index.html; the
+// others are generated below, with exactly the same structure (the rest of the
+// code treats them all the same way). `decimals`: decimals shown for the send
+// window's quick amounts.
 const ASSETS = [
   { coin: "evm", name: "Ethereum", symbol: "ETH", family: "evm", icon: "/assets/eth.svg", gecko: "ethereum", decimals: 6, chart: "ETH", networks: ["evm_mainnet", "arbitrum_mainnet", "base_mainnet", "evm_sepolia"] },
   { coin: "btc", name: "Bitcoin", symbol: "BTC", family: "btc", icon: "/assets/btc.webp", gecko: "bitcoin", decimals: 8, chart: "BTC", networks: ["btc_mainnet", "btc_testnet"] },
   { coin: "sol", name: "Solana", symbol: "SOL", family: "sol", icon: "/assets/sol.png", gecko: "solana", decimals: 9, chart: "SOL", networks: ["sol_mainnet", "sol_devnet"] },
-  // USDC : jeton SPL sur Solana (chemin USDC historique, core/src/sol_spl.rs) et
-  // ERC-20 sur Ethereum, Base et Arbitrum (registre des jetons).
+  // USDC: SPL token on Solana (the historical USDC path, core/src/sol_spl.rs) and
+  // ERC-20 on Ethereum, Base and Arbitrum (token registry).
   { coin: "usdc", name: "USDC", symbol: "USDC", token: true, icon: "/assets/usdc.png", gecko: "usd-coin", decimals: 6, unitDecimals: 6, chart: "USDC", networks: ["sol_mainnet", "evm_mainnet", "base_mainnet", "arbitrum_mainnet"], contracts: { sol_mainnet: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", evm_mainnet: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", base_mainnet: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", arbitrum_mainnet: "0xaf88d065e77c8cc2239327c5edb3a432268e5831" } },
   { coin: "bnb", name: "BNB", symbol: "BNB", family: "evm", icon: "/assets/bnb.png", gecko: "binancecoin", decimals: 6, chart: "BNB", networks: ["bsc_mainnet"] },
   { coin: "avax", name: "Avalanche", symbol: "AVAX", family: "evm", icon: "/assets/avax.png", gecko: "avalanche-2", decimals: 6, chart: "AVAX", networks: ["avax_mainnet"] },
   { coin: "pol", name: "Polygon", symbol: "POL", family: "evm", icon: "/assets/pol.png", gecko: "polygon-ecosystem-token", decimals: 6, chart: "POL", networks: ["polygon_mainnet"] },
   { coin: "zec", name: "Zcash", symbol: "ZEC", family: "zec", icon: "/assets/zec.png", gecko: "zcash", decimals: 8, chart: "ZEC", networks: ["zec_mainnet"] },
-  // Fonds Zcash protégés (Orchard, adresse u1) : leur propre carte, à côté de
-  // la carte transparente (t1). `nameKey` : nom traduit (voir `assetName`).
+  // Shielded Zcash funds (u1 address): their own card, next to the transparent (t1)
+  // card. `nameKey`: translated name (see `assetName`).
   { coin: "zecs", name: "Zcash protégé", nameKey: "coin.zecsName", symbol: "ZEC", family: "zecs", icon: "/assets/zec-shielded.svg", gecko: "zcash", decimals: 8, chart: "ZEC", networks: ["zec_shielded"] },
   { coin: "xmr", name: "Monero", symbol: "XMR", family: "xmr", icon: "/assets/xmr.png", gecko: "monero", decimals: 6, chart: "XMR", networks: ["xmr_mainnet"] },
   { coin: "doge", name: "Dogecoin", symbol: "DOGE", family: "doge", icon: "/assets/doge.png", gecko: "dogecoin", decimals: 8, chart: "DOGE", networks: ["doge_mainnet"] },
   { coin: "trx", name: "Tron", symbol: "TRX", family: "trx", icon: "/assets/trx.png", gecko: "tron", decimals: 6, chart: "TRX", networks: ["tron_mainnet"] },
   { coin: "xrp", name: "XRP", symbol: "XRP", family: "xrp", icon: "/assets/xrp.svg", gecko: "ripple", decimals: 6, chart: "XRP", networks: ["xrp_mainnet"] },
   { coin: "xlm", name: "Stellar", symbol: "XLM", family: "xlm", icon: "/assets/xlm.jpg", iconRound: true, gecko: "stellar", decimals: 7, chart: "XLM", networks: ["xlm_mainnet"] },
-  // NEAR : 24 décimales sur la chaîne ; 6 suffisent à la saisie (Max renvoie le montant exact).
+  // NEAR: 24 decimals on-chain; 6 are enough for input (Max returns the exact amount).
   { coin: "near", name: "NEAR", symbol: "NEAR", family: "near", icon: "/assets/near.jpg", iconRound: true, gecko: "near", decimals: 6, chart: "NEAR", networks: ["near_mainnet"] },
   { coin: "ada", name: "Cardano", symbol: "ADA", family: "ada", icon: "/assets/ada.png", gecko: "cardano", decimals: 6, chart: "ADA", networks: ["ada_mainnet"] },
   { coin: "stx", name: "Stacks", symbol: "STX", family: "stx", icon: "/assets/stx.png", gecko: "blockstack", decimals: 6, chart: "STX", networks: ["stx_mainnet"] },
   { coin: "tao", name: "Bittensor", symbol: "TAO", family: "tao", icon: "/assets/tao.jpg", iconRound: true, gecko: "bittensor", decimals: 9, chart: "TAO", networks: ["tao_mainnet"] },
-  // Jetons (`token: true`) : contrats et mints relevés dans core/src/tokens.rs —
-  // SEUL le registre Rust fait foi pour un envoi (l'interface n'envoie que
-  // l'identifiant et le réseau) ; ceux-ci ne servent qu'aux demandes de
-  // paiement (QR). Test `frontend_token_contracts_match_the_registry` (lib.rs).
+  // Tokens (`token: true`): contracts and mints taken from core/src/tokens.rs. ONLY
+  // the Rust registry counts for a send (the UI only sends the identifier and the
+  // network); these are only used for payment requests (QR). Test
+  // `frontend_token_contracts_match_the_registry` (lib.rs).
   { coin: "usdt", name: "Tether", symbol: "USDT", token: true, icon: "/assets/usdt.png", gecko: "tether", decimals: 6, unitDecimals: 6, chart: null, networks: ["evm_mainnet", "sol_mainnet", "tron_mainnet"], contracts: { evm_mainnet: "0xdac17f958d2ee523a2206206994597c13d831ec7", sol_mainnet: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", tron_mainnet: "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t" } },
   { coin: "link", name: "Chainlink", symbol: "LINK", token: true, icon: "/assets/link.png", gecko: "chainlink", decimals: 6, unitDecimals: 18, chart: "LINK", networks: ["evm_mainnet", "arbitrum_mainnet", "base_mainnet"], contracts: { evm_mainnet: "0x514910771af9ca656af840dff83e8264ecf986ca", arbitrum_mainnet: "0xf97f4df75117a78c1a5a0dbb814af92458539fb4", base_mainnet: "0x88fb150bdc53a65fe94dea0c9ba0a6daf8c6e196" } },
   { coin: "dai", name: "Dai", symbol: "DAI", token: true, icon: "/assets/dai.png", gecko: "dai", decimals: 6, unitDecimals: 18, chart: "DAI", networks: ["evm_mainnet"], contracts: { evm_mainnet: "0x6b175474e89094c44da98b954eedeac495271d0f" } },
@@ -54,11 +55,10 @@ const ASSETS = [
   { coin: "jitosol", name: "Jito Staked SOL", symbol: "JitoSOL", token: true, icon: "/assets/jitosol.png", gecko: "jito-staked-sol", decimals: 6, unitDecimals: 9, chart: "JITOSOL", networks: ["sol_mainnet"], contracts: { sol_mainnet: "J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn" } },
   { coin: "steth", name: "Lido Staked ETH", symbol: "stETH", token: true, icon: "/assets/steth.png", gecko: "staked-ether", decimals: 6, unitDecimals: 18, chart: "STETH", networks: ["evm_mainnet"], contracts: { evm_mainnet: "0xae7ab96520de3a18e5e111b5eaab095312d7fe84" } },
   { coin: "render", name: "Render", symbol: "RENDER", token: true, icon: "/assets/render.png", gecko: "render-token", decimals: 6, unitDecimals: 8, chart: "RENDER", networks: ["sol_mainnet"], contracts: { sol_mainnet: "rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof" } },
-  // Actions tokenisées xStocks (`stock: true`, Solana, programme Token-2022 —
-  // core/src/tokens.rs) : masquées par défaut, cours et courbes de Jupiter par
-  // unité affichée (`chart` : symbole en majuscules, voir price_history.rs),
-  // soldes lus en une requête (get_stock_balances).
-  // Logos officiels des jetons (métadonnées de Backed).
+  // xStocks tokenized shares (`stock: true`, Solana, Token-2022 program,
+  // core/src/tokens.rs): hidden by default, prices and charts from Jupiter per
+  // displayed unit (`chart`: uppercase symbol, see price_history.rs), balances read
+  // in one request (get_stock_balances). Official token logos (Backed metadata).
   { coin: "tslax", name: "Tesla xStock", symbol: "TSLAx", token: true, stock: true, icon: "/assets/xstocks/tslax.png", gecko: "xstock:tslax", decimals: 6, unitDecimals: 8, chart: "TSLAX", networks: ["sol_mainnet"], contracts: { sol_mainnet: "XsDoVfqeBukxuZHWhdvWHBhgEHjGNst4MLodqsJHzoB" } },
   { coin: "nvdax", name: "NVIDIA xStock", symbol: "NVDAx", token: true, stock: true, icon: "/assets/xstocks/nvdax.png", gecko: "xstock:nvdax", decimals: 6, unitDecimals: 8, chart: "NVDAX", networks: ["sol_mainnet"], contracts: { sol_mainnet: "Xsc9qvGR1efVDFGLrVsmkzv3qi45LTBjeUKSPmx9qEh" } },
   { coin: "aaplx", name: "Apple xStock", symbol: "AAPLx", token: true, stock: true, icon: "/assets/xstocks/aaplx.png", gecko: "xstock:aaplx", decimals: 6, unitDecimals: 8, chart: "AAPLX", networks: ["sol_mainnet"], contracts: { sol_mainnet: "XsbEhLAtcf6HdfpFZ5xEMdqW8nfAvcsP5bdudRLJzJp" } },
@@ -79,10 +79,10 @@ const ASSETS = [
   { coin: "brkbx", name: "Berkshire Hathaway xStock", symbol: "BRK.Bx", token: true, stock: true, icon: "/assets/xstocks/brkbx.png", gecko: "xstock:brkbx", decimals: 6, unitDecimals: 8, chart: "BRK.BX", networks: ["sol_mainnet"], contracts: { sol_mainnet: "Xs6B6zawENwAbWVi7w92rjazLuAr5Az59qgWKcNb45x" } },
   { coin: "spcxx", name: "SpaceX xStock", symbol: "SPCXx", token: true, stock: true, icon: "/assets/xstocks/spcxx.png", gecko: "xstock:spcxx", decimals: 6, unitDecimals: 8, chart: "SPCXX", networks: ["sol_mainnet"], contracts: { sol_mainnet: "Xs3oZwbHvqis4NYcf4YKWmEia2eC84wSiVrcYcTqpH8" } },
 ];
-// Réseaux compatibles Ethereum ajoutés par l'utilisateur (Paramètres,
-// « RPC personnalisé ») : une carte chacun, comme une crypto de l'app (même
-// adresse que les ETH), sans logo, sans cours ni échange. Lus avant la
-// construction des cartes ; un ajout ou un retrait recharge l'interface.
+// Ethereum-compatible networks added by the user (Settings, "Custom RPC"): one
+// card each, like one of the app's cryptos (same address as ETH), with no logo,
+// price or swap. Read before the cards are built; adding or removing one reloads
+// the UI.
 const CUSTOM_NETWORKS = await window.__TAURI__.core.invoke("list_custom_networks").catch((e) => {
   console.error(e);
   return [];
@@ -90,28 +90,28 @@ const CUSTOM_NETWORKS = await window.__TAURI__.core.invoke("list_custom_networks
 for (const net of CUSTOM_NETWORKS) {
   ASSETS.push({ coin: net.id, name: net.name, symbol: net.symbol, family: "evm", icon: null, gecko: null, decimals: 6, chart: null, networks: [net.id], custom: true });
 }
-// Nom du réseau (cartes, menus, aperçu d'envoi) : libellé « net.<id> ».
+// Network name (cards, menus, send preview): label "net.<id>".
 const CUSTOM_NETWORK_LABELS = Object.fromEntries(CUSTOM_NETWORKS.map((net) => [`net.${net.id}`, net.name]));
 
 const ASSET_BY_COIN = Object.fromEntries(ASSETS.map((asset) => [asset.coin, asset]));
-// Première crypto de chaque identifiant CoinGecko (Zcash, pas Zcash protégé,
-// qui a le même cours) : marchés et courbes.
+// The first crypto for each CoinGecko identifier (Zcash, not shielded Zcash, which
+// has the same price): markets and charts.
 const ASSET_BY_GECKO = Object.fromEntries([...ASSETS].reverse().map((asset) => [asset.gecko, asset]));
 
-// Nom affiché d'une crypto : traduit pour celles qui en ont un (« Zcash
-// protégé »), sinon son nom propre. Pas au chargement du module (traductions
-// déclarées plus bas) : les éléments créés alors portent `data-i18n`.
+// Display name of a crypto: translated for those that have one ("Shielded Zcash"),
+// otherwise its own name. Not at module load time (translations are declared
+// further down): elements created at that point carry `data-i18n`.
 function assetName(asset) {
   return asset.nameKey ? t(asset.nameKey) : asset.name;
 }
-// Monnaie native de chaque réseau (ETH sur Ethereum, Arbitrum et Base ; BNB
-// sur BNB Chain…) : unité et prix des wallets externes et comptes matériels.
+// Native currency of each network (ETH on Ethereum, Arbitrum and Base; BNB on BNB
+// Chain…): unit and price for external wallets and hardware accounts.
 const NATIVE_ASSET_BY_NETWORK = Object.fromEntries(
   ASSETS.filter((asset) => !asset.token).flatMap((asset) => asset.networks.map((network) => [network, asset]))
 );
 
-// Logo d'une crypto, devant son nom partout où il apparaît (titres, menus,
-// listes, aperçus) ; `null` pour un identifiant inconnu.
+// Logo of a crypto, in front of its name wherever it appears (titles, menus,
+// lists, previews); `null` for an unknown identifier.
 function coinIconEl(coin) {
   const asset = ASSET_BY_COIN[coin];
   if (!asset) return null;
@@ -125,7 +125,8 @@ function coinIconEl(coin) {
   return img;
 }
 
-// Crypto sans logo (réseau ajouté) : pastille avec l'initiale de son symbole.
+// Crypto without a logo (added network): a badge with the first letter of its
+// symbol.
 function letterIcon(asset, className) {
   const span = document.createElement("span");
   span.className = `${className} coin-icon-letter`;
@@ -134,33 +135,33 @@ function letterIcon(asset, className) {
   return span;
 }
 
-// Logo d'un réseau : celui de sa crypto native (Arbitrum : son propre logo ;
-// Base et Sepolia : celui d'Ethereum). `null` pour un réseau inconnu.
+// Logo of a network: that of its native crypto (Arbitrum: its own logo; Base and
+// Sepolia: Ethereum's). `null` for an unknown network.
 function coinForNetwork(network) {
   if (network === "arbitrum_mainnet") return "arb";
   return ASSETS.find((asset) => !asset.token && asset.networks.includes(network))?.coin ?? null;
 }
 
-// Remplace le contenu de `el` par le logo de `coin` suivi de `text`.
+// Replaces the content of `el` with the logo of `coin` followed by `text`.
 function setWithCoinIcon(el, coin, text) {
   const icon = coinIconEl(coin);
   el.replaceChildren(...(icon ? [icon] : []), document.createTextNode(text));
 }
 
-// Échange (« Convertir ») : paires possibles, lues auprès de Rust au démarrage
-// (`swap_pairs`, core/src/swap_routes.rs) —
-// [{ from_coin, from_network, to_coin, to_network, protocol, via, then_protocol }].
+// Swaps ("Convert"): possible pairs, read from Rust at startup (`swap_pairs`,
+// core/src/swap_routes.rs): [{ from_coin, from_network, to_coin, to_network,
+// protocol, via, then_protocol }].
 let swapPairs = [];
-// Échange en 2 étapes en cours (voir « suivi de la crypto intermédiaire »).
+// Two-step swap in progress (see "tracking the intermediate crypto").
 let pendingRoute = null;
 let routePollTimer = null;
 
 const ICON_CONVERT = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h13l-3-3M20 16H7l3 3" /></svg>`;
 
-// Champ de montant : chiffres et un seul séparateur décimal (point ou virgule),
-// filtrés à la frappe plutôt que refusés après coup — un montant ne peut rien
-// contenir d'autre. Écouteur en phase de capture : il passe avant ceux qui
-// lisent la valeur (QR, conversion).
+// Amount field: digits and a single decimal separator (dot or comma), filtered as
+// you type rather than refused afterwards, so an amount cannot contain anything
+// else. Listener in the capture phase: it runs before the ones that read the value
+// (QR, conversion).
 function restrictToAmount(input, onChange) {
   input.addEventListener(
     "input",
@@ -177,20 +178,21 @@ function restrictToAmount(input, onChange) {
   );
 }
 
-// Réseau → format d'adresse : même adresse sur tous les réseaux EVM, une
-// adresse Solana (SOL et jetons SPL), Bitcoin à part.
+// Network → address format: the same address on every EVM network, one Solana
+// address (SOL and SPL tokens), Bitcoin separate.
 function isEvmNetwork(network) {
   return network in EVM_CHAIN_IDS || CUSTOM_NETWORKS.some((net) => net.id === network);
 }
 
-// Jeton passant par le registre Rust (get_token_balance/send_token_transaction) :
-// tout jeton, sauf l'USDC sur Solana qui garde son chemin historique.
+// A token that goes through the Rust registry
+// (get_token_balance/send_token_transaction): every token except USDC on Solana,
+// which keeps its historical path.
 function usesTokenRegistry(coin, network) {
   return ASSET_BY_COIN[coin]?.token === true && !(coin === "usdc" && network === "sol_mainnet");
 }
 
-// Réseaux EVM : identifiant de chaîne (demande de paiement EIP-681). Mêmes
-// valeurs que core/src/wallet_flow.rs::EVM_NETWORKS.
+// EVM networks: chain ID (EIP-681 payment request). The same values as
+// core/src/wallet_flow.rs::EVM_NETWORKS.
 const EVM_CHAIN_IDS = {
   evm_mainnet: 1,
   evm_sepolia: 11155111,
@@ -206,8 +208,8 @@ const ICON_COPY = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" s
 const ICON_QR = `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M3 3h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" /><rect x="5.2" y="5.2" width="1.6" height="1.6" /><path d="M15 3h6v6h-6z" fill="none" stroke="currentColor" stroke-width="1.6" /><rect x="17.2" y="5.2" width="1.6" height="1.6" /><path d="M3 15h6v6H3z" fill="none" stroke="currentColor" stroke-width="1.6" /><rect x="5.2" y="17.2" width="1.6" height="1.6" /><rect x="15" y="15" width="2.5" height="2.5" /><rect x="18.5" y="15" width="2.5" height="2.5" /><rect x="15" y="18.5" width="2.5" height="2.5" /><rect x="18.5" y="18.5" width="2.5" height="2.5" /></svg>`;
 const ICON_EYE = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" /><circle cx="12" cy="12" r="3" /></svg>`;
 
-// Carte d'une crypto à un seul réseau (même structure que celles d'index.html).
-// Textes via data-i18n (traduits par applyLanguage) ; nom et symbole fixes.
+// Card for a single-network crypto (same structure as the ones in index.html).
+// Texts through data-i18n (translated by applyLanguage); fixed name and symbol.
 function buildAssetCard(asset) {
   const card = document.createElement("section");
   card.className = "wallet-card";
@@ -277,7 +279,7 @@ function buildAssetCard(asset) {
   return card;
 }
 
-// Section de l'onglet Historique d'une crypto générée.
+// History tab section for a generated crypto.
 function buildHistorySection(asset) {
   const section = document.createElement("div");
   section.className = "history-section";
@@ -299,24 +301,23 @@ function buildHistorySection(asset) {
 
 {
   const grid = document.querySelector(".wallet-grid");
-  // Actions tokenisées : leur propre onglet (« Actions »), à part des cryptos.
+  // Tokenized shares: their own tab ("Stocks"), separate from the cryptos.
   const stocksGrid = document.querySelector(".stocks-grid");
   const historyCard = document.querySelector('.tab-panel[data-panel="history"] .card');
   for (const asset of ASSETS) {
-    if (document.querySelector(`.wallet-card[data-coin="${asset.coin}"]`)) continue; // carte d'index.html
+    if (document.querySelector(`.wallet-card[data-coin="${asset.coin}"]`)) continue; // card from index.html
     (asset.stock ? stocksGrid : grid).appendChild(buildAssetCard(asset));
     historyCard.appendChild(buildHistorySection(asset));
   }
 }
 
-// Cartes repliées d'une même rangée à la même hauteur : un nom sur deux
-// lignes (« Zcash protégé ») ou une pastille Staker faisait dépasser une
-// carte sous ses voisines. Hauteur de la plus haute carte repliée de la
-// rangée (même position verticale) ; l'en-tête prend l'écart, solde et
-// boutons restent alignés (voir styles.css). Cartes dépliées et vue liste :
-// hauteur propre. Recalculé à chaque changement de taille (repli, langue,
-// fenêtre, pastille chargée…) : remise à zéro, mesure et nouvelle hauteur
-// dans la même image, donc stable d'une image à l'autre.
+// Collapsed cards in the same row get the same height: a name on two lines
+// ("Shielded Zcash") or a Stake badge made one card stick out below its neighbors.
+// Height of the tallest collapsed card in the row (same vertical position); the
+// header absorbs the difference, so balance and buttons stay aligned (see
+// styles.css). Expanded cards and the list view: their own height. Recomputed on
+// every size change (collapse, language, window, badge loaded…): reset, measure
+// and new height in the same frame, so it is stable from one frame to the next.
 for (const grid of document.querySelectorAll(".wallet-grid")) {
   let frame = null;
   const align = () => {
@@ -341,10 +342,11 @@ for (const grid of document.querySelectorAll(".wallet-grid")) {
   grid.querySelectorAll(".wallet-card").forEach((card) => observer.observe(card));
 }
 
-// --- Mes cryptos : cartes affichées -------------------------------------------
-// Choix explicites { coin: true|false }, retenus sur l'appareil ; sans choix :
-// les cryptos par défaut, et toute crypto sur laquelle des fonds sont
-// détectés (voir refreshBalance) s'affiche d'elle-même.
+// --- My cryptos: cards shown -------------------------------------------------
+//
+// Explicit choices { coin: true|false }, remembered on the device; without a
+// choice: the default cryptos, and any crypto on which funds are detected (see
+// refreshBalance) shows up on its own.
 const ASSETS_STORAGE_KEY = "pgp-wallet-assets";
 const DEFAULT_ASSETS = ["evm", "btc", "sol", "usdc"];
 let assetChoices = {};
@@ -354,12 +356,12 @@ try {
     for (const [coin, shown] of Object.entries(saved)) if (ASSET_BY_COIN[coin] && typeof shown === "boolean") assetChoices[coin] = shown;
   }
 } catch (e) {
-  // localStorage indisponible : cryptos par défaut.
+  // localStorage unavailable: default cryptos.
 }
 
 function isAssetVisible(coin) {
   if (coin in assetChoices) return assetChoices[coin];
-  // Zcash protégé suit la carte Zcash tant qu'aucun choix n'est fait pour lui.
+  // Shielded Zcash follows the Zcash card as long as no choice has been made for it.
   if (coin === "zecs") return isAssetVisible("zec");
   return DEFAULT_ASSETS.includes(coin);
 }
@@ -368,13 +370,12 @@ function saveAssetChoices() {
   try {
     localStorage.setItem(ASSETS_STORAGE_KEY, JSON.stringify(assetChoices));
   } catch (e) {
-    // Best-effort : le choix reste appliqué pour cette session.
+    // Best-effort: the choice stays applied for this session.
   }
 }
 
-// Cartes et sections d'historique masquées selon les choix. Le menu
-// « Recevoir » est reconstruit ailleurs (renderReceiveMenu, qui a besoin des
-// traductions).
+// Cards and history sections hidden according to the choices. The "Receive" menu
+// is rebuilt elsewhere (renderReceiveMenu, which needs the translations).
 function applyAssetVisibility() {
   for (const asset of ASSETS) {
     const visible = isAssetVisible(asset.coin);
@@ -382,36 +383,36 @@ function applyAssetVisibility() {
     document.getElementById(`history-section-${asset.coin}`)?.classList.toggle("asset-hidden", !visible);
   }
   document.getElementById("stocks-empty")?.classList.toggle("hidden", ASSETS.some((asset) => asset.stock && isAssetVisible(asset.coin)));
-  // Monero : blocs téléchargés et analysés seulement si sa carte est affichée
-  // (ou si des fonds ont déjà été reçus, voir `set_xmr_sync`) — par
-  // `window.__TAURI__` : appelée au chargement, avant `invoke` ci-dessous.
+  // Monero: blocks are downloaded and scanned only if its card is shown (or if funds
+  // have already been received, see `set_xmr_sync`). Uses `window.__TAURI__`: called
+  // at load time, before `invoke` below.
   window.__TAURI__.core.invoke("set_xmr_sync", { enabled: isAssetVisible("xmr") }).catch((e) => console.error(e));
 }
 applyAssetVisibility();
 
-// Cartes masquées (« Gérer mes cryptos ») : relues une seule fois par
-// déverrouillage ou changement de profil — assez pour détecter des fonds et
-// les afficher (revealIfFunded), sans relire une vingtaine de soldes chaque
-// minute.
+// Hidden cards ("Manage my cryptos"): read only once per unlock or profile change,
+// enough to detect funds and show them (revealIfFunded), without rereading twenty
+// balances every minute.
 let hiddenBalancesChecked = false;
 
 const { invoke } = window.__TAURI__.core;
 
-// --- Thème -----------------------------------------------------------------
-// Préférence purement visuelle par appareil (pas une donnée du wallet) : stockage
-// local suffit, pas besoin de passer par le coffre chiffré. `try/catch` seul
-// (localStorage peut être bloqué selon la configuration) : le thème par défaut
-// s'applique alors sans jamais faire planter l'app.
+// --- Theme -------------------------------------------------------------------
+//
+// A purely visual, per-device preference (not wallet data): local storage is
+// enough, no need to go through the encrypted vault. `try/catch` only
+// (localStorage can be blocked depending on the configuration): the default theme
+// then applies without ever crashing the app.
 const THEME_STORAGE_KEY = "pgp-wallet-theme";
 const VALID_THEMES = ["default", "purple", "emerald", "ocean", "rose", "orange", "dark", "light"];
 
-// Changer `data-theme` sur <html> invalide le style de TOUTE la page (les
-// variables CSS sont héritées partout) et force un recalcul complet. Choisir
-// plusieurs thèmes coup sur coup dans le menu déroulant déclenchait donc une
-// rafale de recalculs de page consécutifs, plus vite que le moteur de rendu ne
-// pouvait les absorber — regroupés ici via `requestAnimationFrame` : si
-// plusieurs appels arrivent avant la prochaine image, seul le dernier choisi
-// est réellement appliqué, une seule fois.
+// Changing `data-theme` on <html> invalidates the style of the WHOLE page (CSS
+// variables are inherited everywhere) and forces a full recalculation. Picking
+// several themes in a row from the dropdown therefore triggered a burst of
+// consecutive page recalculations, faster than the rendering engine could absorb
+// them. They are batched here through `requestAnimationFrame`: if several calls
+// arrive before the next frame, only the last one chosen is actually applied,
+// once.
 let pendingThemeFrame = null;
 
 function applyTheme(theme) {
@@ -423,7 +424,7 @@ function applyTheme(theme) {
     } else {
       delete document.documentElement.dataset.theme;
     }
-    // Barre de titre et contour de la fenêtre Windows assortis au thème.
+    // Windows window title bar and border matched to the theme.
     invoke("set_window_frame", { theme: VALID_THEMES.includes(theme) ? theme : "default" }).catch(() => {});
   });
 }
@@ -433,7 +434,7 @@ try {
   const saved = localStorage.getItem(THEME_STORAGE_KEY);
   if (VALID_THEMES.includes(saved)) currentTheme = saved;
 } catch (e) {
-  // localStorage indisponible : reste sur le thème par défaut.
+  // localStorage unavailable: stays on the default theme.
 }
 applyTheme(currentTheme);
 
@@ -445,14 +446,14 @@ themeSelect.addEventListener("change", () => {
   try {
     localStorage.setItem(THEME_STORAGE_KEY, next);
   } catch (e) {
-    // Best-effort : le thème reste actif pour cette session même si la sauvegarde échoue.
+    // Best-effort: the theme stays active for this session even if saving fails.
   }
 });
 
-// Même préférence purement visuelle que le thème ci-dessus (stockage local
-// suffit). `applyRoundedButtons` cible directement `<html>` (voir styles.css :
-// `:root[data-rounded-buttons="true"] button`), une seule règle CSS qui couvre
-// tous les boutons de l'app puisqu'ils sont tous de vrais éléments `<button>`.
+// The same purely visual preference as the theme above (local storage is enough).
+// `applyRoundedButtons` targets `<html>` directly (see styles.css:
+// `:root[data-rounded-buttons="true"] button`), a single CSS rule that covers
+// every button in the app since they are all real `<button>` elements.
 const ROUNDED_BUTTONS_STORAGE_KEY = "pgp-wallet-rounded-buttons";
 
 function applyRoundedButtons(enabled) {
@@ -467,7 +468,7 @@ let roundedButtonsEnabled = false;
 try {
   roundedButtonsEnabled = localStorage.getItem(ROUNDED_BUTTONS_STORAGE_KEY) === "true";
 } catch (e) {
-  // localStorage indisponible : reste sur des boutons non arrondis par défaut.
+  // localStorage unavailable: stays on non-rounded buttons by default.
 }
 applyRoundedButtons(roundedButtonsEnabled);
 
@@ -479,18 +480,18 @@ roundedButtonsToggle.addEventListener("change", () => {
   try {
     localStorage.setItem(ROUNDED_BUTTONS_STORAGE_KEY, String(enabled));
   } catch (e) {
-    // Best-effort : le réglage reste actif pour cette session même si la sauvegarde échoue.
+    // Best-effort: the setting stays active for this session even if saving fails.
   }
 });
 
-// Vue liste du portefeuille : même préférence purement visuelle/locale que les
-// deux précédentes. `applyWalletListView` cible `<html>` (voir styles.css :
-// `:root[data-wallet-list-view="true"] .wallet-card`) — du CSS pur, aucun
-// changement de structure DOM, donc aucun autre code (refresh/historique/envoi)
-// n'a besoin de savoir dans quel mode d'affichage il tourne.
+// Wallet list view: the same purely visual/local preference as the previous two.
+// `applyWalletListView` targets `<html>` (see styles.css:
+// `:root[data-wallet-list-view="true"] .wallet-card`): pure CSS, no change to the
+// DOM structure, so no other code (refresh/history/send) needs to know which
+// display mode it is running in.
 const WALLET_LIST_VIEW_STORAGE_KEY = "pgp-wallet-list-view";
-// Dernière vérification réussie des clés de sauvegarde (ou création du kit,
-// ou restauration) : rappel au tableau de bord un an après.
+// Last successful check of the backup drives (or kit creation, or restore):
+// reminder on the dashboard one year later.
 const BACKUP_CHECK_STORAGE_KEY = "pgp-wallet-backup-checked-at";
 const BACKUP_CHECK_INTERVAL_MS = 365 * 24 * 3600 * 1000;
 const BACKUP_CHECK_SNOOZE_MS = 30 * 24 * 3600 * 1000;
@@ -501,8 +502,9 @@ function applyWalletListView(enabled) {
   } else {
     delete document.documentElement.dataset.walletListView;
   }
-  // En vue liste, les cartes sont déjà des lignes compactes : leur repli n'y a
-  // pas cours (voir « Panneaux repliables ») — titre retiré du parcours clavier.
+  // In list view, the cards are already compact rows: collapsing does not apply
+  // there (see "Collapsible panels"), so the title is taken out of the keyboard tab
+  // order.
   document.querySelectorAll(".wallet-card .collapse-toggle").forEach((toggle) => {
     toggle.tabIndex = enabled ? -1 : 0;
   });
@@ -512,7 +514,7 @@ let walletListViewEnabled = false;
 try {
   walletListViewEnabled = localStorage.getItem(WALLET_LIST_VIEW_STORAGE_KEY) === "true";
 } catch (e) {
-  // localStorage indisponible : reste en vue cartes par défaut.
+  // localStorage unavailable: stays in card view by default.
 }
 applyWalletListView(walletListViewEnabled);
 
@@ -524,16 +526,16 @@ walletListViewToggle.addEventListener("change", () => {
   try {
     localStorage.setItem(WALLET_LIST_VIEW_STORAGE_KEY, String(enabled));
   } catch (e) {
-    // Best-effort : le réglage reste actif pour cette session même si la sauvegarde échoue.
+    // Best-effort: the setting stays active for this session even if saving fails.
   }
 });
 
-// --- Langue ------------------------------------------------------------------
-// Préférence purement visuelle par appareil (comme le thème ci-dessus) : stockage
-// local suffit. Ne traduit que le frontend (HTML statique + messages générés en
-// JS) — les messages d'erreur renvoyés depuis le backend Rust (via `invoke()`)
-// restent en français quelle que soit la langue choisie ici, les traduire
-// nécessiterait de faire remonter un paramètre de langue jusqu'au backend.
+// --- Language ----------------------------------------------------------------
+//
+// A purely visual, per-device preference (like the theme above): local storage is
+// enough. This only translates the frontend (static HTML + messages generated in
+// JS); error messages returned by the Rust backend are translated on the Rust side
+// (see below).
 const LANG_STORAGE_KEY = "pgp-wallet-lang";
 const VALID_LANGS = ["fr", "en"];
 
@@ -2031,12 +2033,12 @@ function t(key, vars) {
 function applyLanguage(lang) {
   currentLang = VALID_LANGS.includes(lang) ? lang : "fr";
   document.documentElement.lang = currentLang;
-  // Les messages d'erreur renvoyés par le backend Rust (core/) sont eux aussi
-  // traduits, mais côté Rust (app/src-tauri/src/lib.rs::translate_error) : core/
-  // ignore volontairement tout concept d'interface, la langue affichée n'est donc
-  // jamais transmise plus profond que cette commande dédiée. Best-effort : si
-  // l'appel échoue (ex. tout premier appel avant que le backend soit prêt), les
-  // erreurs backend restent simplement en français le temps du prochain switch.
+  // Error messages returned by the Rust backend (core/) are translated too, but on
+  // the Rust side (app/src-tauri/src/lib.rs::translate_error): core/ deliberately
+  // knows nothing about interfaces, so the display language never travels deeper
+  // than this dedicated command. Best-effort: if the call fails (e.g. the very first
+  // call before the backend is ready), backend errors simply stay in French until
+  // the next switch.
   invoke("set_ui_language", { lang: currentLang }).catch(() => {});
   document.querySelectorAll("[data-i18n]").forEach((el) => {
     el.textContent = t(el.dataset.i18n);
@@ -2054,13 +2056,13 @@ function applyLanguage(lang) {
     el.setAttribute("aria-label", t(el.dataset.i18nAriaLabel));
   });
   document.querySelectorAll(".collapse-toggle").forEach(syncCollapseToggle);
-  // Libellés d'une autre longueur : la barre tient-elle encore sur une ligne ?
+  // Labels of a different length: does the bar still fit on one line?
   fitNavbar();
-  // Les <option> viennent d'être retraduits ci-dessus, mais l'étiquette visible
-  // du menu déroulant personnalisé (.custom-select-label) et sa liste (<li>) sont
-  // de simples copies figées, synchronisées seulement à l'ouverture ou à un choix
-  // (voir syncCustomSelect) — sans ce ré-appel, elles resteraient dans l'ancienne
-  // langue jusqu'au prochain clic sur le menu.
+  // The <option> elements have just been translated again above, but the visible
+  // label of the custom dropdown (.custom-select-label) and its list (<li>) are
+  // plain frozen copies, only synced when it opens or on a choice (see
+  // syncCustomSelect). Without this extra call, they would stay in the old language
+  // until the next click on the menu.
   document.querySelectorAll(".custom-select select").forEach(syncCustomSelect);
   document.querySelectorAll(".lang-btn").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.lang === currentLang);
@@ -2072,39 +2074,40 @@ try {
   const savedLang = localStorage.getItem(LANG_STORAGE_KEY);
   if (VALID_LANGS.includes(savedLang)) currentLang = savedLang;
 } catch (e) {
-  // localStorage indisponible : reste sur le français par défaut.
+  // localStorage unavailable: stays on French by default.
 }
 applyLanguage(currentLang);
 
 document.querySelectorAll(".lang-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
     applyLanguage(btn.dataset.lang);
-    // Contenu déjà généré dynamiquement à partir de données déjà en mémoire (pas
-    // besoin de rappeler le backend) : ré-affiché tout de suite dans la nouvelle
-    // langue. Les autres listes dynamiques (historique, frais, kit de sauvegarde...)
-    // adopteront la nouvelle langue à leur prochain affichage.
+    // Content already generated dynamically from data already in memory (no need to
+    // call the backend again): redrawn straight away in the new language. The other
+    // dynamic lists (history, fees, backup kit...) will switch language the next time
+    // they are shown.
     renderRecipientList();
     renderAffiliateNames();
     renderStakeChips();
-    // Valeur en dollars des cartes (« ≈ 1 234,56 $ » / « ≈ $1,234.56 ») :
-    // recalculée sur place, sans appel réseau.
+    // Dollar value of the cards ("≈ 1 234,56 $" / "≈ $1,234.56"): recomputed in place,
+    // with no network call.
     document.querySelectorAll(".wallet-card").forEach(updateFiatValue);
     renderReceiveMenu();
     try {
       localStorage.setItem(LANG_STORAGE_KEY, currentLang);
     } catch (e) {
-      // Best-effort : la langue reste active pour cette session même si la sauvegarde échoue.
+      // Best-effort: the language stays active for this session even if saving fails.
     }
   });
 });
 
-// --- Panneaux repliables -------------------------------------------------------
-// Un clic sur le titre d'un panneau (carte d'une crypto, courbe du portefeuille,
-// prix en direct) le replie ou le déplie : une carte repliée garde son nom et
-// son solde. Pas de repli des cartes en vue liste (déjà compacte). Préférence
-// purement visuelle, par appareil, comme le thème : stockage local.
+// --- Collapsible panels -------------------------------------------------------
+//
+// Clicking a panel's title (a crypto card, the portfolio chart, live prices)
+// collapses or expands it: a collapsed card keeps its name and balance. Cards do
+// not collapse in list view (already compact). A purely visual, per-device
+// preference, like the theme: local storage.
 const COLLAPSED_STORAGE_KEY = "pgp-wallet-collapsed";
-// Durée de l'animation de repli (styles.css, `.collapsible-body`).
+// Duration of the collapse animation (styles.css, `.collapsible-body`).
 const COLLAPSE_MS = 220;
 
 const collapsedPanels = (() => {
@@ -2116,8 +2119,8 @@ const collapsedPanels = (() => {
   }
 })();
 
-// État lu dans le DOM (pas dans `collapsedPanels`) : aussi appelée par
-// `applyLanguage`, qui peut tourner avant l'initialisation ci-dessous.
+// State read from the DOM (not from `collapsedPanels`): also called by
+// `applyLanguage`, which may run before the initialization below.
 function syncCollapseToggle(toggle) {
   const collapsed = toggle.closest("[data-collapse-key]").classList.contains("collapsed");
   toggle.setAttribute("aria-expanded", String(!collapsed));
@@ -2126,8 +2129,8 @@ function syncCollapseToggle(toggle) {
 
 function setPanelCollapsed(panel, collapsed, animate) {
   if (animate) {
-    // Contenu rogné pendant l'animation seulement : déplié, rien n'est coupé
-    // (anneau de focus, ombres des boutons).
+    // Content clipped during the animation only: when expanded, nothing is cut off
+    // (focus ring, button shadows).
     panel.classList.add("collapse-animating");
     clearTimeout(panel._collapseTimer);
     panel._collapseTimer = setTimeout(() => panel.classList.remove("collapse-animating"), COLLAPSE_MS + 40);
@@ -2148,20 +2151,21 @@ document.querySelectorAll("[data-collapse-key]").forEach((panel) => {
     try {
       localStorage.setItem(COLLAPSED_STORAGE_KEY, JSON.stringify([...collapsedPanels]));
     } catch (e) {
-      // Best-effort : l'état reste appliqué pour cette session.
+      // Best-effort: the state stays applied for this session.
     }
   });
 });
 
-// --- Menus déroulants personnalisés -----------------------------------------
-// Un <select> natif n'expose aucun moyen fiable (CSS ou JS) de savoir si son menu
-// est réellement ouvert ou fermé — seulement s'il a le focus, qu'il garde après
-// un choix ou après un second clic qui referme déjà le menu nativement. Résultat
-// avec une simple flèche en CSS (:focus-within) : elle reste tournée après la
-// fermeture tant qu'on ne clique pas ailleurs. Le <select> reste la source de
-// vérité (valeur, options, événement "change" — tout le reste du code continue à
-// le lire/écouter normalement) mais devient invisible ; ce composant pilote
-// entièrement l'affichage et l'ouverture/fermeture, en JS, donc de façon exacte.
+// --- Custom dropdowns -------------------------------------------------------
+//
+// A native <select> offers no reliable way (CSS or JS) to know whether its menu is
+// actually open or closed, only whether it has focus, which it keeps after a
+// choice or after a second click that already closes the menu natively. The result
+// with a simple CSS arrow (:focus-within): it stays rotated after closing until
+// you click elsewhere. The <select> remains the source of truth (value, options,
+// "change" event: the rest of the code keeps reading/listening to it normally) but
+// becomes invisible; this component fully drives the display and the
+// opening/closing, in JS, and therefore exactly.
 
 function syncCustomSelect(select) {
   const wrapper = select.closest(".custom-select");
@@ -2177,7 +2181,7 @@ function syncCustomSelect(select) {
     }
     group = parent.tagName === "OPTGROUP" ? parent : null;
     const li = document.createElement("li");
-    // Option d'une crypto (`data-coin`) : son logo devant le nom.
+    // A crypto's option (`data-coin`): its logo before the name.
     if (option.dataset.coin) setWithCoinIcon(li, option.dataset.coin, option.textContent);
     else li.textContent = option.textContent;
     li.dataset.value = option.value;
@@ -2190,10 +2194,9 @@ function syncCustomSelect(select) {
   });
 }
 
-// `.dropdown` : classe partagée par les menus à valeur (.custom-select, ci-dessus)
-// et les menus d'action pure comme le bouton "Recevoir" (voir plus bas) — mêmes
-// mécanismes d'ouverture/fermeture/flèche, sans qu'un menu d'action ait besoin
-// d'un <select> sous-jacent.
+// `.dropdown`: a class shared by value menus (.custom-select, above) and pure
+// action menus like the "Receive" button (see below): the same open/close/arrow
+// mechanics, without an action menu needing an underlying <select>.
 function closeAllDropdowns(except) {
   document.querySelectorAll(".dropdown.open").forEach((wrapper) => {
     if (wrapper !== except) wrapper.classList.remove("open");
@@ -2205,9 +2208,9 @@ function initCustomSelect(wrapper) {
   const trigger = wrapper.querySelector(".custom-select-trigger");
   const list = wrapper.querySelector(".custom-select-options");
 
-  // Le <select> natif reste focusable au clavier par défaut (tabulation) : ça
-  // créerait un second arrêt invisible qui fait exactement doublon avec le bouton
-  // visible juste à côté. Seul ce dernier doit rester dans l'ordre de tabulation.
+  // The native <select> stays keyboard-focusable by default (tab): that would create
+  // a second, invisible stop that exactly duplicates the visible button right next
+  // to it. Only the latter must stay in the tab order.
   select.tabIndex = -1;
 
   syncCustomSelect(select);
@@ -2218,9 +2221,8 @@ function initCustomSelect(wrapper) {
     wrapper.classList.toggle("open", !wasOpen);
   });
 
-  // Flèches directionnelles au clavier, comme un <select> natif : sans ça, le
-  // rendre non-focusable (tabIndex -1) juste au-dessus aurait rendu ce menu
-  // inutilisable sans souris.
+  // Arrow keys, like a native <select>: without this, making it non-focusable
+  // (tabIndex -1) just above would have made this menu unusable without a mouse.
   trigger.addEventListener("keydown", (e) => {
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
     e.preventDefault();
@@ -2241,8 +2243,8 @@ function initCustomSelect(wrapper) {
     if (!li || li.classList.contains("custom-select-group")) return;
     if (select.value !== li.dataset.value) {
       select.value = li.dataset.value;
-      // Synthétique : déclenche exactement les mêmes gestionnaires "change" que si
-      // l'utilisateur avait choisi cette option dans un <select> natif.
+      // Synthetic: triggers exactly the same "change" handlers as if the user had picked
+      // this option in a native <select>.
       select.dispatchEvent(new Event("change", { bubbles: true }));
     }
     syncCustomSelect(select);
@@ -2250,11 +2252,11 @@ function initCustomSelect(wrapper) {
   });
 }
 
-// --- Menu d'action "Recevoir" (barre de profil) -----------------------------
-// Raccourci vers le même QR/adresse que le bouton QR de chaque carte (voir
-// openQrModal) : pas de valeur "sélectionnée" à retenir, chaque clic déclenche
-// directement une action, donc pas de <select> sous-jacent ici contrairement à
-// .custom-select.
+// --- "Receive" action menu (profile bar) ---------------------------------
+//
+// A shortcut to the same QR/address as each card's QR button (see openQrModal): no
+// "selected" value to remember, each click triggers an action directly, so there
+// is no underlying <select> here, unlike .custom-select.
 function initActionMenu(wrapper) {
   const trigger = wrapper.querySelector(".custom-select-trigger");
   const list = wrapper.querySelector(".custom-select-options");
@@ -2285,15 +2287,16 @@ document.addEventListener("keydown", (e) => {
 document.querySelectorAll(".custom-select").forEach(initCustomSelect);
 document.querySelectorAll(".action-menu").forEach(initActionMenu);
 
-// --- État "en cours" des boutons d'action ----------------------------------
-// Aucune opération sensible (déverrouillage, envoi, création de profil...) ne
-// désactivait son bouton pendant l'attente : certaines sont volontairement
-// lentes (coût S2K maximal pour protéger le mot de passe, appels réseau pour
-// un envoi), donc sans retour visuel l'app paraît figée — et un double-clic
-// peut déclencher deux opérations en parallèle (ex: deux envois superposés).
+// --- "In progress" state of action buttons ----------------------------------
+//
+// No sensitive operation (unlock, send, profile creation...) disabled its button
+// while waiting. Some are deliberately slow (maximum S2K cost to protect the
+// password, network calls for a send), so without visual feedback the app looks
+// frozen, and a double click can trigger two operations in parallel (e.g. two
+// overlapping sends).
 function withBusyButton(button, action) {
   return async (...args) => {
-    if (button.disabled) return; // déjà en cours : ignore un second clic
+    if (button.disabled) return; // already running: ignore a second click
     const originalText = button.textContent;
     button.disabled = true;
     button.textContent = t("common.busy");
@@ -2306,15 +2309,15 @@ function withBusyButton(button, action) {
   };
 }
 
-// Comme `withBusyButton`, mais le bouton reste désactivé au moins `cooldownMs`
-// après le clic, même si la requête elle-même a fini plus vite — sans ça, un
-// clic répété dès que le bouton redevient actif suffit à spammer l'API
-// (solde/historique) à peu près à la fréquence du réseau. Réservé aux boutons
-// "Actualiser", qui sont justement ceux qu'on peut spammer sans rien taper
-// entre deux clics (contrairement à "Envoyer"/"Ajouter", qui demandent de
-// remplir un formulaire à chaque fois). `keepLabel` : le libellé reste (le
-// bouton grisé suffit), pour les boutons voisins d'autres boutons —
-// « Patientez… », plus long, élargissait le bouton et décalait ses voisins.
+// Like `withBusyButton`, but the button stays disabled for at least `cooldownMs`
+// after the click, even if the request itself finished sooner. Without this,
+// clicking again as soon as the button becomes active is enough to spam the API
+// (balance/history) at roughly the network's speed. Reserved for "Refresh"
+// buttons, which are precisely the ones you can spam without typing anything
+// between clicks (unlike "Send"/"Add", which require filling in a form each time).
+// `keepLabel`: the label stays (the greyed-out button is enough), for buttons next
+// to other buttons, since "Please wait…", being longer, widened the button and
+// shifted its neighbors.
 function withThrottledButton(button, cooldownMs, action, { keepLabel = false } = {}) {
   return async (...args) => {
     if (button.disabled) return;
@@ -2355,10 +2358,9 @@ function showView(name) {
   if (name === "dashboard") updateBackupReminder();
 }
 
-// Événement de fond (synchronisation, surveillance) arrivé hors du tableau de
-// bord — verrouillé, réinitialisé, restauration en cours : rien à relire.
-// Constaté le 07/10/2026 : la fin d'une synchronisation Zcash lancée avant
-// une réinitialisation relisait encore des soldes.
+// A background event (sync, monitoring) arriving outside the dashboard (locked,
+// reset, restore in progress): nothing to reread. Seen on 2026-10-07: the end of a
+// Zcash sync started before a reset was still rereading balances.
 function dashboardShown() {
   return !views.dashboard.classList.contains("hidden");
 }
@@ -2376,10 +2378,10 @@ function showError(el, message) {
   el.classList.remove("hidden");
 }
 
-// Erreur technique brute (bibliothèque réseau, nœud) : phrase simple à
-// montrer d'abord (`null` : message déjà clair, montré tel quel). Jamais
-// pour un envoi « peut-être parti » : ce message-là dit quoi faire (vérifier
-// l'historique avant de renvoyer) et doit rester intact.
+// A raw technical error (network library, node): a simple sentence to show first
+// (`null`: the message is already clear and shown as is). Never for a "maybe sent"
+// send: that message says what to do (check the history before sending again) and
+// must stay intact.
 function friendlyError(message) {
   if (/peut-être partie|may have been sent|vérifiez l'historique|check the history/i.test(message)) return null;
   if (/error sending request|timed out|operation timed out|connection (refused|reset|closed)|dns error|tcp connect|failed to lookup|network is unreachable|connexion impossible/i.test(message)) {
@@ -2396,7 +2398,7 @@ function hideError(el) {
 let copyToastHideTimeout = null;
 let copyToastCleanupTimeout = null;
 
-// `coin` : logo de la crypto concernée devant le message (réception…).
+// `coin`: logo of the crypto concerned, in front of the message (incoming funds…).
 function showCopyToast(message, durationMs = 1800, coin = null) {
   const toast = document.getElementById("copy-toast");
   const text = document.getElementById("copy-toast-text");
@@ -2405,9 +2407,9 @@ function showCopyToast(message, durationMs = 1800, coin = null) {
   clearTimeout(copyToastHideTimeout);
   clearTimeout(copyToastCleanupTimeout);
   toast.classList.remove("hidden");
-  // Force le recalcul de style avant d'ajouter `.visible` : sans ça, un clic
-  // pendant que le toast précédent est encore affiché ne redéclencherait pas
-  // la transition (déjà à son état final), donc pas d'animation visible.
+  // Forces a style recalculation before adding `.visible`: without it, a click while
+  // the previous toast is still shown would not restart the transition (already in
+  // its final state), so there would be no visible animation.
   void toast.offsetWidth;
   toast.classList.add("visible");
   copyToastHideTimeout = setTimeout(() => {
@@ -2441,9 +2443,9 @@ const COMMON_PASSWORD_PATTERNS = [
   "admin",
 ];
 
-// Heuristique volontairement simple (pas de dépendance JS externe, cohérent
-// avec le frontend "léger" sans bibliothèque tierce) : longueur + diversité de
-// caractères, avec un filtre sur les motifs les plus évidents à deviner.
+// A deliberately simple heuristic (no external JS dependency, in keeping with the
+// "light" frontend with no third-party library): length + character variety, with
+// a filter on the most obvious guessable patterns.
 function estimatePasswordStrength(password) {
   if (password.length < MIN_PASSWORD_LENGTH) return "faible";
 
@@ -2514,18 +2516,17 @@ onboardingSubmitBtn.addEventListener("click", withBusyButton(onboardingSubmitBtn
   } catch (e) {
     showError(errorEl, String(e));
   } finally {
-    // Le mot de passe ne doit pas rester dans le DOM plus longtemps que nécessaire.
+    // The password must not stay in the DOM longer than necessary.
     document.getElementById("onboarding-password").value = "";
     document.getElementById("onboarding-password-confirm").value = "";
   }
 }));
 
-// Les liens <a download> classiques ne fonctionnent pas de façon fiable dans la
-// webview Tauri (navigation interceptée pour raisons de sécurité) : on utilise à
-// la place une commande Rust qui ouvre elle-même la boîte de dialogue native
-// "Enregistrer sous" et écrit le fichier. Le chemin n'est jamais choisi côté JS :
-// un script compromis ne peut donc pas forcer une écriture vers un emplacement
-// arbitraire.
+// Regular <a download> links do not work reliably in the Tauri webview (navigation
+// intercepted for security reasons): instead we use a Rust command that opens the
+// native "Save as" dialog itself and writes the file. The path is never chosen on
+// the JS side, so a compromised script cannot force a write to an arbitrary
+// location.
 async function saveBase64ToFile(base64Content, suggestedName) {
   return await invoke("save_bytes_with_dialog", {
     suggestedName,
@@ -2536,8 +2537,8 @@ async function saveBase64ToFile(base64Content, suggestedName) {
 function renderBackupList(backups, containerId = "backup-list") {
   const container = document.getElementById(containerId);
   container.innerHTML = "";
-  // Avertissement bien visible AVANT les parts : la sécurité du kit tient à la
-  // séparation des parts (deux réunies = accès complet).
+  // A clearly visible warning BEFORE the shares: the kit's security depends on
+  // keeping the shares apart (two together = full access).
   const disclaimer = document.createElement("div");
   disclaimer.className = "backup-disclaimer";
   disclaimer.setAttribute("role", "note");
@@ -2564,9 +2565,9 @@ function renderBackupList(backups, containerId = "backup-list") {
       </div>
       <p class="success hidden" data-field="usb-saved"></p>
     `;
-    // Part sauvegardée : écrite sur une clé USB, ou ses DEUX fichiers
-    // téléchargés (une part ne sert qu'avec sa clé privée). Chaque changement
-    // met à jour la coche et prévient l'écran (bouton « Continuer »).
+    // Share saved: written to a USB drive, or BOTH its files downloaded (a share is
+    // only useful with its private key). Each change updates the checkmark and
+    // notifies the screen ("Continue" button).
     const saved = { usb: false, share: false, privkey: false };
     const statusEl = item.querySelector('[data-field="status"]');
     const refreshStatus = () => {
@@ -2585,11 +2586,11 @@ function renderBackupList(backups, containerId = "backup-list") {
       item._markSaved(kind);
     };
     item.querySelector('[data-kind="usb"]').addEventListener("click", () => openUsbModal({ mode: "one", backup, item }));
-    // Bouton gardé AVANT l'attente : après un `await`, `e.currentTarget` est vide.
+    // Button kept BEFORE the await: after an `await`, `e.currentTarget` is empty.
     item.querySelector('[data-kind="share"]').addEventListener("click", async (e) => {
       const button = e.currentTarget;
       try {
-        // `false` : boîte « Enregistrer sous » annulée, rien d'enregistré.
+        // `false`: "Save as" dialog cancelled, nothing saved.
         if (await saveBase64ToFile(backup.encrypted_share_b64, `${backup.label}_share.asc`)) markDownloaded(button, "share");
       } catch (err) {
         alert(t("common.saveFailed", { err }));
@@ -2606,8 +2607,8 @@ function renderBackupList(backups, containerId = "backup-list") {
     container.appendChild(item);
     refreshStatus();
   });
-  // Tout le kit sur une seule clé : plus simple, mais cette clé suffit alors à
-  // tout récupérer (confirmé par une boîte native côté Rust).
+  // The whole kit on a single drive: simpler, but that drive is then enough to
+  // recover everything (confirmed through a native dialog on the Rust side).
   const all = document.createElement("div");
   all.className = "backup-all";
   const allButton = document.createElement("button");
@@ -2623,8 +2624,8 @@ function renderBackupList(backups, containerId = "backup-list") {
   container.appendChild(all);
 }
 
-// « Continuer » : seulement une fois les 3 parts sauvegardées (coches) ET la
-// confirmation cochée — elle-même activable seulement à ce moment-là.
+// "Continue": only once the 3 shares are saved (checkmarks) AND the confirmation
+// is ticked, which itself can only be ticked at that point.
 function updateBackupContinue() {
   const items = [...document.querySelectorAll("#backup-list .backup-item")];
   const saved = items.filter((item) => item.dataset.saved === "1").length;
@@ -2671,12 +2672,12 @@ unlockSubmitBtn.addEventListener("click", withBusyButton(unlockSubmitBtn, async 
   }
 }));
 
-// Le mot de passe reste TOUJOURS visible et fonctionnel juste en dessous
-// (jamais remplacé par la biométrie, seulement complété par elle) : un capteur
-// défaillant ou Windows Hello mal configuré ne doit jamais bloquer l'accès au
-// portefeuille. Le bouton biométrique ne se déclenche que sur un clic explicite
-// (voir `showUnlockView`) — jamais automatiquement à l'arrivée sur cet écran,
-// pour ne jamais faire apparaître un prompt OS sans action volontaire.
+// The password stays ALWAYS visible and usable just below (never replaced by
+// biometrics, only complemented by them): a faulty sensor or a misconfigured
+// Windows Hello must never block access to the wallet. The biometric button only
+// fires on an explicit click (see `showUnlockView`), never automatically when
+// arriving on this screen, so an OS prompt never appears without a deliberate
+// action.
 const unlockBiometricBtn = document.getElementById("unlock-biometric-btn");
 const attemptBiometricUnlock = withBusyButton(unlockBiometricBtn, async () => {
   const errorEl = document.getElementById("unlock-biometric-error");
@@ -2693,10 +2694,9 @@ const attemptBiometricUnlock = withBusyButton(unlockBiometricBtn, async () => {
 });
 unlockBiometricBtn.addEventListener("click", attemptBiometricUnlock);
 
-/// Affiche l'écran de déverrouillage et, si la biométrie est activée sur cet
-/// appareil, révèle le bouton dédié — l'utilisateur déclenche lui-même le
-/// prompt Windows Hello en cliquant dessus, jamais automatiquement à l'arrivée
-/// sur cet écran.
+/// Shows the unlock screen and, if biometrics are enabled on this device, reveals
+/// the dedicated button: the user triggers the Windows Hello prompt themselves by
+/// clicking it, never automatically on arriving at this screen.
 async function showUnlockView() {
   showView("unlock");
   const biometricBtn = document.getElementById("unlock-biometric-btn");
@@ -2712,8 +2712,8 @@ async function showUnlockView() {
   divider.classList.toggle("hidden", !enrolled);
 }
 
-// Restauration ouverte depuis le déverrouillage ou depuis le premier lancement
-// (« J'ai déjà un portefeuille ») : Annuler ramène à l'écran d'origine.
+// Restore opened from the unlock screen or from the first launch ("I already have
+// a wallet"): Cancel goes back to the screen it came from.
 let restoreOrigin = "unlock";
 
 function openRestore(origin) {
@@ -2730,8 +2730,8 @@ document.getElementById("goto-unlock").addEventListener("click", () => {
   else showUnlockView();
 });
 
-// Pas de confirm() JavaScript : la confirmation est une boîte NATIVE côté Rust
-// (`confirm_reset_native`), la seule qu'un frontend compromis ne peut pas sauter.
+// No JavaScript confirm(): the confirmation is a NATIVE dialog on the Rust side
+// (`confirm_reset_native`), the only kind a compromised frontend cannot skip.
 const resetWalletBtn = document.getElementById("reset-wallet");
 resetWalletBtn.addEventListener("click", withBusyButton(resetWalletBtn, async () => {
   try {
@@ -2760,16 +2760,16 @@ resetWalletDashboardBtn.addEventListener("click", withBusyButton(resetWalletDash
   }
 }));
 
-// --- Déverrouillage biométrique (Windows Hello), onglet Paramètres ---------
+// --- Biometric unlock (Windows Hello), Settings tab -------------------------
 
 async function loadBiometricSettings() {
   const enableBtn = document.getElementById("enable-biometric-btn");
   const disableBtn = document.getElementById("disable-biometric-btn");
   const unavailableHint = document.getElementById("biometric-unavailable-hint");
 
-  // Les deux appels sont indépendants (disponibilité Windows Hello côté OS vs.
-  // statut d'activation côté fichiers) : lancés en parallèle plutôt que l'un
-  // après l'autre, même principe que le reste de l'app (voir refreshBalance).
+  // The two calls are independent (Windows Hello availability on the OS side vs.
+  // enrollment status on the file side): run in parallel rather than one after the
+  // other, the same principle as the rest of the app (see refreshBalance).
   let available = false;
   let enrolled = false;
   try {
@@ -2781,10 +2781,9 @@ async function loadBiometricSettings() {
     console.error(e);
   }
 
-  // `available` est une heuristique d'affichage côté OS (voir
-  // `windows_hello::is_available`), jamais la barrière de sécurité elle-même :
-  // se tromper ici ne peut que proposer un bouton qui échouera ensuite, jamais
-  // affaiblir quoi que ce soit.
+  // `available` is an OS-side display heuristic (see `windows_hello::is_available`),
+  // never the security barrier itself: getting it wrong can only offer a button that
+  // will then fail, never weaken anything.
   unavailableHint.classList.toggle("hidden", available || enrolled);
   enableBtn.classList.toggle("hidden", enrolled || !available);
   disableBtn.classList.toggle("hidden", !enrolled);
@@ -2852,7 +2851,7 @@ disableBiometricConfirmBtn.addEventListener("click", withBusyButton(disableBiome
   }
 }));
 
-// --- Régénération du kit de sauvegarde ------------------------------------
+// --- Backup kit regeneration ------------------------------------------------
 
 document.getElementById("open-regenerate-backup").addEventListener("click", () => {
   document.getElementById("regenerate-backup-password").value = "";
@@ -2893,10 +2892,11 @@ document.getElementById("regenerate-backup-close").addEventListener("click", () 
   document.getElementById("regenerate-backup-list").innerHTML = "";
 });
 
-// --- Nom d'affiliation (portefeuille du développeur seulement) -----------------
-// Rust ne renvoie rien (null) pour un autre portefeuille : la section reste
-// cachée. L'inscription passe par une boîte de confirmation native, construite
-// côté Rust à partir de l'état relu sur le réseau.
+// --- Affiliate name (developer's wallet only) ---------------------------------
+//
+// Rust returns nothing (null) for any other wallet: the section stays hidden.
+// Registration goes through a native confirmation dialog, built on the Rust side
+// from the state read from the network.
 
 let affiliateNames = null;
 
@@ -2973,9 +2973,10 @@ async function registerAffiliateName(chain) {
   }
 }
 
-// --- Nœud Monero ----------------------------------------------------------------
-// Nœuds publics par défaut ; l'utilisateur peut indiquer le sien (validé et
-// gardé côté Rust, core/src/monero.rs).
+// --- Monero node ----------------------------------------------------------------
+//
+// Public nodes by default; the user can enter their own (validated and stored on
+// the Rust side, core/src/monero.rs).
 
 function renderXmrNode(node) {
   document.getElementById("xmr-node-status").textContent = node ? t("settings.xmrNodeCustom", { node }) : t("settings.xmrNodeDefault");
@@ -3009,8 +3010,8 @@ xmrNodeSaveBtn.addEventListener("click", withBusyButton(xmrNodeSaveBtn, async ()
   await saveXmrNode(url);
 }));
 
-// Réanalyse complète des fonds privés (Monero, Zcash protégé) : soldes mis à
-// jour au fil de la synchronisation de fond.
+// Full rescan of private funds (Monero, shielded Zcash): balances update as the
+// background sync progresses.
 const rescanPrivateBtn = document.getElementById("rescan-private-funds");
 rescanPrivateBtn.addEventListener("click", withBusyButton(rescanPrivateBtn, async () => {
   const status = document.getElementById("rescan-private-status");
@@ -3029,9 +3030,10 @@ rescanPrivateBtn.addEventListener("click", withBusyButton(rescanPrivateBtn, asyn
 const xmrNodeResetBtn = document.getElementById("xmr-node-reset");
 xmrNodeResetBtn.addEventListener("click", withBusyButton(xmrNodeResetBtn, () => saveXmrNode("")));
 
-// --- Adresse THOR (frais de swap) -------------------------------------------
-// Purement informatif (voir api::get_thor_fee_address) : aucune fonction
-// d'envoi/solde RUNE, juste la dérivation + l'affichage de l'adresse.
+// --- THOR address (swap fees) -----------------------------------------------
+//
+// Purely informational (see api::get_thor_fee_address): no RUNE send/balance
+// feature, just deriving and showing the address.
 
 document.getElementById("show-thor-address-btn").addEventListener("click", () => {
   document.getElementById("thor-address-password").value = "";
@@ -3068,7 +3070,7 @@ thorAddressConfirmBtn.addEventListener("click", withBusyButton(thorAddressConfir
 
 function lockWallet() {
   if (coinHistoryOpen()) closeCoinHistory();
-  // Côté Rust : clés de visualisation et adresses mémorisées oubliées.
+  // Rust side: view keys and remembered addresses forgotten.
   invoke("lock_session").catch((e) => console.error(e));
   profilesCache = [];
   currentProfileIndex = 0;
@@ -3080,22 +3082,22 @@ function lockWallet() {
 
 document.getElementById("lock-wallet").addEventListener("click", lockWallet);
 
-// --- Verrouillage automatique après inactivité -------------------------------
-// Rien n'est mis en cache en mémoire entre deux actions sensibles (chaque envoi/
-// déchiffrement redemande le mot de passe, voir "Modèle retenu" dans ETAPES.md) :
-// le verrouillage automatique ne protège donc pas un secret déjà déchiffré, mais
-// laisser le tableau de bord ouvert (adresses, soldes, historique) expose ces
-// informations à quiconque a un accès physique à l'appareil en votre absence —
-// l'hygiène standard attendue de n'importe quel wallet.
-const AUTO_LOCK_MS = 10 * 60 * 1000; // 10 minutes d'inactivité
+// --- Automatic lock after inactivity --------------------------------------------
+//
+// Nothing is cached in memory between two sensitive actions (every send/decryption
+// asks for the password again, see the model described at the top of
+// core/src/api.rs), so the automatic lock does not protect an already-decrypted
+// secret. But leaving the dashboard open (addresses, balances, history) exposes
+// that information to anyone with physical access to the device while you are
+// away: the standard hygiene expected of any wallet.
+const AUTO_LOCK_MS = 10 * 60 * 1000; // 10 minutes of inactivity
 let autoLockTimer = null;
 let lastActivityReset = 0;
 
 function resetAutoLockTimer() {
-  // Throttle : "mousemove"/"scroll" peuvent se déclencher des centaines de fois par
-  // seconde, et recréer un setTimeout à chaque fois est un travail inutile pour un
-  // délai de 10 minutes — une précision à la seconde près suffit largement et évite
-  // ce churn pendant tout mouvement de souris.
+  // Throttle: "mousemove"/"scroll" can fire hundreds of times per second, and
+  // recreating a setTimeout each time is pointless work for a 10-minute delay.
+  // One-second precision is plenty and avoids that churn during any mouse movement.
   const now = Date.now();
   if (now - lastActivityReset < 1000) return;
   lastActivityReset = now;
@@ -3110,10 +3112,11 @@ function resetAutoLockTimer() {
 });
 resetAutoLockTimer();
 
-// --- Réseaux ajoutés (Paramètres) ---------------------------------------------
-// Ajout : contrôles et identifiant de chaîne vérifiés par Rust (le RPC doit
-// répondre pour cette chaîne). Ajout ou retrait : session verrouillée puis
-// interface rechargée, qui reconstruit les cartes avec la nouvelle liste.
+// --- Added networks (Settings) ---------------------------------------------
+//
+// Adding: checks and the chain ID verified by Rust (the RPC must answer for that
+// chain). Adding or removing: the session is locked, then the UI reloads, which
+// rebuilds the cards with the new list.
 function reloadAfterNetworkChange() {
   setTimeout(async () => {
     await invoke("lock_session").catch((e) => console.error(e));
@@ -3137,7 +3140,7 @@ function renderCustomNetworks() {
       try {
         host = new URL(net.rpc).host;
       } catch (e) {
-        // Adresse déjà validée par Rust ; affichée telle quelle sinon.
+        // Address already validated by Rust; otherwise shown as is.
       }
       detail.append(chainLabel, ` ${net.chain_id} · ${host}`);
       info.append(title, detail);
@@ -3200,12 +3203,11 @@ customNetworkAddBtn.addEventListener(
   })
 );
 
-// --- Onglets de navigation ---------------------------------------------
+// --- Navigation tabs ---------------------------------------------
 
-// Navigation en barre latérale (voir styles.css, « Barre latérale ») : plus
-// rien à mesurer ni à replier selon la largeur. Gardée (aussi appelée par
-// `applyLanguage`, plus haut) pour la hauteur réservée en haut de page, nulle
-// avec une barre sur le côté.
+// Navigation in a sidebar (see styles.css, "Sidebar"): nothing left to measure or
+// collapse depending on the width. Kept (also called by `applyLanguage`, above)
+// for the height reserved at the top of the page, which is zero with a sidebar.
 function fitNavbar() {
   document.documentElement.style.setProperty("--navbar-height", "0px");
 }
@@ -3319,13 +3321,14 @@ restoreSubmitBtn.addEventListener("click", withBusyButton(restoreSubmitBtn, asyn
   }
 }));
 
-// --- Sauvegarde et restauration par clé USB (core/src/usb_backup.rs) -------
-// Les clés sont détectées en interrogeant la liste des lecteurs amovibles à
-// intervalle court tant que la fenêtre concernée est ouverte : brancher la clé
-// suffit. Les secrets ne font que transiter vers Rust (écriture) ; à la
-// restauration, les parts lues restent côté Rust, l'interface ne voit que le
-// numéro de part, le kit et le nom de la sauvegarde. Une clé peut porter les
-// sauvegardes de plusieurs portefeuilles, chacune sous son nom.
+// --- USB drive backup and restore (core/src/usb_backup.rs) -------------------
+//
+// Drives are detected by polling the list of removable drives at a short interval
+// while the relevant window is open: plugging the drive in is enough. Secrets only
+// pass through on their way to Rust (writing); when restoring, the shares read
+// stay on the Rust side, and the UI only sees the share number, the kit and the
+// backup name. One drive can hold backups of several wallets, each under its own
+// name.
 const USB_POLL_MS = 1500;
 
 function usbDriveName(drive) {
@@ -3336,16 +3339,16 @@ function usbDriveName(drive) {
 let usbModalTimer = null;
 const usbModal = document.getElementById("usb-modal");
 const usbNameInput = document.getElementById("usb-name");
-// Nom donné à chaque kit pendant la session : proposé pour ses autres parts.
+// Name given to each kit during the session: suggested for its other shares.
 const usbKitNames = new Map();
 
-// Même règle que core/src/usb_backup.rs::normalize_name (qui reste le juge).
+// Same rule as core/src/usb_backup.rs::normalize_name (which has the final say).
 function normalizeUsbName(value) {
   const name = value.trim().split(/\s+/).join(" ");
   return /^[\p{L}\p{N} _-]{1,30}$/u.test(name) ? name : null;
 }
 
-// Contenu d'une clé, par sauvegarde : « Perso (part n°1), Pro (part n°2) ».
+// Content of a drive, per backup: "Perso (share 1), Pro (share 2)".
 function usbDriveContents(shares) {
   return shares.map((s) => t("usb.sharePart", { name: s.name || t("usb.unnamed"), part: s.part })).join(", ");
 }
@@ -3354,8 +3357,8 @@ usbNameInput.addEventListener("input", () => {
   usbNameInput.dataset.touched = "1";
 });
 
-// `target` : { mode: "one", backup, item } (une part, sur sa propre clé) ou
-// { mode: "all", backups, container, saved } (tout le kit sur une clé).
+// `target`: { mode: "one", backup, item } (one share, on its own drive) or { mode:
+// "all", backups, container, saved } (the whole kit on one drive).
 function openUsbModal(target) {
   const all = target.mode === "all";
   document.getElementById("usb-modal-title").textContent = all ? t("usb.titleAll") : t("usb.title", { n: target.backup.part });
@@ -3394,7 +3397,8 @@ async function refreshUsbDrives(target) {
     console.error(e);
     return;
   }
-  // Ce kit déjà sur une clé sous un nom : ce nom est gardé, autant le montrer.
+  // This kit is already on a drive under a name: that name is kept, so we might as
+  // well show it.
   const knownName = drives.flatMap((d) => d.shares || []).find((s) => s.kit === kit && s.name)?.name;
   if (knownName && !usbNameInput.dataset.touched && !usbKitNames.has(kit)) usbNameInput.value = knownName;
   const list = document.getElementById("usb-drive-list");
@@ -3417,8 +3421,8 @@ async function refreshUsbDrives(target) {
       }
       const button = document.createElement("button");
       button.className = "secondary";
-      // Les sauvegardes d'autres portefeuilles n'empêchent rien ; seule une
-      // AUTRE part de ce kit bloque (deux parts sur une clé = accès complet).
+      // Other wallets' backups do not get in the way; only ANOTHER share of this kit
+      // blocks (two shares on one drive = full access).
       const mine = shares.filter((s) => s.kit === kit);
       const otherPart = all ? null : mine.find((s) => s.part !== target.backup.part);
       if (otherPart) {
@@ -3452,7 +3456,7 @@ async function writeToUsb(target, drive, button) {
   button.textContent = t("usb.writing");
   try {
     if (target.mode === "all") {
-      // Champs en snake_case : structure imbriquée, désérialisée telle quelle.
+      // snake_case fields: nested structure, deserialized as is.
       const shares = target.backups.map((b) => ({
         part: b.part,
         encrypted_share_b64: b.encrypted_share_b64,
@@ -3460,7 +3464,7 @@ async function writeToUsb(target, drive, button) {
         passphrase: b.passphrase,
       }));
       const label = await invoke("save_kit_to_usb", { root: drive.root, kitId: kit, name: backupName, shares });
-      if (label === null) return; // refusé dans la boîte de confirmation
+      if (label === null) return; // declined in the confirmation dialog
       usbKitNames.set(kit, backupName);
       const name = label || drive.root;
       successEl.textContent = t("usb.doneAll", { label: name });
@@ -3501,15 +3505,16 @@ async function writeToUsb(target, drive, button) {
 }
 
 let usbRestoreTimer = null;
-// Parts déjà lues : "kit:part" -> { kit, part, name, label } (label : nom de la clé).
+// Shares already read: "kit:part" -> { kit, part, name, label } (label: the drive's
+// name).
 const usbRestoreLoaded = new Map();
-// Sauvegarde à restaurer (identifiant de kit) : la seule complète, ou celle
-// cochée par l'utilisateur quand plusieurs le sont — jamais une choisie d'office
-// alors qu'une autre complète est apparue depuis.
+// Backup to restore (kit identifier): the only complete one, or the one the user
+// ticked when several are complete; never one picked automatically while another
+// complete one has appeared since.
 let usbRestoreChoice = null;
 let usbRestoreUserChose = false;
-// Dernier affichage : rien n'est reconstruit tant que rien ne change (le
-// choix au clavier garde son focus entre deux détections).
+// Last render: nothing is rebuilt as long as nothing changes (a keyboard choice
+// keeps its focus between two detections).
 let usbRestoreRendered = "";
 
 function startUsbRestore() {
@@ -3557,8 +3562,8 @@ async function pollUsbRestore() {
   renderUsbRestore();
 }
 
-// Parts lues, par sauvegarde (kit), dans l'ordre de lecture. Nom : celui
-// trouvé sur une de ses clés (vide : sauvegarde écrite avant les noms).
+// Shares read, per backup (kit), in reading order. Name: the one found on one of
+// its drives (empty: a backup written before names existed).
 function usbRestoreKits() {
   const kits = new Map();
   for (const share of usbRestoreLoaded.values()) {
@@ -3572,7 +3577,7 @@ function usbRestoreKits() {
   return list;
 }
 
-// Nom affiché d'une sauvegarde ; début de l'identifiant si deux portent le même.
+// Display name of a backup; the start of the identifier if two have the same name.
 function usbKitTitle(kit, kits) {
   const name = kit.name || t("restore.usbUnnamed");
   return kits.filter((k) => k.name === kit.name).length > 1 ? `${name} (${kit.kit.slice(0, 6)})` : name;
@@ -3580,7 +3585,7 @@ function usbKitTitle(kit, kits) {
 
 function renderUsbRestore() {
   const kits = usbRestoreKits();
-  // Deux parts différentes d'un même kit lues : restauration possible.
+  // Two different shares of the same kit read: restore possible.
   const complete = kits.filter((k) => new Set(k.parts.map((p) => p.part)).size >= 2);
   if (complete.length === 1) usbRestoreChoice = complete[0].kit;
   else if (!usbRestoreUserChose || !complete.some((k) => k.kit === usbRestoreChoice)) {
@@ -3652,16 +3657,17 @@ restoreUsbSubmitBtn.addEventListener("click", withBusyButton(restoreUsbSubmitBtn
   }
 }));
 
-// --- Vérification des clés de sauvegarde (core/src/usb_backup.rs) ----------
-// Une clé USB peut s'abîmer avec les années : chaque clé branchée est relue et
-// ses parts déchiffrées (check_usb_backup), sans rien écrire ni restaurer. Une
-// part abîmée est signalée tant que les deux autres existent encore.
+// --- Checking the backup drives (core/src/usb_backup.rs) ----------------------
+//
+// A USB drive can degrade over the years: each plugged-in drive is reread and its
+// shares decrypted (check_usb_backup), without writing or restoring anything. A
+// damaged share is reported while the other two still exist.
 
 function setBackupCheckedAt(time) {
   try {
     localStorage.setItem(BACKUP_CHECK_STORAGE_KEY, String(time));
   } catch (e) {
-    // localStorage indisponible : pas de rappel.
+    // localStorage unavailable: no reminder.
   }
 }
 
@@ -3670,8 +3676,8 @@ function markBackupChecked() {
   updateBackupReminder();
 }
 
-// Rappel dû un an après la dernière vérification ; sans date connue (première
-// version avec ce rappel), le compte commence maintenant.
+// Reminder due one year after the last check; with no known date (first version
+// with this reminder), the count starts now.
 function backupCheckDue() {
   let last;
   try {
@@ -3692,8 +3698,8 @@ function updateBackupReminder() {
 
 let backupCheckTimer = null;
 let backupCheckDrives = [];
-// Clé (racine + parts) -> { running } | { checks } | { error } : chaque clé
-// n'est vérifiée qu'une fois tant que son contenu ne change pas.
+// Drive (root + shares) -> { running } | { checks } | { error }: each drive is
+// only checked once as long as its content does not change.
 const backupCheckResults = new Map();
 const backupCheckModal = document.getElementById("backup-check-modal");
 
@@ -3797,29 +3803,26 @@ document.getElementById("backup-reminder-later").addEventListener("click", () =>
 
 let balanceRefreshTimer = null;
 
-// Rafraîchit les soldes toutes les 60 s tant que le tableau de bord est ouvert :
-// filet de sécurité, les changements étant signalés en direct (voir
-// updateBalanceWatch) — 15 s auparavant, avant la surveillance en direct, soit
-// quatre fois plus d'appels aux nœuds publics pour rien. Arrêté au verrouillage/réinitialisation pour ne pas laisser
-// tourner des appels réseau en arrière-plan une fois le wallet quitté. Les prix
-// (voir plus bas) suivent le même cycle de vie, avec un intervalle plus long : ce
-// sont des cours de marché, pas des montants qui bougent à chaque bloc, et l'API
-// publique utilisée (CoinGecko, gratuite) a une limite de requêtes par minute.
+// Refreshes the balances every 60 s while the dashboard is open, as a safety net, since changes are reported live
+// (see updateBalanceWatch). It used to be 15 s, before live monitoring existed: four times as many calls to public
+// nodes for nothing. Stopped on lock/reset so no network calls keep running in the background once the wallet is
+// closed. Prices (see below) follow the same lifecycle with a longer interval: they are market prices, not amounts
+// that move with every block, and the public API used (CoinGecko, free) has a per-minute request limit.
 function startBalanceAutoRefresh() {
   stopBalanceAutoRefresh();
   loadStakingAprs();
-  // Toujours précédé d'une relecture complète (déverrouillage, création,
-  // restauration) : le rattrapage au focus n'a pas à la refaire.
+  // Always preceded by a full reread (unlock, creation, restore): the catch-up on
+  // focus does not need to redo it.
   lastAutoBalances = Date.now();
   balanceRefreshTimer = setInterval(autoRefreshBalances, BALANCE_REFRESH_MS);
   startPriceAutoRefresh();
 }
 
-// Fenêtre réduite : ni soldes ni cours relus (une vingtaine d'appels par
-// minute aux nœuds publics, pour un écran que personne ne regarde). Les
-// réceptions restent signalées par la surveillance en direct (Rust) ; tout
-// est relu dès que la fenêtre reprend le focus. `document.hidden` reste faux
-// dans WebView2 fenêtre réduite (constaté le 06/10/2026) : Tauri répond.
+// Window minimized: neither balances nor prices are reread (twenty-odd calls a
+// minute to public nodes, for a screen nobody is looking at). Incoming funds are
+// still reported by live monitoring (Rust); everything is reread as soon as the
+// window regains focus. `document.hidden` stays false in a minimized WebView2
+// window (seen on 2026-10-06): Tauri answers instead.
 const BALANCE_REFRESH_MS = 60000;
 const PRICE_REFRESH_MS = 30000;
 let lastAutoBalances = 0;
@@ -3833,8 +3836,8 @@ async function windowMinimized() {
   }
 }
 
-// Relu il y a moins d'une demi-période (rattrapage au retour du focus) :
-// ce tick attend le suivant.
+// Reread less than half a period ago (catch-up when focus returned): this tick
+// waits for the next one.
 async function autoRefreshBalances() {
   if (Date.now() - lastAutoBalances < BALANCE_REFRESH_MS / 2 || (await windowMinimized())) return;
   lastAutoBalances = Date.now();
@@ -3848,8 +3851,8 @@ async function autoRefreshPrices() {
 }
 
 try {
-  // Focus rendu : relecture directe — `isMinimized` répond encore « vrai »
-  // à cet instant (constaté le 06/10/2026), l'interroger ici l'annulerait.
+  // Focus regained: reread directly, since `isMinimized` still answers "true" at
+  // this moment (seen on 2026-10-06), and asking it here would cancel the reread.
   window.__TAURI__.window.getCurrentWindow().onFocusChanged(({ payload: focused }) => {
     if (!focused) return;
     if (balanceRefreshTimer && Date.now() - lastAutoBalances > BALANCE_REFRESH_MS) {
@@ -3873,36 +3876,38 @@ function stopBalanceAutoRefresh() {
   }
 }
 
-// Portefeuille quitté (verrouillage, réinitialisation) : plus aucune adresse
-// surveillée. Pas dans stopBalanceAutoRefresh, que startBalanceAutoRefresh
-// appelle juste après que les adresses affichées ont lancé la surveillance.
+// Wallet closed (lock, reset): no address is monitored any more. Not in
+// stopBalanceAutoRefresh, which startBalanceAutoRefresh calls right after the
+// displayed addresses have started the monitoring.
 function stopBalanceWatch() {
   invoke("watch_balances", { targets: [] }).catch((e) => console.error(e));
 }
 
-// --- Prix indicatifs (USD) --------------------------------------------------
-// Purement informatif (voir core/src/price_rpc.rs) : aucune donnée sur l'adresse
-// ou le solde de l'utilisateur n'est envoyée à ce service, juste "quel est le prix
-// actuel de l'ETH/BTC/SOL" — identique pour tout le monde.
+// --- Indicative prices (USD) -------------------------------------------------
+//
+// Purely informational (see core/src/price_rpc.rs): no data about the user's
+// address or balance is sent to this service, just "what is the current price of
+// ETH/BTC/SOL", which is the same for everyone.
 
 let latestPrices = null;
 
-// --- Devise d'affichage -----------------------------------------------------
-// Tout est calculé en dollars (prix, historiques, portefeuilles) ; en euros,
-// chaque montant est converti à l'affichage : taux du moment pour les valeurs
-// actuelles, taux de CHAQUE DATE pour les courbes et les transactions passées
-// (paire EUR/USDT de Binance, cotée depuis le 03/01/2020 ; avant, le premier
-// taux connu). Préférence d'affichage, par appareil : stockage local.
+// --- Display currency -----------------------------------------------------
+//
+// Everything is computed in dollars (prices, histories, portfolios); in euros,
+// each amount is converted at display time: the current rate for current values,
+// the rate of EACH DATE for charts and past transactions (Binance's EUR/USDT pair,
+// listed since 2020-01-03; before that, the first known rate). A display
+// preference, per device: local storage.
 const CURRENCY_STORAGE_KEY = "pgp-wallet-currency";
 let displayCurrency = "usd";
 try {
   if (localStorage.getItem(CURRENCY_STORAGE_KEY) === "eur") displayCurrency = "eur";
 } catch (e) {
-  // localStorage indisponible : dollars.
+  // localStorage unavailable: dollars.
 }
-// Dollars pour 1 euro, au moment présent (`null` tant qu'il n'est pas lu).
+// Dollars per euro, right now (`null` until it has been read).
 let usdPerEur = null;
-// Séries du taux par période de courbe : { points, loadedAt }.
+// Rate series per chart period: { points, loadedAt }.
 const eurSeriesCache = new Map();
 const EUR_SERIES_TTL_MS = 10 * 60 * 1000;
 
@@ -3915,8 +3920,8 @@ async function eurSeries(range) {
   return points;
 }
 
-// Taux à l'instant `t` (secondes) : dernier point connu à cette date ; avant
-// le premier point, le premier (voir plus haut).
+// Rate at time `t` (seconds): the last known point at that date; before the first
+// point, the first one (see above).
 function rateAt(points, t) {
   let lo = 0;
   let hi = points.length - 1;
@@ -3938,15 +3943,15 @@ async function refreshEurRate() {
   }
 }
 
-// Montant en dollars → devise affichée, au taux actuel ; `null` si le taux
-// n'est pas encore connu (affiché « — »).
+// Dollar amount → display currency, at the current rate; `null` if the rate is not
+// known yet (shown as "—").
 function usdToFiat(usd) {
   if (displayCurrency !== "eur") return usd;
   return usdPerEur ? usd / usdPerEur : null;
 }
 
-// Même chose au taux d'une date passée (transactions) : série journalière
-// complète si elle est déjà chargée, sinon taux actuel.
+// The same at a past date's rate (transactions): the full daily series if it is
+// already loaded, otherwise the current rate.
 function usdToFiatAt(usd, timestamp) {
   if (displayCurrency !== "eur") return usd;
   const all = eurSeriesCache.get("all");
@@ -3954,40 +3959,39 @@ function usdToFiatAt(usd, timestamp) {
   return usdToFiat(usd);
 }
 
-// Premier taux EUR/USD connu (03/01/2020) : avant, celui-ci est utilisé.
+// First known EUR/USD rate (2020-01-03): used for earlier dates.
 const EUR_SERIES_START = 1578009600;
 
-// Note sous une courbe en euros ; la précision « avant 2020 » seulement si la
-// courbe commence avant.
+// Note under a chart in euros; the "before 2020" detail only if the chart starts
+// earlier.
 function eurChartNote(points) {
   if (displayCurrency !== "eur" || points.length === 0) return "";
   return points[0][0] < EUR_SERIES_START ? `${t("charts.eurNote")} ${t("charts.eurNoteBefore2020")}` : t("charts.eurNote");
 }
 
-// Points [instant, dollars] d'une courbe → devise affichée, au taux de chaque
-// instant.
+// Points [time, dollars] of a chart → display currency, at each point's rate.
 async function toDisplayCurrency(points, range) {
   if (displayCurrency !== "eur" || points.length === 0) return points;
   const rates = await eurSeries(range);
   return points.map(([time, usd]) => [time, usd / rateAt(rates, time)]);
 }
 
-// Réglage « Devise d'affichage » : tout ce qui est déjà affiché est converti
-// tout de suite (taux et séries chargés au besoin).
+// "Display currency" setting: everything already shown is converted straight away
+// (rates and series loaded as needed).
 const currencySelect = document.getElementById("currency-select");
 currencySelect.value = displayCurrency;
-// Menu déjà construit plus haut (initCustomSelect) : étiquette resynchronisée.
+// Menu already built above (initCustomSelect): label resynced.
 syncCustomSelect(currencySelect);
 currencySelect.addEventListener("change", async () => {
   displayCurrency = currencySelect.value === "eur" ? "eur" : "usd";
   try {
     localStorage.setItem(CURRENCY_STORAGE_KEY, displayCurrency);
   } catch (e) {
-    // Best-effort : la devise reste active pour cette session.
+    // Best-effort: the currency stays active for this session.
   }
   if (displayCurrency === "eur") {
     await refreshEurRate();
-    eurSeries("all").catch((e) => console.error(e)); // valeur des transactions passées
+    eurSeries("all").catch((e) => console.error(e)); // value of past transactions
   }
   refreshCurrencyDisplays();
 });
@@ -4009,10 +4013,10 @@ function refreshCurrencyDisplays() {
 let priceRefreshTimer = null;
 let pricesRefreshing = false;
 
-// Cours des actions tokenisées (Jupiter : prix d'une unité affichée, celui de
-// l'action) : demandés seulement si l'une est affichée.
+// Prices of tokenized shares (Jupiter: the price of one displayed unit, i.e. the
+// share's): only requested if one of them is shown.
 let stockQuotes = {};
-// `force` : même sans action affichée (« Gérer mes actions », trié par capitalisation).
+// `force`: even with no share shown ("Manage my stocks", sorted by market cap).
 async function refreshStockPrices(force = false) {
   if (!force && !ASSETS.some((asset) => asset.stock && isAssetVisible(asset.coin))) return;
   try {
@@ -4025,9 +4029,8 @@ async function refreshStockPrices(force = false) {
 }
 
 function priceForCoin(coin) {
-  // USDC est un stablecoin indexé sur le dollar : pas d'appel de prix
-  // nécessaire, toujours ~1 $ — évite un cas particulier dans
-  // updateFiatValue/renderQuickAmounts pour ce seul actif.
+  // USDC is a dollar-pegged stablecoin: no price call needed, always ~$1. Avoids a
+  // special case in updateFiatValue/renderQuickAmounts for this one asset.
   if (coin === "usdc") return 1;
   const asset = ASSET_BY_COIN[coin];
   if (asset?.stock) return stockQuotes[coin]?.price_usd ?? null;
@@ -4035,10 +4038,11 @@ function priceForCoin(coin) {
   return latestPrices[asset.gecko] ?? null;
 }
 
-// --- Valeur totale (en-tête du tableau de bord) -----------------------------
-// Somme des cartes affichées sur un réseau principal (solde × cours, comme leur
-// valeur en devise : fonds de test exclus) et variation sur 24 h pondérée par
-// la valeur de chaque crypto (variations de la liste des marchés).
+// --- Total value (dashboard header) -----------------------------------------
+//
+// Sum of the cards shown on a mainnet (balance × price, like their currency value:
+// test funds excluded) and the 24 h change weighted by each crypto's value
+// (changes from the market list).
 function marketChange24h(coin) {
   if (ASSET_BY_COIN[coin]?.stock) {
     const change = stockQuotes[coin]?.change_24h_percent;
@@ -4049,15 +4053,14 @@ function marketChange24h(coin) {
   return market && Number.isFinite(market.change_24h_percent) ? market.change_24h_percent : null;
 }
 
-// SOL stakés du profil affiché, liés à son adresse (`balanceKey`) : comptés
-// dans la valeur de la carte SOL et dans la valeur totale. Relus toutes les
-// 5 min au plus (les récompenses tombent tous les 2 jours), et aussitôt
-// après une opération.
+// Staked SOL of the profile shown, tied to its address (`balanceKey`): counted in
+// the SOL card's value and in the total value. Reread at most every 5 min (rewards
+// land every 2 days), and straight after an operation.
 let solStaked = { key: "", lamports: 0, at: 0 };
 const SOL_STAKED_TTL_MS = 5 * 60 * 1000;
 
-// Solde affiché d'une carte (valeur en devise, valeur totale), SOL stakés
-// compris (staking natif : ils ont quitté l'adresse mais restent à vous).
+// A card's displayed balance (currency value, total value), staked SOL included
+// (native staking: it has left the address but still belongs to you).
 function cardTotalBalance(card) {
   return Number.parseFloat(card.querySelector('[data-field="balance"]').textContent) + solStakedFor(card);
 }
@@ -4067,8 +4070,8 @@ function updatePortfolioTotal() {
   renderCardsTotal("stocks-total", "stocks-change", true);
 }
 
-// Valeur et variation sur 24 h des cartes affichées, cryptos (`stocks` faux)
-// ou actions tokenisées : chaque onglet a la sienne.
+// Value and 24 h change of the cards shown, cryptos (`stocks` false) or tokenized
+// shares: each tab has its own.
 function renderCardsTotal(totalId, changeId, stocks) {
   const totalEl = document.getElementById(totalId);
   const changeEl = document.getElementById(changeId);
@@ -4095,7 +4098,7 @@ function renderCardsTotal(totalId, changeId, stocks) {
   const fiat = known ? usdToFiat(usd) : null;
   const text = fiat == null ? "—" : withCurrency(fiat.toLocaleString(chartLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
   if (totalEl.textContent !== text) totalEl.textContent = text;
-  // Variation : seulement avec des fonds (pondérée par leur valeur).
+  // Change: only with funds (weighted by their value).
   const change = weight > 0 ? weighted / weight : null;
   changeEl.classList.toggle("up", change != null && change > 0);
   changeEl.classList.toggle("down", change != null && change < 0);
@@ -4117,36 +4120,36 @@ function updateFiatValue(card) {
     fiatEl.textContent = "—";
     return;
   }
-  // Dans la langue choisie (« ≈ 1 234,56 $ » / « ≈ $1,234.56 ») ; restait au
-  // format français en anglais.
+  // In the chosen language ("≈ 1 234,56 $" / "≈ $1,234.56"); it used to stay in
+  // French format in English.
   const text = formatUsdApprox(balance * price);
   if (fiatEl.textContent !== text) fiatEl.textContent = text;
 }
 
-// Dernière liste des marchés reçue : réaffichée telle quelle au changement de
-// devise, sans nouvel appel.
+// Last market list received: shown again as is when the currency changes, with no
+// new call.
 let lastMarketCoins = null;
 
 async function refreshPrices() {
-  // Même logique de verrou que refreshBalance : évite qu'un cycle lent (CoinGecko
-  // limite le débit gratuit) ne se fasse recouvrir par le tick suivant du minuteur.
+  // Same lock logic as refreshBalance: prevents a slow cycle (CoinGecko rate-limits
+  // the free tier) from being overlapped by the timer's next tick.
   if (pricesRefreshing) return;
   pricesRefreshing = true;
   try {
-    // Un seul appel CoinGecko par cycle : la liste des marchés donne déjà le
-    // cours de BTC/ETH/SOL (un appel `simple/price` séparé doublait la
-    // consommation de la limite gratuite). Échec passager : les derniers prix
-    // restent, au lieu de faire passer toutes les valeurs en dollars à « — ».
+    // A single CoinGecko call per cycle: the market list already gives the BTC/ETH/SOL
+    // prices (a separate `simple/price` call doubled the use of the free limit). On a
+    // transient failure, the last prices stay, instead of every dollar value turning
+    // into "—".
     let coins = null;
     if (displayCurrency === "eur") {
       await refreshEurRate();
-      // Taux de chaque jour, pour la valeur des transactions passées.
+      // Daily rates, for the value of past transactions.
       if (!eurSeriesCache.has("all")) eurSeries("all").catch((e) => console.error(e));
     }
     try {
       coins = await invoke("get_market_prices");
       lastMarketCoins = coins;
-      // Cours par identifiant CoinGecko (voir ASSETS[].gecko).
+      // Prices by CoinGecko identifier (see ASSETS[].gecko).
       const next = Object.fromEntries(coins.filter((c) => Number.isFinite(c.price_usd) && c.price_usd > 0).map((c) => [c.id, c.price_usd]));
       if (Object.keys(next).length > 0) latestPrices = next;
     } catch (e) {
@@ -4157,10 +4160,9 @@ async function refreshPrices() {
     scheduleCardResort();
     renderMarkets(coins);
     renderStockMarkets();
-    // Garde les montants rapides de la modale d'envoi synchronisés avec le cours si
-    // elle reste ouverte pendant un cycle de rafraîchissement (toutes les 60s, voir
-    // startPriceAutoRefresh) — sans ça, un montant rapide cliqué plus tard dans une
-    // session longue refléterait un prix périmé.
+    // Keeps the send window's quick amounts in sync with the price if it stays open
+    // across a refresh cycle (every 60 s, see startPriceAutoRefresh); otherwise a
+    // quick amount clicked later in a long session would reflect a stale price.
     if (!sendModal.classList.contains("hidden")) {
       renderQuickAmounts();
       renderSendAmountUnits();
@@ -4172,8 +4174,8 @@ async function refreshPrices() {
   }
 }
 
-// Capitalisation abrégée, dans la langue et la devise choisies : « 1,67 T$ »,
-// « 325,43 Md€ » / « $1.67T », « €325.43B ».
+// Abbreviated market cap, in the chosen language and currency: "1,67 T$", "325,43
+// Md€" / "$1.67T", "€325.43B".
 function formatMarketCap(usd) {
   const value = usdToFiat(usd);
   if (value == null) return "—";
@@ -4189,14 +4191,13 @@ function formatMarketCap(usd) {
   return withCurrency(value.toLocaleString(chartLocale()));
 }
 
-// Déjà triée par capitalisation décroissante côté Rust (voir
-// core/src/price_rpc.rs::get_market_data) : le frontend affiche l'ordre reçu tel
-// quel, sans re-trier. Mise à jour SUR PLACE toutes les 30 s (lignes gardées,
-// textes changés seulement s'ils diffèrent, mini-courbe remplacée quand la
-// nouvelle arrive) : reconstruire la liste faisait disparaître puis réapparaître
-// toutes les mini-courbes et perdre le focus clavier d'une ligne.
-// Logo des cryptos suivies : mêmes fichiers que les cartes du portefeuille.
-// Logos : ceux des cartes (ASSETS), retrouvés par identifiant CoinGecko.
+// Already sorted by descending market cap on the Rust side (see
+// core/src/price_rpc.rs::get_market_data): the frontend shows the order received
+// as is, without re-sorting. Updated IN PLACE every 30 s (rows kept, texts only
+// changed when they differ, mini chart replaced when the new one arrives):
+// rebuilding the list made every mini chart disappear and reappear, and lost a
+// row's keyboard focus. Logos: the same files as the wallet cards (ASSETS), found
+// by CoinGecko identifier.
 
 function createMarketRow(coin) {
   const row = document.createElement("div");
@@ -4216,7 +4217,7 @@ function createMarketRow(coin) {
     icon.alt = "";
     row.querySelector(".market-name").prepend(icon);
   }
-  // Un clic (ou Entrée) ouvre la courbe en grand, période au choix.
+  // A click (or Enter) opens the chart full size, with a choice of period.
   const openChart = () =>
     openChartModal({
       title: `${coin.name} (${coin.symbol})`,
@@ -4226,8 +4227,7 @@ function createMarketRow(coin) {
       load: (range) => loadPriceChart(chartSymbol, range),
       emptyKey: "charts.noData",
     });
-  // Pas de courbe (stablecoin sans cotation, jeton non coté sur Binance) :
-  // ligne non cliquable.
+  // No chart (unlisted stablecoin, token not listed on Binance): row not clickable.
   if (!chartSymbol) return row;
   row.classList.add("clickable");
   row.tabIndex = 0;
@@ -4254,7 +4254,7 @@ function fillMarketRow(row, coin) {
   setText(row.querySelector(".market-cap"), formatMarketCap(coin.market_cap_usd));
   const changeDiv = row.querySelector(".market-change");
   changeDiv.classList.remove("up", "down");
-  // Variation arrondie à 0,00 % : ni hausse ni baisse (USDC, typiquement).
+  // Change rounded to 0.00%: neither up nor down (USDC, typically).
   const trend = trendOf(coin.change_24h_percent);
   if (coin.change_24h_percent == null) {
     setText(changeDiv, "—");
@@ -4263,9 +4263,8 @@ function fillMarketRow(row, coin) {
     if (trend) changeDiv.classList.add(trend);
     setText(changeDiv, trend ? `${trend === "up" ? "▲" : "▼"} ${shown}` : shown);
   }
-  // Courbe des dernières 24 h (comme la variation affichée), de la même couleur
-  // que cette variation ; l'ancienne reste affichée jusqu'à l'arrivée de la
-  // nouvelle.
+  // Chart of the last 24 h (like the change shown), in the same color as that
+  // change; the old one stays shown until the new one arrives.
   const spark = row.querySelector(".market-spark");
   if (!row.dataset.chart) return;
   invoke("get_price_chart", { symbol: row.dataset.chart, range: "1d" })
@@ -4273,13 +4272,13 @@ function fillMarketRow(row, coin) {
     .catch((e) => console.error(e));
 }
 
-// `coins` : liste reçue par refreshPrices, `null` si l'appel a échoué.
+// `coins`: the list received by refreshPrices, `null` if the call failed.
 function renderMarkets(coins) {
   const container = document.getElementById("markets-list");
   try {
     if (!coins) throw new Error("marchés indisponibles");
     const existing = new Map([...container.querySelectorAll(".market-row")].map((row) => [row.dataset.symbol, row]));
-    // Seulement les cryptos affichées sur le tableau de bord.
+    // Only the cryptos shown on the dashboard.
     const rows = coins.filter((coin) => ASSET_BY_GECKO[coin.id] && isAssetVisible(ASSET_BY_GECKO[coin.id].coin)).map((coin) => {
       const row = existing.get(coin.symbol) || createMarketRow(coin);
       fillMarketRow(row, coin);
@@ -4288,21 +4287,21 @@ function renderMarkets(coins) {
     const sameOrder = rows.length === container.children.length && rows.every((row, i) => container.children[i] === row);
     if (!sameOrder) container.replaceChildren(...rows);
   } catch (e) {
-    // Échec passager : les derniers prix affichés restent plutôt qu'un message
-    // à la place de toute la liste.
+    // Transient failure: the last prices shown stay, rather than a message in place of
+    // the whole list.
     if (!container.querySelector(".market-row")) container.innerHTML = `<p class="muted">${t("wallet.marketsLoadError")}</p>`;
     console.error(e);
   }
 }
 
-// Cours des actions affichées, sous leurs cartes (onglet « Actions ») : même
-// présentation que les cryptos — mini-courbe 24 h, variation, prix,
-// capitalisation de l'entreprise ; un clic ouvre la courbe en grand.
+// Prices of the shares shown, under their cards ("Stocks" tab): the same layout as
+// the cryptos (24 h mini chart, change, price, company market cap); a click opens
+// the chart full size.
 function renderStockMarkets() {
   const container = document.getElementById("stocks-markets-list");
   if (!container) return;
   const existing = new Map([...container.querySelectorAll(".market-row")].map((row) => [row.dataset.symbol, row]));
-  // Par capitalisation, décroissante, comme la liste des cryptos.
+  // By market cap, descending, like the crypto list.
   const cap = (asset) => stockQuotes[asset.coin].market_cap_usd ?? -1;
   const visible = ASSETS.filter((asset) => asset.stock && isAssetVisible(asset.coin) && stockQuotes[asset.coin]);
   const rows = visible.sort((a, b) => cap(b) - cap(a)).map((asset) => {
@@ -4331,15 +4330,15 @@ function stopPriceAutoRefresh() {
   }
 }
 
-// Réseau d'une carte sans menu réseau : le premier de sa crypto (ASSETS).
+// Network of a card without a network menu: the first one for its crypto (ASSETS).
 const coinConfig = Object.fromEntries(ASSETS.map((asset) => [asset.coin, { defaultNetwork: asset.networks[0] }]));
 
-// Un "profil" = un index de dérivation supplémentaire sur la même clé maîtresse
-// (voir core/src/api.rs) : plusieurs adresses par réseau, toujours protégées par
-// le même Shamir 2-sur-3 + PGP. `create_wallet`/`restore_wallet` ne renvoient
-// qu'un seul jeu d'adresses (un seul profil existe à ce moment-là) ; on
-// l'enveloppe dans le même format de liste que `unlock_wallet`/`create_profile`
-// pour que le reste du tableau de bord n'ait qu'une seule forme de données à gérer.
+// A "profile" = an extra derivation index on the same master key (see
+// core/src/api.rs): several addresses per network, always protected by the same
+// 2-of-3 Shamir + PGP. `create_wallet`/`restore_wallet` only return one set of
+// addresses (a single profile exists at that point); it is wrapped in the same list
+// format as `unlock_wallet`/`create_profile` so the rest of the dashboard only has
+// one data shape to handle.
 function singleProfileList(addresses, label = "Principal") {
   return [{ index: 0, label, addresses }];
 }
@@ -4351,54 +4350,56 @@ function currentProfile() {
   return profilesCache.find((p) => p.index === currentProfileIndex) || profilesCache[0] || null;
 }
 
-// `network` ne sert qu'à Bitcoin : mainnet et testnet dérivent des adresses
-// DIFFÉRENTES pour un même profil (voir core/src/derivation.rs), contrairement à
-// EVM/Solana où la même adresse sert sur toutes les variantes du réseau — pour ces
-// deux-là, le paramètre est ignoré.
+// `network` only matters for Bitcoin: mainnet and testnet derive DIFFERENT
+// addresses for the same profile (see core/src/derivation.rs), unlike EVM/Solana
+// where the same address works on every variant of the network; for those two, the
+// parameter is ignored.
 function addressForCoin(coin, network) {
   return addressOfProfile(currentProfile(), coin, network);
 }
 
-// Adresse de `profile` pour une crypto et un réseau (celle de sa carte).
+// Address of `profile` for a crypto and a network (the one on its card).
 function addressOfProfile(profile, coin, network) {
-  // `addresses` est absent quand le profil a été créé sans mot de passe (voir
-  // add-profile-confirm) : l'adresse n'est pas encore dérivée, elle apparaîtra
-  // au prochain déverrouillage complet (voir core/src/api.rs::create_profile).
+  // `addresses` is missing when the profile was created without a password (see
+  // add-profile-confirm): the address has not been derived yet and will appear at
+  // the next full unlock (see core/src/api.rs::create_profile).
   if (!profile || !profile.addresses) return "";
-  // Même adresse sur tous les réseaux EVM (Ethereum, L2, BNB Chain…), jetons
-  // compris.
+  // The same address on every EVM network (Ethereum, L2s, BNB Chain…), tokens
+  // included.
   if (isEvmNetwork(network)) return profile.addresses.evm;
-  // Tron : TRX et jetons TRC-20 (USDT) à la même adresse T….
+  // Tron: TRX and TRC-20 tokens (USDT) at the same T… address.
   if (network === "tron_mainnet") return profile.addresses.tron ?? "";
   if (coin === "btc") return network === "btc_mainnet" ? profile.addresses.btc_mainnet : profile.addresses.btc_testnet;
-  // Zcash transparent (t1…) ; absente d'un profil dérivé avant son ajout,
-  // jusqu'au prochain déverrouillage.
+  // Transparent Zcash (t1…); missing from a profile derived before it was added,
+  // until the next unlock.
   if (coin === "zec") return profile.addresses.zcash ?? "";
-  // Monero : adresse principale (4…) ; absente d'un profil dérivé avant son
-  // ajout, jusqu'au prochain déverrouillage.
+  // Monero: primary address (4…); missing from a profile derived before it was
+  // added, until the next unlock.
   if (coin === "xmr") return profile.addresses.monero ?? "";
-  // Dogecoin (D…) ; absente d'un profil dérivé avant son ajout, jusqu'au
-  // prochain déverrouillage.
+  // Dogecoin (D…); missing from a profile derived before it was added, until the
+  // next unlock.
   if (coin === "doge") return profile.addresses.doge ?? "";
-  // Tron (T…) ; absente d'un profil dérivé avant son ajout.
+  // Tron (T…); missing from a profile derived before it was added.
   if (coin === "trx") return profile.addresses.tron ?? "";
-  // XRP (r…) ; absente d'un profil dérivé avant son ajout.
+  // XRP (r…); missing from a profile derived before it was added.
   if (coin === "xrp") return profile.addresses.xrp ?? "";
-  // Stellar (G…) ; absente d'un profil dérivé avant son ajout.
+  // Stellar (G…); missing from a profile derived before it was added.
   if (coin === "xlm") return profile.addresses.stellar ?? "";
-  // NEAR : compte implicite (64 hex) ; absent d'un profil dérivé avant son ajout.
+  // NEAR: implicit account (64 hex); missing from a profile derived before it was
+  // added.
   if (coin === "near") return profile.addresses.near ?? "";
-  // Cardano : adresse de base (addr1…) ; absente d'un profil dérivé avant son ajout.
+  // Cardano: base address (addr1…); missing from a profile derived before it was
+  // added.
   if (coin === "ada") return profile.addresses.cardano ?? "";
-  // Stacks (SP…) ; absente d'un profil dérivé avant son ajout.
+  // Stacks (SP…); missing from a profile derived before it was added.
   if (coin === "stx") return profile.addresses.stacks ?? "";
-  // Bittensor (5…, SS58) ; absente d'un profil dérivé avant son ajout.
+  // Bittensor (5…, SS58); missing from a profile derived before it was added.
   if (coin === "tao") return profile.addresses.bittensor ?? "";
-  // Zcash protégé : adresse u1 (récepteur Orchard seul).
+  // Shielded Zcash: u1 address (Orchard receiver only).
   if (coin === "zecs") return profile.addresses.zcash_shielded ?? "";
-  // Jetons Solana (USDC, USDT…) : même adresse propriétaire que SOL (le compte
-  // de jetons associé qui les détient réellement est un détail invisible pour
-  // l'utilisateur, dérivé côté Rust — voir core/src/sol_spl.rs).
+  // Solana tokens (USDC, USDT…): the same owner address as SOL (the associated token
+  // account that actually holds them is a detail invisible to the user, derived on
+  // the Rust side; see core/src/sol_spl.rs).
   if (coin === "sol" || network === "sol_mainnet" || network === "sol_devnet") return profile.addresses.solana;
   return "";
 }
@@ -4419,10 +4420,10 @@ function renderProfileSelect() {
 function renderCardAddress(card) {
   const coin = card.dataset.coin;
   const address = addressForCoin(coin, networkForCard(card));
-  // Adresse très longue (u1…, Monero) : début et fin seulement sur la carte ;
-  // en entier dans l'infobulle, la fenêtre QR et la copie.
+  // Very long address (u1…, Monero): only the start and end on the card; in full in
+  // the tooltip, the QR window and the copy.
   const shown = address.length > 64 ? `${address.slice(0, 14)}…${address.slice(-12)}` : address;
-  // Copie affichée par le bouton « adresse » d'une carte repliée.
+  // Copy shown by the "address" button of a collapsed card.
   for (const field of ["address", "collapsed-address"]) {
     const el = card.querySelector(`[data-field="${field}"]`);
     el.textContent = shown;
@@ -4431,10 +4432,11 @@ function renderCardAddress(card) {
   updateConvertButton(card);
 }
 
-// « Convertir » seulement là où un échange existe pour la crypto ET le réseau
-// affichés (voir `swapPairs`) : pas sur un réseau de test, ni là où il
-// échangerait les fonds d'un autre réseau que celui affiché.
-// Staking liquide : jeton reçu pour la monnaie de chaque réseau concerné.
+// "Convert" only where a swap exists for the crypto AND the network shown (see
+// `swapPairs`): not on a test network, nor where it would swap the funds of a
+// network other than the one shown.
+//
+// Liquid staking: the token received for each relevant network's native coin.
 const LIQUID_STAKING = { sol_mainnet: { from: "sol", to: "jitosol" }, evm_mainnet: { from: "evm", to: "steth" } };
 
 function liquidStakingFor(coin, network) {
@@ -4442,12 +4444,12 @@ function liquidStakingFor(coin, network) {
   return target && target.from === coin && swapPairs.some((p) => p.from_coin === coin && p.from_network === network && p.to_coin === target.to) ? target : null;
 }
 
-// Staking liquide : échange vers le jeton de staking dans « Convertir ».
+// Liquid staking: a swap to the staking token in "Convert".
 function openLiquidStaking(card) {
   const network = networkForCard(card);
   const target = liquidStakingFor(card.dataset.coin, network);
   if (!target) return;
-  // Carte du jeton de staking affichée : le solde reçu s'y verra.
+  // Staking token card shown: the balance received will appear there.
   assetChoices[target.to] = true;
   saveAssetChoices();
   applyAssetVisibility();
@@ -4455,8 +4457,8 @@ function openLiquidStaking(card) {
 }
 
 function updateConvertButton(card) {
-  // Cardano (délégation) et Solana (staking natif) : toujours ; ailleurs,
-  // seulement si le staking liquide est possible.
+  // Cardano (delegation) and Solana (native staking): always; elsewhere, only if
+  // liquid staking is possible.
   const native = card.dataset.coin === "ada" || (card.dataset.coin === "sol" && networkForCard(card) === "sol_mainnet");
   card.querySelector('[data-action="stake"]')?.classList.toggle("hidden", !native && !liquidStakingFor(card.dataset.coin, networkForCard(card)));
   const convert = card.querySelector('[data-action="swap"]');
@@ -4469,10 +4471,9 @@ function updateConvertButton(card) {
 
 function renderCardAddresses() {
   document.querySelectorAll(".wallet-card").forEach(renderCardAddress);
-  hiddenBalancesChecked = false; // nouvelles adresses : cartes masquées relues
+  hiddenBalancesChecked = false; // new addresses: hidden cards reread
   updateBalanceWatch();
-  // Adresses du profil changées (déverrouillage, changement de profil) : la
-  // courbe d'évolution suit.
+  // Profile addresses changed (unlock, profile switch): the portfolio chart follows.
   loadPortfolioChart();
 }
 
@@ -4514,9 +4515,9 @@ addProfileConfirmBtn.addEventListener("click", withBusyButton(addProfileConfirmB
   }
 
   try {
-    // Mot de passe optionnel : sans lui, le profil (nom + index) est enregistré tout
-    // de suite, mais son adresse n'est dérivée qu'au prochain déverrouillage complet
-    // (la seed n'est jamais mise en cache, voir core/src/api.rs::create_profile).
+    // Optional password: without it, the profile (name + index) is saved straight
+    // away, but its address is only derived at the next full unlock (the seed is never
+    // cached, see core/src/api.rs::create_profile).
     const profile = await invoke("create_profile", { password: password || null, label });
     profilesCache.push(profile);
     currentProfileIndex = profile.index;
@@ -4531,13 +4532,13 @@ addProfileConfirmBtn.addEventListener("click", withBusyButton(addProfileConfirmB
   }
 }));
 
-// --- Archivage de profil (léger, réversible) --------------------------------
-// Contrairement à la suppression définitive (plus bas), archiver ne touche jamais
-// à la seed et ne demande pas de mot de passe : le profil disparaît juste du
-// sélecteur principal, mais reste entièrement récupérable depuis "Profils
-// archivés" dans les Paramètres (voir core/src/api.rs::archive_profile). C'est le
-// chemin par défaut proposé à l'utilisateur ; la suppression définitive n'est
-// accessible que depuis la liste des archives, jamais directement ici.
+// --- Profile archiving (soft, reversible) --------------------------------
+//
+// Unlike permanent deletion (below), archiving never touches the seed and asks for
+// no password: the profile just disappears from the main selector, but remains
+// fully recoverable from "Archived profiles" in Settings (see
+// core/src/api.rs::archive_profile). This is the default path offered to the user;
+// permanent deletion is only reachable from the archive list, never directly here.
 const archiveProfileBtn = document.getElementById("archive-profile-btn");
 archiveProfileBtn.addEventListener("click", withBusyButton(archiveProfileBtn, async () => {
   if (profilesCache.length <= 1) {
@@ -4562,7 +4563,7 @@ archiveProfileBtn.addEventListener("click", withBusyButton(archiveProfileBtn, as
   }
 }));
 
-// --- Profils archivés (Paramètres) : restaurer ou supprimer définitivement -----
+// --- Archived profiles (Settings): restore or delete permanently -----
 
 async function loadArchivedProfiles() {
   const container = document.getElementById("archived-profiles-list");
@@ -4587,9 +4588,9 @@ async function loadArchivedProfiles() {
       restoreBtn.addEventListener("click", async () => {
         try {
           await invoke("unarchive_profile", { index: profile.index });
-          // L'adresse du profil restauré n'est pas connue tant que le mot de passe
-          // n'a pas été retapé (même principe que `create_profile` sans mot de
-          // passe) : elle apparaîtra au prochain déverrouillage complet.
+          // The restored profile's address is not known until the password has been entered
+          // again (same principle as `create_profile` without a password): it will appear at
+          // the next full unlock.
           profilesCache.push({ index: profile.index, label: profile.label, addresses: null });
           currentProfileIndex = profile.index;
           renderProfileSelect();
@@ -4619,14 +4620,13 @@ async function loadArchivedProfiles() {
   }
 }
 
-// Contrairement à l'archivage, cette suppression est irréversible et redemande le
-// mot de passe : l'app n'offre aucun moyen de recréer un profil au même index plus
-// tard, donc supprimer un profil qui a déjà reçu des fonds en perd concrètement
-// l'accès depuis cette interface (voir core/src/api.rs::delete_profile). Le
-// message d'avertissement le dit explicitement plutôt que de rassurer à tort.
-// Volontairement accessible SEULEMENT depuis la liste des archives (pas
-// directement sur un profil actif) : on doit d'abord archiver avant de pouvoir
-// supprimer pour de bon, comme une corbeille.
+// Unlike archiving, this deletion is irreversible and asks for the password again:
+// the app offers no way to recreate a profile at the same index later, so deleting
+// a profile that has already received funds effectively loses access to them from
+// this interface (see core/src/api.rs::delete_profile). The warning message says
+// so explicitly rather than reassuring wrongly. Deliberately reachable ONLY from
+// the archive list (not directly on an active profile): you have to archive first
+// before you can delete for good, like a recycle bin.
 let profileToDelete = null;
 
 function openDeleteProfileModal(profile) {
@@ -4673,25 +4673,25 @@ function networkForCard(card) {
   return coinConfig[card.dataset.coin].defaultNetwork;
 }
 
-// Réseau et adresse d'une carte : ce à quoi correspond le solde affiché.
+// Network and address of a card: what the balance shown corresponds to.
 function balanceKey(card) {
   const network = networkForCard(card);
   return `${network}|${addressForCoin(card.dataset.coin, network)}`;
 }
 
-// Quantité affichée sans zéros inutiles après le point (« 0.24000000 » →
-// « 0.24 », « 5000.000000 » → « 5000 »). Rien n'est arrondi : Rust a déjà
-// tronqué au nombre de décimales montrées, seuls les zéros finaux partent.
-// Les lectures du texte affiché (tri par valeur, Max, pourcentages, reçu)
-// restent justes : parseFloat et balanceIncrease acceptent cette forme.
+// Quantity shown without needless zeros after the point ("0.24000000" → "0.24",
+// "5000.000000" → "5000"). Nothing is rounded: Rust has already truncated to the
+// number of decimals shown, only trailing zeros go. Readings of the displayed text
+// (sort by value, Max, percentages, receipt) stay correct: parseFloat and
+// balanceIncrease accept this form.
 function displayAmount(raw) {
   return /^\d+\.\d+$/.test(raw) ? raw.replace(/\.?0+$/, "") : raw;
 }
 
-// Solde de `coin` sur `network` à `address`, tel que Rust le formate
-// (« 0.500000 », sans symbole). USDC est un jeton SPL, pas un "réseau" au sens
-// où get_balance l'entend (pas de notion de décimales/mint par actif dans
-// cette commande) : une commande dédiée, voir core/src/api.rs::get_usdc_balance.
+// Balance of `coin` on `network` at `address`, as Rust formats it ("0.500000", no
+// symbol). USDC is an SPL token, not a "network" in the sense get_balance means
+// (that command has no notion of decimals/mint per asset): a dedicated command,
+// see core/src/api.rs::get_usdc_balance.
 function fetchBalance(coin, network, address) {
   if (ASSET_BY_COIN[coin]?.stock) return stockBalance(coin, address);
   return usesTokenRegistry(coin, network)
@@ -4699,10 +4699,10 @@ function fetchBalance(coin, network, address) {
     : invoke(coin === "usdc" ? "get_usdc_balance" : "get_balance", { network, address });
 }
 
-// Soldes des actions tokenisées : une seule requête pour toutes
-// (get_stock_balances), partagée 5 s entre les cartes d'une même adresse —
-// au lieu de 19 lectures, surtout au déverrouillage (cartes masquées lues une
-// fois pour repérer des fonds).
+// Balances of tokenized shares: a single request for all of them
+// (get_stock_balances), shared for 5 s between the cards of the same address,
+// instead of 19 reads, especially at unlock (hidden cards read once to spot
+// funds).
 const stockBalanceRequests = new Map();
 function stockBalance(coin, address) {
   let entry = stockBalanceRequests.get(address);
@@ -4715,13 +4715,13 @@ function stockBalance(coin, address) {
 }
 
 async function refreshBalance(card) {
-  // Verrou par carte, partagé entre le clic manuel (bouton "Actualiser") et le
-  // rafraîchissement automatique (setInterval, toutes les 60 s) : sans lui, un appel
-  // réseau qui dépasse 15s (fréquent sur des endpoints publics gratuits) se ferait
-  // recouvrir par le tick suivant, empilant des requêtes concurrentes pour la même
-  // carte — même symptôme de lag qu'un double-clic, mais déclenché par le minuteur.
-  // Demande arrivée pendant une lecture (changement signalé en direct juste
-  // après l'envoi de la requête) : relue à la fin, pas perdue.
+  // Per-card lock, shared between the manual click ("Refresh" button) and the
+  // automatic refresh (setInterval, every 60 s): without it, a network call taking
+  // longer than 15 s (common with free public endpoints) would be overlapped by the
+  // next tick, piling up concurrent requests for the same card; the same lag as a
+  // double click, but triggered by the timer. A request arriving during a read (a
+  // change reported live just after the request was sent): reread at the end, not
+  // lost.
   if (card.dataset.refreshing === "1") {
     card.dataset.refreshAgain = "1";
     return;
@@ -4734,22 +4734,21 @@ async function refreshBalance(card) {
     const network = networkForCard(card);
     const address = addressForCoin(coin, network);
     const balanceEl = card.querySelector('[data-field="balance"]');
-    // Solde déjà affiché pour ce réseau et cette adresse : il reste pendant la
-    // lecture, et après un échec passager. Le remplacer par « … » à chaque
-    // actualisation périodique faisait clignoter tous les soldes et, en
-    // vue liste, bouger toutes les lignes (colonne ajustée à « … »). Autre
-    // réseau ou autre profil : l'ancien solde ne vaut plus rien.
+    // A balance already shown for this network and this address: it stays during the
+    // read, and after a transient failure. Replacing it with "…" on every periodic
+    // refresh made every balance flicker and, in list view, moved every row (column
+    // fitted to "…"). Different network or profile: the old balance no longer means
+    // anything.
     const shown = card.dataset.balanceKey === key;
     if (!shown) balanceEl.textContent = "…";
-    // Le solde et l'indicateur "transaction en attente" sont deux appels
-    // indépendants (l'un ne dépend pas du résultat de l'autre) : les lancer en
-    // parallèle plutôt que l'un après l'autre coupe la latence perçue du
-    // rafraîchissement en deux.
+    // The balance and the "pending transaction" indicator are two independent calls
+    // (neither depends on the other's result): running them in parallel rather than
+    // one after the other halves the perceived refresh latency.
     const balancePromise = fetchBalance(coin, network, address)
       .then((balance) => {
-        if (balanceKey(card) !== key) return; // réseau ou profil changé entre-temps
-        // Solde précédent de CETTE adresse sur CE réseau (pas au premier
-        // affichage, ni après un changement de profil ou de réseau).
+        if (balanceKey(card) !== key) return; // network or profile changed in the meantime
+        // Previous balance of THIS address on THIS network (not on first display, nor
+        // after a profile or network change).
         const previous = card.dataset.balanceKey === key ? balanceEl.textContent : null;
         const text = displayAmount(balance);
         if (balanceEl.textContent !== text) balanceEl.textContent = text;
@@ -4771,15 +4770,16 @@ async function refreshBalance(card) {
   } finally {
     card.dataset.refreshing = "";
   }
-  // Réseau ou profil changé pendant la lecture (ignorée), ou changement
-  // signalé entre-temps : relire.
+  // Network or profile changed during the read (ignored), or a change reported in
+  // the meantime: reread.
   if (balanceKey(card) !== key || card.dataset.refreshAgain === "1") refreshBalance(card);
 }
 
 // --- Monero --------------------------------------------------------------------
-// Solde tenu par la synchronisation de fond côté Rust (blocs analysés avec la
-// clé de visualisation, voir core/src/monero.rs) : la carte relit l'état local
-// après chaque passage, et montre la part encore bloquée (10 confirmations).
+//
+// Balance kept by the background sync on the Rust side (blocks scanned with the
+// view key, see core/src/monero.rs): the card rereads the local state after each
+// pass, and shows the part still locked (10 confirmations).
 
 async function refreshXmrStatus(card) {
   const statusEl = card.querySelector('[data-field="coin-status"]');
@@ -4802,11 +4802,12 @@ window.__TAURI__.event.listen("xmr-synced", () => {
   if (card && dashboardShown()) refreshBalance(card);
 }).catch((e) => console.error(e));
 
-// --- Zcash protégé ------------------------------------------------------------
-// Carte à part (adresse u1, récepteur Orchard seul) : solde et historique lus
-// côté Rust dans la base locale que la synchronisation de fond met à jour.
-// Sa ligne d'état dit si la synchronisation est en cours, ce qui attend une
-// confirmation, ou invite à protéger les ZEC de la carte transparente.
+// --- Shielded Zcash ------------------------------------------------------------
+//
+// A separate card (u1 address, Orchard receiver only): balance and history read on
+// the Rust side from the local database that the background sync keeps up to date.
+// Its status line says whether the sync is running, what is waiting for
+// confirmation, or invites the user to shield the ZEC on the transparent card.
 
 async function refreshShieldedStatus(card) {
   const statusEl = card.querySelector('[data-field="coin-status"]');
@@ -4833,14 +4834,14 @@ function refreshZcashCards() {
   }
 }
 
-// Fenêtre des dépenses protégées : « shield » (mot de passe seul) ou « send »
-// (destinataire, montant). La boîte de confirmation native, construite côté
-// Rust à partir de la transaction proposée, montre montant et frais.
+// Shielded spending window: "shield" (password only) or "send" (recipient,
+// amount). The native confirmation dialog, built on the Rust side from the
+// proposed transaction, shows the amount and fee.
 let shieldedMode = "send";
 
-// Autres profils proposés comme destinataires (leur adresse protégée u1),
-// comme sous le carnet d'adresses de l'envoi ordinaire ; la boîte native nomme
-// le profil reconnu d'après les adresses dérivées côté Rust.
+// Other profiles offered as recipients (their shielded u1 address), like the
+// address book under the regular send; the native dialog names the recognized
+// profile based on the addresses derived on the Rust side.
 function refreshShieldedPicker() {
   const wrapper = document.getElementById("shielded-picker");
   const select = document.getElementById("shielded-picker-select");
@@ -4891,8 +4892,8 @@ document.getElementById("shielded-cancel").addEventListener("click", () => {
 });
 
 restrictToAmount(document.getElementById("shielded-amount"));
-// « Max » : tous les fonds protégés dépensables, frais déduits (proposition de
-// la bibliothèque Zcash), recalculé à l'envoi.
+// "Max": all spendable shielded funds, fee deducted (the Zcash library's
+// proposal), recomputed at send time.
 let shieldedMax = false;
 document.getElementById("shielded-amount").addEventListener("input", () => {
   shieldedMax = false;
@@ -4944,8 +4945,8 @@ window.__TAURI__.event.listen("zec-shielded-synced", () => {
   if (card && dashboardShown()) refreshBalance(card);
 }).catch((e) => console.error(e));
 
-// Crypto masquée SANS choix explicite de l'utilisateur, avec des fonds :
-// affichée (et retenue comme telle). Une crypto masquée volontairement le reste.
+// A crypto hidden WITHOUT an explicit choice from the user, holding funds: shown
+// (and remembered as such). A crypto hidden on purpose stays hidden.
 function revealIfFunded(card, balance) {
   const coin = card.dataset.coin;
   if (isAssetVisible(coin) || coin in assetChoices || !(Number.parseFloat(balance) > 0)) return;
@@ -4955,9 +4956,9 @@ function revealIfFunded(card, balance) {
   showCopyToast(t("assets.autoShown", { symbol: ASSET_BY_COIN[coin].symbol }), 5000);
 }
 
-// Hausse exacte entre deux soldes affichés (« 0.12345678 ») — calcul sur des
-// entiers à l'échelle des décimales, jamais en flottants —, sans zéros
-// inutiles (« 0.01 ») ; `null` si le solde n'a pas monté ou n'est pas un nombre.
+// Exact increase between two displayed balances ("0.12345678"), computed on
+// integers scaled to the decimals, never in floating point, without needless zeros
+// ("0.01"); `null` if the balance did not go up or is not a number.
 function balanceIncrease(before, after) {
   const number = /^\d+(\.\d+)?$/;
   if (!number.test(before) || !number.test(after)) return null;
@@ -4974,9 +4975,8 @@ function balanceIncrease(before, after) {
   return fraction ? `${whole}.${fraction}` : whole;
 }
 
-// Fonds arrivés sur une carte affichée : message (5 s) et solde brièvement
-// éclairé. Valeur en dollars seulement sur le réseau principal (des jetons de
-// test ne valent rien).
+// Funds arrived on a card shown: a message (5 s) and the balance briefly
+// highlighted. Dollar value only on mainnet (test tokens are worthless).
 function announceReceived(card, network, amount) {
   const coin = card.dataset.coin;
   const symbol = card.querySelector(".balance").textContent.trim().split(/\s+/).pop();
@@ -4986,28 +4986,27 @@ function announceReceived(card, network, amount) {
   showCopyToast(t("wallet.received", { amount, symbol, fiat }), 5000, coin);
   const balance = card.querySelector(".balance");
   balance.classList.remove("balance-received");
-  void balance.offsetWidth; // relance l'animation si une autre réception suit
+  void balance.offsetWidth; // restarts the animation if another receipt follows
   balance.classList.add("balance-received");
 }
 
-// Surveillance en direct (voir core/src/balance_watch.rs) : dès qu'un envoi ou
-// une réception change le solde d'une carte affichée, Rust le signale
-// ("balance-changed") et la carte est relue aussitôt — Solana/USDC poussés par
-// le nœud (~1 s), Ethereum relu toutes les 6 s, Bitcoin et Dogecoin toutes les
-// 10 s (transactions en attente comprises), Zcash transparent toutes les 20 s,
-// jetons du registre (ERC-20 toutes les 12 s, Solana poussés). Monero et Zcash
-// protégé : synchronisation de fond toutes les 30 s. Le rafraîchissement
-// toutes les 60 s reste en filet de sécurité.
+// Live monitoring (see core/src/balance_watch.rs): as soon as a send or receipt
+// changes the balance of a card shown, Rust reports it ("balance-changed") and the
+// card is reread straight away. Solana/USDC are pushed by the node (~1 s),
+// Ethereum is reread every 6 s, Bitcoin and Dogecoin every 10 s (pending
+// transactions included), transparent Zcash every 20 s, registry tokens (ERC-20
+// every 12 s, Solana pushed). Monero and shielded Zcash: background sync every 30
+// s. The 60 s refresh remains as a safety net.
 function updateBalanceWatch() {
   const targets = [...document.querySelectorAll(".wallet-card:not(.asset-hidden)")]
     .map((card) => {
       const coin = card.dataset.coin;
       const network = networkForCard(card);
-      // Jetons du registre : contrat ou mint lus côté Rust (seul l'identifiant
-      // part d'ici).
+      // Registry tokens: contract or mint read on the Rust side (only the identifier
+      // leaves from here).
       if (usesTokenRegistry(coin, network)) return { id: coin, network, address: addressForCoin(coin, network), token: coin };
-      // Monero, Zcash protégé : solde tenu par la synchronisation de fond
-      // (événements `xmr-synced`, `zec-shielded-synced`).
+      // Monero, shielded Zcash: balance kept by the background sync (`xmr-synced`,
+      // `zec-shielded-synced` events).
       if (coin === "xmr" || coin === "zecs") return { address: "" };
       return { id: coin, network: coin === "usdc" ? "usdc_solana" : network, address: addressForCoin(coin, network) };
     })
@@ -5015,11 +5014,10 @@ function updateBalanceWatch() {
   invoke("watch_balances", { targets }).catch((e) => console.error(e));
 }
 
-// Délai d'annulation d'un envoi (Rust : `send_grace_period`), après la
-// confirmation de Windows et avant la signature : compte à rebours,
-// « Confirmer maintenant » ou « Annuler l'envoi ». Sans réponse, l'envoi part
-// à la fin du délai — c'est Rust qui attend, ces boutons ne font que
-// l'écourter ou l'annuler.
+// Cancellation delay of a send (Rust: `send_grace_period`), after the Windows
+// confirmation and before signing: a countdown, "Confirm now" or "Cancel the
+// send". Without an answer, the send goes out when the delay ends; it is Rust that
+// waits, and these buttons can only shorten it or cancel.
 const countdownModal = document.getElementById("send-countdown-modal");
 let sendCountdown = null;
 
@@ -5040,7 +5038,7 @@ function resolveSendCountdown(send) {
 window.__TAURI__.event.listen("send-countdown", (event) => {
   closeSendCountdown();
   const { id, seconds, recap } = event.payload;
-  // Réseau, montant, adresse (et tag / mémo) : ceux de la boîte de Windows.
+  // Network, amount, address (and tag / memo): the ones from the Windows dialog.
   setWithCoinIcon(document.getElementById("send-countdown-network"), coinForNetwork(recap?.network_id), recap?.network ?? "");
   document.getElementById("send-countdown-amount").textContent = recap?.amount ?? "";
   document.getElementById("send-countdown-to-label").textContent = recap?.to_label ?? "";
@@ -5058,10 +5056,10 @@ window.__TAURI__.event.listen("send-countdown", (event) => {
   sendCountdown = { id, timer: setInterval(tick, 200) };
   const progress = document.getElementById("send-countdown-progress");
   progress.classList.remove("running");
-  void progress.offsetWidth; // relance l'animation
+  void progress.offsetWidth; // restarts the animation
   progress.classList.add("running");
   countdownModal.classList.remove("hidden");
-  // Annuler par défaut : une touche Entrée ne confirme jamais par mégarde.
+  // Cancel by default: an Enter key never confirms by accident.
   document.getElementById("send-countdown-cancel").focus();
 });
 
@@ -5080,36 +5078,35 @@ window.__TAURI__.event.listen("balance-changed", (event) => {
   if (card && dashboardShown()) refreshBalance(card);
 });
 
-// Signale une transaction détectée mais pas encore finalisée (mempool Bitcoin,
-// signature Solana pas encore "finalized") — utile pour voir des fonds entrants
-// arriver avant qu'ils ne comptent dans le solde. Toujours `false` pour Ethereum
-// (voir core/src/api.rs::has_pending_btc/has_pending_sol) : aucun nœud EVM public
-// n'expose les transactions en attente pour une adresse, le badge ne s'allumera
-// donc jamais sur les cartes ETH — pas un bug, une limite du réseau public utilisé.
+// Flags a transaction that has been detected but not finalized yet (Bitcoin
+// mempool, Solana signature not yet "finalized"), useful for seeing incoming funds
+// arrive before they count in the balance. Always `false` for Ethereum (see
+// core/src/api.rs::has_pending_btc/has_pending_sol): no public EVM node exposes the
+// pending transactions of an address, so the badge will never light up on ETH
+// cards. Not a bug, a limit of the public network service used.
 async function checkPendingTx(card, address, network) {
   const badge = card.querySelector('[data-field="pending"]');
   if (!badge || !address) return;
   try {
     const pending = await invoke("has_pending_tx", { network, address });
-    // Bitcoin : une réception non confirmée n'est PAS comptée dans le solde
-    // (son émetteur peut encore l'annuler) — son montant est montré ici.
+    // Bitcoin: an unconfirmed receipt is NOT counted in the balance (its sender can
+    // still cancel it); its amount is shown here.
     const incoming = pending && network.startsWith("btc") ? await invoke("get_btc_pending_incoming", { network, address }) : null;
     const text = incoming ? t("wallet.pendingIncoming", { amount: incoming }) : t("wallet.pendingBadge");
     if (badge.textContent !== text) badge.textContent = text;
     badge.classList.toggle("visible", pending);
-    // Nouvelle réception Bitcoin en attente (pas encore comptée dans le
-    // solde) : signalée dès qu'elle apparaît, par la HAUSSE du total en
-    // attente — une baisse (réception confirmée, passée dans le solde) n'est
-    // pas une nouvelle réception. Rien au premier affichage, ni après un
-    // changement de profil ou de réseau.
+    // A new pending Bitcoin receipt (not counted in the balance yet): reported as soon
+    // as it appears, through an INCREASE of the pending total; a decrease (receipt
+    // confirmed, moved into the balance) is not a new receipt. Nothing on first
+    // display, nor after a profile or network change.
     const key = balanceKey(card);
     const seen = card._pendingIncoming;
     const increase = incoming && seen && seen.key === key ? balanceIncrease(seen.amount || "0", incoming) : null;
     if (increase) showCopyToast(t("wallet.receivedPending", { amount: increase }), 5000);
     card._pendingIncoming = { key, amount: incoming };
-    // Transaction pas encore finalisée : revérifiée dans 15 s, la surveillance
-    // en direct ne signalant pas la finalisation (le solde ne bouge plus). Un
-    // seul minuteur par carte : chaque actualisation le remplace.
+    // Transaction not finalized yet: checked again in 15 s, since live monitoring does
+    // not report finalization (the balance no longer moves). A single timer per card:
+    // each refresh replaces it.
     clearTimeout(card._pendingRecheck);
     if (pending) card._pendingRecheck = setTimeout(() => refreshBalance(card), 15000);
   } catch (e) {
@@ -5128,14 +5125,14 @@ function refreshAllBalances() {
 document.querySelectorAll(".wallet-card").forEach((card) => {
   const refreshBtn = card.querySelector('[data-action="refresh"]');
   refreshBtn.addEventListener("click", withThrottledButton(refreshBtn, REFRESH_COOLDOWN_MS, () => refreshBalance(card), { keepLabel: true }));
-  // Zcash protégé : envoi depuis les fonds protégés (fenêtre dédiée).
+  // Shielded Zcash: sending from shielded funds (dedicated window).
   card.querySelector('[data-action="send"]').addEventListener("click", () => (card.dataset.coin === "zecs" ? openShieldedModal("send") : openSendModal(card)));
-  // Boutons QR et copie : ceux de la ligne d'adresse ET ceux de la carte repliée.
+  // QR and copy buttons: those of the address line AND those of the collapsed card.
   card.querySelectorAll('[data-action="qr"]').forEach((button) => button.addEventListener("click", () => openQrModal(card)));
-  // Cliquer l'adresse elle-même l'affiche en entier (même modale que le bouton QR,
-  // qui montre déjà le texte complet à côté du code QR) — utile surtout en vue
-  // liste (voir styles.css : `.address` y est tronquée avec "…" pour la
-  // compacité), mais garde le même geste en vue cartes aussi, par cohérence.
+  // Clicking the address itself shows it in full (the same modal as the QR button,
+  // which already shows the full text next to the QR code). Mostly useful in list
+  // view (see styles.css: `.address` is truncated with "…" there for compactness),
+  // but the same gesture is kept in card view for consistency.
   card.querySelectorAll('[data-field="address"], [data-field="collapsed-address"]').forEach((el) => el.addEventListener("click", () => openQrModal(card)));
   card.querySelectorAll('[data-action="copy-address"]').forEach((button) =>
     button.addEventListener("click", () => {
@@ -5147,7 +5144,7 @@ document.querySelectorAll(".wallet-card").forEach((card) => {
       copyText(address, t("wallet.addressCopied"));
     })
   );
-  // Carte repliée : afficher / masquer l'adresse sans déplier la carte.
+  // Collapsed card: show / hide the address without expanding the card.
   const toggleAddress = card.querySelector('[data-action="toggle-address"]');
   toggleAddress.addEventListener("click", () => {
     const shown = card.querySelector('[data-field="collapsed-address"]').classList.toggle("hidden") === false;
@@ -5169,15 +5166,15 @@ document.querySelectorAll(".wallet-card").forEach((card) => {
     }
     openLiquidStaking(card);
   });
-  // Même historique que l'onglet « Historique », ouvert directement sur cette
-  // crypto : plus facile à trouver depuis la carte que l'onglet seul.
+  // The same history as the "History" tab, opened directly on this crypto: easier to
+  // find from the card than the tab alone.
   card.querySelector('[data-action="history"]').addEventListener("click", () => openCoinHistory(card.dataset.coin));
   const select = card.querySelector(".network-select");
   if (select) {
-    // Contrairement à EVM/Solana, changer de réseau Bitcoin change aussi l'adresse
-    // affichée (mainnet et testnet dérivent des adresses différentes pour un même
-    // profil, voir addressForCoin) — recalculée pour toutes les cartes sans risque,
-    // puisqu'elle ne change de valeur que pour "btc".
+    // Unlike EVM/Solana, switching Bitcoin network also changes the address shown
+    // (mainnet and testnet derive different addresses for the same profile, see
+    // addressForCoin). Recomputed for every card safely, since it only changes value
+    // for "btc".
     select.addEventListener("change", () => {
       renderCardAddress(card);
       refreshBalance(card);
@@ -5190,25 +5187,26 @@ document.querySelectorAll(".wallet-card").forEach((card) => {
 
 const qrModal = document.getElementById("qr-modal");
 
-// Demande de paiement : montant facultatif inscrit dans le QR code, au format
-// standard de chaque réseau — celui qui scanne voit l'adresse ET le montant :
-// BIP21 pour Bitcoin, Solana Pay pour SOL (et USDC, désigné par son mint),
-// EIP-681 pour Ethereum (montant en wei, réseau par son chain id). Sans
-// montant : l'adresse seule, lisible par toutes les applications.
-// Décimales maximales d'un montant demandé : 18 pour toute monnaie EVM.
+// Payment request: an optional amount written into the QR code, in each network's
+// standard format, so whoever scans it sees the address AND the amount: BIP21 for
+// Bitcoin, Solana Pay for SOL (and USDC, designated by its mint), EIP-681 for
+// Ethereum (amount in wei, network by its chain ID). Without an amount: the
+// address alone, readable by every app.
+//
+// Maximum decimals for a requested amount: 18 for any EVM currency.
 const QR_DECIMALS = new Proxy({ btc: 8, sol: 9, zec: 8, zecs: 8, xmr: 12, doge: 8, trx: 6, xrp: 6, xlm: 7, near: 24, ada: 6, stx: 6 }, { get: (known, coin) => ASSET_BY_COIN[coin]?.unitDecimals ?? known[coin] ?? 18 });
-// Même mint que core/src/sol_spl.rs::usdc_mint_mainnet.
+// Same mint as core/src/sol_spl.rs::usdc_mint_mainnet.
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 let qrCard = null;
 let qrRenderToken = 0;
 
-// Montant saisi (« 0,01 » accepté) → décimal normalisé (« 0.01 »), `null` si
-// vide ou nul ; lève une erreur s'il est invalide.
+// Amount entered ("0,01" accepted) → normalized decimal ("0.01"), `null` if empty
+// or zero; throws an error if it is invalid.
 function parseRequestAmount(raw, decimals) {
   let text = raw.trim().replace(",", ".");
-  // Saisie en cours (« 0. », « . ») : pas encore de montant, mais pas une
-  // erreur — le message rouge apparaissait puis disparaissait à chaque
-  // montant décimal tapé. « .5 » vaut 0.5.
+  // Input in progress ("0.", "."): no amount yet, but not an error either; the red
+  // message used to appear and disappear with every decimal amount typed. ".5" means
+  // 0.5.
   if (!text || text === "." || /^\d+\.$/.test(text)) return null;
   if (/^\.\d+$/.test(text)) text = `0${text}`;
   if (!/^\d+(\.\d+)?$/.test(text)) throw new Error("invalid");
@@ -5224,7 +5222,7 @@ function paymentUri(coin, network, address, amount) {
   if (amount == null) return address;
   const asset = ASSET_BY_COIN[coin];
   if (asset?.token && isEvmNetwork(network)) {
-    // EIP-681, appel transfer du contrat du jeton (montant en unités exactes).
+    // EIP-681, a transfer call on the token's contract (amount in exact units).
     const [whole, fraction = ""] = amount.split(".");
     const units = BigInt(whole + fraction.padEnd(asset.unitDecimals, "0")).toString();
     return `ethereum:${asset.contracts[network]}@${EVM_CHAIN_IDS[network]}/transfer?address=${address}&uint256=${units}`;
@@ -5245,8 +5243,8 @@ function paymentUri(coin, network, address, amount) {
   return address;
 }
 
-// QR code de la carte ouverte, avec le montant saisi s'il est valide (sinon
-// l'adresse seule, et l'erreur sous le champ).
+// QR code of the open card, with the amount entered if it is valid (otherwise the
+// address alone, and the error under the field).
 async function renderQr() {
   const card = qrCard;
   if (!card) return;
@@ -5264,12 +5262,12 @@ async function renderQr() {
   document.getElementById("qr-amount-hint").classList.toggle("hidden", amount == null);
   const token = ++qrRenderToken;
   const svg = await invoke("generate_qr_svg", { text: paymentUri(coin, network, address, amount) });
-  if (token !== qrRenderToken || qrCard !== card) return; // saisie plus récente
+  if (token !== qrRenderToken || qrCard !== card) return; // a more recent input
   document.getElementById("qr-container").innerHTML = svg;
 }
 
-// Nom du réseau tel que les plateformes d'échange l'affichent au retrait
-// (Binance, Coinbase, Kraken…) : celui à choisir pour envoyer ici.
+// Network name as exchanges show it when withdrawing (Binance, Coinbase, Kraken…):
+// the one to pick to send here.
 const EXCHANGE_NETWORK_NAMES = {
   evm_mainnet: "Ethereum (ERC20)",
   arbitrum_mainnet: "Arbitrum One",
@@ -5294,7 +5292,7 @@ const EXCHANGE_NETWORK_NAMES = {
 
 function renderQrNetworkHint(network) {
   const hint = document.getElementById("qr-network-hint");
-  // Réseau ajouté : son nom, tel que l'utilisateur l'a saisi.
+  // Added network: its name, as the user entered it.
   const name = EXCHANGE_NETWORK_NAMES[network] ?? CUSTOM_NETWORKS.find((net) => net.id === network)?.name;
   if (!name) {
     hint.textContent = t("qr.testnetWarning");
@@ -5341,25 +5339,25 @@ document.getElementById("qr-close").addEventListener("click", () => {
   qrCard = null;
 });
 
-// --- Historique de transactions (onglet dédié, trié par réseau) -------------
-// Un réseau = une carte du tableau de bord (voir data-coin) : la carte reste
-// la seule source de vérité pour "quel réseau/quelle adresse" (mainnet ou
-// testnet, choisi via son sélecteur), l'onglet ne fait que relire cet état,
-// jamais son propre choix de réseau séparé.
+// --- Transaction history (dedicated tab, sorted by network) -------------
+//
+// One network = one dashboard card (see data-coin): the card stays the single
+// source of truth for "which network/which address" (mainnet or testnet, chosen
+// with its selector); the tab only rereads that state, never a separate network
+// choice of its own.
 
 const HISTORY_COINS = ASSETS.map((asset) => asset.coin);
 
-// Pas encore dans un bloc : pas de date (le statut dit « En attente »).
+// Not in a block yet: no date (the status says "Pending").
 function formatTxTimestamp(unixSeconds) {
   if (unixSeconds == null) return "";
   return new Date(unixSeconds * 1000).toLocaleString(chartLocale());
 }
 
-// Envois partis de l'app pendant cette session, que l'historique du réseau
-// ne liste pas encore (indexeur en retard de quelques secondes à quelques
-// minutes) : affichés « En attente » en tête, pour qu'un envoi ne semble
-// jamais avoir disparu. En mémoire seulement ; oubliés dès que l'historique
-// les liste, ou au bout d'une heure.
+// Sends made from the app during this session that the network's history does not
+// list yet (indexer a few seconds to a few minutes behind): shown as "Pending" at
+// the top, so a send never seems to have disappeared. In memory only; forgotten as
+// soon as the history lists them, or after an hour.
 const RECENT_SEND_MAX_AGE_MS = 60 * 60 * 1000;
 const recentSends = [];
 
@@ -5375,11 +5373,10 @@ function rememberRecentSend(coin, network, id, amount) {
   invoke("tx_explorer_url", { network, tx: id }).then((url) => { send.explorerUrl = url; }).catch(() => {});
 }
 
-// Envois de `network`/`address` encore absents de `entries`, du plus récent
-// au plus ancien. Listé = même identifiant ; sinon (TAO : l'historique
-// désigne une transaction par bloc et position, pas par son hash) chaque
-// envoi plus récent que le plus ancien attendu, et d'identifiant inconnu,
-// en tient lieu, du plus ancien au plus récent.
+// Sends for `network`/`address` still missing from `entries`, newest first. Listed
+// = same identifier; otherwise (TAO: the history designates a transaction by block
+// and position, not by its hash) each send newer than the oldest one expected,
+// with an unknown identifier, stands in for it, oldest to newest.
 function recentSendsAwaiting(network, address, entries) {
   const now = Date.now();
   const ids = new Set(entries.map((tx) => normalizeTxId(tx.id)));
@@ -5399,7 +5396,7 @@ function recentSendsAwaiting(network, address, entries) {
   return waiting.reverse();
 }
 
-// Ligne d'historique d'un envoi en attente, au format des autres.
+// History row for a pending send, in the same format as the others.
 function recentSendEntry(send) {
   const price = TEST_NETWORKS.includes(send.network) ? null : priceForCoin(send.coin);
   return {
@@ -5413,10 +5410,10 @@ function recentSendEntry(send) {
   };
 }
 
-// Envoi encore en attente : l'historique est relu toutes les 30 s tant
-// qu'il est affiché (onglet Activité ou fenêtre d'historique d'une crypto)
-// et la fenêtre de l'app visible, pour le voir passer en « Confirmée » sans
-// Actualiser. Annulé par toute nouvelle lecture du même conteneur.
+// A send still pending: the history is reread every 30 s while it is shown
+// (Activity tab or a crypto's history window) and the app window is visible, so it
+// can be seen turning "Confirmed" without clicking Refresh. Cancelled by any new
+// read of the same container.
 function recheckHistoryLater(container, reload) {
   container._recheck = setTimeout(() => {
     if (document.hidden || !container.isConnected || container.offsetParent === null) return;
@@ -5431,24 +5428,23 @@ function historyStatusLabel(status) {
   return status;
 }
 
-// Montant en dollars affiché dans la devise choisie : « ≈ 1 234,56 $ » /
-// « ≈ $1,234.56 » / « ≈ 1 085,20 € » ; sous le centime : « < 0,01 $ ».
-// `fiat` : montant déjà converti (sinon, conversion au taux actuel).
+// Dollar amount shown in the chosen currency: "≈ 1 234,56 $" / "≈ $1,234.56" / "≈
+// 1 085,20 €"; under a cent: "< 0,01 $". `fiat`: an amount already converted
+// (otherwise, converted at the current rate).
 function formatUsdApprox(usd, fiat = usdToFiat(usd)) {
   if (fiat == null) return "—";
   if (fiat > 0 && fiat < 0.01) return `< ${withCurrency((0.01).toLocaleString(chartLocale()))}`;
   return `≈ ${withCurrency(fiat.toLocaleString(chartLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 }))}`;
 }
 
-// « -0.010000000000000000 » → « -0.01 » : zéros de fin retirés.
+// "-0.010000000000000000" → "-0.01": trailing zeros removed.
 function trimAmount(amount) {
   return amount.includes(".") ? amount.replace(/0+$/, "").replace(/\.$/, "") : amount;
 }
 
-// Montant lisible : décimales coupées à celles de la carte (`decimals`),
-// mais au moins 3 chiffres significatifs pour une très petite somme
-// (« +0.00000000000123 » reste lisible) ; jamais arrondi vers le haut. Le
-// montant exact venu de Rust reste au survol (title).
+// Readable amount: decimals cut to the card's (`decimals`), but at least 3
+// significant digits for a very small sum ("+0.00000000000123" stays readable);
+// never rounded up. The exact amount from Rust stays available on hover (title).
 function shortAmount(amount, decimals) {
   const [int, frac = ""] = amount.split(".");
   const firstDigit = frac.search(/[1-9]/);
@@ -5494,15 +5490,15 @@ function buildHistoryRow(tx, symbol, decimals) {
     amountDiv.textContent = symbol ? `${shown} ${symbol}` : shown;
     if (shown !== trimAmount(tx.amount)) amountDiv.title = symbol ? `${trimAmount(tx.amount)} ${symbol}` : trimAmount(tx.amount);
   } else {
-    // Rien de cette crypto déplacé (transaction « Autre » : jeton reçu,
-    // opération payée par un tiers…) : un tiret plutôt que « +0.000000000 ».
+    // Nothing of this crypto moved (an "Other" transaction: token received, operation
+    // paid for by a third party…): a dash rather than "+0.000000000".
     amountDiv.textContent = "—";
   }
   const amountBox = document.createElement("div");
   amountBox.className = "history-amount-box";
   amountBox.appendChild(amountDiv);
-  // Valeur calculée côté Rust au prix du moment de la transaction (voir
-  // core/src/price_history.rs) ; absente sur les réseaux de test.
+  // Value computed on the Rust side at the price at the time of the transaction (see
+  // core/src/price_history.rs); absent on test networks.
   if (tx.usd_value != null) {
     const usdDiv = document.createElement("div");
     usdDiv.className = "history-usd";
@@ -5510,9 +5506,9 @@ function buildHistoryRow(tx, symbol, decimals) {
     usdDiv.title = t("history.usdAtTime");
     amountBox.appendChild(usdDiv);
   }
-  // Un <a target="_blank"> classique ne s'ouvre pas de façon fiable dans la
-  // webview Tauri (navigation interceptée pour raisons de sécurité) : on passe
-  // par la commande dédiée qui ouvre le navigateur système (voir
+  // A regular <a target="_blank"> does not open reliably in the Tauri webview
+  // (navigation intercepted for security reasons): we go through the dedicated
+  // command that opens the system browser (see
   // app/src-tauri/src/lib.rs::open_external_link).
   const link = document.createElement("button");
   link.type = "button";
@@ -5533,9 +5529,9 @@ function loadHistorySection(coin) {
   return renderHistory(coin, document.getElementById(`history-list-${coin}`), document.getElementById(`history-network-${coin}`));
 }
 
-// Historique de `coin` (réseau et adresse de sa carte) dans `container`.
-// Une lecture plus récente dans le même conteneur (autre crypto ouverte entre-
-// temps, Actualiser) l'emporte : une réponse arrivée après elle est ignorée.
+// History of `coin` (its card's network and address) in `container`. A more recent
+// read in the same container (another crypto opened in the meantime, Refresh)
+// wins: a response arriving after it is ignored.
 async function renderHistory(coin, container, networkEl) {
   const card = document.querySelector(`.wallet-card[data-coin="${coin}"]`);
   if (!card || !container || !networkEl) return;
@@ -5554,15 +5550,15 @@ async function renderHistory(coin, container, networkEl) {
     return;
   }
   try {
-    // Jetons (registre Rust) : commande dédiée, l'interface n'envoie que
-    // l'identifiant du jeton et le réseau (contrat ou mint lus côté Rust).
+    // Tokens (Rust registry): a dedicated command; the UI only sends the token
+    // identifier and the network (contract or mint read on the Rust side).
     const result = ASSET_BY_COIN[coin]?.token
       ? await invoke("get_token_tx_history", { token: coin, network, address })
       : await invoke("get_tx_history", { network, address });
     if (!current()) return;
-    // Historique indisponible (BNB Chain sans clé NodeReal dans cette
-    // version, ou limite du service atteinte) : motif, et lien vers la page
-    // de l'adresse sur l'explorateur du réseau.
+    // History unavailable (BNB Chain without a NodeReal key in this build, or the
+    // service's limit reached): the reason, and a link to the address's page on the
+    // network's explorer.
     if (result.explorer_url) {
       container.replaceChildren(historyExplorerOnly(result.explorer_url, result.reason));
       return;
@@ -5574,17 +5570,17 @@ async function renderHistory(coin, container, networkEl) {
       container.innerHTML = `<p class="muted">${t("wallet.historyEmpty")}</p>`;
       return;
     }
-    // Montant d'un envoi en attente : tel que saisi, jamais coupé.
+    // Amount of a pending send: as entered, never cut.
     const { symbol, decimals } = ASSET_BY_COIN[coin] ?? {};
     waiting.forEach((send) => container.appendChild(buildHistoryRow(recentSendEntry(send), symbol)));
     entries.forEach((tx) => container.appendChild(buildHistoryRow(tx, symbol, decimals)));
     if (waiting.length) recheckHistoryLater(container, () => renderHistory(coin, container, networkEl));
   } catch (e) {
     if (!current()) return;
-    // textContent, jamais innerHTML : le message d'erreur vient de Rust, qui y
-    // recopie le JSON d'erreur renvoyé par le serveur RPC — un serveur
-    // malveillant aurait pu y glisser du HTML (faux formulaire, lien de
-    // phishing) directement dans l'interface du wallet.
+    // textContent, never innerHTML: the error message comes from Rust, which copies
+    // into it the error JSON returned by the RPC server. A malicious server could have
+    // slipped HTML into it (fake form, phishing link) straight into the wallet's
+    // interface.
     container.replaceChildren(mutedParagraph(String(e)));
   }
 }
@@ -5617,8 +5613,8 @@ function loadAllHistory() {
 
 document.getElementById("refresh-history-btn").addEventListener("click", loadAllHistory);
 
-// Menu « Recevoir » : une entrée par crypto affichée, USDC compris (la
-// fenêtre de réception dit le réseau de sa carte, à choisir à l'envoi).
+// "Receive" menu: one entry per crypto shown, USDC included (the receive window
+// states its card's network, to be chosen when sending).
 function renderReceiveMenu() {
   const list = document.querySelector(".action-menu .custom-select-options");
   const items = ASSETS.filter((asset) => !asset.stock && isAssetVisible(asset.coin)).map((asset) => {
@@ -5631,8 +5627,8 @@ function renderReceiveMenu() {
 }
 renderReceiveMenu();
 
-// Après un changement des cryptos affichées : cartes, menu, surveillance,
-// prix en direct, courbe du portefeuille.
+// After a change to the cryptos shown: cards, menu, monitoring, live prices,
+// portfolio chart.
 function refreshAssetDisplays() {
   applyAssetVisibility();
   updatePortfolioTotal();
@@ -5643,10 +5639,10 @@ function refreshAssetDisplays() {
   if (portfolioView.rangesEl.childElementCount) refreshChart(portfolioView);
 }
 
-// Fenêtre « Gérer mes cryptos ».
+// "Manage my cryptos" window.
 const assetsModal = document.getElementById("assets-modal");
-// Recherche : nom (affiché et d'origine), symbole ; sans tenir compte des
-// majuscules ni des accents (« zcash protege » trouve « Zcash protégé »).
+// Search: name (displayed and original), symbol; ignoring case and accents ("zcash
+// protege" finds "Zcash protégé").
 function normalizeSearch(text) {
   return text.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase().trim();
 }
@@ -5665,7 +5661,7 @@ function filterAssetsList() {
 }
 
 assetsSearch.addEventListener("input", filterAssetsList);
-// Échap dans une recherche non vide : l'efface (la fenêtre reste ouverte).
+// Escape in a non-empty search: clears it (the window stays open).
 assetsSearch.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && assetsSearch.value) {
     e.stopPropagation();
@@ -5674,7 +5670,7 @@ assetsSearch.addEventListener("keydown", (e) => {
   }
 });
 
-// `stocks` : actions tokenisées (onglet « Actions »), sinon cryptos.
+// `stocks`: tokenized shares ("Stocks" tab), otherwise cryptos.
 function openAssetsModal(stocks) {
   const list = document.getElementById("assets-list");
   const boxes = new Map();
@@ -5689,7 +5685,7 @@ function openAssetsModal(stocks) {
   assetsSearch.dataset.i18nAriaLabel = search;
   assetsSearch.placeholder = t(search);
   assetsSearch.setAttribute("aria-label", t(search));
-  // Actions : par capitalisation de l'entreprise, décroissante (sans cours : à la suite).
+  // Stocks: by company market cap, descending (those without a price: after the rest).
   const cap = (coin) => stockQuotes[coin]?.market_cap_usd ?? -1;
   const coins = stocks
     ? ASSETS.filter((asset) => asset.stock).map((asset) => asset.coin).sort((a, b) => cap(b) - cap(a))
@@ -5713,15 +5709,15 @@ function openAssetsModal(stocks) {
         assetChoices[asset.coin] = box.checked;
         saveAssetChoices();
         refreshAssetDisplays();
-        // Cases qui suivent une autre (Zcash protégé suit Zcash sans choix
-        // propre) : remises à jour.
+        // Checkboxes that follow another one (shielded Zcash follows Zcash when it has no
+        // choice of its own): updated.
         for (const [coin, other] of boxes) {
           other.checked = isAssetVisible(coin);
           if (other !== box && other.checked) refreshBalance(document.querySelector(`.wallet-card[data-coin="${coin}"]`));
         }
         if (box.checked) refreshBalance(document.querySelector(`.wallet-card[data-coin="${asset.coin}"]`));
-        // Action tokenisée affichée : son cours tout de suite, sans attendre
-        // le prochain cycle.
+        // Tokenized share shown: its price straight away, without waiting for the next
+        // cycle.
         if (box.checked && asset.stock) {
           refreshStockPrices().then(() => {
             document.querySelectorAll(".wallet-card").forEach(updateFiatValue);
@@ -5739,8 +5735,8 @@ function openAssetsModal(stocks) {
   filterAssetsList();
   assetsModal.classList.remove("hidden");
   assetsSearch.focus();
-  // Cours pas encore demandés (aucune action affichée) : la fenêtre s'ouvre
-  // tout de suite, puis la liste se trie dès qu'ils arrivent.
+  // Prices not requested yet (no share shown): the window opens straight away, then
+  // the list sorts itself as soon as they arrive.
   if (stocks && Object.keys(stockQuotes).length === 0) {
     refreshStockPrices(true).then(() => {
       if (assetsModal.classList.contains("hidden") || title.dataset.i18n !== "stocks.title") return;
@@ -5751,9 +5747,9 @@ function openAssetsModal(stocks) {
 
 document.getElementById("manage-assets-btn").addEventListener("click", () => openAssetsModal(false));
 document.getElementById("manage-stocks-btn").addEventListener("click", () => openAssetsModal(true));
-// Fermée par « Terminé », la croix, Échap, ou un clic à côté — seulement si
-// le clic a aussi COMMENCÉ à côté : un geste commencé dans la fenêtre (faire
-// défiler la liste, sélectionner du texte) et relâché dehors ne la ferme pas.
+// Closed by "Done", the X button, Escape, or a click outside, but only if the
+// click also STARTED outside: a gesture started inside the window (scrolling the
+// list, selecting text) and released outside does not close it.
 const closeAssetsModal = () => assetsModal.classList.add("hidden");
 document.getElementById("assets-done").addEventListener("click", closeAssetsModal);
 document.getElementById("assets-close-x").addEventListener("click", closeAssetsModal);
@@ -5768,24 +5764,24 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !assetsModal.classList.contains("hidden")) closeAssetsModal();
 });
 
-// --- Ordre des cartes (« Organiser ») ------------------------------------------
-// Trois modes : « Mon ordre » (glisser-déposer ou flèches), « Valeur détenue »
-// (valeur en devise du solde affiché, décroissante, recalculée à chaque
-// nouveau solde ou cours) et « Nom ». Préférence d'affichage par appareil,
-// retenue localement comme la vue liste. Réordonner ne change que la place
-// des éléments dans la grille (et dans l'onglet Historique, et la liste
-// « Gérer mes cryptos ») : aucun autre code n'en dépend.
+// --- Card order ("Arrange") ------------------------------------------
+//
+// Three modes: "My order" (drag and drop or arrows), "Value held" (currency value
+// of the balance shown, descending, recomputed with each new balance or price) and
+// "Name". A per-device display preference, remembered locally like the list view.
+// Reordering only changes where elements sit in the grid (and in the History tab,
+// and the "Manage my cryptos" list): no other code depends on it.
 
-// Deux « tableaux », chacun sa grille, son ordre et sa barre « Organiser » :
-// les cryptos (onglet « Portefeuille ») et les actions tokenisées (onglet
-// « Actions », avec en plus le tri « Capitalisation », par défaut).
+// Two "boards", each with its own grid, order and "Arrange" bar: the cryptos
+// ("Wallet" tab) and the tokenized shares ("Stocks" tab, which also has the
+// "Market cap" sort, the default there).
 const CARD_ORDER_STORAGE_KEY = "pgp-wallet-card-order";
 const STOCK_ORDER_STORAGE_KEY = "pgp-wallet-stock-order";
 const walletGrid = document.querySelector(".wallet-grid");
 
 function makeBoard({ grid, storageKey, modes, defaultMode, bar, button, done }) {
-  // Ordre d'origine (cartes d'index.html, puis celles générées depuis
-  // ASSETS) : base de « Mon ordre » pour les cartes jamais déplacées.
+  // Original order (index.html cards, then those generated from ASSETS): the basis
+  // of "My order" for cards that were never moved.
   const defaultOrder = [...grid.querySelectorAll(".wallet-card")].map((card) => card.dataset.coin);
   let order = { mode: defaultMode, custom: [] };
   try {
@@ -5794,7 +5790,7 @@ function makeBoard({ grid, storageKey, modes, defaultMode, bar, button, done }) 
       order = { mode: saved.mode, custom: saved.custom.filter((coin) => defaultOrder.includes(coin)) };
     }
   } catch (e) {
-    // localStorage indisponible : ordre d'origine.
+    // localStorage unavailable: original order.
   }
   return { grid, storageKey, defaultOrder, order, bar, button, done, organizing: false, resortTimer: null };
 }
@@ -5825,16 +5821,16 @@ function saveCardOrder(board) {
   try {
     localStorage.setItem(board.storageKey, JSON.stringify(board.order));
   } catch (e) {
-    // Best-effort : l'ordre reste appliqué pour cette session.
+    // Best-effort: the order stays applied for this session.
   }
 }
 
-// « Mon ordre » complet : l'ordre enregistré, puis les cryptos qui n'y sont
-// pas encore (ajoutées depuis), à leur place d'origine.
+// Full "My order": the saved order, then the cryptos that are not in it yet (added
+// since), at their original place.
 function customOrder(board) {
   const order = [...board.order.custom];
-  // Crypto ajoutée depuis (Zcash protégé…) : juste après celle qui la
-  // précède dans l'ordre d'origine, pas en fin de liste.
+  // A crypto added since (shielded Zcash…): right after the one that precedes it in
+  // the original order, not at the end of the list.
   board.defaultOrder.forEach((coin, i) => {
     if (order.includes(coin)) return;
     const before = board.defaultOrder.slice(0, i).reverse().find((c) => order.includes(c));
@@ -5843,7 +5839,7 @@ function customOrder(board) {
   return order;
 }
 
-// Valeur en devise du solde affiché par la carte (réseau de test : aucune).
+// Currency value of the balance shown on the card (test network: none).
 function cardValue(board, coin) {
   const card = board.grid.querySelector(`.wallet-card[data-coin="${coin}"]`);
   if (!card || TEST_NETWORKS.includes(networkForCard(card))) return 0;
@@ -5859,8 +5855,8 @@ function orderedCoins(board = BOARDS.wallet) {
     const values = new Map(custom.map((coin) => [coin, cardValue(board, coin)]));
     return [...custom].sort((a, b) => values.get(b) - values.get(a) || rank.get(a) - rank.get(b));
   }
-  // Capitalisation de l'entreprise (cours de Jupiter), décroissante ; sans
-  // cours : à la suite, dans « Mon ordre ».
+  // Company market cap (Jupiter price), descending; without a price: after the rest,
+  // in "My order".
   if (board.order.mode === "cap") {
     const cap = (coin) => stockQuotes[coin]?.market_cap_usd ?? -1;
     return [...custom].sort((a, b) => cap(b) - cap(a) || rank.get(a) - rank.get(b));
@@ -5872,15 +5868,15 @@ function orderedCoins(board = BOARDS.wallet) {
   return custom;
 }
 
-// Place les éléments dans l'ordre voulu, sans rien déplacer s'ils y sont
-// déjà (pas de saut d'affichage ni de perte du focus à chaque recalcul).
+// Puts the elements in the desired order without moving anything that is already
+// in place (no display jump or loss of focus on each recalculation).
 function placeInOrder(container, elements) {
   const current = [...container.children].filter((el) => elements.includes(el));
   if (current.length === elements.length && current.every((el, i) => el === elements[i])) return;
   for (const el of elements) container.appendChild(el);
 }
 
-// Sans tableau : les deux.
+// Without a board: both.
 function applyCardOrder(board) {
   if (draggingCard) return;
   if (!board) {
@@ -5889,15 +5885,14 @@ function applyCardOrder(board) {
   }
   const coins = orderedCoins(board);
   placeInOrder(board.grid, coins.map((coin) => board.grid.querySelector(`.wallet-card[data-coin="${coin}"]`)).filter(Boolean));
-  // Onglet Historique : les cryptos, puis les actions, chacune dans l'ordre
-  // de son onglet.
+  // History tab: the cryptos, then the stocks, each in the order of its own tab.
   const historyCard = document.querySelector('.tab-panel[data-panel="history"] .card');
   const all = [...orderedCoins(BOARDS.wallet), ...orderedCoins(BOARDS.stocks)];
   placeInOrder(historyCard, all.map((coin) => document.getElementById(`history-section-${coin}`)).filter(Boolean));
 }
 
-// « Valeur détenue » et « Capitalisation » : recalcul après un nouveau solde
-// ou cours, regroupé (plusieurs soldes arrivent presque ensemble).
+// "Value held" and "Market cap": recomputed after a new balance or price, batched
+// (several balances arrive almost together).
 function scheduleCardResort() {
   for (const board of Object.values(BOARDS)) {
     if (board.order.mode !== "value" && board.order.mode !== "cap") continue;
@@ -5922,13 +5917,13 @@ function renderOrganizeModes(board) {
   });
 }
 
-// Ordre affiché actuel → « Mon ordre » (après un glisser ou une flèche).
+// Current display order → "My order" (after a drag or an arrow).
 function adoptDisplayedOrder(board) {
   board.order.custom = [...board.grid.querySelectorAll(".wallet-card")].map((card) => card.dataset.coin);
   setCardOrderMode(board, "custom");
 }
 
-// Poignée et flèches de chaque carte, visibles seulement en mode « Organiser ».
+// Each card's handle and arrows, only visible in "Arrange" mode.
 function addOrganizeControls(board, card) {
   const controls = document.createElement("div");
   controls.className = "organize-controls";
@@ -5944,8 +5939,8 @@ function addOrganizeControls(board, card) {
 }
 for (const board of Object.values(BOARDS)) board.grid.querySelectorAll(".wallet-card").forEach((card) => addOrganizeControls(board, card));
 
-// Déplace une carte d'un cran parmi les cartes AFFICHÉES (les masquées
-// gardent leur place relative).
+// Moves a card one step among the cards SHOWN (hidden ones keep their relative
+// place).
 function moveCard(board, card, step, focusAfter) {
   if (draggingCard) return;
   const visible = [...board.grid.querySelectorAll(".wallet-card:not(.asset-hidden)")];
@@ -5979,24 +5974,22 @@ document.addEventListener("keydown", (e) => {
   else setOrganizing(board, false);
 });
 
-// Glisser-déposer au pointeur (souris, stylet, tactile) — pas le
-// glisser-déposer HTML5 : sous Windows, Tauri intercepte le glissement dans
-// la fenêtre (dépôt de fichiers) et ses événements n'arrivent jamais aux
-// cartes. Après quelques pixels, la carte elle-même se soulève et suit le
-// pointeur (légèrement inclinée, ombrée) ; un emplacement en pointillés
-// marque l'endroit où elle sera rangée et se déplace entre les autres cartes,
-// qui glissent en douceur ; près du bord de la fenêtre, la page défile ; au
-// relâchement, la carte glisse jusqu'à l'emplacement (Échap la ramène à sa
-// place d'origine). Aucune copie de carte : la carte soulevée reste la vraie
-// (son solde continue d'être mis à jour).
+// Pointer-based drag and drop (mouse, pen, touch), not HTML5 drag and drop: on
+// Windows, Tauri intercepts dragging in the window (file drop) and its events
+// never reach the cards. After a few pixels, the card itself lifts and follows the
+// pointer (slightly tilted, shadowed); a dotted placeholder marks where it will be
+// put and moves between the other cards, which slide smoothly; near the edge of
+// the window, the page scrolls; on release, the card slides to the placeholder
+// (Escape takes it back to where it was). No copy of the card: the lifted card
+// stays the real one (its balance keeps updating).
 const DRAG_START_DISTANCE = 6;
 const DRAG_SCROLL_EDGE = 70;
 const DRAG_SCROLL_MAX_SPEED = 18;
 const prefersReducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 let pointerDrag = null;
 
-// Rectangle de mise en page (sans les translations des animations en cours),
-// en coordonnées de la fenêtre.
+// Layout rectangle (without the translations of running animations), in window
+// coordinates.
 function layoutRect(el) {
   const rect = el.getBoundingClientRect();
   const transform = getComputedStyle(el).transform;
@@ -6006,9 +5999,8 @@ function layoutRect(el) {
   return { left: rect.left - dx, top: rect.top - dy, width: rect.width, height: rect.height, right: rect.right - dx, bottom: rect.bottom - dy };
 }
 
-// Réordonne (`change`) puis fait glisser chaque carte et l'emplacement de leur
-// ancienne position visuelle à la nouvelle (technique FLIP), animations en
-// cours comprises.
+// Reorders (`change`), then slides each card and the placeholder from their old
+// visual position to the new one (FLIP technique), running animations included.
 function animateLayout(board, change) {
   const items = [...board.grid.querySelectorAll(".wallet-card:not(.asset-hidden):not(.drag-floating), .card-placeholder")];
   const before = new Map(items.map((el) => [el, el.getBoundingClientRect()]));
@@ -6035,8 +6027,8 @@ function animateLayout(board, change) {
     for (const el of moved) {
       el.style.transition = "transform 200ms cubic-bezier(0.2, 0.8, 0.2, 1)";
       el.style.transform = "";
-      // Fin du glissement : plus aucun style en ligne. Interrompu par un
-      // nouveau réordonnancement, ce dernier reprend la main sur la carte.
+      // End of the slide: no inline styles left. If it is interrupted by a new reorder,
+      // that one takes over the card.
       const done = (e) => {
         if (e.target !== el || e.propertyName !== "transform") return;
         el.removeEventListener("transitionend", done);
@@ -6047,10 +6039,10 @@ function animateLayout(board, change) {
   });
 }
 
-// Colonnes d'une carte en largeurs fixes. En vue liste, la carte est un
-// sous-grille (`subgrid`) qui n'a plus de colonnes une fois hors de la grille :
-// elle reçoit celles de la grille, moins sa marge intérieure et sa bordure aux
-// bords (que le sous-grille reporte sur les éléments des colonnes extrêmes).
+// A card's columns at fixed widths. In list view, the card is a subgrid
+// (`subgrid`) that has no columns once it is out of the grid: it gets the grid's
+// columns, minus its padding and border at the edges (which the subgrid passes on
+// to the elements in the outermost columns).
 function frozenColumns(board, style) {
   if (!style.gridTemplateColumns.startsWith("subgrid")) return style.gridTemplateColumns;
   const tracks = (getComputedStyle(board.grid).gridTemplateColumns.match(/[\d.]+px/g) || []).map(parseFloat);
@@ -6064,16 +6056,15 @@ function startCardDrag(drag) {
   const { card, board } = drag;
   const rect = card.getBoundingClientRect();
   const style = getComputedStyle(card);
-  // Colonnes de la grille figées le temps du glisser : en vue liste, leur
-  // largeur dépend du contenu de toutes les cartes, et les autres cartes
-  // changeraient de colonnes en perdant la carte soulevée.
+  // Grid columns frozen for the duration of the drag: in list view, their width
+  // depends on the content of every card, and the other cards would change columns
+  // when losing the lifted card.
   board.grid.style.gridTemplateColumns = getComputedStyle(board.grid).gridTemplateColumns;
   const placeholder = document.createElement("div");
   placeholder.className = "card-placeholder";
   placeholder.style.height = `${rect.height}px`;
   board.grid.insertBefore(placeholder, card);
-  // La carte sort de la grille (position fixe) en gardant sa taille et ses
-  // colonnes.
+  // The card leaves the grid (fixed position) while keeping its size and columns.
   card.style.gridTemplateColumns = frozenColumns(board, style);
   card.style.left = `${rect.left}px`;
   card.style.top = `${rect.top}px`;
@@ -6092,10 +6083,10 @@ function followPointer(drag) {
   card.style.transform = `translate(${lastX - startX}px, ${lastY - startY}px) rotate(1.5deg) scale(1.02)`;
 }
 
-// Place l'emplacement selon la carte survolée (rectangles de mise en page,
-// pour ne pas osciller pendant les animations) : avant ou après elle, à la
-// verticale quand elle occupe toute la largeur (une colonne, vue liste), à
-// l'horizontale sinon.
+// Places the placeholder according to the card under the pointer (layout
+// rectangles, so it does not oscillate during animations): before or after it,
+// vertically when it spans the full width (one column, list view), horizontally
+// otherwise.
 function placePlaceholder(drag) {
   const { placeholder, lastX: x, lastY: y, board } = drag;
   const candidates = [...board.grid.querySelectorAll(".wallet-card:not(.asset-hidden):not(.drag-floating)")];
@@ -6112,7 +6103,7 @@ function placePlaceholder(drag) {
   animateLayout(board, () => board.grid.insertBefore(placeholder, reference));
 }
 
-// Défilement continu près du bord de la fenêtre, plus rapide tout au bord.
+// Continuous scrolling near the edge of the window, faster right at the edge.
 function autoScroll(drag) {
   if (pointerDrag !== drag || !drag.started) return;
   const { lastY } = drag;
@@ -6137,9 +6128,8 @@ for (const board of Object.values(BOARDS)) {
   });
 }
 
-// Mouvement et relâchement écoutés sur toute la page : la carte soulevée
-// n'est plus sous le pointeur, et le relâchement peut avoir lieu hors de la
-// grille.
+// Movement and release are listened for on the whole page: the lifted card is no
+// longer under the pointer, and the release may happen outside the grid.
 document.addEventListener("pointermove", (e) => {
   const drag = pointerDrag;
   if (!drag || e.pointerId !== drag.pointerId) return;
@@ -6153,9 +6143,9 @@ document.addEventListener("pointermove", (e) => {
   placePlaceholder(drag);
 });
 
-// Fin du glisser : la carte glisse jusqu'à l'emplacement, puis y reprend sa
-// place dans la grille ; `draggingCard` reste posé jusque-là (pas de tri ni de
-// nouveau glisser pendant qu'elle se pose).
+// End of the drag: the card slides to the placeholder, then takes its place back
+// in the grid; `draggingCard` stays set until then (no sorting or new drag while
+// it settles).
 function finishCardDrag(drag, { adopt }) {
   const { card, placeholder, board } = drag;
   pointerDrag = null;
@@ -6181,9 +6171,9 @@ function finishCardDrag(drag, { adopt }) {
   setTimeout(settle, 190);
 }
 
-// Échap (ou sortie du mode) pendant le glisser : la carte retourne à sa place
-// d'origine — elle n'a jamais quitté sa position dans la grille, seul
-// l'emplacement a bougé — et le mode de tri ne change pas.
+// Escape (or leaving the mode) during the drag: the card goes back to its original
+// place (it never left its position in the grid, only the placeholder moved), and
+// the sort mode does not change.
 function cancelCardDrag() {
   const drag = pointerDrag;
   if (drag.started) animateLayout(drag.board, () => drag.board.grid.insertBefore(drag.placeholder, drag.card));
@@ -6198,15 +6188,16 @@ document.addEventListener("pointercancel", (e) => {
   if (pointerDrag && e.pointerId === pointerDrag.pointerId) cancelCardDrag();
 });
 
-// Ordre initial une fois tout le module chargé (« Valeur détenue » lit des
-// constantes déclarées plus bas dans ce fichier).
+// Initial order once the whole module has loaded ("Value held" reads constants
+// declared further down in this file).
 setTimeout(() => applyCardOrder(), 0);
 
-// --- Historique d'une crypto (fenêtre) --------------------------------------
-// Bouton « Historique » d'une carte : grande fenêtre au-dessus du portefeuille,
-// qui reste visible derrière, flouté ; cette crypto seule (l'onglet
-// « Activité » garde toutes les cryptos). Fermée par la croix, Échap, ou un
-// clic à côté commencé à côté (comme « Gérer mes cryptos »).
+// --- A crypto's history (window) --------------------------------------
+//
+// A card's "History" button: a large window above the wallet, which stays visible
+// behind it, blurred; this crypto only (the "Activity" tab keeps every crypto).
+// Closed by the X button, Escape, or a click outside that also started outside
+// (like "Manage my cryptos").
 
 const coinHistoryModal = document.getElementById("coin-history-modal");
 let coinHistoryCoin = null;
@@ -6218,7 +6209,7 @@ function coinHistoryOpen() {
 function renderCoinHistoryTitle() {
   const card = document.querySelector(`.wallet-card[data-coin="${coinHistoryCoin}"]`);
   if (!card) return;
-  // Nom lu sur la carte, sans l'indentation du HTML : « Bitcoin », « USDC Solana ».
+  // Name read from the card, without the HTML indentation: "Bitcoin", "USDC Solana".
   const name = card.querySelector("h2").textContent.trim().replace(/\s+/g, " ");
   setWithCoinIcon(document.getElementById("coin-history-title"), coinHistoryCoin, t("coinHistory.title", { name }));
 }
@@ -6239,7 +6230,7 @@ function openCoinHistory(coin) {
 function closeCoinHistory() {
   coinHistoryModal.classList.add("hidden");
   coinHistoryCoin = null;
-  // Lecture encore en cours : sa réponse est ignorée (voir `renderHistory`).
+  // A read still in progress: its response is ignored (see `renderHistory`).
   const list = document.getElementById("coin-history-list");
   list.dataset.load = String((Number(list.dataset.load) || 0) + 1);
   list.replaceChildren();
@@ -6259,8 +6250,8 @@ document.getElementById("coin-history-refresh").addEventListener("click", () => 
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && coinHistoryOpen()) closeCoinHistory();
 });
-// Nouvelle langue : titre et lignes retraduits (après `applyLanguage`,
-// abonnée plus haut).
+// New language: title and rows translated again (after `applyLanguage`, subscribed
+// above).
 document.querySelectorAll(".lang-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
     if (coinHistoryOpen()) loadCoinHistory();
@@ -6272,16 +6263,16 @@ document.querySelectorAll(".lang-btn").forEach((btn) => {
 const sendModal = document.getElementById("send-modal");
 let sendContext = null;
 
-// Montant en crypto OU dans la devise affichée (€ ou $), les deux champs liés
-// au cours en direct. Le montant en crypto reste le seul envoyé, affiché dans
-// l'aperçu puis dans la boîte de confirmation de Windows ; le montant en
-// devise n'est qu'une aide à la saisie. Sur un réseau de test (fonds sans
-// valeur) ou sans cours connu, le champ en devise est désactivé.
+// Amount in crypto OR in the display currency (€ or $), the two fields linked by
+// the live price. The crypto amount is the only one sent, shown in the preview and
+// then in the Windows confirmation dialog; the currency amount is only an input
+// aid. On a test network (worthless funds) or with no known price, the currency
+// field is disabled.
 const sendAmountInput = document.getElementById("send-amount");
 const sendFiatInput = document.getElementById("send-amount-fiat");
 
-// Cours d'une crypto : dollars pour 1 unité, dollars pour 1 unité de la devise
-// affichée ; `null` si inconnu ou réseau de test (fonds sans valeur).
+// Price of a crypto: dollars per unit, dollars per unit of the display currency;
+// `null` if unknown or on a test network (worthless funds).
 function fiatRate(coin, network) {
   if (!network?.endsWith("mainnet")) return null;
   const price = priceForCoin(coin);
@@ -6298,8 +6289,8 @@ function parseAmountInput(text) {
   return Number.isFinite(value) ? value : null;
 }
 
-// Texte du champ en devise pour un montant en crypto (« 12,34 »), et texte du
-// champ en crypto pour un montant en devise (aux décimales de la crypto).
+// Text of the currency field for a crypto amount ("12,34"), and text of the crypto
+// field for a currency amount (at the crypto's decimals).
 function fiatAmountText(crypto, rate) {
   const fiat = ((crypto * rate.price) / rate.usdPerUnit).toFixed(2);
   return currentLang === "fr" ? fiat.replace(".", ",") : fiat;
@@ -6328,14 +6319,14 @@ function setSendCryptoAmount(value) {
 
 restrictToAmount(sendAmountInput, syncSendFiatFromCrypto);
 restrictToAmount(sendFiatInput, syncSendCryptoFromFiat);
-// Montant tapé à la main : ce n'est plus le maximum.
+// Amount typed by hand: it is no longer the maximum.
 for (const input of [sendAmountInput, sendFiatInput]) {
   input.addEventListener("input", () => {
     if (sendContext) sendContext.max = false;
   });
 }
 
-// Unités à droite des deux champs, champ en devise activé ou non.
+// Units to the right of both fields, currency field enabled or not.
 function renderSendAmountUnits() {
   if (!sendContext) return;
   setWithCoinIcon(document.getElementById("send-amount-unit"), sendContext.coin, COIN_SYMBOL[sendContext.coin]);
@@ -6345,13 +6336,14 @@ function renderSendAmountUnits() {
   sendFiatInput.placeholder = rate ? (currentLang === "fr" ? "0,00" : "0.00") : "—";
 }
 
-// Montants rapides en dollars : convertis en crypto au prix en direct (voir
-// `latestPrices`/`refreshPrices`), pas des montants fixes en ETH/BTC/SOL — ça n'a
-// de sens que si le montant en dollars reste identique quel que soit le cours du
-// jour. Mêmes décimales que le formatage des soldes côté Rust
-// (app/src-tauri/src/lib.rs::get_balance), pour que le montant rempli soit celui
-// réellement envoyé, pas une valeur arrondie différente.
-// Montants rapides, dans la devise affichée (5 $ ou 5 €…).
+// Quick amounts in dollars: converted to crypto at the live price (see
+// `latestPrices`/`refreshPrices`), not fixed amounts in ETH/BTC/SOL, which only
+// makes sense if the dollar amount stays the same whatever the day's price. The
+// same decimals as the balance formatting on the Rust side
+// (app/src-tauri/src/lib.rs::get_balance), so the amount filled in is the one
+// actually sent, not a differently rounded value.
+//
+// Quick amounts, in the display currency ($5 or €5…).
 const QUICK_AMOUNTS = [5, 10, 50];
 const COIN_DECIMALS = Object.fromEntries(ASSETS.map((asset) => [asset.coin, asset.decimals]));
 const COIN_SYMBOL = Object.fromEntries(ASSETS.map((asset) => [asset.coin, asset.symbol]));
@@ -6365,7 +6357,7 @@ function renderQuickAmounts() {
   const decimals = COIN_DECIMALS[coin];
   const symbol = COIN_SYMBOL[coin];
 
-  // Dollars pour 1 unité de la devise affichée (1 pour le dollar).
+  // Dollars per unit of the display currency (1 for the dollar).
   const usdPerUnit = displayCurrency === "eur" ? usdPerEur : 1;
   if (price == null || !usdPerUnit) {
     container.replaceChildren(Object.assign(document.createElement("p"), { className: "muted quick-amounts-hint", textContent: t("send.quickUnavailable") }));
@@ -6393,16 +6385,16 @@ function renderQuickAmounts() {
   });
 }
 
-// Pourcentages du solde actuellement affiché sur la carte (pas un nouvel appel
-// réseau : réutilise `[data-field="balance"]`, déjà tenu à jour par
-// refreshBalance). « Max » : le plus grand montant ENVOYABLE, frais du réseau
-// déduits, calculé côté Rust (`max_send_amount`) avec les mêmes règles que
-// l'envoi — puis recalculé à la confirmation (`max: true`), si bien que le
-// montant affiché dans la boîte de Windows reste exact si les frais bougent.
+// Percentages of the balance currently shown on the card (no new network call:
+// reuses `[data-field="balance"]`, already kept up to date by refreshBalance).
+// "Max": the largest amount that CAN BE SENT, network fees deducted, computed on
+// the Rust side (`max_send_amount`) with the same rules as the send, then
+// recomputed at confirmation (`max: true`), so the amount shown in the Windows
+// dialog stays exact if the fees move.
 const QUICK_PERCENTAGES = [25, 50, 100];
 
-// Jeton du registre (ou USDC) envoyé depuis la carte : son identifiant, sinon
-// `null` (monnaie du réseau).
+// Registry token (or USDC) sent from the card: its identifier, otherwise `null`
+// (the network's native coin).
 function sendTokenId(coin, network) {
   return usesTokenRegistry(coin, network) || coin === "usdc" ? coin : null;
 }
@@ -6435,8 +6427,8 @@ async function fillMaxAmount(btn) {
   }
 }
 
-// « Disponible : 0.0419 SOL (≈ 5,03 $) » à droite de « Montant » : le solde
-// affiché sur la carte, sans zéros inutiles.
+// "Available: 0.0419 SOL (≈ $5.03)" to the right of "Amount": the balance shown on
+// the card, without needless zeros.
 function renderSendAvailable() {
   const el = document.getElementById("send-available");
   if (!sendContext) return;
@@ -6492,16 +6484,16 @@ function renderQuickPercentages() {
 }
 
 function openSendModal(card) {
-  // Le profil source est figé à l'ouverture (`sendContext.profileIndex`) plutôt que
-  // relu depuis `currentProfileIndex` au moment de confirmer : la modale plein écran
-  // empêche déjà de changer de profil pendant qu'elle est ouverte, mais figer la
-  // valeur explicitement évite de dépendre de cet effet de bord d'affichage pour une
-  // garantie de sécurité (quel profil signe la transaction).
+  // The source profile is frozen when the window opens (`sendContext.profileIndex`)
+  // rather than reread from `currentProfileIndex` at confirmation time. The
+  // full-screen modal already prevents switching profile while it is open, but
+  // freezing the value explicitly avoids relying on that display side effect for a
+  // security guarantee (which profile signs the transaction).
   const profile = currentProfile();
   sendContext = { coin: card.dataset.coin, card, profileIndex: profile ? profile.index : currentProfileIndex, max: false };
   const network = networkForCard(card);
-  // Nom lu sur la carte, sans l'indentation du HTML (le titre contient le
-  // bouton de repli) : « Bitcoin », « USDC Solana ».
+  // Name read from the card, without the HTML indentation (the title contains the
+  // collapse button): "Bitcoin", "USDC Solana".
   const coinName = card.querySelector("h2").textContent.trim().replace(/\s+/g, " ");
   setWithCoinIcon(document.getElementById("send-modal-title"), card.dataset.coin, `${t("send.title")} (${coinName})`);
   document.getElementById("send-from-profile").textContent = profile ? profile.label : "—";
@@ -6525,17 +6517,18 @@ function openSendModal(card) {
   loadAddressBook().then(() => refreshSendAddressBookPicker(card.dataset.coin, network, sendContext.profileIndex));
 }
 
-// Frais Bitcoin d'un niveau (total en satoshis) dits dans la devise affichée,
-// ou en BTC sans cours (réseau de test, cours pas encore chargé).
+// Bitcoin fee for a tier (total in satoshis) stated in the display currency, or in
+// BTC without a price (test network, price not loaded yet).
 function btcFeeText(sat, network) {
   const btc = sat / 1e8;
   const price = network === "btc_mainnet" ? priceForCoin("btc") : null;
   return price != null ? formatUsdApprox(btc * price) : `${btc.toLocaleString(chartLocale(), { maximumSignificantDigits: 3 })} BTC`;
 }
 
-// Bitcoin est le seul réseau où les frais sont un choix explicite de l'utilisateur
-// (voir core/src/api.rs::estimate_btc_fees) : EVM/Solana calculent déjà les leurs
-// automatiquement (gas price / frais de base réseau), rien à proposer pour eux.
+// Bitcoin is the only network where the fee is an explicit choice by the user (see
+// core/src/api.rs::estimate_btc_fees): EVM/Solana already compute theirs
+// automatically (gas price / network base fee), so there is nothing to offer for
+// them.
 async function loadBtcFeeOptions(card, network) {
   const block = document.getElementById("send-fee-block");
   const container = document.getElementById("send-fee-options");
@@ -6586,12 +6579,12 @@ async function loadBtcFeeOptions(card, network) {
         container.querySelectorAll(".fee-option-btn").forEach((b) => b.classList.remove("selected"));
         btn.classList.add("selected");
         sendContext.feeSat = sat;
-        // Maximum dépendant des frais choisis : recalculé.
+        // Maximum depends on the chosen fee: recomputed.
         if (sendContext.max) fillMaxAmount(document.querySelector("#send-quick-percentages .quick-amount-btn:last-child"));
       });
 
-      // "Moyen" présélectionné : compromis raisonnable par défaut, l'utilisateur
-      // reste libre de choisir plus rapide/moins cher avant de confirmer.
+      // "Medium" preselected: a reasonable default compromise; the user is still free to
+      // pick faster/cheaper before confirming.
       if (index === 1) {
         btn.classList.add("selected");
         sendContext.feeSat = sat;
@@ -6599,8 +6592,8 @@ async function loadBtcFeeOptions(card, network) {
       container.appendChild(btn);
     });
   } catch (e) {
-    // Même raison que dans loadHistorySection : texte d'erreur venant d'un
-    // serveur tiers (Esplora), jamais interprété comme du HTML.
+    // Same reason as in loadHistorySection: error text coming from a third-party
+    // server (Esplora), never interpreted as HTML.
     container.replaceChildren(mutedParagraph(t("wallet.feeUnavailable", { err: e })));
   }
 }
@@ -6610,14 +6603,14 @@ document.getElementById("send-cancel").addEventListener("click", () => {
   sendContext = null;
 });
 
-// Complément du destinataire exigé par les plateformes d'échange : tag de
-// destination (XRP, chiffres) ou mémo (Stellar, texte ASCII court).
+// Recipient detail required by exchanges: destination tag (XRP, digits) or memo
+// (Stellar, short ASCII text).
 const NOTE_COINS = new Set(["xrp", "xlm", "stx"]);
-// Mémo : longueur maximale selon le réseau (Stellar 28 octets, Stacks 34).
+// Memo: maximum length depends on the network (Stellar 28 bytes, Stacks 34).
 const MEMO_MAX = { xlm: 28, stx: 34 };
 
-// Libellés du champ, de sa consigne et de la ligne d'aperçu selon la crypto
-// (clés i18n changées aussi, pour un changement de langue fenêtre ouverte).
+// Labels of the field, its hint and the preview row depending on the crypto (i18n
+// keys changed too, for a language switch while the window is open).
 function setNoteLabels(coin) {
   const memo = coin in MEMO_MAX;
   const input = document.getElementById("send-tag");
@@ -6634,7 +6627,7 @@ function setNoteLabels(coin) {
   }
 }
 
-// Valeur saisie pour la crypto de la fenêtre, `null` si vide ou autre crypto.
+// Value entered for the window's crypto, `null` if empty or for another crypto.
 function sendNote(coin) {
   if (sendContext?.coin !== coin) return null;
   const value = document.getElementById("send-tag").value.trim();
@@ -6643,16 +6636,16 @@ function sendNote(coin) {
 const sendDestinationTag = () => sendNote("xrp");
 const sendMemo = () => (sendContext?.coin in MEMO_MAX ? sendNote(sendContext.coin) : null);
 
-// XRP : chiffres seulement ; Stellar : ASCII imprimable (collage compris).
+// XRP: digits only; Stellar: printable ASCII (pasting included).
 document.getElementById("send-tag").addEventListener("input", (event) => {
   const max = MEMO_MAX[sendContext?.coin];
   const filtered = max ? event.target.value.replace(/[^\x20-\x7e]/g, "").slice(0, max) : event.target.value.replace(/\D/g, "").slice(0, 10);
   if (filtered !== event.target.value) event.target.value = filtered;
 });
 
-// Champs d'adresse : aucune espace possible (touche Espace bloquée, espaces
-// retirées d'un collage) — une adresse n'en contient jamais, une espace
-// glissée par mégarde la rendrait invalide.
+// Address fields: no space possible (Space key blocked, spaces removed from a
+// paste). An address never contains one, and a space slipped in by mistake would
+// make it invalid.
 for (const id of ["send-to", "shielded-to", "swap-destination", "external-wallet-address", "ledger-send-to", "address-book-address", "wc-uri"]) {
   const input = document.getElementById(id);
   if (!input) continue;
@@ -6675,10 +6668,9 @@ function networkLabelForCard(card) {
 
 const sendPreviewModal = document.getElementById("send-preview-modal");
 
-// Avertissements sur le destinataire dans l'aperçu (Rust, `recipient_warnings`) :
-// adresse presque identique à une adresse connue, sosie d'un contact,
-// nouvelle adresse, état sur la blockchain — les mêmes que la boîte de
-// Windows, qui reste la vraie protection.
+// Recipient warnings in the preview (Rust, `recipient_warnings`): address almost
+// identical to a known one, lookalike of a contact, new address, blockchain state;
+// the same ones as the Windows dialog, which remains the real protection.
 let recipientCheck = 0;
 
 async function showRecipientWarnings(to) {
@@ -6694,14 +6686,14 @@ async function showRecipientWarnings(to) {
   box.classList.remove("hidden");
   const network = networkForCard(sendContext.card);
   const coin = sendContext.coin;
-  // Même aiguillage que l'envoi : jeton du registre, USDC Solana, monnaie.
+  // Same routing as the send: registry token, Solana USDC, native coin.
   const token = usesTokenRegistry(coin, network) ? coin : coin === "usdc" ? "usdc" : null;
   let warnings = [];
   try {
     warnings = await invoke("recipient_warnings", { network, token, to });
   } catch (e) {
-    // Adresse refusée (compte de jetons Solana, adresse mal formée…) :
-    // l'envoi le sera aussi, autant le dire dès l'aperçu.
+    // Address refused (Solana token account, malformed address…): the send would
+    // refuse it too, so we might as well say so in the preview.
     warnings = [{ level: "danger", text: String(e) }];
   }
   if (check !== recipientCheck) return;
@@ -6709,17 +6701,17 @@ async function showRecipientWarnings(to) {
   box.classList.toggle("hidden", warnings.length === 0);
 }
 
-// Étape 1 : valide les champs puis affiche un aperçu stylé (réseau,
-// destinataire, montant, frais) — pas encore d'appel réseau ni de secret
-// impliqué ici, juste relire ce qui est déjà dans le formulaire.
+// Step 1: validates the fields, then shows a styled preview (network, recipient,
+// amount, fees). No network call or secret involved here yet, just rereading what
+// is already in the form.
 const sendConfirmBtn = document.getElementById("send-confirm");
 
-// Adresse d'un autre réseau (adresse Bitcoin sur la carte Ethereum, adresse
-// Ethereum sur la carte USDC réglée sur Solana…) : dit dès cette étape, en
-// clair, plutôt qu'en fin d'envoi. Réseaux reconnus par Rust
-// (`address_networks`, mêmes parseurs que l'envoi) ; rien n'est dit si
-// l'adresse n'est reconnue nulle part (forme rare : l'envoi tranchera), ni
-// si l'adresse du portefeuille elle-même n'est pas reconnue sur ce réseau.
+// An address from another network (a Bitcoin address on the Ethereum card, an
+// Ethereum address on the USDC card set to Solana…): said at this step, in plain
+// words, rather than at the end of the send. Networks recognized by Rust
+// (`address_networks`, the same parsers as the send); nothing is said if the
+// address is recognized nowhere (a rare form: the send will decide), nor if the
+// wallet's own address is not recognized on that network.
 async function wrongNetworkMessage(coin, network, to) {
   try {
     const own = addressForCoin(coin, network);
@@ -6727,7 +6719,7 @@ async function wrongNetworkMessage(coin, network, to) {
     if (networks.length === 0 || networks.includes(network) || !ownNetworks.includes(network)) return null;
     const found = networks.some(isEvmNetwork) ? t("send.evmAddressFamily") : contactNetworkLabel(networks[0]);
     const symbol = COIN_SYMBOL[coin];
-    // Même crypto proposée sur ce réseau-là par la carte : il suffit d'y passer.
+    // The same crypto offered on that network by the card: switching to it is enough.
     if (ASSET_BY_COIN[coin]?.networks.some((n) => networks.includes(n))) return t("send.addressSwitchNetwork", { network: found, symbol });
     return t("send.addressOtherNetwork", { network: found, cardNetwork: contactNetworkLabel(network) });
   } catch (e) {
@@ -6776,13 +6768,13 @@ sendConfirmBtn.addEventListener("click", withBusyButton(sendConfirmBtn, async ()
   document.getElementById("send-preview-network").textContent = networkLabelForCard(sendContext.card);
   document.getElementById("send-preview-from").textContent = document.getElementById("send-from-profile").textContent;
   document.getElementById("send-preview-to").textContent = to;
-  // XRP, Stellar : tag ou mémo toujours montré (« aucun » compris), comme
-  // dans la boîte native.
+  // XRP, Stellar: tag or memo always shown ("none" included), as in the native
+  // dialog.
   document.getElementById("send-preview-tag-row").classList.toggle("hidden", !NOTE_COINS.has(sendContext.coin));
   document.getElementById("send-preview-tag").textContent = tag ?? memo ?? t("send.destinationTagNone");
   const rate = sendRate();
   const approx = rate ? ` (${formatUsdApprox(Number(amount) * rate.price)})` : "";
-  // Jeton : tout son solde part (les frais sont payés dans la crypto du réseau).
+  // Token: its whole balance goes (fees are paid in the network's crypto).
   const tokenMax = sendContext.coin === "usdc" || usesTokenRegistry(sendContext.coin, networkForCard(sendContext.card));
   const maxNote = sendContext.max ? t(tokenMax ? "send.maxSuffixToken" : "send.maxSuffix") : "";
   setWithCoinIcon(document.getElementById("send-preview-amount"), sendContext.coin, `${amount} ${COIN_SYMBOL[sendContext.coin]}${maxNote}${approx}`);
@@ -6790,10 +6782,10 @@ sendConfirmBtn.addEventListener("click", withBusyButton(sendConfirmBtn, async ()
   const feeRow = document.getElementById("send-preview-fee-row");
   const selectedFeeBtn = document.querySelector("#send-fee-options .fee-option-btn.selected");
   if (sendContext.coin === "btc" && selectedFeeBtn) {
-    // Les 3 <span> du bouton (label/indication/sat) n'ont pas d'espace entre
-    // eux dans le DOM (juste juxtaposés visuellement en flex) : lus un par un
-    // et rejoints ici plutôt que via `.textContent` global, qui les collerait
-    // ("Rapide~10 min1240 sat" au lieu de "Rapide · ~10 min · 1240 sat").
+    // The button's 3 <span> elements (label/hint/sat) have no space between them in
+    // the DOM (just placed side by side visually with flex): read one by one and
+    // joined here rather than through the global `.textContent`, which would glue them
+    // together ("Fast~10 min1240 sat" instead of "Fast · ~10 min · 1240 sat").
     const parts = [".fee-option-label", ".fee-option-hint", ".fee-option-sat"]
       .map((sel) => selectedFeeBtn.querySelector(sel)?.textContent)
       .filter(Boolean);
@@ -6809,9 +6801,9 @@ sendConfirmBtn.addEventListener("click", withBusyButton(sendConfirmBtn, async ()
   sendPreviewModal.classList.remove("hidden");
 }));
 
-// Crypto présente sur plusieurs réseaux (ETH, USDC, USDT…) : rappel du
-// réseau de départ — un dépôt sur une plateforme d'échange par un autre
-// réseau que celui qu'elle attend est l'une des pertes les plus fréquentes.
+// A crypto available on several networks (ETH, USDC, USDT…): a reminder of the
+// source network, since depositing to an exchange over a different network than
+// the one it expects is one of the most common losses.
 function showSendNetworkNote() {
   const note = document.getElementById("send-preview-network-note");
   const asset = ASSET_BY_COIN[sendContext.coin];
@@ -6827,12 +6819,11 @@ function showSendNetworkNote() {
   note.classList.remove("hidden");
 }
 
-// Frais réseau estimés dans l'aperçu, en devise et dans la monnaie du réseau
-// (la boîte de confirmation native, ensuite, montre le montant exact) :
-// découvrir les frais au dernier moment est l'une des plaintes les plus
-// fréquentes des utilisateurs de portefeuilles. Bitcoin (vitesse déjà
-// affichée) et Monero : pas d'estimation, la ligne n'apparaît que si
-// l'adresse est refusée ; réseaux de test : rien.
+// Estimated network fee in the preview, in currency and in the network's coin (the
+// native confirmation dialog then shows the exact amount): discovering fees at the
+// last moment is one of wallet users' most common complaints. Bitcoin (speed
+// already shown) and Monero: no estimate, and the row only appears if the address
+// is refused; test networks: nothing.
 let sendFeeEstimate = 0;
 async function showSendFeeEstimate(to, amount) {
   const row = document.getElementById("send-preview-estimate-row");
@@ -6855,12 +6846,13 @@ async function showSendFeeEstimate(to, amount) {
       return;
     }
     const price = priceForCoin(fee.coin);
-    // 3 chiffres significatifs : « 0,0000508 ETH », pas 15 décimales.
+    // 3 significant digits: "0.0000508 ETH", not 15 decimals.
     const native = `${Number(fee.amount).toLocaleString(chartLocale(), { maximumSignificantDigits: 3 })} ${fee.symbol}`;
     const text = price != null ? `${formatUsdApprox(Number(fee.amount) * price)} (${native})` : native;
     value.textContent = fee.up_to ? t("send.feeUpTo", { fee: text }) : text;
   } catch (e) {
-    // Solde insuffisant, adresse refusée… : dit ici déjà, plutôt qu'à la fin.
+    // Insufficient balance, address refused…: said here already, rather than at the
+    // end.
     if (check !== sendFeeEstimate) return;
     value.textContent = friendlyError(String(e)) ?? String(e);
     row.classList.remove("hidden");
@@ -6871,11 +6863,11 @@ document.getElementById("send-preview-back").addEventListener("click", () => {
   sendPreviewModal.classList.add("hidden");
 });
 
-// Étape 2 : c'est ICI, et seulement ici, que la vraie transaction part — la
-// boîte de dialogue native de l'OS (confirm_transaction_native côté Rust,
-// voir son commentaire) s'ouvre pendant cet appel et reste la seule
-// protection réelle contre un frontend compromis. L'aperçu ci-dessus n'est
-// qu'un résumé agréable à lire avant d'y arriver, jamais un remplacement.
+// Step 2: it is HERE, and only here, that the real transaction goes out. The OS
+// native dialog (confirm_transaction_native on the Rust side, see its comment)
+// opens during this call and remains the only real protection against a
+// compromised frontend. The preview above is only a pleasant summary to read
+// beforehand, never a replacement.
 const sendPreviewConfirmBtn = document.getElementById("send-preview-confirm");
 sendPreviewConfirmBtn.addEventListener("click", withBusyButton(sendPreviewConfirmBtn, async () => {
   if (!sendContext) return;
@@ -6884,21 +6876,23 @@ sendPreviewConfirmBtn.addEventListener("click", withBusyButton(sendPreviewConfir
 
   const network = networkForCard(sendContext.card);
   const to = document.getElementById("send-to").value.trim();
-  // La virgule est acceptée à la saisie (voir le filtre sur #send-amount plus
-  // bas) mais les parseurs Rust (parse_btc_to_sat/parse_eth_to_wei/
-  // parse_sol_to_lamports/parse_usdc_to_micros) n'acceptent qu'un point.
+  // The comma is accepted as input (see the filter on #send-amount further down),
+  // but the Rust parsers
+  // (parse_btc_to_sat/parse_eth_to_wei/parse_sol_to_lamports/parse_usdc_to_micros)
+  // only accept a dot.
   const amount = document.getElementById("send-amount").value.trim().replace(",", ".");
   const password = document.getElementById("send-password").value;
 
   sendPreviewModal.classList.add("hidden");
 
   try {
-    // USDC (jeton SPL) suit un chemin dédié, distinct de send_transaction :
-    // pas de "network" à transmettre (mainnet uniquement, voir sol_spl.rs) ni
-    // de frais Bitcoin-style, et la construction de la transaction elle-même
-    // est entièrement différente côté Rust (deux instructions au lieu d'une).
-    // Jetons du registre : identifiant et réseau seulement (contrat, décimales
-    // et boîte de confirmation côté Rust).
+    // USDC (SPL token) follows a dedicated path, separate from send_transaction: no
+    // "network" to pass (mainnet only, see sol_spl.rs) and no Bitcoin-style fee, and
+    // building the transaction itself is entirely different on the Rust side (two
+    // instructions instead of one).
+    //
+    // Registry tokens: identifier and network only (contract, decimals and
+    // confirmation dialog on the Rust side).
     const txResult = usesTokenRegistry(sendContext.coin, network)
       ? await invoke("send_token_transaction", { token: sendContext.coin, network, password, to, amount, profileIndex: sendContext.profileIndex, max: sendContext.max })
       : sendContext.coin === "usdc"
@@ -6924,10 +6918,9 @@ sendPreviewConfirmBtn.addEventListener("click", withBusyButton(sendPreviewConfir
   }
 }));
 
-// Envoi parti : ce qui va se passer (confirmation par le réseau, solde mis à
-// jour tout seul), l'identifiant, et un bouton vers l'explorateur du réseau —
-// « j'ai envoyé et rien n'est arrivé » est la plainte n°1 des utilisateurs
-// de portefeuilles.
+// Send gone out: what will happen next (confirmation by the network, balance
+// updated on its own), the identifier, and a button to the network's explorer,
+// since "I sent it and nothing arrived" is wallet users' number one complaint.
 async function showSentTransaction(successEl, network, tx) {
   const text = document.createElement("span");
   text.textContent = `${t("send.sentFriendly")} `;
@@ -6946,14 +6939,15 @@ async function showSentTransaction(successEl, network, tx) {
   successEl.append(" ", link);
 }
 
-// --- Échange (« Convertir ») -------------------------------------------------
-// Passe par un protocole externe non audité par cette app : THORChain ou Maya
-// pour un échange entre réseaux (core/src/thorchain_rpc.rs), Jupiter dans le
-// même portefeuille Solana (core/src/jupiter_rpc.rs), CoW sur un même réseau
-// EVM (ordre signé, core/src/cow.rs). Les paires proposées viennent
-// de Rust (`swapPairs`, core/src/swap_routes.rs) : l'interface ne propose que
-// ce que les commandes d'échange acceptent. Même principe en deux étapes que
-// l'envoi (devis -> aperçu -> confirmation native de Windows).
+// --- Swap ("Convert") -------------------------------------------------
+//
+// Goes through an external protocol not audited by this app: THORChain or Maya for
+// a cross-chain swap (core/src/thorchain_rpc.rs), Jupiter within the same Solana
+// wallet (core/src/jupiter_rpc.rs), CoW on the same EVM network (signed order,
+// core/src/cow.rs), and LI.FI, SwapKit or MoonPay Trade between ecosystems. The
+// pairs offered come from Rust (`swapPairs`, core/src/swap_routes.rs): the UI only
+// offers what the swap commands accept. The same two-step principle as the send
+// (quote -> preview -> native Windows confirmation).
 
 const swapModal = document.getElementById("swap-modal");
 const swapPreviewModal = document.getElementById("swap-preview-modal");
@@ -6973,7 +6967,7 @@ function parseSwapKey(key) {
   return { coin, network };
 }
 
-// « USDC (USDC) — Base » ; réseau omis pour une crypto qui n'en a qu'un.
+// "USDC (USDC) — Base"; network left out for a crypto that only has one.
 function swapAssetLabel(coin, network) {
   const asset = ASSET_BY_COIN[coin];
   if (!asset) return coin;
@@ -6982,8 +6976,8 @@ function swapAssetLabel(coin, network) {
   return mainnets.length > 1 ? `${label} — ${t(`net.${network}`).split(" — ")[0]}` : label;
 }
 
-// Cryptos de départ : celles qu'un échange sait vendre, affichées dans le
-// portefeuille (plus celle de la carte d'où la fenêtre s'ouvre).
+// Source cryptos: those a swap can sell that are shown in the wallet (plus the one
+// on the card the window was opened from).
 function fillSwapFromOptions(selectedKey) {
   const select = document.getElementById("swap-from-coin");
   const keys = [...new Set(swapPairs.map((p) => swapKey(p.from_coin, p.from_network)))].filter(
@@ -7003,29 +6997,28 @@ function fillSwapFromOptions(selectedKey) {
   syncCustomSelect(select);
 }
 
-// Paire choisie dans la fenêtre, telle que Rust l'a déclarée (`null` sinon).
+// Pair chosen in the window, as Rust declared it (`null` otherwise).
 function selectedSwapPair() {
   const from = parseSwapKey(document.getElementById("swap-from-coin").value);
   const to = parseSwapKey(document.getElementById("swap-to-coin").value);
   const pair = swapPairs.find((p) => p.from_coin === from.coin && p.from_network === from.network && p.to_coin === to.coin && p.to_network === to.network);
   if (!pair) return null;
-  // Fournisseurs de l'étape à faire maintenant (la paire elle-même, ou sa
-  // première étape vers l'intermédiaire), le préféré d'abord ; celui choisi
-  // dans le menu s'il en fait partie.
+  // Providers for the step to do now (the pair itself, or its first step towards the
+  // intermediate), the preferred one first; the one chosen in the menu if it is
+  // among them.
   const stepTo = pair.via ?? to;
   const direct = swapPairs.find((p) => p.from_coin === from.coin && p.from_network === from.network && p.to_coin === stepTo.coin && p.to_network === stepTo.network && !p.via);
   const providers = direct?.protocols?.length ? direct.protocols : [pair.protocol];
-  // Frais d'affiliation de l'app pour cette étape, en points de base, déclarés
-  // par Rust pour chaque fournisseur (0 depuis Bitcoin ou Zcash via THORChain
-  // ou Maya, voir `swap_routes::affiliate_fee_bps`).
+  // The app's affiliate fee for this step, in basis points, declared by Rust for
+  // each provider (0 from Bitcoin or Zcash through THORChain or Maya, see
+  // `swap_routes::affiliate_fee_bps`).
   const feesBps = Object.fromEntries((direct?.protocols ?? []).map((protocol, index) => [protocol, direct.fees_bps?.[index]]));
   const chosen = document.getElementById("swap-provider").value;
   return { from, to, protocol: providers.includes(chosen) ? chosen : providers[0], providers, feesBps, via: pair.via ?? null, thenProtocol: pair.then_protocol ?? null };
 }
 
-// Frais d'affiliation par défaut de chaque fournisseur, en % (voir
-// core/src/cow.rs et core/src/thorchain_rpc.rs), quand Rust n'en déclare pas
-// pour la paire.
+// Each provider's default affiliate fee, in % (see core/src/cow.rs and
+// core/src/thorchain_rpc.rs), when Rust does not declare one for the pair.
 const SWAP_PROVIDER_FEE_PERCENT = { thorchain: 0.8, maya: 0.8, jupiter: 0.8, cow: 1, lifi: 0.8, swapkit: 0.15, moonpay: 1.1 };
 
 function swapProviderFeePercent(pair, protocol) {
@@ -7033,21 +7026,21 @@ function swapProviderFeePercent(pair, protocol) {
   return typeof bps === "number" ? bps / 100 : SWAP_PROVIDER_FEE_PERCENT[protocol];
 }
 
-// Actifs que THORChain et Maya n'échangent pas en ce moment (`coin@network`,
-// réseau suspendu : incident, maintenance), lus à chaque ouverture de la
-// fenêtre (commande `swap_halts`).
+// Assets that THORChain and Maya are not swapping right now (`coin@network`,
+// network halted: incident, maintenance), read each time the window opens
+// (`swap_halts` command).
 let swapHalts = {};
 
-// Le fournisseur `protocol` a-t-il suspendu l'un des deux actifs de l'étape ?
+// Has provider `protocol` halted either of the step's two assets?
 function isProviderHalted(protocol, step) {
   const halted = swapHalts[protocol] ?? [];
   return [step.from, step.to].some(({ coin, network }) => halted.includes(swapKey(coin, network)));
 }
 
-// Menu « Fournisseur » : tous ceux qui savent faire l'étape, le recommandé
-// en premier et choisi par défaut à chaque changement de paire. Un
-// fournisseur suspendu passe en dernier, marqué : choisi par défaut seulement
-// s'il n'y en a pas d'autre (son devis dira alors la suspension en clair).
+// "Provider" menu: every provider that can do the step, the recommended one first
+// and chosen by default whenever the pair changes. A halted provider goes last,
+// marked: chosen by default only if there is no other (its quote will then state
+// the halt in plain words).
 function fillSwapProviderOptions() {
   const select = document.getElementById("swap-provider");
   const pair = selectedSwapPair();
@@ -7068,9 +7061,10 @@ function fillSwapProviderOptions() {
   syncCustomSelect(select);
 }
 
-// --- Staking Cardano (délégation à un pool) -----------------------------------
-// Les ADA restent dans le portefeuille ; tout se décide côté Rust (pools
-// proposés, état du compte, transaction, boîte native, délai d'annulation).
+// --- Cardano staking (delegation to a pool) -----------------------------------
+//
+// The ADA stays in the wallet; everything is decided on the Rust side (pools
+// offered, account state, transaction, native dialog, cancellation delay).
 const adaStakeModal = document.getElementById("ada-stake-modal");
 let adaStakeContext = null;
 
@@ -7146,10 +7140,11 @@ document.getElementById("ada-stake-close").addEventListener("click", () => {
   adaStakeContext = null;
 });
 
-// --- Staking Solana (liquide ou natif) -------------------------------------------
-// Liquide : échange SOL → JitoSOL dans « Convertir ». Natif : compte de mise
-// délégué à un validateur ; tout se décide et se vérifie côté Rust
-// (validateurs proposés, simulation, boîte native, délai d'annulation).
+// --- Solana staking (liquid or native) -------------------------------------------
+//
+// Liquid: a SOL → JitoSOL swap in "Convert". Native: a stake account delegated to a
+// validator; everything is decided and checked on the Rust side (validators
+// offered, simulation, native dialog, cancellation delay).
 const solStakeModal = document.getElementById("sol-stake-modal");
 let solStakeContext = null;
 
@@ -7232,7 +7227,7 @@ function renderSolStakeAccounts(context, status) {
     ? t("staking.solTotal", { amount: Number.parseFloat(status.total).toLocaleString(chartLocale(), { maximumFractionDigits: 6 }) })
     : t("staking.solNone");
   document.getElementById("sol-stake-min").textContent = t("staking.solMin", { min: status.min_delegation, reserve: status.rent_reserve });
-  // Même lecture pour la carte SOL et la valeur totale.
+  // The same read for the SOL card and the total value.
   const key = balanceKey(context.card);
   solStaked = { key, lamports: status.total_lamports, at: Date.now() };
   renderSolStaked(context.card);
@@ -7316,7 +7311,7 @@ async function runSolStake(action, target) {
     successEl.textContent = t("staking.adaSent", { tx: `${tx.slice(0, 10)}…` });
     successEl.classList.remove("hidden");
     if (action === "delegate") document.getElementById("sol-stake-amount").value = "";
-    // Relu une fois la transaction confirmée (quelques secondes).
+    // Reread once the transaction is confirmed (a few seconds).
     setTimeout(() => {
       if (solStakeContext === context) loadSolStakeStatus(context);
       else refreshSolStaked(context.card, true);
@@ -7356,12 +7351,12 @@ async function runSolStake(action, target) {
   });
 }
 
-// Rendements annuels estimés (Rust, `staking_aprs`) : lus au déverrouillage,
-// une fois par heure au plus. Affichés à côté de « Staker » (renderStakeChips),
-// dans la note de « Convertir » et dans la fenêtre « Staker vos SOL ».
+// Estimated annual yields (Rust, `staking_aprs`): read at unlock, at most once an
+// hour. Shown next to "Stake" (renderStakeChips), in the "Convert" note and in the
+// "Stake your SOL" window.
 let stakingAprs = null;
 let stakingAprsAt = 0;
-// Taux affiché par carte : SOL → Jito, ETH → Lido, Cardano → moyenne du réseau.
+// Rate shown per card: SOL → Jito, ETH → Lido, Cardano → network average.
 const STAKE_RATE_SOURCE = { sol: "jitosol", evm: "steth", ada: "ada" };
 
 function loadStakingAprs() {
@@ -7399,7 +7394,7 @@ function renderStakingNote() {
   let text = "";
   if (pair && !pair.via && lst[pair.to.coin] === pair.from.coin) {
     const apr = stakingAprs?.[pair.to.coin];
-    // Taux annoncé (Jito, Lido) ; inconnu : message sans chiffre.
+    // Announced rate (Jito, Lido); unknown: a message without a figure.
     text = apr
       ? t(pair.to.coin === "jitosol" ? "staking.noteSol" : "staking.noteEth", { apr: apr.toLocaleString(chartLocale(), { maximumFractionDigits: 1 }) })
       : t("staking.apr", { coin: COIN_SYMBOL[pair.from.coin] });
@@ -7407,7 +7402,7 @@ function renderStakingNote() {
   } else if (pair && !pair.via && lst[pair.from.coin] === pair.to.coin) {
     text = t("staking.unstake", { from: COIN_SYMBOL[pair.from.coin], to: COIN_SYMBOL[pair.to.coin] });
   }
-  // Frais de l'app pour ce fournisseur et cette paire (Rust, `fees_bps`).
+  // The app's fee for this provider and this pair (Rust, `fees_bps`).
   const bps = pair?.feesBps?.[pair.protocol];
   if (text && bps != null) text += t("staking.fee", { fee: (bps / 100).toLocaleString(chartLocale(), { maximumFractionDigits: 2 }) });
   el.textContent = text;
@@ -7422,17 +7417,18 @@ function onSwapTargetChange() {
   if (swapMaxActive) fillSwapMax();
 }
 
-// --- État des fournisseurs ----------------------------------------------------
-// Messages orange (échange dégradé) ou rouge (impossible par ce fournisseur)
-// sous son choix : service qui ne répond pas (Rust, `swap_health`), crypto
-// suspendue par THORChain ou Maya (`swap_halts`), échange en cours
-// anormalement long (suivi ici, gardé d'une ouverture de l'app à l'autre).
+// --- Provider status ----------------------------------------------------
+//
+// Orange messages (degraded swap) or red ones (impossible through this provider)
+// under its choice: a service that does not answer (Rust, `swap_health`), a crypto
+// halted by THORChain or Maya (`swap_halts`), a swap in progress that is taking
+// abnormally long (tracked here, kept from one app launch to the next).
 let swapHealth = [];
 let swapSlow = [];
 const PENDING_SWAPS_KEY = "pgp-wallet-pending-swaps";
-// « Lent » : au-delà de 15 min, ou de 3 fois la durée annoncée. Oublié après
-// 48 h (et à la réinitialisation ou la restauration du portefeuille) : au-delà,
-// « lent en ce moment » ne voudrait plus rien dire.
+// "Slow": beyond 15 min, or 3 times the announced duration. Forgotten after 48 h
+// (and on wallet reset or restore): beyond that, "slow right now" would mean
+// nothing.
 const SLOW_SWAP_MIN_MS = 15 * 60 * 1000;
 const PENDING_SWAP_MAX_MS = 48 * 60 * 60 * 1000;
 
@@ -7449,7 +7445,7 @@ function writePendingSwaps(list) {
   try {
     localStorage.setItem(PENDING_SWAPS_KEY, JSON.stringify(list.slice(-20)));
   } catch (e) {
-    // Préférence d'affichage seulement : sans stockage, pas d'alerte de lenteur.
+    // Display preference only: without storage, no slowness warning.
   }
 }
 
@@ -7461,8 +7457,8 @@ function removePendingSwap(id) {
   writePendingSwaps(readPendingSwaps().filter((e) => e.id !== id));
 }
 
-// Échanges en cours depuis trop longtemps : état relu chez le fournisseur ;
-// ceux qui sont terminés sortent de la liste.
+// Swaps in progress for too long: state reread from the provider; finished ones
+// leave the list.
 async function slowPendingSwaps() {
   const slow = [];
   for (const entry of readPendingSwaps()) {
@@ -7488,8 +7484,8 @@ function renderSwapAlerts() {
   const pair = selectedSwapPair();
   const alerts = [];
   if (pair) {
-    // Étape à faire maintenant (un fournisseur au choix), puis la seconde d'un
-    // échange en deux étapes, depuis l'intermédiaire.
+    // Step to do now (one provider of your choice), then the second step of a two-step
+    // swap, from the intermediate.
     const steps = new Map(pair.providers.map((protocol) => [protocol, [pair.from, pair.via ?? pair.to]]));
     if (pair.thenProtocol) steps.set(pair.thenProtocol, [...(steps.get(pair.thenProtocol) ?? []), pair.via, pair.to]);
     for (const [protocol, coins] of steps) {
@@ -7502,7 +7498,7 @@ function renderSwapAlerts() {
         alerts.push({ protocol, severity: "warning", text: t("swap.alert.slow", { provider: entry.provider_name, minutes: Math.round((Date.now() - entry.started) / 60000) }) });
       }
     }
-    // Fournisseur choisi d'abord, puis le rouge avant l'orange.
+    // Chosen provider first, then red before orange.
     const rank = (a) => (a.protocol === pair.protocol ? 0 : 2) + (a.severity === "error" ? 0 : 1);
     alerts.sort((a, b) => rank(a) - rank(b));
   }
@@ -7519,12 +7515,11 @@ function renderSwapAlerts() {
 
 const SWAP_PROTOCOL_NAMES = { thorchain: "THORChain", maya: "Maya", jupiter: "Jupiter", cow: "CoW", lifi: "LI.FI", swapkit: "SwapKit", moonpay: "MoonPay Trade" };
 
-// Au-delà de ce coût estimé (frais et écart au cours du marché), l'aperçu
-// avertit avant de continuer.
+// Above this estimated cost (fees and gap to the market price), the preview warns
+// before continuing.
 const SWAP_HIGH_COST_PERCENT = 5;
 
-// « SOL », « ETH (Arbitrum) » : symbole, et réseau pour une crypto qui en a
-// plusieurs.
+// "SOL", "ETH (Arbitrum)": symbol, plus the network for a crypto that has several.
 function swapShortLabel({ coin, network }) {
   const asset = ASSET_BY_COIN[coin];
   const symbol = COIN_SYMBOL[coin] ?? coin.toUpperCase();
@@ -7532,16 +7527,14 @@ function swapShortLabel({ coin, network }) {
   return mainnets.length > 1 ? `${symbol} (${t(`net.${network}`).split(" — ")[0]})` : symbol;
 }
 
-// Étape à faire maintenant : la paire elle-même, ou sa première étape (vers
-// la crypto intermédiaire) pour un échange en 2 étapes — les commandes
-// d'échange n'acceptent qu'une paire directe.
+// Step to do now: the pair itself, or its first step (towards the intermediate
+// crypto) for a two-step swap, since the swap commands only accept a direct pair.
 function currentSwapStep(pair) {
   return pair.via ? { from: pair.from, to: pair.via, protocol: pair.protocol } : pair;
 }
 
-// Adresse d'arrivée de l'étape : aucune dans le même portefeuille ; celle de
-// l'utilisateur pour la crypto intermédiaire (TOUJOURS la sienne) ; sinon
-// celle saisie.
+// Destination address of the step: none within the same wallet; the user's own for
+// the intermediate crypto (ALWAYS theirs); otherwise the one entered.
 function swapStepDestination(pair, step) {
   if (isSameWalletSwap(step)) return "";
   if (pair.via) return addressForCoin(pair.via.coin, pair.via.network);
@@ -7580,11 +7573,10 @@ function updateSwapToOptions() {
   onSwapTargetChange();
 }
 
-// Montant à échanger en crypto OU dans la devise affichée, comme à l'envoi :
-// seul le montant en crypto part dans le devis (puis dans l'aperçu et la
-// boîte de confirmation de Windows). Quand la crypto de départ change ou que
-// le cours est rafraîchi, le dernier champ saisi fait foi : 20 € restent
-// 20 €, 0,1 reste 0,1.
+// Amount to swap in crypto OR in the display currency, as for a send: only the
+// crypto amount goes into the quote (then into the preview and the Windows
+// confirmation dialog). When the source crypto changes or the price is refreshed,
+// the last field typed into wins: €20 stays €20, 0.1 stays 0.1.
 const swapAmountInput = document.getElementById("swap-amount");
 const swapFiatInput = document.getElementById("swap-amount-fiat");
 let swapAmountTypedIn = "crypto";
@@ -7616,11 +7608,11 @@ restrictToAmount(swapFiatInput, () => {
   renderSwapBalance();
 });
 
-// « Max » : montant maximal pour l'échange choisi, frais de l'échange
-// déduits (Rust, `swap_max_amount` : tout le solde d'un jeton ; pour la
-// monnaie du réseau, le solde moins les frais au plus de ce fournisseur).
-// Recalculé si le fournisseur ou la paire change tant que le montant n'a
-// pas été retouché ; la vérification des fonds de l'échange fait foi.
+// "Max": the maximum amount for the chosen swap, the swap's fees deducted (Rust,
+// `swap_max_amount`: a token's whole balance; for the native coin, the balance
+// minus this provider's maximum fees). Recomputed if the provider or the pair
+// changes as long as the amount has not been edited; the swap's funds check is the
+// one that counts.
 let swapMaxActive = false;
 const swapMaxBtn = document.getElementById("swap-max");
 
@@ -7653,15 +7645,15 @@ async function fillSwapMax() {
 }
 
 swapMaxBtn.addEventListener("click", fillSwapMax);
-// Montant tapé à la main : ce n'est plus le maximum.
+// Amount typed by hand: it is no longer the maximum.
 for (const input of [swapAmountInput, swapFiatInput]) {
   input.addEventListener("input", () => {
     swapMaxActive = false;
   });
 }
 
-// Unités à droite des deux champs, champ en devise activé ou non, montants
-// resynchronisés.
+// Units to the right of both fields, currency field enabled or not, amounts
+// resynced.
 function renderSwapAmount() {
   const { coin, network } = swapFromAsset();
   setWithCoinIcon(document.getElementById("swap-amount-unit"), coin, COIN_SYMBOL[coin] ?? "");
@@ -7674,17 +7666,16 @@ function renderSwapAmount() {
   renderSwapBalance();
 }
 
-// Solde de la crypto de départ, sous le montant : relu sur son réseau à chaque
-// choix (la carte peut afficher un autre réseau, ou un solde d'il y a 15 s).
-// `{ key, text, amount }` une fois lu, `text: null` pendant la lecture,
-// `failed` après un échec.
+// Balance of the source crypto, under the amount: reread on its network for every
+// choice (the card may show another network, or a balance from 15 s ago). `{ key,
+// text, amount }` once read, `text: null` while reading, `failed` after a failure.
 let swapBalance = null;
 
 async function loadSwapBalance() {
   const { coin, network } = swapFromAsset();
   swapBalance = null;
   if (!coin) {
-    renderSwapBalance(); // aucune crypto de départ proposée
+    renderSwapBalance(); // no source crypto offered
     return;
   }
   const key = swapKey(coin, network);
@@ -7700,13 +7691,13 @@ async function loadSwapBalance() {
     console.error(e);
     next = { key, failed: true };
   }
-  if (swapBalance?.key !== key) return; // autre crypto choisie entre-temps
+  if (swapBalance?.key !== key) return; // another crypto chosen in the meantime
   swapBalance = next;
   renderSwapBalance();
 }
 
-// « Disponible : 0.5 ETH (≈ 1 234,56 €) », signalé quand le montant
-// saisi le dépasse (simple aide : les frais du réseau ne sont pas déduits).
+// "Available: 0.5 ETH (≈ €1,234.56)", flagged when the amount entered exceeds it
+// (just an aid: network fees are not deducted).
 function renderSwapBalance() {
   const el = document.getElementById("swap-balance");
   el.classList.remove("swap-balance-short");
@@ -7762,7 +7753,7 @@ function openSwapModal(card, preset = null) {
   swapHalts = {};
   invoke("swap_halts")
     .then((halts) => {
-      if (swapContext?.card !== card) return; // fenêtre fermée ou rouverte entre-temps
+      if (swapContext?.card !== card) return; // window closed or reopened in the meantime
       swapHalts = halts;
       onSwapTargetChange();
     })
@@ -7779,12 +7770,12 @@ function openSwapModal(card, preset = null) {
   swapModal.classList.remove("hidden");
 }
 
-// Jupiter (Solana) et CoW (un même réseau EVM) restent dans le même
-// portefeuille : pas d'adresse de destination à saisir, contrairement à un
-// échange entre réseaux (THORChain, Maya), où elle est pré-remplie avec
-// l'adresse du profil sur le réseau d'arrivée.
-// MoonPay Trade sur un même réseau EVM : routeur, achats sur l'adresse du
-// profil (vérifié par simulation).
+// Jupiter (Solana) and CoW (the same EVM network) stay within the same wallet: no
+// destination address to enter, unlike a cross-chain swap (THORChain, Maya), where
+// it is pre-filled with the profile's address on the destination network.
+//
+// MoonPay Trade on the same EVM network: router, purchases to the profile's
+// address (checked by simulation).
 const isSameWalletSwap = (pair) => pair?.protocol === "jupiter" || pair?.protocol === "cow" || (pair?.protocol === "moonpay" && pair.from?.network === pair.to?.network);
 
 function updateSwapDestination() {
@@ -7850,9 +7841,9 @@ swapQuoteBtn.addEventListener("click", withBusyButton(swapQuoteBtn, async () => 
     let receivingText;
     let receivedAmount = Number.NaN;
     if (step.protocol === "cow") {
-      // Ordre CoW : réception attendue, minimum garanti signé, frais (1 %
-      // d'intégration dans la crypto reçue + frais réseau de CoW pris sur la
-      // crypto vendue), tous déjà comptés.
+      // CoW order: expected amount, signed guaranteed minimum, fees (1% integration fee
+      // in the crypto received + CoW's network fee taken from the crypto sold), all
+      // already counted.
       const quote = await invoke("get_cow_quote", { network: fromNetwork, fromCoin, toCoin, amount, profileIndex: swapContext.profileIndex });
       receivingText = `≈ ${quote.expected_out}`;
       receivedAmount = Number.parseFloat(quote.expected_out);
@@ -7863,9 +7854,8 @@ swapQuoteBtn.addEventListener("click", withBusyButton(swapQuoteBtn, async () => 
       destRow.classList.add("hidden");
       feeRow.classList.remove("hidden");
     } else if (step.protocol === "lifi") {
-      // LI.FI : pont choisi par l'agrégateur, durée estimée, minimum annoncé
-      // (garanti par le pont) ; la transaction elle-même est vérifiée à la
-      // confirmation.
+      // LI.FI: bridge chosen by the aggregator, estimated duration, announced minimum
+      // (guaranteed by the bridge); the transaction itself is verified at confirmation.
       const quote = await invoke("get_lifi_quote", { fromCoin, fromNetwork, toCoin, toNetwork, amount, destination, profileIndex: swapContext.profileIndex });
       receivingText = `≈ ${quote.expected_out}`;
       receivedAmount = Number.parseFloat(quote.expected_out);
@@ -7877,9 +7867,8 @@ swapQuoteBtn.addEventListener("click", withBusyButton(swapQuoteBtn, async () => 
       destRow.classList.remove("hidden");
       feeRow.classList.remove("hidden");
     } else if (step.protocol === "swapkit") {
-      // SwapKit : meilleur devis de NEAR Intents et de Chainflip ; le dépôt
-      // n'est ouvert, puis confirmé par le fournisseur lui-même, qu'à la
-      // confirmation.
+      // SwapKit: the best quote from NEAR Intents and Chainflip; the deposit is only
+      // opened, then confirmed by the provider itself, at confirmation.
       const quote = await invoke("get_swapkit_quote", { fromCoin, fromNetwork, toCoin, toNetwork, amount, destination, profileIndex: swapContext.profileIndex });
       const symbol = COIN_SYMBOL[toCoin] || toCoin.toUpperCase();
       receivingText = `≈ ${quote.expected_out} ${symbol}`;
@@ -7896,9 +7885,9 @@ swapQuoteBtn.addEventListener("click", withBusyButton(swapQuoteBtn, async () => 
       destRow.classList.remove("hidden");
       feeRow.classList.remove("hidden");
     } else if (step.protocol === "moonpay") {
-      // MoonPay Trade : sur un même réseau EVM, routeur simulé à la
-      // confirmation (achats sur l'adresse du profil) ; ailleurs, dépôt dont
-      // la livraison est gérée par MoonPay Trade — dit ici et dans la boîte.
+      // MoonPay Trade: on the same EVM network, router simulated at confirmation
+      // (purchases to the profile's address); elsewhere, a deposit whose delivery is
+      // handled by MoonPay Trade, as stated here and in the dialog.
       const quote = await invoke("get_moonpay_quote", { fromCoin, fromNetwork, toCoin, toNetwork, amount, destination, profileIndex: swapContext.profileIndex });
       const symbol = COIN_SYMBOL[toCoin] || toCoin.toUpperCase();
       receivingText = `≈ ${quote.expected_out} ${symbol}`;
@@ -7923,8 +7912,8 @@ swapQuoteBtn.addEventListener("click", withBusyButton(swapQuoteBtn, async () => 
       const quote = await invoke("get_swap_quote", { fromCoin, fromNetwork, toCoin, toNetwork, amount, destination, protocol: step.protocol });
       receivingText = `≈ ${quote.expected_amount_out} ${COIN_SYMBOL[toCoin] || toCoin.toUpperCase()}`;
       receivedAmount = Number(quote.expected_amount_out);
-      // Frais du protocole (THORChain ou Maya), dans la crypto reçue (déjà
-      // déduits de la réception).
+      // Protocol fees (THORChain or Maya), in the crypto received (already deducted from
+      // the amount received).
       document.getElementById("swap-preview-fees-label").textContent = t("swap.previewFeesOf", { name: SWAP_PROTOCOL_NAMES[step.protocol] });
       document.getElementById("swap-preview-fees").textContent = quote.total_fees != null ? `${quote.total_fees} ${COIN_SYMBOL[toCoin] ?? ""}` : "—";
       document.getElementById("swap-preview-destination").textContent = destination;
@@ -7935,9 +7924,9 @@ swapQuoteBtn.addEventListener("click", withBusyButton(swapQuoteBtn, async () => 
     const routeNote = document.getElementById("swap-preview-route");
     routeNote.classList.toggle("hidden", !pair.via);
     if (pair.via) routeNote.textContent = t("swap.previewRoute", swapRouteVars(pair));
-    // Valeur en devise de l'envoi et de la réception (cours du marché) et
-    // leur écart : frais compris, un repère pour juger le devis d'un
-    // protocole externe. Masqué sans cours connu.
+    // Currency value of what is sent and received (market price) and the gap between
+    // them: fees included, a benchmark for judging an external protocol's quote.
+    // Hidden with no known price.
     const fromPrice = priceForCoin(fromCoin);
     const toPrice = priceForCoin(toCoin);
     const sentValue = fromPrice != null ? Number(amount) * fromPrice : null;
@@ -7973,11 +7962,10 @@ document.getElementById("swap-preview-back").addEventListener("click", () => {
   swapModal.classList.remove("hidden");
 });
 
-// Le devis affiché ici (aperçu) n'est qu'une estimation pour décider de
-// continuer : `swap_transaction` en relit un tout nouveau côté Rust juste
-// avant la confirmation native, jamais celui-ci (voir sa doc) — l'adresse de
-// vault THORChain change régulièrement, un devis de quelques secondes peut
-// déjà être périmé.
+// The quote shown here (preview) is only an estimate to decide whether to
+// continue: `swap_transaction` rereads a brand-new one on the Rust side just
+// before the native confirmation, never this one (see its docs). THORChain's vault
+// address changes regularly, so a quote a few seconds old may already be stale.
 const swapPreviewConfirmBtn = document.getElementById("swap-preview-confirm");
 swapPreviewConfirmBtn.addEventListener("click", withBusyButton(swapPreviewConfirmBtn, async () => {
   if (!swapContext) return;
@@ -8005,8 +7993,8 @@ swapPreviewConfirmBtn.addEventListener("click", withBusyButton(swapPreviewConfir
   }
 
   try {
-    // 2 étapes : solde de la crypto intermédiaire relevé AVANT l'envoi, pour
-    // reconnaître son arrivée (et le montant reçu) ensuite.
+    // Two steps: the intermediate crypto's balance recorded BEFORE sending, to
+    // recognize its arrival (and the amount received) afterwards.
     const routeAddress = pair.via ? addressForCoin(pair.via.coin, pair.via.network) : "";
     const routeBefore = pair.via ? await readAssetBalance(pair.via.coin, pair.via.network, routeAddress) : null;
 
@@ -8039,12 +8027,12 @@ swapPreviewConfirmBtn.addEventListener("click", withBusyButton(swapPreviewConfir
       note.textContent = ` ${t("swap.routeStep1Sent", { via: swapShortLabel(pair.via) })}`;
       successEl.append(note);
     } else if (pendingRoute && sameSwapAsset(pendingRoute.via, pair.from) && sameSwapAsset(pendingRoute.to, pair.to)) {
-      // Seconde étape d'un échange en 2 étapes : terminé.
+      // Second step of a two-step swap: done.
       savePendingRoute(null);
     }
-    // Un swap peut affecter le solde de PLUSIEURS cartes (source ET
-    // destination si elle est aussi gérée par ce wallet, ex: SOL<->USDC) —
-    // toutes rafraîchies plutôt que juste celle d'où le swap a été ouvert.
+    // A swap can affect the balance of SEVERAL cards (source AND destination if it is
+    // also managed by this wallet, e.g. SOL<->USDC): all of them are refreshed rather
+    // than just the one the swap was opened from.
     refreshAllBalances();
   } catch (e) {
     showError(errorEl, String(e));
@@ -8053,13 +8041,13 @@ swapPreviewConfirmBtn.addEventListener("click", withBusyButton(swapPreviewConfir
   }
 }));
 
-// --- Échange en 2 étapes : suivi de la crypto intermédiaire ---------------------
-// Après l'étape 1, la route est gardée localement (même après un redémarrage)
-// et le solde de la crypto intermédiaire relu toutes les 20 s : dès qu'il
-// monte, l'étape 2 est proposée avec le montant reçu (fenêtre « Convertir »
-// pré-remplie, nouveau devis et nouvelle confirmation native). Rien n'est
-// bloqué si elle n'est jamais faite : l'intermédiaire reste sur le
-// portefeuille de l'utilisateur.
+// --- Two-step swap: tracking the intermediate crypto ---------------------
+//
+// After step 1, the route is kept locally (even across a restart) and the
+// intermediate crypto's balance is reread every 20 s: as soon as it goes up, step
+// 2 is offered with the amount received ("Convert" window pre-filled, new quote
+// and new native confirmation). Nothing is locked if it is never done: the
+// intermediate stays in the user's wallet.
 
 const PENDING_ROUTE_STORAGE_KEY = "pendingSwapRoute";
 const ROUTE_POLL_MS = 20000;
@@ -8067,7 +8055,7 @@ const ROUTE_MAX_WAIT_MS = 3 * 60 * 60 * 1000;
 
 const sameSwapAsset = (a, b) => Boolean(a && b) && a.coin === b.coin && a.network === b.network;
 
-// Solde d'une crypto sur un réseau, comme sur sa carte (texte « 0.123 »).
+// Balance of a crypto on a network, as on its card (text "0.123").
 function readAssetBalance(coin, network, address) {
   if (ASSET_BY_COIN[coin]?.stock) return stockBalance(coin, address);
   return usesTokenRegistry(coin, network)
@@ -8081,14 +8069,13 @@ function savePendingRoute(route) {
     if (route) localStorage.setItem(PENDING_ROUTE_STORAGE_KEY, JSON.stringify(route));
     else localStorage.removeItem(PENDING_ROUTE_STORAGE_KEY);
   } catch {
-    // localStorage indisponible : suivi pour cette session seulement.
+    // localStorage unavailable: tracking for this session only.
   }
   renderRouteBanner();
   scheduleRoutePoll();
 }
 
-// Bandeau du portefeuille : seulement pour le profil (et l'adresse) qui a
-// lancé l'échange.
+// Wallet banner: only for the profile (and the address) that started the swap.
 function renderRouteBanner() {
   const banner = document.getElementById("swap-route-banner");
   const route = pendingRoute;
@@ -8142,14 +8129,13 @@ try {
 }
 scheduleRoutePoll();
 
-// Suivi d'un ordre CoW après l'envoi : son état est relu toutes les 15 s
-// jusqu'à son exécution, son expiration (30 min au plus) ou son annulation ;
-// lien vers CoW Explorer.
+// Tracking a CoW order after sending: its state is reread every 15 s until it is
+// executed, expires (30 min at most) or is cancelled; link to CoW Explorer.
 const COW_ORDER_POLL_MS = 15000;
 const COW_ORDER_MAX_WAIT_MS = 35 * 60 * 1000;
 
-// Suivi d'un transfert LI.FI : état relu toutes les 15 s jusqu'à son arrivée,
-// son échec ou un remboursement (au plus 2 h) ; lien vers LI.FI Scan.
+// Tracking a LI.FI transfer: state reread every 15 s until it arrives, fails or is
+// refunded (2 h at most); link to LI.FI Scan.
 const LIFI_POLL_MS = 15000;
 const LIFI_MAX_WAIT_MS = 2 * 60 * 60 * 1000;
 
@@ -8200,9 +8186,8 @@ function trackLifiTransfer(successEl, transfer) {
   setTimeout(poll, LIFI_POLL_MS);
 }
 
-// Échange SwapKit : étape lue auprès du fournisseur (NEAR Intents ou
-// Chainflip) toutes les 20 s, jusqu'à l'arrivée, au remboursement ou à
-// l'échec (3 h au plus).
+// SwapKit swap: stage read from the provider (NEAR Intents or Chainflip) every 20
+// s, until arrival, refund or failure (3 h at most).
 const SWAPKIT_POLL_MS = 20000;
 const SWAPKIT_MAX_WAIT_MS = 3 * 60 * 60 * 1000;
 
@@ -8285,7 +8270,7 @@ function trackCowOrder(successEl, network, order) {
   setTimeout(poll, COW_ORDER_POLL_MS);
 }
 
-// --- Certificat ------------------------------------------------------------
+// --- Certificate ------------------------------------------------------------
 
 async function loadCertificate() {
   try {
@@ -8303,7 +8288,7 @@ document.getElementById("copy-cert").addEventListener("click", () => {
   copyText(document.getElementById("cert-armored").value);
 });
 
-// --- Message (destinataires + chiffrement) ---------------------------------
+// --- Message (recipients + encryption) ---------------------------------
 
 let recipientsCache = [];
 
@@ -8319,7 +8304,7 @@ async function loadRecipients() {
 function renderRecipientList() {
   const container = document.getElementById("recipient-list");
   const picker = document.getElementById("message-recipients-picker");
-  // On garde la sélection en cours (cases déjà cochées) d'un rafraîchissement à l'autre.
+  // The current selection (boxes already ticked) is kept from one refresh to the next.
   const previouslyChecked = new Set(
     Array.from(picker.querySelectorAll("input[type=checkbox]:checked")).map((cb) => cb.value)
   );
@@ -8333,10 +8318,10 @@ function renderRecipientList() {
   }
 
   recipientsCache.forEach((r) => {
-    // `r.label` est saisi par l'utilisateur : on construit le DOM avec textContent
-    // plutôt qu'un innerHTML avec interpolation, pour ne jamais l'interpréter comme
-    // du HTML (même si la CSP stricte bloquerait déjà l'exécution d'un script injecté
-    // ainsi, autant ne pas dépendre uniquement de ça).
+    // `r.label` is typed by the user: the DOM is built with textContent rather than
+    // innerHTML with interpolation, so it is never interpreted as HTML (even though
+    // the strict CSP would already block a script injected this way, better not to
+    // rely on that alone).
     const item = document.createElement("div");
     item.className = "recipient-item";
 
@@ -8344,9 +8329,9 @@ function renderRecipientList() {
     labelDiv.className = "recipient-label";
     labelDiv.textContent = r.label;
 
-    // Empreinte affichée pour permettre une vérification hors-ligne de l'identité
-    // (voir le commentaire sur RecipientDto.fingerprint côté Rust) : sans ça, un
-    // remplacement de la clé stockée localement passerait inaperçu.
+    // Fingerprint shown to allow an offline identity check (see the comment on
+    // RecipientDto.fingerprint on the Rust side): without it, a swap of the locally
+    // stored key would go unnoticed.
     const fingerprintDiv = document.createElement("div");
     fingerprintDiv.className = "recipient-fp";
     fingerprintDiv.textContent = r.fingerprint;
@@ -8394,11 +8379,11 @@ function renderRecipientList() {
   });
 }
 
-// Consultation de la clé publique complète d'un destinataire déjà enregistré
-// (identité/empreinte/identifiant de clé/texte ASCII-armor complet) — même
-// gabarit que l'onglet Certificat pour la propre identité de l'appareil.
-// Toutes les données viennent déjà de `recipientsCache` (voir RecipientDto
-// côté Rust) : aucun nouvel appel Tauri nécessaire pour ouvrir cette modale.
+// Viewing the full public key of a recipient already saved
+// (identity/fingerprint/key ID/full ASCII-armored text), with the same layout as
+// the Certificate tab for the device's own identity. All the data already comes
+// from `recipientsCache` (see RecipientDto on the Rust side): no new Tauri call is
+// needed to open this modal.
 function openRecipientKeyModal(recipient) {
   document.getElementById("recipient-key-label").textContent = recipient.label;
   document.getElementById("recipient-key-userid").textContent = recipient.user_id;
@@ -8523,16 +8508,17 @@ document.getElementById("clear-decrypted").addEventListener("click", () => {
   document.getElementById("decrypt-input").value = "";
 });
 
-// --- Wallets externes --------------------------------------------------------
-// Suivi en lecture seule d'adresses qui n'appartiennent pas à ce portefeuille :
-// on réutilise directement la commande `get_balance` déjà utilisée pour les
-// propres cartes du wallet (aucun secret impliqué, juste une adresse publique).
+// --- External wallets --------------------------------------------------------
+//
+// Read-only tracking of addresses that do not belong to this wallet: the
+// `get_balance` command already used for the wallet's own cards is reused directly
+// (no secrets involved, just a public address).
 
 let externalWalletsCache = [];
 let externalGroupsCache = [];
 
-// Crypto dont le prix valorise un wallet externe : la monnaie du réseau (BNB
-// sur BNB Chain…), ou USDC pour « USDC — Solana ».
+// Crypto whose price values an external wallet: the network's native coin (BNB on
+// BNB Chain…), or USDC for "USDC — Solana".
 function externalWalletPriceCoin(network) {
   if (network === "usdc_solana") return "usdc";
   return NATIVE_ASSET_BY_NETWORK[network]?.coin ?? null;
@@ -8549,7 +8535,7 @@ function externalNetworkLabel(network) {
     usdc_solana: "external.netUsdcSolana",
   }[network];
   if (key) return t(key);
-  // Autres réseaux (Arbitrum, Zcash, XRP…) : même libellé que sur les cartes.
+  // Other networks (Arbitrum, Zcash, XRP…): the same label as on the cards.
   const label = t(`net.${network}`);
   return label === `net.${network}` ? network : label;
 }
@@ -8737,11 +8723,11 @@ async function refreshExternalWalletBalances() {
       if (!row) return;
       const balanceEl = row.querySelector('[data-field="external-balance"]');
       try {
-        // USDC n'est pas un "network" au sens où get_balance l'entend (pas de
-        // notion de décimales/mint par actif) : commande dédiée, comme pour la
-        // carte USDC du propre wallet. Mainnet uniquement (voir sol_spl.rs) —
-        // "usdc_solana" est stocké tel quel dans external_wallets.json, mais
-        // get_usdc_balance attend le vrai identifiant de cluster ("sol_mainnet").
+        // USDC is not a "network" in the sense get_balance means (no notion of
+        // decimals/mint per asset): a dedicated command, as for the wallet's own USDC
+        // card. Mainnet only (see sol_spl.rs): "usdc_solana" is stored as is in
+        // external_wallets.json, but get_usdc_balance expects the real cluster identifier
+        // ("sol_mainnet").
         const balance =
           wallet.network === "usdc_solana"
             ? await invoke("get_usdc_balance", { network: "sol_mainnet", address: wallet.address })
@@ -8762,13 +8748,13 @@ async function refreshExternalWalletBalances() {
 const refreshExternalWalletsBtn = document.getElementById("refresh-external-wallets-btn");
 refreshExternalWalletsBtn.addEventListener(
   "click",
-  // Sur place : reconstruire la liste remettait tous les soldes à « — » avant
-  // de les relire (tout clignotait et bougeait).
+  // In place: rebuilding the list reset every balance to "—" before rereading them
+  // (everything flickered and moved).
   withThrottledButton(refreshExternalWalletsBtn, REFRESH_COOLDOWN_MS, refreshExternalWalletBalances, { keepLabel: true })
 );
 
-// Nom court d'un réseau pour une adresse enregistrée (« Ethereum », « Base »,
-// « XRP Ledger ») ; réseaux de test et cas à part : libellé complet.
+// Short network name for a saved address ("Ethereum", "Base", "XRP Ledger"); test
+// networks and special cases: full label.
 function contactNetworkLabel(network) {
   if (network === "btc_mainnet") return "Bitcoin";
   const label = t(`net.${network}`);
@@ -8776,11 +8762,11 @@ function contactNetworkLabel(network) {
   return externalNetworkLabel(network);
 }
 
-// Menu « Réseau » qui suit l'adresse saisie (carnet d'adresses, wallets
-// externes) : seulement les réseaux où elle est valide, d'après Rust
-// (`address_networks`, mêmes parseurs que l'envoi), parmi ceux que
-// `allowed` accepte ; choisi d'office s'il n'y en a qu'un. Adresse vide ou
-// non reconnue : le menu le dit. Renvoie la fonction de mise à jour.
+// "Network" menu that follows the address entered (address book, external
+// wallets): only the networks where it is valid, according to Rust
+// (`address_networks`, the same parsers as the send), among those `allowed`
+// accepts; chosen automatically if there is only one. Empty or unrecognized
+// address: the menu says so. Returns the update function.
 function networkFollowsAddress(input, select, allowed) {
   let check = 0;
   const refresh = async () => {
@@ -8813,8 +8799,9 @@ function networkFollowsAddress(input, select, allowed) {
   return refresh;
 }
 
-// --- Modale ajout d'un wallet externe ---------------------------------------
-// Réseaux suivis (soldes lisibles), d'après le menu d'origine.
+// --- Add external wallet modal ---------------------------------------
+//
+// Tracked networks (readable balances), based on the original menu.
 const EXTERNAL_WALLET_NETWORKS = [...document.getElementById("external-wallet-network").options].map((o) => o.value);
 const refreshExternalWalletNetwork = networkFollowsAddress(
   document.getElementById("external-wallet-address"),
@@ -8874,7 +8861,7 @@ addExternalWalletConfirmBtn.addEventListener("click", withBusyButton(addExternal
   }
 }));
 
-// --- Modale nouveau groupe ---------------------------------------------------
+// --- New group modal ---------------------------------------------------
 
 document.getElementById("add-external-group-btn").addEventListener("click", () => {
   document.getElementById("external-group-name").value = "";
@@ -8904,10 +8891,11 @@ addExternalGroupConfirmBtn.addEventListener("click", withBusyButton(addExternalG
   }
 }));
 
-// --- Carnet d'adresses -------------------------------------------------------
-// Associer un label à une adresse pour la retrouver au moment d'envoyer des
-// fonds (voir core/src/address_book.rs) — distinct des wallets externes :
-// aucun solde n'est jamais interrogé ici.
+// --- Address book -------------------------------------------------------------
+//
+// Attach a label to an address to find it again when sending funds (see
+// core/src/address_book.rs); separate from external wallets: no balance is ever
+// queried here.
 
 let addressBookCache = [];
 
@@ -8977,8 +8965,8 @@ function renderAddressBook() {
   container.appendChild(list);
 }
 
-// « USDC — Solana » : ancien réseau du carnet, plus proposé (une adresse
-// Solana sert pour le SOL comme pour ses jetons) ; ses entrées restent lues.
+// "USDC — Solana": an old address book network, no longer offered (a Solana
+// address works for SOL as well as its tokens); its entries are still read.
 const refreshAddressBookNetwork = networkFollowsAddress(
   document.getElementById("address-book-address"),
   document.getElementById("address-book-network"),
@@ -9023,17 +9011,18 @@ addAddressBookConfirmBtn.addEventListener("click", withBusyButton(addAddressBook
   }
 }));
 
-// Sélecteur "choisir depuis le carnet d'adresses" dans la modale d'envoi :
-// contacts dont l'adresse a le format du réseau de l'envoi (voir
-// addressFamily), masqué s'il n'y en a aucun ni d'autre profil. Choisir une
-// entrée remplit juste le champ adresse,
-// le sélecteur repart ensuite sur son placeholder (action, pas un état persistant).
-// Destinataires proposés à l'envoi : contacts du carnet, puis les AUTRES
-// profils de ce portefeuille (leur adresse pour la même crypto et le même
-// réseau). La boîte de confirmation native nomme le profil reconnu, d'après
-// les adresses dérivées côté Rust — jamais d'après ce menu.
-// Format d'adresse d'un réseau : tous les EVM ont le même ; les réseaux
-// Solana aussi (« USDC — Solana » compris) ; chaque autre a le sien.
+// "Choose from the address book" selector in the send modal: contacts whose address
+// has the send network's format (see addressFamily), hidden if there are none and
+// no other profile. Choosing an entry only fills in the address field; the selector
+// then goes back to its placeholder (an action, not a persistent state).
+//
+// Recipients offered when sending: address book contacts, then the OTHER profiles
+// of this wallet (their address for the same crypto and network). The native
+// confirmation dialog names the recognized profile based on the addresses derived
+// on the Rust side, never on this menu.
+//
+// Address format of a network: all EVM networks share one; so do the Solana
+// networks ("USDC — Solana" included); every other network has its own.
 function addressFamily(network) {
   if (isEvmNetwork(network)) return "evm";
   if (network === "usdc_solana" || network.startsWith("sol_")) return "sol";
@@ -9059,9 +9048,8 @@ function refreshSendAddressBookPicker(coin, network, sourceProfileIndex) {
   group(
     "send.pickBook",
     matches.map((entry) => {
-      // Contact enregistré pour un autre réseau du même format (Ethereum pour
-      // un envoi sur Base…) : dit, une plateforme d'échange pouvant ne pas
-      // accepter ce réseau-là.
+      // A contact saved for another network with the same format (Ethereum for a send on
+      // Base…): said, since an exchange may not accept that network.
       const other = entry.network === network ? "" : ` (${t("send.bookOtherNetwork", { network: contactNetworkLabel(entry.network) })})`;
       return Object.assign(document.createElement("option"), { value: `book:${entry.id}`, textContent: `${entry.label} — ${entry.address}${other}` });
     })
@@ -9091,11 +9079,12 @@ document.getElementById("send-address-book-select").addEventListener("change", (
   syncCustomSelect(e.target);
 });
 
-// --- Valider avec Entrée -----------------------------------------------------
-// Aucun de ces champs n'est dans un vrai <form> (tout est soumis via un clic
-// de bouton géré en JS) : Entrée ne fait donc rien par défaut, contrairement à
-// un formulaire HTML classique. Ce mapping recrée ce comportement pour chaque
-// champ de mot de passe de l'app, sans dupliquer un `keydown` par écran.
+// --- Submit with Enter -----------------------------------------------------
+//
+// None of these fields is in a real <form> (everything is submitted through a
+// button click handled in JS), so Enter does nothing by default, unlike a classic
+// HTML form. This mapping recreates that behavior for every password field in the
+// app, without duplicating a `keydown` per screen.
 const ENTER_SUBMIT_MAP = {
   "onboarding-password": "onboarding-submit",
   "onboarding-password-confirm": "onboarding-submit",
@@ -9125,7 +9114,7 @@ Object.entries(ENTER_SUBMIT_MAP).forEach(([inputId, buttonId]) => {
   });
 });
 
-// --- Démarrage -------------------------------------------------------------
+// --- Startup -------------------------------------------------------------
 
 async function startApp() {
   try {
@@ -9141,26 +9130,27 @@ async function startApp() {
   }
 }
 
-// Le module attend la liste des réseaux ajoutés avant de construire les
-// cartes (voir CUSTOM_NETWORKS) : la page peut être déjà prête quand on
-// arrive ici, et DOMContentLoaded déjà passé.
+// The module waits for the list of added networks before building the cards (see
+// CUSTOM_NETWORKS): the page may already be ready when we get here, and
+// DOMContentLoaded already past.
 if (document.readyState === "loading") {
   window.addEventListener("DOMContentLoaded", startApp);
 } else {
   startApp();
 }
 
-// --- WalletConnect (applications connectées) ---------------------------------
-// Le frontend ne fait qu'afficher et relayer : le contenu d'une demande est
-// relu et préparé côté Rust (`wc_prepare_request`, jamais à partir d'une copie
-// d'ici), et chaque signature passe par une boîte native de Windows. Tout le
-// texte venu d'un site est inséré par `textContent`, jamais comme du HTML.
+// --- WalletConnect (connected apps) ---------------------------------
+//
+// The frontend only displays and relays: a request's content is reread and
+// prepared on the Rust side (`wc_prepare_request`, never from a copy held here),
+// and every signature goes through a native Windows dialog. All text coming from a
+// website is inserted through `textContent`, never as HTML.
 
 const { listen } = window.__TAURI__.event;
 const wcQueue = [];
 let wcCurrent = null;
 
-// Réseaux EVM : tous ceux de l'app (identifiant « eip155:<chainId> »).
+// EVM networks: all of the app's (identifier "eip155:<chainId>").
 function wcChainLabel(chain) {
   const evm = Object.keys(EVM_CHAIN_IDS).find((network) => `eip155:${EVM_CHAIN_IDS[network]}` === chain);
   if (evm === "evm_sepolia") return "Ethereum Sepolia";
@@ -9173,7 +9163,7 @@ function wcChainLabel(chain) {
   );
 }
 
-// Une seule fenêtre à la fois : propositions et demandes attendent leur tour.
+// One window at a time: proposals and requests wait their turn.
 function wcProcessQueue() {
   if (wcCurrent || wcQueue.length === 0) return;
   wcCurrent = wcQueue.shift();
@@ -9236,7 +9226,7 @@ wcProposalApproveBtn.addEventListener(
     const proposal = wcCurrent;
     if (!proposal || proposal.kind !== "Proposal") return;
     try {
-      // `false` : refusée dans la boîte native (la dApp en est déjà informée).
+      // `false`: declined in the native dialog (the dApp has already been told).
       await invoke("wc_approve_session", {
         proposalId: proposal.id,
         profileIndex: Number(document.getElementById("wc-proposal-profile").value),
@@ -9281,7 +9271,8 @@ async function showWcRequest(request) {
     danger.classList.toggle("hidden", !prepared.danger);
     approve.disabled = false;
   } catch (e) {
-    // Demande invalide ou dangereuse par construction : déjà refusée côté Rust.
+    // A request that is invalid or dangerous by construction: already refused on the
+    // Rust side.
     showError(errorEl, String(e));
   } finally {
     loading.classList.add("hidden");
@@ -9301,12 +9292,12 @@ wcRequestApproveBtn.addEventListener(
       return;
     }
     try {
-      // `false` : refusée dans la boîte native (la dApp en est déjà informée).
+      // `false`: declined in the native dialog (the dApp has already been told).
       await invoke("wc_approve_request", { requestId: request.id, password: passwordEl.value });
       passwordEl.value = "";
       wcClose("wc-request-modal");
     } catch (e) {
-      // Mauvais mot de passe, fonds insuffisants… : la demande reste ouverte.
+      // Wrong password, insufficient funds…: the request stays open.
       showError(errorEl, String(e));
     }
   }),
@@ -9401,9 +9392,11 @@ async function loadWcSessions() {
   }
 }
 
-// --- Comptes Ledger ------------------------------------------------------------
-// Tout ce qui parle à l'appareil passe par le backend Rust (core/src/hardware.rs),
-// qui revérifie chaque réponse ; la dernière barrière reste l'écran du Ledger.
+// --- Ledger accounts ------------------------------------------------------------
+//
+// Everything that talks to the device goes through the Rust backend
+// (core/src/hardware.rs), which checks every response again; the last barrier
+// remains the Ledger's screen.
 
 let ledgerAccountsCache = [];
 let ledgerSendAccount = null;
@@ -9416,7 +9409,7 @@ function ledgerCoin(network) {
   return "sol";
 }
 
-// Monnaie du réseau du compte (ETH, BNB, AVAX…).
+// The account's network coin (ETH, BNB, AVAX…).
 function ledgerUnit(network) {
   return NATIVE_ASSET_BY_NETWORK[network]?.symbol ?? { evm: "ETH", btc: "BTC", sol: "SOL" }[ledgerCoin(network)];
 }
@@ -9639,11 +9632,12 @@ ledgerSendConfirmBtn.addEventListener(
   })
 );
 
-// --- Courbes : prix, évolution du portefeuille, wallets externes -----------------
-// Données calculées côté Rust (core/src/price_history.rs, core/src/portfolio.rs) ;
-// tracé par app/src/charts.js. Une vue = un graphique et ses contrôles
-// (boutons de période au-dessus, résumé, note), rechargée en gardant l'ancienne
-// courbe estompée plutôt qu'un écran vide.
+// --- Charts: prices, portfolio history, external wallets -----------------
+//
+// Data computed on the Rust side (core/src/price_history.rs,
+// core/src/portfolio.rs); drawn by app/src/charts.js. One view = a chart and its
+// controls (period buttons above, summary, note), reloaded while keeping the old
+// chart dimmed rather than showing an empty screen.
 
 const CHART_RANGES = ["1d", "7d", "30d", "1y", "all"];
 
@@ -9651,14 +9645,14 @@ function chartLocale() {
   return currentLang === "en" ? "en-US" : "fr-FR";
 }
 
-// Symbole de la devise affichée, placé selon la langue : « 12 $ » / « $12 »,
-// « 12 € » / « €12 ».
+// Symbol of the display currency, placed according to the language: "12 $" /
+// "$12", "12 €" / "€12".
 function withCurrency(number) {
   const symbol = displayCurrency === "eur" ? "€" : "$";
   return currentLang === "en" ? `${symbol}${number}` : `${number} ${symbol}`;
 }
 
-// Valeur DÉJÀ dans la devise affichée (points de courbe convertis).
+// A value ALREADY in the display currency (converted chart points).
 function formatFiatValue(value) {
   const maxDigits = Math.abs(value) < 10 ? 4 : 2;
   return withCurrency(value.toLocaleString(chartLocale(), { minimumFractionDigits: 2, maximumFractionDigits: maxDigits }));
@@ -9672,9 +9666,9 @@ function formatAxisValue(value, step) {
   return withCurrency(value.toLocaleString(chartLocale(), { minimumFractionDigits: digits, maximumFractionDigits: digits }));
 }
 
-// Précision des dates selon la durée RÉELLEMENT couverte par les points (une
-// courbe de portefeuille peut ne couvrir que quelques jours d'une période de
-// 30 jours) : sinon des graduations voisines affichaient la même date.
+// Date precision based on the duration ACTUALLY covered by the points (a portfolio
+// chart may only cover a few days of a 30-day period): otherwise neighboring ticks
+// showed the same date.
 const DAY_SECONDS = 86400;
 
 function formatChartTime(t, span) {
@@ -9699,15 +9693,15 @@ function chartSpan(points) {
   return points.length ? points[points.length - 1][0] - points[0][0] : 0;
 }
 
-// Valeur actuelle, puis variation sur la période (couleur selon le sens) — ou
-// depuis le début des données connues, quand elles ne couvrent pas toute la
-// période ; « Tout » : depuis le premier point. En % pour un prix ; en dollars
-// (`deltaMode` "usd") pour la valeur d'un portefeuille, que dépôts et retraits
-// font varier sans rapport avec une performance (un % depuis un premier dépôt
-// de 1 $ affichait « +338 270 % »).
-// Variation entre le premier et le dernier point affichés : en % pour un prix,
-// en dollars pour un portefeuille ; `null` si elle n'a pas de sens (prix de
-// départ nul, moins de deux points).
+// Current value, then the change over the period (colored by direction), or since
+// the start of the known data when it does not cover the whole period; "All":
+// since the first point. In % for a price; in dollars (`deltaMode` "usd") for a
+// portfolio's value, which deposits and withdrawals move without any relation to
+// performance (a % since a first $1 deposit showed "+338,270%").
+//
+// Change between the first and last points shown: in % for a price, in dollars for
+// a portfolio; `null` if it makes no sense (zero starting price, fewer than two
+// points).
 function chartChange(points, deltaMode) {
   if (points.length < 2) return null;
   const first = points[0][1];
@@ -9716,9 +9710,9 @@ function chartChange(points, deltaMode) {
   return first > 0 ? ((last - first) / first) * 100 : null;
 }
 
-// Sens de la variation : UNE règle pour la flèche et la couleur du résumé ET
-// pour la couleur de la courbe (verte en hausse, rouge en baisse). Variation
-// qui s'affiche 0 (moins de 0,005 % ou 0,005 $) : ni hausse ni baisse.
+// Direction of the change: ONE rule for the summary's arrow and color AND for the
+// chart's color (green going up, red going down). A change that displays as 0
+// (under 0.005% or $0.005): neither up nor down.
 function trendOf(change) {
   if (change == null || Math.abs(change) < 0.005) return null;
   return change > 0 ? "up" : "down";
@@ -9752,7 +9746,7 @@ function mountChart(view) {
       const button = document.createElement("button");
       button.type = "button";
       button.dataset.range = range;
-      // Clé gardée : relibellé au changement de langue (« 1 an » → « 1y »).
+      // Key kept: relabeled when the language changes ("1 an" → "1y").
       button.dataset.i18n = `charts.range.${range}`;
       button.textContent = t(button.dataset.i18n);
       button.addEventListener("click", () => {
@@ -9765,9 +9759,9 @@ function mountChart(view) {
   return refreshChart(view);
 }
 
-// Historique encore en cours de lecture côté Rust (`loading`) : nouvel appel
-// peu après, sans estomper la courbe — elle se complète au fur et à mesure.
-// Changer de période ou fermer la fenêtre (jeton changé) arrête la suite.
+// History still being read on the Rust side (`loading`): another call shortly
+// after, without dimming the chart, which fills in as it goes. Changing the period
+// or closing the window (token changed) stops the follow-ups.
 const CHART_POLL_MS = 1500;
 
 async function refreshChart(view, { poll = false } = {}) {
@@ -9783,8 +9777,8 @@ async function refreshChart(view, { poll = false } = {}) {
   }
   try {
     const data = await view.load(view.range);
-    if (token !== view.token) return; // une demande plus récente l'emporte
-    // En euros : chaque point converti au taux de sa date.
+    if (token !== view.token) return; // a more recent request wins
+    // In euros: each point converted at the rate of its date.
     const points = await toDisplayCurrency(data.points.every((p) => p[1] === 0) ? [] : data.points, view.range);
     if (token !== view.token) return;
     view.points = points;
@@ -9816,13 +9810,13 @@ async function refreshChart(view, { poll = false } = {}) {
   }
 }
 
-// Valeur d'un ensemble d'adresses (portefeuille ou wallets externes).
+// Value of a set of addresses (wallet or external wallets).
 async function loadHoldingsHistory(holdings, range) {
   if (holdings.length === 0) return { points: [] };
   const result = await invoke("get_portfolio_history", { holdings, range });
   const notes = [];
-  // Adresse illisible (service saturé ou en panne) : courbe sans elle, dit
-  // en premier (voir core/src/portfolio.rs).
+  // An unreadable address (service overloaded or down): chart without it, said first
+  // (see core/src/portfolio.rs).
   if (result.unavailable?.length) notes.push(t("charts.unavailable", { list: result.unavailable.join(", ") }));
   if (result.loading) {
     const count = result.transactions_read;
@@ -9830,13 +9824,13 @@ async function loadHoldingsHistory(holdings, range) {
   }
   else if (result.since) notes.push(t("charts.since", { date: new Date(result.since * 1000).toLocaleDateString(chartLocale()) }));
   if (result.approximate && !result.loading) notes.push(t("charts.approximate"));
-  // Réseau sans historique utilisable (BNB Chain sans clé NodeReal) : solde actuel compté
-  // sur toute la période (voir core/src/portfolio.rs).
+  // Network with no usable history (BNB Chain without a NodeReal key): current balance
+  // counted over the whole period (see core/src/portfolio.rs).
   if (result.constant?.length) notes.push(t("charts.constantBalance", { list: result.constant.join(", ") }));
   return { points: result.points, since: result.since, note: notes.join(" "), loading: result.loading };
 }
 
-// Courbes servies par Kraken (absentes de Binance, voir core/src/price_history.rs).
+// Charts served by Kraken (not on Binance, see core/src/price_history.rs).
 const KRAKEN_CHARTS = ["VVV"];
 
 async function loadPriceChart(symbol, range) {
@@ -9845,7 +9839,7 @@ async function loadPriceChart(symbol, range) {
   return { points: await invoke("get_price_chart", { symbol, range }), note };
 }
 
-// --- Courbe en grand -------------------------------------------------------------
+// --- Full-size chart -------------------------------------------------------------
 
 const chartModal = document.getElementById("chart-modal");
 const chartModalTable = document.getElementById("chart-modal-table");
@@ -9861,7 +9855,7 @@ const chartModalView = {
   },
 };
 
-// Vue tableau : les mêmes valeurs sans survol (accessibilité).
+// Table view: the same values without hovering (accessibility).
 function renderChartTable() {
   const table = document.createElement("table");
   const head = table.createTHead().insertRow();
@@ -9895,7 +9889,7 @@ function openChartModal({ title, coin = null, ranges, range, load, emptyKey, del
 
 function closeChartModal() {
   chartModal.classList.add("hidden");
-  chartModalView.token = (chartModalView.token || 0) + 1; // ignore une réponse tardive
+  chartModalView.token = (chartModalView.token || 0) + 1; // ignore a late response
 }
 
 document.getElementById("chart-modal-close").addEventListener("click", closeChartModal);
@@ -9912,14 +9906,14 @@ chartModalTableToggle.addEventListener("click", () => {
   if (show) renderChartTable();
 });
 
-// --- Évolution du portefeuille (profil affiché, réseaux principaux) ----------------
+// --- Portfolio history (profile shown, mainnets) ----------------
 
-// Réseaux de test : fonds sans valeur, hors de la courbe.
+// Test networks: worthless funds, left out of the chart.
 const TEST_NETWORKS = ["evm_sepolia", "btc_testnet", "sol_devnet"];
 
-// Chaque crypto affichée, sur chacun de ses réseaux principaux (ETH sur
-// Ethereum, Arbitrum et Base ; USDC sur Solana et ses trois réseaux EVM…) :
-// la valeur de chaque avoir est reconstruite côté Rust (core/src/portfolio.rs).
+// Each crypto shown, on each of its mainnets (ETH on Ethereum, Arbitrum and Base;
+// USDC on Solana and its three EVM networks…): the value of each holding is
+// rebuilt on the Rust side (core/src/portfolio.rs).
 function currentProfileHoldings() {
   const holdings = [];
   for (const asset of ASSETS.filter((a) => isAssetVisible(a.coin))) {
@@ -9968,7 +9962,8 @@ portfolioSection.querySelector(".chart-expand").addEventListener("click", () =>
   })
 );
 
-// --- Évolution des wallets externes (tous, ou un groupe) -------------------------
+// --- External wallets history (all of them, or one group)
+// -------------------------
 
 const externalChartSection = document.getElementById("external-chart-section");
 const externalChartScope = document.getElementById("external-chart-scope");

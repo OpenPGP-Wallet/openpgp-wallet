@@ -10,12 +10,12 @@
 
   <body>
 
-    <!-- Écran de chargement initial -->
+    <!-- Initial loading screen -->
     <main id="view-loading" class="view">
       <p class="muted" data-i18n="loading.text">Chargement…</p>
     </main>
 
-    <!-- Onboarding : pas encore de wallet sur cet appareil -->
+    <!-- Onboarding: no wallet on this device yet -->
     <main id="view-onboarding" class="view hidden">
       <div class="brand-mark"><img class="brand-logo" src="/assets/logo.svg" alt="" />OpenPGP Wallet</div>
       <div class="card narrow">
@@ -36,7 +36,7 @@
       </div>
     </main>
 
-    <!-- Backup : affichée une seule fois juste après la création -->
+    <!-- Backup: shown only once, right after creation -->
     <main id="view-backup" class="view hidden">
       <div class="card wide">
         <h1 data-i18n="backup.title">Sauvegardez votre kit de récupération</h1>
@@ -57,7 +57,7 @@
       </div>
     </main>
 
-    <!-- Déverrouillage : wallet déjà créé sur cet appareil -->
+    <!-- Unlock: a wallet already exists on this device -->
     <main id="view-unlock" class="view hidden">
       <div class="brand-mark"><img class="brand-logo" src="/assets/logo.svg" alt="" />OpenPGP Wallet</div>
       <div class="card narrow">
@@ -76,7 +76,7 @@
       </div>
     </main>
 
-    <!-- Restauration depuis 2 des 3 parts de sauvegarde -->
+    <!-- Restore from 2 of the 3 backup shares -->
     <main id="view-restore" class="view hidden">
       <div class="card wide">
         <h1 data-i18n="restore.title">Restaurer depuis une sauvegarde</h1>
@@ -122,7 +122,7 @@
       </div>
     </main>
 
-    <!-- Tableau de bord -->
+    <!-- Dashboard -->
     <main id="view-dashboard" class="view hidden view-shell">
       <nav class="navbar">
         <span class="nav-brand"><img class="brand-logo" src="/assets/logo.svg" alt="" />OpenPGP Wallet</span>
@@ -148,8 +148,8 @@
       </nav>
 
       <section class="tab-panel dashboard" data-panel="wallet">
-        <!-- Rappel annuel : vérifier les clés de sauvegarde (main.js,
-             « Vérification des clés de sauvegarde »). -->
+        <!-- Yearly reminder: check the backup drives (main.js, "Checking
+             the backup drives"). -->
         <div id="backup-check-reminder" class="backup-reminder hidden" role="status">
           <p data-i18n="backupCheck.reminder">Pensez à vérifier vos clés de sauvegarde : une clé USB peut s'abîmer avec les années.</p>
           <div class="backup-reminder-actions">
@@ -157,8 +157,8 @@
             <button id="backup-reminder-later" class="link" data-i18n="backupCheck.later">Plus tard</button>
           </div>
         </div>
-        <!-- En-tête du portefeuille : profil, puis valeur totale (main.js,
-             « Valeur totale »). -->
+        <!-- Wallet header: profile, then total value (main.js, "Total
+             value"). -->
         <div class="portfolio-hero">
           <div class="profile-bar">
             <label for="profile-select" data-i18n="wallet.profile">Profil</label>
@@ -189,7 +189,7 @@
             <div class="hero-total" id="portfolio-total">—</div>
             <div class="hero-change" id="portfolio-change"></div>
           </div>
-          <!-- Courbe du portefeuille, juste sous la valeur totale. -->
+          <!-- Portfolio chart, just under the total value. -->
           <section class="chart-section" id="portfolio-chart-section" data-collapse-key="portfolio-chart">
             <div class="chart-section-header">
               <div>
@@ -220,7 +220,7 @@
             <button id="swap-route-abandon" class="link" data-i18n="swap.routeAbandon">Arrêter le suivi</button>
           </div>
         </div>
-        <!-- Cryptos affichées et leur ordre : réglages au-dessus des cartes. -->
+        <!-- Cryptos shown and their order: settings above the cards. -->
         <div class="manage-assets-row">
           <h2 class="assets-heading" data-i18n="assets.title">Mes cryptos</h2>
           <button id="manage-assets-btn" class="secondary" data-i18n="assets.manage">Gérer mes cryptos</button>
@@ -245,7 +245,8 @@
                   <img class="coin-icon" src="/assets/eth.svg" alt="" />Ethereum
                 </button>
               </h2>
-              <!-- Staking (Lido), rendement annuel estimé à côté : main.js, renderStakeChips. -->
+              <!-- Staking (Lido), with the estimated annual yield next to it: main.js,
+                   renderStakeChips. -->
               <button type="button" class="stake-chip hidden" data-action="stake" data-i18n-title="staking.chipHint" title="Staker : vos cryptos vous rapportent (rendement annuel estimé)"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21v-9" /><path d="M12 12c0-4 3-7 8-7 0 5-3 7-8 7z" /><path d="M12 14c0-3.5-2.5-6-7-6 0 4 2.5 6 7 6z" /></svg><span class="stake-label" data-i18n="staking.action">Staker</span><span class="stake-rate hidden" data-field="stake-rate"></span></button>
               <div class="custom-select dropdown">
                 <select class="network-select" data-coin="evm">
@@ -263,8 +264,8 @@
             </header>
             <div class="balance-row">
               <p class="balance"><span data-field="balance">—</span> <span class="coin-symbol">ETH</span></p>
-              <!-- Carte repliée seulement (voir styles.css, « Panneaux repliables ») :
-                   l'adresse, sa copie et son QR code sans déplier la carte. -->
+              <!-- Collapsed card only (see styles.css, "Collapsible panels"): the
+                   address, its copy and its QR code without expanding the card. -->
               <div class="collapsed-actions">
                 <button type="button" class="qr-btn" data-action="toggle-address" aria-pressed="false" data-i18n-title="wallet.showAddress" title="Afficher l'adresse">
                   <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
@@ -329,13 +330,12 @@
                     <span data-i18n="wallet.convert">Convertir</span>
                   </button>
                 </div>
-                <!-- Pas de badge "transaction en attente" ici : aucun nœud EVM public
-                     n'expose les transactions en attente pour une adresse (voir
-                     core/src/api.rs::has_pending_btc/has_pending_sol, toujours faux
-                     pour EVM) — cet emplacement ne pourrait de toute façon jamais
-                     s'allumer, réserver son espace n'aurait fait qu'agrandir la
-                     carte pour rien, contrairement à BTC/SOL qui en ont réellement
-                     besoin. -->
+                <!-- No "pending transaction" badge here: no public EVM node
+                     exposes the pending transactions of an address (see
+                     core/src/api.rs::has_pending_btc/has_pending_sol, always
+                     false for EVM). This slot could never light up anyway, so
+                     reserving its space would only have made the card bigger for
+                     nothing, unlike BTC/SOL, which really need it. -->
                 <div class="row-buttons">
                   <button class="secondary" data-action="refresh" data-i18n="wallet.refresh" data-i18n-title="wallet.refresh">Actualiser</button>
                   <button class="secondary receive-action" data-action="qr" data-i18n="wallet.receive">Recevoir</button>
@@ -368,8 +368,8 @@
             </header>
             <div class="balance-row">
               <p class="balance"><span data-field="balance">—</span> <span class="coin-symbol">BTC</span></p>
-              <!-- Carte repliée seulement (voir styles.css, « Panneaux repliables ») :
-                   l'adresse, sa copie et son QR code sans déplier la carte. -->
+              <!-- Collapsed card only (see styles.css, "Collapsible panels"): the
+                   address, its copy and its QR code without expanding the card. -->
               <div class="collapsed-actions">
                 <button type="button" class="qr-btn" data-action="toggle-address" aria-pressed="false" data-i18n-title="wallet.showAddress" title="Afficher l'adresse">
                   <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
@@ -455,7 +455,8 @@
                   <img class="coin-icon coin-icon-sol" src="/assets/sol.png" alt="" />Solana
                 </button>
               </h2>
-              <!-- Staking (liquide ou natif), rendement annuel estimé à côté : main.js, renderStakeChips. -->
+              <!-- Staking (liquid or native), with the estimated annual yield next to it: main.js,
+                   renderStakeChips. -->
               <button type="button" class="stake-chip hidden" data-action="stake" data-i18n-title="staking.chipHint" title="Staker : vos cryptos vous rapportent (rendement annuel estimé)"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21v-9" /><path d="M12 12c0-4 3-7 8-7 0 5-3 7-8 7z" /><path d="M12 14c0-3.5-2.5-6-7-6 0 4 2.5 6 7 6z" /></svg><span class="stake-label" data-i18n="staking.action">Staker</span><span class="stake-rate hidden" data-field="stake-rate"></span></button>
               <div class="custom-select dropdown">
                 <select class="network-select" data-coin="sol">
@@ -471,8 +472,8 @@
             </header>
             <div class="balance-row">
               <p class="balance"><span data-field="balance">—</span> <span class="coin-symbol">SOL</span></p>
-              <!-- Carte repliée seulement (voir styles.css, « Panneaux repliables ») :
-                   l'adresse, sa copie et son QR code sans déplier la carte. -->
+              <!-- Collapsed card only (see styles.css, "Collapsible panels"): the
+                   address, its copy and its QR code without expanding the card. -->
               <div class="collapsed-actions">
                 <button type="button" class="qr-btn" data-action="toggle-address" aria-pressed="false" data-i18n-title="wallet.showAddress" title="Afficher l'adresse">
                   <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
@@ -506,7 +507,7 @@
               <p class="fiat-value" data-field="fiat">—</p>
               <p class="pending-badge" data-field="pending" data-i18n="wallet.pendingBadge"> Transaction en attente détectée</p>
             </div>
-            <!-- SOL stakés (staking natif), comptés dans la valeur : main.js, refreshSolStaked. -->
+            <!-- Natively staked SOL, counted in the value: main.js, refreshSolStaked. -->
             <p class="coin-status muted" data-field="coin-status"></p>
             <p class="address collapsed-address hidden" data-field="collapsed-address"></p>
             <div class="collapsible-body" id="wallet-body-sol">
@@ -552,10 +553,10 @@
             </div>
           </section>
 
-          <!-- USDC : jeton SPL sur Solana, pas un réseau à part — même adresse
-               que la carte Solana ci-dessus (owner), le compte de jetons associé
-               (ATA) reste un détail invisible pour l'utilisateur. Aussi sur
-               Ethereum, Base et Arbitrum (jeton ERC-20, voir core/src/tokens.rs). -->
+          <!-- USDC: an SPL token on Solana, not a separate network. The same
+               address as the Solana card above (owner); the associated token
+               account (ATA) stays a detail invisible to the user. Also on
+               Ethereum, Base and Arbitrum (ERC-20 token, see core/src/tokens.rs). -->
           <section class="wallet-card" data-coin="usdc" data-collapse-key="wallet-usdc">
             <header>
               <h2>
@@ -580,8 +581,8 @@
             </header>
             <div class="balance-row">
               <p class="balance"><span data-field="balance">—</span> <span class="coin-symbol">USDC</span></p>
-              <!-- Carte repliée seulement (voir styles.css, « Panneaux repliables ») :
-                   l'adresse, sa copie et son QR code sans déplier la carte. -->
+              <!-- Collapsed card only (see styles.css, "Collapsible panels"): the
+                   address, its copy and its QR code without expanding the card. -->
               <div class="collapsed-actions">
                 <button type="button" class="qr-btn" data-action="toggle-address" aria-pressed="false" data-i18n-title="wallet.showAddress" title="Afficher l'adresse">
                   <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
@@ -673,8 +674,9 @@
         </section>
       </section>
 
-      <!-- Actions tokenisées (xStocks) : leur propre onglet, à part des cryptos
-           (main.js, « Actions tokenisées »). Cartes générées depuis ASSETS. -->
+      <!-- Tokenized shares (xStocks): their own tab, separate from the
+           cryptos (main.js, "Tokenized shares"). Cards generated from
+           ASSETS. -->
       <section class="tab-panel dashboard hidden" data-panel="stocks">
         <div class="portfolio-hero stocks-hero">
           <div class="hero-figures">
@@ -772,10 +774,10 @@
             chiffrer un message pour que seul le destinataire puisse le lire.
           </p>
 
-          <!-- Destinataires en pleine largeur en haut (utile aux deux colonnes
-               ci-dessous : celle de gauche s'en sert pour choisir à qui chiffrer),
-               puis chiffrer/déchiffrer côte à côte pour ne pas avoir à défiler
-               entre les deux. -->
+          <!-- Recipients at full width at the top (useful to both columns
+               below: the left one uses it to choose who to encrypt for), then
+               encrypt/decrypt side by side so there is no need to scroll
+               between the two. -->
           <h2 class="section-title" data-i18n="message.recipientsTitle">Destinataires</h2>
           <div id="recipient-list" class="recipient-list"></div>
           <div class="row-buttons">
@@ -1139,7 +1141,7 @@
       </section>
     </main>
 
-    <!-- Zcash protégé : protéger les ZEC transparents, ou envoyer depuis les fonds protégés -->
+    <!-- Shielded Zcash: shield transparent ZEC, or send from shielded funds -->
     <div id="shielded-modal" class="modal-overlay hidden">
       <div class="modal">
         <h2 id="shielded-modal-title" data-i18n="shielded.sendTitle">Envoyer des ZEC protégés</h2>
@@ -1176,12 +1178,13 @@
       </div>
     </div>
 
-    <!-- Délai d'annulation d'un envoi (après la confirmation de Windows) -->
+    <!-- Cancellation delay of a send (after the Windows confirmation) -->
     <div id="send-countdown-modal" class="modal-overlay hidden" role="alertdialog" aria-labelledby="send-countdown-title" aria-describedby="send-countdown-text">
       <div class="modal">
         <h2 id="send-countdown-title" data-i18n="countdown.title">Envoi dans quelques secondes</h2>
         <p id="send-countdown-text" class="muted"></p>
-        <!-- Rappel de ce qui part (valeurs envoyées par Rust, celles de la boîte de Windows). -->
+        <!-- Reminder of what is going out (values sent by Rust, the ones from the Windows
+             dialog). -->
         <div class="send-preview-rows">
           <div class="send-preview-row">
             <span class="send-preview-label" data-i18n="send.previewNetwork">Réseau</span>
@@ -1208,8 +1211,9 @@
       </div>
     </div>
 
-    <!-- Staking Cardano : délégation à un pool (main.js, openAdaStakeModal ;
-         transaction, boîte native et délai d'annulation côté Rust). -->
+    <!-- Cardano staking: delegation to a pool (main.js, openAdaStakeModal;
+         transaction, native dialog and cancellation delay on the Rust
+         side). -->
     <div id="ada-stake-modal" class="modal-overlay hidden">
       <div class="modal">
         <div class="modal-header-row">
@@ -1241,9 +1245,10 @@
       </div>
     </div>
 
-    <!-- Staking Solana : liquide (JitoSOL, via « Convertir ») ou natif (compte
-         de mise délégué à un validateur ; main.js, openSolStakeModal ;
-         préparation, simulation, boîte native et délai d'annulation côté Rust). -->
+    <!-- Solana staking: liquid (JitoSOL, through "Convert") or native (a stake
+         account delegated to a validator; main.js, openSolStakeModal;
+         preparation, simulation, native dialog and cancellation delay on the
+         Rust side). -->
     <div id="sol-stake-modal" class="modal-overlay hidden">
       <div class="modal">
         <div class="modal-header-row">
@@ -1288,11 +1293,11 @@
       </div>
     </div>
 
-    <!-- Modale d'envoi -->
+    <!-- Send modal -->
     <div id="send-modal" class="modal-overlay hidden">
       <div class="modal">
         <h2 id="send-modal-title" data-i18n="send.title">Envoyer</h2>
-        <!-- Profil qui envoie et réseau, en pastilles (main.js, openSendModal). -->
+        <!-- Sending profile and network, as chips (main.js, openSendModal). -->
         <div class="send-meta">
           <span class="send-chip"><span data-i18n="send.fromShort">Depuis</span> <strong id="send-from-profile"></strong></span>
           <span id="send-network-chip" class="send-chip"></span>
@@ -1319,7 +1324,8 @@
           <input id="send-tag" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" maxlength="10" />
           <p class="muted tag-hint" data-i18n="send.destinationTagHint">Exigé par les plateformes d'échange : recopiez exactement celui qu'elles indiquent. Sans tag, les fonds peuvent y être perdus.</p>
         </div>
-        <!-- Solde disponible à droite du libellé (main.js, renderSendAvailable). -->
+        <!-- Available balance to the right of the label (main.js,
+             renderSendAvailable). -->
         <div class="label-row">
           <label for="send-amount" data-i18n="send.amount">Montant</label>
           <span id="send-available" class="label-aside"></span>
@@ -1335,7 +1341,8 @@
             <span id="send-amount-fiat-unit" class="amount-unit"></span>
           </div>
         </div>
-        <!-- Raccourcis : montants dans la devise à gauche, part du solde à droite. -->
+        <!-- Shortcuts: amounts in the currency on the left, share of the balance
+             on the right. -->
         <div class="quick-row">
           <div id="send-quick-amounts" class="quick-amounts"></div>
           <div id="send-quick-percentages" class="quick-amounts"></div>
@@ -1357,19 +1364,19 @@
       </div>
     </div>
 
-    <!-- Aperçu stylé avant la confirmation native de l'OS. La vraie protection
-         contre un frontend compromis reste cette boîte de dialogue native qui
-         s'ouvre juste après (voir confirm_transaction_native côté Rust,
-         jamais modifiable depuis le frontend) — cet aperçu n'est qu'un
-         résumé agréable à lire avant d'y arriver, pas un remplacement. -->
+    <!-- Styled preview before the OS native confirmation. The real
+         protection against a compromised frontend remains the native dialog
+         that opens right after (see confirm_transaction_native on the Rust
+         side, which the frontend can never alter); this preview is only a
+         pleasant summary to read beforehand, not a replacement. -->
     <div id="send-preview-modal" class="modal-overlay hidden">
       <div class="modal">
         <h2 data-i18n="send.previewTitle">Vérifiez avant d'envoyer</h2>
         <p class="muted" data-i18n="send.previewSubtitle">
           Une confirmation de Windows s'ouvrira juste après — c'est elle qui valide réellement l'envoi.
         </p>
-        <!-- Avertissements sur le destinataire (mêmes que la boîte de Windows) :
-             rouge, orange, vert ou gris selon la gravité. -->
+        <!-- Recipient warnings (the same as in the Windows dialog): red,
+             orange, green or grey depending on severity. -->
         <div id="send-preview-warnings" class="send-warnings hidden" role="alert"></div>
         <p id="send-preview-network-note" class="send-network-note hidden"></p>
         <div class="send-preview-rows">
@@ -1409,11 +1416,12 @@
       </div>
     </div>
 
-    <!-- Modale d'échange (swap) : passe par un protocole externe non audité
-         par cette app — THORChain ou Maya entre réseaux (voir
-         core/src/thorchain_rpc.rs), Jupiter sur Solana (voir
-         core/src/jupiter_rpc.rs), CoW sur un même réseau EVM (voir
-         core/src/cow.rs). Paires fournies par core/src/swap_routes.rs. -->
+    <!-- Swap modal: goes through an external protocol not audited by this
+         app: THORChain or Maya between networks (see
+         core/src/thorchain_rpc.rs), Jupiter on Solana (see
+         core/src/jupiter_rpc.rs), CoW on the same EVM network (see
+         core/src/cow.rs), LI.FI, SwapKit or MoonPay Trade between
+         ecosystems. Pairs provided by core/src/swap_routes.rs. -->
     <div id="swap-modal" class="modal-overlay hidden">
       <div class="modal">
         <div class="modal-header-row">
@@ -1454,10 +1462,10 @@
           </button>
           <ul class="custom-select-options"></ul>
         </div>
-        <!-- État des fournisseurs : orange (dégradé), rouge (échange impossible). -->
+        <!-- Provider status: orange (degraded), red (swap impossible). -->
         <div id="swap-alerts" class="swap-alerts hidden" role="status" aria-live="polite"></div>
-        <!-- Staking liquide (cible JitoSOL ou stETH, ou retour vers SOL/ETH) :
-             ce que c'est, rendement annoncé, comment récupérer (main.js,
+        <!-- Liquid staking (target JitoSOL or stETH, or back to SOL/ETH):
+             what it is, announced yield, how to get it back (main.js,
              renderStakingNote). -->
         <p id="swap-staking-note" class="swap-staking-note hidden"></p>
         <label data-i18n="swap.amount">Montant</label>
@@ -1472,8 +1480,8 @@
             <span id="swap-amount-fiat-unit" class="amount-unit"></span>
           </div>
         </div>
-        <!-- Solde de départ et « Max » (frais de l'échange déduits, calculés
-             par Rust : main.js, fillSwapMax). -->
+        <!-- Source balance and "Max" (swap fees deducted, computed by Rust:
+             main.js, fillSwapMax). -->
         <div class="swap-balance-row">
           <p id="swap-balance" class="muted swap-balance"></p>
           <button type="button" id="swap-max" class="max-chip" data-i18n="send.percentMax" data-i18n-title="swap.maxHint" title="Montant maximal, frais de l'échange déduits">Max</button>
@@ -1499,11 +1507,11 @@
       </div>
     </div>
 
-    <!-- Aperçu du devis avant la confirmation native de l'OS — même principe
-         que #send-preview-modal : la vraie protection reste la boîte de
-         dialogue Windows qui s'ouvre juste après, avec un devis relu en
-         direct à ce moment-là (jamais celui affiché ici, qui peut avoir
-         légèrement changé entre-temps). -->
+    <!-- Quote preview before the OS native confirmation, the same principle
+         as #send-preview-modal: the real protection remains the Windows
+         dialog that opens right after, with a quote reread live at that
+         moment (never the one shown here, which may have changed slightly
+         in the meantime). -->
     <div id="swap-preview-modal" class="modal-overlay hidden">
       <div class="modal">
         <div class="modal-header-row">
@@ -1555,8 +1563,8 @@
       </div>
     </div>
 
-    <!-- Modale QR code -->
-    <!-- Sauvegarde d'une part sur clé USB : clés détectées automatiquement -->
+    <!-- QR code modal -->
+    <!-- Saving a share to a USB drive: drives detected automatically -->
     <div id="usb-modal" class="modal-overlay hidden">
       <div class="modal">
         <h2 id="usb-modal-title"></h2>
@@ -1571,7 +1579,7 @@
       </div>
     </div>
 
-    <!-- Vérification des clés de sauvegarde : relues et déchiffrées, rien n'est écrit. -->
+    <!-- Checking the backup drives: reread and decrypted, nothing is written. -->
     <div id="backup-check-modal" class="modal-overlay hidden">
       <div class="modal">
         <h2 data-i18n="backupCheck.title">Vérifier mes clés de sauvegarde</h2>
@@ -1581,9 +1589,9 @@
       </div>
     </div>
 
-    <!-- « Gérer mes cryptos » : cartes affichées sur le tableau de bord. -->
-    <!-- Historique d'une seule crypto : fenêtre ouverte par le bouton
-         « Historique » de sa carte, au-dessus du portefeuille (flouté derrière). -->
+    <!-- "Manage my cryptos": cards shown on the dashboard. -->
+    <!-- History of a single crypto: a window opened by its card's "History"
+         button, above the wallet (blurred behind). -->
     <div id="coin-history-modal" class="modal-overlay coin-history-overlay hidden">
       <div class="modal coin-history-sheet" role="dialog" aria-modal="true" aria-labelledby="coin-history-title">
         <div class="modal-header-row">
@@ -1632,7 +1640,7 @@
       </div>
     </div>
 
-    <!-- Modale de consultation de la clé publique d'un destinataire -->
+    <!-- Modal for viewing a recipient's public key -->
     <div id="recipient-key-modal" class="modal-overlay hidden">
       <div class="modal">
         <h2 data-i18n="recipientKey.title">Clé publique du destinataire</h2>
@@ -1653,7 +1661,7 @@
       </div>
     </div>
 
-    <!-- Modale nouveau profil -->
+    <!-- New profile modal -->
     <div id="add-profile-modal" class="modal-overlay hidden">
       <div class="modal">
         <h2 data-i18n="addProfile.title">Nouveau profil</h2>
@@ -1677,7 +1685,7 @@
       </div>
     </div>
 
-    <!-- Modale de suppression d'un profil -->
+    <!-- Profile deletion modal -->
     <div id="delete-profile-modal" class="modal-overlay hidden">
       <div class="modal">
         <h2 data-i18n="deleteProfile.title">Supprimer ce profil ?</h2>
@@ -1696,7 +1704,7 @@
       </div>
     </div>
 
-    <!-- WalletConnect : demande de connexion d'une application -->
+    <!-- WalletConnect: an application's connection request -->
     <div id="wc-proposal-modal" class="modal-overlay hidden">
       <div class="modal">
         <h2 data-i18n="wc.proposalTitle">Demande de connexion</h2>
@@ -1718,7 +1726,7 @@
       </div>
     </div>
 
-    <!-- WalletConnect : demande de signature -->
+    <!-- WalletConnect: signing request -->
     <div id="wc-request-modal" class="modal-overlay hidden">
       <div class="modal wide-modal">
         <h2 data-i18n="wc.requestTitle">Demande de signature</h2>
@@ -1737,8 +1745,8 @@
       </div>
     </div>
 
-    <!-- Modale mot de passe pour régénérer le kit de sauvegarde -->
-    <!-- Modale mot de passe pour afficher l'adresse THOR (frais de swap) -->
+    <!-- Password modal for regenerating the backup kit -->
+    <!-- Password modal for showing the THOR address (swap fees) -->
     <div id="thor-address-password-modal" class="modal-overlay hidden">
       <div class="modal">
         <h2 data-i18n="settings.thorTitle">Adresse THOR (frais de swap)</h2>
@@ -1770,7 +1778,7 @@
       </div>
     </div>
 
-    <!-- Modale mot de passe pour activer Windows Hello -->
+    <!-- Password modal for enabling Windows Hello -->
     <div id="enable-biometric-password-modal" class="modal-overlay hidden">
       <div class="modal">
         <h2 data-i18n="settings.biometricEnableModalTitle">Activer Windows Hello</h2>
@@ -1789,7 +1797,7 @@
       </div>
     </div>
 
-    <!-- Modale mot de passe pour désactiver Windows Hello -->
+    <!-- Password modal for disabling Windows Hello -->
     <div id="disable-biometric-password-modal" class="modal-overlay hidden">
       <div class="modal">
         <h2 data-i18n="settings.biometricDisableModalTitle">Désactiver Windows Hello</h2>
@@ -1803,7 +1811,7 @@
       </div>
     </div>
 
-    <!-- Modale ajout d'un wallet externe -->
+    <!-- Add external wallet modal -->
     <div id="add-external-wallet-modal" class="modal-overlay hidden">
       <div class="modal">
         <h2 data-i18n="external.addWalletTitle">Ajouter un wallet externe</h2>
@@ -1849,7 +1857,7 @@
       </div>
     </div>
 
-    <!-- Courbe en grand (prix d'une crypto, évolution du portefeuille ou des wallets externes) -->
+    <!-- Full-size chart (a crypto's price, portfolio or external wallets history) -->
     <div id="chart-modal" class="modal-overlay hidden">
       <div class="modal chart-modal" role="dialog" aria-labelledby="chart-modal-title">
         <div class="chart-section-header">
@@ -1865,7 +1873,7 @@
       </div>
     </div>
 
-    <!-- Modale ajout d'un compte Ledger -->
+    <!-- Add Ledger account modal -->
     <div id="ledger-add-modal" class="modal-overlay hidden">
       <div class="modal">
         <h2 data-i18n="ledger.addTitle">Ajouter un compte Ledger</h2>
@@ -1913,7 +1921,7 @@
       </div>
     </div>
 
-    <!-- Modale envoi depuis un compte Ledger -->
+    <!-- Send from a Ledger account modal -->
     <div id="ledger-send-modal" class="modal-overlay hidden">
       <div class="modal">
         <h2 id="ledger-send-title"></h2>
@@ -1936,7 +1944,7 @@
       </div>
     </div>
 
-    <!-- Modale ajout d'une entrée du carnet d'adresses -->
+    <!-- Add address book entry modal -->
     <div id="add-address-book-modal" class="modal-overlay hidden">
       <div class="modal">
         <h2 data-i18n="addressBook.addTitle">Ajouter une adresse</h2>
@@ -1944,8 +1952,9 @@
         <input id="address-book-label" type="text" />
         <label data-i18n="addressBook.address">Adresse</label>
         <input id="address-book-address" type="text" />
-        <!-- Réseau déduit de l'adresse (main.js, networkFollowsAddress) : seuls
-             ceux où elle est valide sont proposés. -->
+        <!-- Network deduced from the address (main.js,
+             networkFollowsAddress): only those where it is valid are
+             offered. -->
         <label data-i18n="addressBook.network">Réseau</label>
         <div class="custom-select dropdown">
           <select id="address-book-network"></select>
@@ -1963,7 +1972,7 @@
       </div>
     </div>
 
-    <!-- Modale nouveau groupe de wallets externes -->
+    <!-- New external wallet group modal -->
     <div id="add-external-group-modal" class="modal-overlay hidden">
       <div class="modal">
         <h2 data-i18n="external.addGroupTitle">Nouveau groupe</h2>
@@ -1977,7 +1986,7 @@
       </div>
     </div>
 
-    <!-- Modale d'affichage du kit de sauvegarde régénéré -->
+    <!-- Modal showing the regenerated backup kit -->
     <div id="regenerate-backup-result-modal" class="modal-overlay hidden">
       <div class="modal wide-modal">
         <h2 data-i18n="regenBackup.resultTitle">Nouveau kit de sauvegarde</h2>
@@ -1991,19 +2000,19 @@
       </div>
     </div>
 
-    <!-- Placé en tout dernier dans le document : sur les écrans sans navbar
-         (onboarding, déverrouillage, sauvegarde, restauration), ce sélecteur
-         flottant reste le seul moyen de changer de langue. Sur le tableau de
-         bord, il est masqué au profit de la version intégrée dans la navbar
-         (voir .lang-switcher-inline) — l'ordre après #view-dashboard dans le
-         document est nécessaire pour que ce masquage fonctionne en CSS pur. -->
+    <!-- Placed at the very end of the document: on screens without a navbar
+         (onboarding, unlock, backup, restore), this floating selector
+         remains the only way to change the language. On the dashboard, it
+         is hidden in favor of the version built into the navbar (see
+         .lang-switcher-inline); its position after #view-dashboard in the
+         document is required for that hiding to work in pure CSS. -->
     <div id="lang-switcher" class="lang-switcher">
       <button type="button" class="lang-btn" data-lang="fr">FR</button>
       <button type="button" class="lang-btn" data-lang="en">EN</button>
     </div>
 
-    <!-- Confirmation glissante après un clic sur un bouton "copier" (adresse,
-         clé publique, message chiffré...) — voir copyText() dans main.js. -->
+    <!-- Sliding confirmation after a click on a "copy" button (address,
+         public key, encrypted message...); see copyText() in main.js. -->
     <div id="copy-toast" class="copy-toast hidden" role="status" aria-live="polite">
       <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M4 12.5l5 5L20 6" />

@@ -1,9 +1,10 @@
-/* Polices auto-hébergées (fichiers dans assets/fonts/) : la CSP stricte de l'app
-   (style-src/default-src 'self') empêche de charger Google Fonts par un <link>
-   externe comme sur le site vitrine — les .woff2 doivent venir du même paquet. */
-/* Inter (variable, licence OFL : assets/fonts/Inter-OFL.txt), police de
-   référence des interfaces financières ; latin (accents français, €) et latin
-   étendu, chargés selon les caractères affichés. */
+/* Self-hosted fonts (files in assets/fonts/): the app's strict CSP
+   (style-src/default-src 'self') prevents loading Google Fonts through an
+   external <link> as the showcase site does, so the .woff2 files must ship in the
+   same package. */
+/* Inter (variable, OFL license: assets/fonts/Inter-OFL.txt), the reference font
+   of financial interfaces; latin (French accents, €) and latin extended
+   subsets, loaded according to the characters displayed. */
 @font-face {
   font-family: "Inter";
   src: url("./assets/fonts/Inter-latin.woff2") format("woff2");
@@ -20,8 +21,8 @@
   font-display: swap;
   unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
 }
-/* Space Grotesk (variable, licence OFL : assets/fonts/SpaceGrotesk-OFL.txt), la
-   police des titres du site vitrine : titres, noms des cryptos, grands montants. */
+/* Space Grotesk (variable, OFL license: assets/fonts/SpaceGrotesk-OFL.txt), the
+   showcase site's heading font: headings, crypto names, large amounts. */
 @font-face {
   font-family: "Space Grotesk";
   src: url("./assets/fonts/SpaceGrotesk-latin.woff2") format("woff2");
@@ -56,13 +57,13 @@
   --muted: #a1a9b5;
   --accent: #7c93ff;
   --accent-hover: #6b84f7;
-  /* Teinte secondaire des halos (deux couleurs par thème, comme sur le site). */
+  /* Secondary tint of the glows (two colors per theme, as on the site). */
   --accent-2: #a78bfa;
   --danger: #ff6b6b;
   --success: #4ade80;
   --warning: #fbbf24;
-  /* Dérivés des jetons ci-dessus : suivent automatiquement le thème choisi
-     (survol, bordure appuyée, teinte d'accent légère, texte discret). */
+  /* Derived from the tokens above: they follow the chosen theme automatically
+     (hover, stronger border, light accent tint, muted text). */
   --surface-3: color-mix(in srgb, var(--surface-2), white 4%);
   --border-strong: color-mix(in srgb, var(--border), white 9%);
   --accent-soft: color-mix(in srgb, var(--accent) 15%, transparent);
@@ -75,24 +76,24 @@
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
   --shadow: 0 12px 32px -14px rgba(0, 0, 0, 0.7);
   --shadow-lg: 0 32px 80px -24px rgba(0, 0, 0, 0.8);
-  /* Largeur de la barre latérale (voir « Barre latérale »). */
+  /* Width of the sidebar (see "Sidebar"). */
   --sidebar-w: 232px;
-  /* Titres, noms des cryptos et grands montants (voir « Allure moderne »). */
+  /* Headings, crypto names and large amounts (see "Modern look"). */
   --font-display: "Space Grotesk", "Inter", "Segoe UI", system-ui, sans-serif;
   font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
-  /* Chiffres de même largeur : montants et soldes alignés chiffre à chiffre. */
+  /* Tabular figures: amounts and balances aligned digit by digit. */
   font-variant-numeric: tabular-nums;
 }
 
-/* Thèmes alternatifs, activés via data-theme sur <html> (choisis depuis le menu
-   déroulant des Paramètres, voir main.js) — ne changent que les jetons de couleur,
-   jamais la mise en page ni la structure. Le thème par défaut ("Bleu") est celui
-   déjà défini dans :root ci-dessus, pas besoin de bloc séparé pour lui. */
-/* Sur le modèle du Bleu (refait le 11/10/2026, à la demande de l'utilisateur :
-   « la version bleue fait beaucoup plus pro ») : fond très profond à peine
-   teinté plutôt que saturé, surfaces et bordures discrètes, accent lumineux,
-   teinte secondaire pour les halos. Accents assez soutenus pour le texte blanc
-   fixe des boutons principaux. */
+/* Alternative themes, enabled through data-theme on <html> (picked from the
+   Settings dropdown, see main.js). They only change the color tokens, never the
+   layout or the structure. The default theme ("Blue") is the one already defined
+   in :root above, so it needs no separate block. */
+/* Modeled on Blue (redone on 2026-10-11 at the user's request: "the blue
+   version looks much more professional"): a very deep, barely tinted background
+   rather than a saturated one, discreet surfaces and borders, a bright accent,
+   a secondary tint for the glows. Accents strong enough for the fixed white
+   text of primary buttons. */
 :root[data-theme="purple"] {
   --bg: #0a090e;
   --surface: #13111a;
@@ -153,9 +154,9 @@
   --accent-2: #f43f5e;
 }
 
-/* Noir quasi pur, monochrome (pas de teinte de couleur) — pensé pour les écrans
-   OLED/faible luminosité. Accent gris moyen : les boutons ".primary" ont un
-   texte blanc fixe, un accent trop clair le rendrait illisible. */
+/* Near-pure black, monochrome (no color tint), designed for OLED/low-brightness
+   screens. Medium grey accent: ".primary" buttons have fixed white text, and an
+   accent that is too light would make it unreadable. */
 :root[data-theme="dark"] {
   --bg: #000000;
   --surface: #0a0a0b;
@@ -168,51 +169,47 @@
   --accent-2: #3f3f46;
 }
 
-/* Option "Boutons arrondis" (Paramètres > Apparence, voir main.js) : activée via
-   data-rounded-buttons sur <html>. Cible le tag `button` directement plutôt que
-   chaque classe (.primary/.secondary/.nav-tab/.qr-btn/...) une par une : tous les
-   contrôles cliquables de l'app sont déjà de vrais éléments <button> (jamais des
-   div avec un rôle ARIA, voir les règles d'accessibilité du projet), donc cette
-   seule règle les couvre tous — y compris les boutons carrés type QR, qui
-   deviennent des cercles parfaits avec un rayon aussi large. */
+/* "Rounded buttons" option (Settings > Appearance, see main.js): enabled through
+   data-rounded-buttons on <html>. Targets the `button` tag directly rather than
+   each class (.primary/.secondary/.nav-tab/.qr-btn/...) one by one: every
+   clickable control in the app is already a real <button> element (never a div
+   with an ARIA role, see the project's accessibility rules), so this single rule
+   covers them all, including square QR-style buttons, which become perfect
+   circles with such a large radius. */
 :root[data-rounded-buttons="true"] button {
   border-radius: 999px;
 }
 
-/* Même bascule, mais pour les petites puces/lignes qui ne sont PAS des
-   <button> (donc pas couvertes par la règle ci-dessus) : lignes de liste
-   (profils archivés, wallets externes, carnet d'adresses, destinataires de
-   message...), boîte d'adresse, menus déroulants, etc. Sans ça, "boutons
-   ronds" ne rendait rond QUE les boutons, en laissant tout le reste anguleux
-   autour d'eux.
+/* The same switch, but for the small chips/rows that are NOT <button>s (so not
+   covered by the rule above): list rows (archived profiles, external wallets,
+   address book, message recipients...), address box, dropdowns, etc. Without
+   this, "rounded buttons" made ONLY the buttons round, leaving everything
+   around them angular.
 
-   Volontairement exclus : les GRANDS conteneurs (`.card`, `.modal`,
-   `.wallet-card`, `.qr-container`, `.backup-item`) — un rayon de 999px sur une
-   grande boîte se rabat certes sur la moitié de son plus petit côté plutôt que
-   de casser, mais ça donnait des coins bien plus arrondis que la boîte n'a de
-   marge intérieure pour ça, et le contenu (texte, boutons) dépassait
-   visuellement du cadre arrondi près des coins. Ce problème ne se pose pas sur
-   les petites puces ci-dessous, assez basses pour qu'un rayon large reste
-   dans leur marge intérieure. Formulaires (input/textarea/select/fieldset)
-   également exclus : une pilule n'est pas un motif courant pour une zone de
-   saisie. Menus déroulants (`.custom-select-options`) aussi exclus : plusieurs
-   options en pilule empilées les unes sur les autres ne se raccordent pas
-   proprement (contrairement à un bouton isolé), le résultat était moche —
-   ils gardent leur rayon normal (8px conteneur / 6px option) dans les deux
-   modes. */
+   Deliberately excluded: the LARGE containers (`.card`, `.modal`,
+   `.wallet-card`, `.qr-container`, `.backup-item`). A 999px radius on a large
+   box does fall back to half its shortest side rather than breaking, but it
+   gave far rounder corners than the box has padding for, and the content (text,
+   buttons) visibly stuck out of the rounded frame near the corners. The small
+   chips below do not have that problem, being short enough for a large radius
+   to stay within their padding. Form fields (input/textarea/select/fieldset)
+   are also excluded: a pill is not a common pattern for an input area. Dropdown
+   menus (`.custom-select-options`) are excluded too: several pill-shaped
+   options stacked on top of each other do not join up cleanly (unlike a single
+   button) and the result was ugly, so they keep their normal radius (8px
+   container / 6px option) in both modes. */
 :root[data-rounded-buttons="true"] .market-row,
 :root[data-rounded-buttons="true"] .lang-switcher,
 :root[data-rounded-buttons="true"] .lang-switcher-inline {
   border-radius: 999px;
 }
 
-/* Texte trop près des bords en mode arrondi (signalé) : les extrémités en
-   demi-cercle mangent la marge intérieure. Marge latérale élargie pour les
-   boutons à texte — pas pour les boutons-icônes (copier, QR), qui restent des
-   cercles. Zones qui passent sur plusieurs lignes (adresse, lignes
-   d'historique, de destinataires, phrases du kit) : coins arrondis plutôt
-   qu'une pilule, dont les demi-cercles rognaient le début et la fin des
-   lignes du haut et du bas. */
+/* Text too close to the edges in rounded mode (reported): the semicircular ends
+   eat into the padding. Wider side padding for buttons with text, but not for
+   icon buttons (copy, QR), which stay circles. Areas that wrap onto several
+   lines (address, history rows, recipient rows, kit phrases): rounded corners
+   rather than a pill, whose semicircles clipped the start and end of the top
+   and bottom lines. */
 :root[data-rounded-buttons="true"] button.primary,
 :root[data-rounded-buttons="true"] button.secondary,
 :root[data-rounded-buttons="true"] button.convert-btn {
@@ -249,15 +246,15 @@
   box-sizing: border-box;
 }
 
-/* Place de la barre de défilement toujours réservée : passer d'un onglet court
-   (sans barre) à un onglet long décalait toute la page de sa largeur. */
+/* Room for the scrollbar always reserved: going from a short tab (no scrollbar)
+   to a long one shifted the whole page by its width. */
 html {
   scrollbar-gutter: stable;
 }
 
-/* Fenêtre ouverte : la page derrière ne défile plus — une seule barre, celle de
-   la fenêtre, au lieu de deux côte à côte ; la place de la barre de la page
-   reste réservée, rien ne bouge. */
+/* A window is open: the page behind no longer scrolls, so there is a single
+   scrollbar (the window's) instead of two side by side; the page's scrollbar
+   space stays reserved, so nothing moves. */
 html:has(.modal-overlay:not(.hidden)) {
   overflow: hidden;
 }
@@ -272,8 +269,8 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Écrans hors tableau de bord (chargement, création, déverrouillage,
-   restauration) : halo d'accent discret derrière la carte. */
+/* Screens outside the dashboard (loading, creation, unlock, restore): a
+   discreet accent glow behind the card. */
 .view:not(.view-shell) {
   background:
     radial-gradient(ellipse 55% 45% at 50% 28%, color-mix(in srgb, var(--accent) 13%, transparent), transparent 70%),
@@ -288,9 +285,8 @@ body {
   padding: 24px;
 }
 
-/* Écrans de déverrouillage et de premier lancement (id, pas .view) : empilent la
-   marque au-dessus de la carte plutôt que le centrage en ligne par défaut des
-   autres écrans. */
+/* Unlock and first-launch screens (id, not .view): the brand is stacked above
+   the card rather than using the other screens' default inline centering. */
 #view-unlock,
 #view-onboarding {
   flex-direction: column;
@@ -309,7 +305,7 @@ body {
   gap: 10px;
 }
 
-/* Logo (cadenas, provisoire) devant le nom de l'app. */
+/* Logo (padlock, temporary) in front of the app's name. */
 .brand-logo {
   width: 34px;
   height: 34px;
@@ -330,8 +326,8 @@ body {
   line-height: 1.5;
 }
 
-/* Séparateur textuel entre le bouton biométrique et le champ mot de passe sur
-   l'écran de déverrouillage (visible seulement quand la biométrie est activée). */
+/* Text separator between the biometric button and the password field on the unlock
+   screen (only visible when biometrics are enabled). */
 .divider-text {
   color: var(--muted);
   text-align: center;
@@ -344,10 +340,9 @@ body {
   border-radius: var(--radius-xl);
   padding: 32px;
   box-shadow: var(--shadow);
-  /* Sans ça, une carte dans un panneau plus large qu'elle (ex: onglet Paramètres)
-     restait collée à gauche au lieu d'utiliser l'espace disponible — inoffensif
-     pour onboarding/déverrouillage/restauration, déjà centrés par leur parent
-     flex (.view). */
+  /* Without this, a card inside a panel wider than itself (e.g. the Settings tab)
+     stayed stuck to the left instead of using the available space; harmless for
+     onboarding/unlock/restore, which their flex parent (.view) already centers. */
   margin: 0 auto;
 }
 
@@ -412,7 +407,7 @@ textarea::placeholder {
   color: var(--dim);
 }
 
-/* Cases à cocher : couleur de l'accent, taille confortable. */
+/* Checkboxes: accent color, comfortable size. */
 input[type="checkbox"],
 input[type="radio"] {
   accent-color: var(--accent);
@@ -420,13 +415,13 @@ input[type="radio"] {
   height: 17px;
 }
 
-/* Menu déroulant personnalisé : un <select> natif n'expose aucun moyen fiable
-   (CSS ou JS) de savoir si son menu est réellement ouvert ou fermé — seulement
-   s'il a le focus, qu'il garde après un choix ou un second clic qui referme déjà
-   le menu nativement. Impossible d'y synchroniser une flèche qui doit se remettre
-   au clic. Le <select> reste la source de vérité (valeur, options, événement
-   "change", voir main.js::syncCustomSelect) mais devient invisible ; ce composant
-   ne fait qu'en piloter l'affichage, ouverture/fermeture 100% gérées en JS. */
+/* Custom dropdown: a native <select> offers no reliable way (CSS or JS) to know
+   whether its menu is actually open or closed, only whether it has focus, which
+   it keeps after a choice or after a second click that already closes the menu
+   natively. There is no way to sync an arrow to it that must reset on click. The
+   <select> remains the source of truth (value, options, "change" event, see
+   main.js::syncCustomSelect) but becomes invisible; this component only drives
+   its display, with opening/closing handled entirely in JS. */
 .custom-select select {
   position: absolute;
   opacity: 0;
@@ -436,9 +431,9 @@ input[type="radio"] {
   overflow: hidden;
 }
 
-/* Classe partagée par les menus à valeur (.custom-select) et les menus d'action
-   pure sans <select> sous-jacent (.action-menu, voir le bouton "Recevoir") :
-   mêmes mécanismes d'ouverture/fermeture/flèche pour les deux. */
+/* Class shared by value menus (.custom-select) and pure action menus with no
+   underlying <select> (.action-menu, see the "Receive" button): the same
+   open/close/arrow mechanics for both. */
 .dropdown {
   position: relative;
 }
@@ -534,7 +529,7 @@ input[type="radio"] {
   font-weight: 600;
 }
 
-/* Libellé et bouton sur une même ligne (« Montant » … « Max »). */
+/* Label and button on the same line ("Amount" … "Max"). */
 .label-row {
   display: flex;
   align-items: center;
@@ -549,10 +544,10 @@ input[type="radio"] {
   font-size: 0.8rem;
 }
 
-/* Délai d'annulation d'un envoi : barre qui se vide en 5 s (`SEND_GRACE`). */
-/* Délai d'annulation : AU-DESSUS de toutes les fenêtres (la fenêtre d'envoi
-   ou l'aperçu d'échange reste ouvert pendant l'envoi ; à niveau égal, elle
-   masquait le compte à rebours et ses boutons, rendant l'annulation impossible). */
+/* Cancellation delay of a send: a bar that empties in 5 s (`SEND_GRACE`). */
+/* Cancellation delay: ABOVE every window (the send window or the swap preview stays
+   open during the send; at the same level, it hid the countdown and its buttons,
+   making cancellation impossible). */
 #send-countdown-modal {
   z-index: 70;
 }
@@ -590,7 +585,8 @@ input[type="radio"] {
   }
 }
 
-/* Intertitre d'un groupe d'options (<optgroup>) : ni cliquable ni survolé. */
+/* Heading of an option group (<optgroup>): neither clickable nor highlighted on
+   hover. */
 .custom-select-options li.custom-select-group {
   padding: 10px 11px 4px;
   font-size: 0.72rem;
@@ -608,8 +604,8 @@ input[type="radio"] {
   width: auto;
 }
 
-/* Réseau d'une carte : pastille, de même encombrement que l'étiquette fixe
-   des cryptos à un seul réseau (.network-fixed-label, juste en dessous). */
+/* A card's network: a chip with the same footprint as the fixed label of
+   single-network cryptos (.network-fixed-label, just below). */
 .wallet-card .custom-select-trigger,
 .network-fixed-label {
   height: auto;
@@ -630,9 +626,8 @@ input[type="radio"] {
   margin-top: -3px;
 }
 
-/* USDC (v1) n'a pas de sélecteur de réseau (mainnet uniquement, voir
-   core/src/sol_spl.rs) : simple étiquette à la même taille que le sélecteur
-   des autres cartes, pour garder les en-têtes visuellement alignés. */
+/* A card with no network selector: a plain label the same size as the other
+   cards' selector, to keep the headers visually aligned. */
 .network-fixed-label {
   white-space: nowrap;
 }
@@ -669,13 +664,13 @@ button:disabled {
   cursor: not-allowed;
 }
 
-/* Actualisation en cours (voir withThrottledButton) : pas un refus. */
+/* Refresh in progress (see withThrottledButton): not a refusal. */
 button[aria-busy="true"] {
   cursor: progress;
 }
 
-/* Chiffres à chasse fixe : un solde ou un prix qui change garde sa largeur,
-   rien ne bouge autour à chaque actualisation. */
+/* Tabular figures: a balance or price that changes keeps its width, so nothing
+   around it moves on each refresh. */
 .balance,
 .fiat-value,
 .market-price,
@@ -737,7 +732,7 @@ button.link:hover {
   margin-top: 12px;
 }
 
-/* Erreur technique reformulée : le détail brut en petit, dessous. */
+/* Reworded technical error: the raw detail in small print, underneath. */
 .error .error-detail {
   display: block;
   margin-top: 4px;
@@ -751,11 +746,10 @@ button.link:hover {
   font-size: 0.8rem;
 }
 
-/* Avertissements sur le destinataire dans l'aperçu d'envoi : rouge (adresse
-   presque identique à une connue, sosie d'un contact), orange (nouvelle
-   adresse, jamais servi, vide), vert (un de vos profils), gris (état
-   impossible à vérifier). */
-/* Crypto sur plusieurs réseaux : rappel du réseau de départ. */
+/* Recipient warnings in the send preview: red (address almost identical to a
+   known one, lookalike of a contact), orange (new address, never used, empty),
+   green (one of your profiles), grey (state could not be checked). */
+/* A crypto on several networks: reminder of the source network. */
 .send-network-note {
   margin: 10px 0 4px;
   padding: 8px 12px;
@@ -806,7 +800,7 @@ button.link:hover {
   color: var(--success);
 }
 
-/* « Max » de la fenêtre « Convertir », au bout de la ligne du solde. */
+/* "Max" in the "Convert" window, at the end of the balance line. */
 .swap-balance-row {
   display: flex;
   align-items: center;
@@ -839,7 +833,7 @@ button.link:hover {
   cursor: progress;
 }
 
-/* État de la délégation Cardano (fenêtre « Staker vos ADA »). */
+/* Cardano delegation state ("Stake your ADA" window). */
 .ada-stake-status {
   margin: 12px 0 0;
   font-weight: 600;
@@ -851,8 +845,8 @@ button.link:hover {
   max-width: 620px;
 }
 
-/* Fenêtre « Staker vos SOL » : choix du staking liquide (ouvre « Convertir »),
-   puis staking natif (comptes de mise, validateur, montant). */
+/* "Stake your SOL" window: liquid staking choice (opens "Convert"), then native
+   staking (stake accounts, validator, amount). */
 .stake-option {
   display: flex;
   flex-direction: column;
@@ -952,7 +946,7 @@ button.link:hover {
   font-size: 0.85rem;
 }
 
-/* Note du staking liquide dans « Convertir » : information, teinte d'accent. */
+/* Liquid staking note in "Convert": information, accent tint. */
 .swap-staking-note {
   margin: 10px 0 4px;
   padding: 9px 12px;
@@ -964,8 +958,8 @@ button.link:hover {
   line-height: 1.45;
 }
 
-/* Alertes de la fenêtre « Convertir » : orange (échange dégradé), rouge
-   (échange impossible par ce fournisseur pour l'instant). */
+/* Alerts in the "Convert" window: orange (degraded swap), red (swap currently
+   impossible through this provider). */
 .swap-alerts {
   display: flex;
   flex-direction: column;
@@ -994,7 +988,7 @@ button.link:hover {
   color: var(--danger);
 }
 
-/* Consigne sous le tag de destination XRP. */
+/* Hint under the XRP destination tag. */
 .tag-hint {
   margin: 6px 0 0;
   font-size: 0.8rem;
@@ -1061,9 +1055,9 @@ button.link:hover {
   font-size: 0.85rem;
 }
 
-/* Boutons d'une part : « Enregistrer sur une clé USB » (le geste conseillé) seul
-   sur sa ligne, les deux téléchargements côte à côte en dessous — à trois sur
-   une ligne, chaque libellé passait sur deux lignes. */
+/* Buttons for a share: "Save to a USB drive" (the recommended action) alone on
+   its line, the two downloads side by side below; with three on one line, every
+   label wrapped onto two lines. */
 .backup-item .row-buttons {
   flex-wrap: wrap;
   margin-top: 12px;
@@ -1102,17 +1096,16 @@ legend {
   margin-top: 0;
 }
 
-/* 3 boutons par carte (Actualiser/Échanger/Envoyer) : sur une seule ligne quand
-   ils y tiennent, sinon Envoyer passe seul sur toute la largeur en dessous. Une
-   carte peut descendre à 260px (3 cartes par rangée dès ~1000px de large) :
-   sans retour à la ligne, Envoyer débordait de la carte sur la voisine. Aucun
-   bouton plus étroit que son texte. */
+/* 3 buttons per card (Refresh/Swap/Send): on a single line when they fit,
+   otherwise Send goes alone across the full width below. A card can shrink to
+   260px (3 cards per row from ~1000px wide): without wrapping, Send overflowed
+   the card onto its neighbor. No button narrower than its text. */
 .wallet-card .row-buttons {
-  /* Marge par défaut de `.row-buttons` (20px, pensée pour les modales) trop
-     large ici, juste sous l'adresse/QR d'une carte déjà compacte. */
+  /* The default margin of `.row-buttons` (20px, meant for modals) is too large
+     here, just under the address/QR of an already compact card. */
   margin-top: 8px;
-  /* 4 boutons (Actualiser, Historique, Échanger, Envoyer) : 2 × 2, de même
-     largeur — sur une seule ligne, ils ne tenaient pas dans une carte. */
+  /* 4 buttons (Refresh, History, Swap, Send): 2 × 2, all the same width; on a
+     single line, they did not fit in a card. */
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
@@ -1133,13 +1126,13 @@ legend {
   padding: 0 0 0 var(--sidebar-w);
 }
 
-/* --- Barre latérale ------------------------------------------------------------
-   Navigation à gauche, sur toute la hauteur de la fenêtre (libère la hauteur,
-   rare à 600 px). Libellés toujours visibles : pas d'icônes seules à deviner.
-   Fenêtre large : icône et libellé côte à côte ; étroite (< 1000 px) : colonne
-   compacte, icône au-dessus du libellé. Icônes dessinées en CSS (masques SVG,
-   voir « Icônes ») : le texte des onglets reste celui que la traduction
-   réécrit (`data-i18n` sur le bouton lui-même). */
+/* --- Sidebar
+   ----------------------------------------------------------------------
+   Navigation on the left, over the full height of the window (frees up height,
+   which is scarce at 600 px). Labels always visible: no bare icons to guess. Wide
+   window: icon and label side by side; narrow (< 1000 px): a compact column, icon
+   above label. Icons drawn in CSS (SVG masks, see "Icons"): the tab text stays
+   the one the translation rewrites (`data-i18n` on the button itself). */
 .navbar {
   position: fixed;
   top: 0;
@@ -1254,7 +1247,7 @@ legend {
     padding: 14px 8px 12px;
   }
 
-  /* Logo seul : le nom ne tient pas dans la colonne. */
+  /* Logo only: the name does not fit in the column. */
   .nav-brand {
     justify-content: center;
     padding: 2px 0 16px;
@@ -1337,18 +1330,18 @@ textarea:focus {
   margin-bottom: 4px;
 }
 
-/* `.tab-panel` plafonne normalement tout onglet à 960px (voir plus bas) — bien
-   pour une seule colonne, mais ça tassait les deux colonnes chiffrer/déchiffrer
-   l'une contre l'autre. Onglet Message seul élargi puisque c'est le seul avec
-   ce layout à deux colonnes ; `.card.wide` (640px) est levé pour lui aussi. */
+/* `.tab-panel` normally caps every tab at 960px (see below), which is fine for
+   a single column but squeezed the encrypt/decrypt columns against each other.
+   Only the Message tab is widened, since it is the only one with this
+   two-column layout; `.card.wide` (640px) is lifted for it too. */
 .tab-panel[data-panel="message"] {
   max-width: 1600px;
 }
 
-/* `.card.wide` (deux classes, spécificité 0-2-0) l'emportait sur `.message-panel`
-   seul (0-1-0) malgré l'ordre dans la feuille — la carte restait bloquée à
-   640px quel que soit le max-width posé ici. Il faut au moins la même
-   spécificité pour vraiment l'annuler. */
+/* `.card.wide` (two classes, specificity 0-2-0) won over `.message-panel` alone
+   (0-1-0) despite the order in the stylesheet, so the card stayed stuck at 640px
+   whatever max-width was set here. At least the same specificity is needed to
+   really override it. */
 .card.wide.message-panel {
   max-width: none;
 }
@@ -1358,9 +1351,9 @@ textarea:focus {
   grid-template-columns: 1fr 1fr;
   gap: 40px;
   align-items: start;
-  /* Même écart qu'avant un titre de section (`.section-title`) : les titres des
-     colonnes ont leur marge haute retirée, 8 px collaient « Message » au bouton
-     « Ajouter un destinataire » juste au-dessus. */
+  /* The same gap as before a section heading (`.section-title`): the column
+     headings have their top margin removed, and 8 px glued "Message" to the
+     "Add a recipient" button just above. */
   margin-top: 28px;
 }
 
@@ -1368,9 +1361,9 @@ textarea:focus {
   margin-top: 0;
 }
 
-/* En dessous d'une certaine largeur, deux colonnes de contenu (textarea, liste
-   de destinataires) deviendraient trop étroites pour rester lisibles — on
-   repasse à un seul empilement vertical, comme avant ce changement. */
+/* Below a certain width, two content columns (textarea, recipient list) would
+   become too narrow to stay readable, so we go back to a single vertical stack,
+   as before this change. */
 @media (max-width: 860px) {
   .message-columns {
     grid-template-columns: 1fr;
@@ -1424,9 +1417,9 @@ textarea:focus {
   flex-shrink: 0;
 }
 
-/* Wallets externes (onglet "Wallets externes") : chaque groupe réutilise
-   .recipient-list/.recipient-item/.recipient-info/.recipient-label pour les
-   lignes de wallet, seul l'en-tête de groupe (nom + total) est spécifique. */
+/* External wallets ("External wallets" tab): each group reuses
+   .recipient-list/.recipient-item/.recipient-info/.recipient-label for its
+   wallet rows; only the group header (name + total) is specific. */
 .external-group {
   margin-top: 24px;
 }
@@ -1468,7 +1461,7 @@ textarea:focus {
   margin-bottom: 14px;
 }
 
-/* Une <label> : sans les marges ni le texte discret des libellés de champ. */
+/* A <label>: without the margins or the muted text of field labels. */
 .recipient-picker-item {
   display: flex;
   align-items: center;
@@ -1502,12 +1495,12 @@ textarea:focus {
   padding: 4px;
 }
 
-/* Sur le tableau de bord, la navbar a déjà un sélecteur intégré à sa suite
-   normale (voir .lang-switcher-inline) : le sélecteur flottant ci-dessus s'y
-   superposerait au bouton "Verrouiller", donc masqué uniquement sur cet écran.
-   Nécessite que #lang-switcher soit placé APRÈS #view-dashboard dans le HTML
-   pour que ce sélecteur de sibling fonctionne (position: fixed ne dépend pas
-   de l'ordre dans le document, donc le déplacer ne change rien visuellement). */
+/* On the dashboard, the navbar already has a selector built into its normal flow
+   (see .lang-switcher-inline): the floating selector above would sit on top of
+   the "Lock" button, so it is hidden on that screen only. Requires
+   #lang-switcher to be placed AFTER #view-dashboard in the HTML for this sibling
+   selector to work (position: fixed does not depend on document order, so moving
+   it changes nothing visually). */
 #view-dashboard:not(.hidden) ~ #lang-switcher {
   display: none;
 }
@@ -1541,15 +1534,15 @@ textarea:focus {
   color: white;
 }
 
-/* Confirmation glissante après un clic sur un bouton "copier" (voir copyText()
-   dans main.js) : `.hidden` retire l'élément du flux tant qu'il n'a jamais
-   servi, `.visible` pilote ensuite l'animation par transition CSS plutôt que
-   `display` (qui ne peut pas être transitionné) — glisse depuis le bas et
-   s'efface en même temps, dans les deux sens (apparition/disparition). */
+/* Sliding confirmation after a click on a "copy" button (see copyText() in
+   main.js): `.hidden` takes the element out of the flow as long as it has never
+   been used, then `.visible` drives the animation through a CSS transition
+   rather than `display` (which cannot be transitioned). It slides up from the
+   bottom and fades at the same time, both ways (appearing/disappearing). */
 .copy-toast {
   position: fixed;
-  /* En haut de la zone de contenu, centré sur elle (à droite de la barre
-     latérale du tableau de bord, voir `--content-left`). */
+  /* At the top of the content area, centered on it (to the right of the
+     dashboard's sidebar, see `--content-left`). */
   top: 18px;
   left: calc(50% + var(--content-left, 0px) / 2);
   z-index: 999;
@@ -1560,10 +1553,10 @@ textarea:focus {
   border: 1px solid var(--border);
   color: var(--text);
   padding: 10px 16px;
-  /* Même logique que les boutons (voir la règle `:root[data-rounded-buttons]`
-     tout en haut de ce fichier) : carré par défaut, pilule en mode "boutons
-     ronds" — ce n'est pas un <button> donc pas couvert automatiquement par
-     cette règle-là, dupliquée ici volontairement pour ce seul élément. */
+  /* Same logic as the buttons (see the `:root[data-rounded-buttons]` rule at
+     the very top of this file): square by default, a pill in "rounded buttons"
+     mode. This is not a <button>, so that rule does not cover it automatically;
+     it is duplicated here on purpose for this one element. */
   border-radius: var(--radius);
   box-shadow: var(--shadow-lg);
   font-size: 0.88rem;
@@ -1592,7 +1585,7 @@ textarea:focus {
   flex-shrink: 0;
 }
 
-/* Fonds reçus : le solde de la carte s'éclaire brièvement en vert. */
+/* Funds received: the card's balance briefly lights up in green. */
 .balance.balance-received {
   animation: balance-received 2.4s ease-out;
 }
@@ -1638,8 +1631,8 @@ textarea:focus {
   margin: 0;
 }
 
-/* Archiver : action rare, discrète, à droite (les nouveaux venus la
-   confondaient avec une action courante). */
+/* Archive: a rare action, kept discreet, on the right (newcomers mistook it for
+   an everyday action). */
 .profile-bar > .profile-archive-link {
   margin-left: auto;
   font-size: 0.85rem;
@@ -1652,17 +1645,17 @@ textarea:focus {
 
 .wallet-grid {
   display: grid;
-  /* 236px minimum : 3 cartes par rangée dès la taille de fenêtre par défaut
-     (1080 px), 2 en fenêtre étroite, 4 sur un grand écran. Les cartes
-     étroites se resserrent d'elles-mêmes (voir « Cartes compactes ») : réseau
-     sous le nom, solde et actions rondes plus petits. */
+  /* 236px minimum: 3 cards per row from the default window size (1080 px), 2 in
+     a narrow window, 4 on a large screen. Narrow cards tighten up on their own
+     (see "Compact cards"): network under the name, smaller balance and round
+     actions. */
   grid-template-columns: repeat(auto-fill, minmax(236px, 1fr));
   gap: 16px;
   margin-top: 20px;
-  /* Cartes d'une même rangée à la même hauteur, actions posées en bas (voir
-     « Cartes : actions alignées ») : les rangées d'actions s'alignent d'une
-     carte à l'autre même quand l'adresse est plus courte ou qu'il n'y a pas
-     de « Convertir ». Une carte repliée garde sa propre hauteur. */
+  /* Cards in the same row get the same height, with the actions at the bottom
+     (see "Cards: aligned actions"): the action rows line up from one card to
+     the next even when the address is shorter or there is no "Convert". A
+     collapsed card keeps its own height. */
   align-items: stretch;
 }
 
@@ -1694,13 +1687,13 @@ textarea:focus {
   flex-wrap: wrap;
   row-gap: 6px;
   margin-bottom: 12px;
-  /* Le badge "Testnet" (Bitcoin) est naturellement plus court qu'un <select> de
-     réseau (Ethereum/Solana) : sans hauteur minimale commune, tout le contenu de
-     la carte Bitcoin (adresse, solde) remontait par rapport aux deux autres,
-     malgré l'alignement déjà fait sur l'adresse et les boutons. */
+  /* The "Testnet" badge (Bitcoin) is naturally shorter than a network <select>
+     (Ethereum/Solana): without a shared minimum height, all the content of the
+     Bitcoin card (address, balance) moved up compared with the other two,
+     despite the alignment already done on the address and the buttons. */
   min-height: 34px;
-  /* Espace entre le nom et le bouton « Staker » sur une même ligne (aucun
-     retrait quand le bouton passe à la ligne). */
+  /* Space between the name and the "Stake" button on the same line (no indent
+     when the button wraps to the next line). */
   column-gap: 10px;
 }
 
@@ -1717,8 +1710,8 @@ textarea:focus {
   gap: 10px;
 }
 
-/* « Staker » à côté du nom de la crypto, avec le rendement annuel estimé ;
-   la marge automatique garde le menu des réseaux tout à droite. */
+/* "Stake" next to the crypto's name, with the estimated annual yield; the
+   automatic margin keeps the network menu on the far right. */
 .stake-chip {
   display: inline-flex;
   align-items: center;
@@ -1750,11 +1743,11 @@ textarea:focus {
   font-variant-numeric: tabular-nums;
 }
 
-/* Cartes de 300 à 369 px (trois colonnes, fenêtre large) : la ligne du nom
-   n'a la place que pour le rendement (l'en-tête garde 42 px pour le bouton
-   d'actualisation) — « Staker » reste dans l'infobulle, et revient sans
-   rendement connu. Plus larges : tout tient. Plus étroites : le bouton passe
-   sous le nom, en entier (mesuré le 07/10/2026 : noms jusqu'à 140 px). */
+/* Cards from 300 to 369 px (three columns, wide window): the name line only has
+   room for the yield (the header keeps 42 px for the refresh button), so
+   "Stake" stays in the tooltip, and comes back when no yield is known. Wider:
+   everything fits. Narrower: the button goes under the name, in full (measured
+   on 2026-10-07: names up to 140 px). */
 @container (min-width: 260px) and (max-width: 329px) {
   .stake-chip {
     gap: 5px;
@@ -1773,7 +1766,7 @@ textarea:focus {
   flex-shrink: 0;
 }
 
-/* Crypto sans logo (réseau ajouté) : initiale de son symbole. */
+/* Crypto without a logo (added network): the first letter of its symbol. */
 .coin-icon-letter {
   display: inline-grid;
   place-items: center;
@@ -1789,7 +1782,7 @@ textarea:focus {
   font-size: 0.62rem;
 }
 
-/* Paramètres : réseaux ajoutés. */
+/* Settings: added networks. */
 .custom-networks-list {
   list-style: none;
   margin: 12px 0 16px;
@@ -1827,7 +1820,7 @@ textarea:focus {
   overflow-wrap: anywhere;
 }
 
-/* Bouton sous un champ d'adresse (réseau ajouté, nœud Monero). */
+/* Button under an address field (added network, Monero node). */
 #custom-network-add,
 #xmr-node-save {
   margin-top: 12px;
@@ -1839,16 +1832,16 @@ textarea:focus {
   gap: 12px;
 }
 
-/* Ce PNG a beaucoup de marge transparente autour du symbole (contrairement aux
-   logos ETH/BTC qui remplissent tout leur cercle) : agrandi pour compenser et
-   paraître à la même taille visuelle que les deux autres. */
-/* Logo carré (jpg) : arrondi comme les autres. */
+/* This PNG has a lot of transparent margin around the symbol (unlike the
+   ETH/BTC logos, which fill their whole circle): enlarged to compensate and
+   look the same visual size as the other two. */
+/* Square logo (jpg): rounded like the others. */
 .coin-icon-round {
   border-radius: 50%;
 }
 
-/* « Mes cryptos », au-dessus des cartes : titre à gauche, « Gérer mes cryptos »
-   et « Organiser » à droite. */
+/* "My cryptos", above the cards: title on the left, "Manage my cryptos" and
+   "Arrange" on the right. */
 .manage-assets-row {
   display: flex;
   flex-wrap: wrap;
@@ -1882,7 +1875,7 @@ textarea:focus {
   mask: var(--icon) center / contain no-repeat;
 }
 
-/* Mode « Organiser » actif. */
+/* "Arrange" mode active. */
 #organize-btn[aria-pressed="true"],
 #stocks-organize-btn[aria-pressed="true"] {
   background: var(--accent-soft);
@@ -1890,14 +1883,14 @@ textarea:focus {
   color: var(--accent-text);
 }
 
-/* Crypto non choisie dans « Gérer mes cryptos ». */
+/* Crypto not selected in "Manage my cryptos". */
 .asset-hidden {
   display: none !important;
 }
 
-/* « Gérer mes cryptos » : une ligne par crypto, case à droite. */
-/* Recherche de « Gérer mes cryptos » : loupe dans le champ. `input.` : plus
-   spécifique que le style commun des champs texte. */
+/* "Manage my cryptos": one row per crypto, checkbox on the right. */
+/* Search in "Manage my cryptos": magnifier inside the field. `input.`: more
+   specific than the shared text field style. */
 input.assets-search {
   margin-top: 12px;
   padding-left: 38px;
@@ -1920,7 +1913,7 @@ input.assets-search {
   gap: 6px;
 }
 
-/* Une <label> : sans les marges ni le texte discret des libellés de champ. */
+/* A <label>: without the margins or the muted text of field labels. */
 .asset-choice {
   display: flex;
   align-items: center;
@@ -1952,8 +1945,8 @@ input.assets-search {
   accent-color: var(--accent);
 }
 
-/* Boutons d'une carte sans « Échanger » (3 boutons) : le dernier (Envoyer)
-   occupe toute la dernière ligne de la grille 2 × 2. */
+/* Card buttons without "Swap" (3 buttons): the last one (Send) takes the whole
+   last row of the 2 × 2 grid. */
 .wallet-card .row-buttons button:last-child:nth-child(odd) {
   grid-column: 1 / -1;
 }
@@ -1964,10 +1957,9 @@ input.assets-search {
   margin: -17px;
 }
 
-/* USDC uniquement : petite étiquette "Solana" collée sous le nom "USDC"
-   plutôt que dans le texte du réseau à côté (voir index.html) — garde ce
-   dernier identique aux autres cartes pour ne pas décaler l'alignement de
-   tout ce qui suit dans l'en-tête. */
+/* USDC only: a small "Solana" label tucked under the "USDC" name rather than in
+   the network text next to it (see index.html), which keeps that text identical
+   to the other cards so nothing after it in the header shifts. */
 .coin-name-stack {
   display: flex;
   flex-direction: column;
@@ -1982,10 +1974,9 @@ input.assets-search {
   white-space: nowrap;
 }
 
-/* Cliquable uniquement sur les cartes wallet (voir main.js) : ouvre la même
-   modale que le bouton QR, qui affiche déjà l'adresse en entier — pas sur les
-   autres usages de `.address` (onglet Certificat), qui n'ont pas ce
-   comportement. */
+/* Clickable only on wallet cards (see main.js): opens the same modal as the QR
+   button, which already shows the full address; not on the other uses of
+   `.address` (Certificate tab), which do not have this behavior. */
 .wallet-card .address {
   cursor: pointer;
 }
@@ -2001,10 +1992,9 @@ input.assets-search {
   border-radius: var(--radius);
   margin: 0;
   flex: 1;
-  /* Toujours affichée en entier, quitte à passer sur plusieurs lignes : une
-     troncature sur une seule ligne cachait la fin de l'adresse (ou d'une empreinte
-     PGP dans l'onglet Certificat) sans aucun moyen de la voir autrement qu'en
-     rouvrant le QR code. */
+  /* Always shown in full, even if it wraps onto several lines: truncating to a
+     single line hid the end of the address (or of a PGP fingerprint in the
+     Certificate tab) with no way to see it other than reopening the QR code. */
   white-space: normal;
   word-break: break-all;
   min-width: 0;
@@ -2018,16 +2008,15 @@ input.assets-search {
   gap: 8px;
 }
 
-/* Copier et QR code de la ligne d'adresse : groupés pour pouvoir être
-   superposés en vue cartes ; ailleurs le groupe s'efface (ses boutons restent
-   des éléments de la ligne). */
+/* Copy and QR code of the address line: grouped so they can be stacked in card
+   view; elsewhere the group disappears (its buttons stay items of the line). */
 .address-tools {
   display: contents;
 }
 
-/* « Convertir » (échange vers une autre crypto) : bien visible, à droite de
-   l'adresse ; seulement là où l'échange existe (voir SWAP_NETWORK). */
-/* Teinté plutôt que plein : « Envoyer » reste la seule action pleine. */
+/* "Convert" (swap to another crypto): clearly visible, to the right of the
+   address; only where the swap exists (see SWAP_NETWORK). */
+/* Tinted rather than solid: "Send" stays the only solid action. */
 button.convert-btn {
   display: flex;
   align-items: center;
@@ -2045,9 +2034,9 @@ button.convert-btn:hover {
   background: color-mix(in srgb, var(--accent) 26%, transparent);
 }
 
-/* Avec « Convertir », l'adresse garde sa largeur (2 lignes) : à sa droite,
-   une colonne avec « Convertir » en haut, copier et QR en dessous — sinon
-   l'adresse, coincée entre trois boutons, passait sur 5 lignes. */
+/* With "Convert", the address keeps its width (2 lines): to its right, a column
+   with "Convert" on top and copy and QR below; otherwise the address, squeezed
+   between three buttons, wrapped onto 5 lines. */
 .address-row:has(> .convert-btn:not(.hidden)) {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 56px 56px;
@@ -2081,7 +2070,7 @@ button.convert-btn svg {
   grid-area: qr;
 }
 
-/* Logo d'une crypto devant son nom (titres, menus, listes, aperçus). */
+/* A crypto's logo in front of its name (titles, menus, lists, previews). */
 .coin-icon-inline {
   width: 18px;
   height: 18px;
@@ -2091,7 +2080,7 @@ button.convert-btn svg {
   flex-shrink: 0;
 }
 
-/* Même PNG à large marge transparente que sur les cartes (.coin-icon-sol). */
+/* The same PNG with a wide transparent margin as on the cards (.coin-icon-sol). */
 .coin-icon-inline-sol {
   transform: scale(2.15);
 }
@@ -2110,8 +2099,8 @@ h2 .coin-icon-inline,
   vertical-align: -3px;
 }
 
-/* Montant d'un envoi ou d'un échange : en crypto OU dans la devise affichée,
-   les deux liés. */
+/* Amount of a send or a swap: in crypto OR in the display currency, the two
+   linked. */
 .amount-pair {
   display: flex;
   align-items: center;
@@ -2153,7 +2142,7 @@ h2 .coin-icon-inline,
   flex-shrink: 0;
 }
 
-/* Solde de la crypto de départ, sous le montant d'un échange. */
+/* Balance of the source crypto, under the amount of a swap. */
 .swap-balance {
   margin: 6px 0 0;
   font-size: 0.85rem;
@@ -2172,10 +2161,10 @@ h2 .coin-icon-inline,
   padding: 0 12px;
   border-radius: var(--radius);
   flex-shrink: 0;
-  /* .address-row a `align-items: stretch` (pour que ce bouton suive la hauteur de
-     l'adresse quand elle passe sur 2 lignes) : sans ce centrage explicite, l'icône
-     SVG restait collée en haut du bouton une fois celui-ci étiré, au lieu de
-     rester centrée verticalement à côté de l'adresse. */
+  /* .address-row has `align-items: stretch` (so this button follows the address's
+     height when it wraps onto 2 lines): without explicit centering, the SVG icon
+     stayed stuck to the top of the button once it was stretched, instead of
+     staying vertically centered next to the address. */
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2187,42 +2176,40 @@ h2 .coin-icon-inline,
   color: var(--text);
 }
 
-/* Vue liste du portefeuille (bascule dans Paramètres → Apparence) : chaque
-   carte devient une ligne compacte plutôt qu'un bloc vertical, pour que plus
-   de cryptos tiennent à l'écran sans défiler — utile une fois qu'il y en a
-   plus que ETH/BTC/SOL/USDC. Uniquement du CSS : le DOM (et donc tout le JS
-   qui le manipule, refresh/historique/envoi/QR) reste identique, seule la
-   disposition change.
+/* Wallet list view (toggle in Settings → Appearance): each card becomes a
+   compact row rather than a vertical block, so more cryptos fit on screen
+   without scrolling, which helps once there are more than ETH/BTC/SOL/USDC. CSS
+   only: the DOM (and therefore all the JS that manipulates it,
+   refresh/history/send/QR) stays identical; only the layout changes.
 
-   Les colonnes sont définies UNE SEULE FOIS ici, sur `.wallet-grid` — chaque
-   `.wallet-card` s'y raccroche ensuite avec `grid-template-columns: subgrid`
-   plutôt que de redéfinir ses propres colonnes. Sans ça, chaque carte étant
-   sa propre grille indépendante, ses colonnes se dimensionnaient sur SON
-   PROPRE contenu (ex: "Bitcoin" vs "Ethereum", ou une adresse tronquée plus
-   ou moins longue) : rien ne garantissait que la colonne "solde" de la ligne
-   ETH commence au même endroit que celle de la ligne BTC. Le subgrid force
-   toutes les lignes à partager exactement les mêmes largeurs de colonnes. */
-/* Vue liste (compacte) : une ligne par crypto ou action — nom, solde, adresse
-   et ses outils, actions. Revue le 10/10/2026 (jugée « catastrophique ») :
-   adresse réduite à un caractère, noms sur trois lignes, menu réseau
-   d'Ethereum posé sur le solde, boutons sur une seconde ligne. Désormais :
-   réseau et « Staker » à la ligne SOUS le nom (dans sa colonne), nom trop
-   long coupé, copier, QR et Convertir en icônes à côté de l'adresse,
-   Actualiser et Historique en icônes (libellé en info-bulle), Envoyer avec
-   son libellé. `.tab-panel` plafonne le contenu à 960px : élargi ici. */
+   The columns are defined ONCE here, on `.wallet-grid`; each `.wallet-card`
+   then hooks into them with `grid-template-columns: subgrid` rather than
+   defining its own columns. Without this, each card being its own independent
+   grid, its columns were sized on ITS OWN content (e.g. "Bitcoin" vs
+   "Ethereum", or a truncated address of varying length): nothing guaranteed
+   that the "balance" column of the ETH row started at the same place as the BTC
+   row's. The subgrid forces every row to share exactly the same column widths. */
+/* List view (compact): one row per crypto or share: name, balance, address and
+   its tools, actions. Reworked on 2026-10-10 (judged "catastrophic"): address
+   shrunk to a single character, names on three lines, Ethereum's network menu
+   sitting on the balance, buttons on a second line. Now: network and "Stake" on
+   the line UNDER the name (in its column), an overlong name cut off, copy, QR
+   and Convert as icons next to the address, Refresh and History as icons (label
+   in a tooltip), Send with its label. `.tab-panel` caps the content at 960px:
+   widened here. */
 :root[data-wallet-list-view="true"] .tab-panel[data-panel="wallet"],
 :root[data-wallet-list-view="true"] .tab-panel[data-panel="stocks"] {
   max-width: 1150px;
 }
 
 :root[data-wallet-list-view="true"] .wallet-grid {
-  /* Adresse : au moins 9 caractères et ses trois outils (sinon « Convertir »
-     débordait sur « Actualiser ») ; c'est le nom, coupé, qui cède la place.
-     Pas `min-content` : celui d'une adresse sur une ligne est sa longueur
-     entière. Fenêtre large : l'adresse a la plus grosse part (le réseau passe
-     sous le nom au besoin). */
+  /* Address: at least 9 characters plus its three tools (otherwise "Convert"
+     overflowed onto "Refresh"); it is the name, cut off, that gives way. Not
+     `min-content`: for an address on one line, that is its full length. Wide
+     window: the address gets the biggest share (the network goes under the name
+     if needed). */
   grid-template-columns: minmax(0, 1fr) minmax(130px, auto) minmax(210px, 1.3fr) auto;
-  /* row-gap puis column-gap : lignes plus rapprochées que les colonnes. */
+  /* row-gap then column-gap: rows closer together than columns. */
   gap: 10px 22px;
 }
 
@@ -2288,8 +2275,8 @@ h2 .coin-icon-inline,
   margin: 0;
 }
 
-/* Le badge "transaction en attente" réserve normalement sa place même
-   invisible (cartes verticales) ; en ligne compacte, seulement s'il est là. */
+/* The "pending transaction" badge normally reserves its space even when
+   invisible (vertical cards); in a compact row, only when it is there. */
 :root[data-wallet-list-view="true"] .wallet-card .pending-badge {
   display: none;
 }
@@ -2299,7 +2286,7 @@ h2 .coin-icon-inline,
   visibility: visible;
 }
 
-/* Adresse puis ses outils sur une ligne (avec ou sans « Convertir »). */
+/* Address then its tools on one line (with or without "Convert"). */
 :root[data-wallet-list-view="true"] .wallet-card .address-row,
 :root[data-wallet-list-view="true"] .wallet-card .address-row:has(> .convert-btn:not(.hidden)) {
   display: flex;
@@ -2310,9 +2297,9 @@ h2 .coin-icon-inline,
   min-width: 0;
 }
 
-/* Seule dérogation à la règle "adresse toujours entière" : le but de cette
-   vue est de gagner de la place. Le texte complet reste copiable, et le
-   bouton QR affiche l'adresse entière en un clic. */
+/* The only exception to the "address always in full" rule: the point of this
+   view is to save space. The full text can still be copied, and the QR button
+   shows the whole address in one click. */
 :root[data-wallet-list-view="true"] .wallet-card .address {
   flex: 1 1 auto;
   min-width: 9ch;
@@ -2361,8 +2348,8 @@ h2 .coin-icon-inline,
   font-size: 0.8rem;
 }
 
-/* Actualiser, Protéger (Zcash protégé) et Historique : icône seule (libellé
-   en info-bulle) ; « Envoyer » aligné d'une ligne à l'autre. */
+/* Refresh, Shield (shielded Zcash) and History: icon only (label in a tooltip);
+   "Send" aligned from one row to the next. */
 :root[data-wallet-list-view="true"] .wallet-card .row-buttons [data-action="refresh"],
 :root[data-wallet-list-view="true"] .wallet-card .row-buttons [data-action="shield"],
 :root[data-wallet-list-view="true"] .wallet-card .row-buttons [data-action="history"] {
@@ -2372,10 +2359,9 @@ h2 .coin-icon-inline,
   gap: 0;
 }
 
-/* Fenêtre moyenne ou étroite (une adresse sur une ligne n'y montrerait que 4 ou 5
-   caractères) : adresse sur la première ligne, ses outils, plus petits, en
-   dessous — les lignes ont de toute façon deux étages (réseau sous le nom,
-   valeur sous le solde). */
+/* Medium or narrow window (an address on one line would only show 4 or 5
+   characters there): address on the first line, its tools, smaller, underneath;
+   rows have two levels anyway (network under the name, value under the balance). */
 @media (max-width: 1180px) {
   :root[data-wallet-list-view="true"] .wallet-grid {
     grid-template-columns: minmax(0, 1.3fr) minmax(130px, auto) minmax(150px, 1fr) auto;
@@ -2400,7 +2386,7 @@ h2 .coin-icon-inline,
   }
 }
 
-/* Fenêtre étroite : les actions passent sous la ligne, alignées à droite. */
+/* Narrow window: the actions go under the row, aligned to the right. */
 @media (max-width: 760px) {
   :root[data-wallet-list-view="true"] .wallet-grid {
     grid-template-columns: minmax(0, 1fr) minmax(110px, auto) minmax(110px, 1fr);
@@ -2414,12 +2400,12 @@ h2 .coin-icon-inline,
   }
 }
 
-/* --- Panneaux repliables ----------------------------------------------------
-   Le titre du panneau est le bouton (motif « accordéon ») : pas de bouton de
-   plus dans l'en-tête des cartes, déjà plein à la largeur minimale de la
-   fenêtre (nom + réseau). Chevron devant le titre, comme une arborescence,
-   pour ne pas ressembler à la flèche d'un menu déroulant. La hauteur s'anime
-   par `grid-template-rows` (1fr → 0fr) : rien à mesurer en JS. */
+/* --- Collapsible panels ------------------------------------------------------
+   The panel's title is the button ("accordion" pattern): no extra button in the
+   card headers, which are already full at the window's minimum width (name +
+   network). A chevron in front of the title, like a tree view, so it does not
+   look like a dropdown arrow. The height animates through `grid-template-rows`
+   (1fr → 0fr): nothing to measure in JS. */
 .collapse-toggle {
   display: inline-flex;
   align-items: center;
@@ -2453,7 +2439,7 @@ h2 .coin-icon-inline,
   border-right: 2px solid currentColor;
   border-bottom: 2px solid currentColor;
   opacity: 0.4;
-  /* Pointe vers le bas : déplié. */
+  /* Pointing down: expanded. */
   transform: translateY(-2px) rotate(45deg);
   transition: transform 220ms ease, opacity 150ms ease;
 }
@@ -2463,7 +2449,7 @@ h2 .coin-icon-inline,
   opacity: 0.9;
 }
 
-/* Pointe vers la droite : replié. */
+/* Pointing right: collapsed. */
 .collapsed .collapse-chevron {
   transform: translateX(-1px) rotate(-45deg);
 }
@@ -2478,12 +2464,12 @@ h2 .coin-icon-inline,
   grid-template-rows: 0fr;
 }
 
-/* Caché au clavier une fois replié (après l'animation), visible tout de suite
-   au dépliage. */
+/* Hidden from the keyboard once collapsed (after the animation), visible
+   straight away when expanding. */
 .collapsible-inner {
   min-height: 0;
-  /* Élément de grille : sans ceci, sa largeur minimale est celle de son
-     contenu (une adresse u1 sur une ligne élargissait toute la carte). */
+  /* Grid item: without this, its minimum width is that of its content (a u1
+     address on one line widened the whole card). */
   min-width: 0;
   visibility: visible;
   transition: visibility 0s;
@@ -2507,8 +2493,8 @@ h2 .coin-icon-inline,
   }
 }
 
-/* Carte : l'écart sous le solde passe dans le corps repliable, pour qu'une
-   carte repliée ne garde pas un vide en bas. */
+/* Card: the gap under the balance moves into the collapsible body, so a
+   collapsed card does not keep an empty space at the bottom. */
 .wallet-card > .fiat-value,
 .wallet-card > .fiat-pending-row {
   margin-bottom: 0;
@@ -2518,16 +2504,16 @@ h2 .coin-icon-inline,
   padding-top: 12px;
 }
 
-/* Courbe repliée : la ligne du total, vide (aucun fonds), ne laisse pas de vide. */
+/* Collapsed chart: the total line, empty (no funds), leaves no gap. */
 .chart-section.collapsed .chart-summary:empty {
   display: none;
 }
 
-/* Carte repliée : adresse, copie et QR code accessibles sans la déplier. Rien
-   de tout cela sur une carte dépliée (la ligne d'adresse est là) ni en vue
-   liste. */
-/* Solde et boutons de la carte repliée sur une même ligne (les boutons à
-   droite de la quantité : pas de ligne de plus par carte repliée). */
+/* Collapsed card: address, copy and QR code reachable without expanding it.
+   None of this on an expanded card (the address line is there) nor in list
+   view. */
+/* Balance and buttons of the collapsed card on the same line (buttons to the
+   right of the quantity: no extra line per collapsed card). */
 .balance-row {
   display: flex;
   align-items: center;
@@ -2582,7 +2568,7 @@ h2 .coin-icon-inline,
   display: none;
 }
 
-/* Vue liste : pas de repli, le contenu reprend sa place dans la ligne. */
+/* List view: no collapsing, the content takes its place back in the row. */
 :root[data-wallet-list-view="true"] .wallet-card .collapsible-body,
 :root[data-wallet-list-view="true"] .wallet-card .collapsible-inner,
 :root[data-wallet-list-view="true"] .wallet-card .balance-row {
@@ -2607,7 +2593,7 @@ h2 .coin-icon-inline,
   text-align: center;
 }
 
-/* Recevoir : montant facultatif à inscrire dans le QR code. */
+/* Receive: an optional amount to write into the QR code. */
 .qr-amount-label {
   display: block;
   margin-top: 14px;
@@ -2627,7 +2613,7 @@ h2 .coin-icon-inline,
   font-variant-numeric: tabular-nums;
 }
 
-/* Envoi parti : identifiant lisible en entier, lien vers l'explorateur. */
+/* Send gone out: identifier readable in full, link to the explorer. */
 .sent-tx-id {
   word-break: break-all;
   font-size: 0.8rem;
@@ -2638,8 +2624,8 @@ h2 .coin-icon-inline,
   margin-top: 4px;
 }
 
-/* Recevoir : copie de l'adresse, et réseau à choisir — n°1 des pertes depuis
-   une plateforme d'échange : un retrait sur le mauvais réseau. */
+/* Receive: copy of the address, and the network to choose. The number one
+   source of losses from an exchange: a withdrawal on the wrong network. */
 .qr-copy {
   margin-top: 4px;
 }
@@ -2704,17 +2690,17 @@ h2 .coin-icon-inline,
 .fiat-value {
   color: var(--muted);
   font-size: 0.9rem;
-  /* Marge positive : une valeur négative ici faisait chevaucher ce texte avec le
-     bas du solde juste au-dessus (font-size 1.5rem), le rendant invisible même
-     quand il était bien écrit dans le DOM. */
+  /* Positive margin: a negative value here made this text overlap the bottom of
+     the balance just above (font-size 1.5rem), making it invisible even when it
+     was correctly written in the DOM. */
   margin: 0 0 12px;
   font-variant-numeric: tabular-nums;
 }
 
-/* BTC/SOL uniquement : place le badge "transaction en attente" à côté de
-   l'équivalence en dollars au lieu de lui réserver sa propre ligne sous
-   l'adresse — la carte n'a alors plus qu'une seule ligne à ce niveau au lieu
-   de deux, aussi compacte qu'ETH/USDC qui n'ont pas ce badge du tout. */
+/* BTC/SOL only: places the "pending transaction" badge next to the dollar
+   equivalent instead of reserving its own line under the address, so the card
+   has only one line at this level instead of two, as compact as ETH/USDC, which
+   do not have this badge at all. */
 .fiat-pending-row {
   display: flex;
   align-items: baseline;
@@ -2728,10 +2714,10 @@ h2 .coin-icon-inline,
   margin: 0;
 }
 
-/* `visibility: hidden` plutôt que `display: none` : la place du badge reste
-   toujours réservée dans `.fiat-pending-row`, qu'il soit affiché ou non —
-   sinon son apparition/disparition ferait bouger l'adresse/les boutons
-   juste en dessous, et donc la hauteur de toute la carte. */
+/* `visibility: hidden` rather than `display: none`: the badge's space always
+   stays reserved in `.fiat-pending-row`, whether it is shown or not; otherwise
+   its appearing/disappearing would move the address/buttons just below, and
+   therefore the height of the whole card. */
 .pending-badge {
   font-style: italic;
   font-size: 0.75rem;
@@ -2816,9 +2802,9 @@ h2 .coin-icon-inline,
   color: var(--danger);
 }
 
-/* Historique d'une crypto (ouvert depuis sa carte) : grande fenêtre au-dessus
-   du portefeuille, qui reste visible derrière, flouté — voile plus léger et
-   flou plus fort que les autres fenêtres. */
+/* A crypto's history (opened from its card): a large window above the wallet,
+   which stays visible behind it, blurred; a lighter veil and a stronger blur
+   than the other windows. */
 .modal-overlay.coin-history-overlay {
   background: rgba(4, 5, 8, 0.32);
   backdrop-filter: blur(14px);
@@ -2851,9 +2837,9 @@ h2 .coin-icon-inline,
   flex-direction: column;
   gap: 8px;
   margin: 12px 0;
-  /* Onglet dédié (4 sections empilées), pas une modale plein écran : un plus
-     petit plafond que l'ancien 60vh, avec son propre défilement interne, pour
-     qu'une longue section ne pousse pas les 3 autres hors de vue. */
+  /* Dedicated tab (4 stacked sections), not a full-screen modal: a smaller cap
+     than the old 60vh, with its own internal scrolling, so one long section
+     does not push the other 3 out of view. */
   max-height: 320px;
   overflow-y: auto;
 }
@@ -3045,10 +3031,10 @@ h2 .coin-icon-inline,
   color: var(--text);
 }
 
-/* Fenêtre plus haute que l'écran (envoi à 600 px de haut, taille par défaut) :
-   avec un simple centrage vertical, son titre et ses boutons étaient coupés en
-   haut et en bas, sans défilement possible. Le fond défile, et `margin: auto`
-   centre la fenêtre quand elle tient, la colle en haut sinon. */
+/* A window taller than the screen (send window at 600 px high, the default
+   size): with simple vertical centering, its title and buttons were cut off at
+   the top and bottom, with no way to scroll. The backdrop scrolls, and `margin:
+   auto` centers the window when it fits and pins it to the top otherwise. */
 .modal-overlay {
   position: fixed;
   inset: 0;
@@ -3064,9 +3050,9 @@ h2 .coin-icon-inline,
   overscroll-behavior: contain;
 }
 
-/* Fenêtre de confirmation sécurisée (confirm.html, ouverte par Rust : voir
-   lib.rs, secure_confirm) : même allure que les fenêtres de l'app, teinte
-   rouge pour une action destructrice. */
+/* Secure confirmation window (confirm.html, opened by Rust: see lib.rs,
+   secure_confirm): the same look as the app's windows, with a red tint for a
+   destructive action. */
 .secure-confirm-body {
   --tone: var(--accent);
   min-height: 0;
@@ -3129,7 +3115,7 @@ h2 .coin-icon-inline,
   margin-top: 0;
 }
 
-/* Phrase à recopier : bien visible, non sélectionnable (à écrire, pas à copier). */
+/* Phrase to type: clearly visible, not selectable (to be typed, not copied). */
 .secure-confirm-phrase-text {
   margin: 0 0 10px;
   padding: 9px 12px;
@@ -3196,9 +3182,9 @@ h2 .coin-icon-inline,
   animation: modal-in 0.18s ease-out;
 }
 
-/* Fenêtres d'envoi et d'échange (et leurs aperçus) : plus larges, pour que
-   montants, frais, adresses et fournisseurs tiennent sur une ligne. Elles
-   rétrécissent avec la fenêtre (largeur 100 %, marges de .modal-overlay). */
+/* Send and swap windows (and their previews): wider, so amounts, fees,
+   addresses and providers fit on one line. They shrink with the window (100%
+   width, .modal-overlay margins). */
 #send-modal > .modal,
 #send-preview-modal > .modal,
 #send-countdown-modal > .modal,
@@ -3257,9 +3243,9 @@ h2 .coin-icon-inline,
   border-color: var(--muted);
 }
 
-/* Menu « Réseau » qui suit l'adresse saisie (carnet, wallets externes) :
-   un seul réseau possible, il s'affiche sans flèche ni clic ; aucun (adresse
-   vide ou non reconnue), la consigne en gris. */
+/* "Network" menu that follows the address entered (address book, external
+   wallets): with a single possible network, it shows without an arrow or a
+   click; with none (empty or unrecognized address), the hint in grey. */
 .custom-select-trigger:disabled {
   opacity: 1;
   cursor: default;
@@ -3273,10 +3259,10 @@ h2 .coin-icon-inline,
   color: var(--muted);
 }
 
-/* --- Fenêtre d'envoi ----------------------------------------------------------
-   Profil et réseau en pastilles sous le titre, avertissement « fonds réels »
-   en bandeau, solde disponible à droite de « Montant », raccourcis en une
-   rangée de pastilles, mot de passe séparé par un filet. */
+/* --- Send window ----------------------------------------------------------
+   Profile and network as chips under the title, "real funds" warning as a
+   banner, available balance to the right of "Amount", shortcuts as a row of
+   chips, password set apart by a rule. */
 .send-meta {
   display: flex;
   flex-wrap: wrap;
@@ -3370,7 +3356,7 @@ h2 .coin-icon-inline,
   font-weight: 600;
 }
 
-/* Équivalent en crypto : en info-bulle (le champ montant le montre au clic). */
+/* Crypto equivalent: in a tooltip (the amount field shows it on click). */
 #send-modal .quick-amount-crypto {
   display: none;
 }
@@ -3385,8 +3371,8 @@ h2 .coin-icon-inline,
   border-top: 1px solid var(--border);
 }
 
-/* Menu « Carnet d'adresses ou autre profil » : détaché du champ d'adresse
-   au-dessus (collés, ils se lisaient comme un seul bloc). */
+/* "Address book or other profile" menu: set apart from the address field above
+   (stuck together, they read as a single block). */
 #send-address-book-picker {
   margin-top: 10px;
 }
@@ -3469,8 +3455,8 @@ h2 .coin-icon-inline,
   font-variant-numeric: tabular-nums;
 }
 
-/* WalletConnect : texte d'une demande de signature (préformaté, lignes
-   citées "│" pour le contenu venu du site). */
+/* WalletConnect: text of a signing request (preformatted, lines quoted with "│"
+   for content from the website). */
 .wc-request-text {
   font-family: "IBM Plex Mono", ui-monospace, monospace;
   font-size: 0.78rem;
@@ -3487,11 +3473,11 @@ h2 .coin-icon-inline,
   margin: 0 0 10px;
 }
 
-/* --- Courbes (app/src/charts.js) ------------------------------------------
-   Couleur de ligne par thème, contraste validée contre la surface du thème
-   (script de validation de la charte graphique : clarté, chroma, contraste
-   ≥ 3:1) : l'accent du thème noir (#3f3f46) échouait, l'orange a été assombri
-   d'un cran pour entrer dans la plage de clarté. */
+/* --- Charts (app/src/charts.js) ------------------------------------------
+   Line color per theme, contrast validated against the theme's surface (the
+   design system's validation script: lightness, chroma, contrast ≥ 3:1): the
+   black theme's accent (#3f3f46) failed, and the orange was darkened one step
+   to fall within the lightness range. */
 :root {
   --chart-line: #6c8bff;
 }
@@ -3599,7 +3585,7 @@ h2 .coin-icon-inline,
   min-height: 320px;
 }
 
-/* Rechargement : l'ancienne courbe reste affichée, estompée (pas de saut). */
+/* Reloading: the old chart stays shown, dimmed (no jump). */
 .chart-area.chart-loading {
   opacity: 0.45;
   transition: opacity 0.2s;
@@ -3646,9 +3632,9 @@ h2 .coin-icon-inline,
   stroke-width: 2;
 }
 
-/* Courbe verte si la valeur a monté sur la période affichée, rouge si elle a
-   baissé — même sens que la variation écrite au-dessus (flèche ▲/▼, qui dit
-   aussi le sens sans la couleur). Variation nulle : couleur du thème. */
+/* Green chart if the value went up over the period shown, red if it went down;
+   the same direction as the change written above it (▲/▼ arrow, which also
+   conveys the direction without color). Zero change: the theme's color. */
 .trend-up {
   --chart-line: var(--success);
 }
@@ -3702,8 +3688,8 @@ h2 .coin-icon-inline,
   margin: 6px 0 0;
 }
 
-/* Pas de hauteur maximale ni de défilement propre : le fond de la fenêtre défile
-   déjà (`.modal-overlay`), une seconde barre ne ferait que doubler la première. */
+/* No maximum height or scrolling of its own: the window's backdrop already scrolls
+   (`.modal-overlay`), and a second scrollbar would only duplicate the first. */
 .chart-modal {
   max-width: 760px;
 }
@@ -3774,9 +3760,9 @@ h2 .coin-icon-inline,
   font-size: 0.85rem;
 }
 
-/* Boutons côte à côte dans un onglet (« + Ajouter un wallet externe »,
-   « + Nouveau groupe », « Actualiser »…) : un libellé ne se coupe jamais sur
-   deux lignes ; faute de place, un bouton passe à la ligne suivante. */
+/* Buttons side by side in a tab ("+ Add an external wallet", "+ New group",
+   "Refresh"…): a label never breaks onto two lines; when space runs out, a
+   button moves to the next line. */
 .tab-panel .row-buttons {
   flex-wrap: wrap;
 }
@@ -3786,14 +3772,14 @@ h2 .coin-icon-inline,
   white-space: nowrap;
 }
 
-/* Fenêtre « clé USB » : ouverte par-dessus une autre (kit régénéré, fenêtre
-   placée plus bas dans la page) — sans priorité propre, elle s'affichait
-   derrière et restait invisible. */
+/* "USB drive" window: opened on top of another one (regenerated kit, a window
+   placed further down the page); without its own priority, it showed behind and
+   stayed invisible. */
 #usb-modal {
   z-index: 60;
 }
 
-/* Sauvegarde et restauration par clé USB : clés détectées, une par ligne. */
+/* USB drive backup and restore: detected drives, one per row. */
 .usb-list {
   list-style: none;
   padding: 0;
@@ -3815,9 +3801,9 @@ h2 .coin-icon-inline,
   border-radius: 8px;
 }
 
-/* Libellé long (« Contient déjà des parts de ce kit — tout réécrire ») : le
-   bouton passe sous le nom de la clé et son texte revient à la ligne, au lieu
-   de dépasser du cadre (vu avec une vraie clé). */
+/* Long label ("Already holds shares of this kit — rewrite everything"): the
+   button goes under the drive's name and its text wraps, instead of overflowing
+   the frame (seen with a real drive). */
 .usb-drive button {
   flex: 0 1 auto;
   max-width: 100%;
@@ -3831,7 +3817,7 @@ h2 .coin-icon-inline,
   word-break: normal;
 }
 
-/* Nom de la clé, puis les sauvegardes qu'elle porte déjà. */
+/* Drive name, then the backups it already holds. */
 .usb-drive-info {
   display: flex;
   flex-direction: column;
@@ -3849,7 +3835,7 @@ h2 .coin-icon-inline,
   font-size: 0.85rem;
 }
 
-/* Onglet « Actions » : valeur des actions, avertissement, onglet vide. */
+/* "Stocks" tab: value of the shares, warning, empty tab. */
 .stocks-hero .stocks-notice {
   margin: 14px 0 0;
   font-size: 0.85rem;
@@ -3860,7 +3846,7 @@ h2 .coin-icon-inline,
   margin: 8px 0 16px;
 }
 
-/* Vérification des clés de sauvegarde : une clé par cadre, une ligne par part. */
+/* Checking the backup drives: one frame per drive, one row per share. */
 .backup-check-drive {
   flex-direction: column;
   align-items: stretch;
@@ -3892,7 +3878,7 @@ h2 .coin-icon-inline,
   color: var(--warning);
 }
 
-/* Rappel annuel au tableau de bord : vérifier les clés de sauvegarde. */
+/* Yearly dashboard reminder: check the backup drives. */
 .backup-reminder {
   display: flex;
   flex-wrap: wrap;
@@ -3923,7 +3909,7 @@ h2 .coin-icon-inline,
   width: auto;
 }
 
-/* Restauration : choix de la sauvegarde quand plusieurs sont complètes. */
+/* Restore: choice of backup when several are complete. */
 .usb-choice label {
   display: flex;
   align-items: center;
@@ -3936,7 +3922,7 @@ h2 .coin-icon-inline,
   margin-bottom: 8px;
 }
 
-/* « Tout enregistrer sur une seule clé USB », sous les 3 parts. */
+/* "Save everything to a single USB drive", under the 3 shares. */
 .backup-all {
   margin-top: 16px;
   padding-top: 16px;
@@ -3950,8 +3936,8 @@ h2 .coin-icon-inline,
   line-height: 1.45;
 }
 
-/* Avertissement en tête du kit : une part par appareil, à des endroits
-   différents. Bandeau ambre bien visible, texte lisible (pas en ambre). */
+/* Warning at the top of the kit: one share per device, in different places. A
+   clearly visible amber banner, with readable text (not in amber). */
 .backup-disclaimer {
   margin: 4px 0 18px;
   padding: 16px 18px;
@@ -3974,7 +3960,7 @@ h2 .coin-icon-inline,
   line-height: 1.5;
 }
 
-/* Coche par part du kit et progression sous la liste. */
+/* Checkmark per kit share and progress under the list. */
 .backup-item-header {
   display: flex;
   align-items: baseline;
@@ -4001,8 +3987,8 @@ h2 .coin-icon-inline,
   color: var(--warning);
 }
 
-/* Échange en 2 étapes en cours (main.js, « suivi de la crypto intermédiaire ») :
-   bandeau sous la barre de profil. */
+/* Two-step swap in progress (main.js, "tracking the intermediate crypto"):
+   banner under the profile bar. */
 .route-banner {
   display: flex;
   flex-wrap: wrap;
@@ -4028,16 +4014,15 @@ h2 .coin-icon-inline,
   white-space: nowrap;
 }
 
-/* Aperçu d'échange : coût estimé élevé (main.js, SWAP_HIGH_COST_PERCENT). */
+/* Swap preview: high estimated cost (main.js, SWAP_HIGH_COST_PERCENT). */
 .swap-cost-warning {
   color: var(--warning);
   font-size: 0.85rem;
   margin: 8px 0 0;
 }
 
-/* « Organiser » (main.js, « Ordre des cartes ») : barre de tri au-dessus de la
-   grille, poignée et flèches sur chaque carte, contenu des cartes neutralisé
-   (aucun envoi par mégarde pendant qu'on les déplace). */
+/* "Arrange" (main.js, "Card order"): sort bar above the grid, handle and arrows
+   on each card, card content disabled (no accidental send while moving them). */
 .organize-bar {
   display: flex;
   flex-wrap: wrap;
@@ -4081,7 +4066,7 @@ h2 .coin-icon-inline,
   cursor: grab;
   outline: 1px dashed var(--border);
   outline-offset: 2px;
-  /* Glissement au pointeur : pas de défilement tactile ni de sélection. */
+  /* Pointer drag: no touch scrolling or selection. */
   touch-action: none;
   user-select: none;
 }
@@ -4091,14 +4076,14 @@ h2 .coin-icon-inline,
   user-select: none;
 }
 
-/* Carte soulevée : elle suit le pointeur au-dessus de tout (main.js,
-   startCardDrag), ombrée ; elle ne capte plus le pointeur, pour que la carte
-   survolée soit trouvée en dessous. Indépendant de `.organizing` : quitter le
-   mode pendant que la carte se pose ne la fait pas sauter. `:root` en tête :
-   plus spécifique que `:root:not([data-wallet-list-view="true"]) .wallet-card`
-   (cartes compactes, position relative, plus loin dans ce fichier) — sinon la
-   carte soulevée gardait sa case dans la grille et l'emplacement ne trouvait
-   jamais de carte sous le pointeur. */
+/* Lifted card: it follows the pointer above everything (main.js,
+   startCardDrag), with a shadow; it no longer captures the pointer, so the card
+   underneath can be found. Independent of `.organizing`: leaving the mode while
+   the card settles does not make it jump. `:root` first: more specific than
+   `:root:not([data-wallet-list-view="true"]) .wallet-card` (compact cards,
+   relative position, further down this file); otherwise the lifted card kept
+   its slot in the grid and the placeholder never found a card under the
+   pointer. */
 :root .wallet-grid .wallet-card.drag-floating {
   position: fixed;
   z-index: 1000;
@@ -4114,7 +4099,7 @@ h2 .coin-icon-inline,
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25), 0 0 0 1px var(--border);
 }
 
-/* Emplacement où la carte sera rangée. */
+/* Placeholder where the card will be put. */
 .card-placeholder {
   border: 2px dashed var(--accent);
   border-radius: 14px;
@@ -4150,10 +4135,10 @@ h2 .coin-icon-inline,
   border-color: var(--border-strong);
 }
 
-/* --- Icônes ---------------------------------------------------------------
-   Masques SVG (data:, autorisés par la CSP via img-src) teintés par
-   `currentColor` : aucune balise ajoutée dans les boutons, dont le texte est
-   réécrit par la traduction. */
+/* --- Icons ---------------------------------------------------------------
+   SVG masks (data:, allowed by the CSP through img-src) tinted with
+   `currentColor`: no tag added inside the buttons, whose text the translation
+   rewrites. */
 .nav-tab[data-tab="wallet"] { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Crect%20x%3D'3'%20y%3D'6'%20width%3D'18'%20height%3D'14'%20rx%3D'3'%2F%3E%3Cpath%20d%3D'M3%2010h18'%2F%3E%3Cpath%20d%3D'M7%206V5a2%202%200%200%201%202-2h8'%2F%3E%3Ccircle%20cx%3D'16.5'%20cy%3D'15'%20r%3D'1.2'%2F%3E%3C%2Fsvg%3E"); }
 .nav-tab[data-tab="stocks"] { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M3%203v18h18'%2F%3E%3Cpath%20d%3D'M7%2015l4-4%203%203%205-6'%2F%3E%3Cpath%20d%3D'M15%208h4v4'%2F%3E%3C%2Fsvg%3E"); }
 .nav-tab[data-tab="history"] { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M3%2012a9%209%200%201%200%202.6-6.4L3%208'%2F%3E%3Cpath%20d%3D'M3%203v5h5'%2F%3E%3Cpath%20d%3D'M12%207.5V12l3%202'%2F%3E%3C%2Fsvg%3E"); }
@@ -4171,7 +4156,7 @@ h2 .coin-icon-inline,
 #organize-btn,
 #stocks-organize-btn { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M7%204v16M3.5%207.5%207%204l3.5%203.5'%2F%3E%3Cpath%20d%3D'M17%2020V4M13.5%2016.5%2017%2020l3.5-3.5'%2F%3E%3C%2Fsvg%3E"); }
 
-/* Actions d'une carte : icône devant le libellé. */
+/* A card's actions: icon before the label. */
 .wallet-card .row-buttons button[data-action] {
   display: flex;
   align-items: center;
@@ -4197,7 +4182,7 @@ h2 .coin-icon-inline,
 .wallet-card [data-action="stake"] { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M12%2021v-9'%2F%3E%3Cpath%20d%3D'M12%2012c0-4.5%203-7.5%208-7.5%200%205-3%207.5-8%207.5z'%2F%3E%3Cpath%20d%3D'M12%2014.5c0-3.5-2.5-5.5-7-5.5%200%203.8%202.5%205.5%207%205.5z'%2F%3E%3C%2Fsvg%3E"); }
 .wallet-card [data-action="swap"] { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M4%208h13l-3.5-3.5'%2F%3E%3Cpath%20d%3D'M20%2016H7l3.5%203.5'%2F%3E%3C%2Fsvg%3E"); }
 
-/* Actions secondaires d'une carte : discrètes, « Envoyer » seul en avant. */
+/* A card's secondary actions: discreet, with only "Send" standing out. */
 .wallet-card .row-buttons button.secondary {
   background: transparent;
   color: var(--muted);
@@ -4213,7 +4198,7 @@ h2 .coin-icon-inline,
   padding-bottom: 11px;
 }
 
-/* Tableau de bord : barre de profil posée comme une barre d'outils. */
+/* Dashboard: the profile bar styled as a toolbar. */
 .dashboard .profile-bar {
   padding: 10px 12px;
   background: var(--surface);
@@ -4226,12 +4211,12 @@ h2 .coin-icon-inline,
 }
 
 
-/* Le message de copie reste centré sur la zone de contenu. */
+/* The copy message stays centered on the content area. */
 :root:has(#view-dashboard:not(.hidden)) {
   --content-left: var(--sidebar-w);
 }
 
-/* Écrans d'accueil : carte plus aérée. */
+/* Welcome screens: a more spacious card. */
 #view-unlock .card,
 #view-onboarding .card,
 #view-restore .card,
@@ -4239,13 +4224,13 @@ h2 .coin-icon-inline,
   padding: 36px;
 }
 
-/* Barres de défilement fines, aux couleurs du thème. */
+/* Thin scrollbars, in the theme's colors. */
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--border-strong) transparent;
 }
 
-/* --- En-tête du portefeuille : profil et valeur totale ------------------------ */
+/* --- Wallet header: profile and total value ------------------------ */
 .portfolio-hero {
   position: relative;
   padding: 18px 22px 26px;
@@ -4310,13 +4295,12 @@ h2 .coin-icon-inline,
   background: color-mix(in srgb, var(--danger) 12%, transparent);
 }
 
-/* --- Cartes : actions rondes (vue cartes ; la vue liste garde ses boutons) -----
-   L'adresse en première ligne (copie et QR code l'un sur l'autre à sa
-   droite), puis une rangée d'actions rondes à
-   icône, libellé dessous : Envoyer, Recevoir (le QR code), Convertir,
-   Historique, Actualiser. Les conteneurs d'origine (.address-row,
-   .row-buttons) s'effacent (`display: contents`) : rien ne change dans le
-   document, dont le JS dépend. */
+/* --- Cards: round actions (card view; the list view keeps its buttons) -----
+   The address on the first line (copy and QR code stacked on its right), then a
+   row of round icon actions with the label underneath: Send, Receive (the QR
+   code), Convert, History, Refresh. The original containers (.address-row,
+   .row-buttons) disappear (`display: contents`): nothing changes in the document,
+   which the JS depends on. */
 :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner {
   display: flex;
   flex-wrap: wrap;
@@ -4334,8 +4318,8 @@ h2 .coin-icon-inline,
   font-size: 0.75rem;
 }
 
-/* Copier et QR code : l'un sur l'autre, dans une colonne étroite à droite de
-   l'adresse, chacun à mi-hauteur (le QR code s'ouvre aussi par « Recevoir »). */
+/* Copy and QR code: stacked in a narrow column to the right of the address, each
+   half the height (the QR code also opens through "Receive"). */
 :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .address-row > .address-tools {
   display: flex;
   flex-direction: column;
@@ -4374,7 +4358,7 @@ h2 .coin-icon-inline,
   text-overflow: ellipsis;
 }
 
-/* Cercle (avant) et icône (après), posée au centre du cercle. */
+/* Circle (before) and icon (after), placed in the center of the circle. */
 :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .row-buttons > button::before,
 :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .address-row > .convert-btn::before {
   content: "";
@@ -4415,7 +4399,7 @@ h2 .coin-icon-inline,
   border-color: var(--border-strong);
 }
 
-/* « Envoyer » : seul cercle plein. */
+/* "Send": the only solid circle. */
 :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .row-buttons > button.primary {
   color: var(--text);
 }
@@ -4435,7 +4419,7 @@ h2 .coin-icon-inline,
   display: none;
 }
 
-/* Ordre des actions. */
+/* Order of the actions. */
 :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner [data-action="send"] { order: 1; }
 :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner .receive-action { order: 2; }
 :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner [data-action="swap"] { order: 3; }
@@ -4444,14 +4428,14 @@ h2 .coin-icon-inline,
 :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner [data-action="history"] { order: 4; }
 :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner [data-action="refresh"] { order: 5; }
 
-/* Vue liste : le QR code reste à côté de l'adresse, pas de « Recevoir » en plus. */
+/* List view: the QR code stays next to the address, with no extra "Receive". */
 :root[data-wallet-list-view="true"] .wallet-card .receive-action {
   display: none;
 }
 
-/* Courbe du portefeuille dans l'en-tête, sous la valeur totale : sans cadre
-   propre, séparée par un filet. Le total est déjà affiché au-dessus : de son
-   résumé, seule la variation sur la période choisie reste visible. */
+/* Portfolio chart in the header, under the total value: no frame of its own,
+   set apart by a rule. The total is already shown above, so of its summary only
+   the change over the chosen period stays visible. */
 .portfolio-hero .chart-section {
   margin-top: 22px;
   padding: 18px 0 0;
@@ -4487,8 +4471,8 @@ h2 .coin-icon-inline,
   align-items: center;
 }
 
-/* Pas encore de courbe (aucun fonds) : le message seul, sans la hauteur
-   réservée à la courbe. */
+/* No chart yet (no funds): the message alone, without the height reserved for
+   the chart. */
 .portfolio-hero .chart-area:has(> .chart-empty) {
   min-height: 0;
 }
@@ -4497,18 +4481,18 @@ h2 .coin-icon-inline,
   padding: 22px 0 6px;
 }
 
-/* --- Cartes compactes ----------------------------------------------------------
-   Chaque carte est un conteneur (requêtes de conteneur) : étroite, elle
-   resserre son solde et ses actions. Vue cartes seulement : en vue liste, la
-   carte est un sous-grille, que l'endiguement de taille casserait. */
+/* --- Compact cards ----------------------------------------------------------
+   Each card is a container (container queries): when narrow, it tightens its
+   balance and actions. Card view only: in list view, the card is a subgrid, which
+   size containment would break. */
 :root:not([data-wallet-list-view="true"]) .wallet-card {
   position: relative;
   container-type: inline-size;
 }
 
-/* « Actualiser » : petite icône ronde dans le coin de la carte (qui tourne
-   pendant la lecture), plus une action de la rangée. Place réservée à droite
-   de l'en-tête. */
+/* "Refresh": a small round icon in the corner of the card (which spins while
+   reading), no longer an action in the row. Space reserved on the right of the
+   header. */
 :root:not([data-wallet-list-view="true"]) .wallet-card header {
   padding-right: 42px;
 }
@@ -4560,7 +4544,7 @@ h2 .coin-icon-inline,
   }
 }
 
-/* Mode « Organiser » : la poignée et les flèches occupent le haut de la carte. */
+/* "Arrange" mode: the handle and the arrows take the top of the card. */
 .wallet-grid.organizing .wallet-card .collapsible-inner > .row-buttons > [data-action="refresh"] {
   display: none;
 }
@@ -4570,9 +4554,9 @@ h2 .coin-icon-inline,
     font-size: 1.4rem;
   }
 
-  /* Actions en emplacements égaux (cercles régulièrement espacés), sans
-     écart entre eux ; la rangée déborde de 4 px de chaque côté de la carte
-     pour que « Historique », le plus long (mesuré), tienne dans le sien. */
+  /* Actions in equal slots (evenly spaced circles), with no gap between them;
+     the row overflows the card by 4 px on each side so "History", the longest
+     (measured), fits in its slot. */
   :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner {
     column-gap: 0;
   }
@@ -4596,8 +4580,8 @@ h2 .coin-icon-inline,
     margin-right: -4px;
   }
 
-  /* Adresses de même hauteur d'une carte à l'autre (3 lignes : les plus
-     longues, ETH, BTC, SOL), texte centré dans l'encart. */
+  /* Addresses of the same height from one card to the next (3 lines: the
+     longest ones, ETH, BTC, SOL), text centered in the box. */
   :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-inner > .address-row > .address {
     min-height: calc(3 * 1.5em + 20px);
   }
@@ -4623,16 +4607,16 @@ h2 .coin-icon-inline,
   }
 }
 
-/* Badge « transaction en attente » : plus de place réservée tant qu'il est
-   caché (dans une carte étroite, son texte en réservait plusieurs lignes) ; la
-   carte s'allonge seulement le temps où il s'affiche. */
+/* "Pending transaction" badge: no more space reserved while it is hidden (in a
+   narrow card, its text reserved several lines); the card only grows while it
+   is shown. */
 :root:not([data-wallet-list-view="true"]) .wallet-card .pending-badge:not(.visible) {
   display: none;
 }
 
-/* --- Cartes : actions alignées ------------------------------------------------
-   La partie dépliable occupe toute la hauteur restante de la carte, l'adresse
-   reste en haut et la rangée d'actions descend en bas. */
+/* --- Cards: aligned actions ------------------------------------------------
+   The expandable part takes the card's whole remaining height, the address stays
+   at the top and the action row goes to the bottom. */
 :root:not([data-wallet-list-view="true"]) .wallet-card .collapsible-body {
   flex: 1 1 auto;
 }
@@ -4645,17 +4629,17 @@ h2 .coin-icon-inline,
   align-self: start;
 }
 
-/* --- Cartes repliées : même hauteur quel que soit le solde ----------------------
-   Solde seul sur sa ligne, puis équivalence en devise à gauche et boutons
-   (adresse, copie, QR code) à droite sur la ligne suivante : toujours deux
-   lignes. Avant, les boutons passaient ou non à la ligne selon la longueur du
-   solde, et les cartes repliées n'avaient pas la même hauteur. */
+/* --- Collapsed cards: same height whatever the balance ----------------------
+   Balance alone on its line, then the currency equivalent on the left and the
+   buttons (address, copy, QR code) on the right on the next line: always two
+   lines. Previously the buttons wrapped or not depending on the balance's length,
+   and collapsed cards did not have the same height. */
 :root:not([data-wallet-list-view="true"]) .wallet-card.collapsed {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  /* En-tête (1re rangée) extensible : carte allongée à la hauteur de la plus
-     haute carte repliée de sa rangée (main.js), l'écart va sous l'en-tête et
-     solde, équivalence et boutons restent alignés d'une carte à l'autre. */
+  /* Stretchable header (1st row): the card is stretched to the height of the
+     tallest collapsed card in its row (main.js), the gap goes under the header,
+     and balance, equivalent and buttons stay aligned from one card to the next. */
   grid-template-rows: minmax(min-content, 1fr);
   grid-auto-flow: row dense;
   column-gap: 8px;
@@ -4666,8 +4650,8 @@ h2 .coin-icon-inline,
   grid-column: 1 / -1;
 }
 
-/* En-tête en haut de sa rangée allongée : nom et réseau à la même place que
-   dans les cartes voisines. */
+/* Header at the top of its stretched row: name and network in the same place as
+   in the neighboring cards. */
 :root:not([data-wallet-list-view="true"]) .wallet-card.collapsed > header {
   align-self: start;
 }
@@ -4698,7 +4682,7 @@ h2 .coin-icon-inline,
   margin: 8px 0 0;
 }
 
-/* Historique indisponible : message, puis boutons côte à côte, espacés. */
+/* History unavailable: message, then buttons side by side, spaced out. */
 .history-explorer-only {
   display: flex;
   flex-wrap: wrap;
@@ -4711,18 +4695,18 @@ h2 .coin-icon-inline,
   margin: 0 0 4px;
 }
 
-/* Clé Etherscan (Paramètres) : espace entre le champ et les boutons. */
+/* Etherscan key (Settings): space between the field and the buttons. */
 #etherscan-key-input {
   margin-bottom: 12px;
 }
 
-/* --- Allure moderne -------------------------------------------------------------
-   Reprise du langage du site vitrine et de la fenêtre de confirmation sécurisée :
-   titres en Space Grotesk, fond plus profond éclairé de halos d'accent, cartes
-   « verre » (léger dégradé, reflet en haut, coins plus ronds), fenêtres avec la
-   lueur de la fenêtre sécurisée, barre latérale translucide. Apparence seule :
-   aucune mise en page ni structure changée ; tous les thèmes en profitent (les
-   couleurs viennent de leurs jetons), le thème Blanc ajuste le reste plus bas. */
+/* --- Modern look -------------------------------------------------------------
+   The visual language of the showcase site and of the secure confirmation window:
+   headings in Space Grotesk, a deeper background lit by accent glows, "glass"
+   cards (light gradient, highlight at the top, rounder corners), windows with the
+   secure window's glow, a translucent sidebar. Appearance only: no layout or
+   structure changed; every theme benefits (the colors come from their tokens), and
+   the White theme adjusts the rest further down. */
 h1,
 h2,
 .brand-mark,
@@ -4768,7 +4752,7 @@ h1 {
   letter-spacing: -0.02em;
 }
 
-/* Fond du tableau de bord : halos d'accent fixes, comme le haut du site. */
+/* Dashboard background: fixed accent glows, like the top of the site. */
 .view-shell {
   background:
     radial-gradient(ellipse 55% 40% at 88% -6%, color-mix(in srgb, var(--accent) 11%, transparent), transparent 70%),
@@ -4777,8 +4761,8 @@ h1 {
   background-attachment: fixed;
 }
 
-/* Écrans d'accueil (déverrouillage, création, restauration) : la grille fine du
-   site, estompée vers les bords, derrière la carte. */
+/* Welcome screens (unlock, creation, restore): the site's fine grid, fading
+   towards the edges, behind the card. */
 .view:not(.view-shell) {
   isolation: isolate;
   position: relative;
@@ -4798,7 +4782,7 @@ h1 {
   mask-image: radial-gradient(ellipse 60% 55% at 50% 40%, #000 20%, transparent 75%);
 }
 
-/* Cartes et fenêtres « verre » : reflet d'un pixel en haut, bordure adoucie. */
+/* "Glass" cards and windows: a one-pixel highlight at the top, softened border. */
 .card,
 .modal,
 .wallet-card,
@@ -4818,7 +4802,7 @@ h1 {
   box-shadow: var(--shadow), 0 0 0 1px color-mix(in srgb, var(--accent) 10%, transparent), inset 0 1px 0 color-mix(in srgb, var(--text) 7%, transparent);
 }
 
-/* Total du portefeuille : la grille du site, dans le coin éclairé. */
+/* Portfolio total: the site's grid, in the lit corner. */
 .portfolio-hero {
   isolation: isolate;
 }
@@ -4838,7 +4822,7 @@ h1 {
   mask-image: radial-gradient(ellipse 55% 95% at 100% 0%, #000 5%, transparent 70%);
 }
 
-/* Fenêtres : la lueur d'accent en haut de la fenêtre sécurisée, voile plus flou. */
+/* Windows: the secure window's accent glow at the top, a blurrier veil. */
 .modal {
   background:
     radial-gradient(ellipse 90% 55% at 50% -12%, color-mix(in srgb, var(--accent) 13%, transparent), transparent 70%),
@@ -4851,7 +4835,7 @@ h1 {
   -webkit-backdrop-filter: blur(10px) saturate(120%);
 }
 
-/* Barre latérale translucide ; onglet actif : teinte d'accent et trait lumineux. */
+/* Translucent sidebar; active tab: accent tint and a bright stroke. */
 .navbar {
   background: color-mix(in srgb, var(--bg) 80%, transparent);
   backdrop-filter: saturate(140%) blur(16px);
@@ -4880,7 +4864,7 @@ h1 {
   box-shadow: 0 0 10px var(--accent);
 }
 
-/* Boutons : principal plus lumineux, secondaire en « verre ». */
+/* Buttons: brighter primary, "glass" secondary. */
 button.primary:not(:disabled) {
   box-shadow: 0 10px 24px -12px color-mix(in srgb, var(--accent) 85%, transparent), inset 0 1px 0 rgba(255, 255, 255, 0.2);
 }
@@ -4890,7 +4874,7 @@ button.secondary {
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text) 4%, transparent);
 }
 
-/* Champs : un cran plus sombres que la carte, anneau d'accent au focus. */
+/* Fields: one step darker than the card, accent ring on focus. */
 input[type="password"],
 input[type="text"],
 input[type="url"],
@@ -4906,8 +4890,8 @@ textarea:focus {
   box-shadow: 0 0 0 4px var(--accent-soft);
 }
 
-/* Allure moderne, suite : chiffres en Space Grotesk, cartes plus « verre »,
-   liseré lumineux en haut d'une carte survolée, libellés en petits sur-titres. */
+/* Modern look, continued: figures in Space Grotesk, more "glass" cards, a bright
+   edge at the top of a hovered card, labels as small overlines. */
 .balance,
 .hero-total {
   font-family: var(--font-display);
@@ -4953,13 +4937,13 @@ textarea:focus {
   opacity: 1;
 }
 
-/* --- Thème « Blanc » ----------------------------------------------------------
-   Clair, repris de la boîte de confirmation Windows du site vitrine (section
-   « À l'envoi ») : fond gris très clair, surfaces blanches, bordures #e3e3e3,
-   texte quasi noir, accent bleu Windows. Les jetons dérivés (définis en
-   mélangeant du blanc pour les thèmes sombres) sont redéfinis en mélangeant du
-   noir ; ombres et voile des fenêtres adoucis. Placé en fin de feuille : il
-   l'emporte sur les blocs de même spécificité plus haut (courbes). */
+/* --- "White" theme ----------------------------------------------------------
+   Light, taken from the Windows confirmation dialog on the showcase site ("When
+   sending" section): very light grey background, white surfaces, #e3e3e3
+   borders, near-black text, Windows blue accent. The derived tokens (defined by
+   mixing in white for the dark themes) are redefined by mixing in black; shadows
+   and the windows' veil are softened. Placed at the end of the stylesheet so it
+   wins over the blocks of equal specificity above (charts). */
 :root[data-theme="light"] {
   color-scheme: light;
   --bg: #f5f6f8;
@@ -4999,7 +4983,7 @@ textarea:focus {
     var(--surface);
 }
 
-/* Nom d'affiliation (Paramètres) : une ligne par réseau. */
+/* Affiliate name (Settings): one row per network. */
 .affiliate-names {
   display: flex;
   flex-direction: column;
@@ -5030,9 +5014,8 @@ textarea:focus {
   margin-top: 8px;
 }
 
-/* Ligne d'état sous la valeur en monnaie (Monero : part encore bloquée ;
-   Zcash protégé : synchronisation, attente, invitation à protéger) ; masquée
-   en vue liste. */
+/* Status line under the currency value (Monero: part still locked; shielded
+   Zcash: syncing, waiting, invitation to shield); hidden in list view. */
 .coin-status {
   margin: 2px 0 0;
   font-size: 0.85rem;
