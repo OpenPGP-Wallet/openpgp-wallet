@@ -36,7 +36,7 @@ Please allow time for a fix to ship before going public: 90 days by default, or 
 
 **In scope:** this repository, meaning the Rust core (`core/`) and the desktop app (`app/`), and in particular how they handle keys, backups, transaction building and signing, and what they trust from the outside world.
 
-**Out of scope:** the third-party services the app talks to (blockchain nodes, indexers, swap providers, the WalletConnect relay), unless the app trusts their answers in a way it shouldn't. The showcase website (`site/`) is in scope only for issues that could affect users' safety.
+**Out of scope:** the third-party services the app talks to (blockchain nodes, indexers, swap providers, the WalletConnect relay), unless the app trusts their answers in a way it shouldn't. The showcase website lives in its own repository ([KHADEVS/openpgp-wallet-site](https://github.com/KHADEVS/openpgp-wallet-site)); issues there are in scope only if they could affect users' safety.
 
 I won't take any action against anyone who researches in good faith, avoids harming users, and never touches funds that aren't theirs.
 
