@@ -19,7 +19,8 @@ use std::io::{self, Write};
 /// sending again could pay a second time (next nonce or sequence, other UTXOs).
 /// Audit round 31.
 pub const MAYBE_SENT_PREFIX: &str = "connexion perdue pendant l'envoi : la transaction ";
-pub const MAYBE_SENT_SUFFIX: &str = " est peut-être partie — vérifiez l'historique avant de renvoyer";
+pub const MAYBE_SENT_SUFFIX: &str =
+    " est peut-être partie — vérifiez l'historique avant de renvoyer";
 
 pub fn maybe_sent(id: &str) -> anyhow::Error {
     anyhow!("{MAYBE_SENT_PREFIX}{id}{MAYBE_SENT_SUFFIX}")
@@ -257,8 +258,15 @@ pub const EVM_NETWORKS: &[&EvmNetwork] = &[
 /// EVM network by its identifier ("evm_mainnet", "bsc_mainnet"…): one of the app's
 /// networks, or one added by the user (`custom_networks`).
 pub fn evm_network(id: &str) -> Option<&'static EvmNetwork> {
-    EVM_NETWORKS.iter().copied().find(|n| n.id == id).or_else(|| crate::custom_networks::find(id))
+    EVM_NETWORKS
+        .iter()
+        .copied()
+        .find(|n| n.id == id)
+        .or_else(|| crate::custom_networks::find(id))
 }
+
+/// Derives profile `index`'s Bitcoin key from the seed: (signing key, hash160).
+pub type DeriveBtcKey = fn(&[u8], u32) -> Result<(k256::ecdsa::SigningKey, [u8; 20])>;
 
 /// Bitcoin network parameters, same idea as EvmNetwork/SolNetwork, except that
 /// Bitcoin mainnet and testnet use DIFFERENT ADDRESSES for the same index (separate
@@ -270,7 +278,7 @@ pub struct BtcNetwork {
     pub esplora_base: &'static str,
     pub label: &'static str,
     pub explorer_tx_prefix: &'static str,
-    pub derive_key: fn(&[u8], u32) -> Result<(k256::ecdsa::SigningKey, [u8; 20])>,
+    pub derive_key: DeriveBtcKey,
     pub format_address: fn(&[u8; 20]) -> Result<String>,
     /// The wallet's address (P2WPKH) as a hash160.
     pub parse_address: fn(&str) -> Result<[u8; 20]>,
@@ -346,14 +354,17 @@ fn read_menu_choice() -> Result<String> {
 
 // Refusal of an EVM address, in plain words (no "hex" or "bytes"); translated by
 // the app.
-pub const EVM_ADDRESS_NOT_RECOGNIZED: &str = "adresse non reconnue : sur ce réseau, une adresse s'écrit 0x suivi de 40 caractères";
+pub const EVM_ADDRESS_NOT_RECOGNIZED: &str =
+    "adresse non reconnue : sur ce réseau, une adresse s'écrit 0x suivi de 40 caractères";
 pub const EVM_ADDRESS_WRONG_LENGTH: &str = "adresse incomplète ou trop longue : sur ce réseau, une adresse s'écrit 0x suivi de 40 caractères";
 pub const EVM_ADDRESS_MISCOPIED: &str = "adresse mal recopiée : un caractère ne correspond pas (majuscules et minuscules comptent) — copiez-la à nouveau";
 
 pub(crate) fn parse_evm_address(input: &str) -> Result<[u8; 20]> {
     let hex_str = input.trim().trim_start_matches("0x");
     let bytes = hex::decode(hex_str).context(EVM_ADDRESS_NOT_RECOGNIZED)?;
-    let address: [u8; 20] = bytes.try_into().map_err(|_| anyhow!(EVM_ADDRESS_WRONG_LENGTH))?;
+    let address: [u8; 20] = bytes
+        .try_into()
+        .map_err(|_| anyhow!(EVM_ADDRESS_WRONG_LENGTH))?;
 
     // EIP-55: a mixed-case address claims to carry a checksum, so we verify it to
     // catch a typo (corrupted copy-paste, altered character) that would otherwise go
@@ -361,8 +372,8 @@ pub(crate) fn parse_evm_address(input: &str) -> Result<[u8; 20]> {
     // irreversibly to a different address. An all-lowercase or all-uppercase address
     // has no case to check (the legacy format without a checksum, still valid under
     // the standard) and is accepted as is.
-    let has_mixed_case =
-        hex_str.chars().any(|c| c.is_ascii_uppercase()) && hex_str.chars().any(|c| c.is_ascii_lowercase());
+    let has_mixed_case = hex_str.chars().any(|c| c.is_ascii_uppercase())
+        && hex_str.chars().any(|c| c.is_ascii_lowercase());
     if has_mixed_case {
         let expected = derivation::format_address(&address);
         anyhow::ensure!(format!("0x{hex_str}") == expected, EVM_ADDRESS_MISCOPIED);
@@ -378,12 +389,20 @@ pub(crate) fn parse_eth_to_wei(input: &str) -> Result<u128> {
     if frac.len() > 18 {
         return Err(anyhow!("trop de décimales (18 maximum pour l'ETH)"));
     }
-    let whole: u128 = if whole.is_empty() { 0 } else { whole.parse().context("partie entière invalide")? };
+    let whole: u128 = if whole.is_empty() {
+        0
+    } else {
+        whole.parse().context("partie entière invalide")?
+    };
     let mut frac_padded = frac.to_string();
     while frac_padded.len() < 18 {
         frac_padded.push('0');
     }
-    let frac_val: u128 = if frac_padded.is_empty() { 0 } else { frac_padded.parse().context("partie décimale invalide")? };
+    let frac_val: u128 = if frac_padded.is_empty() {
+        0
+    } else {
+        frac_padded.parse().context("partie décimale invalide")?
+    };
     // Checked arithmetic: in the release profile, an integer overflow wraps around
     // silently instead of panicking (`overflow-checks` is off by default). An absurdly
     // large amount must never turn into a small one.
@@ -400,7 +419,9 @@ pub fn run_evm_wallet(seed: &[u8], network: &EvmNetwork) -> Result<()> {
     let address_str = derivation::format_address(&address);
 
     let rpc = EthRpc::new(network.rpc);
-    let chain_id = rpc.chain_id().context("impossible de contacter le nœud RPC")?;
+    let chain_id = rpc
+        .chain_id()
+        .context("impossible de contacter le nœud RPC")?;
     if chain_id != network.chain_id {
         println!(
             "Attention : le nœud RPC répond avec chain_id={chain_id}, attendu {}.",
@@ -415,7 +436,10 @@ pub fn run_evm_wallet(seed: &[u8], network: &EvmNetwork) -> Result<()> {
         match read_menu_choice()?.trim() {
             "1" => {
                 let balance = rpc.balance(&address_str)?;
-                println!("Solde actuel : {balance} wei ({:.6} ETH).\n", balance as f64 / 1e18);
+                println!(
+                    "Solde actuel : {balance} wei ({:.6} ETH).\n",
+                    balance as f64 / 1e18
+                );
             }
             "2" => {
                 if let Err(e) = send_evm(&rpc, &signing_key, &address_str, chain_id, network) {
@@ -468,12 +492,20 @@ pub(crate) fn parse_btc_to_sat(input: &str) -> Result<u64> {
     if frac.len() > 8 {
         return Err(anyhow!("trop de décimales (8 maximum pour le BTC)"));
     }
-    let whole: u64 = if whole.is_empty() { 0 } else { whole.parse().context("partie entière invalide")? };
+    let whole: u64 = if whole.is_empty() {
+        0
+    } else {
+        whole.parse().context("partie entière invalide")?
+    };
     let mut frac_padded = frac.to_string();
     while frac_padded.len() < 8 {
         frac_padded.push('0');
     }
-    let frac_val: u64 = if frac_padded.is_empty() { 0 } else { frac_padded.parse().context("partie décimale invalide")? };
+    let frac_val: u64 = if frac_padded.is_empty() {
+        0
+    } else {
+        frac_padded.parse().context("partie décimale invalide")?
+    };
     whole
         .checked_mul(100_000_000)
         .and_then(|w| w.checked_add(frac_val))
@@ -495,7 +527,11 @@ pub fn run_btc_wallet(seed: &[u8]) -> Result<()> {
             "1" => {
                 let utxos = esplora.utxos(&address)?;
                 let total: u64 = utxos.iter().map(|u| u.value_sat).sum();
-                println!("Solde actuel : {total} sat ({:.8} BTC), {} UTXO(s).\n", total as f64 / 1e8, utxos.len());
+                println!(
+                    "Solde actuel : {total} sat ({:.8} BTC), {} UTXO(s).\n",
+                    total as f64 / 1e8,
+                    utxos.len()
+                );
             }
             "2" => {
                 if let Err(e) = send_btc(&esplora, &signing_key, &address, &hash160) {
@@ -518,7 +554,9 @@ fn send_btc(
     let utxos = esplora.utxos(address)?;
     let total_sat: u64 = utxos.iter().map(|u| u.value_sat).sum();
     if utxos.is_empty() {
-        return Err(anyhow!("aucun UTXO confirmé disponible (vérifie le solde d'abord)"));
+        return Err(anyhow!(
+            "aucun UTXO confirmé disponible (vérifie le solde d'abord)"
+        ));
     }
 
     let to_str = prompt("Adresse destinataire testnet (tb1…, m…, n… ou 2…) : ")?;
@@ -537,7 +575,11 @@ fn send_btc(
     }
 
     let remaining = total_sat - total_needed;
-    let change_sat = if remaining > BTC_DUST_THRESHOLD_SAT { remaining } else { 0 };
+    let change_sat = if remaining > BTC_DUST_THRESHOLD_SAT {
+        remaining
+    } else {
+        0
+    };
 
     let tx = BtcTx {
         inputs: utxos,
@@ -563,12 +605,20 @@ pub(crate) fn parse_sol_to_lamports(input: &str) -> Result<u64> {
     if frac.len() > 9 {
         return Err(anyhow!("trop de décimales (9 maximum pour le SOL)"));
     }
-    let whole: u64 = if whole.is_empty() { 0 } else { whole.parse().context("partie entière invalide")? };
+    let whole: u64 = if whole.is_empty() {
+        0
+    } else {
+        whole.parse().context("partie entière invalide")?
+    };
     let mut frac_padded = frac.to_string();
     while frac_padded.len() < 9 {
         frac_padded.push('0');
     }
-    let frac_val: u64 = if frac_padded.is_empty() { 0 } else { frac_padded.parse().context("partie décimale invalide")? };
+    let frac_val: u64 = if frac_padded.is_empty() {
+        0
+    } else {
+        frac_padded.parse().context("partie décimale invalide")?
+    };
     whole
         .checked_mul(1_000_000_000)
         .and_then(|w| w.checked_add(frac_val))
@@ -584,12 +634,20 @@ pub(crate) fn parse_usdc_to_micros(input: &str) -> Result<u64> {
     if frac.len() > 6 {
         return Err(anyhow!("trop de décimales (6 maximum pour l'USDC)"));
     }
-    let whole: u64 = if whole.is_empty() { 0 } else { whole.parse().context("partie entière invalide")? };
+    let whole: u64 = if whole.is_empty() {
+        0
+    } else {
+        whole.parse().context("partie entière invalide")?
+    };
     let mut frac_padded = frac.to_string();
     while frac_padded.len() < 6 {
         frac_padded.push('0');
     }
-    let frac_val: u64 = if frac_padded.is_empty() { 0 } else { frac_padded.parse().context("partie décimale invalide")? };
+    let frac_val: u64 = if frac_padded.is_empty() {
+        0
+    } else {
+        frac_padded.parse().context("partie décimale invalide")?
+    };
     whole
         .checked_mul(1_000_000)
         .and_then(|w| w.checked_add(frac_val))
@@ -625,7 +683,10 @@ pub fn run_sol_wallet(seed: &[u8], network: &SolNetwork) -> Result<()> {
         match read_menu_choice()?.trim() {
             "1" => {
                 let balance = rpc.balance_lamports(&address)?;
-                println!("Solde actuel : {balance} lamports ({:.9} SOL).\n", balance as f64 / 1e9);
+                println!(
+                    "Solde actuel : {balance} lamports ({:.9} SOL).\n",
+                    balance as f64 / 1e9
+                );
             }
             "2" => {
                 if let Err(e) = send_sol(&rpc, &signing_key, &from_pubkey, &address, network) {
@@ -669,7 +730,13 @@ fn send_sol(
     }
 
     let recent_blockhash = rpc.latest_blockhash()?;
-    let raw_tx = sol_tx::build_transfer_transaction(signing_key, from_pubkey, &to_pubkey, lamports, &recent_blockhash);
+    let raw_tx = sol_tx::build_transfer_transaction(
+        signing_key,
+        from_pubkey,
+        &to_pubkey,
+        lamports,
+        &recent_blockhash,
+    );
 
     let signature = rpc.send_transaction(&raw_tx)?;
 
@@ -708,7 +775,10 @@ mod tests {
 
     #[test]
     fn parse_evm_address_accepts_all_uppercase_without_checksum() {
-        let all_upper = format!("0x{}", VALID_CHECKSUM.trim_start_matches("0x").to_uppercase());
+        let all_upper = format!(
+            "0x{}",
+            VALID_CHECKSUM.trim_start_matches("0x").to_uppercase()
+        );
         assert!(parse_evm_address(&all_upper).is_ok());
     }
 

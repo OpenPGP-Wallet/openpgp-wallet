@@ -100,9 +100,13 @@ pub struct ViewKeys {
 
 impl ViewKeys {
     fn pair(&self) -> Result<ViewPair> {
-        let spend = CompressedPoint::from(self.spend_public).decompress().ok_or_else(|| anyhow!("clé publique Monero invalide"))?;
-        let view = Scalar::read(&mut self.view_private.as_slice()).context("clé de visualisation Monero invalide")?;
-        ViewPair::new(spend, Zeroizing::new(view)).map_err(|e| anyhow!("clés Monero invalides ({e})"))
+        let spend = CompressedPoint::from(self.spend_public)
+            .decompress()
+            .ok_or_else(|| anyhow!("clé publique Monero invalide"))?;
+        let view = Scalar::read(&mut self.view_private.as_slice())
+            .context("clé de visualisation Monero invalide")?;
+        ViewPair::new(spend, Zeroizing::new(view))
+            .map_err(|e| anyhow!("clés Monero invalides ({e})"))
     }
 
     /// The profile's primary address (4…).
@@ -128,8 +132,15 @@ pub fn view_keys(seed: &[u8], profile: u32) -> Result<ViewKeys> {
 fn keys_from_spend(profile: u32, spend: &Scalar) -> ViewKeys {
     let spend_bytes = Zeroizing::new(<[u8; 32]>::from(*spend));
     let view = Scalar::hash(&spend_bytes[..]);
-    let spend_public = (curve25519_dalek::constants::ED25519_BASEPOINT_TABLE * &dalek(&spend_bytes)).compress().to_bytes();
-    ViewKeys { profile, spend_public, view_private: Zeroizing::new(<[u8; 32]>::from(view)) }
+    let spend_public = (curve25519_dalek::constants::ED25519_BASEPOINT_TABLE
+        * &dalek(&spend_bytes))
+        .compress()
+        .to_bytes();
+    ViewKeys {
+        profile,
+        spend_public,
+        view_private: Zeroizing::new(<[u8; 32]>::from(view)),
+    }
 }
 
 /// Key image of an output: (spend key + output offset) × Hp(output key), published
@@ -148,11 +159,17 @@ fn key_image_for(secret: &curve25519_dalek::Scalar, output_key: Point) -> [u8; 3
 /// Recipient: a mainnet Monero address (standard 4…, subaddress 8…, integrated);
 /// test networks and non-standard formats refused.
 pub fn parse_recipient(address: &str) -> Result<MoneroAddress> {
-    let address = MoneroAddress::from_str(Network::Mainnet, address.trim()).map_err(|e| match e {
-        AddressError::DifferentNetwork { .. } => anyhow!("adresse Monero d'un réseau de test (stagenet/testnet) : refusée"),
-        _ => anyhow!("adresse Monero invalide"),
-    })?;
-    ensure!(!matches!(address.kind(), AddressType::Featured { .. }), "format d'adresse Monero non standard : refusé");
+    let address =
+        MoneroAddress::from_str(Network::Mainnet, address.trim()).map_err(|e| match e {
+            AddressError::DifferentNetwork { .. } => {
+                anyhow!("adresse Monero d'un réseau de test (stagenet/testnet) : refusée")
+            }
+            _ => anyhow!("adresse Monero invalide"),
+        })?;
+    ensure!(
+        !matches!(address.kind(), AddressType::Featured { .. }),
+        "format d'adresse Monero non standard : refusé"
+    );
     Ok(address)
 }
 
@@ -198,7 +215,12 @@ struct ProfileState {
 
 impl ProfileState {
     fn new(spend_public: &[u8; 32], start: usize) -> Self {
-        Self { spend_public: Some(hex::encode(spend_public)), next_block: start, outputs: Vec::new(), sends: Vec::new() }
+        Self {
+            spend_public: Some(hex::encode(spend_public)),
+            next_block: start,
+            outputs: Vec::new(),
+            sends: Vec::new(),
+        }
     }
 }
 
@@ -211,7 +233,9 @@ fn bind_profile(state: &mut State, profile: u32, spend_public: &[u8; 32], start:
         Some(p) if p.spend_public.as_deref() == Some(expected.as_str()) => {}
         Some(p) if p.spend_public.is_none() => p.spend_public = Some(expected),
         _ => {
-            state.profiles.insert(profile, ProfileState::new(spend_public, start));
+            state
+                .profiles
+                .insert(profile, ProfileState::new(spend_public, start));
         }
     }
 }
@@ -269,12 +293,16 @@ fn load(data_dir: &Path) -> Result<State> {
 fn save(data_dir: &Path, state: &State) -> Result<()> {
     let path = data_dir.join(STATE_FILE);
     let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, serde_json::to_vec(state)?).context("enregistrement de l'état Monero impossible")?;
+    std::fs::write(&tmp, serde_json::to_vec(state)?)
+        .context("enregistrement de l'état Monero impossible")?;
     std::fs::rename(&tmp, &path).context("enregistrement de l'état Monero impossible")
 }
 
 fn now() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 /// Pending spend that is too old: never mined, output available again.
@@ -291,7 +319,9 @@ fn decode_output(hex_output: &str) -> Result<WalletOutput> {
 
 /// Node chosen by the user in Settings, if any.
 pub fn custom_node(data_dir: &Path) -> Option<String> {
-    std::fs::read_to_string(data_dir.join(NODE_FILE)).ok().and_then(|text| normalize_node(&text).ok())
+    std::fs::read_to_string(data_dir.join(NODE_FILE))
+        .ok()
+        .and_then(|text| normalize_node(&text).ok())
 }
 
 /// Saves the user's node (empty: back to the public nodes).
@@ -299,7 +329,9 @@ pub fn set_custom_node(data_dir: &Path, url: &str) -> Result<Option<String>> {
     let path = data_dir.join(NODE_FILE);
     if url.trim().is_empty() {
         match std::fs::remove_file(&path) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e).context("suppression du nœud Monero impossible"),
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                return Err(e).context("suppression du nœud Monero impossible")
+            }
             _ => return Ok(None),
         }
     }
@@ -315,8 +347,13 @@ pub fn set_custom_node(data_dir: &Path, url: &str) -> Result<Option<String>> {
 /// No path or credentials.
 fn normalize_node(url: &str) -> Result<String> {
     let url = url.trim().trim_end_matches('/');
-    let (scheme, rest) = url.split_once("://").ok_or_else(|| anyhow!("adresse de nœud invalide : https://hôte:port attendu"))?;
-    ensure!(!rest.is_empty() && !rest.contains(['/', '?', '#', '@', ' ']), "adresse de nœud invalide : https://hôte:port attendu, sans chemin");
+    let (scheme, rest) = url
+        .split_once("://")
+        .ok_or_else(|| anyhow!("adresse de nœud invalide : https://hôte:port attendu"))?;
+    ensure!(
+        !rest.is_empty() && !rest.contains(['/', '?', '#', '@', ' ']),
+        "adresse de nœud invalide : https://hôte:port attendu, sans chemin"
+    );
     let host = match rest.strip_prefix('[') {
         Some(v6) => v6.split(']').next().unwrap_or_default(),
         None => rest.split(':').next().unwrap_or_default(),
@@ -324,7 +361,10 @@ fn normalize_node(url: &str) -> Result<String> {
     ensure!(!host.is_empty(), "adresse de nœud invalide : hôte manquant");
     match scheme.to_ascii_lowercase().as_str() {
         "https" => {}
-        "http" => ensure!(is_local_host(host), "nœud distant : https:// obligatoire (http:// seulement pour un nœud local)"),
+        "http" => ensure!(
+            is_local_host(host),
+            "nœud distant : https:// obligatoire (http:// seulement pour un nœud local)"
+        ),
         _ => bail!("adresse de nœud invalide : https://hôte:port attendu"),
     }
     Ok(format!("{}://{rest}", scheme.to_ascii_lowercase()))
@@ -349,7 +389,10 @@ fn nodes(data_dir: &Path) -> Vec<String> {
 }
 
 fn runtime() -> Result<tokio::runtime::Runtime> {
-    tokio::runtime::Builder::new_current_thread().enable_all().build().context("démarrage du client Monero impossible")
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("démarrage du client Monero impossible")
 }
 
 /// The first node that answers, with the height of the latest block.
@@ -357,7 +400,8 @@ async fn connect(data_dir: &Path) -> Result<(Daemon, usize)> {
     let mut errors = Vec::new();
     for url in nodes(data_dir) {
         let attempt = async {
-            let rpc = SimpleRequestTransport::with_custom_timeout(url.clone(), REQUEST_TIMEOUT).await?;
+            let rpc =
+                SimpleRequestTransport::with_custom_timeout(url.clone(), REQUEST_TIMEOUT).await?;
             let tip = rpc.latest_block_number().await?;
             Ok::<_, InterfaceError>((rpc, tip))
         };
@@ -394,8 +438,14 @@ pub fn sync(data_dir: &Path, keys: &[ViewKeys], generation: u64) -> Result<()> {
     if keys.is_empty() || crate::seed_state::pass(generation).is_none() {
         return Ok(());
     }
-    let mut scanners = keys.iter().map(|k| Ok((k.profile, Scanner::new(k.pair()?)))).collect::<Result<BTreeMap<_, _>>>()?;
-    let addresses = keys.iter().map(|k| Ok((k.address()?, k.profile))).collect::<Result<BTreeMap<_, _>>>()?;
+    let mut scanners = keys
+        .iter()
+        .map(|k| Ok((k.profile, Scanner::new(k.pair()?))))
+        .collect::<Result<BTreeMap<_, _>>>()?;
+    let addresses = keys
+        .iter()
+        .map(|k| Ok((k.address()?, k.profile)))
+        .collect::<Result<BTreeMap<_, _>>>()?;
     *KNOWN.lock().unwrap_or_else(|p| p.into_inner()) = Some((data_dir.to_path_buf(), addresses));
     runtime()?.block_on(async {
         let (rpc, _) = connect(data_dir).await?;
@@ -407,26 +457,37 @@ pub fn sync(data_dir: &Path, keys: &[ViewKeys], generation: u64) -> Result<()> {
             let tip = rpc.latest_block_number().await.map_err(node_err)?;
             // Lock released during network calls: a send never waits for a batch to finish.
             let (start, recent) = {
-                let Some(_pass) = crate::seed_state::pass(generation) else { return Ok(()) };
+                let Some(_pass) = crate::seed_state::pass(generation) else {
+                    return Ok(());
+                };
                 let _guard = lock();
                 let state = load(data_dir)?;
                 (scan_start(&state, keys), state.recent.clone())
             };
             let fork = find_fork(&rpc, &recent).await?;
             let blocks = if fork.is_none() && start <= tip {
-                ProvidesScannableBlocks::contiguous_scannable_blocks(&rpc, start..=tip.min(start + BATCH - 1)).await.map_err(node_err)?
+                ProvidesScannableBlocks::contiguous_scannable_blocks(
+                    &rpc,
+                    start..=tip.min(start + BATCH - 1),
+                )
+                .await
+                .map_err(node_err)?
             } else {
                 Vec::new()
             };
 
-            let Some(_pass) = crate::seed_state::pass(generation) else { return Ok(()) };
+            let Some(_pass) = crate::seed_state::pass(generation) else {
+                return Ok(());
+            };
             let _guard = lock();
             let mut state = load(data_dir)?;
             // New profile: scan from shortly before the wallet was created (fixed birthday if
             // unknown); never beyond the known chain (wrong clock). (A different name from
             // `start`, the first block of THIS batch: mixing them up made the loop spin
             // without doing anything.)
-            let new_profile_start = wallet_birthday::start_height(data_dir, tip as u64, 120, BIRTHDAY_HEIGHT as u64) as usize;
+            let new_profile_start =
+                wallet_birthday::start_height(data_dir, tip as u64, 120, BIRTHDAY_HEIGHT as u64)
+                    as usize;
             for k in keys {
                 bind_profile(&mut state, k.profile, &k.spend_public, new_profile_start);
                 if let Some(p) = state.profiles.get_mut(&k.profile) {
@@ -474,15 +535,27 @@ pub fn sync(data_dir: &Path, keys: &[ViewKeys], generation: u64) -> Result<()> {
 
 /// Next block to scan: the furthest behind across profiles.
 fn scan_start(state: &State, keys: &[ViewKeys]) -> usize {
-    keys.iter().map(|k| state.profiles.get(&k.profile).map_or(BIRTHDAY_HEIGHT, |p| p.next_block)).min().unwrap_or(BIRTHDAY_HEIGHT)
+    keys.iter()
+        .map(|k| {
+            state
+                .profiles
+                .get(&k.profile)
+                .map_or(BIRTHDAY_HEIGHT, |p| p.next_block)
+        })
+        .min()
+        .unwrap_or(BIRTHDAY_HEIGHT)
 }
 
 /// Compares the latest scanned blocks with the node's: `Some(last common block)` if
 /// the chain was reorganized.
 async fn find_fork(rpc: &Daemon, recent: &[(usize, String)]) -> Result<Option<usize>> {
-    let Some(&(last, _)) = recent.last() else { return Ok(None) };
+    let Some(&(last, _)) = recent.last() else {
+        return Ok(None);
+    };
     for (number, hash) in recent.iter().rev() {
-        let node_hash = ProvidesBlockchain::block_hash(rpc, *number).await.map_err(node_err)?;
+        let node_hash = ProvidesBlockchain::block_hash(rpc, *number)
+            .await
+            .map_err(node_err)?;
         if hex::encode(node_hash) == *hash {
             return Ok((*number != last).then_some(*number));
         }
@@ -523,13 +596,21 @@ fn expire_pending(state: &mut State, now: u64) {
     }
 }
 
-fn process_block(state: &mut State, scanners: &mut BTreeMap<u32, Scanner>, block: ScannableBlock) -> Result<()> {
+fn process_block(
+    state: &mut State,
+    scanners: &mut BTreeMap<u32, Scanner>,
+    block: ScannableBlock,
+) -> Result<()> {
     let number = block.block.number();
     let time = block.block.header.timestamp;
     let hash = hex::encode(block.block.hash());
 
     // Spends: key images of the inputs, compared with those of our outputs.
-    let ours: HashSet<String> = state.profiles.values().flat_map(|p| p.outputs.iter().filter_map(|o| o.key_image.clone())).collect();
+    let ours: HashSet<String> = state
+        .profiles
+        .values()
+        .flat_map(|p| p.outputs.iter().filter_map(|o| o.key_image.clone()))
+        .collect();
     if !ours.is_empty() {
         for (tx_hash, tx) in block.block.transactions.iter().zip(&block.transactions) {
             for input in &tx.prefix().inputs {
@@ -544,11 +625,17 @@ fn process_block(state: &mut State, scanners: &mut BTreeMap<u32, Scanner>, block
     }
 
     for (profile, scanner) in scanners.iter_mut() {
-        let state_profile = state.profiles.get_mut(profile).ok_or_else(|| anyhow!("profil Monero inconnu"))?;
+        let state_profile = state
+            .profiles
+            .get_mut(profile)
+            .ok_or_else(|| anyhow!("profil Monero inconnu"))?;
         if state_profile.next_block > number {
             continue;
         }
-        let found = scanner.scan(block.clone()).map_err(|e| anyhow!("bloc Monero {number} illisible ({e})"))?.not_additionally_locked();
+        let found = scanner
+            .scan(block.clone())
+            .map_err(|e| anyhow!("bloc Monero {number} illisible ({e})"))?
+            .not_additionally_locked();
         for output in found {
             let key = hex::encode(output.key().compress().to_bytes());
             if state_profile.outputs.iter().any(|o| o.key == key) {
@@ -580,8 +667,16 @@ fn process_block(state: &mut State, scanners: &mut BTreeMap<u32, Scanner>, block
 /// Output with key image `image` spent by `tx` (mined in `block`, or pending).
 fn mark_spent(state: &mut State, image: &str, tx: &str, block: Option<usize>, time: u64) {
     for profile in state.profiles.values_mut() {
-        for output in profile.outputs.iter_mut().filter(|o| o.key_image.as_deref() == Some(image)) {
-            output.spent = Some(Spend { tx: tx.to_string(), block, time });
+        for output in profile
+            .outputs
+            .iter_mut()
+            .filter(|o| o.key_image.as_deref() == Some(image))
+        {
+            output.spent = Some(Spend {
+                tx: tx.to_string(),
+                block,
+                time,
+            });
         }
         if block.is_some() {
             for sent in profile.sends.iter_mut().filter(|s| s.tx == tx) {
@@ -603,10 +698,15 @@ pub fn update_key_images(data_dir: &Path, seed: &[u8], profile: u32) -> Result<(
     // Unlock: another wallet's state is forgotten before anything is displayed.
     let spend = spend_key(seed, profile)?;
     let spend_public = keys_from_spend(profile, &spend).spend_public;
-    let before = state.profiles.get(&profile).and_then(|p| p.spend_public.clone());
+    let before = state
+        .profiles
+        .get(&profile)
+        .and_then(|p| p.spend_public.clone());
     // Another wallet (restore): fixed birthday, since the funds may be old.
     bind_profile(&mut state, profile, &spend_public, BIRTHDAY_HEIGHT);
-    let Some(state_profile) = state.profiles.get_mut(&profile) else { return Ok(()) };
+    let Some(state_profile) = state.profiles.get_mut(&profile) else {
+        return Ok(());
+    };
     if state_profile.outputs.iter().all(|o| o.key_image.is_some()) {
         if state_profile.spend_public != before {
             save(data_dir, &state)?;
@@ -614,9 +714,17 @@ pub fn update_key_images(data_dir: &Path, seed: &[u8], profile: u32) -> Result<(
         return Ok(());
     }
     let mut rescan_from = state_profile.next_block;
-    for output in state_profile.outputs.iter_mut().filter(|o| o.key_image.is_none()) {
+    for output in state_profile
+        .outputs
+        .iter_mut()
+        .filter(|o| o.key_image.is_none())
+    {
         let decoded = decode_output(&output.output)?;
-        output.key_image = Some(hex::encode(key_image(&spend, decoded.key(), decoded.key_offset())));
+        output.key_image = Some(hex::encode(key_image(
+            &spend,
+            decoded.key(),
+            decoded.key_offset(),
+        )));
         rescan_from = rescan_from.min(output.block + 1);
     }
     state_profile.next_block = rescan_from;
@@ -644,7 +752,13 @@ fn available(output: &Received, now: u64) -> bool {
 
 pub fn balance(data_dir: &Path, profile: u32) -> Result<Balance> {
     let state = load(data_dir)?;
-    let Some(p) = state.profiles.get(&profile) else { return Ok(Balance { unlocked: 0, locked: 0, synced: false }) };
+    let Some(p) = state.profiles.get(&profile) else {
+        return Ok(Balance {
+            unlocked: 0,
+            locked: 0,
+            synced: false,
+        });
+    };
     let now = now();
     let (mut unlocked, mut locked) = (0u64, 0u64);
     for output in p.outputs.iter().filter(|o| available(o, now)) {
@@ -654,25 +768,42 @@ pub fn balance(data_dir: &Path, profile: u32) -> Result<Balance> {
             locked = locked.saturating_add(output.amount);
         }
     }
-    for sent in p.sends.iter().filter(|s| s.block.is_none() && now.saturating_sub(s.time) <= PENDING_EXPIRY_SECS) {
+    for sent in p
+        .sends
+        .iter()
+        .filter(|s| s.block.is_none() && now.saturating_sub(s.time) <= PENDING_EXPIRY_SECS)
+    {
         locked = locked.saturating_add(sent.change);
     }
-    Ok(Balance { unlocked, locked, synced: state.tip > 0 && p.next_block > state.tip })
+    Ok(Balance {
+        unlocked,
+        locked,
+        synced: state.tip > 0 && p.next_block > state.tip,
+    })
 }
 
 /// The profile's transactions, newest first: net amount (received minus spent,
 /// including the fee for a send).
 pub fn history(data_dir: &Path, profile: u32) -> Result<Vec<history::TxEntry>> {
     let state = load(data_dir)?;
-    let Some(p) = state.profiles.get(&profile) else { return Ok(Vec::new()) };
+    let Some(p) = state.profiles.get(&profile) else {
+        return Ok(Vec::new());
+    };
     let now = now();
     // tx → (net, block, time, abandoned)
     let mut txs: BTreeMap<String, (i128, Option<usize>, u64, bool)> = BTreeMap::new();
     for output in &p.outputs {
-        let entry = txs.entry(output.tx.clone()).or_insert((0, Some(output.block), output.time, false));
+        let entry =
+            txs.entry(output.tx.clone())
+                .or_insert((0, Some(output.block), output.time, false));
         entry.0 += i128::from(output.amount);
         if let Some(spend) = &output.spent {
-            let entry = txs.entry(spend.tx.clone()).or_insert((0, spend.block, spend.time, spend_expired(spend, now)));
+            let entry = txs.entry(spend.tx.clone()).or_insert((
+                0,
+                spend.block,
+                spend.time,
+                spend_expired(spend, now),
+            ));
             entry.0 -= i128::from(output.amount);
         }
     }
@@ -701,8 +832,12 @@ pub fn history(data_dir: &Path, profile: u32) -> Result<Vec<history::TxEntry>> {
 
 fn known_profile(address: &str) -> Result<(std::path::PathBuf, u32)> {
     let known = KNOWN.lock().unwrap_or_else(|p| p.into_inner());
-    let (dir, addresses) = known.as_ref().ok_or_else(|| anyhow!("Monero : synchronisation pas encore lancée"))?;
-    let profile = addresses.get(address).ok_or_else(|| anyhow!("adresse Monero inconnue de ce portefeuille"))?;
+    let (dir, addresses) = known
+        .as_ref()
+        .ok_or_else(|| anyhow!("Monero : synchronisation pas encore lancée"))?;
+    let profile = addresses
+        .get(address)
+        .ok_or_else(|| anyhow!("adresse Monero inconnue de ce portefeuille"))?;
     Ok((dir.clone(), *profile))
 }
 
@@ -712,7 +847,13 @@ pub fn balance_of_address(address: &str) -> Result<u64> {
     let (dir, profile) = known_profile(address)?;
     let state = load(&dir)?;
     let now = now();
-    Ok(state.profiles.get(&profile).map_or(0, |p| p.outputs.iter().filter(|o| available(o, now)).map(|o| o.amount).sum()))
+    Ok(state.profiles.get(&profile).map_or(0, |p| {
+        p.outputs
+            .iter()
+            .filter(|o| available(o, now))
+            .map(|o| o.amount)
+            .sum()
+    }))
 }
 
 /// Full history of the address (local state): portfolio chart.
@@ -742,7 +883,11 @@ pub fn rescan_from_birthday(data_dir: &Path) -> Result<()> {
 pub fn has_pending(data_dir: &Path, profile: u32) -> Result<bool> {
     let state = load(data_dir)?;
     let now = now();
-    Ok(state.profiles.get(&profile).is_some_and(|p| p.sends.iter().any(|s| s.block.is_none() && now.saturating_sub(s.time) <= PENDING_EXPIRY_SECS)))
+    Ok(state.profiles.get(&profile).is_some_and(|p| {
+        p.sends
+            .iter()
+            .any(|s| s.block.is_none() && now.saturating_sub(s.time) <= PENDING_EXPIRY_SECS)
+    }))
 }
 
 // --- Sending ---------------------------------------------------------------------
@@ -763,14 +908,29 @@ pub struct SendPlan {
 fn spendable(data_dir: &Path, keys: &ViewKeys) -> Result<(Vec<Received>, u64, u64)> {
     let (outputs, synced, locked) = {
         let state = load(data_dir)?;
-        let p = state.profiles.get(&keys.profile).ok_or_else(|| anyhow!("Monero : synchronisation pas encore faite, réessayez dans un instant"))?;
+        let p = state.profiles.get(&keys.profile).ok_or_else(|| {
+            anyhow!("Monero : synchronisation pas encore faite, réessayez dans un instant")
+        })?;
         let now = now();
-        let mut outputs: Vec<Received> = p.outputs.iter().filter(|o| available(o, now) && unlocked_at(o, state.tip)).cloned().collect();
+        let mut outputs: Vec<Received> = p
+            .outputs
+            .iter()
+            .filter(|o| available(o, now) && unlocked_at(o, state.tip))
+            .cloned()
+            .collect();
         outputs.sort_by_key(|o| std::cmp::Reverse(o.amount));
-        let locked: u64 = p.outputs.iter().filter(|o| available(o, now) && !unlocked_at(o, state.tip)).map(|o| o.amount).sum();
+        let locked: u64 = p
+            .outputs
+            .iter()
+            .filter(|o| available(o, now) && !unlocked_at(o, state.tip))
+            .map(|o| o.amount)
+            .sum();
         (outputs, state.tip > 0 && p.next_block > state.tip, locked)
     };
-    ensure!(synced, "Monero : synchronisation en cours, réessayez dans un instant");
+    ensure!(
+        synced,
+        "Monero : synchronisation en cours, réessayez dans un instant"
+    );
     let total: u64 = outputs.iter().map(|o| o.amount).sum();
     Ok((outputs, total, locked))
 }
@@ -803,16 +963,32 @@ pub fn prepare_send_max(data_dir: &Path, keys: &ViewKeys, to: Option<&str>) -> R
     ensure!(total > 0, "{}", insufficient(1, total, locked));
     runtime()?.block_on(async {
         let (rpc, tip) = connect(data_dir).await?;
-        let header = ProvidesBlockchain::block_by_number(&rpc, tip).await.map_err(node_err)?.header;
+        let header = ProvidesBlockchain::block_by_number(&rpc, tip)
+            .await
+            .map_err(node_err)?
+            .header;
         ensure!(
             header.hardfork_version == KNOWN_HARDFORK,
             "réseau Monero mis à niveau (version {}) : mettez l'app à jour avant d'envoyer",
             header.hardfork_version
         );
-        let fee_rate = rpc.fee_rate(FeePriority::Unimportant, MAX_FEE_PER_WEIGHT).await.map_err(node_err)?;
+        let fee_rate = rpc
+            .fee_rate(FeePriority::Unimportant, MAX_FEE_PER_WEIGHT)
+            .await
+            .map_err(node_err)?;
         let mut inputs = Vec::new();
         for output in &outputs {
-            inputs.push(OutputWithDecoys::new(&mut OsRng, &rpc, RING_LEN, tip, decode_output(&output.output)?).await.map_err(node_err)?);
+            inputs.push(
+                OutputWithDecoys::new(
+                    &mut OsRng,
+                    &rpc,
+                    RING_LEN,
+                    tip,
+                    decode_output(&output.output)?,
+                )
+                .await
+                .map_err(node_err)?,
+            );
         }
         let build = |amount: u64| {
             let mut outgoing_view_key = Zeroizing::new([0u8; 32]);
@@ -832,14 +1008,27 @@ pub fn prepare_send_max(data_dir: &Path, keys: &ViewKeys, to: Option<&str>) -> R
         let fee = match build(1) {
             Ok(tx) => tx.necessary_fee(),
             Err(SendError::NotEnoughFunds { necessary_fee, .. }) => {
-                bail!("XMR insuffisants pour les frais ({} XMR)", format_xmr(necessary_fee.unwrap_or(0)))
+                bail!(
+                    "XMR insuffisants pour les frais ({} XMR)",
+                    format_xmr(necessary_fee.unwrap_or(0))
+                )
             }
             Err(e) => bail!("envoi Monero impossible ({e})"),
         };
-        let amount = total.checked_sub(fee).filter(|a| *a > 0).ok_or_else(|| anyhow!("XMR insuffisants pour les frais ({} XMR)", format_xmr(fee)))?;
+        let amount = total
+            .checked_sub(fee)
+            .filter(|a| *a > 0)
+            .ok_or_else(|| anyhow!("XMR insuffisants pour les frais ({} XMR)", format_xmr(fee)))?;
         let tx = build(amount).map_err(|e| anyhow!("envoi Monero impossible ({e})"))?;
         ensure!(tx.necessary_fee() == fee, "frais Monero incohérents");
-        Ok(SendPlan { profile: keys.profile, to: recipient.to_string(), amount, fee, change: 0, tx })
+        Ok(SendPlan {
+            profile: keys.profile,
+            to: recipient.to_string(),
+            amount,
+            fee,
+            change: 0,
+            tx,
+        })
     })
 }
 
@@ -854,18 +1043,34 @@ pub fn prepare_send(data_dir: &Path, keys: &ViewKeys, to: &str, amount: u64) -> 
 
     runtime()?.block_on(async {
         let (rpc, tip) = connect(data_dir).await?;
-        let header = ProvidesBlockchain::block_by_number(&rpc, tip).await.map_err(node_err)?.header;
+        let header = ProvidesBlockchain::block_by_number(&rpc, tip)
+            .await
+            .map_err(node_err)?
+            .header;
         ensure!(
             header.hardfork_version == KNOWN_HARDFORK,
             "réseau Monero mis à niveau (version {}) : mettez l'app à jour avant d'envoyer",
             header.hardfork_version
         );
-        let fee_rate = rpc.fee_rate(FeePriority::Unimportant, MAX_FEE_PER_WEIGHT).await.map_err(node_err)?;
+        let fee_rate = rpc
+            .fee_rate(FeePriority::Unimportant, MAX_FEE_PER_WEIGHT)
+            .await
+            .map_err(node_err)?;
 
         let mut inputs = Vec::new();
         let mut selected = 0u64;
         for output in &outputs {
-            inputs.push(OutputWithDecoys::new(&mut OsRng, &rpc, RING_LEN, tip, decode_output(&output.output)?).await.map_err(node_err)?);
+            inputs.push(
+                OutputWithDecoys::new(
+                    &mut OsRng,
+                    &rpc,
+                    RING_LEN,
+                    tip,
+                    decode_output(&output.output)?,
+                )
+                .await
+                .map_err(node_err)?,
+            );
             selected += output.amount;
             if selected <= amount {
                 continue;
@@ -883,8 +1088,17 @@ pub fn prepare_send(data_dir: &Path, keys: &ViewKeys, to: &str, amount: u64) -> 
             ) {
                 Ok(tx) => {
                     let fee = tx.necessary_fee();
-                    let change = selected.checked_sub(amount + fee).ok_or_else(|| anyhow!("frais Monero incohérents"))?;
-                    return Ok(SendPlan { profile: keys.profile, to: recipient.to_string(), amount, fee, change, tx });
+                    let change = selected
+                        .checked_sub(amount + fee)
+                        .ok_or_else(|| anyhow!("frais Monero incohérents"))?;
+                    return Ok(SendPlan {
+                        profile: keys.profile,
+                        to: recipient.to_string(),
+                        amount,
+                        fee,
+                        change,
+                        tx,
+                    });
                 }
                 Err(SendError::NotEnoughFunds { necessary_fee, .. }) => {
                     if selected == total {
@@ -904,9 +1118,16 @@ pub fn prepare_send(data_dir: &Path, keys: &ViewKeys, to: &str, amount: u64) -> 
 }
 
 fn insufficient(amount: u64, unlocked: u64, locked: u64) -> String {
-    let mut message = format!("XMR insuffisants : {} demandés, {} disponibles", format_xmr(amount), format_xmr(unlocked));
+    let mut message = format!(
+        "XMR insuffisants : {} demandés, {} disponibles",
+        format_xmr(amount),
+        format_xmr(unlocked)
+    );
     if locked > 0 {
-        message.push_str(&format!(" ({} encore bloqués : 10 confirmations, ≈ 20 min)", format_xmr(locked)));
+        message.push_str(&format!(
+            " ({} encore bloqués : 10 confirmations, ≈ 20 min)",
+            format_xmr(locked)
+        ));
     }
     message
 }
@@ -916,8 +1137,17 @@ fn insufficient(amount: u64, unlocked: u64, locked: u64) -> String {
 pub fn sign_and_send(data_dir: &Path, seed: &[u8], plan: SendPlan) -> Result<String> {
     update_key_images(data_dir, seed, plan.profile)?;
     let spend = spend_key(seed, plan.profile)?;
-    let SendPlan { profile: _, to, amount, fee, change, tx } = plan;
-    let tx = tx.sign(&mut OsRng, &spend).map_err(|e| anyhow!("signature Monero impossible ({e})"))?;
+    let SendPlan {
+        profile: _,
+        to,
+        amount,
+        fee,
+        change,
+        tx,
+    } = plan;
+    let tx = tx
+        .sign(&mut OsRng, &spend)
+        .map_err(|e| anyhow!("signature Monero impossible ({e})"))?;
     drop(spend);
     let tx_hash = hex::encode(tx.hash());
     let images: Vec<String> = tx
@@ -930,7 +1160,15 @@ pub fn sign_and_send(data_dir: &Path, seed: &[u8], plan: SendPlan) -> Result<Str
         })
         .collect();
 
-    let record = Sent { tx: tx_hash.clone(), to, amount, fee, change, time: now(), block: None };
+    let record = Sent {
+        tx: tx_hash.clone(),
+        to,
+        amount,
+        fee,
+        change,
+        time: now(),
+        block: None,
+    };
     let published = runtime()?.block_on(async {
         let (rpc, _) = connect(data_dir).await?;
         Ok::<_, anyhow::Error>(rpc.publish_transaction(&tx).await)
@@ -958,7 +1196,11 @@ fn record_send(data_dir: &Path, sent: &Sent, images: &[String]) -> Result<()> {
     for image in images {
         mark_spent(&mut state, image, &sent.tx, None, sent.time);
     }
-    if let Some(p) = state.profiles.values_mut().find(|p| p.outputs.iter().any(|o| o.spent.as_ref().is_some_and(|s| s.tx == sent.tx))) {
+    if let Some(p) = state.profiles.values_mut().find(|p| {
+        p.outputs
+            .iter()
+            .any(|o| o.spent.as_ref().is_some_and(|s| s.tx == sent.tx))
+    }) {
         p.sends.push(sent.clone());
     }
     save(data_dir, &state)
@@ -980,12 +1222,24 @@ mod tests {
     fn keys_match_the_ledger_monero_app() {
         // Vectors from LedgerHQ/app-monero's `tests/test_crypto.py`.
         let spend = spend_key(&seed(), 0).unwrap();
-        assert_eq!(hex::encode(<[u8; 32]>::from(*spend)), "3b094ca7218f175e91fa2402b4ae239a2fe8262792a3e718533a1a357a1e4109");
+        assert_eq!(
+            hex::encode(<[u8; 32]>::from(*spend)),
+            "3b094ca7218f175e91fa2402b4ae239a2fe8262792a3e718533a1a357a1e4109"
+        );
         let keys = view_keys(&seed(), 0).unwrap();
-        assert_eq!(hex::encode(*keys.view_private), "0f3fe25d0c6d4c94dde0c0bcc214b233e9c72927f813728b0f01f28f9d5e1201");
-        assert_eq!(hex::encode(keys.spend_public), "dae41d6b13568fdd71ec3d20c2f614c65fe819f36ca5da8d24df3bd89b2bad9d");
+        assert_eq!(
+            hex::encode(*keys.view_private),
+            "0f3fe25d0c6d4c94dde0c0bcc214b233e9c72927f813728b0f01f28f9d5e1201"
+        );
+        assert_eq!(
+            hex::encode(keys.spend_public),
+            "dae41d6b13568fdd71ec3d20c2f614c65fe819f36ca5da8d24df3bd89b2bad9d"
+        );
         let pair = keys.pair().unwrap();
-        assert_eq!(hex::encode(pair.view().compress().to_bytes()), "865cbfab852a1d1ccdfc7328e4dac90f78fc2154257d07522e9b79e637326dfa");
+        assert_eq!(
+            hex::encode(pair.view().compress().to_bytes()),
+            "865cbfab852a1d1ccdfc7328e4dac90f78fc2154257d07522e9b79e637326dfa"
+        );
         assert_eq!(
             pair.legacy_address(Network::Stagenet).to_string(),
             "5A8FgbMkmG2e3J41sBdjvjaBUyz8qHohsQcGtRf63qEUTMBvmA45fpp5pSacMdSg7A3b71RejLzB8EkGbfjp5PELVHCRUaE"
@@ -1031,13 +1285,23 @@ mod tests {
     fn recipients() {
         let keys = view_keys(&seed(), 0).unwrap();
         let pair = keys.pair().unwrap();
-        let sub = pair.subaddress(Network::Mainnet, monero_wallet::address::SubaddressIndex::new(0, 1).unwrap()).to_string();
+        let sub = pair
+            .subaddress(
+                Network::Mainnet,
+                monero_wallet::address::SubaddressIndex::new(0, 1).unwrap(),
+            )
+            .to_string();
         assert!(sub.starts_with('8'));
         assert!(parse_recipient(&sub).is_ok());
-        let integrated = pair.legacy_integrated_address(Network::Mainnet, [7; 8]).to_string();
+        let integrated = pair
+            .legacy_integrated_address(Network::Mainnet, [7; 8])
+            .to_string();
         assert!(parse_recipient(&integrated).is_ok());
         let stagenet = pair.legacy_address(Network::Stagenet).to_string();
-        assert!(parse_recipient(&stagenet).unwrap_err().to_string().contains("réseau de test"));
+        assert!(parse_recipient(&stagenet)
+            .unwrap_err()
+            .to_string()
+            .contains("réseau de test"));
         assert!(parse_recipient("4pasuneadresse").is_err());
         assert!(parse_recipient("0x0000000000000000000000000000000000000000").is_err());
     }
@@ -1052,10 +1316,22 @@ mod tests {
 
     #[test]
     fn node_addresses() {
-        assert_eq!(normalize_node(" https://node.example.org:18089/ ").unwrap(), "https://node.example.org:18089");
-        assert_eq!(normalize_node("http://127.0.0.1:18081").unwrap(), "http://127.0.0.1:18081");
-        assert_eq!(normalize_node("http://192.168.1.20:18081").unwrap(), "http://192.168.1.20:18081");
-        assert!(normalize_node("http://node.example.org:18081").is_err(), "http distant refusé");
+        assert_eq!(
+            normalize_node(" https://node.example.org:18089/ ").unwrap(),
+            "https://node.example.org:18089"
+        );
+        assert_eq!(
+            normalize_node("http://127.0.0.1:18081").unwrap(),
+            "http://127.0.0.1:18081"
+        );
+        assert_eq!(
+            normalize_node("http://192.168.1.20:18081").unwrap(),
+            "http://192.168.1.20:18081"
+        );
+        assert!(
+            normalize_node("http://node.example.org:18081").is_err(),
+            "http distant refusé"
+        );
         assert!(normalize_node("https://user:pass@node.example.org").is_err());
         assert!(normalize_node("https://node.example.org/json_rpc").is_err());
         assert!(normalize_node("ftp://node.example.org").is_err());
@@ -1063,14 +1339,24 @@ mod tests {
     }
 
     fn temp_dir(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("pgp_wallet_monero_{name}_{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("pgp_wallet_monero_{name}_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
 
     fn received(tx: &str, block: usize, amount: u64, spent: Option<Spend>) -> Received {
-        Received { output: String::new(), tx: tx.into(), key: format!("k{tx}"), block, time: 1, amount, key_image: Some(format!("i{tx}")), spent }
+        Received {
+            output: String::new(),
+            tx: tx.into(),
+            key: format!("k{tx}"),
+            block,
+            time: 1,
+            amount,
+            key_image: Some(format!("i{tx}")),
+            spent,
+        }
     }
 
     /// A state written for another wallet is replaced, never mixed in; our own is kept;
@@ -1081,37 +1367,88 @@ mod tests {
         let other = view_keys(&[9u8; 64], 0).unwrap().spend_public;
         let mut state = State::default();
         bind_profile(&mut state, 0, &other, BIRTHDAY_HEIGHT);
-        state.profiles.get_mut(&0).unwrap().outputs.push(received("old", 10, 99, None));
+        state
+            .profiles
+            .get_mut(&0)
+            .unwrap()
+            .outputs
+            .push(received("old", 10, 99, None));
         bind_profile(&mut state, 0, &other, BIRTHDAY_HEIGHT);
-        assert_eq!(state.profiles[&0].outputs.len(), 1, "même portefeuille : gardé");
+        assert_eq!(
+            state.profiles[&0].outputs.len(),
+            1,
+            "même portefeuille : gardé"
+        );
         bind_profile(&mut state, 0, &mine, BIRTHDAY_HEIGHT + 500);
-        assert!(state.profiles[&0].outputs.is_empty(), "autre portefeuille : oublié");
-        assert_eq!(state.profiles[&0].next_block, BIRTHDAY_HEIGHT + 500, "nouvel état : analyse depuis le début demandé");
+        assert!(
+            state.profiles[&0].outputs.is_empty(),
+            "autre portefeuille : oublié"
+        );
+        assert_eq!(
+            state.profiles[&0].next_block,
+            BIRTHDAY_HEIGHT + 500,
+            "nouvel état : analyse depuis le début demandé"
+        );
         state.profiles.get_mut(&0).unwrap().spend_public = None;
-        state.profiles.get_mut(&0).unwrap().outputs.push(received("legacy", 10, 5, None));
+        state
+            .profiles
+            .get_mut(&0)
+            .unwrap()
+            .outputs
+            .push(received("legacy", 10, 5, None));
         bind_profile(&mut state, 0, &mine, BIRTHDAY_HEIGHT);
-        assert_eq!(state.profiles[&0].outputs.len(), 1, "état d'avant le lien : adopté");
-        assert_eq!(state.profiles[&0].spend_public.as_deref(), Some(hex::encode(mine).as_str()));
+        assert_eq!(
+            state.profiles[&0].outputs.len(),
+            1,
+            "état d'avant le lien : adopté"
+        );
+        assert_eq!(
+            state.profiles[&0].spend_public.as_deref(),
+            Some(hex::encode(mine).as_str())
+        );
     }
 
     #[test]
     fn reorg_rolls_back_outputs_and_spends() {
-        let mut state = State { tip: 120, recent: (100..=120).map(|n| (n, format!("h{n}"))).collect(), profiles: BTreeMap::new() };
-        let spent_late = Spend { tx: "s".into(), block: Some(115), time: 2 };
+        let mut state = State {
+            tip: 120,
+            recent: (100..=120).map(|n| (n, format!("h{n}"))).collect(),
+            profiles: BTreeMap::new(),
+        };
+        let spent_late = Spend {
+            tx: "s".into(),
+            block: Some(115),
+            time: 2,
+        };
         state.profiles.insert(
             0,
             ProfileState {
                 spend_public: None,
                 next_block: 121,
-                outputs: vec![received("a", 90, 5, Some(spent_late)), received("b", 112, 7, None)],
-                sends: vec![Sent { tx: "s".into(), to: String::new(), amount: 1, fee: 1, change: 3, time: 2, block: Some(115) }],
+                outputs: vec![
+                    received("a", 90, 5, Some(spent_late)),
+                    received("b", 112, 7, None),
+                ],
+                sends: vec![Sent {
+                    tx: "s".into(),
+                    to: String::new(),
+                    amount: 1,
+                    fee: 1,
+                    change: 3,
+                    time: 2,
+                    block: Some(115),
+                }],
             },
         );
         rollback(&mut state, 110);
         let p = &state.profiles[&0];
         assert_eq!(p.next_block, 111);
         assert_eq!(p.outputs.len(), 1, "sortie du bloc 112 oubliée");
-        assert_eq!(p.outputs[0].spent.as_ref().unwrap().block, None, "dépense repassée en attente");
+        assert_eq!(
+            p.outputs[0].spent.as_ref().unwrap().block,
+            None,
+            "dépense repassée en attente"
+        );
         assert_eq!(p.sends[0].block, None);
         assert_eq!(state.recent.last().unwrap().0, 110);
     }
@@ -1120,7 +1457,11 @@ mod tests {
     fn balance_counts_locks_and_pending_sends() {
         let dir = temp_dir("balance");
         let t = now();
-        let mut state = State { tip: 200, recent: Vec::new(), profiles: BTreeMap::new() };
+        let mut state = State {
+            tip: 200,
+            recent: Vec::new(),
+            profiles: BTreeMap::new(),
+        };
         state.profiles.insert(
             0,
             ProfileState {
@@ -1129,10 +1470,36 @@ mod tests {
                 outputs: vec![
                     received("old", 150, 10, None),
                     received("new", 195, 4, None),
-                    received("gone", 100, 50, Some(Spend { tx: "s".into(), block: None, time: t })),
-                    received("stale", 100, 2, Some(Spend { tx: "x".into(), block: None, time: t - PENDING_EXPIRY_SECS - 10 })),
+                    received(
+                        "gone",
+                        100,
+                        50,
+                        Some(Spend {
+                            tx: "s".into(),
+                            block: None,
+                            time: t,
+                        }),
+                    ),
+                    received(
+                        "stale",
+                        100,
+                        2,
+                        Some(Spend {
+                            tx: "x".into(),
+                            block: None,
+                            time: t - PENDING_EXPIRY_SECS - 10,
+                        }),
+                    ),
                 ],
-                sends: vec![Sent { tx: "s".into(), to: String::new(), amount: 30, fee: 1, change: 19, time: t, block: None }],
+                sends: vec![Sent {
+                    tx: "s".into(),
+                    to: String::new(),
+                    amount: 30,
+                    fee: 1,
+                    change: 19,
+                    time: t,
+                    block: None,
+                }],
             },
         );
         save(&dir, &state).unwrap();
@@ -1144,7 +1511,10 @@ mod tests {
         let send = h.iter().find(|e| e.id == "s").unwrap();
         assert_eq!(send.net_amount_minor, Some(-50));
         assert!(matches!(send.status, history::TxStatus::Pending));
-        assert!(matches!(h.iter().find(|e| e.id == "x").unwrap().status, history::TxStatus::Failed));
+        assert!(matches!(
+            h.iter().find(|e| e.id == "x").unwrap().status,
+            history::TxStatus::Failed
+        ));
         assert!(has_pending(&dir, 0).unwrap());
     }
 
@@ -1156,18 +1526,39 @@ mod tests {
         let dir = temp_dir("sync");
         let keys = view_keys(&seed(), 0).unwrap();
         let started = std::time::Instant::now();
-        sync(&dir, std::slice::from_ref(&keys), crate::seed_state::generation()).unwrap();
+        sync(
+            &dir,
+            std::slice::from_ref(&keys),
+            crate::seed_state::generation(),
+        )
+        .unwrap();
         let state = load(&dir).unwrap();
-        println!("{} blocs en {:?}, hauteur {}", state.tip + 1 - BIRTHDAY_HEIGHT, started.elapsed(), state.tip);
+        println!(
+            "{} blocs en {:?}, hauteur {}",
+            state.tip + 1 - BIRTHDAY_HEIGHT,
+            started.elapsed(),
+            state.tip
+        );
         assert!(balance(&dir, 0).unwrap().synced);
         // Second pass: nothing to reread.
         let again = std::time::Instant::now();
-        sync(&dir, std::slice::from_ref(&keys), crate::seed_state::generation()).unwrap();
+        sync(
+            &dir,
+            std::slice::from_ref(&keys),
+            crate::seed_state::generation(),
+        )
+        .unwrap();
         println!("seconde passe {:?}", again.elapsed());
-        let error = prepare_send(&dir, &keys, &keys.address().unwrap(), 1).map(|_| ()).unwrap_err().to_string();
+        let error = prepare_send(&dir, &keys, &keys.address().unwrap(), 1)
+            .map(|_| ())
+            .unwrap_err()
+            .to_string();
         assert!(error.contains("propre adresse"), "{error}");
         let other = view_keys(&seed(), 1).unwrap().address().unwrap();
-        let error = prepare_send(&dir, &keys, &other, 1).map(|_| ()).unwrap_err().to_string();
+        let error = prepare_send(&dir, &keys, &other, 1)
+            .map(|_| ())
+            .unwrap_err()
+            .to_string();
         assert!(error.contains("XMR insuffisants"), "{error}");
     }
 }

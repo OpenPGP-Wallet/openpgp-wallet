@@ -33,9 +33,21 @@ pub struct Network {
     pub tx_index: &'static str,
 }
 
-pub const MAINNET: Network = Network { rpc: ["https://rpc.mainnet.fastnear.com", "https://rpc.mainnet.near.org"], tx_index: "https://tx.main.fastnear.com" };
+pub const MAINNET: Network = Network {
+    rpc: [
+        "https://rpc.mainnet.fastnear.com",
+        "https://rpc.mainnet.near.org",
+    ],
+    tx_index: "https://tx.main.fastnear.com",
+};
 #[cfg(test)]
-const TESTNET: Network = Network { rpc: ["https://rpc.testnet.fastnear.com", "https://rpc.testnet.near.org"], tx_index: "https://tx.test.fastnear.com" };
+const TESTNET: Network = Network {
+    rpc: [
+        "https://rpc.testnet.fastnear.com",
+        "https://rpc.testnet.near.org",
+    ],
+    tx_index: "https://tx.test.fastnear.com",
+};
 
 pub const DECIMALS: u8 = 24;
 /// Storage size of a new implicit account (account + access key).
@@ -66,10 +78,17 @@ fn rpc(net: &Network, method: &str, params: Value) -> Result<std::result::Result
     let mut last = anyhow!("nœud NEAR injoignable");
     for node in net.rpc {
         let attempt = (|| -> Result<Value> {
-            let response = client().post(node).json(&json!({ "jsonrpc": "2.0", "id": "ow", "method": method, "params": params })).send().context("nœud NEAR injoignable")?;
+            let response = client()
+                .post(node)
+                .json(&json!({ "jsonrpc": "2.0", "id": "ow", "method": method, "params": params }))
+                .send()
+                .context("nœud NEAR injoignable")?;
             let status = response.status();
             // 400: node error, detailed in the JSON-RPC body.
-            ensure!(status.is_success() || status == reqwest::StatusCode::BAD_REQUEST, "nœud NEAR : réponse {status}");
+            ensure!(
+                status.is_success() || status == reqwest::StatusCode::BAD_REQUEST,
+                "nœud NEAR : réponse {status}"
+            );
             response.json().context("réponse du nœud NEAR illisible")
         })();
         match attempt {
@@ -83,13 +102,26 @@ fn rpc(net: &Network, method: &str, params: Value) -> Result<std::result::Result
 /// JSON-RPC response: the result, or the error FROM THE NODE.
 fn reply(value: &Value) -> std::result::Result<Value, RpcError> {
     if let Some(error) = value.get("error") {
-        let name = error["cause"]["name"].as_str().or(error["name"].as_str()).unwrap_or("").to_string();
-        let detail = [error["cause"]["info"].to_string(), error["data"].to_string()].into_iter().find(|d| d != "null" && d != "{}").unwrap_or_default();
+        let name = error["cause"]["name"]
+            .as_str()
+            .or(error["name"].as_str())
+            .unwrap_or("")
+            .to_string();
+        let detail = [
+            error["cause"]["info"].to_string(),
+            error["data"].to_string(),
+        ]
+        .into_iter()
+        .find(|d| d != "null" && d != "{}")
+        .unwrap_or_default();
         return Err(RpcError { name, detail });
     }
     // Response to a "query" request: the error is inside the result.
     if let Some(error) = value["result"]["error"].as_str() {
-        return Err(RpcError { name: "QUERY_ERROR".into(), detail: error.to_string() });
+        return Err(RpcError {
+            name: "QUERY_ERROR".into(),
+            detail: error.to_string(),
+        });
     }
     Ok(value["result"].clone())
 }
@@ -131,26 +163,42 @@ pub fn implicit_account(key: &SigningKey) -> String {
 }
 
 fn is_implicit(account: &str) -> bool {
-    account.len() == 64 && account.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    account.len() == 64
+        && account
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 /// Valid NEAR account ID: implicit (64 hex) or named ("alice.near", protocol
 /// rules). Ethereum addresses are refused.
 pub fn parse_account(text: &str) -> Result<String> {
     let text = text.trim();
-    if text.len() == 42 && (text.starts_with("0x") || text.starts_with("0X")) && text[2..].bytes().all(|b| b.is_ascii_hexdigit()) {
-        bail!("adresse Ethereum : pour envoyer sur Ethereum, utilisez la carte Ethereum (pas NEAR)");
+    if text.len() == 42
+        && (text.starts_with("0x") || text.starts_with("0X"))
+        && text[2..].bytes().all(|b| b.is_ascii_hexdigit())
+    {
+        bail!(
+            "adresse Ethereum : pour envoyer sur Ethereum, utilisez la carte Ethereum (pas NEAR)"
+        );
     }
-    ensure!(!text.bytes().any(|b| b.is_ascii_uppercase()), "adresse NEAR invalide (minuscules seulement)");
+    ensure!(
+        !text.bytes().any(|b| b.is_ascii_uppercase()),
+        "adresse NEAR invalide (minuscules seulement)"
+    );
     ensure!((2..=64).contains(&text.len()), "adresse NEAR invalide");
     // Parts separated by "."; within a part, "-" or "_" only between two alphanumeric
     // characters.
     let valid = text.split('.').all(|part| {
         !part.is_empty()
-            && part.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+            && part
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
             && !part.starts_with(['-', '_'])
             && !part.ends_with(['-', '_'])
-            && !part.as_bytes().windows(2).any(|w| matches!(w[0], b'-' | b'_') && matches!(w[1], b'-' | b'_'))
+            && !part
+                .as_bytes()
+                .windows(2)
+                .any(|w| matches!(w[0], b'-' | b'_') && matches!(w[1], b'-' | b'_'))
     });
     ensure!(valid, "adresse NEAR invalide");
     Ok(text.to_string())
@@ -204,7 +252,10 @@ pub fn sign(tx: &Transfer, key: &SigningKey) -> Signed {
     let mut bytes = tx.borsh();
     bytes.push(0); // ed25519 signature
     bytes.extend_from_slice(&key.sign(&hash).to_bytes());
-    Signed { bytes, hash: bs58::encode(hash).into_string() }
+    Signed {
+        bytes,
+        hash: bs58::encode(hash).into_string(),
+    }
 }
 
 // --- Account and network -------------------------------------------------------------------
@@ -216,12 +267,19 @@ struct AccountState {
 
 fn account_state(net: &Network, account: &str) -> Result<Option<AccountState>> {
     let account = parse_account(account)?;
-    match rpc(net, "query", json!({ "request_type": "view_account", "finality": "final", "account_id": account }))? {
+    match rpc(
+        net,
+        "query",
+        json!({ "request_type": "view_account", "finality": "final", "account_id": account }),
+    )? {
         Err(e) if e.name == "UNKNOWN_ACCOUNT" || e.detail.contains("does not exist") => Ok(None),
         Err(e) => bail!("nœud NEAR : {} {}", e.name, e.detail),
         Ok(value) => Ok(Some(AccountState {
             amount: yocto(value["amount"].as_str().context("solde NEAR illisible")?)?,
-            storage_usage: value["storage_usage"].as_u64().map(u128::from).context("solde NEAR illisible")?,
+            storage_usage: value["storage_usage"]
+                .as_u64()
+                .map(u128::from)
+                .context("solde NEAR illisible")?,
         })),
     }
 }
@@ -239,22 +297,47 @@ struct Costs {
 }
 
 fn costs(net: &Network) -> Result<Costs> {
-    let config = rpc_ok(net, "EXPERIMENTAL_protocol_config", json!({ "finality": "final" }))?;
+    let config = rpc_ok(
+        net,
+        "EXPERIMENTAL_protocol_config",
+        json!({ "finality": "final" }),
+    )?;
     let runtime = &config["runtime_config"];
     let fees = &runtime["transaction_costs"];
     let gas = |fee: &Value| -> Result<(u128, u128)> {
-        let field = |name: &str| fee[name].as_u64().map(u128::from).context("configuration NEAR illisible");
+        let field = |name: &str| {
+            fee[name]
+                .as_u64()
+                .map(u128::from)
+                .context("configuration NEAR illisible")
+        };
         Ok((field("send_not_sir")?, field("execution")?))
     };
     let add = |a: (u128, u128), b: (u128, u128)| (a.0 + b.0, a.1 + b.1);
     let actions = &fees["action_creation_config"];
     let gas_price = rpc_ok(net, "gas_price", json!([null]))?;
-    let price = |value: &Value| value.as_str().map(yocto).transpose()?.context("configuration NEAR illisible");
+    let price = |value: &Value| {
+        value
+            .as_str()
+            .map(yocto)
+            .transpose()?
+            .context("configuration NEAR illisible")
+    };
     Ok(Costs {
         storage_per_byte: price(&runtime["storage_amount_per_byte"])?,
-        transfer_gas: add(gas(&fees["action_receipt_creation_config"])?, gas(&actions["transfer_cost"])?),
-        create_gas: add(gas(&actions["create_account_cost"])?, gas(&actions["add_key_cost"]["full_access_cost"])?),
-        gas_price: yocto(gas_price["gas_price"].as_str().context("prix du gaz NEAR illisible")?)?,
+        transfer_gas: add(
+            gas(&fees["action_receipt_creation_config"])?,
+            gas(&actions["transfer_cost"])?,
+        ),
+        create_gas: add(
+            gas(&actions["create_account_cost"])?,
+            gas(&actions["add_key_cost"]["full_access_cost"])?,
+        ),
+        gas_price: yocto(
+            gas_price["gas_price"]
+                .as_str()
+                .context("prix du gaz NEAR illisible")?,
+        )?,
         purchase_price: price(&runtime["min_gas_purchase_price"]).unwrap_or(0),
     })
 }
@@ -262,10 +345,22 @@ fn costs(net: &Network) -> Result<Costs> {
 impl Costs {
     /// (expected actual fee, maximum held) for a transfer.
     fn fee(&self, creates: bool) -> Result<(u128, u128)> {
-        let (send, exec) = if creates { (self.transfer_gas.0 + self.create_gas.0, self.transfer_gas.1 + self.create_gas.1) } else { self.transfer_gas };
+        let (send, exec) = if creates {
+            (
+                self.transfer_gas.0 + self.create_gas.0,
+                self.transfer_gas.1 + self.create_gas.1,
+            )
+        } else {
+            self.transfer_gas
+        };
         let actual = (send + exec) * self.gas_price;
-        let held = (send * self.gas_price + exec * self.gas_price.max(self.purchase_price)) * 12 / 10;
-        ensure!(held <= MAX_FEE_YOCTO, "frais du réseau NEAR anormalement élevés ({} NEAR) — réessayez plus tard", format_near_exact(held));
+        let held =
+            (send * self.gas_price + exec * self.gas_price.max(self.purchase_price)) * 12 / 10;
+        ensure!(
+            held <= MAX_FEE_YOCTO,
+            "frais du réseau NEAR anormalement élevés ({} NEAR) — réessayez plus tard",
+            format_near_exact(held)
+        );
         Ok((actual, held))
     }
 }
@@ -309,7 +404,10 @@ pub fn plan(net: &Network, from: &str, to: &str, amount: u128) -> Result<NearPla
     let destination = account_state(net, &to)?;
     let creates = destination.is_none();
     if creates {
-        ensure!(is_implicit(&to), "ce compte NEAR n'existe pas : vérifiez l'adresse");
+        ensure!(
+            is_implicit(&to),
+            "ce compte NEAR n'existe pas : vérifiez l'adresse"
+        );
         let minimum = IMPLICIT_ACCOUNT_BYTES * costs.storage_per_byte;
         ensure!(amount >= minimum, "ce destinataire n'est pas encore activé : envoyez-lui au moins {} NEAR (stockage du compte)", format_near_exact(minimum));
     }
@@ -324,7 +422,13 @@ pub fn plan(net: &Network, from: &str, to: &str, amount: u128) -> Result<NearPla
         format_near_exact(amount),
         format_near_exact(fee)
     );
-    Ok(NearPlan { amount, fee, fee_actual, reserved, creates })
+    Ok(NearPlan {
+        amount,
+        fee,
+        fee_actual,
+        reserved,
+        creates,
+    })
 }
 
 /// Largest amount that can be sent (to `to` if known: an account that must be
@@ -337,7 +441,12 @@ pub fn max_amount(net: &Network, from: &str, to: Option<&str>) -> Result<u128> {
         None => false,
     };
     let (_, fee) = costs.fee(creates)?;
-    sender.amount.saturating_sub(sender.storage_usage * costs.storage_per_byte).checked_sub(fee).filter(|m| *m > 0).context("NEAR insuffisants pour couvrir les frais du réseau")
+    sender
+        .amount
+        .saturating_sub(sender.storage_usage * costs.storage_per_byte)
+        .checked_sub(fee)
+        .filter(|m| *m > 0)
+        .context("NEAR insuffisants pour couvrir les frais du réseau")
 }
 
 /// Builds, signs and broadcasts the prepared send; returns its identifier.
@@ -346,10 +455,27 @@ pub fn send(net: &Network, key: &SigningKey, to: &str, plan: &NearPlan) -> Resul
     let public_key = key.verifying_key().to_bytes();
     // Nonce read at the latest block ("optimistic"): two sends close together never
     // reuse a nonce that is already consumed (InvalidNonce refusal).
-    let access = rpc_ok(net, "query", json!({ "request_type": "view_access_key", "finality": "optimistic", "account_id": signer, "public_key": format!("ed25519:{}", bs58::encode(public_key).into_string()) }))?;
-    let nonce = access["nonce"].as_u64().context("clé d'accès NEAR illisible")?;
-    let block_hash: [u8; 32] = access["block_hash"].as_str().and_then(|h| bs58::decode(h).into_vec().ok()).and_then(|h| h.try_into().ok()).context("bloc NEAR illisible")?;
-    let tx = Transfer { signer, public_key, nonce: nonce + 1, receiver: parse_account(to)?, block_hash, deposit: plan.amount };
+    let access = rpc_ok(
+        net,
+        "query",
+        json!({ "request_type": "view_access_key", "finality": "optimistic", "account_id": signer, "public_key": format!("ed25519:{}", bs58::encode(public_key).into_string()) }),
+    )?;
+    let nonce = access["nonce"]
+        .as_u64()
+        .context("clé d'accès NEAR illisible")?;
+    let block_hash: [u8; 32] = access["block_hash"]
+        .as_str()
+        .and_then(|h| bs58::decode(h).into_vec().ok())
+        .and_then(|h| h.try_into().ok())
+        .context("bloc NEAR illisible")?;
+    let tx = Transfer {
+        signer,
+        public_key,
+        nonce: nonce + 1,
+        receiver: parse_account(to)?,
+        block_hash,
+        deposit: plan.amount,
+    };
     submit(net, &sign(&tx, key))
 }
 
@@ -365,13 +491,18 @@ pub fn submit(net: &Network, signed: &Signed) -> Result<String> {
     let mut last = anyhow!("nœud NEAR injoignable");
     for node in net.rpc {
         let value: Value = match client().post(node).json(&body).send() {
-            Ok(response) if response.status().is_success() || response.status() == reqwest::StatusCode::BAD_REQUEST => match response.json() {
-                Ok(value) => value,
-                Err(_) => {
-                    uncertain = true;
-                    continue;
+            Ok(response)
+                if response.status().is_success()
+                    || response.status() == reqwest::StatusCode::BAD_REQUEST =>
+            {
+                match response.json() {
+                    Ok(value) => value,
+                    Err(_) => {
+                        uncertain = true;
+                        continue;
+                    }
                 }
-            },
+            }
             Ok(response) => {
                 uncertain |= crate::wallet_flow::server_error_may_have_sent(response.status());
                 last = anyhow!("nœud NEAR : réponse {}", response.status());
@@ -385,10 +516,18 @@ pub fn submit(net: &Network, signed: &Signed) -> Result<String> {
         };
         return submit_outcome(reply(&value), signed, uncertain);
     }
-    Err(if uncertain { crate::wallet_flow::maybe_sent(&signed.hash) } else { last })
+    Err(if uncertain {
+        crate::wallet_flow::maybe_sent(&signed.hash)
+    } else {
+        last
+    })
 }
 
-fn submit_outcome(outcome: std::result::Result<Value, RpcError>, signed: &Signed, uncertain: bool) -> Result<String> {
+fn submit_outcome(
+    outcome: std::result::Result<Value, RpcError>,
+    signed: &Signed,
+    uncertain: bool,
+) -> Result<String> {
     match outcome {
         Ok(result) => {
             let status = &result["status"];
@@ -414,7 +553,10 @@ fn submit_outcome(outcome: std::result::Result<Value, RpcError>, signed: &Signed
 /// Execution error as one short line.
 fn compact(value: &Value) -> String {
     let text = value.to_string();
-    text.chars().filter(|c| !matches!(c, '{' | '}' | '"')).take(200).collect()
+    text.chars()
+        .filter(|c| !matches!(c, '{' | '}' | '"'))
+        .take(200)
+        .collect()
 }
 
 // --- History -------------------------------------------------------------------------------
@@ -423,13 +565,24 @@ fn compact(value: &Value) -> String {
 /// excluding gas refunds), most recent first.
 pub fn history(net: &Network, account: &str, limit: usize) -> Result<Vec<history::TxEntry>> {
     let account = parse_account(account)?;
-    let list: Value = client().post(format!("{}/v0/account", net.tx_index)).json(&json!({ "account_id": account })).send().context("index NEAR injoignable")?.json().context("réponse de l'index NEAR illisible")?;
+    let list: Value = client()
+        .post(format!("{}/v0/account", net.tx_index))
+        .json(&json!({ "account_id": account }))
+        .send()
+        .context("index NEAR injoignable")?
+        .json()
+        .context("réponse de l'index NEAR illisible")?;
     let mut txs: Vec<(u64, String)> = list["account_txs"]
         .as_array()
         .map(Vec::as_slice)
         .unwrap_or_default()
         .iter()
-        .filter_map(|t| Some((t["tx_block_height"].as_u64()?, t["transaction_hash"].as_str()?.to_string())))
+        .filter_map(|t| {
+            Some((
+                t["tx_block_height"].as_u64()?,
+                t["transaction_hash"].as_str()?.to_string(),
+            ))
+        })
         .collect();
     txs.sort_by_key(|t| std::cmp::Reverse(t.0));
     txs.dedup_by(|a, b| a.1 == b.1);
@@ -437,8 +590,18 @@ pub fn history(net: &Network, account: &str, limit: usize) -> Result<Vec<history
     let mut entries = Vec::new();
     for chunk in txs.chunks(20) {
         let hashes: Vec<&str> = chunk.iter().map(|t| t.1.as_str()).collect();
-        let details: Value = client().post(format!("{}/v0/transactions", net.tx_index)).json(&json!({ "tx_hashes": hashes })).send().context("index NEAR injoignable")?.json().context("réponse de l'index NEAR illisible")?;
-        for tx in details["transactions"].as_array().map(Vec::as_slice).unwrap_or_default() {
+        let details: Value = client()
+            .post(format!("{}/v0/transactions", net.tx_index))
+            .json(&json!({ "tx_hashes": hashes }))
+            .send()
+            .context("index NEAR injoignable")?
+            .json()
+            .context("réponse de l'index NEAR illisible")?;
+        for tx in details["transactions"]
+            .as_array()
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+        {
             if let Some(entry) = history_entry(tx, &account) {
                 entries.push(entry);
             }
@@ -449,20 +612,48 @@ pub fn history(net: &Network, account: &str, limit: usize) -> Result<Vec<history
 }
 
 fn history_entry(tx: &Value, account: &str) -> Option<history::TxEntry> {
-    let hash = tx["transaction"]["hash"].as_str().or(tx["execution_outcome"]["id"].as_str())?;
-    let succeeded = |outcome: &Value| outcome["outcome"]["status"].get("SuccessValue").is_some() || outcome["outcome"]["status"].get("SuccessReceiptId").is_some();
+    let hash = tx["transaction"]["hash"]
+        .as_str()
+        .or(tx["execution_outcome"]["id"].as_str())?;
+    let succeeded = |outcome: &Value| {
+        outcome["outcome"]["status"].get("SuccessValue").is_some()
+            || outcome["outcome"]["status"]
+                .get("SuccessReceiptId")
+                .is_some()
+    };
     let (mut incoming, mut outgoing, mut burnt, mut failed) = (0u128, 0u128, 0u128, false);
-    burnt += tx["execution_outcome"]["outcome"]["tokens_burnt"].as_str().and_then(|t| t.parse::<u128>().ok()).unwrap_or(0);
-    for receipt in tx["receipts"].as_array().map(Vec::as_slice).unwrap_or_default() {
-        burnt += receipt["execution_outcome"]["outcome"]["tokens_burnt"].as_str().and_then(|t| t.parse::<u128>().ok()).unwrap_or(0);
-        let Some(actions) = receipt["receipt"]["receipt"]["Action"]["actions"].as_array() else { continue };
-        let deposits: u128 = actions.iter().filter_map(|a| a["Transfer"]["deposit"].as_str()?.parse::<u128>().ok()).sum();
+    burnt += tx["execution_outcome"]["outcome"]["tokens_burnt"]
+        .as_str()
+        .and_then(|t| t.parse::<u128>().ok())
+        .unwrap_or(0);
+    for receipt in tx["receipts"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+    {
+        burnt += receipt["execution_outcome"]["outcome"]["tokens_burnt"]
+            .as_str()
+            .and_then(|t| t.parse::<u128>().ok())
+            .unwrap_or(0);
+        let Some(actions) = receipt["receipt"]["receipt"]["Action"]["actions"].as_array() else {
+            continue;
+        };
+        let deposits: u128 = actions
+            .iter()
+            .filter_map(|a| a["Transfer"]["deposit"].as_str()?.parse::<u128>().ok())
+            .sum();
         if deposits == 0 {
             continue;
         }
-        let (predecessor, receiver) = (receipt["receipt"]["predecessor_id"].as_str(), receipt["receipt"]["receiver_id"].as_str());
+        let (predecessor, receiver) = (
+            receipt["receipt"]["predecessor_id"].as_str(),
+            receipt["receipt"]["receiver_id"].as_str(),
+        );
         let ok = succeeded(&receipt["execution_outcome"]);
-        if receiver == Some(account) && predecessor != Some("system") && predecessor != Some(account) {
+        if receiver == Some(account)
+            && predecessor != Some("system")
+            && predecessor != Some(account)
+        {
             if ok {
                 incoming += deposits;
             }
@@ -479,15 +670,27 @@ fn history_entry(tx: &Value, account: &str) -> Option<history::TxEntry> {
     }
     let signer = tx["transaction"]["signer_id"].as_str() == Some(account);
     let fee = if signer { burnt } else { 0 };
-    let net = i128::try_from(incoming).ok()? - i128::try_from(outgoing).ok()? - i128::try_from(fee).ok()?;
-    let timestamp = tx["execution_outcome"]["block_timestamp"].as_u64().map(|ns| (ns / 1_000_000_000) as i64);
+    let net = i128::try_from(incoming).ok()?
+        - i128::try_from(outgoing).ok()?
+        - i128::try_from(fee).ok()?;
+    let timestamp = tx["execution_outcome"]["block_timestamp"]
+        .as_u64()
+        .map(|ns| (ns / 1_000_000_000) as i64);
     Some(history::TxEntry {
         id: hash.to_string(),
         timestamp_unix: timestamp,
-        status: if failed { history::TxStatus::Failed } else { history::TxStatus::Confirmed },
+        status: if failed {
+            history::TxStatus::Failed
+        } else {
+            history::TxStatus::Confirmed
+        },
         net_amount_minor: Some(net),
         fee_minor: 0,
-        kind: if net > 0 { history::TxKind::Received } else { history::TxKind::Sent },
+        kind: if net > 0 {
+            history::TxKind::Received
+        } else {
+            history::TxKind::Sent
+        },
     })
 }
 
@@ -502,14 +705,42 @@ mod tests {
     /// execution failure is a refusal.
     #[test]
     fn accepted_transactions_are_never_reported_as_refused() {
-        let signed = Signed { bytes: vec![], hash: "Hash1".into() };
-        let reply = |status: Value, hash: &str| Ok(json!({ "status": status, "transaction": { "hash": hash } }));
-        assert_eq!(submit_outcome(reply(json!({ "SuccessValue": "" }), "Hash1"), &signed, false).unwrap(), "Hash1");
-        for (status, hash) in [(json!({ "SuccessValue": "" }), "Hash2"), (json!("Started"), "Hash1"), (json!({ "Unknown": {} }), "Hash1")] {
-            let error = submit_outcome(reply(status, hash), &signed, false).unwrap_err().to_string();
-            assert!(error.contains("peut-être partie") && error.contains("Hash1"), "{error}");
+        let signed = Signed {
+            bytes: vec![],
+            hash: "Hash1".into(),
+        };
+        let reply = |status: Value, hash: &str| {
+            Ok(json!({ "status": status, "transaction": { "hash": hash } }))
+        };
+        assert_eq!(
+            submit_outcome(
+                reply(json!({ "SuccessValue": "" }), "Hash1"),
+                &signed,
+                false
+            )
+            .unwrap(),
+            "Hash1"
+        );
+        for (status, hash) in [
+            (json!({ "SuccessValue": "" }), "Hash2"),
+            (json!("Started"), "Hash1"),
+            (json!({ "Unknown": {} }), "Hash1"),
+        ] {
+            let error = submit_outcome(reply(status, hash), &signed, false)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                error.contains("peut-être partie") && error.contains("Hash1"),
+                "{error}"
+            );
         }
-        let refused = submit_outcome(reply(json!({ "Failure": { "ActionError": {} } }), "Hash1"), &signed, false).unwrap_err().to_string();
+        let refused = submit_outcome(
+            reply(json!({ "Failure": { "ActionError": {} } }), "Hash1"),
+            &signed,
+            false,
+        )
+        .unwrap_err()
+        .to_string();
         assert!(refused.starts_with("transaction NEAR refusée"), "{refused}");
     }
 
@@ -521,17 +752,48 @@ mod tests {
     /// @near-js/transactions, independent of this code.
     #[test]
     fn keys_and_transactions_match_the_official_libraries() {
-        for (index, expected) in [(0, "5510e2b44cae6eb807e3e0e45d579dda058c274abcba15e5cb84636f5d1ee412"), (1, "3b93b03253b9715213ec314eb50ecc99d25602ccb5b059f91f51d24710d54326"), (7, "689ec7ca9d844e55d75d1fd43c2d3c5582a3b54722f89ffbb4cc3b8d28d46735")] {
+        for (index, expected) in [
+            (
+                0,
+                "5510e2b44cae6eb807e3e0e45d579dda058c274abcba15e5cb84636f5d1ee412",
+            ),
+            (
+                1,
+                "3b93b03253b9715213ec314eb50ecc99d25602ccb5b059f91f51d24710d54326",
+            ),
+            (
+                7,
+                "689ec7ca9d844e55d75d1fd43c2d3c5582a3b54722f89ffbb4cc3b8d28d46735",
+            ),
+        ] {
             assert_eq!(implicit_account(&key(index)), expected, "index {index}");
         }
-        assert_eq!(bs58::encode(key(0).verifying_key().to_bytes()).into_string(), "6j4b6zUaty6fD1awqcGCCU9JYGCWYUgdJhQrzfZhqE25");
-        let block = |h: &str| -> [u8; 32] { bs58::decode(h).into_vec().unwrap().try_into().unwrap() };
-        let t1 = Transfer { signer: implicit_account(&key(0)), public_key: key(0).verifying_key().to_bytes(), nonce: 12_345_678_901, receiver: implicit_account(&key(1)), block_hash: block("CW7viZzmpbwWcwJbDabJ8x9HczC8Czc1hPA8SQcSyyEi"), deposit: 1_500_000_000_000_000_000_000_000 };
+        assert_eq!(
+            bs58::encode(key(0).verifying_key().to_bytes()).into_string(),
+            "6j4b6zUaty6fD1awqcGCCU9JYGCWYUgdJhQrzfZhqE25"
+        );
+        let block =
+            |h: &str| -> [u8; 32] { bs58::decode(h).into_vec().unwrap().try_into().unwrap() };
+        let t1 = Transfer {
+            signer: implicit_account(&key(0)),
+            public_key: key(0).verifying_key().to_bytes(),
+            nonce: 12_345_678_901,
+            receiver: implicit_account(&key(1)),
+            block_hash: block("CW7viZzmpbwWcwJbDabJ8x9HczC8Czc1hPA8SQcSyyEi"),
+            deposit: 1_500_000_000_000_000_000_000_000,
+        };
         assert_eq!(hex::encode(t1.borsh()), "4000000035353130653262343463616536656238303765336530653435643537396464613035386332373461626362613135653563623834363336663564316565343132005510e2b44cae6eb807e3e0e45d579dda058c274abcba15e5cb84636f5d1ee412351cdcdf020000004000000033623933623033323533623937313532313365633331346562353065636339396432353630326363623562303539663931663531643234373130643534333236aae63b27cab273f393ddb567b10fc01c52198830e5bae1344dfca0485953966b0100000003000080716433b629a33d010000000000");
         let signed = sign(&t1, &key(0));
         assert_eq!(signed.hash, "49g8fGFVPAaAdRxPDqWkRB5ZRqNQj1cgQVJfFVKhXD6X");
         assert_eq!(hex::encode(&signed.bytes), "4000000035353130653262343463616536656238303765336530653435643537396464613035386332373461626362613135653563623834363336663564316565343132005510e2b44cae6eb807e3e0e45d579dda058c274abcba15e5cb84636f5d1ee412351cdcdf020000004000000033623933623033323533623937313532313365633331346562353065636339396432353630326363623562303539663931663531643234373130643534333236aae63b27cab273f393ddb567b10fc01c52198830e5bae1344dfca0485953966b0100000003000080716433b629a33d01000000000000913f9f2b22571ec49fb93086c5ee141243c8bc1b3efea0c4e27381977dde34f9e738197e8ca2ef1ae9c7676fb06ec18fcd599d3ffb8c539f64f4c9526397ec02");
-        let t2 = Transfer { signer: implicit_account(&key(0)), public_key: key(0).verifying_key().to_bytes(), nonce: 7, receiver: "alice.near".into(), block_hash: block("DjsYX3zyMrmRukvkbKPeoJG7ZkyfV4yUX2R2ERga9gjG"), deposit: 1 };
+        let t2 = Transfer {
+            signer: implicit_account(&key(0)),
+            public_key: key(0).verifying_key().to_bytes(),
+            nonce: 7,
+            receiver: "alice.near".into(),
+            block_hash: block("DjsYX3zyMrmRukvkbKPeoJG7ZkyfV4yUX2R2ERga9gjG"),
+            deposit: 1,
+        };
         let signed = sign(&t2, &key(0));
         assert_eq!(signed.hash, "GdUiesG9aqedyx8Bexo69VzyQkBbKJjV474uRSHCxPjb");
         assert_eq!(hex::encode(&signed.bytes), "4000000035353130653262343463616536656238303765336530653435643537396464613035386332373461626362613135653563623834363336663564316565343132005510e2b44cae6eb807e3e0e45d579dda058c274abcba15e5cb84636f5d1ee41207000000000000000a000000616c6963652e6e656172bd47c9667dcfe23a95c04c3ef05a47562c17332d85c4a803195e6dce6c06693f01000000030100000000000000000000000000000000d8044f3213e1918edb89f517b3479edf892d7dd871e2ba3202e17d46bb945ea31f75cd28406328eedd43e5357cabf94b582ffdb2434fb41afc60ad40fce4c60a");
@@ -539,14 +801,39 @@ mod tests {
 
     #[test]
     fn account_ids_follow_the_protocol_rules() {
-        for ok in ["alice.near", "a1", "relay.tg", "my-wallet_2.sub.near", "c108f2eee566da96a4f07dcf7faa5821435ee8a76a03f36d2104ba21749d0e9b"] {
+        for ok in [
+            "alice.near",
+            "a1",
+            "relay.tg",
+            "my-wallet_2.sub.near",
+            "c108f2eee566da96a4f07dcf7faa5821435ee8a76a03f36d2104ba21749d0e9b",
+        ] {
             assert_eq!(parse_account(ok).unwrap(), ok);
         }
-        for bad in ["a", "Alice.near", "alice..near", ".alice", "alice.", "-alice", "alice-", "al--ice", "al_-ice", "alice near", "aliçe.near", &"a".repeat(65)] {
+        for bad in [
+            "a",
+            "Alice.near",
+            "alice..near",
+            ".alice",
+            "alice.",
+            "-alice",
+            "alice-",
+            "al--ice",
+            "al_-ice",
+            "alice near",
+            "aliçe.near",
+            &"a".repeat(65),
+        ] {
             assert!(parse_account(bad).is_err(), "{bad}");
         }
-        assert!(parse_account("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045").unwrap_err().to_string().contains("carte Ethereum"));
-        assert!(is_implicit("c108f2eee566da96a4f07dcf7faa5821435ee8a76a03f36d2104ba21749d0e9b") && !is_implicit("alice.near"));
+        assert!(parse_account("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
+            .unwrap_err()
+            .to_string()
+            .contains("carte Ethereum"));
+        assert!(
+            is_implicit("c108f2eee566da96a4f07dcf7faa5821435ee8a76a03f36d2104ba21749d0e9b")
+                && !is_implicit("alice.near")
+        );
     }
 
     #[test]
@@ -562,18 +849,29 @@ mod tests {
     #[test]
     fn history_entries_come_from_receipts() {
         let me = "5510e2b44cae6eb807e3e0e45d579dda058c274abcba15e5cb84636f5d1ee412";
-        let receipt = |pred: &str, recv: &str, deposit: &str, ok: bool, burnt: &str| {
-            json!({ "execution_outcome": { "outcome": { "tokens_burnt": burnt, "status": if ok { json!({ "SuccessValue": "" }) } else { json!({ "Failure": {} }) } } }, "receipt": { "predecessor_id": pred, "receiver_id": recv, "receipt": { "Action": { "actions": [{ "Transfer": { "deposit": deposit } }] } } } })
-        };
+        let receipt = |pred: &str, recv: &str, deposit: &str, ok: bool, burnt: &str| json!({ "execution_outcome": { "outcome": { "tokens_burnt": burnt, "status": if ok { json!({ "SuccessValue": "" }) } else { json!({ "Failure": {} }) } } }, "receipt": { "predecessor_id": pred, "receiver_id": recv, "receipt": { "Action": { "actions": [{ "Transfer": { "deposit": deposit } }] } } } });
         let incoming = json!({ "transaction": { "hash": "H1", "signer_id": "solver.near" }, "execution_outcome": { "block_timestamp": 1_791_144_173_672_955_600u64, "outcome": { "tokens_burnt": "100" } }, "receipts": [receipt("intents.near", me, "5000", true, "10"), receipt("system", me, "77", true, "0")] });
         let entry = history_entry(&incoming, me).unwrap();
-        assert_eq!((entry.net_amount_minor, entry.kind == history::TxKind::Received, entry.timestamp_unix), (Some(5000), true, Some(1_791_144_173)));
+        assert_eq!(
+            (
+                entry.net_amount_minor,
+                entry.kind == history::TxKind::Received,
+                entry.timestamp_unix
+            ),
+            (Some(5000), true, Some(1_791_144_173))
+        );
         let outgoing = json!({ "transaction": { "hash": "H2", "signer_id": me }, "execution_outcome": { "block_timestamp": 1u64, "outcome": { "tokens_burnt": "100" } }, "receipts": [receipt(me, "alice.near", "3000", true, "20"), receipt("system", me, "50", true, "0")] });
         let entry = history_entry(&outgoing, me).unwrap();
-        assert_eq!((entry.net_amount_minor, entry.kind == history::TxKind::Sent), (Some(-3120), true));
+        assert_eq!(
+            (entry.net_amount_minor, entry.kind == history::TxKind::Sent),
+            (Some(-3120), true)
+        );
         let failed = json!({ "transaction": { "hash": "H3", "signer_id": me }, "execution_outcome": { "block_timestamp": 1u64, "outcome": { "tokens_burnt": "100" } }, "receipts": [receipt(me, "nobody.near", "3000", false, "20")] });
         let entry = history_entry(&failed, me).unwrap();
-        assert!(matches!(entry.status, history::TxStatus::Failed) && entry.net_amount_minor == Some(-120));
+        assert!(
+            matches!(entry.status, history::TxStatus::Failed)
+                && entry.net_amount_minor == Some(-120)
+        );
         let unrelated = json!({ "transaction": { "hash": "H4", "signer_id": "x.near" }, "execution_outcome": { "block_timestamp": 1u64, "outcome": { "tokens_burnt": "1" } }, "receipts": [receipt("x.near", "y.near", "9", true, "0")] });
         assert!(history_entry(&unrelated, me).is_none());
     }
@@ -593,13 +891,23 @@ mod tests {
         };
         // Funded named account (10 testnet NEAR), with "alice"'s key.
         let alice = random_key();
-        let alice_name = format!("ow{}.testnet", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis());
+        let alice_name = format!(
+            "ow{}.testnet",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
+        );
         let created = client()
             .post("https://helper.testnet.near.org/account")
             .json(&json!({ "newAccountId": alice_name, "newAccountPublicKey": format!("ed25519:{}", bs58::encode(alice.verifying_key().to_bytes()).into_string()) }))
             .send()
             .unwrap();
-        assert!(created.status().is_success(), "création du compte de test : {}", created.status());
+        assert!(
+            created.status().is_success(),
+            "création du compte de test : {}",
+            created.status()
+        );
         // Reads at "final" finality: a few seconds behind.
         let wait_for = |account: &str| {
             for _ in 0..15 {
@@ -616,20 +924,60 @@ mod tests {
         // "alice"'s account is a named account: sent with its key, signer = its name.
         let send_from_named = |plan: &NearPlan, to: &str| -> Result<String> {
             let public_key = alice.verifying_key().to_bytes();
-            let access = rpc_ok(&TESTNET, "query", json!({ "request_type": "view_access_key", "finality": "final", "account_id": alice_name, "public_key": format!("ed25519:{}", bs58::encode(public_key).into_string()) }))?;
-            let block_hash: [u8; 32] = bs58::decode(access["block_hash"].as_str().unwrap()).into_vec()?.try_into().unwrap();
-            let tx = Transfer { signer: alice_name.clone(), public_key, nonce: access["nonce"].as_u64().unwrap() + 1, receiver: to.to_string(), block_hash, deposit: plan.amount };
+            let access = rpc_ok(
+                &TESTNET,
+                "query",
+                json!({ "request_type": "view_access_key", "finality": "final", "account_id": alice_name, "public_key": format!("ed25519:{}", bs58::encode(public_key).into_string()) }),
+            )?;
+            let block_hash: [u8; 32] = bs58::decode(access["block_hash"].as_str().unwrap())
+                .into_vec()?
+                .try_into()
+                .unwrap();
+            let tx = Transfer {
+                signer: alice_name.clone(),
+                public_key,
+                nonce: access["nonce"].as_u64().unwrap() + 1,
+                receiver: to.to_string(),
+                block_hash,
+                deposit: plan.amount,
+            };
             submit(&TESTNET, &sign(&tx, &alice))
         };
-        let tiny = plan(&TESTNET, &alice_name, &bob_account, 1_000_000_000_000_000_000_000).unwrap_err().to_string();
+        let tiny = plan(
+            &TESTNET,
+            &alice_name,
+            &bob_account,
+            1_000_000_000_000_000_000_000,
+        )
+        .unwrap_err()
+        .to_string();
         assert!(tiny.contains("au moins 0.00182 NEAR"), "{tiny}");
-        let first = plan(&TESTNET, &alice_name, &bob_account, 50_000_000_000_000_000_000_000).unwrap();
+        let first = plan(
+            &TESTNET,
+            &alice_name,
+            &bob_account,
+            50_000_000_000_000_000_000_000,
+        )
+        .unwrap();
         assert!(first.creates, "{first:?}");
-        println!("création : {} (frais max {} NEAR)", send_from_named(&first, &bob_account).unwrap(), format_near_exact(first.fee));
+        println!(
+            "création : {} (frais max {} NEAR)",
+            send_from_named(&first, &bob_account).unwrap(),
+            format_near_exact(first.fee)
+        );
         wait_for(&bob_account);
-        assert_eq!(balance(&TESTNET, &bob_account).unwrap(), 50_000_000_000_000_000_000_000);
+        assert_eq!(
+            balance(&TESTNET, &bob_account).unwrap(),
+            50_000_000_000_000_000_000_000
+        );
         // Send back from the implicit account (the app's code path).
-        let back = plan(&TESTNET, &bob_account, &alice_name, 10_000_000_000_000_000_000_000).unwrap();
+        let back = plan(
+            &TESTNET,
+            &bob_account,
+            &alice_name,
+            10_000_000_000_000_000_000_000,
+        )
+        .unwrap();
         assert!(!back.creates);
         let sent = send(&TESTNET, &bob, &alice_name, &back).unwrap();
         println!("renvoi : {sent} depuis {bob_account}");
@@ -643,18 +991,41 @@ mod tests {
             }
             std::thread::sleep(std::time::Duration::from_secs(1));
         }
-        assert_eq!(left, expected, "frais réels {} NEAR attendus, retenue max {} NEAR", format_near_exact(back.fee_actual), format_near_exact(back.fee));
+        assert_eq!(
+            left,
+            expected,
+            "frais réels {} NEAR attendus, retenue max {} NEAR",
+            format_near_exact(back.fee_actual),
+            format_near_exact(back.fee)
+        );
         // Tampered signature: refused by the node.
         let access = rpc_ok(&TESTNET, "query", json!({ "request_type": "view_access_key", "finality": "final", "account_id": bob_account, "public_key": format!("ed25519:{}", bs58::encode(bob.verifying_key().to_bytes()).into_string()) })).unwrap();
-        let tx = Transfer { signer: bob_account.clone(), public_key: bob.verifying_key().to_bytes(), nonce: access["nonce"].as_u64().unwrap() + 1, receiver: alice_name.clone(), block_hash: bs58::decode(access["block_hash"].as_str().unwrap()).into_vec().unwrap().try_into().unwrap(), deposit: 1 };
+        let tx = Transfer {
+            signer: bob_account.clone(),
+            public_key: bob.verifying_key().to_bytes(),
+            nonce: access["nonce"].as_u64().unwrap() + 1,
+            receiver: alice_name.clone(),
+            block_hash: bs58::decode(access["block_hash"].as_str().unwrap())
+                .into_vec()
+                .unwrap()
+                .try_into()
+                .unwrap(),
+            deposit: 1,
+        };
         let mut signed = sign(&tx, &bob);
         let last = signed.bytes.len() - 1;
         signed.bytes[last] ^= 1;
         let error = submit(&TESTNET, &signed).unwrap_err().to_string();
         println!("{error}");
-        assert!(error.contains("InvalidSignature") || error.contains("INVALID_TRANSACTION"), "{error}");
+        assert!(
+            error.contains("InvalidSignature") || error.contains("INVALID_TRANSACTION"),
+            "{error}"
+        );
         // Named account that does not exist: refused before anything is signed.
-        assert!(plan(&TESTNET, &bob_account, "personne-ici-123.testnet", 1).unwrap_err().to_string().contains("n'existe pas"));
+        assert!(plan(&TESTNET, &bob_account, "personne-ici-123.testnet", 1)
+            .unwrap_err()
+            .to_string()
+            .contains("n'existe pas"));
         // History (the index follows the network within a few seconds).
         let mut found = Vec::new();
         for _ in 0..10 {
@@ -664,11 +1035,23 @@ mod tests {
             }
             std::thread::sleep(std::time::Duration::from_secs(3));
         }
-        assert!(found.iter().any(|e| e.kind == history::TxKind::Received && e.net_amount_minor == Some(50_000_000_000_000_000_000_000)), "historique : {}", found.len());
-        assert!(found.iter().any(|e| e.id == sent && e.net_amount_minor.is_some_and(|n| n < -10_000_000_000_000_000_000_000)));
+        assert!(
+            found.iter().any(|e| e.kind == history::TxKind::Received
+                && e.net_amount_minor == Some(50_000_000_000_000_000_000_000)),
+            "historique : {}",
+            found.len()
+        );
+        assert!(found.iter().any(|e| e.id == sent
+            && e.net_amount_minor
+                .is_some_and(|n| n < -10_000_000_000_000_000_000_000)));
         // Mainnet: reads.
         let main = costs(&MAINNET).unwrap();
-        println!("principal : gaz {} yocto, frais virement {} NEAR, création {} NEAR", main.gas_price, format_near_exact(main.fee(false).unwrap().0), format_near_exact(main.fee(true).unwrap().0));
+        println!(
+            "principal : gaz {} yocto, frais virement {} NEAR, création {} NEAR",
+            main.gas_price,
+            format_near_exact(main.fee(false).unwrap().0),
+            format_near_exact(main.fee(true).unwrap().0)
+        );
         assert!(balance(&MAINNET, "relay.tg").unwrap() > 0);
     }
 }

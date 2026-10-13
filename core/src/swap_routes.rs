@@ -43,20 +43,42 @@ impl Protocol {
         match self {
             Protocol::Thorchain => Some(&thorchain_rpc::THORCHAIN),
             Protocol::Maya => Some(&thorchain_rpc::MAYA),
-            Protocol::Jupiter | Protocol::Cow | Protocol::Lifi | Protocol::Swapkit | Protocol::Moonpay => None,
+            Protocol::Jupiter
+            | Protocol::Cow
+            | Protocol::Lifi
+            | Protocol::Swapkit
+            | Protocol::Moonpay => None,
         }
     }
 }
 
 /// Cryptos that can be swapped through Jupiter (see `api::send_jupiter_swap`).
 const JUPITER: [SwapAsset; 6] = [
-    SwapAsset { coin: "sol", network: "sol_mainnet" },
-    SwapAsset { coin: "usdc", network: "sol_mainnet" },
-    SwapAsset { coin: "usdt", network: "sol_mainnet" },
-    SwapAsset { coin: "eurc", network: "sol_mainnet" },
-    SwapAsset { coin: "render", network: "sol_mainnet" },
+    SwapAsset {
+        coin: "sol",
+        network: "sol_mainnet",
+    },
+    SwapAsset {
+        coin: "usdc",
+        network: "sol_mainnet",
+    },
+    SwapAsset {
+        coin: "usdt",
+        network: "sol_mainnet",
+    },
+    SwapAsset {
+        coin: "eurc",
+        network: "sol_mainnet",
+    },
+    SwapAsset {
+        coin: "render",
+        network: "sol_mainnet",
+    },
     // Liquid staking: SOL ⇄ JitoSOL.
-    SwapAsset { coin: "jitosol", network: "sol_mainnet" },
+    SwapAsset {
+        coin: "jitosol",
+        network: "sol_mainnet",
+    },
 ];
 
 /// Swappable through Jupiter: the list above, plus the tokenized xStocks shares
@@ -67,7 +89,13 @@ fn jupiter_supports(asset: &SwapAsset) -> bool {
 
 fn jupiter_assets() -> impl Iterator<Item = SwapAsset> {
     JUPITER.into_iter().chain(
-        tokens::TOKENS.iter().filter(|t| tokens::is_spl2022(t.id)).map(|t| SwapAsset { coin: t.id, network: "sol_mainnet" }),
+        tokens::TOKENS
+            .iter()
+            .filter(|t| tokens::is_spl2022(t.id))
+            .map(|t| SwapAsset {
+                coin: t.id,
+                network: "sol_mainnet",
+            }),
     )
 }
 
@@ -80,7 +108,9 @@ const BUY_ONLY: [&str; 1] = ["doge_mainnet"];
 /// affiliate short name, there is simply no fee for the app (see
 /// `thorchain_rpc::CrossChain::charges_affiliate`).
 fn links(protocol: &thorchain_rpc::CrossChain, from: SwapAsset, to: SwapAsset) -> bool {
-    !BUY_ONLY.contains(&from.network) && protocol.asset(from.coin, from.network).is_some() && protocol.asset(to.coin, to.network).is_some()
+    !BUY_ONLY.contains(&from.network)
+        && protocol.asset(from.coin, from.network).is_some()
+        && protocol.asset(to.coin, to.network).is_some()
 }
 
 /// Liquid staking (SOL ⇄ JitoSOL, ETH ⇄ stETH): the app's fees are in line with
@@ -95,7 +125,10 @@ pub const STAKING_EXIT_FEE_BPS: u32 = 10;
 /// Crypto and network.
 type CoinOn = (&'static str, &'static str);
 
-const LIQUID_STAKING: [(CoinOn, CoinOn); 2] = [(("sol", "sol_mainnet"), ("jitosol", "sol_mainnet")), (("evm", "evm_mainnet"), ("steth", "evm_mainnet"))];
+const LIQUID_STAKING: [(CoinOn, CoinOn); 2] = [
+    (("sol", "sol_mainnet"), ("jitosol", "sol_mainnet")),
+    (("evm", "evm_mainnet"), ("steth", "evm_mainnet")),
+];
 
 /// The app's fee for a liquid staking pair (`None`: any other pair).
 pub fn staking_fee_bps(from: (&str, &str), to: (&str, &str)) -> Option<u32> {
@@ -115,7 +148,10 @@ pub fn staking_fee_bps(from: (&str, &str), to: (&str, &str)) -> Option<u32> {
 /// exist. Jupiter: without a fee account for the pair, the swap is fee-free (stated in
 /// its confirmation dialog).
 pub fn affiliate_fee_bps(protocol: Protocol, from: SwapAsset, to: SwapAsset) -> u32 {
-    if let (Some(bps), Protocol::Jupiter | Protocol::Cow) = (staking_fee_bps((from.coin, from.network), (to.coin, to.network)), protocol) {
+    if let (Some(bps), Protocol::Jupiter | Protocol::Cow) = (
+        staking_fee_bps((from.coin, from.network), (to.coin, to.network)),
+        protocol,
+    ) {
         return bps;
     }
     // Buying an xStock through Jupiter: the fee can only be taken on the xStock
@@ -203,7 +239,10 @@ pub fn direct_all(from: SwapAsset, to: SwapAsset) -> Vec<Protocol> {
         all.push(Protocol::Maya);
     }
     // Liquid staking: Jupiter and CoW only (staking fee, see `staking_fee_bps`).
-    if lifi_enabled() && staking_fee_bps((from.coin, from.network), (to.coin, to.network)).is_none() && lifi::links((from.coin, from.network), (to.coin, to.network)) {
+    if lifi_enabled()
+        && staking_fee_bps((from.coin, from.network), (to.coin, to.network)).is_none()
+        && lifi::links((from.coin, from.network), (to.coin, to.network))
+    {
         if from.network == "btc_mainnet" && !thorchain_rpc::THORCHAIN.charges_affiliate("BTC.BTC") {
             all.insert(0, Protocol::Lifi);
         } else {
@@ -218,7 +257,10 @@ pub fn direct_all(from: SwapAsset, to: SwapAsset) -> Vec<Protocol> {
     // network); otherwise only as a last resort, if no other provider connects the
     // pair (product decision, 2026-10-07).
     let (from_pair, to_pair) = ((from.coin, from.network), (to.coin, to.network));
-    if moonpay_enabled() && moonpay_trade::links(from_pair, to_pair) && (all.is_empty() || moonpay_trade::verifiable(from_pair, to_pair)) {
+    if moonpay_enabled()
+        && moonpay_trade::links(from_pair, to_pair)
+        && (all.is_empty() || moonpay_trade::verifiable(from_pair, to_pair))
+    {
         all.push(Protocol::Moonpay);
     }
     all
@@ -232,12 +274,36 @@ pub fn direct(from: SwapAsset, to: SwapAsset) -> Option<Protocol> {
 /// Every crypto that at least one protocol can swap.
 pub fn assets() -> Vec<SwapAsset> {
     let mut all: Vec<SwapAsset> = Vec::new();
-    let cross_chain = thorchain_rpc::ASSETS.iter().chain(thorchain_rpc::MAYA_ASSETS.iter()).map(|a| SwapAsset { coin: a.coin, network: a.network });
-    let cow_assets = cow::tradable().into_iter().filter(|_| cow_enabled()).map(|(coin, network)| SwapAsset { coin, network });
-    let lifi_assets = lifi::tradable().into_iter().filter(|_| lifi_enabled()).map(|(coin, network)| SwapAsset { coin, network });
-    let swapkit_assets = swapkit::tradable().into_iter().filter(|_| swapkit_enabled()).map(|(coin, network)| SwapAsset { coin, network });
-    let moonpay_assets = moonpay_trade::tradable().into_iter().filter(|_| moonpay_enabled()).map(|(coin, network)| SwapAsset { coin, network });
-    for asset in cross_chain.chain(jupiter_assets()).chain(cow_assets).chain(lifi_assets).chain(swapkit_assets).chain(moonpay_assets) {
+    let cross_chain = thorchain_rpc::ASSETS
+        .iter()
+        .chain(thorchain_rpc::MAYA_ASSETS.iter())
+        .map(|a| SwapAsset {
+            coin: a.coin,
+            network: a.network,
+        });
+    let cow_assets = cow::tradable()
+        .into_iter()
+        .filter(|_| cow_enabled())
+        .map(|(coin, network)| SwapAsset { coin, network });
+    let lifi_assets = lifi::tradable()
+        .into_iter()
+        .filter(|_| lifi_enabled())
+        .map(|(coin, network)| SwapAsset { coin, network });
+    let swapkit_assets = swapkit::tradable()
+        .into_iter()
+        .filter(|_| swapkit_enabled())
+        .map(|(coin, network)| SwapAsset { coin, network });
+    let moonpay_assets = moonpay_trade::tradable()
+        .into_iter()
+        .filter(|_| moonpay_enabled())
+        .map(|(coin, network)| SwapAsset { coin, network });
+    for asset in cross_chain
+        .chain(jupiter_assets())
+        .chain(cow_assets)
+        .chain(lifi_assets)
+        .chain(swapkit_assets)
+        .chain(moonpay_assets)
+    {
         if !all.contains(&asset) {
             all.push(asset);
         }
@@ -284,7 +350,13 @@ fn route_among(all: &[SwapAsset], from: SwapAsset, to: SwapAsset) -> Option<Rout
         .filter_map(|&via| {
             let first = direct(from, via)?;
             let second = direct(via, to)?;
-            Some((via_rank(via, from, to), Route { first, via: Some((via, second)) }))
+            Some((
+                via_rank(via, from, to),
+                Route {
+                    first,
+                    via: Some((via, second)),
+                },
+            ))
         })
         .min_by_key(|(rank, _)| *rank)
         .map(|(_, route)| route)
@@ -299,13 +371,21 @@ pub fn route(from: SwapAsset, to: SwapAsset) -> Option<Route> {
 /// Every possible pair, with its route.
 pub fn routes() -> Vec<(SwapAsset, SwapAsset, Route)> {
     let all = assets();
-    all.iter().flat_map(|&from| all.iter().filter_map(|&to| route_among(&all, from, to).map(|r| (from, to, r))).collect::<Vec<_>>()).collect()
+    all.iter()
+        .flat_map(|&from| {
+            all.iter()
+                .filter_map(|&to| route_among(&all, from, to).map(|r| (from, to, r)))
+                .collect::<Vec<_>>()
+        })
+        .collect()
 }
 
 /// The app crypto designated by the UI (identifier and network), if it can be
 /// swapped.
 pub fn find(coin: &str, network: &str) -> Option<SwapAsset> {
-    assets().into_iter().find(|a| a.coin == coin && a.network == network)
+    assets()
+        .into_iter()
+        .find(|a| a.coin == coin && a.network == network)
 }
 
 #[cfg(test)]
@@ -323,17 +403,52 @@ mod tests {
     #[test]
     fn moonpay_is_offered_last_or_as_last_resort() {
         let a = |coin, network| find(coin, network).unwrap_or(SwapAsset { coin, network });
-        let (eth, usdc, btc, xmr) = (a("evm", "evm_mainnet"), a("usdc", "evm_mainnet"), a("btc", "btc_mainnet"), SwapAsset { coin: "xmr", network: "xmr_mainnet" });
-        assert!(!direct_all(eth, usdc).contains(&Protocol::Moonpay), "sans clé : jamais");
+        let (eth, usdc, btc, xmr) = (
+            a("evm", "evm_mainnet"),
+            a("usdc", "evm_mainnet"),
+            a("btc", "btc_mainnet"),
+            SwapAsset {
+                coin: "xmr",
+                network: "xmr_mainnet",
+            },
+        );
+        assert!(
+            !direct_all(eth, usdc).contains(&Protocol::Moonpay),
+            "sans clé : jamais"
+        );
         MOONPAY_IN_TESTS.with(|m| m.set(true));
         let same_network = direct_all(eth, usdc);
-        assert_eq!(same_network.last(), Some(&Protocol::Moonpay), "même réseau EVM : une option de plus, en dernier");
+        assert_eq!(
+            same_network.last(),
+            Some(&Protocol::Moonpay),
+            "même réseau EVM : une option de plus, en dernier"
+        );
         assert!(same_network.len() > 1);
-        assert!(!direct_all(eth, btc).contains(&Protocol::Moonpay), "THORChain relie ETH et BTC : pas de dépôt invérifiable");
-        assert_eq!(direct_all(eth, xmr), vec![Protocol::Moonpay], "XMR : aucun autre fournisseur, dernier recours");
-        assert_eq!(route(eth, xmr), Some(Route { first: Protocol::Moonpay, via: None }));
-        assert!(direct_all(xmr, eth).is_empty(), "pas de dépôt depuis Monero");
-        assert_eq!(affiliate_fee_bps(Protocol::Moonpay, eth, xmr), 110, "0,80 % pour l'app + 0,30 % pour MoonPay");
+        assert!(
+            !direct_all(eth, btc).contains(&Protocol::Moonpay),
+            "THORChain relie ETH et BTC : pas de dépôt invérifiable"
+        );
+        assert_eq!(
+            direct_all(eth, xmr),
+            vec![Protocol::Moonpay],
+            "XMR : aucun autre fournisseur, dernier recours"
+        );
+        assert_eq!(
+            route(eth, xmr),
+            Some(Route {
+                first: Protocol::Moonpay,
+                via: None
+            })
+        );
+        assert!(
+            direct_all(xmr, eth).is_empty(),
+            "pas de dépôt depuis Monero"
+        );
+        assert_eq!(
+            affiliate_fee_bps(Protocol::Moonpay, eth, xmr),
+            110,
+            "0,80 % pour l'app + 0,30 % pour MoonPay"
+        );
         MOONPAY_IN_TESTS.with(|m| m.set(false));
     }
 
@@ -341,17 +456,39 @@ mod tests {
     /// not offered; elsewhere, the usual fees.
     #[test]
     fn liquid_staking_has_its_own_fees() {
-        let sol = SwapAsset { coin: "sol", network: "sol_mainnet" };
-        let jitosol = SwapAsset { coin: "jitosol", network: "sol_mainnet" };
-        let eth = SwapAsset { coin: "evm", network: "evm_mainnet" };
-        let steth = SwapAsset { coin: "steth", network: "evm_mainnet" };
-        let usdc = SwapAsset { coin: "usdc", network: "sol_mainnet" };
+        let sol = SwapAsset {
+            coin: "sol",
+            network: "sol_mainnet",
+        };
+        let jitosol = SwapAsset {
+            coin: "jitosol",
+            network: "sol_mainnet",
+        };
+        let eth = SwapAsset {
+            coin: "evm",
+            network: "evm_mainnet",
+        };
+        let steth = SwapAsset {
+            coin: "steth",
+            network: "evm_mainnet",
+        };
+        let usdc = SwapAsset {
+            coin: "usdc",
+            network: "sol_mainnet",
+        };
         assert_eq!(affiliate_fee_bps(Protocol::Jupiter, sol, jitosol), 30);
         assert_eq!(affiliate_fee_bps(Protocol::Jupiter, jitosol, sol), 10);
         assert_eq!(affiliate_fee_bps(Protocol::Cow, eth, steth), 30);
         assert_eq!(affiliate_fee_bps(Protocol::Cow, steth, eth), 10);
-        assert_eq!(affiliate_fee_bps(Protocol::Jupiter, sol, usdc), crate::jupiter_rpc::AFFILIATE_FEE_BPS);
-        assert_eq!(affiliate_fee_bps(Protocol::Jupiter, jitosol, usdc), crate::jupiter_rpc::AFFILIATE_FEE_BPS, "JitoSOL → USDC : un échange ordinaire");
+        assert_eq!(
+            affiliate_fee_bps(Protocol::Jupiter, sol, usdc),
+            crate::jupiter_rpc::AFFILIATE_FEE_BPS
+        );
+        assert_eq!(
+            affiliate_fee_bps(Protocol::Jupiter, jitosol, usdc),
+            crate::jupiter_rpc::AFFILIATE_FEE_BPS,
+            "JitoSOL → USDC : un échange ordinaire"
+        );
         assert!(!direct_all(sol, jitosol).contains(&Protocol::Lifi));
         assert_eq!(direct_all(sol, jitosol).first(), Some(&Protocol::Jupiter));
     }
@@ -365,20 +502,62 @@ mod tests {
     /// THORChain pool.
     #[test]
     fn routes_pick_the_right_protocol() {
-        assert_eq!(direct(a("sol", "sol_mainnet"), a("usdc", "sol_mainnet")), Some(Protocol::Jupiter));
-        assert_eq!(direct(a("usdc", "evm_mainnet"), a("bnb", "bsc_mainnet")), Some(Protocol::Thorchain));
-        let same_network = if cow_enabled() { Protocol::Cow } else { Protocol::Thorchain };
-        assert_eq!(direct(a("evm", "base_mainnet"), a("vvv", "base_mainnet")), Some(same_network), "même réseau : CoW une fois activé");
+        assert_eq!(
+            direct(a("sol", "sol_mainnet"), a("usdc", "sol_mainnet")),
+            Some(Protocol::Jupiter)
+        );
+        assert_eq!(
+            direct(a("usdc", "evm_mainnet"), a("bnb", "bsc_mainnet")),
+            Some(Protocol::Thorchain)
+        );
+        let same_network = if cow_enabled() {
+            Protocol::Cow
+        } else {
+            Protocol::Thorchain
+        };
+        assert_eq!(
+            direct(a("evm", "base_mainnet"), a("vvv", "base_mainnet")),
+            Some(same_network),
+            "même réseau : CoW une fois activé"
+        );
         // Without a native route (no Solana USDC pool on THORChain), LI.FI once enabled.
         let lifi_or_none = lifi_enabled().then_some(Protocol::Lifi);
-        assert_eq!(direct(a("usdc", "sol_mainnet"), a("evm", "evm_mainnet")), lifi_or_none, "pas de pool USDC Solana sur THORChain");
-        assert_eq!(direct(a("evm", "evm_mainnet"), a("evm", "evm_mainnet")), None);
-        assert_eq!(direct(a("evm", "arbitrum_mainnet"), a("btc", "btc_mainnet")), Some(Protocol::Maya), "Arbitrum : via Maya");
-        assert_eq!(direct(a("usdt", "evm_mainnet"), a("usdc", "arbitrum_mainnet")), Some(Protocol::Maya));
-        assert_eq!(direct(a("evm", "evm_mainnet"), a("btc", "btc_mainnet")), Some(Protocol::Thorchain), "THORChain avant Maya");
-        assert_eq!(direct(a("evm", "arbitrum_mainnet"), a("bnb", "bsc_mainnet")), lifi_or_none, "aucun protocole natif ne relie les deux");
-        assert_eq!(find("usdc", "base_mainnet"), Some(a("usdc", "base_mainnet")));
-        assert!(find("hype", "hyperevm_mainnet").is_none(), "HyperEVM retiré de l'app");
+        assert_eq!(
+            direct(a("usdc", "sol_mainnet"), a("evm", "evm_mainnet")),
+            lifi_or_none,
+            "pas de pool USDC Solana sur THORChain"
+        );
+        assert_eq!(
+            direct(a("evm", "evm_mainnet"), a("evm", "evm_mainnet")),
+            None
+        );
+        assert_eq!(
+            direct(a("evm", "arbitrum_mainnet"), a("btc", "btc_mainnet")),
+            Some(Protocol::Maya),
+            "Arbitrum : via Maya"
+        );
+        assert_eq!(
+            direct(a("usdt", "evm_mainnet"), a("usdc", "arbitrum_mainnet")),
+            Some(Protocol::Maya)
+        );
+        assert_eq!(
+            direct(a("evm", "evm_mainnet"), a("btc", "btc_mainnet")),
+            Some(Protocol::Thorchain),
+            "THORChain avant Maya"
+        );
+        assert_eq!(
+            direct(a("evm", "arbitrum_mainnet"), a("bnb", "bsc_mainnet")),
+            lifi_or_none,
+            "aucun protocole natif ne relie les deux"
+        );
+        assert_eq!(
+            find("usdc", "base_mainnet"),
+            Some(a("usdc", "base_mainnet"))
+        );
+        assert!(
+            find("hype", "hyperevm_mainnet").is_none(),
+            "HyperEVM retiré de l'app"
+        );
     }
 
     /// CoW: same EVM network only (native coin included, through EthFlow), and only
@@ -389,35 +568,93 @@ mod tests {
     #[test]
     fn xstocks_are_swapped_through_jupiter_only() {
         let (usdc, tsla, sol) = (
-            SwapAsset { coin: "usdc", network: "sol_mainnet" },
-            SwapAsset { coin: "tslax", network: "sol_mainnet" },
-            SwapAsset { coin: "sol", network: "sol_mainnet" },
+            SwapAsset {
+                coin: "usdc",
+                network: "sol_mainnet",
+            },
+            SwapAsset {
+                coin: "tslax",
+                network: "sol_mainnet",
+            },
+            SwapAsset {
+                coin: "sol",
+                network: "sol_mainnet",
+            },
         );
         assert_eq!(direct_all(usdc, tsla), vec![Protocol::Jupiter]);
-        assert_eq!(affiliate_fee_bps(Protocol::Jupiter, usdc, tsla), 0, "achat : sans frais");
-        assert_eq!(affiliate_fee_bps(Protocol::Jupiter, tsla, usdc), crate::jupiter_rpc::AFFILIATE_FEE_BPS, "vente : frais en USDC");
+        assert_eq!(
+            affiliate_fee_bps(Protocol::Jupiter, usdc, tsla),
+            0,
+            "achat : sans frais"
+        );
+        assert_eq!(
+            affiliate_fee_bps(Protocol::Jupiter, tsla, usdc),
+            crate::jupiter_rpc::AFFILIATE_FEE_BPS,
+            "vente : frais en USDC"
+        );
         assert_eq!(direct_all(tsla, sol), vec![Protocol::Jupiter]);
-        assert!(assets().contains(&tsla) && assets().contains(&SwapAsset { coin: "spyx", network: "sol_mainnet" }));
+        assert!(
+            assets().contains(&tsla)
+                && assets().contains(&SwapAsset {
+                    coin: "spyx",
+                    network: "sol_mainnet"
+                })
+        );
         assert!(lifi::token("tslax", "sol_mainnet").is_none());
         assert!(moonpay_trade::asset("tslax", "sol_mainnet").is_none());
         assert!(cow::token("tslax", "sol_mainnet").is_none());
-        assert!(direct_all(SwapAsset { coin: "evm", network: "evm_mainnet" }, tsla).is_empty(), "pas de route directe depuis un autre réseau");
+        assert!(
+            direct_all(
+                SwapAsset {
+                    coin: "evm",
+                    network: "evm_mainnet"
+                },
+                tsla
+            )
+            .is_empty(),
+            "pas de route directe depuis un autre réseau"
+        );
     }
 
     #[test]
     fn cow_links_same_network_tokens() {
-        assert!(cow_links(a("link", "evm_mainnet"), a("usdc", "evm_mainnet")));
-        assert!(cow_links(a("usdc", "arbitrum_mainnet"), a("evm", "arbitrum_mainnet")));
-        assert!(cow_links(a("aster", "bsc_mainnet"), a("bnb", "bsc_mainnet")));
-        assert!(cow_links(a("evm", "evm_mainnet"), a("usdc", "evm_mainnet")), "vente native : EthFlow");
-        assert!(cow_links(a("bnb", "bsc_mainnet"), a("aster", "bsc_mainnet")));
-        assert!(!cow_links(a("link", "evm_mainnet"), a("usdc", "base_mainnet")), "deux réseaux");
-        assert!(!cow_links(a("usdc", "sol_mainnet"), a("usdt", "sol_mainnet")));
+        assert!(cow_links(
+            a("link", "evm_mainnet"),
+            a("usdc", "evm_mainnet")
+        ));
+        assert!(cow_links(
+            a("usdc", "arbitrum_mainnet"),
+            a("evm", "arbitrum_mainnet")
+        ));
+        assert!(cow_links(
+            a("aster", "bsc_mainnet"),
+            a("bnb", "bsc_mainnet")
+        ));
+        assert!(
+            cow_links(a("evm", "evm_mainnet"), a("usdc", "evm_mainnet")),
+            "vente native : EthFlow"
+        );
+        assert!(cow_links(
+            a("bnb", "bsc_mainnet"),
+            a("aster", "bsc_mainnet")
+        ));
+        assert!(
+            !cow_links(a("link", "evm_mainnet"), a("usdc", "base_mainnet")),
+            "deux réseaux"
+        );
+        assert!(!cow_links(
+            a("usdc", "sol_mainnet"),
+            a("usdt", "sol_mainnet")
+        ));
         let link_usdc = direct(a("link", "evm_mainnet"), a("usdc", "evm_mainnet"));
         assert_eq!(link_usdc == Some(Protocol::Cow), cow_enabled());
         let eth_usdc = direct(a("evm", "evm_mainnet"), a("usdc", "evm_mainnet"));
         if cow_enabled() {
-            assert_eq!(direct(a("usdc", "evm_mainnet"), a("evm", "evm_mainnet")), Some(Protocol::Cow), "CoW avant THORChain sur un même réseau");
+            assert_eq!(
+                direct(a("usdc", "evm_mainnet"), a("evm", "evm_mainnet")),
+                Some(Protocol::Cow),
+                "CoW avant THORChain sur un même réseau"
+            );
             assert_eq!(eth_usdc, Some(Protocol::Cow));
         } else {
             assert!(link_usdc.is_none());
@@ -442,12 +679,20 @@ mod tests {
             }
         }
         assert_eq!(direct_all(btc, eth), expected);
-        let free = u32::from(thorchain_rpc::THORCHAIN.charges_affiliate("BTC.BTC")) * thorchain_rpc::AFFILIATE_FEE_BPS;
+        let free = u32::from(thorchain_rpc::THORCHAIN.charges_affiliate("BTC.BTC"))
+            * thorchain_rpc::AFFILIATE_FEE_BPS;
         assert_eq!(affiliate_fee_bps(Protocol::Thorchain, btc, eth), free);
-        assert_eq!(affiliate_fee_bps(Protocol::Maya, btc, eth), 0, "Maya : pas de MAYAName");
+        assert_eq!(
+            affiliate_fee_bps(Protocol::Maya, btc, eth),
+            0,
+            "Maya : pas de MAYAName"
+        );
         assert_eq!(affiliate_fee_bps(Protocol::Thorchain, eth, btc), 80);
         assert_eq!(affiliate_fee_bps(Protocol::Lifi, btc, eth), 80);
-        assert_eq!(affiliate_fee_bps(Protocol::Cow, eth, a("usdc", "evm_mainnet")), 100);
+        assert_eq!(
+            affiliate_fee_bps(Protocol::Cow, eth, a("usdc", "evm_mainnet")),
+            100
+        );
         // Every crypto the app swaps can be reached from Bitcoin.
         let all = assets();
         for to in all.iter().filter(|t| **t != btc) {
@@ -460,20 +705,48 @@ mod tests {
     /// offered last (except from Bitcoin), once the integrator name is set.
     #[test]
     fn lifi_links_between_ecosystems() {
-        assert!(lifi::links(("render", "sol_mainnet"), ("link", "evm_mainnet")), "le cas qui manquait");
-        assert!(lifi::links(("link", "evm_mainnet"), ("render", "sol_mainnet")));
+        assert!(
+            lifi::links(("render", "sol_mainnet"), ("link", "evm_mainnet")),
+            "le cas qui manquait"
+        );
+        assert!(lifi::links(
+            ("link", "evm_mainnet"),
+            ("render", "sol_mainnet")
+        ));
         assert!(lifi::links(("evm", "evm_mainnet"), ("btc", "btc_mainnet")));
-        assert!(lifi::links(("avax", "avax_mainnet"), ("usdc", "arbitrum_mainnet")), "AVAX vendu vers un réseau EVM");
-        assert!(!lifi::links(("avax", "avax_mainnet"), ("sol", "sol_mainnet")), "Avalanche ne simule pas : pas vers Solana");
-        assert!(!lifi::links(("avax", "avax_mainnet"), ("btc", "btc_mainnet")));
-        assert!(lifi::links(("btc", "btc_mainnet"), ("evm", "evm_mainnet")), "depuis Bitcoin : PSBT vérifiée");
+        assert!(
+            lifi::links(("avax", "avax_mainnet"), ("usdc", "arbitrum_mainnet")),
+            "AVAX vendu vers un réseau EVM"
+        );
+        assert!(
+            !lifi::links(("avax", "avax_mainnet"), ("sol", "sol_mainnet")),
+            "Avalanche ne simule pas : pas vers Solana"
+        );
+        assert!(!lifi::links(
+            ("avax", "avax_mainnet"),
+            ("btc", "btc_mainnet")
+        ));
+        assert!(
+            lifi::links(("btc", "btc_mainnet"), ("evm", "evm_mainnet")),
+            "depuis Bitcoin : PSBT vérifiée"
+        );
         assert!(lifi::links(("btc", "btc_mainnet"), ("sol", "sol_mainnet")));
-        assert!(!lifi::links(("zec", "zec_mainnet"), ("evm", "evm_mainnet")), "ZEC inconnu de LI.FI");
-        assert!(!lifi::links(("link", "evm_mainnet"), ("usdc", "evm_mainnet")), "même réseau : CoW");
+        assert!(
+            !lifi::links(("zec", "zec_mainnet"), ("evm", "evm_mainnet")),
+            "ZEC inconnu de LI.FI"
+        );
+        assert!(
+            !lifi::links(("link", "evm_mainnet"), ("usdc", "evm_mainnet")),
+            "même réseau : CoW"
+        );
         let render_link = direct_all(a("render", "sol_mainnet"), a("link", "evm_mainnet"));
         assert_eq!(render_link.contains(&Protocol::Lifi), lifi_enabled());
         if lifi_enabled() {
-            assert_eq!(direct_all(a("evm", "evm_mainnet"), a("btc", "btc_mainnet")).last(), Some(&Protocol::Lifi), "LI.FI en dernier");
+            assert_eq!(
+                direct_all(a("evm", "evm_mainnet"), a("btc", "btc_mainnet")).last(),
+                Some(&Protocol::Lifi),
+                "LI.FI en dernier"
+            );
         }
     }
 
@@ -485,12 +758,20 @@ mod tests {
         let doge = a("doge", "doge_mainnet");
         let eth = a("evm", "evm_mainnet");
         assert_eq!(direct(eth, doge), Some(Protocol::Thorchain));
-        assert_eq!(direct(a("btc", "btc_mainnet"), doge), Some(Protocol::Thorchain));
-        assert!(direct_all(doge, eth).is_empty(), "départ DOGE pas encore construit");
+        assert_eq!(
+            direct(a("btc", "btc_mainnet"), doge),
+            Some(Protocol::Thorchain)
+        );
+        assert!(
+            direct_all(doge, eth).is_empty(),
+            "départ DOGE pas encore construit"
+        );
         for to in assets().into_iter().filter(|t| *t != doge) {
             assert!(route(doge, to).is_none(), "route depuis DOGE : {to:?}");
             if let Some(route) = route(to, doge) {
-                assert!(route.via.is_none_or(|(via, _)| via.network != "doge_mainnet"));
+                assert!(route
+                    .via
+                    .is_none_or(|(via, _)| via.network != "doge_mainnet"));
             }
         }
     }
@@ -500,16 +781,28 @@ mod tests {
         let zec = a("zec", "zec_mainnet");
         let eth = a("evm", "evm_mainnet");
         assert_eq!(direct(eth, zec), Some(Protocol::Maya));
-        assert_eq!(direct(a("usdc", "arbitrum_mainnet"), zec), Some(Protocol::Maya));
+        assert_eq!(
+            direct(a("usdc", "arbitrum_mainnet"), zec),
+            Some(Protocol::Maya)
+        );
         assert_eq!(direct_all(zec, eth), vec![Protocol::Maya]);
-        assert_eq!(direct_all(zec, a("btc", "btc_mainnet")), vec![Protocol::Maya]);
+        assert_eq!(
+            direct_all(zec, a("btc", "btc_mainnet")),
+            vec![Protocol::Maya]
+        );
         assert_eq!(affiliate_fee_bps(Protocol::Maya, zec, eth), 0);
         let to_sol = route(zec, a("sol", "sol_mainnet")).expect("ZEC → SOL en deux étapes");
         let (via, _) = to_sol.via.expect("deux étapes");
-        assert!(!matches!(via.network, "btc_mainnet" | "zec_mainnet"), "intermédiaire lent : {via:?}");
+        assert!(
+            !matches!(via.network, "btc_mainnet" | "zec_mainnet"),
+            "intermédiaire lent : {via:?}"
+        );
         // Tokenized shares: bought from Solana (Jupiter); from ZEC it would take three
         // steps (ZEC → ETH → SOL → xStock).
-        for to in assets().into_iter().filter(|t| *t != zec && !tokens::is_spl2022(t.coin)) {
+        for to in assets()
+            .into_iter()
+            .filter(|t| *t != zec && !tokens::is_spl2022(t.coin))
+        {
             assert!(route(zec, to).is_some(), "aucune route ZEC → {to:?}");
         }
     }
@@ -525,11 +818,21 @@ mod tests {
         }
         assert_eq!(direct_all(eth, btc), eth_btc);
         let usdc = a("usdc", "evm_mainnet");
-        let expected = if cow_enabled() { vec![Protocol::Cow, Protocol::Thorchain, Protocol::Maya] } else { vec![Protocol::Thorchain, Protocol::Maya] };
+        let expected = if cow_enabled() {
+            vec![Protocol::Cow, Protocol::Thorchain, Protocol::Maya]
+        } else {
+            vec![Protocol::Thorchain, Protocol::Maya]
+        };
         assert_eq!(direct_all(eth, usdc), expected);
         assert!(direct_all(eth, eth).is_empty());
-        assert_eq!(direct_all(a("sol", "sol_mainnet"), a("render", "sol_mainnet")), vec![Protocol::Jupiter]);
-        assert_eq!(serde_json::from_str::<Protocol>("\"maya\"").unwrap(), Protocol::Maya);
+        assert_eq!(
+            direct_all(a("sol", "sol_mainnet"), a("render", "sol_mainnet")),
+            vec![Protocol::Jupiter]
+        );
+        assert_eq!(
+            serde_json::from_str::<Protocol>("\"maya\"").unwrap(),
+            Protocol::Maya
+        );
     }
 
     /// Two steps when nothing connects directly, preferably through a network's native
@@ -538,23 +841,56 @@ mod tests {
     fn two_step_routes_go_through_a_network_currency() {
         let sol = a("sol", "sol_mainnet");
         let eth = a("evm", "evm_mainnet");
-        assert_eq!(route(eth, a("btc", "btc_mainnet")), Some(Route { first: Protocol::Thorchain, via: None }));
+        assert_eq!(
+            route(eth, a("btc", "btc_mainnet")),
+            Some(Route {
+                first: Protocol::Thorchain,
+                via: None
+            })
+        );
         if lifi_enabled() {
             // Direct through LI.FI.
-            let lifi = Some(Route { first: Protocol::Lifi, via: None });
+            let lifi = Some(Route {
+                first: Protocol::Lifi,
+                via: None,
+            });
             assert_eq!(route(a("render", "sol_mainnet"), eth), lifi);
-            assert_eq!(route(a("evm", "arbitrum_mainnet"), a("bnb", "bsc_mainnet")), lifi);
+            assert_eq!(
+                route(a("evm", "arbitrum_mainnet"), a("bnb", "bsc_mainnet")),
+                lifi
+            );
         } else {
-            assert_eq!(route(a("render", "sol_mainnet"), eth), Some(Route { first: Protocol::Jupiter, via: Some((sol, Protocol::Thorchain)) }));
-            assert_eq!(route(a("usdc", "sol_mainnet"), a("btc", "btc_mainnet")), Some(Route { first: Protocol::Jupiter, via: Some((sol, Protocol::Thorchain)) }));
-            assert_eq!(route(a("evm", "arbitrum_mainnet"), a("bnb", "bsc_mainnet")), Some(Route { first: Protocol::Maya, via: Some((eth, Protocol::Thorchain)) }));
+            assert_eq!(
+                route(a("render", "sol_mainnet"), eth),
+                Some(Route {
+                    first: Protocol::Jupiter,
+                    via: Some((sol, Protocol::Thorchain))
+                })
+            );
+            assert_eq!(
+                route(a("usdc", "sol_mainnet"), a("btc", "btc_mainnet")),
+                Some(Route {
+                    first: Protocol::Jupiter,
+                    via: Some((sol, Protocol::Thorchain))
+                })
+            );
+            assert_eq!(
+                route(a("evm", "arbitrum_mainnet"), a("bnb", "bsc_mainnet")),
+                Some(Route {
+                    first: Protocol::Maya,
+                    via: Some((eth, Protocol::Thorchain))
+                })
+            );
         }
         for (from, to, r) in routes() {
             match r.via {
                 None => assert_eq!(direct(from, to), Some(r.first)),
                 Some((via, second)) => {
                     assert!(direct(from, to).is_none() && via != from && via != to);
-                    assert_eq!((direct(from, via), direct(via, to)), (Some(r.first), Some(second)));
+                    assert_eq!(
+                        (direct(from, via), direct(via, to)),
+                        (Some(r.first), Some(second))
+                    );
                 }
             }
         }

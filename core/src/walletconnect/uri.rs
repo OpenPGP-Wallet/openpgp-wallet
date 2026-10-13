@@ -23,11 +23,21 @@ pub fn parse(uri: &str) -> Result<PairingUri> {
         .strip_prefix("wc://")
         .or_else(|| uri.strip_prefix("wc:"))
         .ok_or_else(|| anyhow!("lien WalletConnect invalide : il doit commencer par « wc: »"))?;
-    let (path, query) = rest.split_once('?').ok_or_else(|| anyhow!("lien WalletConnect incomplet (paramètres absents)"))?;
-    let (topic, version) = path.split_once('@').ok_or_else(|| anyhow!("lien WalletConnect incomplet (version absente)"))?;
+    let (path, query) = rest
+        .split_once('?')
+        .ok_or_else(|| anyhow!("lien WalletConnect incomplet (paramètres absents)"))?;
+    let (topic, version) = path
+        .split_once('@')
+        .ok_or_else(|| anyhow!("lien WalletConnect incomplet (version absente)"))?;
     let topic = topic.strip_prefix("//").unwrap_or(topic);
-    anyhow::ensure!(version == "2", "lien WalletConnect version {version} : seule la version 2 est prise en charge");
-    anyhow::ensure!(is_hex64(topic), "lien WalletConnect invalide (identifiant de canal)");
+    anyhow::ensure!(
+        version == "2",
+        "lien WalletConnect version {version} : seule la version 2 est prise en charge"
+    );
+    anyhow::ensure!(
+        is_hex64(topic),
+        "lien WalletConnect invalide (identifiant de canal)"
+    );
 
     let mut sym_key = None;
     let mut relay_protocol = None;
@@ -37,7 +47,13 @@ pub fn parse(uri: &str) -> Result<PairingUri> {
         match name {
             "symKey" => sym_key = Some(value),
             "relay-protocol" => relay_protocol = Some(value),
-            "expiryTimestamp" => expiry = Some(value.parse::<u64>().context("lien WalletConnect : expiration illisible")?),
+            "expiryTimestamp" => {
+                expiry = Some(
+                    value
+                        .parse::<u64>()
+                        .context("lien WalletConnect : expiration illisible")?,
+                )
+            }
             _ => {}
         }
     }
@@ -49,8 +65,13 @@ pub fn parse(uri: &str) -> Result<PairingUri> {
     );
 
     let mut key = Zeroizing::new([0u8; 32]);
-    hex::decode_to_slice(sym_key, key.as_mut_slice()).context("lien WalletConnect invalide (clé)")?;
-    Ok(PairingUri { topic: topic.to_ascii_lowercase(), sym_key: key, expiry })
+    hex::decode_to_slice(sym_key, key.as_mut_slice())
+        .context("lien WalletConnect invalide (clé)")?;
+    Ok(PairingUri {
+        topic: topic.to_ascii_lowercase(),
+        sym_key: key,
+        expiry,
+    })
 }
 
 #[cfg(test)]
@@ -63,13 +84,16 @@ mod tests {
     #[test]
     fn parses_the_official_uri_format() {
         // The shape produced by `formatUri` (sorted parameters).
-        let uri = format!("wc:{TOPIC}@2?expiryTimestamp=1705667684&relay-protocol=irn&symKey={KEY}");
+        let uri =
+            format!("wc:{TOPIC}@2?expiryTimestamp=1705667684&relay-protocol=irn&symKey={KEY}");
         let parsed = parse(&uri).unwrap();
         assert_eq!(parsed.topic, TOPIC);
         assert_eq!(hex::encode(*parsed.sym_key), KEY);
         assert_eq!(parsed.expiry, Some(1_705_667_684));
         // "wc://" variant (Android), and the "methods" parameter is ignored.
-        let uri = format!("wc://{TOPIC}@2?relay-protocol=irn&symKey={KEY}&methods=%5Bwc_sessionPropose%5D");
+        let uri = format!(
+            "wc://{TOPIC}@2?relay-protocol=irn&symKey={KEY}&methods=%5Bwc_sessionPropose%5D"
+        );
         assert!(parse(&uri).unwrap().expiry.is_none());
     }
 

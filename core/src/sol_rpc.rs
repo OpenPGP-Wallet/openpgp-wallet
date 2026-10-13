@@ -23,7 +23,8 @@ const MAX_PER_ENDPOINT: usize = 80;
 const DEFAULT_RETRY_AFTER: Duration = Duration::from_secs(10);
 /// Retries after a refusal, each after the requested delay.
 const MAX_RETRIES: u32 = 4;
-pub const RATE_LIMITED_ERROR: &str = "le nœud Solana public limite le nombre de requêtes : réessayez dans un instant";
+pub const RATE_LIMITED_ERROR: &str =
+    "le nœud Solana public limite le nombre de requêtes : réessayez dans un instant";
 /// Details of finalized transactions are kept (in memory and, if the app configured
 /// it, on disk): they never change.
 const DETAILS_CACHE_MAX: usize = 20_000;
@@ -50,18 +51,27 @@ impl RateWindow {
     /// will be.
     fn try_acquire(&mut self, method: &str, now: Instant) -> Option<Duration> {
         let expire = |queue: &mut VecDeque<Instant>| {
-            while queue.front().is_some_and(|t| now.duration_since(*t) >= RATE_WINDOW) {
+            while queue
+                .front()
+                .is_some_and(|t| now.duration_since(*t) >= RATE_WINDOW)
+            {
                 queue.pop_front();
             }
         };
         let wait = |queue: &VecDeque<Instant>, cap: usize| {
-            (queue.len() >= cap).then(|| (queue[queue.len() - cap] + RATE_WINDOW).saturating_duration_since(now))
+            (queue.len() >= cap)
+                .then(|| (queue[queue.len() - cap] + RATE_WINDOW).saturating_duration_since(now))
         };
         expire(&mut self.all);
         let window = self.per_method.entry(method.to_string()).or_default();
         expire(&mut window.sent);
-        let blocked = window.blocked_until.filter(|until| *until > now).map(|until| until - now);
-        let delay = wait(&self.all, MAX_PER_ENDPOINT).max(wait(&window.sent, window.cap.unwrap_or(DEFAULT_METHOD_CAP))).max(blocked);
+        let blocked = window
+            .blocked_until
+            .filter(|until| *until > now)
+            .map(|until| until - now);
+        let delay = wait(&self.all, MAX_PER_ENDPOINT)
+            .max(wait(&window.sent, window.cap.unwrap_or(DEFAULT_METHOD_CAP)))
+            .max(blocked);
         if delay.is_none() {
             self.all.push_back(now);
             window.sent.push_back(now);
@@ -71,7 +81,13 @@ impl RateWindow {
 
     /// Limit announced by the node for `method` (minus one as a margin), and any
     /// refusal.
-    fn record(&mut self, method: &str, announced_limit: Option<usize>, refused_for: Option<Duration>, now: Instant) {
+    fn record(
+        &mut self,
+        method: &str,
+        announced_limit: Option<usize>,
+        refused_for: Option<Duration>,
+        now: Instant,
+    ) {
         let window = self.per_method.entry(method.to_string()).or_default();
         if let Some(limit) = announced_limit {
             window.cap = Some(limit.saturating_sub(1).max(1));
@@ -90,8 +106,12 @@ fn rate_windows() -> &'static Mutex<HashMap<String, RateWindow>> {
 /// Waits until a send of `method` to `endpoint` is allowed.
 fn wait_for_slot(endpoint: &str, method: &str) {
     loop {
-        let delay =
-            rate_windows().lock().unwrap_or_else(|p| p.into_inner()).entry(endpoint.to_string()).or_default().try_acquire(method, Instant::now());
+        let delay = rate_windows()
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .entry(endpoint.to_string())
+            .or_default()
+            .try_acquire(method, Instant::now());
         match delay {
             None => return,
             Some(delay) => std::thread::sleep(delay.max(Duration::from_millis(10))),
@@ -116,12 +136,26 @@ impl DetailsCache {
             return;
         }
         self.loaded = true;
-        let Some(file) = self.file.as_ref().and_then(|path| std::fs::File::open(path).ok()) else { return };
-        for line in std::io::BufReader::new(file).lines().map_while(std::result::Result::ok) {
-            let Ok(entry) = serde_json::from_str::<Value>(&line) else { continue };
-            if let (Some(signature), Some(detail)) = (entry.get("s").and_then(Value::as_str), entry.get("t")) {
+        let Some(file) = self
+            .file
+            .as_ref()
+            .and_then(|path| std::fs::File::open(path).ok())
+        else {
+            return;
+        };
+        for line in std::io::BufReader::new(file)
+            .lines()
+            .map_while(std::result::Result::ok)
+        {
+            let Ok(entry) = serde_json::from_str::<Value>(&line) else {
+                continue;
+            };
+            if let (Some(signature), Some(detail)) =
+                (entry.get("s").and_then(Value::as_str), entry.get("t"))
+            {
                 if self.entries.len() < DETAILS_CACHE_MAX {
-                    self.entries.insert(signature.to_string(), Arc::new(detail.clone()));
+                    self.entries
+                        .insert(signature.to_string(), Arc::new(detail.clone()));
                 }
             }
         }
@@ -139,7 +173,11 @@ impl DetailsCache {
             self.entries.insert(signature, detail);
         }
         if let (false, Some(path)) = (lines.is_empty(), self.file.as_ref()) {
-            let written = std::fs::OpenOptions::new().create(true).append(true).open(path).and_then(|mut f| f.write_all(lines.as_bytes()));
+            let written = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .and_then(|mut f| f.write_all(lines.as_bytes()));
             if let Err(e) = written {
                 eprintln!("cache des transactions Solana non écrit : {e}");
             }
@@ -203,20 +241,43 @@ impl SolRpc {
         let mut attempt = 0;
         let resp: Value = loop {
             wait_for_slot(&self.endpoint, method);
-            let response = self.client.post(&self.endpoint).json(&body).send().with_context(|| format!("appel RPC {method} impossible"))?;
-            let header = |name: &str| response.headers().get(name).and_then(|v| v.to_str().ok()).and_then(|s| s.trim().parse::<u64>().ok());
+            let response = self
+                .client
+                .post(&self.endpoint)
+                .json(&body)
+                .send()
+                .with_context(|| format!("appel RPC {method} impossible"))?;
+            let header = |name: &str| {
+                response
+                    .headers()
+                    .get(name)
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|s| s.trim().parse::<u64>().ok())
+            };
             let announced_limit = header("x-ratelimit-method-limit").map(|limit| limit as usize);
             let retry_after = header("retry-after").map(Duration::from_secs);
             let too_many = response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS;
-            let parsed: Result<Value> = response.json().with_context(|| format!("réponse RPC {method} illisible"));
-            let too_many = too_many || parsed.as_ref().ok().and_then(|r| r.pointer("/error/code")).and_then(Value::as_i64) == Some(429);
-            let refused_for = too_many.then(|| retry_after.unwrap_or(DEFAULT_RETRY_AFTER).min(Duration::from_secs(30)));
-            rate_windows().lock().unwrap_or_else(|p| p.into_inner()).entry(self.endpoint.clone()).or_default().record(
-                method,
-                announced_limit,
-                refused_for,
-                Instant::now(),
-            );
+            let parsed: Result<Value> = response
+                .json()
+                .with_context(|| format!("réponse RPC {method} illisible"));
+            let too_many = too_many
+                || parsed
+                    .as_ref()
+                    .ok()
+                    .and_then(|r| r.pointer("/error/code"))
+                    .and_then(Value::as_i64)
+                    == Some(429);
+            let refused_for = too_many.then(|| {
+                retry_after
+                    .unwrap_or(DEFAULT_RETRY_AFTER)
+                    .min(Duration::from_secs(30))
+            });
+            rate_windows()
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .entry(self.endpoint.clone())
+                .or_default()
+                .record(method, announced_limit, refused_for, Instant::now());
             if !too_many {
                 break parsed?;
             }
@@ -239,7 +300,10 @@ impl SolRpc {
     /// behind): a send or receipt shows up straight away, as live monitoring
     /// (`balance_watch`) reports it.
     pub fn balance_lamports(&self, pubkey_b58: &str) -> Result<u64> {
-        let result = self.call("getBalance", json!([pubkey_b58, {"commitment": "confirmed"}]))?;
+        let result = self.call(
+            "getBalance",
+            json!([pubkey_b58, {"commitment": "confirmed"}]),
+        )?;
         result
             .get("value")
             .and_then(Value::as_u64)
@@ -277,19 +341,30 @@ impl SolRpc {
     /// `wallet_flow::maybe_sent`). Already processed: it is the same transaction.
     pub fn send_transaction(&self, raw_tx: &[u8]) -> Result<String> {
         // First signature, after the count (one byte: fewer than 128).
-        let signature = raw_tx.get(1..65).filter(|_| raw_tx.first().is_some_and(|n| (1..128).contains(n))).map(|s| bs58::encode(s).into_string()).context("transaction Solana sans signature")?;
+        let signature = raw_tx
+            .get(1..65)
+            .filter(|_| raw_tx.first().is_some_and(|n| (1..128).contains(n)))
+            .map(|s| bs58::encode(s).into_string())
+            .context("transaction Solana sans signature")?;
         let b64 = base64::engine::general_purpose::STANDARD.encode(raw_tx);
         match self.call("sendTransaction", json!([b64, {"encoding": "base64"}])) {
-            Ok(result) => result.as_str().map(String::from).ok_or_else(|| crate::wallet_flow::maybe_sent(&signature)),
+            Ok(result) => result
+                .as_str()
+                .map(String::from)
+                .ok_or_else(|| crate::wallet_flow::maybe_sent(&signature)),
             Err(e) => {
                 let text = e.to_string();
                 if text.contains("\"BlockhashNotFound\"") {
                     Err(anyhow!(BLOCKHASH_EXPIRED_ERROR))
-                } else if text.contains("AlreadyProcessed") || text.contains("already been processed") {
+                } else if text.contains("AlreadyProcessed")
+                    || text.contains("already been processed")
+                {
                     Ok(signature)
                 } else if text.starts_with("erreur RPC sendTransaction")
                     || text == RATE_LIMITED_ERROR
-                    || e.chain().find_map(|c| c.downcast_ref::<reqwest::Error>()).is_some_and(crate::wallet_flow::nothing_sent)
+                    || e.chain()
+                        .find_map(|c| c.downcast_ref::<reqwest::Error>())
+                        .is_some_and(crate::wallet_flow::nothing_sent)
                 {
                     // Flat refusal from the node, rate limit exceeded, or connection never established:
                     // nothing went out.
@@ -307,12 +382,18 @@ impl SolRpc {
     pub fn multiple_accounts(&self, pubkeys: &[String]) -> Result<Vec<Option<AccountState>>> {
         let mut states = Vec::with_capacity(pubkeys.len());
         for chunk in pubkeys.chunks(100) {
-            let result = self.call("getMultipleAccounts", json!([chunk, {"encoding": "base64"}]))?;
+            let result = self.call(
+                "getMultipleAccounts",
+                json!([chunk, {"encoding": "base64"}]),
+            )?;
             let values = result
                 .get("value")
                 .and_then(Value::as_array)
                 .ok_or_else(|| anyhow!("réponse getMultipleAccounts inattendue"))?;
-            anyhow::ensure!(values.len() == chunk.len(), "réponse getMultipleAccounts incomplète");
+            anyhow::ensure!(
+                values.len() == chunk.len(),
+                "réponse getMultipleAccounts incomplète"
+            );
             for value in values {
                 states.push(AccountState::from_rpc_value(value)?);
             }
@@ -326,7 +407,11 @@ impl SolRpc {
     /// the user's accounts, instead of trusting it (see `api::verify_swap_effects`).
     /// The simulation is run by THIS RPC node, a party independent of the one that
     /// built the transaction (Jupiter).
-    pub fn simulate_with_account_states(&self, raw_tx: &[u8], addresses: &[String]) -> Result<SimulationOutcome> {
+    pub fn simulate_with_account_states(
+        &self,
+        raw_tx: &[u8],
+        addresses: &[String],
+    ) -> Result<SimulationOutcome> {
         let b64 = base64::engine::general_purpose::STANDARD.encode(raw_tx);
         let result = self.call(
             "simulateTransaction",
@@ -342,16 +427,31 @@ impl SolRpc {
             let logs = result
                 .pointer("/value/logs")
                 .and_then(Value::as_array)
-                .map(|entries| entries.iter().filter_map(Value::as_str).collect::<Vec<_>>().join("\n"))
+                .map(|entries| {
+                    entries
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })
                 .unwrap_or_default();
-            return Ok(SimulationOutcome::Failed { err: err.cloned().unwrap_or(Value::Null), logs });
+            return Ok(SimulationOutcome::Failed {
+                err: err.cloned().unwrap_or(Value::Null),
+                logs,
+            });
         }
         let accounts = result
             .pointer("/value/accounts")
             .and_then(Value::as_array)
             .ok_or_else(|| anyhow!("simulation sans état de comptes (champ 'accounts' absent)"))?;
-        anyhow::ensure!(accounts.len() == addresses.len(), "simulation : nombre d'états de comptes inattendu");
-        let post_states = accounts.iter().map(AccountState::from_rpc_value).collect::<Result<Vec<_>>>()?;
+        anyhow::ensure!(
+            accounts.len() == addresses.len(),
+            "simulation : nombre d'états de comptes inattendu"
+        );
+        let post_states = accounts
+            .iter()
+            .map(AccountState::from_rpc_value)
+            .collect::<Result<Vec<_>>>()?;
         Ok(SimulationOutcome::Succeeded { post_states })
     }
 
@@ -376,7 +476,9 @@ impl SolRpc {
     /// has an on-chain account any more). A single signature requested, no details.
     pub fn has_any_signature(&self, pubkey_b58: &str) -> Result<bool> {
         let result = self.call("getSignaturesForAddress", json!([pubkey_b58, {"limit": 1}]))?;
-        let entries = result.as_array().ok_or_else(|| anyhow!("réponse getSignaturesForAddress inattendue"))?;
+        let entries = result
+            .as_array()
+            .ok_or_else(|| anyhow!("réponse getSignaturesForAddress inattendue"))?;
         Ok(!entries.is_empty())
     }
 
@@ -390,13 +492,24 @@ impl SolRpc {
     }
 
     /// Next page of `signature_history`: signatures older than `before`.
-    pub fn signature_history_before(&self, pubkey_b58: &str, limit: u32, before: Option<&str>) -> Result<Vec<SolTx>> {
+    pub fn signature_history_before(
+        &self,
+        pubkey_b58: &str,
+        limit: u32,
+        before: Option<&str>,
+    ) -> Result<Vec<SolTx>> {
         self.history_with_details(pubkey_b58, limit, before, net_lamports)
     }
 
     /// Signatures involving `account` (older than `before`), each with its details read
     /// (amount through `amount`, swap detection).
-    fn history_with_details(&self, account: &str, limit: u32, before: Option<&str>, amount: fn(&Value, &str) -> Option<i128>) -> Result<Vec<SolTx>> {
+    fn history_with_details(
+        &self,
+        account: &str,
+        limit: u32,
+        before: Option<&str>,
+        amount: fn(&Value, &str) -> Option<i128>,
+    ) -> Result<Vec<SolTx>> {
         let mut options = json!({"limit": limit});
         if let Some(before) = before {
             options["before"] = json!(before);
@@ -406,8 +519,15 @@ impl SolRpc {
         let signatures: Vec<(String, bool)> = entries
             .iter()
             .map(|e| {
-                let signature = e.get("signature").and_then(Value::as_str).unwrap_or_default().to_string();
-                (signature, e.get("confirmationStatus").and_then(Value::as_str) == Some("finalized"))
+                let signature = e
+                    .get("signature")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                (
+                    signature,
+                    e.get("confirmationStatus").and_then(Value::as_str) == Some("finalized"),
+                )
             })
             .collect();
         let details = self.transactions(&signatures);
@@ -418,12 +538,17 @@ impl SolRpc {
             .zip(details)
             .map(|((entry, signature), details)| {
                 let block_time = entry.get("blockTime").and_then(Value::as_i64);
-                let confirmation_status = entry.get("confirmationStatus").and_then(Value::as_str).unwrap_or("");
+                let confirmation_status = entry
+                    .get("confirmationStatus")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
                 let failed = entry.get("err").map(|e| !e.is_null()).unwrap_or(false);
                 SolTx {
                     net_lamports: details.as_deref().and_then(|tx| amount(tx, account)),
                     swap: details.as_deref().is_some_and(is_swap_transaction),
-                    stake: details.as_deref().is_some_and(|tx| is_stake_transaction(tx, account)),
+                    stake: details
+                        .as_deref()
+                        .is_some_and(|tx| is_stake_transaction(tx, account)),
                     signature,
                     block_time,
                     confirmed: matches!(confirmation_status, "confirmed" | "finalized"),
@@ -445,19 +570,32 @@ impl SolRpc {
         let mut details: Vec<Option<Arc<Value>>> = {
             let mut cache = details_cache().lock().unwrap_or_else(|p| p.into_inner());
             cache.ensure_loaded();
-            signatures.iter().map(|(signature, _)| cache.entries.get(signature).cloned()).collect()
+            signatures
+                .iter()
+                .map(|(signature, _)| cache.entries.get(signature).cloned())
+                .collect()
         };
-        let missing: Vec<usize> = (0..signatures.len()).filter(|&i| details[i].is_none()).collect();
+        let missing: Vec<usize> = (0..signatures.len())
+            .filter(|&i| details[i].is_none())
+            .collect();
         for chunk in missing.chunks(PARALLEL) {
             let fetched: Vec<Option<Arc<Value>>> = std::thread::scope(|scope| {
                 let handles: Vec<_> = chunk
                     .iter()
                     .map(|&i| {
                         let signature = &signatures[i].0;
-                        scope.spawn(move || self.transaction(signature).ok().flatten().map(|tx| Arc::new(compact_transaction(&tx))))
+                        scope.spawn(move || {
+                            self.transaction(signature)
+                                .ok()
+                                .flatten()
+                                .map(|tx| Arc::new(compact_transaction(&tx)))
+                        })
                     })
                     .collect();
-                handles.into_iter().map(|h| h.join().ok().flatten()).collect()
+                handles
+                    .into_iter()
+                    .map(|h| h.join().ok().flatten())
+                    .collect()
             });
             let mut finalized = Vec::new();
             for (&i, detail) in chunk.iter().zip(fetched) {
@@ -466,7 +604,10 @@ impl SolRpc {
                 }
                 details[i] = detail;
             }
-            details_cache().lock().unwrap_or_else(|p| p.into_inner()).insert(finalized);
+            details_cache()
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .insert(finalized);
         }
         details
     }
@@ -478,15 +619,28 @@ impl SolRpc {
     /// message rather than by a structured code, for lack of anything better from this
     /// endpoint. "Confirmed" level, like `balance_lamports`.
     pub fn token_account_balance(&self, ata_b58: &str) -> Result<Option<u64>> {
-        match self.call("getTokenAccountBalance", json!([ata_b58, {"commitment": "confirmed"}])) {
+        match self.call(
+            "getTokenAccountBalance",
+            json!([ata_b58, {"commitment": "confirmed"}]),
+        ) {
             Ok(result) => {
                 let amount_str = result
                     .pointer("/value/amount")
                     .and_then(Value::as_str)
                     .ok_or_else(|| anyhow!("réponse getTokenAccountBalance inattendue"))?;
-                Ok(Some(amount_str.parse::<u64>().context("montant getTokenAccountBalance illisible")?))
+                Ok(Some(
+                    amount_str
+                        .parse::<u64>()
+                        .context("montant getTokenAccountBalance illisible")?,
+                ))
             }
-            Err(e) if e.to_string().to_lowercase().contains("could not find account") => Ok(None),
+            Err(e)
+                if e.to_string()
+                    .to_lowercase()
+                    .contains("could not find account") =>
+            {
+                Ok(None)
+            }
             Err(e) => Err(e),
         }
     }
@@ -495,7 +649,10 @@ impl SolRpc {
     /// whether the CreateIdempotent instruction will actually create an account (and
     /// therefore charge rent) before showing that cost in the confirmation dialog.
     pub fn account_exists(&self, pubkey_b58: &str) -> Result<bool> {
-        let result = self.call("getAccountInfo", json!([pubkey_b58, {"encoding": "base64"}]))?;
+        let result = self.call(
+            "getAccountInfo",
+            json!([pubkey_b58, {"encoding": "base64"}]),
+        )?;
         Ok(!result.get("value").map(Value::is_null).unwrap_or(true))
     }
 
@@ -504,7 +661,9 @@ impl SolRpc {
     /// fixed figure would silently become too low or too high.
     pub fn minimum_rent_exempt_balance(&self, data_len: u64) -> Result<u64> {
         let result = self.call("getMinimumBalanceForRentExemption", json!([data_len]))?;
-        result.as_u64().ok_or_else(|| anyhow!("réponse getMinimumBalanceForRentExemption inattendue"))
+        result
+            .as_u64()
+            .ok_or_else(|| anyhow!("réponse getMinimumBalanceForRentExemption inattendue"))
     }
 
     /// A clear message for a failed simulation whose cause is known: missing SOL found
@@ -517,7 +676,9 @@ impl SolRpc {
         if let Some(error) = insufficient_lamports_error(logs) {
             return Some(error);
         }
-        let index = err.pointer("/InsufficientFundsForRent/account_index").and_then(Value::as_u64)?;
+        let index = err
+            .pointer("/InsufficientFundsForRent/account_index")
+            .and_then(Value::as_u64)?;
         // Reserve for an account with no data, read live: this network parameter has
         // already gone down (0.00089088 SOL before, 0.00065024 seen on 2026-10-02); that
         // last value is used if the read fails.
@@ -561,7 +722,12 @@ impl SolRpc {
     }
 
     /// Next page of `token_signature_history`: signatures older than `before`.
-    pub fn token_signature_history_before(&self, ata_b58: &str, limit: u32, before: Option<&str>) -> Result<Vec<SolTx>> {
+    pub fn token_signature_history_before(
+        &self,
+        ata_b58: &str,
+        limit: u32,
+        before: Option<&str>,
+    ) -> Result<Vec<SolTx>> {
         self.history_with_details(ata_b58, limit, before, net_token_amount)
     }
 }
@@ -572,15 +738,27 @@ impl SolRpc {
 /// before/after and the memo lines of the log. A few hundred bytes instead of tens
 /// of KB.
 fn compact_transaction(tx: &Value) -> Value {
-    let mut keys = tx.pointer("/transaction/message/accountKeys").and_then(Value::as_array).cloned().unwrap_or_default();
+    let mut keys = tx
+        .pointer("/transaction/message/accountKeys")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
     for group in ["writable", "readonly"] {
-        if let Some(loaded) = tx.pointer(&format!("/meta/loadedAddresses/{group}")).and_then(Value::as_array) {
+        if let Some(loaded) = tx
+            .pointer(&format!("/meta/loadedAddresses/{group}"))
+            .and_then(Value::as_array)
+        {
             keys.extend(loaded.iter().cloned());
         }
     }
-    let meta = |field: &str| tx.pointer(&format!("/meta/{field}")).cloned().unwrap_or(Value::Null);
+    let meta = |field: &str| {
+        tx.pointer(&format!("/meta/{field}"))
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
     // Token balances: only the account index and the amount are read.
-    let token_balances = |field: &str| match tx.pointer(&format!("/meta/{field}")).and_then(Value::as_array) {
+    let token_balances = |field: &str| {
+        match tx.pointer(&format!("/meta/{field}")).and_then(Value::as_array) {
         Some(entries) => Value::Array(
             entries
                 .iter()
@@ -588,11 +766,20 @@ fn compact_transaction(tx: &Value) -> Value {
                 .collect(),
         ),
         None => Value::Null,
+    }
     };
     let memos: Vec<Value> = tx
         .pointer("/meta/logMessages")
         .and_then(Value::as_array)
-        .map(|logs| logs.iter().filter(|line| line.as_str().is_some_and(|l| l.starts_with("Program log: Memo (len "))).cloned().collect())
+        .map(|logs| {
+            logs.iter()
+                .filter(|line| {
+                    line.as_str()
+                        .is_some_and(|l| l.starts_with("Program log: Memo (len "))
+                })
+                .cloned()
+                .collect()
+        })
         .unwrap_or_default();
     json!({
         "transaction": {"message": {"accountKeys": keys}},
@@ -610,9 +797,19 @@ fn compact_transaction(tx: &Value) -> Value {
 /// (`getTransaction`).
 fn net_lamports(tx: &Value, pubkey_b58: &str) -> Option<i128> {
     let account_keys = tx.pointer("/transaction/message/accountKeys")?.as_array()?;
-    let index = account_keys.iter().position(|k| k.as_str() == Some(pubkey_b58))?;
-    let pre = tx.pointer("/meta/preBalances")?.as_array()?.get(index)?.as_i64()?;
-    let post = tx.pointer("/meta/postBalances")?.as_array()?.get(index)?.as_i64()?;
+    let index = account_keys
+        .iter()
+        .position(|k| k.as_str() == Some(pubkey_b58))?;
+    let pre = tx
+        .pointer("/meta/preBalances")?
+        .as_array()?
+        .get(index)?
+        .as_i64()?;
+    let post = tx
+        .pointer("/meta/postBalances")?
+        .as_array()?
+        .get(index)?
+        .as_i64()?;
     Some((post - pre) as i128)
 }
 
@@ -624,7 +821,9 @@ fn net_lamports(tx: &Value, pubkey_b58: &str) -> Option<i128> {
 /// of an ATA just created by that same transaction, through CreateIdempotent).
 fn net_token_amount(tx: &Value, ata_b58: &str) -> Option<i128> {
     let account_keys = tx.pointer("/transaction/message/accountKeys")?.as_array()?;
-    let index = account_keys.iter().position(|k| k.as_str() == Some(ata_b58))?;
+    let index = account_keys
+        .iter()
+        .position(|k| k.as_str() == Some(ata_b58))?;
     let amount_at_index = |balances: &[Value]| -> Option<i128> {
         balances
             .iter()
@@ -633,8 +832,13 @@ fn net_token_amount(tx: &Value, ata_b58: &str) -> Option<i128> {
             .and_then(Value::as_str)
             .and_then(|s| s.parse::<i128>().ok())
     };
-    let pre_amount = tx.pointer("/meta/preTokenBalances").and_then(Value::as_array).and_then(|b| amount_at_index(b)).unwrap_or(0);
-    amount_at_index(tx.pointer("/meta/postTokenBalances")?.as_array()?).map(|post| post - pre_amount)
+    let pre_amount = tx
+        .pointer("/meta/preTokenBalances")
+        .and_then(Value::as_array)
+        .and_then(|b| amount_at_index(b))
+        .unwrap_or(0);
+    amount_at_index(tx.pointer("/meta/postTokenBalances")?.as_array()?)
+        .map(|post| post - pre_amount)
 }
 
 /// Jupiter's swap aggregation program (v6), the one the app uses.
@@ -645,9 +849,14 @@ const JUPITER_PROGRAM: &str = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4";
 /// payer (first account). A third-party transaction that also touches the Stake
 /// program stays an ordinary receipt.
 fn is_stake_transaction(tx: &Value, account: &str) -> bool {
-    tx.pointer("/transaction/message/accountKeys").and_then(Value::as_array).is_some_and(|keys| {
-        keys.first().and_then(Value::as_str) == Some(account) && keys.iter().any(|k| k.as_str() == Some(crate::sol_stake::STAKE_PROGRAM))
-    })
+    tx.pointer("/transaction/message/accountKeys")
+        .and_then(Value::as_array)
+        .is_some_and(|keys| {
+            keys.first().and_then(Value::as_str) == Some(account)
+                && keys
+                    .iter()
+                    .any(|k| k.as_str() == Some(crate::sol_stake::STAKE_PROGRAM))
+        })
 }
 
 /// Swap: the Jupiter program is called (always among the message's static keys, since
@@ -658,14 +867,17 @@ fn is_swap_transaction(tx: &Value) -> bool {
         .pointer("/transaction/message/accountKeys")
         .and_then(Value::as_array)
         .is_some_and(|keys| keys.iter().any(|k| k.as_str() == Some(JUPITER_PROGRAM)));
-    let memo_swap = tx.pointer("/meta/logMessages").and_then(Value::as_array).is_some_and(|logs| {
-        logs.iter().filter_map(Value::as_str).any(|line| {
-            line.strip_prefix("Program log: Memo (len ")
-                .and_then(|rest| rest.split_once("): \""))
-                .and_then(|(_, memo)| memo.strip_suffix('"'))
-                .is_some_and(crate::history::is_swap_memo)
-        })
-    });
+    let memo_swap = tx
+        .pointer("/meta/logMessages")
+        .and_then(Value::as_array)
+        .is_some_and(|logs| {
+            logs.iter().filter_map(Value::as_str).any(|line| {
+                line.strip_prefix("Program log: Memo (len ")
+                    .and_then(|rest| rest.split_once("): \""))
+                    .and_then(|(_, memo)| memo.strip_suffix('"'))
+                    .is_some_and(crate::history::is_swap_memo)
+            })
+        });
     jupiter || memo_swap
 }
 
@@ -676,7 +888,11 @@ pub const BLOCKHASH_EXPIRED_ERROR: &str =
 
 /// Lamports as SOL, without needless zeros ("0.00065024").
 pub fn format_lamports(lamports: u64) -> String {
-    let text = format!("{}.{:09}", lamports / 1_000_000_000, lamports % 1_000_000_000);
+    let text = format!(
+        "{}.{:09}",
+        lamports / 1_000_000_000,
+        lamports % 1_000_000_000
+    );
     text.trim_end_matches('0').trim_end_matches('.').to_string()
 }
 
@@ -713,16 +929,29 @@ impl AccountState {
         if value.is_null() {
             return Ok(None);
         }
-        let lamports = value.get("lamports").and_then(Value::as_u64).ok_or_else(|| anyhow!("compte sans lamports"))?;
-        let owner = value.get("owner").and_then(Value::as_str).ok_or_else(|| anyhow!("compte sans propriétaire"))?.to_string();
+        let lamports = value
+            .get("lamports")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| anyhow!("compte sans lamports"))?;
+        let owner = value
+            .get("owner")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("compte sans propriétaire"))?
+            .to_string();
         let data_b64 = value
             .get("data")
             .and_then(Value::as_array)
             .and_then(|d| d.first())
             .and_then(Value::as_str)
             .ok_or_else(|| anyhow!("compte sans données base64"))?;
-        let data = base64::engine::general_purpose::STANDARD.decode(data_b64).context("données de compte base64 invalides")?;
-        Ok(Some(Self { lamports, owner, data }))
+        let data = base64::engine::general_purpose::STANDARD
+            .decode(data_b64)
+            .context("données de compte base64 invalides")?;
+        Ok(Some(Self {
+            lamports,
+            owner,
+            data,
+        }))
     }
 }
 
@@ -730,7 +959,9 @@ pub enum SimulationOutcome {
     /// `err`: transaction error returned by the node (the only trace of some causes,
     /// see `SolRpc::explain_simulation_failure`).
     Failed { err: Value, logs: String },
-    Succeeded { post_states: Vec<Option<AccountState>> },
+    Succeeded {
+        post_states: Vec<Option<AccountState>>,
+    },
 }
 
 pub struct SolTx {
@@ -763,12 +994,18 @@ mod tests {
         let message = err.to_string();
         assert!(message.contains("6460932"), "{message}");
         assert!(message.contains("13045440"), "{message}");
-        assert!(message.contains("6584508"), "manque exact attendu : {message}");
+        assert!(
+            message.contains("6584508"),
+            "manque exact attendu : {message}"
+        );
     }
 
     #[test]
     fn insufficient_lamports_error_returns_none_without_the_pattern() {
-        assert!(insufficient_lamports_error("Program log: Instruction: Route\nProgram ... success").is_none());
+        assert!(insufficient_lamports_error(
+            "Program log: Instruction: Route\nProgram ... success"
+        )
+        .is_none());
     }
 
     /// Real failure from 2026-10-02 (a LI.FI swap of almost the whole balance,
@@ -779,11 +1016,31 @@ mod tests {
     fn explains_a_balance_left_under_the_rent_reserve() {
         let rpc = SolRpc::new("http://127.0.0.1:1");
         let logs = "Program 99vQwtBwYtrqqD9YSXbdum3KBdxPAVxYTaQ3cfnJSrN2 invoke [1]\nProgram log: Instruction: DepositNative\nProgram 99vQwtBwYtrqqD9YSXbdum3KBdxPAVxYTaQ3cfnJSrN2 success";
-        let own = rpc.explain_simulation_failure(&json!({"InsufficientFundsForRent": {"account_index": 0}}), logs).expect("cause reconnue").to_string();
-        assert!(own.starts_with("solde SOL trop juste") && own.contains("0.00065024 SOL"), "{own}");
-        let other = rpc.explain_simulation_failure(&json!({"InsufficientFundsForRent": {"account_index": 3}}), logs).expect("cause reconnue").to_string();
-        assert!(other.starts_with("un autre compte") && other.contains("0.00065024 SOL"), "{other}");
-        assert!(rpc.explain_simulation_failure(&json!({"InstructionError": [6, {"Custom": 1}]}), logs).is_none());
+        let own = rpc
+            .explain_simulation_failure(
+                &json!({"InsufficientFundsForRent": {"account_index": 0}}),
+                logs,
+            )
+            .expect("cause reconnue")
+            .to_string();
+        assert!(
+            own.starts_with("solde SOL trop juste") && own.contains("0.00065024 SOL"),
+            "{own}"
+        );
+        let other = rpc
+            .explain_simulation_failure(
+                &json!({"InsufficientFundsForRent": {"account_index": 3}}),
+                logs,
+            )
+            .expect("cause reconnue")
+            .to_string();
+        assert!(
+            other.starts_with("un autre compte") && other.contains("0.00065024 SOL"),
+            "{other}"
+        );
+        assert!(rpc
+            .explain_simulation_failure(&json!({"InstructionError": [6, {"Custom": 1}]}), logs)
+            .is_none());
     }
 
     #[test]
@@ -800,7 +1057,13 @@ mod tests {
     #[test]
     fn swaps_are_detected_in_real_transaction_formats() {
         let tx = |keys: &[&str], logs: &[&str]| json!({"transaction": {"message": {"accountKeys": keys}}, "meta": {"logMessages": logs}});
-        let jupiter = tx(&["7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU", JUPITER_PROGRAM], &["Program JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 invoke [1]"]);
+        let jupiter = tx(
+            &[
+                "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
+                JUPITER_PROGRAM,
+            ],
+            &["Program JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 invoke [1]"],
+        );
         assert!(is_swap_transaction(&jupiter));
         let deposit = tx(
             &["11111111111111111111111111111111", "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"],
@@ -812,7 +1075,13 @@ mod tests {
         assert!(is_swap_transaction(&deposit));
         let payout = tx(&[], &["Program log: Memo (len 68): \"OUT:69F129E7A9CC7D8C71D4A261C56EF2291275DF572A29F9218A535B743EAAEB15\""]);
         assert!(is_swap_transaction(&payout));
-        let transfer = tx(&["11111111111111111111111111111111"], &["Program 11111111111111111111111111111111 invoke [1]", "Program log: Memo (len 5): \"merci\""]);
+        let transfer = tx(
+            &["11111111111111111111111111111111"],
+            &[
+                "Program 11111111111111111111111111111111 invoke [1]",
+                "Program log: Memo (len 5): \"merci\"",
+            ],
+        );
         assert!(!is_swap_transaction(&transfer));
         assert!(!is_swap_transaction(&json!({})));
     }
@@ -829,7 +1098,11 @@ mod tests {
         });
         assert_eq!(net_lamports(&tx, "Owner"), Some(-10_000));
         assert_eq!(net_lamports(&tx, "Absent"), None);
-        assert_eq!(net_token_amount(&tx, "Ata"), Some(2_500_000), "compte de jetons créé par la transaction : solde avant = 0");
+        assert_eq!(
+            net_token_amount(&tx, "Ata"),
+            Some(2_500_000),
+            "compte de jetons créé par la transaction : solde avant = 0"
+        );
         assert_eq!(net_token_amount(&tx, "Other"), None);
     }
 
@@ -842,28 +1115,61 @@ mod tests {
         let mut window = RateWindow::default();
         let t0 = Instant::now();
         for i in 0..DEFAULT_METHOD_CAP {
-            assert_eq!(window.try_acquire("getTransaction", t0 + Duration::from_millis(i as u64)), None);
+            assert_eq!(
+                window.try_acquire("getTransaction", t0 + Duration::from_millis(i as u64)),
+                None
+            );
         }
         let later = t0 + Duration::from_secs(1);
-        assert_eq!(window.try_acquire("getTransaction", later), Some(Duration::from_secs(9)));
-        assert_eq!(window.try_acquire("getBalance", later), None, "autre méthode : pas concernée");
-        assert_eq!(window.try_acquire("getTransaction", t0 + RATE_WINDOW), None, "place libérée après 10 s");
+        assert_eq!(
+            window.try_acquire("getTransaction", later),
+            Some(Duration::from_secs(9))
+        );
+        assert_eq!(
+            window.try_acquire("getBalance", later),
+            None,
+            "autre méthode : pas concernée"
+        );
+        assert_eq!(
+            window.try_acquire("getTransaction", t0 + RATE_WINDOW),
+            None,
+            "place libérée après 10 s"
+        );
 
         window.record("getBalance", Some(40), None, later);
         for _ in 1..39 {
             assert_eq!(window.try_acquire("getBalance", later), None);
         }
-        assert!(window.try_acquire("getBalance", later).is_some(), "limite annoncée 40 : 39 envois");
+        assert!(
+            window.try_acquire("getBalance", later).is_some(),
+            "limite annoncée 40 : 39 envois"
+        );
 
-        window.record("getSignaturesForAddress", None, Some(Duration::from_secs(10)), later);
-        assert_eq!(window.try_acquire("getSignaturesForAddress", later + Duration::from_secs(4)), Some(Duration::from_secs(6)), "refus : attendre");
-        assert_eq!(window.try_acquire("getSignaturesForAddress", later + Duration::from_secs(10)), None);
+        window.record(
+            "getSignaturesForAddress",
+            None,
+            Some(Duration::from_secs(10)),
+            later,
+        );
+        assert_eq!(
+            window.try_acquire("getSignaturesForAddress", later + Duration::from_secs(4)),
+            Some(Duration::from_secs(6)),
+            "refus : attendre"
+        );
+        assert_eq!(
+            window.try_acquire("getSignaturesForAddress", later + Duration::from_secs(10)),
+            None
+        );
 
         let mut window = RateWindow::default();
         for i in 0..MAX_PER_ENDPOINT {
             assert_eq!(window.try_acquire(&format!("m{}", i % 10), t0), None);
         }
-        assert_eq!(window.try_acquire("autre", t0 + Duration::from_secs(2)), Some(Duration::from_secs(8)), "limite totale");
+        assert_eq!(
+            window.try_acquire("autre", t0 + Duration::from_secs(2)),
+            Some(Duration::from_secs(8)),
+            "limite totale"
+        );
     }
 
     /// Disk cache: reread from one session to the next, duplicates ignored, damaged
@@ -872,18 +1178,39 @@ mod tests {
     fn transaction_details_survive_a_restart() {
         let path = std::env::temp_dir().join(format!("sol_details_{}.jsonl", std::process::id()));
         let _ = std::fs::remove_file(&path);
-        let mut cache = DetailsCache { file: Some(path.clone()), ..Default::default() };
+        let mut cache = DetailsCache {
+            file: Some(path.clone()),
+            ..Default::default()
+        };
         cache.ensure_loaded();
         let detail = Arc::new(json!({"meta": {"preBalances": [1]}}));
-        cache.insert(vec![("sigA".into(), detail.clone()), ("sigB".into(), detail.clone())]);
+        cache.insert(vec![
+            ("sigA".into(), detail.clone()),
+            ("sigB".into(), detail.clone()),
+        ]);
         cache.insert(vec![("sigA".into(), detail.clone())]);
-        std::fs::OpenOptions::new().append(true).open(&path).unwrap().write_all(b"{\"s\":\"sigC\",\"t\"").unwrap();
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(b"{\"s\":\"sigC\",\"t\"")
+            .unwrap();
 
-        let mut reloaded = DetailsCache { file: Some(path.clone()), ..Default::default() };
+        let mut reloaded = DetailsCache {
+            file: Some(path.clone()),
+            ..Default::default()
+        };
         reloaded.ensure_loaded();
         assert_eq!(reloaded.entries.len(), 2);
-        assert_eq!(reloaded.entries.get("sigA").map(|d| d.as_ref()), Some(detail.as_ref()));
-        assert_eq!(std::fs::read_to_string(&path).unwrap().lines().count(), 3, "deux entrées + la ligne abîmée");
+        assert_eq!(
+            reloaded.entries.get("sigA").map(|d| d.as_ref()),
+            Some(detail.as_ref())
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap().lines().count(),
+            3,
+            "deux entrées + la ligne abîmée"
+        );
         let _ = std::fs::remove_file(&path);
     }
 
@@ -904,16 +1231,35 @@ mod tests {
                 "computeUnitsConsumed": 150
             }
         });
-        assert_eq!(net_lamports(&tx, "Receiver"), None, "clé chargée invisible sans le détail réduit");
+        assert_eq!(
+            net_lamports(&tx, "Receiver"),
+            None,
+            "clé chargée invisible sans le détail réduit"
+        );
         let compact = compact_transaction(&tx);
         assert_eq!(net_lamports(&compact, "Receiver"), Some(1_000_000));
         assert_eq!(net_lamports(&compact, "Payer"), Some(-1_005_000));
         assert_eq!(net_lamports(&compact, "Lookup"), Some(0));
-        assert_eq!(net_token_amount(&compact, "Lookup"), Some(-500), "compte de jetons chargé d'une table");
-        assert_eq!(compact.pointer("/meta/postTokenBalances/0"), Some(&json!({"accountIndex": 3, "uiTokenAmount": {"amount": "200"}})));
+        assert_eq!(
+            net_token_amount(&compact, "Lookup"),
+            Some(-500),
+            "compte de jetons chargé d'une table"
+        );
+        assert_eq!(
+            compact.pointer("/meta/postTokenBalances/0"),
+            Some(&json!({"accountIndex": 3, "uiTokenAmount": {"amount": "200"}}))
+        );
         assert!(is_swap_transaction(&compact));
-        assert_eq!(compact.pointer("/meta/logMessages").and_then(Value::as_array).map(Vec::len), Some(1));
-        assert!(compact.pointer("/transaction/message/instructions").is_none());
+        assert_eq!(
+            compact
+                .pointer("/meta/logMessages")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(1)
+        );
+        assert!(compact
+            .pointer("/transaction/message/instructions")
+            .is_none());
         assert!(compact.pointer("/meta/computeUnitsConsumed").is_none());
     }
 }

@@ -79,7 +79,10 @@ mod tests {
             ready.send(used).unwrap();
             let started = Instant::now();
             while !cancelled() {
-                assert!(started.elapsed() < Duration::from_secs(5), "demande d'arrêt jamais vue");
+                assert!(
+                    started.elapsed() < Duration::from_secs(5),
+                    "demande d'arrêt jamais vue"
+                );
                 std::thread::sleep(Duration::from_millis(10));
             }
             std::thread::sleep(Duration::from_millis(100));

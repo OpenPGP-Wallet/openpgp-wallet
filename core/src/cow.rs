@@ -117,22 +117,40 @@ pub fn token(coin: &str, network: &str) -> Option<CowToken> {
     api_network(network)?;
     if let Some((info, deployment)) = tokens::find(coin, network) {
         return match deployment.kind {
-            tokens::TokenKind::Erc20 { contract } => Some(CowToken { address: contract.to_string(), decimals: deployment.decimals, symbol: info.symbol, native: false }),
-            tokens::TokenKind::Spl { .. } | tokens::TokenKind::Spl2022 { .. } | tokens::TokenKind::Trc20 { .. } => None,
+            tokens::TokenKind::Erc20 { contract } => Some(CowToken {
+                address: contract.to_string(),
+                decimals: deployment.decimals,
+                symbol: info.symbol,
+                native: false,
+            }),
+            tokens::TokenKind::Spl { .. }
+            | tokens::TokenKind::Spl2022 { .. }
+            | tokens::TokenKind::Trc20 { .. } => None,
         };
     }
     let net = wallet_flow::evm_network(network)?;
-    (native_coin(net) == coin).then(|| CowToken { address: NATIVE_BUY_TOKEN.to_string(), decimals: 18, symbol: net.native_symbol, native: true })
+    (native_coin(net) == coin).then(|| CowToken {
+        address: NATIVE_BUY_TOKEN.to_string(),
+        decimals: 18,
+        symbol: net.native_symbol,
+        native: true,
+    })
 }
 
 /// Every app crypto CoW can swap (identifier, network): native coins and ERC-20
 /// tokens from the registry.
 pub fn tradable() -> Vec<(&'static str, &'static str)> {
-    let natives = wallet_flow::EVM_NETWORKS.iter().filter(|n| api_network(n.id).is_some() && !native_coin(n).is_empty()).map(|n| (native_coin(n), n.id));
+    let natives = wallet_flow::EVM_NETWORKS
+        .iter()
+        .filter(|n| api_network(n.id).is_some() && !native_coin(n).is_empty())
+        .map(|n| (native_coin(n), n.id));
     let erc20 = tokens::TOKENS.iter().flat_map(|t| {
         t.deployments
             .iter()
-            .filter(|d| api_network(d.network).is_some() && matches!(d.kind, tokens::TokenKind::Erc20 { .. }))
+            .filter(|d| {
+                api_network(d.network).is_some()
+                    && matches!(d.kind, tokens::TokenKind::Erc20 { .. })
+            })
             .map(move |d| (t.id, d.network))
     });
     natives.chain(erc20).collect()
@@ -157,7 +175,9 @@ pub fn explorer_order_url(network: &str, uid: &str) -> Option<String> {
 /// code and the partner fee (`partner_fee_bps`: `PARTNER_FEE_BPS`, or the liquid
 /// staking rate, see `swap_routes::staking_fee_bps`).
 pub fn app_data(recipient: &str, partner_fee_bps: u32) -> String {
-    format!(r#"{{"appCode":"{APP_CODE}","metadata":{{"partnerFee":{{"recipient":"{recipient}","volumeBps":{partner_fee_bps}}}}},"version":"{APP_DATA_VERSION}"}}"#)
+    format!(
+        r#"{{"appCode":"{APP_CODE}","metadata":{{"partnerFee":{{"recipient":"{recipient}","volumeBps":{partner_fee_bps}}}}},"version":"{APP_DATA_VERSION}"}}"#
+    )
 }
 
 /// An order ready to sign, exactly as it will be SHOWN and then signed.
@@ -211,30 +231,76 @@ fn mul_div(a: u128, b: u128, c: u128) -> Option<u128> {
 /// Order amounts from the quote (sell amount after network fees, matching buy
 /// amount, network fee in the token sold, protocol fee in bps), using the official
 /// SDK's formula: (total sell amount, expected buy amount, minimum, partner fee).
-pub fn order_amounts(sell: u128, buy: u128, fee: u128, protocol_fee_bps: f64, partner_fee_bps: u32) -> Result<(u128, u128, u128, u128)> {
+pub fn order_amounts(
+    sell: u128,
+    buy: u128,
+    fee: u128,
+    protocol_fee_bps: f64,
+    partner_fee_bps: u32,
+) -> Result<(u128, u128, u128, u128)> {
     ensure!(sell > 0 && buy > 0, "devis CoW vide");
     let cost_in_buy = mul_div(buy, fee, sell).context("montant hors limites")?;
     let scaled = (protocol_fee_bps * 100_000.0).round();
-    ensure!((0.0..1e9).contains(&scaled), "frais du protocole CoW inattendus");
+    ensure!(
+        (0.0..1e9).contains(&scaled),
+        "frais du protocole CoW inattendus"
+    );
     let scaled = scaled as u128;
-    let protocol_fee = if scaled > 0 { mul_div(buy, scaled, 10_000 * 100_000 - scaled).context("montant hors limites")? } else { 0 };
-    let before_all = buy.checked_add(cost_in_buy).and_then(|b| b.checked_add(protocol_fee)).context("montant hors limites")?;
-    let partner_fee = before_all.checked_mul(u128::from(partner_fee_bps)).context("montant hors limites")? / 10_000;
-    let expected = buy.checked_sub(partner_fee).context("frais supérieurs à la réception")?;
+    let protocol_fee = if scaled > 0 {
+        mul_div(buy, scaled, 10_000 * 100_000 - scaled).context("montant hors limites")?
+    } else {
+        0
+    };
+    let before_all = buy
+        .checked_add(cost_in_buy)
+        .and_then(|b| b.checked_add(protocol_fee))
+        .context("montant hors limites")?;
+    let partner_fee = before_all
+        .checked_mul(u128::from(partner_fee_bps))
+        .context("montant hors limites")?
+        / 10_000;
+    let expected = buy
+        .checked_sub(partner_fee)
+        .context("frais supérieurs à la réception")?;
     let min = expected - expected * u128::from(SLIPPAGE_BPS) / 10_000;
-    Ok((sell.checked_add(fee).context("montant hors limites")?, expected, min, partner_fee))
+    Ok((
+        sell.checked_add(fee).context("montant hors limites")?,
+        expected,
+        min,
+        partner_fee,
+    ))
 }
 
 /// CoW quote for selling `amount` (units) of `sell` for `buy` on `network`, on
 /// behalf of `owner` (seller AND recipient). The response is checked again (tokens,
 /// recipient, direction, amounts) before the order is derived from it.
-pub fn quote(network: &'static str, sell: &CowToken, buy: &CowToken, amount: u128, owner: &str, recipient: &str, partner_fee_bps: u32) -> Result<CowOrder> {
-    ensure!(sell.address != buy.address, "échange d'une crypto vers elle-même");
+pub fn quote(
+    network: &'static str,
+    sell: &CowToken,
+    buy: &CowToken,
+    amount: u128,
+    owner: &str,
+    recipient: &str,
+    partner_fee_bps: u32,
+) -> Result<CowOrder> {
+    ensure!(
+        sell.address != buy.address,
+        "échange d'une crypto vers elle-même"
+    );
     let api = api_network(network).ok_or_else(|| anyhow!("réseau non pris en charge par CoW"))?;
     // EthFlow: quote on the wrapped version, order created on-chain by the contract
     // (official SDK parameters, ETH_FLOW_AUX_QUOTE_PARAMS).
-    let sell_token = if sell.native { wrapped_native(network).context("réseau sans EthFlow")?.to_string() } else { sell.address.clone() };
-    ensure!(!(sell.native && buy.native), "échange d'une crypto vers elle-même");
+    let sell_token = if sell.native {
+        wrapped_native(network)
+            .context("réseau sans EthFlow")?
+            .to_string()
+    } else {
+        sell.address.clone()
+    };
+    ensure!(
+        !(sell.native && buy.native),
+        "échange d'une crypto vers elle-même"
+    );
     let app_data = app_data(recipient, partner_fee_bps);
     let app_data_hash = evm_sign::keccak(app_data.as_bytes());
     let mut body = json!({
@@ -266,27 +332,80 @@ pub fn quote(network: &'static str, sell: &CowToken, buy: &CowToken, amount: u12
         .json()
         .context("réponse de devis CoW illisible")?;
     if let Some(error) = response.get("errorType").and_then(Value::as_str) {
-        let detail = response.get("description").and_then(Value::as_str).unwrap_or("");
+        let detail = response
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or("");
         bail!("devis CoW refusé : {error} {detail}");
     }
-    let q = response.get("quote").ok_or_else(|| anyhow!("réponse de devis CoW sans devis"))?;
-    let text = |field: &str| q.get(field).and_then(Value::as_str).unwrap_or_default().to_ascii_lowercase();
-    ensure!(text("sellToken") == sell_token.to_ascii_lowercase(), "devis CoW pour un autre jeton vendu");
-    ensure!(text("buyToken") == buy.address.to_ascii_lowercase(), "devis CoW pour un autre jeton acheté");
-    ensure!(text("receiver") == owner.to_ascii_lowercase(), "devis CoW pour un autre destinataire");
-    ensure!(text("kind") == "sell" && q.get("partiallyFillable") == Some(&Value::Bool(false)), "devis CoW d'un autre type d'ordre");
-    let (sell_after, buy_quoted, fee) = (u128_field(q, "sellAmount")?, u128_field(q, "buyAmount")?, u128_field(q, "feeAmount")?);
-    ensure!(sell_after.checked_add(fee) == Some(amount), "devis CoW pour un autre montant que {amount}");
+    let q = response
+        .get("quote")
+        .ok_or_else(|| anyhow!("réponse de devis CoW sans devis"))?;
+    let text = |field: &str| {
+        q.get(field)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+    };
+    ensure!(
+        text("sellToken") == sell_token.to_ascii_lowercase(),
+        "devis CoW pour un autre jeton vendu"
+    );
+    ensure!(
+        text("buyToken") == buy.address.to_ascii_lowercase(),
+        "devis CoW pour un autre jeton acheté"
+    );
+    ensure!(
+        text("receiver") == owner.to_ascii_lowercase(),
+        "devis CoW pour un autre destinataire"
+    );
+    ensure!(
+        text("kind") == "sell" && q.get("partiallyFillable") == Some(&Value::Bool(false)),
+        "devis CoW d'un autre type d'ordre"
+    );
+    let (sell_after, buy_quoted, fee) = (
+        u128_field(q, "sellAmount")?,
+        u128_field(q, "buyAmount")?,
+        u128_field(q, "feeAmount")?,
+    );
+    ensure!(
+        sell_after.checked_add(fee) == Some(amount),
+        "devis CoW pour un autre montant que {amount}"
+    );
     let protocol_fee_bps = match response.get("protocolFeeBps") {
         Some(Value::String(s)) => s.parse().context("frais du protocole CoW illisibles")?,
         Some(Value::Number(n)) => n.as_f64().unwrap_or(0.0),
         _ => 0.0,
     };
-    let (sell_amount, expected_buy, min_buy, partner_fee_buy) = order_amounts(sell_after, buy_quoted, fee, protocol_fee_bps, partner_fee_bps)?;
-    let valid_to = q.get("validTo").and_then(Value::as_u64).ok_or_else(|| anyhow!("devis CoW sans validité"))?;
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).context("horloge système invalide")?.as_secs();
-    ensure!(valid_to > now && valid_to <= now + MAX_VALIDITY_SECS, "validité du devis CoW inattendue");
-    let eth_flow_quote_id = if sell.native { Some(response.get("id").and_then(Value::as_i64).context("devis CoW sans identifiant (exigé par EthFlow)")?) } else { None };
+    let (sell_amount, expected_buy, min_buy, partner_fee_buy) = order_amounts(
+        sell_after,
+        buy_quoted,
+        fee,
+        protocol_fee_bps,
+        partner_fee_bps,
+    )?;
+    let valid_to = q
+        .get("validTo")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| anyhow!("devis CoW sans validité"))?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .context("horloge système invalide")?
+        .as_secs();
+    ensure!(
+        valid_to > now && valid_to <= now + MAX_VALIDITY_SECS,
+        "validité du devis CoW inattendue"
+    );
+    let eth_flow_quote_id = if sell.native {
+        Some(
+            response
+                .get("id")
+                .and_then(Value::as_i64)
+                .context("devis CoW sans identifiant (exigé par EthFlow)")?,
+        )
+    } else {
+        None
+    };
     Ok(CowOrder {
         network,
         sell_token,
@@ -323,7 +442,10 @@ pub fn eth_flow_calldata(order: &CowOrder) -> Result<Vec<u8>> {
     };
     let mut quote_word = [if quote_id < 0 { 0xff } else { 0 }; 32];
     quote_word[24..].copy_from_slice(&quote_id.to_be_bytes());
-    let mut data = evm_sign::keccak(b"createOrder((address,address,uint256,uint256,bytes32,uint256,uint32,bool,int64))")[..4].to_vec();
+    let mut data = evm_sign::keccak(
+        b"createOrder((address,address,uint256,uint256,bytes32,uint256,uint32,bool,int64))",
+    )[..4]
+        .to_vec();
     for word in [
         word_address(&order.buy_token)?,
         word_address(&order.receiver)?,
@@ -345,14 +467,22 @@ pub fn eth_flow_calldata(order: &CowOrder) -> Result<Vec<u8>> {
 /// like the official SDK's `calculateUniqueOrderId`.
 pub fn eth_flow_uid(order: &CowOrder, chain_id: u64) -> Result<String> {
     ensure!(order.eth_flow_quote_id.is_some(), "ordre CoW sans EthFlow");
-    let contract_order = CowOrder { valid_to: u32::MAX, ..order.clone() };
-    Ok(order_uid(&digest(&contract_order, chain_id)?, &wallet_flow::parse_evm_address(ETH_FLOW)?, u32::MAX))
+    let contract_order = CowOrder {
+        valid_to: u32::MAX,
+        ..order.clone()
+    };
+    Ok(order_uid(
+        &digest(&contract_order, chain_id)?,
+        &wallet_flow::parse_evm_address(ETH_FLOW)?,
+        u32::MAX,
+    ))
 }
 
 /// Uploads the `appData` document to CoW: an EthFlow order only carries its hash,
 /// and it is this document that declares the partner fee.
 pub fn upload_app_data(order: &CowOrder) -> Result<()> {
-    let api = api_network(order.network).ok_or_else(|| anyhow!("réseau non pris en charge par CoW"))?;
+    let api =
+        api_network(order.network).ok_or_else(|| anyhow!("réseau non pris en charge par CoW"))?;
     let hash = format!("0x{}", hex::encode(order.app_data_hash));
     let response = shared_client()
         .put(format!("{API_BASE}/{api}/api/v1/app_data/{hash}"))
@@ -361,7 +491,10 @@ pub fn upload_app_data(order: &CowOrder) -> Result<()> {
         .context("dépôt de l'appData CoW impossible")?;
     let status = response.status();
     let body: Value = response.json().unwrap_or(Value::Null);
-    ensure!(status.is_success() && body.as_str().is_some_and(|h| h.eq_ignore_ascii_case(&hash)), "dépôt de l'appData CoW refusé ({status})");
+    ensure!(
+        status.is_success() && body.as_str().is_some_and(|h| h.eq_ignore_ascii_case(&hash)),
+        "dépôt de l'appData CoW refusé ({status})"
+    );
     Ok(())
 }
 
@@ -417,14 +550,25 @@ pub fn digest(order: &CowOrder, chain_id: u64) -> Result<[u8; 32]> {
 
 /// An order's identifier (GPv2 contract format): EIP-712 digest ‖ owner ‖ validity.
 pub fn order_uid(digest: &[u8; 32], owner: &[u8; 20], valid_to: u32) -> String {
-    format!("0x{}{}{}", hex::encode(digest), hex::encode(owner), hex::encode(valid_to.to_be_bytes()))
+    format!(
+        "0x{}{}{}",
+        hex::encode(digest),
+        hex::encode(owner),
+        hex::encode(valid_to.to_be_bytes())
+    )
 }
 
 /// Sends the signed order to CoW's order book and returns its identifier; refused
 /// if it does not match the order signed here (`digest`, `owner`).
-pub fn submit(order: &CowOrder, digest: &[u8; 32], signature: &[u8; 65], owner: &str) -> Result<String> {
+pub fn submit(
+    order: &CowOrder,
+    digest: &[u8; 32],
+    signature: &[u8; 65],
+    owner: &str,
+) -> Result<String> {
     let owner_bytes = wallet_flow::parse_evm_address(owner)?;
-    let api = api_network(order.network).ok_or_else(|| anyhow!("réseau non pris en charge par CoW"))?;
+    let api =
+        api_network(order.network).ok_or_else(|| anyhow!("réseau non pris en charge par CoW"))?;
     let body = json!({
         "sellToken": order.sell_token,
         "buyToken": order.buy_token,
@@ -452,11 +596,20 @@ pub fn submit(order: &CowOrder, digest: &[u8; 32], signature: &[u8; 65], owner: 
         .context("réponse de CoW illisible")?;
     if let Some(uid) = response.as_str() {
         let expected = order_uid(digest, &owner_bytes, order.valid_to);
-        ensure!(uid.eq_ignore_ascii_case(&expected), "identifiant d'ordre CoW inattendu ({uid})");
+        ensure!(
+            uid.eq_ignore_ascii_case(&expected),
+            "identifiant d'ordre CoW inattendu ({uid})"
+        );
         return Ok(expected);
     }
-    let error = response.get("errorType").and_then(Value::as_str).unwrap_or("erreur inconnue");
-    let detail = response.get("description").and_then(Value::as_str).unwrap_or("");
+    let error = response
+        .get("errorType")
+        .and_then(Value::as_str)
+        .unwrap_or("erreur inconnue");
+    let detail = response
+        .get("description")
+        .and_then(Value::as_str)
+        .unwrap_or("");
     bail!("ordre CoW refusé : {error} {detail}")
 }
 
@@ -464,14 +617,23 @@ pub fn submit(order: &CowOrder, digest: &[u8; 32], signature: &[u8; 65], owner: 
 pub fn order_status(network: &str, uid: &str) -> Result<String> {
     let api = api_network(network).ok_or_else(|| anyhow!("réseau non pris en charge par CoW"))?;
     // Comes from the UI and goes into the URL: exact format required.
-    ensure!(uid.len() == 2 + 112 && uid.starts_with("0x") && uid[2..].bytes().all(|b| b.is_ascii_hexdigit()), "identifiant d'ordre CoW invalide");
+    ensure!(
+        uid.len() == 2 + 112
+            && uid.starts_with("0x")
+            && uid[2..].bytes().all(|b| b.is_ascii_hexdigit()),
+        "identifiant d'ordre CoW invalide"
+    );
     let response: Value = shared_client()
         .get(format!("{API_BASE}/{api}/api/v1/orders/{uid}"))
         .send()
         .context("lecture de l'ordre CoW impossible")?
         .json()
         .context("réponse de CoW illisible")?;
-    response.get("status").and_then(Value::as_str).map(str::to_string).ok_or_else(|| anyhow!("ordre CoW introuvable"))
+    response
+        .get("status")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| anyhow!("ordre CoW introuvable"))
 }
 
 #[cfg(test)]
@@ -479,7 +641,10 @@ mod tests {
     use super::*;
 
     fn eth_flow_order() -> CowOrder {
-        let app_data = app_data("0x1111111111111111111111111111111111111111", PARTNER_FEE_BPS);
+        let app_data = app_data(
+            "0x1111111111111111111111111111111111111111",
+            PARTNER_FEE_BPS,
+        );
         CowOrder {
             network: "evm_mainnet",
             sell_token: wrapped_native("evm_mainnet").unwrap().into(),
@@ -513,7 +678,10 @@ mod tests {
             eth_flow_uid(&order, 1).unwrap(),
             "0xa349f2f18202cf546cf5613991677bbb7cb3df7ca7938e284f9aa8fc61f015e0ba3cb449bd2b4adddbc894d8697f5170800eadecffffffff"
         );
-        let regular = CowOrder { eth_flow_quote_id: None, ..order };
+        let regular = CowOrder {
+            eth_flow_quote_id: None,
+            ..order
+        };
         assert!(eth_flow_calldata(&regular).is_err() && eth_flow_uid(&regular, 1).is_err());
     }
 
@@ -522,16 +690,36 @@ mod tests {
     #[test]
     #[ignore]
     fn real_eth_flow_contracts() {
-        for network in ["evm_mainnet", "arbitrum_mainnet", "base_mainnet", "polygon_mainnet", "avax_mainnet", "bsc_mainnet"] {
+        for network in [
+            "evm_mainnet",
+            "arbitrum_mainnet",
+            "base_mainnet",
+            "polygon_mainnet",
+            "avax_mainnet",
+            "bsc_mainnet",
+        ] {
             let net = wallet_flow::evm_network(network).unwrap();
             let rpc = crate::eth_rpc::EthRpc::new(net.rpc);
-            assert!(!rpc.code(ETH_FLOW).unwrap().is_empty(), "{network} : pas de contrat EthFlow");
-            let address_of = |selector: &[u8]| hex::encode(&rpc.call_contract(ETH_FLOW, ETH_FLOW, 0, selector).unwrap()[12..32]);
+            assert!(
+                !rpc.code(ETH_FLOW).unwrap().is_empty(),
+                "{network} : pas de contrat EthFlow"
+            );
+            let address_of = |selector: &[u8]| {
+                hex::encode(&rpc.call_contract(ETH_FLOW, ETH_FLOW, 0, selector).unwrap()[12..32])
+            };
             let wrapped = address_of(&evm_sign::keccak(b"wrappedNativeToken()")[..4]);
             let settlement = address_of(&evm_sign::keccak(b"cowSwapSettlement()")[..4]);
             println!("{network} : {wrapped} {settlement}");
-            assert_eq!(format!("0x{wrapped}"), wrapped_native(network).unwrap(), "{network}");
-            assert_eq!(format!("0x{settlement}"), SETTLEMENT.to_ascii_lowercase(), "{network}");
+            assert_eq!(
+                format!("0x{wrapped}"),
+                wrapped_native(network).unwrap(),
+                "{network}"
+            );
+            assert_eq!(
+                format!("0x{settlement}"),
+                SETTLEMENT.to_ascii_lowercase(),
+                "{network}"
+            );
         }
     }
 
@@ -542,16 +730,42 @@ mod tests {
     #[ignore]
     fn real_eth_flow_order_simulated() {
         let owner = "0x28C6c06298d514Db089934071355E5743bf21d60";
-        for (network, buy, amount) in [("evm_mainnet", "usdc", 50_000_000_000_000_000u128), ("bsc_mainnet", "aster", 100_000_000_000_000_000)] {
+        for (network, buy, amount) in [
+            ("evm_mainnet", "usdc", 50_000_000_000_000_000u128),
+            ("bsc_mainnet", "aster", 100_000_000_000_000_000),
+        ] {
             let net = wallet_flow::evm_network(network).unwrap();
             let sell = token(native_coin(net), network).unwrap();
-            let order = quote(network, &sell, &token(buy, network).unwrap(), amount, owner, "0x1111111111111111111111111111111111111111", PARTNER_FEE_BPS).unwrap();
-            println!("{network} : vente {} minimum {} devis n°{:?}", order.sell_amount, order.min_buy, order.eth_flow_quote_id);
+            let order = quote(
+                network,
+                &sell,
+                &token(buy, network).unwrap(),
+                amount,
+                owner,
+                "0x1111111111111111111111111111111111111111",
+                PARTNER_FEE_BPS,
+            )
+            .unwrap();
+            println!(
+                "{network} : vente {} minimum {} devis n°{:?}",
+                order.sell_amount, order.min_buy, order.eth_flow_quote_id
+            );
             assert_eq!(order.sell_token, wrapped_native(network).unwrap());
             let rpc = crate::eth_rpc::EthRpc::new(net.rpc);
-            let returned = rpc.call_contract(owner, ETH_FLOW, order.sell_amount, &eth_flow_calldata(&order).unwrap()).unwrap();
+            let returned = rpc
+                .call_contract(
+                    owner,
+                    ETH_FLOW,
+                    order.sell_amount,
+                    &eth_flow_calldata(&order).unwrap(),
+                )
+                .unwrap();
             let uid = eth_flow_uid(&order, net.chain_id).unwrap();
-            assert_eq!(format!("0x{}", hex::encode(&returned)), uid[..66], "{network}");
+            assert_eq!(
+                format!("0x{}", hex::encode(&returned)),
+                uid[..66],
+                "{network}"
+            );
         }
     }
 
@@ -563,7 +777,12 @@ mod tests {
         let order = eth_flow_order();
         upload_app_data(&order).unwrap();
         let hash = format!("0x{}", hex::encode(order.app_data_hash));
-        let stored: Value = shared_client().get(format!("{API_BASE}/mainnet/api/v1/app_data/{hash}")).send().unwrap().json().unwrap();
+        let stored: Value = shared_client()
+            .get(format!("{API_BASE}/mainnet/api/v1/app_data/{hash}"))
+            .send()
+            .unwrap()
+            .json()
+            .unwrap();
         assert_eq!(stored["fullAppData"], order.app_data);
     }
 
@@ -572,7 +791,14 @@ mod tests {
     /// fee 2 bps) for a 10 LINK → USDC quote.
     #[test]
     fn order_amounts_match_the_official_sdk() {
-        let (sell, expected, min, partner) = order_amounts(9_776_517_981_337_341_408, 140_645_630, 223_482_018_662_658_592, 2.0, PARTNER_FEE_BPS).unwrap();
+        let (sell, expected, min, partner) = order_amounts(
+            9_776_517_981_337_341_408,
+            140_645_630,
+            223_482_018_662_658_592,
+            2.0,
+            PARTNER_FEE_BPS,
+        )
+        .unwrap();
         assert_eq!(sell, 10_000_000_000_000_000_000);
         assert_eq!(partner, 1_438_887);
         assert_eq!(expected, 139_206_743);
@@ -583,9 +809,19 @@ mod tests {
         assert!(order_amounts(u128::MAX, u128::MAX, 1, 0.0, PARTNER_FEE_BPS).is_err());
         // Two 18-decimal tokens with a low price (orders of magnitude from a real FET →
         // ARB quote): the product buy × fee exceeds 2^128.
-        let (sell, expected, _, partner) = order_amounts(100_000_000_000_000_000_000, 166_000_000_000_000_000_000, 10_000_000_000_000_000_000, 0.0, PARTNER_FEE_BPS).unwrap();
+        let (sell, expected, _, partner) = order_amounts(
+            100_000_000_000_000_000_000,
+            166_000_000_000_000_000_000,
+            10_000_000_000_000_000_000,
+            0.0,
+            PARTNER_FEE_BPS,
+        )
+        .unwrap();
         assert_eq!(sell, 110_000_000_000_000_000_000);
-        assert_eq!(partner, (166_000_000_000_000_000_000u128 + 16_600_000_000_000_000_000) / 100);
+        assert_eq!(
+            partner,
+            (166_000_000_000_000_000_000u128 + 16_600_000_000_000_000_000) / 100
+        );
         assert_eq!(expected, 166_000_000_000_000_000_000 - partner);
         assert_eq!(mul_div(u128::MAX, 2, 4), Some(u128::MAX / 2));
         assert_eq!(mul_div(1, 1, 0), None);
@@ -595,7 +831,10 @@ mod tests {
     /// (GPv2Settlement domain), on Ethereum and on Arbitrum.
     #[test]
     fn order_digest_matches_the_official_library() {
-        let app_data = app_data("0x1111111111111111111111111111111111111111", PARTNER_FEE_BPS);
+        let app_data = app_data(
+            "0x1111111111111111111111111111111111111111",
+            PARTNER_FEE_BPS,
+        );
         let order = CowOrder {
             network: "evm_mainnet",
             sell_token: "0x514910771af9ca656af840dff83e8264ecf986ca".into(),
@@ -612,8 +851,14 @@ mod tests {
             app_data,
             eth_flow_quote_id: None,
         };
-        assert_eq!(hex::encode(digest(&order, 1).unwrap()), "c90555a84a12eff8be21d2fbc5ad7a7247a9294132198bdfa2bb309981d8e096");
-        assert_eq!(hex::encode(digest(&order, 42161).unwrap()), "b47e9843046df348f0c34a59b9116f6dfc8143d228fd854f710f89e22d59afac");
+        assert_eq!(
+            hex::encode(digest(&order, 1).unwrap()),
+            "c90555a84a12eff8be21d2fbc5ad7a7247a9294132198bdfa2bb309981d8e096"
+        );
+        assert_eq!(
+            hex::encode(digest(&order, 42161).unwrap()),
+            "b47e9843046df348f0c34a59b9116f6dfc8143d228fd854f710f89e22d59afac"
+        );
     }
 
     /// Real quote (live): 10 LINK → USDC on Ethereum, 20 USDC → ETH on Arbitrum, 100
@@ -625,7 +870,12 @@ mod tests {
         let owner = "0x2222222222222222222222222222222222222222";
         let recipient = "0x1111111111111111111111111111111111111111";
         for (network, sell, buy, amount) in [
-            ("evm_mainnet", "link", "usdc", 10_000_000_000_000_000_000u128),
+            (
+                "evm_mainnet",
+                "link",
+                "usdc",
+                10_000_000_000_000_000_000u128,
+            ),
             ("arbitrum_mainnet", "usdc", "evm", 20_000_000),
             ("bsc_mainnet", "aster", "bnb", 100_000_000_000_000_000_000),
         ] {
@@ -645,20 +895,45 @@ mod tests {
     #[test]
     #[ignore]
     fn real_submit_is_rejected_only_for_balance() {
-        let key = k256::ecdsa::SigningKey::from_slice(&evm_sign::keccak(b"openpgp-wallet cow test key, no funds")).unwrap();
-        let owner = format!("0x{}", hex::encode(crate::derivation::evm_address_from_key(&key)));
-        let (link, usdc) = (token("link", "evm_mainnet").unwrap(), token("usdc", "evm_mainnet").unwrap());
-        let order = quote("evm_mainnet", &link, &usdc, 10_000_000_000_000_000_000, &owner, "0x1111111111111111111111111111111111111111", PARTNER_FEE_BPS).unwrap();
+        let key = k256::ecdsa::SigningKey::from_slice(&evm_sign::keccak(
+            b"openpgp-wallet cow test key, no funds",
+        ))
+        .unwrap();
+        let owner = format!(
+            "0x{}",
+            hex::encode(crate::derivation::evm_address_from_key(&key))
+        );
+        let (link, usdc) = (
+            token("link", "evm_mainnet").unwrap(),
+            token("usdc", "evm_mainnet").unwrap(),
+        );
+        let order = quote(
+            "evm_mainnet",
+            &link,
+            &usdc,
+            10_000_000_000_000_000_000,
+            &owner,
+            "0x1111111111111111111111111111111111111111",
+            PARTNER_FEE_BPS,
+        )
+        .unwrap();
         let hash = digest(&order, 1).unwrap();
         let signature = evm_sign::sign_digest(&key, &hash).unwrap();
-        let error = submit(&order, &hash, &signature, &owner).unwrap_err().to_string();
+        let error = submit(&order, &hash, &signature, &owner)
+            .unwrap_err()
+            .to_string();
         println!("{error}");
-        assert!(error.contains("InsufficientBalance") || error.contains("InsufficientAllowance"), "{error}");
+        assert!(
+            error.contains("InsufficientBalance") || error.contains("InsufficientAllowance"),
+            "{error}"
+        );
         // Counter-check: the same signature for a different amount is refused BEFORE the
         // balance check (signer ≠ declared owner).
         let mut other = order.clone();
         other.min_buy -= 1;
-        let error = submit(&other, &digest(&other, 1).unwrap(), &signature, &owner).unwrap_err().to_string();
+        let error = submit(&other, &digest(&other, 1).unwrap(), &signature, &owner)
+            .unwrap_err()
+            .to_string();
         println!("{error}");
         assert!(!error.contains("InsufficientBalance"), "{error}");
     }
@@ -674,17 +949,31 @@ mod tests {
     #[test]
     fn tokens_come_from_the_registry_and_natives_use_the_cow_convention() {
         let link = token("link", "evm_mainnet").unwrap();
-        assert_eq!((link.address.as_str(), link.decimals, link.native), ("0x514910771af9ca656af840dff83e8264ecf986ca", 18, false));
+        assert_eq!(
+            (link.address.as_str(), link.decimals, link.native),
+            ("0x514910771af9ca656af840dff83e8264ecf986ca", 18, false)
+        );
         let eth = token("evm", "arbitrum_mainnet").unwrap();
-        assert!(wrapped_native("arbitrum_mainnet").is_some() && wrapped_native("hyperevm_mainnet").is_none());
+        assert!(
+            wrapped_native("arbitrum_mainnet").is_some()
+                && wrapped_native("hyperevm_mainnet").is_none()
+        );
         assert!(eth.native && eth.address == NATIVE_BUY_TOKEN && eth.symbol == "ETH");
         assert_eq!(token("bnb", "bsc_mainnet").unwrap().symbol, "BNB");
         assert!(token("usdc", "sol_mainnet").is_none());
         assert!(token("evm", "evm_sepolia").is_none());
         let all = tradable();
-        assert!(all.contains(&("aster", "bsc_mainnet")) && all.contains(&("pol", "polygon_mainnet")) && all.contains(&("usdc", "arbitrum_mainnet")));
-        assert!(all.iter().all(|(coin, network)| token(coin, network).is_some()));
-        assert!(!all.iter().any(|(_, network)| *network == "sol_mainnet" || *network == "hyperevm_mainnet"));
+        assert!(
+            all.contains(&("aster", "bsc_mainnet"))
+                && all.contains(&("pol", "polygon_mainnet"))
+                && all.contains(&("usdc", "arbitrum_mainnet"))
+        );
+        assert!(all
+            .iter()
+            .all(|(coin, network)| token(coin, network).is_some()));
+        assert!(!all
+            .iter()
+            .any(|(_, network)| *network == "sol_mainnet" || *network == "hyperevm_mainnet"));
     }
 
     /// Order identifier in GPv2 format (56 bytes) and explorer links.
@@ -693,8 +982,14 @@ mod tests {
         let uid = order_uid(&[0xab; 32], &[0x22; 20], 0x6ab0_0000);
         assert_eq!(uid.len(), 2 + 112);
         assert!(uid.ends_with(&format!("{}6ab00000", "22".repeat(20))));
-        assert_eq!(explorer_order_url("evm_mainnet", "0x1").unwrap(), "https://explorer.cow.fi/orders/0x1");
-        assert_eq!(explorer_order_url("arbitrum_mainnet", "0x1").unwrap(), "https://explorer.cow.fi/arb1/orders/0x1");
+        assert_eq!(
+            explorer_order_url("evm_mainnet", "0x1").unwrap(),
+            "https://explorer.cow.fi/orders/0x1"
+        );
+        assert_eq!(
+            explorer_order_url("arbitrum_mainnet", "0x1").unwrap(),
+            "https://explorer.cow.fi/arb1/orders/0x1"
+        );
         assert!(explorer_order_url("hyperevm_mainnet", "0x1").is_none());
     }
 
@@ -702,8 +997,17 @@ mod tests {
     /// `stringifyDeterministic`, validated by its schema) and the same keccak256 hash.
     #[test]
     fn app_data_matches_the_official_sdk() {
-        let doc = app_data("0x1111111111111111111111111111111111111111", PARTNER_FEE_BPS);
-        assert_eq!(doc, r#"{"appCode":"OpenPGP Wallet","metadata":{"partnerFee":{"recipient":"0x1111111111111111111111111111111111111111","volumeBps":100}},"version":"1.15.0"}"#);
-        assert_eq!(hex::encode(evm_sign::keccak(doc.as_bytes())), "e2f19f04f6fd06ccb99166260a45bca65d7fbeca47f18afb796f0237c383437e");
+        let doc = app_data(
+            "0x1111111111111111111111111111111111111111",
+            PARTNER_FEE_BPS,
+        );
+        assert_eq!(
+            doc,
+            r#"{"appCode":"OpenPGP Wallet","metadata":{"partnerFee":{"recipient":"0x1111111111111111111111111111111111111111","volumeBps":100}},"version":"1.15.0"}"#
+        );
+        assert_eq!(
+            hex::encode(evm_sign::keccak(doc.as_bytes())),
+            "e2f19f04f6fd06ccb99166260a45bca65d7fbeca47f18afb796f0237c383437e"
+        );
     }
 }

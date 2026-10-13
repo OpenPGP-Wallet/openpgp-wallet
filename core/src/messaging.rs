@@ -34,7 +34,8 @@ fn load_recipients(data_dir: &Path) -> Result<Vec<Recipient>> {
 
 fn save_recipients(data_dir: &Path, recipients: &[Recipient]) -> Result<()> {
     let path = data_dir.join(RECIPIENTS_FILE);
-    let content = serde_json::to_string_pretty(recipients).context("sérialisation du carnet de destinataires")?;
+    let content = serde_json::to_string_pretty(recipients)
+        .context("sérialisation du carnet de destinataires")?;
     std::fs::write(path, content).context("écriture du carnet de destinataires")
 }
 
@@ -65,7 +66,11 @@ pub fn list_recipients(data_dir: &Path) -> Result<Vec<Recipient>> {
 /// through the UI) would swap the trusted key with no sign of it, which is exactly
 /// what the fingerprint shown in the book is meant to catch. `None` for a new
 /// contact, or when the key is strictly identical.
-pub fn recipient_key_change(data_dir: &Path, label: &str, new_pubkey_armored: &str) -> Result<Option<(String, String)>> {
+pub fn recipient_key_change(
+    data_dir: &Path,
+    label: &str,
+    new_pubkey_armored: &str,
+) -> Result<Option<(String, String)>> {
     let recipients = load_recipients(data_dir)?;
     let Some(existing) = recipients.iter().find(|r| r.label == label) else {
         return Ok(None);
@@ -73,8 +78,12 @@ pub fn recipient_key_change(data_dir: &Path, label: &str, new_pubkey_armored: &s
     if existing.pubkey_armored == new_pubkey_armored {
         return Ok(None);
     }
-    let old_fingerprint = cert_info(&existing.pubkey_armored).map(|c| c.fingerprint).unwrap_or_else(|_| "invalide".to_string());
-    let new_fingerprint = cert_info(new_pubkey_armored).map(|c| c.fingerprint).unwrap_or_else(|_| "invalide".to_string());
+    let old_fingerprint = cert_info(&existing.pubkey_armored)
+        .map(|c| c.fingerprint)
+        .unwrap_or_else(|_| "invalide".to_string());
+    let new_fingerprint = cert_info(new_pubkey_armored)
+        .map(|c| c.fingerprint)
+        .unwrap_or_else(|_| "invalide".to_string());
     Ok(Some((old_fingerprint, new_fingerprint)))
 }
 
@@ -128,8 +137,8 @@ pub fn encrypt_message(pubkeys_armored: &[String], message: &str) -> Result<Stri
 
     let mut sink = Vec::new();
     {
-        let mut armor_writer =
-            armor::Writer::new(&mut sink, armor::Kind::Message).context("initialisation de l'armure PGP")?;
+        let mut armor_writer = armor::Writer::new(&mut sink, armor::Kind::Message)
+            .context("initialisation de l'armure PGP")?;
         {
             let pgp_message = PgpMessage::new(&mut armor_writer);
             let pgp_message = Encryptor::for_recipients(pgp_message, recipients)
@@ -141,7 +150,9 @@ pub fn encrypt_message(pubkeys_armored: &[String], message: &str) -> Result<Stri
             lw.write_all(message.as_bytes())?;
             lw.finalize()?;
         }
-        armor_writer.finalize().context("finalisation de l'armure PGP")?;
+        armor_writer
+            .finalize()
+            .context("finalisation de l'armure PGP")?;
     }
     String::from_utf8(sink).context("résultat PGP non-UTF8 (inattendu)")
 }
@@ -186,7 +197,8 @@ mod tests {
         let mut pubkey_armored = Vec::new();
         {
             use openpgp::serialize::Serialize;
-            let mut writer = armor::Writer::new(&mut pubkey_armored, armor::Kind::PublicKey).unwrap();
+            let mut writer =
+                armor::Writer::new(&mut pubkey_armored, armor::Kind::PublicKey).unwrap();
             cert.serialize(&mut writer).unwrap();
             writer.finalize().unwrap();
         }
@@ -195,7 +207,10 @@ mod tests {
 
     #[test]
     fn recipient_key_change_returns_none_for_a_new_label() {
-        let dir = std::env::temp_dir().join(format!("pgp_wallet_recipient_change_new_{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "pgp_wallet_recipient_change_new_{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
@@ -207,7 +222,10 @@ mod tests {
 
     #[test]
     fn recipient_key_change_returns_none_when_the_key_is_unchanged() {
-        let dir = std::env::temp_dir().join(format!("pgp_wallet_recipient_change_same_{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "pgp_wallet_recipient_change_same_{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
@@ -224,7 +242,10 @@ mod tests {
     /// catch.
     #[test]
     fn recipient_key_change_detects_a_different_key_for_the_same_label() {
-        let dir = std::env::temp_dir().join(format!("pgp_wallet_recipient_change_diff_{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "pgp_wallet_recipient_change_diff_{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
@@ -233,7 +254,10 @@ mod tests {
 
         let attacker_key = test_pubkey_armored("Alice <alice@example.invalid>");
         let change = recipient_key_change(&dir, "Alice", &attacker_key).unwrap();
-        assert!(change.is_some(), "un changement de clé pour le même label doit être détecté");
+        assert!(
+            change.is_some(),
+            "un changement de clé pour le même label doit être détecté"
+        );
         let (old_fp, new_fp) = change.unwrap();
         assert_ne!(old_fp, new_fp);
 
@@ -251,7 +275,8 @@ mod tests {
         let mut pubkey_armored = Vec::new();
         {
             use openpgp::serialize::Serialize;
-            let mut writer = armor::Writer::new(&mut pubkey_armored, armor::Kind::PublicKey).unwrap();
+            let mut writer =
+                armor::Writer::new(&mut pubkey_armored, armor::Kind::PublicKey).unwrap();
             cert.serialize(&mut writer).unwrap();
             writer.finalize().unwrap();
         }
@@ -267,7 +292,8 @@ mod tests {
     fn encrypt_message_succeeds_for_several_valid_recipients() {
         let alice = test_pubkey_armored("Alice <alice@example.invalid>");
         let bob = test_pubkey_armored("Bob <bob@example.invalid>");
-        let armored = encrypt_message(&[alice, bob], "salut à vous deux").expect("chiffrement multi-destinataires");
+        let armored = encrypt_message(&[alice, bob], "salut à vous deux")
+            .expect("chiffrement multi-destinataires");
         assert!(armored.contains("BEGIN PGP MESSAGE"));
     }
 

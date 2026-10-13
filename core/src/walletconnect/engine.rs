@@ -65,13 +65,19 @@ pub const DUPLICATE_REQUEST: (i64, &str) = (-32600, "Request id already pending.
 pub const TOO_MANY_REQUESTS: (i64, &str) = (-32005, "Too many pending requests.");
 
 pub fn now() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
-/// JSON-RPC identifier, same shape as the SDK's `payloadId()`: milliseconds × 1000
-/// + 3 random digits.
+/// JSON-RPC identifier, same shape as the SDK's `payloadId()`: milliseconds × 1000,
+/// plus 3 random digits.
 pub fn payload_id() -> u64 {
-    let ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
+    let ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
     let mut r = [0u8; 2];
     let _ = getrandom::getrandom(&mut r);
     ms * 1000 + u64::from(u16::from_le_bytes(r) % 1000)
@@ -122,7 +128,12 @@ impl Session {
             .as_object()
             .map(|ns| {
                 ns.values()
-                    .flat_map(|n| n.get("chains").and_then(Value::as_array).cloned().unwrap_or_default())
+                    .flat_map(|n| {
+                        n.get("chains")
+                            .and_then(Value::as_array)
+                            .cloned()
+                            .unwrap_or_default()
+                    })
                     .filter_map(|c| c.as_str().map(str::to_string))
                     .collect()
             })
@@ -132,13 +143,20 @@ impl Session {
     fn allows(&self, chain: &str, method: &str) -> bool {
         let namespace = chain.split(':').next().unwrap_or("");
         self.namespaces.get(namespace).is_some_and(|n| {
-            let has = |field: &str, v: &str| n.get(field).and_then(Value::as_array).is_some_and(|a| a.iter().any(|x| x == v));
+            let has = |field: &str, v: &str| {
+                n.get(field)
+                    .and_then(Value::as_array)
+                    .is_some_and(|a| a.iter().any(|x| x == v))
+            };
             has("chains", chain) && has("methods", method)
         })
     }
 
     pub fn account(&self) -> dapp_requests::Account {
-        dapp_requests::Account { evm: self.evm_address.clone(), solana: self.solana_address.clone() }
+        dapp_requests::Account {
+            evm: self.evm_address.clone(),
+            solana: self.solana_address.clone(),
+        }
     }
 }
 
@@ -195,10 +213,25 @@ pub struct PendingRequest {
 #[derive(Serialize, Clone, Debug, PartialEq)]
 #[serde(tag = "kind")]
 pub enum WcEvent {
-    Proposal { id: u64, peer: PeerMetadata, chains: Vec<String>, methods: Vec<String>, incompatible: Option<String> },
-    Request { id: u64, topic: String, peer: PeerMetadata, method: String, chain: String },
+    Proposal {
+        id: u64,
+        peer: PeerMetadata,
+        chains: Vec<String>,
+        methods: Vec<String>,
+        incompatible: Option<String>,
+    },
+    Request {
+        id: u64,
+        topic: String,
+        peer: PeerMetadata,
+        method: String,
+        chain: String,
+    },
     SessionsChanged,
-    RelayStatus { connected: bool, error: Option<String> },
+    RelayStatus {
+        connected: bool,
+        error: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -207,7 +240,13 @@ pub enum Action {
     Unsubscribe(String),
     /// Fetches the messages already published on a topic before subscribing.
     FetchMessages(String),
-    Publish { topic: String, message: String, ttl: u64, tag: u32, prompt: bool },
+    Publish {
+        topic: String,
+        message: String,
+        ttl: u64,
+        tag: u32,
+        prompt: bool,
+    },
     Emit(WcEvent),
     Persist,
 }
@@ -248,18 +287,27 @@ fn rpc_error(id: u64, (code, message): (i64, &str)) -> String {
 /// this wallet supports, with the profile's accounts and ITS methods. Refused if a
 /// REQUIRED network, method or event is not supported: a session that could not
 /// deliver what the dApp requires would be rejected by the dApp anyway.
-pub fn session_namespaces(params: &Value, account: Option<&dapp_requests::Account>) -> Result<Value, String> {
+pub fn session_namespaces(
+    params: &Value,
+    account: Option<&dapp_requests::Account>,
+) -> Result<Value, String> {
     let mut requested: HashMap<&str, Vec<String>> = HashMap::new();
     let mut required_methods: Vec<String> = Vec::new();
     let mut required_events: Vec<String> = Vec::new();
     for (field, required) in [("requiredNamespaces", true), ("optionalNamespaces", false)] {
-        let Some(map) = params.get(field).and_then(Value::as_object) else { continue };
+        let Some(map) = params.get(field).and_then(Value::as_object) else {
+            continue;
+        };
         for (key, ns) in map {
             // "eip155" key with a `chains` list, or an "eip155:1" key directly.
             let mut chains: Vec<String> = ns
                 .get("chains")
                 .and_then(Value::as_array)
-                .map(|a| a.iter().filter_map(|c| c.as_str().map(str::to_string)).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|c| c.as_str().map(str::to_string))
+                        .collect()
+                })
                 .unwrap_or_default();
             if key.contains(':') {
                 chains.push(key.clone());
@@ -285,33 +333,64 @@ pub fn session_namespaces(params: &Value, account: Option<&dapp_requests::Accoun
             }
             if required {
                 let list = |f: &str| -> Vec<String> {
-                    ns.get(f).and_then(Value::as_array).map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default()
+                    ns.get(f)
+                        .and_then(Value::as_array)
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|v| v.as_str().map(str::to_string))
+                                .collect()
+                        })
+                        .unwrap_or_default()
                 };
                 required_methods.extend(list("methods"));
                 required_events.extend(list("events"));
             }
         }
     }
-    let supported_methods: Vec<&str> = dapp_requests::EVM_METHODS.iter().chain(dapp_requests::SOLANA_METHODS.iter()).copied().collect();
-    if let Some(m) = required_methods.iter().find(|m| !supported_methods.contains(&m.as_str())) {
+    let supported_methods: Vec<&str> = dapp_requests::EVM_METHODS
+        .iter()
+        .chain(dapp_requests::SOLANA_METHODS.iter())
+        .copied()
+        .collect();
+    if let Some(m) = required_methods
+        .iter()
+        .find(|m| !supported_methods.contains(&m.as_str()))
+    {
         return Err(format!("méthode exigée non prise en charge : {m}"));
     }
-    if let Some(e) = required_events.iter().find(|e| !dapp_requests::EVM_EVENTS.contains(&e.as_str())) {
+    if let Some(e) = required_events
+        .iter()
+        .find(|e| !dapp_requests::EVM_EVENTS.contains(&e.as_str()))
+    {
         return Err(format!("événement exigé non pris en charge : {e}"));
     }
     if requested.is_empty() {
-        return Err("aucun réseau demandé n'est pris en charge (réseaux EVM de l'app, Solana)".to_string());
+        return Err(
+            "aucun réseau demandé n'est pris en charge (réseaux EVM de l'app, Solana)".to_string(),
+        );
     }
     let mut namespaces = serde_json::Map::new();
     for (namespace, chains) in requested {
-        let address = account.map(|a| if namespace == "eip155" { a.evm.clone() } else { a.solana.clone() });
-        let accounts: Vec<String> = chains.iter().filter_map(|c| address.as_ref().map(|a| format!("{c}:{a}"))).collect();
+        let address = account.map(|a| {
+            if namespace == "eip155" {
+                a.evm.clone()
+            } else {
+                a.solana.clone()
+            }
+        });
+        let accounts: Vec<String> = chains
+            .iter()
+            .filter_map(|c| address.as_ref().map(|a| format!("{c}:{a}")))
+            .collect();
         let (methods, events): (&[&str], &[&str]) = if namespace == "eip155" {
             (&dapp_requests::EVM_METHODS, &dapp_requests::EVM_EVENTS)
         } else {
             (&dapp_requests::SOLANA_METHODS, &[])
         };
-        namespaces.insert(namespace.to_string(), json!({"chains": chains, "accounts": accounts, "methods": methods, "events": events}));
+        namespaces.insert(
+            namespace.to_string(),
+            json!({"chains": chains, "accounts": accounts, "methods": methods, "events": events}),
+        );
     }
     Ok(Value::Object(namespaces))
 }
@@ -320,10 +399,15 @@ impl Engine {
     pub fn new(mut state: PersistedState) -> Result<Self> {
         if state.client_seed.len() != 64 {
             let mut seed = [0u8; 32];
-            getrandom::getrandom(&mut seed).map_err(|e| anyhow!("génération d'aléa impossible : {e}"))?;
+            getrandom::getrandom(&mut seed)
+                .map_err(|e| anyhow!("génération d'aléa impossible : {e}"))?;
             state.client_seed = hex::encode(seed);
         }
-        let mut engine = Self { state, proposals: HashMap::new(), requests: HashMap::new() };
+        let mut engine = Self {
+            state,
+            proposals: HashMap::new(),
+            requests: HashMap::new(),
+        };
         engine.drop_expired();
         Ok(engine)
     }
@@ -334,7 +418,12 @@ impl Engine {
 
     /// Topics to listen to (pairings + sessions), notably after reconnecting.
     pub fn topics(&self) -> Vec<String> {
-        self.state.pairings.iter().map(|p| p.topic.clone()).chain(self.state.sessions.iter().map(|s| s.topic.clone())).collect()
+        self.state
+            .pairings
+            .iter()
+            .map(|p| p.topic.clone())
+            .chain(self.state.sessions.iter().map(|s| s.topic.clone()))
+            .collect()
     }
 
     pub fn sessions(&self) -> &[Session] {
@@ -379,7 +468,10 @@ impl Engine {
     /// A `wc:` link pasted by the user.
     pub fn pair(&mut self, uri: &str) -> Result<Vec<Action>> {
         let parsed = super::uri::parse(uri)?;
-        anyhow::ensure!(parsed.expiry.is_none_or(|e| e > now()), "ce lien WalletConnect a expiré : demandez-en un nouveau à la dApp");
+        anyhow::ensure!(
+            parsed.expiry.is_none_or(|e| e > now()),
+            "ce lien WalletConnect a expiré : demandez-en un nouveau à la dApp"
+        );
         anyhow::ensure!(
             !self.state.pairings.iter().any(|p| p.topic == parsed.topic),
             "ce lien WalletConnect a déjà été utilisé : demandez-en un nouveau à la dApp"
@@ -390,12 +482,19 @@ impl Engine {
             expiry: parsed.expiry.unwrap_or(now() + FIVE_MINUTES),
             active: false,
         });
-        Ok(vec![Action::Persist, Action::Subscribe(parsed.topic.clone()), Action::FetchMessages(parsed.topic)])
+        Ok(vec![
+            Action::Persist,
+            Action::Subscribe(parsed.topic.clone()),
+            Action::FetchMessages(parsed.topic),
+        ])
     }
 
     /// (`topic`, `id`) already accepted (shown to the user).
     fn already_seen(&self, topic: &str, id: u64) -> bool {
-        self.state.seen.iter().any(|m| m.id == id && m.topic == topic)
+        self.state
+            .seen
+            .iter()
+            .any(|m| m.id == id && m.topic == topic)
     }
 
     /// Remembers (`topic`, `id`) once the request or proposal has been ACCEPTED: a
@@ -404,7 +503,11 @@ impl Engine {
         if self.state.seen.len() >= MAX_SEEN {
             self.state.seen.remove(0);
         }
-        self.state.seen.push(SeenMessage { topic: topic.to_string(), id, expiry: now() + SEEN_LIFETIME });
+        self.state.seen.push(SeenMessage {
+            topic: topic.to_string(),
+            id,
+            expiry: now() + SEEN_LIFETIME,
+        });
     }
 
     fn sym_key_for(&self, topic: &str) -> Option<[u8; 32]> {
@@ -413,23 +516,45 @@ impl Engine {
             .iter()
             .find(|p| p.topic == topic)
             .map(|p| p.sym_key.as_str())
-            .or_else(|| self.state.sessions.iter().find(|s| s.topic == topic).map(|s| s.sym_key.as_str()))
+            .or_else(|| {
+                self.state
+                    .sessions
+                    .iter()
+                    .find(|s| s.topic == topic)
+                    .map(|s| s.sym_key.as_str())
+            })
             .and_then(|k| key_from_hex(k).ok())
     }
 
     fn publish(&self, topic: &str, payload: &str, ttl: u64, tag: u32) -> Result<Action> {
-        let key = self.sym_key_for(topic).ok_or_else(|| anyhow!("canal WalletConnect inconnu"))?;
-        Ok(Action::Publish { topic: topic.to_string(), message: crypto::encrypt_type0(&key, payload)?, ttl, tag, prompt: false })
+        let key = self
+            .sym_key_for(topic)
+            .ok_or_else(|| anyhow!("canal WalletConnect inconnu"))?;
+        Ok(Action::Publish {
+            topic: topic.to_string(),
+            message: crypto::encrypt_type0(&key, payload)?,
+            ttl,
+            tag,
+            prompt: false,
+        })
     }
 
     /// Encrypted message received from the relay on `topic`. Anything unreadable, from
     /// an unknown topic or malformed is ignored (data from the network never causes a
     /// fatal error).
     pub fn handle_incoming(&mut self, topic: &str, encrypted: &str) -> Vec<Action> {
-        let Some(key) = self.sym_key_for(topic) else { return Vec::new() };
-        let Ok(opened) = crypto::decrypt(&key, encrypted) else { return Vec::new() };
-        let Ok(payload) = serde_json::from_str::<Value>(&opened.plaintext) else { return Vec::new() };
-        let Some(id) = payload.get("id").and_then(Value::as_u64) else { return Vec::new() };
+        let Some(key) = self.sym_key_for(topic) else {
+            return Vec::new();
+        };
+        let Ok(opened) = crypto::decrypt(&key, encrypted) else {
+            return Vec::new();
+        };
+        let Ok(payload) = serde_json::from_str::<Value>(&opened.plaintext) else {
+            return Vec::new();
+        };
+        let Some(id) = payload.get("id").and_then(Value::as_u64) else {
+            return Vec::new();
+        };
         let is_pairing = self.state.pairings.iter().any(|p| p.topic == topic);
         match payload.get("method").and_then(Value::as_str) {
             Some(method) => {
@@ -443,7 +568,12 @@ impl Engine {
             // A response (notably to `wc_sessionSettle`).
             None => {
                 if payload.get("result") == Some(&Value::Bool(true)) {
-                    if let Some(s) = self.state.sessions.iter_mut().find(|s| s.topic == topic && !s.acknowledged) {
+                    if let Some(s) = self
+                        .state
+                        .sessions
+                        .iter_mut()
+                        .find(|s| s.topic == topic && !s.acknowledged)
+                    {
                         s.acknowledged = true;
                         return vec![Action::Persist];
                     }
@@ -453,12 +583,21 @@ impl Engine {
         }
     }
 
-    fn on_pairing_request(&mut self, topic: &str, id: u64, method: &str, params: Value) -> Vec<Action> {
+    fn on_pairing_request(
+        &mut self,
+        topic: &str,
+        id: u64,
+        method: &str,
+        params: Value,
+    ) -> Vec<Action> {
         match method {
             "wc_sessionPropose" => {
                 // Already received (redelivery), identifier reused by another pairing, or too many
                 // proposals: ignored. See `on_session_request`.
-                if self.already_seen(topic, id) || self.proposals.contains_key(&id) || self.proposals.len() >= MAX_PENDING_PROPOSALS {
+                if self.already_seen(topic, id)
+                    || self.proposals.contains_key(&id)
+                    || self.proposals.len() >= MAX_PENDING_PROPOSALS
+                {
                     return Vec::new();
                 }
                 self.remember(topic, id);
@@ -466,32 +605,83 @@ impl Engine {
                     .pointer("/proposer/publicKey")
                     .and_then(Value::as_str)
                     .and_then(|k| key_from_hex(k).ok());
-                let Some(proposer_public) = proposer_public else { return Vec::new() };
-                let peer: PeerMetadata =
-                    params.pointer("/proposer/metadata").and_then(|m| serde_json::from_value(m.clone()).ok()).unwrap_or_default();
+                let Some(proposer_public) = proposer_public else {
+                    return Vec::new();
+                };
+                let peer: PeerMetadata = params
+                    .pointer("/proposer/metadata")
+                    .and_then(|m| serde_json::from_value(m.clone()).ok())
+                    .unwrap_or_default();
                 let namespaces = session_namespaces(&params, None);
                 let (chains, methods) = match &namespaces {
                     Ok(ns) => (
                         ns.as_object()
-                            .map(|o| o.values().flat_map(|n| n["chains"].as_array().cloned().unwrap_or_default()).filter_map(|c| c.as_str().map(str::to_string)).collect())
+                            .map(|o| {
+                                o.values()
+                                    .flat_map(|n| {
+                                        n["chains"].as_array().cloned().unwrap_or_default()
+                                    })
+                                    .filter_map(|c| c.as_str().map(str::to_string))
+                                    .collect()
+                            })
                             .unwrap_or_default(),
                         ns.as_object()
-                            .map(|o| o.values().flat_map(|n| n["methods"].as_array().cloned().unwrap_or_default()).filter_map(|c| c.as_str().map(str::to_string)).collect())
+                            .map(|o| {
+                                o.values()
+                                    .flat_map(|n| {
+                                        n["methods"].as_array().cloned().unwrap_or_default()
+                                    })
+                                    .filter_map(|c| c.as_str().map(str::to_string))
+                                    .collect()
+                            })
                             .unwrap_or_default(),
                     ),
                     Err(_) => (Vec::new(), Vec::new()),
                 };
-                let expiry = params.get("expiryTimestamp").and_then(Value::as_u64).unwrap_or(now() + FIVE_MINUTES).min(now() + MAX_PENDING_LIFETIME);
+                let expiry = params
+                    .get("expiryTimestamp")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(now() + FIVE_MINUTES)
+                    .min(now() + MAX_PENDING_LIFETIME);
                 let incompatible = namespaces.as_ref().err().cloned();
                 self.proposals.insert(
                     id,
-                    PendingProposal { id, pairing_topic: topic.to_string(), proposer_public, peer: peer.clone(), namespaces: namespaces.map(|_| params.clone()), expiry },
+                    PendingProposal {
+                        id,
+                        pairing_topic: topic.to_string(),
+                        proposer_public,
+                        peer: peer.clone(),
+                        namespaces: namespaces.map(|_| params.clone()),
+                        expiry,
+                    },
                 );
-                vec![Action::Emit(WcEvent::Proposal { id, peer, chains, methods, incompatible })]
+                vec![Action::Emit(WcEvent::Proposal {
+                    id,
+                    peer,
+                    chains,
+                    methods,
+                    incompatible,
+                })]
             }
-            "wc_pairingPing" => self.publish(topic, &rpc_result(id, json!(true)), 30, TAG_PAIRING_PING_RES).into_iter().collect(),
+            "wc_pairingPing" => self
+                .publish(
+                    topic,
+                    &rpc_result(id, json!(true)),
+                    30,
+                    TAG_PAIRING_PING_RES,
+                )
+                .into_iter()
+                .collect(),
             "wc_pairingDelete" => {
-                let mut actions: Vec<Action> = self.publish(topic, &rpc_result(id, json!(true)), ONE_DAY, TAG_PAIRING_DELETE_RES).into_iter().collect();
+                let mut actions: Vec<Action> = self
+                    .publish(
+                        topic,
+                        &rpc_result(id, json!(true)),
+                        ONE_DAY,
+                        TAG_PAIRING_DELETE_RES,
+                    )
+                    .into_iter()
+                    .collect();
                 self.state.pairings.retain(|p| p.topic != topic);
                 actions.extend([Action::Unsubscribe(topic.to_string()), Action::Persist]);
                 actions
@@ -502,21 +692,63 @@ impl Engine {
         }
     }
 
-    fn on_session_request(&mut self, topic: &str, id: u64, method: &str, params: Value) -> Vec<Action> {
-        let Some(session) = self.session(topic).cloned() else { return Vec::new() };
+    fn on_session_request(
+        &mut self,
+        topic: &str,
+        id: u64,
+        method: &str,
+        params: Value,
+    ) -> Vec<Action> {
+        let Some(session) = self.session(topic).cloned() else {
+            return Vec::new();
+        };
         match method {
             "wc_sessionRequest" => {
-                let chain = params.get("chainId").and_then(Value::as_str).unwrap_or("").to_string();
-                let request_method = params.pointer("/request/method").and_then(Value::as_str).unwrap_or("").to_string();
-                let request_params = params.pointer("/request/params").cloned().unwrap_or(Value::Null);
+                let chain = params
+                    .get("chainId")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                let request_method = params
+                    .pointer("/request/method")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                let request_params = params
+                    .pointer("/request/params")
+                    .cloned()
+                    .unwrap_or(Value::Null);
                 if !session.allows(&chain, &request_method) {
-                    let error = if dapp_requests::network_for_chain(&chain).is_none() { UNSUPPORTED_CHAINS } else { UNSUPPORTED_METHODS };
-                    return self.publish(topic, &rpc_error(id, error), 3 * FIVE_MINUTES, TAG_SESSION_REQUEST_RES).into_iter().collect();
+                    let error = if dapp_requests::network_for_chain(&chain).is_none() {
+                        UNSUPPORTED_CHAINS
+                    } else {
+                        UNSUPPORTED_METHODS
+                    };
+                    return self
+                        .publish(
+                            topic,
+                            &rpc_error(id, error),
+                            3 * FIVE_MINUTES,
+                            TAG_SESSION_REQUEST_RES,
+                        )
+                        .into_iter()
+                        .collect();
                 }
                 // Reading accounts: no signature, immediate answer.
-                if matches!(request_method.as_str(), "solana_getAccounts" | "solana_requestAccounts") {
+                if matches!(
+                    request_method.as_str(),
+                    "solana_getAccounts" | "solana_requestAccounts"
+                ) {
                     let result = json!([{"pubkey": session.solana_address}]);
-                    return self.publish(topic, &rpc_result(id, result), 3 * FIVE_MINUTES, TAG_SESSION_REQUEST_RES).into_iter().collect();
+                    return self
+                        .publish(
+                            topic,
+                            &rpc_result(id, result),
+                            3 * FIVE_MINUTES,
+                            TAG_SESSION_REQUEST_RES,
+                        )
+                        .into_iter()
+                        .collect();
                 }
                 // Already received on this topic: a relay redelivery, ignored without an answer
                 // (if still pending, it keeps its window; if already handled, it does not come
@@ -529,11 +761,29 @@ impl Engine {
                 // confirmation, replace it, and receive the signature meant for the first one. An
                 // identifier already pending is refused; the first request stays.
                 if self.requests.contains_key(&id) {
-                    return self.publish(topic, &rpc_error(id, DUPLICATE_REQUEST), 3 * FIVE_MINUTES, TAG_SESSION_REQUEST_RES).into_iter().collect();
+                    return self
+                        .publish(
+                            topic,
+                            &rpc_error(id, DUPLICATE_REQUEST),
+                            3 * FIVE_MINUTES,
+                            TAG_SESSION_REQUEST_RES,
+                        )
+                        .into_iter()
+                        .collect();
                 }
                 let from_session = self.requests.values().filter(|r| r.topic == topic).count();
-                if self.requests.len() >= MAX_PENDING_REQUESTS || from_session >= MAX_PENDING_PER_SESSION {
-                    return self.publish(topic, &rpc_error(id, TOO_MANY_REQUESTS), 3 * FIVE_MINUTES, TAG_SESSION_REQUEST_RES).into_iter().collect();
+                if self.requests.len() >= MAX_PENDING_REQUESTS
+                    || from_session >= MAX_PENDING_PER_SESSION
+                {
+                    return self
+                        .publish(
+                            topic,
+                            &rpc_error(id, TOO_MANY_REQUESTS),
+                            3 * FIVE_MINUTES,
+                            TAG_SESSION_REQUEST_RES,
+                        )
+                        .into_iter()
+                        .collect();
                 }
                 let expiry = params
                     .pointer("/request/expiryTimestamp")
@@ -543,22 +793,85 @@ impl Engine {
                 self.remember(topic, id);
                 self.requests.insert(
                     id,
-                    PendingRequest { id, topic: topic.to_string(), method: request_method.clone(), params: request_params, chain: chain.clone(), expiry },
+                    PendingRequest {
+                        id,
+                        topic: topic.to_string(),
+                        method: request_method.clone(),
+                        params: request_params,
+                        chain: chain.clone(),
+                        expiry,
+                    },
                 );
-                vec![Action::Persist, Action::Emit(WcEvent::Request { id, topic: topic.to_string(), peer: session.peer, method: request_method, chain })]
+                vec![
+                    Action::Persist,
+                    Action::Emit(WcEvent::Request {
+                        id,
+                        topic: topic.to_string(),
+                        peer: session.peer,
+                        method: request_method,
+                        chain,
+                    }),
+                ]
             }
-            "wc_sessionPing" => self.publish(topic, &rpc_result(id, json!(true)), ONE_DAY, TAG_SESSION_PING_RES).into_iter().collect(),
+            "wc_sessionPing" => self
+                .publish(
+                    topic,
+                    &rpc_result(id, json!(true)),
+                    ONE_DAY,
+                    TAG_SESSION_PING_RES,
+                )
+                .into_iter()
+                .collect(),
             "wc_sessionDelete" => {
-                let mut actions: Vec<Action> = self.publish(topic, &rpc_result(id, json!(true)), ONE_DAY, TAG_SESSION_DELETE_RES).into_iter().collect();
+                let mut actions: Vec<Action> = self
+                    .publish(
+                        topic,
+                        &rpc_result(id, json!(true)),
+                        ONE_DAY,
+                        TAG_SESSION_DELETE_RES,
+                    )
+                    .into_iter()
+                    .collect();
                 self.remove_session(topic);
-                actions.extend([Action::Unsubscribe(topic.to_string()), Action::Persist, Action::Emit(WcEvent::SessionsChanged)]);
+                actions.extend([
+                    Action::Unsubscribe(topic.to_string()),
+                    Action::Persist,
+                    Action::Emit(WcEvent::SessionsChanged),
+                ]);
                 actions
             }
             // Only the wallet (the controller) can update or extend a session.
-            "wc_sessionUpdate" => self.publish(topic, &rpc_error(id, (3003, "Unauthorized update request.")), ONE_DAY, TAG_SESSION_UPDATE_RES).into_iter().collect(),
-            "wc_sessionExtend" => self.publish(topic, &rpc_error(id, (3004, "Unauthorized extend request.")), ONE_DAY, TAG_SESSION_EXTEND_RES).into_iter().collect(),
-            "wc_sessionEvent" => self.publish(topic, &rpc_error(id, (3002, "Unauthorized event.")), FIVE_MINUTES, TAG_SESSION_EVENT_RES).into_iter().collect(),
-            _ => self.publish(topic, &rpc_error(id, UNSUPPORTED_WC_METHOD), ONE_DAY, 0).into_iter().collect(),
+            "wc_sessionUpdate" => self
+                .publish(
+                    topic,
+                    &rpc_error(id, (3003, "Unauthorized update request.")),
+                    ONE_DAY,
+                    TAG_SESSION_UPDATE_RES,
+                )
+                .into_iter()
+                .collect(),
+            "wc_sessionExtend" => self
+                .publish(
+                    topic,
+                    &rpc_error(id, (3004, "Unauthorized extend request.")),
+                    ONE_DAY,
+                    TAG_SESSION_EXTEND_RES,
+                )
+                .into_iter()
+                .collect(),
+            "wc_sessionEvent" => self
+                .publish(
+                    topic,
+                    &rpc_error(id, (3002, "Unauthorized event.")),
+                    FIVE_MINUTES,
+                    TAG_SESSION_EVENT_RES,
+                )
+                .into_iter()
+                .collect(),
+            _ => self
+                .publish(topic, &rpc_error(id, UNSUPPORTED_WC_METHOD), ONE_DAY, 0)
+                .into_iter()
+                .collect(),
         }
     }
 
@@ -568,10 +881,21 @@ impl Engine {
     }
 
     /// The user approves a proposal, for the chosen profile.
-    pub fn approve(&mut self, proposal_id: u64, profile_index: u32, account: &dapp_requests::Account) -> Result<Vec<Action>> {
-        let proposal = self.proposals.remove(&proposal_id).ok_or_else(|| anyhow!("proposition de connexion introuvable ou expirée"))?;
-        let params = proposal.namespaces.map_err(|reason| anyhow!("connexion impossible : {reason}"))?;
-        let namespaces = session_namespaces(&params, Some(account)).map_err(|reason| anyhow!("connexion impossible : {reason}"))?;
+    pub fn approve(
+        &mut self,
+        proposal_id: u64,
+        profile_index: u32,
+        account: &dapp_requests::Account,
+    ) -> Result<Vec<Action>> {
+        let proposal = self
+            .proposals
+            .remove(&proposal_id)
+            .ok_or_else(|| anyhow!("proposition de connexion introuvable ou expirée"))?;
+        let params = proposal
+            .namespaces
+            .map_err(|reason| anyhow!("connexion impossible : {reason}"))?;
+        let namespaces = session_namespaces(&params, Some(account))
+            .map_err(|reason| anyhow!("connexion impossible : {reason}"))?;
 
         let own = crypto::KeyPair::generate()?;
         let sym_key = crypto::derive_sym_key(&own.private, &proposal.proposer_public)?;
@@ -579,8 +903,16 @@ impl Engine {
         let expiry = now() + SEVEN_DAYS;
         let own_public = hex::encode(own.public);
 
-        let response = rpc_result(proposal.id, json!({"relay": {"protocol": "irn"}, "responderPublicKey": own_public}));
-        let pairing_publish = self.publish(&proposal.pairing_topic, &response, FIVE_MINUTES, TAG_SESSION_PROPOSE_RES)?;
+        let response = rpc_result(
+            proposal.id,
+            json!({"relay": {"protocol": "irn"}, "responderPublicKey": own_public}),
+        );
+        let pairing_publish = self.publish(
+            &proposal.pairing_topic,
+            &response,
+            FIVE_MINUTES,
+            TAG_SESSION_PROPOSE_RES,
+        )?;
 
         self.state.sessions.push(Session {
             topic: session_topic.clone(),
@@ -595,7 +927,12 @@ impl Engine {
             solana_address: account.solana.clone(),
             acknowledged: false,
         });
-        if let Some(p) = self.state.pairings.iter_mut().find(|p| p.topic == proposal.pairing_topic) {
+        if let Some(p) = self
+            .state
+            .pairings
+            .iter_mut()
+            .find(|p| p.topic == proposal.pairing_topic)
+        {
             p.active = true;
             p.expiry = now() + THIRTY_DAYS;
         }
@@ -609,7 +946,12 @@ impl Engine {
             }
         })
         .to_string();
-        let settle_publish = self.publish(&session_topic, &settle, FIVE_MINUTES, TAG_SESSION_SETTLE_REQ)?;
+        let settle_publish = self.publish(
+            &session_topic,
+            &settle,
+            FIVE_MINUTES,
+            TAG_SESSION_SETTLE_REQ,
+        )?;
         Ok(vec![
             Action::Persist,
             Action::Subscribe(session_topic),
@@ -620,18 +962,38 @@ impl Engine {
     }
 
     pub fn reject(&mut self, proposal_id: u64) -> Result<Vec<Action>> {
-        let proposal = self.proposals.remove(&proposal_id).ok_or_else(|| anyhow!("proposition de connexion introuvable ou expirée"))?;
-        Ok(vec![self.publish(&proposal.pairing_topic, &rpc_error(proposal.id, USER_REJECTED), FIVE_MINUTES, TAG_SESSION_PROPOSE_REJECT)?])
+        let proposal = self
+            .proposals
+            .remove(&proposal_id)
+            .ok_or_else(|| anyhow!("proposition de connexion introuvable ou expirée"))?;
+        Ok(vec![self.publish(
+            &proposal.pairing_topic,
+            &rpc_error(proposal.id, USER_REJECTED),
+            FIVE_MINUTES,
+            TAG_SESSION_PROPOSE_REJECT,
+        )?])
     }
 
     /// Answer to a request: the signature result, or an error (refusal).
-    pub fn respond(&mut self, request_id: u64, result: std::result::Result<Value, (i64, String)>) -> Result<Vec<Action>> {
-        let request = self.requests.remove(&request_id).ok_or_else(|| anyhow!("demande introuvable ou expirée"))?;
+    pub fn respond(
+        &mut self,
+        request_id: u64,
+        result: std::result::Result<Value, (i64, String)>,
+    ) -> Result<Vec<Action>> {
+        let request = self
+            .requests
+            .remove(&request_id)
+            .ok_or_else(|| anyhow!("demande introuvable ou expirée"))?;
         let payload = match result {
             Ok(value) => rpc_result(request.id, value),
             Err((code, message)) => json!({"id": request.id, "jsonrpc": "2.0", "error": {"code": code, "message": message}}).to_string(),
         };
-        Ok(vec![self.publish(&request.topic, &payload, 3 * FIVE_MINUTES, TAG_SESSION_REQUEST_RES)?])
+        Ok(vec![self.publish(
+            &request.topic,
+            &payload,
+            3 * FIVE_MINUTES,
+            TAG_SESSION_REQUEST_RES,
+        )?])
     }
 
     /// Disconnection initiated by the user.
@@ -644,7 +1006,12 @@ impl Engine {
         .to_string();
         let publish = self.publish(topic, &delete, ONE_DAY, TAG_SESSION_DELETE_REQ)?;
         self.remove_session(topic);
-        Ok(vec![publish, Action::Unsubscribe(topic.to_string()), Action::Persist, Action::Emit(WcEvent::SessionsChanged)])
+        Ok(vec![
+            publish,
+            Action::Unsubscribe(topic.to_string()),
+            Action::Persist,
+            Action::Emit(WcEvent::SessionsChanged),
+        ])
     }
 }
 
@@ -664,10 +1031,20 @@ mod tests {
     impl FakeDapp {
         fn new() -> Self {
             let pairing_key = [0x42; 32];
-            Self { pairing_topic: crypto::topic_for_key(&pairing_key), pairing_key, keys: crypto::KeyPair::generate().unwrap(), session_key: None }
+            Self {
+                pairing_topic: crypto::topic_for_key(&pairing_key),
+                pairing_key,
+                keys: crypto::KeyPair::generate().unwrap(),
+                session_key: None,
+            }
         }
         fn uri(&self) -> String {
-            format!("wc:{}@2?relay-protocol=irn&symKey={}&expiryTimestamp={}", self.pairing_topic, hex::encode(self.pairing_key), now() + 300)
+            format!(
+                "wc:{}@2?relay-protocol=irn&symKey={}&expiryTimestamp={}",
+                self.pairing_topic,
+                hex::encode(self.pairing_key),
+                now() + 300
+            )
         }
         fn propose(&self, id: u64, required: Value, optional: Value) -> String {
             let payload = json!({"id": id, "jsonrpc": "2.0", "method": "wc_sessionPropose", "params": {
@@ -683,14 +1060,22 @@ mod tests {
     }
 
     fn account() -> dapp_requests::Account {
-        dapp_requests::Account { evm: "0x2c7536E3605D9C16a7a3D7b1898e529396a65c23".into(), solana: "9waCLiN9G99f1GXMVBQqifbPMwGMYvJZFUHywRCQPG5F".into() }
+        dapp_requests::Account {
+            evm: "0x2c7536E3605D9C16a7a3D7b1898e529396a65c23".into(),
+            solana: "9waCLiN9G99f1GXMVBQqifbPMwGMYvJZFUHywRCQPG5F".into(),
+        }
     }
 
     fn published(actions: &[Action]) -> Vec<(String, String, u32)> {
         actions
             .iter()
             .filter_map(|a| match a {
-                Action::Publish { topic, message, tag, .. } => Some((topic.clone(), message.clone(), *tag)),
+                Action::Publish {
+                    topic,
+                    message,
+                    tag,
+                    ..
+                } => Some((topic.clone(), message.clone(), *tag)),
                 _ => None,
             })
             .collect()
@@ -709,13 +1094,31 @@ mod tests {
 
         let required = json!({"eip155": {"chains": ["eip155:1"], "methods": ["eth_sendTransaction", "personal_sign"], "events": ["accountsChanged", "chainChanged"]}});
         let optional = json!({"eip155": {"chains": ["eip155:10", "eip155:11155111", "eip155:8453"], "methods": ["eth_signTypedData_v4", "wallet_switchEthereumChain"], "events": []}, "solana": {"chains": [dapp_requests::SOLANA_MAINNET], "methods": ["solana_signMessage"], "events": []}});
-        let actions = engine.handle_incoming(&dapp.pairing_topic.clone(), &dapp.propose(7, required, optional));
+        let actions = engine.handle_incoming(
+            &dapp.pairing_topic.clone(),
+            &dapp.propose(7, required, optional),
+        );
         match &actions[..] {
-            [Action::Emit(WcEvent::Proposal { id: 7, peer, chains, incompatible: None, .. })] => {
+            [Action::Emit(WcEvent::Proposal {
+                id: 7,
+                peer,
+                chains,
+                incompatible: None,
+                ..
+            })] => {
                 assert_eq!(peer.name, "Démo dApp");
-                assert!(chains.contains(&"eip155:1".to_string()) && chains.contains(&"eip155:11155111".to_string()));
-                assert!(!chains.contains(&"eip155:10".to_string()), "réseau facultatif non géré : omis");
-                assert!(chains.contains(&"eip155:8453".to_string()), "Base, géré par l'app : accordé");
+                assert!(
+                    chains.contains(&"eip155:1".to_string())
+                        && chains.contains(&"eip155:11155111".to_string())
+                );
+                assert!(
+                    !chains.contains(&"eip155:10".to_string()),
+                    "réseau facultatif non géré : omis"
+                );
+                assert!(
+                    chains.contains(&"eip155:8453".to_string()),
+                    "Base, géré par l'app : accordé"
+                );
             }
             other => panic!("{other:?}"),
         }
@@ -725,10 +1128,14 @@ mod tests {
         assert_eq!(pubs.len(), 2);
         // Response to the proposal, on the pairing topic: our public key.
         let (topic, message, tag) = &pubs[0];
-        assert_eq!((topic, *tag), (&dapp.pairing_topic, TAG_SESSION_PROPOSE_RES));
+        assert_eq!(
+            (topic, *tag),
+            (&dapp.pairing_topic, TAG_SESSION_PROPOSE_RES)
+        );
         let response = dapp.open(&dapp.pairing_key, message);
         assert_eq!(response["id"], 7);
-        let wallet_public = key_from_hex(response["result"]["responderPublicKey"].as_str().unwrap()).unwrap();
+        let wallet_public =
+            key_from_hex(response["result"]["responderPublicKey"].as_str().unwrap()).unwrap();
         // The dApp derives the SAME session key and the same topic.
         let session_key = *crypto::derive_sym_key(&dapp.keys.private, &wallet_public).unwrap();
         let session_topic = crypto::topic_for_key(&session_key);
@@ -738,38 +1145,81 @@ mod tests {
         let settle = dapp.open(&session_key, message);
         assert_eq!(settle["method"], "wc_sessionSettle");
         let ns = &settle["params"]["namespaces"];
-        assert_eq!(ns["eip155"]["accounts"][0], format!("eip155:1:{}", account().evm));
-        assert_eq!(ns["solana"]["accounts"][0], format!("{}:{}", dapp_requests::SOLANA_MAINNET, account().solana));
-        assert!(ns["eip155"]["methods"].as_array().unwrap().iter().all(|m| m != "eth_sign"));
+        assert_eq!(
+            ns["eip155"]["accounts"][0],
+            format!("eip155:1:{}", account().evm)
+        );
+        assert_eq!(
+            ns["solana"]["accounts"][0],
+            format!("{}:{}", dapp_requests::SOLANA_MAINNET, account().solana)
+        );
+        assert!(ns["eip155"]["methods"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|m| m != "eth_sign"));
         assert!(actions.contains(&Action::Subscribe(session_topic.clone())));
 
         // Signing request.
         let request = json!({"id": 99, "jsonrpc": "2.0", "method": "wc_sessionRequest", "params": {
             "request": {"method": "personal_sign", "params": ["0x48656c6c6f", account().evm]}, "chainId": "eip155:1"}});
-        let actions = engine.handle_incoming(&session_topic, &crypto::encrypt_type0(&session_key, &request.to_string()).unwrap());
-        assert!(matches!(&actions[..], [Action::Persist, Action::Emit(WcEvent::Request { id: 99, method, .. })] if method == "personal_sign"));
-        assert_eq!(engine.pending_request(99).unwrap().params[0], "0x48656c6c6f");
+        let actions = engine.handle_incoming(
+            &session_topic,
+            &crypto::encrypt_type0(&session_key, &request.to_string()).unwrap(),
+        );
+        assert!(
+            matches!(&actions[..], [Action::Persist, Action::Emit(WcEvent::Request { id: 99, method, .. })] if method == "personal_sign")
+        );
+        assert_eq!(
+            engine.pending_request(99).unwrap().params[0],
+            "0x48656c6c6f"
+        );
         let actions = engine.respond(99, Ok(json!("0xsignature"))).unwrap();
         let (_, message, tag) = &published(&actions)[0];
         assert_eq!(*tag, TAG_SESSION_REQUEST_RES);
-        assert_eq!(dapp.open(&session_key, message), json!({"id": 99, "jsonrpc": "2.0", "result": "0xsignature"}));
-        assert!(engine.respond(99, Ok(json!("rejouée"))).is_err(), "une demande ne reçoit qu'une réponse");
+        assert_eq!(
+            dapp.open(&session_key, message),
+            json!({"id": 99, "jsonrpc": "2.0", "result": "0xsignature"})
+        );
+        assert!(
+            engine.respond(99, Ok(json!("rejouée"))).is_err(),
+            "une demande ne reçoit qu'une réponse"
+        );
 
         // A method outside the session (eth_sign) and a network outside the session: immediate
         // error, never shown.
-        for (method, chain, code) in [("eth_sign", "eip155:1", 5101), ("personal_sign", "eip155:10", 5100)] {
+        for (method, chain, code) in [
+            ("eth_sign", "eip155:1", 5101),
+            ("personal_sign", "eip155:10", 5100),
+        ] {
             let request = json!({"id": 100, "jsonrpc": "2.0", "method": "wc_sessionRequest", "params": {"request": {"method": method, "params": []}, "chainId": chain}});
-            let actions = engine.handle_incoming(&session_topic, &crypto::encrypt_type0(&session_key, &request.to_string()).unwrap());
+            let actions = engine.handle_incoming(
+                &session_topic,
+                &crypto::encrypt_type0(&session_key, &request.to_string()).unwrap(),
+            );
             let (_, message, _) = &published(&actions)[0];
-            assert_eq!(dapp.open(&session_key, message)["error"]["code"], code, "{method} {chain}");
+            assert_eq!(
+                dapp.open(&session_key, message)["error"]["code"],
+                code,
+                "{method} {chain}"
+            );
         }
 
         // Ping, then disconnection by the wallet.
         let ping = json!({"id": 5, "jsonrpc": "2.0", "method": "wc_sessionPing", "params": {}});
-        let actions = engine.handle_incoming(&session_topic, &crypto::encrypt_type0(&session_key, &ping.to_string()).unwrap());
-        assert_eq!(dapp.open(&session_key, &published(&actions)[0].1)["result"], true);
+        let actions = engine.handle_incoming(
+            &session_topic,
+            &crypto::encrypt_type0(&session_key, &ping.to_string()).unwrap(),
+        );
+        assert_eq!(
+            dapp.open(&session_key, &published(&actions)[0].1)["result"],
+            true
+        );
         let actions = engine.disconnect(&session_topic).unwrap();
-        assert_eq!(dapp.open(&session_key, &published(&actions)[0].1)["method"], "wc_sessionDelete");
+        assert_eq!(
+            dapp.open(&session_key, &published(&actions)[0].1)["method"],
+            "wc_sessionDelete"
+        );
         assert!(engine.sessions().is_empty());
     }
 
@@ -779,16 +1229,36 @@ mod tests {
         let mut engine = Engine::new(PersistedState::default()).unwrap();
         engine.pair(&dapp.uri()).unwrap();
         let required = json!({"eip155": {"chains": ["eip155:10"], "methods": ["eth_sendTransaction"], "events": []}});
-        let actions = engine.handle_incoming(&dapp.pairing_topic.clone(), &dapp.propose(8, required, json!({})));
-        assert!(matches!(&actions[..], [Action::Emit(WcEvent::Proposal { incompatible: Some(_), .. })]));
+        let actions = engine.handle_incoming(
+            &dapp.pairing_topic.clone(),
+            &dapp.propose(8, required, json!({})),
+        );
+        assert!(matches!(
+            &actions[..],
+            [Action::Emit(WcEvent::Proposal {
+                incompatible: Some(_),
+                ..
+            })]
+        ));
         assert!(engine.approve(8, 0, &account()).is_err());
 
-        let required = json!({"eip155": {"chains": ["eip155:1"], "methods": ["eth_sign"], "events": []}});
-        engine.handle_incoming(&dapp.pairing_topic.clone(), &dapp.propose(9, required, json!({})));
-        assert!(engine.approve(9, 0, &account()).is_err(), "eth_sign exigé : incompatible");
+        let required =
+            json!({"eip155": {"chains": ["eip155:1"], "methods": ["eth_sign"], "events": []}});
+        engine.handle_incoming(
+            &dapp.pairing_topic.clone(),
+            &dapp.propose(9, required, json!({})),
+        );
+        assert!(
+            engine.approve(9, 0, &account()).is_err(),
+            "eth_sign exigé : incompatible"
+        );
 
-        let required = json!({"eip155": {"chains": ["eip155:1"], "methods": ["personal_sign"], "events": []}});
-        engine.handle_incoming(&dapp.pairing_topic.clone(), &dapp.propose(10, required, json!({})));
+        let required =
+            json!({"eip155": {"chains": ["eip155:1"], "methods": ["personal_sign"], "events": []}});
+        engine.handle_incoming(
+            &dapp.pairing_topic.clone(),
+            &dapp.propose(10, required, json!({})),
+        );
         let actions = engine.reject(10).unwrap();
         let (_, message, tag) = &published(&actions)[0];
         assert_eq!(*tag, TAG_SESSION_PROPOSE_REJECT);
@@ -801,23 +1271,47 @@ mod tests {
         let mut engine = Engine::new(PersistedState::default()).unwrap();
         engine.pair(&dapp.uri()).unwrap();
         assert!(engine.pair(&dapp.uri()).is_err(), "lien déjà utilisé");
-        assert!(engine.handle_incoming("canal-inconnu", &dapp.propose(1, json!({}), json!({}))).is_empty());
-        assert!(engine.handle_incoming(&dapp.pairing_topic.clone(), "pas une enveloppe").is_empty());
+        assert!(engine
+            .handle_incoming("canal-inconnu", &dapp.propose(1, json!({}), json!({})))
+            .is_empty());
+        assert!(engine
+            .handle_incoming(&dapp.pairing_topic.clone(), "pas une enveloppe")
+            .is_empty());
         let other_key = crypto::encrypt_type0(&[1; 32], "{}").unwrap();
-        assert!(engine.handle_incoming(&dapp.pairing_topic.clone(), &other_key).is_empty());
-        let expired = format!("wc:{}@2?relay-protocol=irn&symKey={}&expiryTimestamp=1000", "ab".repeat(32), "cd".repeat(32));
+        assert!(engine
+            .handle_incoming(&dapp.pairing_topic.clone(), &other_key)
+            .is_empty());
+        let expired = format!(
+            "wc:{}@2?relay-protocol=irn&symKey={}&expiryTimestamp=1000",
+            "ab".repeat(32),
+            "cd".repeat(32)
+        );
         assert!(engine.pair(&expired).is_err());
     }
 
     /// A connected dApp (pairing, proposal, approval): session topic and key.
-    fn connect(engine: &mut Engine, pairing_key: [u8; 32], proposal_id: u64) -> (FakeDapp, String, [u8; 32]) {
-        let dapp = FakeDapp { pairing_topic: crypto::topic_for_key(&pairing_key), pairing_key, keys: crypto::KeyPair::generate().unwrap(), session_key: None };
+    fn connect(
+        engine: &mut Engine,
+        pairing_key: [u8; 32],
+        proposal_id: u64,
+    ) -> (FakeDapp, String, [u8; 32]) {
+        let dapp = FakeDapp {
+            pairing_topic: crypto::topic_for_key(&pairing_key),
+            pairing_key,
+            keys: crypto::KeyPair::generate().unwrap(),
+            session_key: None,
+        };
         engine.pair(&dapp.uri()).unwrap();
-        let required = json!({"eip155": {"chains": ["eip155:1"], "methods": ["personal_sign"], "events": []}});
-        engine.handle_incoming(&dapp.pairing_topic.clone(), &dapp.propose(proposal_id, required, json!({})));
+        let required =
+            json!({"eip155": {"chains": ["eip155:1"], "methods": ["personal_sign"], "events": []}});
+        engine.handle_incoming(
+            &dapp.pairing_topic.clone(),
+            &dapp.propose(proposal_id, required, json!({})),
+        );
         let pubs = published(&engine.approve(proposal_id, 0, &account()).unwrap());
         let response = dapp.open(&dapp.pairing_key, &pubs[0].1);
-        let wallet_public = key_from_hex(response["result"]["responderPublicKey"].as_str().unwrap()).unwrap();
+        let wallet_public =
+            key_from_hex(response["result"]["responderPublicKey"].as_str().unwrap()).unwrap();
         let key = *crypto::derive_sym_key(&dapp.keys.private, &wallet_public).unwrap();
         (dapp, crypto::topic_for_key(&key), key)
     }
@@ -841,26 +1335,57 @@ mod tests {
         let (_, topic, key) = connect(&mut engine, [0x42; 32], 1);
         let message = sign_request(&key, 42, None);
         assert!(!engine.handle_incoming(&topic, &message).is_empty());
-        assert!(engine.handle_incoming(&topic, &message).is_empty(), "redélivrée en attente : rien, pas d'erreur");
+        assert!(
+            engine.handle_incoming(&topic, &message).is_empty(),
+            "redélivrée en attente : rien, pas d'erreur"
+        );
         assert!(engine.pending_request(42).is_some());
         engine.respond(42, Ok(json!("0xsignature"))).unwrap();
-        assert!(engine.handle_incoming(&topic, &message).is_empty(), "redélivrée après la réponse : ignorée");
-        assert!(engine.pending_request(42).is_none(), "ne redevient pas une demande en attente");
+        assert!(
+            engine.handle_incoming(&topic, &message).is_empty(),
+            "redélivrée après la réponse : ignorée"
+        );
+        assert!(
+            engine.pending_request(42).is_none(),
+            "ne redevient pas une demande en attente"
+        );
 
         let saved = serde_json::to_string(&engine.state).unwrap();
         let mut restarted = Engine::new(serde_json::from_str(&saved).unwrap()).unwrap();
-        assert!(restarted.handle_incoming(&topic, &message).is_empty(), "après redémarrage : toujours ignorée");
+        assert!(
+            restarted.handle_incoming(&topic, &message).is_empty(),
+            "après redémarrage : toujours ignorée"
+        );
         assert!(restarted.pending_request(42).is_none());
         let fresh = restarted.handle_incoming(&topic, &sign_request(&key, 43, None));
-        assert!(matches!(&fresh[..], [Action::Persist, Action::Emit(WcEvent::Request { id: 43, .. })]), "une vraie nouvelle demande passe");
+        assert!(
+            matches!(
+                &fresh[..],
+                [
+                    Action::Persist,
+                    Action::Emit(WcEvent::Request { id: 43, .. })
+                ]
+            ),
+            "une vraie nouvelle demande passe"
+        );
 
         // Redelivered proposal: a single window.
-        let required = json!({"eip155": {"chains": ["eip155:1"], "methods": ["personal_sign"], "events": []}});
-        let other = FakeDapp { pairing_topic: crypto::topic_for_key(&[0x45; 32]), pairing_key: [0x45; 32], keys: crypto::KeyPair::generate().unwrap(), session_key: None };
+        let required =
+            json!({"eip155": {"chains": ["eip155:1"], "methods": ["personal_sign"], "events": []}});
+        let other = FakeDapp {
+            pairing_topic: crypto::topic_for_key(&[0x45; 32]),
+            pairing_key: [0x45; 32],
+            keys: crypto::KeyPair::generate().unwrap(),
+            session_key: None,
+        };
         restarted.pair(&other.uri()).unwrap();
         let proposal = other.propose(77, required, json!({}));
-        assert!(!restarted.handle_incoming(&other.pairing_topic.clone(), &proposal).is_empty());
-        assert!(restarted.handle_incoming(&other.pairing_topic.clone(), &proposal).is_empty());
+        assert!(!restarted
+            .handle_incoming(&other.pairing_topic.clone(), &proposal)
+            .is_empty());
+        assert!(restarted
+            .handle_incoming(&other.pairing_topic.clone(), &proposal)
+            .is_empty());
     }
 
     /// Audit round 23: a request's identifier is chosen by the dApp. ANOTHER dApp
@@ -877,8 +1402,15 @@ mod tests {
         let actions = engine.handle_incoming(&topic_b, &sign_request(&key_b, 500, None));
         let (topic, message, _) = &published(&actions)[0];
         assert_eq!(topic, &topic_b);
-        assert_eq!(dapp_b.open(&key_b, message)["error"]["code"], DUPLICATE_REQUEST.0);
-        assert_eq!(engine.pending_request(500).unwrap().topic, topic_a, "la demande de la 1re dApp reste");
+        assert_eq!(
+            dapp_b.open(&key_b, message)["error"]["code"],
+            DUPLICATE_REQUEST.0
+        );
+        assert_eq!(
+            engine.pending_request(500).unwrap().topic,
+            topic_a,
+            "la demande de la 1re dApp reste"
+        );
 
         engine.handle_incoming(&topic_a, &sign_request(&key_a, 501, Some(u64::MAX)));
         assert!(engine.pending_request(501).unwrap().expiry <= now() + MAX_PENDING_LIFETIME);
@@ -888,16 +1420,31 @@ mod tests {
             engine.handle_incoming(&topic_b, &sign_request(&key_b, id, None));
         }
         let actions = engine.handle_incoming(&topic_b, &sign_request(&key_b, 700, None));
-        assert_eq!(dapp_b.open(&key_b, &published(&actions)[0].1)["error"]["code"], TOO_MANY_REQUESTS.0);
+        assert_eq!(
+            dapp_b.open(&key_b, &published(&actions)[0].1)["error"]["code"],
+            TOO_MANY_REQUESTS.0
+        );
         assert!(engine.pending_request(700).is_none());
-        assert_eq!(engine.requests.values().filter(|r| r.topic == topic_b).count(), MAX_PENDING_PER_SESSION);
+        assert_eq!(
+            engine
+                .requests
+                .values()
+                .filter(|r| r.topic == topic_b)
+                .count(),
+            MAX_PENDING_PER_SESSION
+        );
         // Refused for lack of room, it was never shown: redelivered once there is room
         // again, it is accepted (not ignored as "already seen").
-        engine.respond(600, Err((5000, "User rejected.".into()))).unwrap();
+        engine
+            .respond(600, Err((5000, "User rejected.".into())))
+            .unwrap();
         engine.handle_incoming(&topic_b, &sign_request(&key_b, 700, None));
         assert!(engine.pending_request(700).is_some());
         engine.handle_incoming(&topic_a, &sign_request(&key_a, 502, None));
-        assert!(engine.pending_request(502).is_some(), "la 1re dApp n'est pas bloquée par la 2de");
+        assert!(
+            engine.pending_request(502).is_some(),
+            "la 1re dApp n'est pas bloquée par la 2de"
+        );
         // Across all connections: at most 20.
         let mut next_id = 800;
         for key in 0x50..0x54u8 {
@@ -911,13 +1458,30 @@ mod tests {
 
         // Proposals: the same identifier on another pairing is ignored; the number is
         // bounded.
-        let other = FakeDapp { pairing_topic: crypto::topic_for_key(&[0x44; 32]), pairing_key: [0x44; 32], keys: crypto::KeyPair::generate().unwrap(), session_key: None };
+        let other = FakeDapp {
+            pairing_topic: crypto::topic_for_key(&[0x44; 32]),
+            pairing_key: [0x44; 32],
+            keys: crypto::KeyPair::generate().unwrap(),
+            session_key: None,
+        };
         engine.pair(&other.uri()).unwrap();
-        let required = json!({"eip155": {"chains": ["eip155:1"], "methods": ["personal_sign"], "events": []}});
-        engine.handle_incoming(&other.pairing_topic.clone(), &other.propose(900, required.clone(), json!({})));
-        assert!(engine.handle_incoming(&other.pairing_topic.clone(), &other.propose(900, required.clone(), json!({}))).is_empty());
+        let required =
+            json!({"eip155": {"chains": ["eip155:1"], "methods": ["personal_sign"], "events": []}});
+        engine.handle_incoming(
+            &other.pairing_topic.clone(),
+            &other.propose(900, required.clone(), json!({})),
+        );
+        assert!(engine
+            .handle_incoming(
+                &other.pairing_topic.clone(),
+                &other.propose(900, required.clone(), json!({}))
+            )
+            .is_empty());
         for id in 901..920 {
-            engine.handle_incoming(&other.pairing_topic.clone(), &other.propose(id, required.clone(), json!({})));
+            engine.handle_incoming(
+                &other.pairing_topic.clone(),
+                &other.propose(id, required.clone(), json!({})),
+            );
         }
         assert_eq!(engine.proposals.len(), MAX_PENDING_PROPOSALS);
     }

@@ -11,7 +11,9 @@ use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 pub fn get_pubkey(trezor: &mut Trezor, path: &[u32], show: bool) -> Result<[u8; 32]> {
     let payload = Writer::new().uints(1, path).boolean(2, show).finish();
     let response = trezor.call_expect(msg::SOLANA_GET_ADDRESS, &payload, msg::SOLANA_ADDRESS)?;
-    let address = Message::parse(&response)?.string(1).ok_or_else(|| anyhow!("adresse Solana du Trezor absente"))?;
+    let address = Message::parse(&response)?
+        .string(1)
+        .ok_or_else(|| anyhow!("adresse Solana du Trezor absente"))?;
     bs58::decode(&address)
         .into_vec()
         .ok()
@@ -25,8 +27,17 @@ fn sign_request(path: &[u32], message: &[u8]) -> Vec<u8> {
 
 /// Signs the message (the signed part of a transaction); the signature must verify
 /// against `expected`.
-pub fn sign_transaction_message(trezor: &mut Trezor, path: &[u32], message: &[u8], expected: &[u8; 32]) -> Result<[u8; 64]> {
-    let response = trezor.call_expect(msg::SOLANA_SIGN_TX, &sign_request(path, message), msg::SOLANA_TX_SIGNATURE)?;
+pub fn sign_transaction_message(
+    trezor: &mut Trezor,
+    path: &[u32],
+    message: &[u8],
+    expected: &[u8; 32],
+) -> Result<[u8; 64]> {
+    let response = trezor.call_expect(
+        msg::SOLANA_SIGN_TX,
+        &sign_request(path, message),
+        msg::SOLANA_TX_SIGNATURE,
+    )?;
     let signature: [u8; 64] = Message::parse(&response)?
         .bytes(1)
         .and_then(|b| b.try_into().ok())
@@ -47,7 +58,10 @@ mod tests {
     #[test]
     fn sign_request_matches_trezorlib() {
         assert_eq!(
-            hex::encode(sign_request(&parse_path("44'/501'/0'/0'").unwrap(), &[1, 2, 3, 4, 5])),
+            hex::encode(sign_request(
+                &parse_path("44'/501'/0'/0'").unwrap(),
+                &[1, 2, 3, 4, 5]
+            )),
             "08ac8080800808f58380800808808080800808808080800812050102030405"
         );
     }
@@ -61,25 +75,39 @@ mod tests {
     fn trezor_solana_against_the_official_firmware() {
         use super::super::emulator::{connect, DebugLink};
         let path = parse_path("44'/501'/0'/0'").unwrap();
-        let seed = bip39::Mnemonic::parse(crate::ledger::speculos::TEST_MNEMONIC).unwrap().to_seed("");
-        let ours = crate::derivation::derive_solana_key(&seed, 0).verifying_key().to_bytes();
+        let seed = bip39::Mnemonic::parse(crate::ledger::speculos::TEST_MNEMONIC)
+            .unwrap()
+            .to_seed("");
+        let ours = crate::derivation::derive_solana_key(&seed, 0)
+            .verifying_key()
+            .to_bytes();
         let mut trezor = connect();
         trezor.initialize().unwrap();
         assert_eq!(get_pubkey(&mut trezor, &path, false).unwrap(), ours);
-        println!("clé Trezor = dérivation : {}", bs58::encode(ours).into_string());
+        println!(
+            "clé Trezor = dérivation : {}",
+            bs58::encode(ours).into_string()
+        );
 
         let reviewer = std::thread::spawn(|| DebugLink::connect().review(8, None));
         assert_eq!(get_pubkey(&mut trezor, &path, true).unwrap(), ours);
         println!("écrans adresse : {:?}", reviewer.join().unwrap());
 
         let to = [0x44u8; 32];
-        let message = crate::sol_tx::build_message(&ours, &[crate::sol_tx::transfer_instruction(&ours, &to, 12_300_000)], &[7u8; 32]);
+        let message = crate::sol_tx::build_message(
+            &ours,
+            &[crate::sol_tx::transfer_instruction(&ours, &to, 12_300_000)],
+            &[7u8; 32],
+        );
         let reviewer = std::thread::spawn(|| DebugLink::connect().review(15, None));
         sign_transaction_message(&mut trezor, &path, &message, &ours).unwrap();
         let screens = reviewer.join().unwrap().join(" | ");
         println!("écrans virement : {screens}");
         assert!(screens.contains("0.0123"), "montant affiché");
-        assert!(screens.contains(&bs58::encode(to).into_string()[..8]), "destinataire affiché");
+        assert!(
+            screens.contains(&bs58::encode(to).into_string()[..8]),
+            "destinataire affiché"
+        );
 
         let refuser = std::thread::spawn(|| DebugLink::connect().review(15, Some("")));
         let err = sign_transaction_message(&mut trezor, &path, &message, &ours).unwrap_err();

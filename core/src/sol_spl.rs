@@ -17,8 +17,12 @@ use sha2::{Digest, Sha256};
 /// (fixed, verified values), never for user input (see `derivation`/`wallet_flow`
 /// for that).
 pub(crate) fn decode_pubkey(base58: &str) -> [u8; 32] {
-    let bytes = bs58::decode(base58).into_vec().expect("constante base58 invalide (bug de compilation)");
-    bytes.try_into().expect("une clé publique Solana fait 32 octets (bug de compilation)")
+    let bytes = bs58::decode(base58)
+        .into_vec()
+        .expect("constante base58 invalide (bug de compilation)");
+    bytes
+        .try_into()
+        .expect("une clé publique Solana fait 32 octets (bug de compilation)")
 }
 
 /// Official USDC mint on Solana mainnet-beta (Circle), checked against Circle's
@@ -101,7 +105,11 @@ pub fn find_associated_token_address(owner: &[u8; 32], mint: &[u8; 32]) -> [u8; 
 /// `find_associated_token_address` for the token program `token_program` (Token or
 /// Token-2022: the program is part of the seeds, so the address differs; see the
 /// test on a real xStocks account).
-pub fn find_associated_token_address_for(owner: &[u8; 32], mint: &[u8; 32], token_program: &[u8; 32]) -> [u8; 32] {
+pub fn find_associated_token_address_for(
+    owner: &[u8; 32],
+    mint: &[u8; 32],
+    token_program: &[u8; 32],
+) -> [u8; 32] {
     let program = associated_token_program_id();
     find_program_address(&[owner, token_program, mint], &program)
         .expect("aucun bump valide trouvé entre 255 et 0 (probabilité astronomiquement improbable)")
@@ -114,14 +122,25 @@ pub fn find_associated_token_address_for(owner: &[u8; 32], mint: &[u8; 32], toke
 /// sender in this project). Accounts (verified): payer (signer, writable), ata
 /// (writable), owner (read-only), mint (read-only), system program (read-only),
 /// token program (read-only), rent sysvar (read-only).
-pub fn create_ata_idempotent_instruction(payer: &[u8; 32], owner: &[u8; 32], mint: &[u8; 32], ata: &[u8; 32]) -> Instruction {
+pub fn create_ata_idempotent_instruction(
+    payer: &[u8; 32],
+    owner: &[u8; 32],
+    mint: &[u8; 32],
+    ata: &[u8; 32],
+) -> Instruction {
     create_ata_idempotent_instruction_for(payer, owner, mint, ata, &token_program_id())
 }
 
 /// `create_ata_idempotent_instruction` for the token program `token_program`
 /// (Token-2022: the account created carries the extensions the mint requires, so
 /// its size and rent are larger).
-pub fn create_ata_idempotent_instruction_for(payer: &[u8; 32], owner: &[u8; 32], mint: &[u8; 32], ata: &[u8; 32], token_program: &[u8; 32]) -> Instruction {
+pub fn create_ata_idempotent_instruction_for(
+    payer: &[u8; 32],
+    owner: &[u8; 32],
+    mint: &[u8; 32],
+    ata: &[u8; 32],
+    token_program: &[u8; 32],
+) -> Instruction {
     Instruction {
         program_id: associated_token_program_id(),
         accounts: vec![
@@ -143,8 +162,23 @@ pub fn create_ata_idempotent_instruction_for(payer: &[u8; 32], owner: &[u8; 32],
 /// with the rest of the project (see the EIP-55 checksum check). Accounts
 /// (verified): source ATA (writable), mint (read-only), destination ATA (writable),
 /// owner (signer).
-pub fn transfer_checked_instruction(source_ata: &[u8; 32], mint: &[u8; 32], dest_ata: &[u8; 32], owner: &[u8; 32], amount: u64, decimals: u8) -> Instruction {
-    transfer_checked_instruction_for(source_ata, mint, dest_ata, owner, amount, decimals, &token_program_id())
+pub fn transfer_checked_instruction(
+    source_ata: &[u8; 32],
+    mint: &[u8; 32],
+    dest_ata: &[u8; 32],
+    owner: &[u8; 32],
+    amount: u64,
+    decimals: u8,
+) -> Instruction {
+    transfer_checked_instruction_for(
+        source_ata,
+        mint,
+        dest_ata,
+        owner,
+        amount,
+        decimals,
+        &token_program_id(),
+    )
 }
 
 /// `transfer_checked_instruction` for the token program `token_program` (same
@@ -164,7 +198,12 @@ pub fn transfer_checked_instruction_for(
     data.push(decimals);
     Instruction {
         program_id: *token_program,
-        accounts: vec![(*source_ata, false, true), (*mint, false, false), (*dest_ata, false, true), (*owner, true, false)],
+        accounts: vec![
+            (*source_ata, false, true),
+            (*mint, false, false),
+            (*dest_ata, false, true),
+            (*owner, true, false),
+        ],
         data,
     }
 }
@@ -194,10 +233,16 @@ mod tests {
 
         let ata = find_associated_token_address(&owner, &mint);
 
-        assert_eq!(ata, expected_ata, "l'ATA calculée doit correspondre exactement à celle du réseau réel");
+        assert_eq!(
+            ata, expected_ata,
+            "l'ATA calculée doit correspondre exactement à celle du réseau réel"
+        );
         // An extra structural property (not a replacement for the check above): a PDA must
         // never be a valid point on the curve.
-        assert!(CompressedEdwardsY(ata).decompress().is_none(), "une PDA doit être hors de la courbe ed25519");
+        assert!(
+            CompressedEdwardsY(ata).decompress().is_none(),
+            "une PDA doit être hors de la courbe ed25519"
+        );
     }
 
     /// Same check for Token-2022, on a real xStocks account read on-chain on 2026-10-09
@@ -216,7 +261,10 @@ mod tests {
         let owner = decode_pubkey("GLMD3nt75DqvnJXpEXuSTy6jug3NmSnUNFYbVCVy19JB");
         let mint = decode_pubkey("XsDoVfqeBukxuZHWhdvWHBhgEHjGNst4MLodqsJHzoB");
         let expected = decode_pubkey("D8mtDK8cHzAKbFiEuhD42MqXYZ13Qu2sR5bBQxRnNJwd");
-        assert_eq!(find_associated_token_address_for(&owner, &mint, &token_2022_program_id()), expected);
+        assert_eq!(
+            find_associated_token_address_for(&owner, &mint, &token_2022_program_id()),
+            expected
+        );
         assert_ne!(find_associated_token_address(&owner, &mint), expected);
     }
 
@@ -231,7 +279,10 @@ mod tests {
         assert_eq!(create.accounts[5], (program, false, false));
         let transfer = transfer_checked_instruction_for(&a, &b, &c, &d, 42, 8, &program);
         assert_eq!(transfer.program_id, program);
-        assert_eq!(transfer.data, transfer_checked_instruction(&a, &b, &c, &d, 42, 8).data);
+        assert_eq!(
+            transfer.data,
+            transfer_checked_instruction(&a, &b, &c, &d, 42, 8).data
+        );
     }
 
     /// Without the "off-curve" test, an inverted condition (`is_some()` instead of
@@ -245,7 +296,8 @@ mod tests {
         for i in 0u8..20 {
             let seed = [i; 32];
             let program = [i.wrapping_add(1); 32];
-            let result = find_program_address(&[&seed], &program).expect("un bump valide doit exister");
+            let result =
+                find_program_address(&[&seed], &program).expect("un bump valide doit exister");
             assert!(CompressedEdwardsY(result).decompress().is_none());
         }
     }
@@ -277,4 +329,3 @@ mod tests {
         assert_eq!(ix.accounts[3], (owner, true, false));
     }
 }
-

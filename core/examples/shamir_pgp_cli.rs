@@ -98,7 +98,11 @@ fn main() -> Result<()> {
             let passphrase = Zeroizing::new(prompt(&format!(
                 "Passphrase pour '{name}' (essai {attempt}/{MAX_ATTEMPTS}) : "
             ))?);
-            match pgp_engine::decrypt_share(&encrypted, &format!("keys/{name}_privkey.asc"), &passphrase) {
+            match pgp_engine::decrypt_share(
+                &encrypted,
+                &format!("keys/{name}_privkey.asc"),
+                &passphrase,
+            ) {
                 Ok(d) => {
                     decrypted = Some(d);
                     break;
@@ -130,7 +134,10 @@ fn main() -> Result<()> {
     let (_btc_key, btc_hash160) = derivation::derive_btc_testnet_key(&recovered, 0)?;
     let sol_key = derivation::derive_solana_key(&recovered, 0);
 
-    println!("Adresse EVM dérivée         : {}", derivation::format_address(&evm_address));
+    println!(
+        "Adresse EVM dérivée         : {}",
+        derivation::format_address(&evm_address)
+    );
     println!(
         "Adresse BTC testnet dérivée : {}",
         derivation::format_btc_testnet_address(&btc_hash160)?
@@ -139,13 +146,18 @@ fn main() -> Result<()> {
         "Adresse Solana dérivée      : {}",
         bs58::encode(sol_key.verifying_key().to_bytes()).into_string()
     );
-    println!("\nRestauration réussie : le wallet complet a été reconstruit à partir de 2 parts sur 3.\n");
+    println!(
+        "\nRestauration réussie : le wallet complet a été reconstruit à partir de 2 parts sur 3.\n"
+    );
 
     // 7. The restored wallet is usable: offer a real testnet/devnet transfer with the
     //    rebuilt key (never shown), to prove it is a working wallet and not just an
     //    address check.
     let do_transfer = prompt("Faire un vrai virement test avec ce wallet restauré ? [o/N] : ")?;
-    if matches!(do_transfer.to_lowercase().as_str(), "o" | "oui" | "y" | "yes") {
+    if matches!(
+        do_transfer.to_lowercase().as_str(),
+        "o" | "oui" | "y" | "yes"
+    ) {
         let network = prompt(
             "Quel réseau ? (1=EVM Sepolia testnet, 2=Bitcoin testnet, 3=Solana devnet,\n\
              4=Ethereum MAINNET - fonds réels, 5=Solana MAINNET - fonds réels) : ",
@@ -154,10 +166,12 @@ fn main() -> Result<()> {
             "1" => wallet_flow::run_evm_wallet(&recovered, &wallet_flow::SEPOLIA),
             "2" => wallet_flow::run_btc_wallet(&recovered),
             "3" => wallet_flow::run_sol_wallet(&recovered, &wallet_flow::SOLANA_DEVNET),
-            "4" => confirm_mainnet_transfer()
-                .and_then(|_| wallet_flow::run_evm_wallet(&recovered, &wallet_flow::ETHEREUM_MAINNET)),
-            "5" => confirm_mainnet_transfer()
-                .and_then(|_| wallet_flow::run_sol_wallet(&recovered, &wallet_flow::SOLANA_MAINNET)),
+            "4" => confirm_mainnet_transfer().and_then(|_| {
+                wallet_flow::run_evm_wallet(&recovered, &wallet_flow::ETHEREUM_MAINNET)
+            }),
+            "5" => confirm_mainnet_transfer().and_then(|_| {
+                wallet_flow::run_sol_wallet(&recovered, &wallet_flow::SOLANA_MAINNET)
+            }),
             other => Err(anyhow!("choix invalide : '{other}' (attendu 1 à 5)")),
         };
         // `recovered` is wiped automatically at the end of `main` (the `Zeroizing` drop).

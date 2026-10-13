@@ -27,7 +27,9 @@ fn prompt(message: &str) -> Result<String> {
 fn main() -> Result<()> {
     println!("=== Démo PGP (chiffrement/déchiffrement d'une part) — clé de test générée à la volée ===\n");
 
-    let passphrase = Zeroizing::new(prompt("Choisis une passphrase pour la clé de test générée : ")?);
+    let passphrase = Zeroizing::new(prompt(
+        "Choisis une passphrase pour la clé de test générée : ",
+    )?);
 
     println!("\nGénération d'une paire de clés PGP de test...");
     let (cert, _revocation) = CertBuilder::new()
@@ -54,10 +56,15 @@ fn main() -> Result<()> {
         writer.finalize()?;
     }
     std::fs::write("keys/test_privkey.asc", &privkey_bytes)?;
-    println!("Clés écrites dans keys/test_pubkey.asc et keys/test_privkey.asc (ignorées par git).\n");
+    println!(
+        "Clés écrites dans keys/test_pubkey.asc et keys/test_privkey.asc (ignorées par git).\n"
+    );
 
     let share = b"ceci-est-une-fausse-part-shamir-pour-le-test".to_vec();
-    println!("Part factice à chiffrer : {}", String::from_utf8_lossy(&share));
+    println!(
+        "Part factice à chiffrer : {}",
+        String::from_utf8_lossy(&share)
+    );
 
     let encrypted = pgp_engine::encrypt_share(&share, "keys/test_pubkey.asc")?;
     println!("Chiffrée avec succès ({} octets).", encrypted.len());

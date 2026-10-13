@@ -90,7 +90,15 @@ fn create_with_seed(owner: &[u8; 32], stake: &[u8; 32], seed: &str, lamports: u6
     data.extend_from_slice(&lamports.to_le_bytes());
     data.extend_from_slice(&STAKE_ACCOUNT_SPACE.to_le_bytes());
     data.extend_from_slice(&decode_pubkey(STAKE_PROGRAM));
-    Instruction { program_id: SYSTEM_PROGRAM_ID, accounts: vec![(*owner, true, true), (*stake, false, true), (*owner, true, false)], data }
+    Instruction {
+        program_id: SYSTEM_PROGRAM_ID,
+        accounts: vec![
+            (*owner, true, true),
+            (*stake, false, true),
+            (*owner, true, false),
+        ],
+        data,
+    }
 }
 
 /// `Initialize` (variant 0): stake and withdraw authorities = `owner`, no lockup
@@ -100,7 +108,14 @@ fn initialize(stake: &[u8; 32], owner: &[u8; 32]) -> Instruction {
     data.extend_from_slice(owner);
     data.extend_from_slice(owner);
     data.extend_from_slice(&[0u8; 48]);
-    Instruction { program_id: decode_pubkey(STAKE_PROGRAM), accounts: vec![(*stake, false, true), (decode_pubkey(SYSVAR_RENT), false, false)], data }
+    Instruction {
+        program_id: decode_pubkey(STAKE_PROGRAM),
+        accounts: vec![
+            (*stake, false, true),
+            (decode_pubkey(SYSVAR_RENT), false, false),
+        ],
+        data,
+    }
 }
 
 /// `DelegateStake` (variant 2).
@@ -123,7 +138,11 @@ fn delegate(stake: &[u8; 32], vote: &[u8; 32], owner: &[u8; 32]) -> Instruction 
 fn deactivate(stake: &[u8; 32], owner: &[u8; 32]) -> Instruction {
     Instruction {
         program_id: decode_pubkey(STAKE_PROGRAM),
-        accounts: vec![(*stake, false, true), (decode_pubkey(SYSVAR_CLOCK), false, false), (*owner, true, false)],
+        accounts: vec![
+            (*stake, false, true),
+            (decode_pubkey(SYSVAR_CLOCK), false, false),
+            (*owner, true, false),
+        ],
         data: 5u32.to_le_bytes().to_vec(),
     }
 }
@@ -171,12 +190,23 @@ struct Parsed {
 }
 
 fn parse(data: &[u8]) -> Option<Parsed> {
-    let u64_at = |at: usize| data.get(at..at + 8).map(|b| u64::from_le_bytes(b.try_into().expect("8 octets")));
-    let key_at = |at: usize| data.get(at..at + 32).map(|b| <[u8; 32]>::try_from(b).expect("32 octets"));
+    let u64_at = |at: usize| {
+        data.get(at..at + 8)
+            .map(|b| u64::from_le_bytes(b.try_into().expect("8 octets")))
+    };
+    let key_at = |at: usize| {
+        data.get(at..at + 32)
+            .map(|b| <[u8; 32]>::try_from(b).expect("32 octets"))
+    };
     let tag = u32::from_le_bytes(data.get(0..4)?.try_into().ok()?);
     let delegation = match tag {
         1 => None,
-        2 => Some(Delegation { voter: key_at(124)?, stake: u64_at(156)?, activation: u64_at(164)?, deactivation: u64_at(172)? }),
+        2 => Some(Delegation {
+            voter: key_at(124)?,
+            stake: u64_at(156)?,
+            activation: u64_at(164)?,
+            deactivation: u64_at(172)?,
+        }),
         _ => return None,
     };
     Some(Parsed {
@@ -246,14 +276,23 @@ pub struct StakeAccount {
 }
 
 fn now_unix() -> i64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 fn lockup_in_force(parsed: &Parsed, owner: &[u8; 32], epoch: u64) -> bool {
-    parsed.custodian != *owner && (parsed.lockup_timestamp > now_unix() || parsed.lockup_epoch > epoch)
+    parsed.custodian != *owner
+        && (parsed.lockup_timestamp > now_unix() || parsed.lockup_epoch > epoch)
 }
 
-fn stake_account(address: &str, state: &AccountState, owner: &[u8; 32], epoch: u64) -> Option<StakeAccount> {
+fn stake_account(
+    address: &str,
+    state: &AccountState,
+    owner: &[u8; 32],
+    epoch: u64,
+) -> Option<StakeAccount> {
     if state.owner != STAKE_PROGRAM {
         return None;
     }
@@ -284,13 +323,25 @@ pub struct EpochInfo {
 
 pub fn epoch_info(rpc: &SolRpc) -> Result<EpochInfo> {
     let info = rpc.call("getEpochInfo", json!([{"commitment": "confirmed"}]))?;
-    let field = |name: &str| info[name].as_u64().with_context(|| format!("réponse getEpochInfo sans {name}"));
+    let field = |name: &str| {
+        info[name]
+            .as_u64()
+            .with_context(|| format!("réponse getEpochInfo sans {name}"))
+    };
     let remaining = field("slotsInEpoch")?.saturating_sub(field("slotIndex")?);
-    Ok(EpochInfo { epoch: field("epoch")?, ends_in_secs: remaining * SLOT_MILLIS / 1000 })
+    Ok(EpochInfo {
+        epoch: field("epoch")?,
+        ends_in_secs: remaining * SLOT_MILLIS / 1000,
+    })
 }
 
 fn minimum_delegation(rpc: &SolRpc) -> Result<u64> {
-    rpc.call("getStakeMinimumDelegation", json!([{"commitment": "confirmed"}]))?["value"].as_u64().context("réponse getStakeMinimumDelegation inattendue")
+    rpc.call(
+        "getStakeMinimumDelegation",
+        json!([{"commitment": "confirmed"}]),
+    )?["value"]
+        .as_u64()
+        .context("réponse getStakeMinimumDelegation inattendue")
 }
 
 /// Stake accounts whose withdraw authority is `owner`: search by program; if the
@@ -307,23 +358,38 @@ fn owned_accounts(rpc: &SolRpc, owner: &[u8; 32]) -> Result<Vec<(String, Account
     if let Ok(Value::Array(entries)) = search {
         let mut found = Vec::new();
         for entry in &entries {
-            let address = entry["pubkey"].as_str().context("réponse getProgramAccounts sans adresse")?;
+            let address = entry["pubkey"]
+                .as_str()
+                .context("réponse getProgramAccounts sans adresse")?;
             if let Some(state) = AccountState::from_rpc_value(&entry["account"])? {
                 found.push((address.to_string(), state));
             }
         }
         return Ok(found);
     }
-    let addresses: Vec<String> = (0..SEED_SCAN).map(|i| b58(&derived_address(owner, &format!("{SEED_PREFIX}{i}")))).collect();
+    let addresses: Vec<String> = (0..SEED_SCAN)
+        .map(|i| b58(&derived_address(owner, &format!("{SEED_PREFIX}{i}"))))
+        .collect();
     let states = rpc.multiple_accounts(&addresses)?;
-    Ok(addresses.into_iter().zip(states).filter_map(|(address, state)| state.map(|s| (address, s))).collect())
+    Ok(addresses
+        .into_iter()
+        .zip(states)
+        .filter_map(|(address, state)| state.map(|s| (address, s)))
+        .collect())
 }
 
 /// SOL in `owner`'s stake accounts (reserves included): counted with its balance in
 /// the portfolio chart.
 pub fn staked_lamports(rpc: &SolRpc, owner: &str) -> Result<u64> {
     let owner = key(owner)?;
-    Ok(owned_accounts(rpc, &owner)?.iter().filter(|(_, state)| state.owner == STAKE_PROGRAM && parse(&state.data).is_some_and(|p| p.withdrawer == owner)).map(|(_, state)| state.lamports).sum())
+    Ok(owned_accounts(rpc, &owner)?
+        .iter()
+        .filter(|(_, state)| {
+            state.owner == STAKE_PROGRAM
+                && parse(&state.data).is_some_and(|p| p.withdrawer == owner)
+        })
+        .map(|(_, state)| state.lamports)
+        .sum())
 }
 
 /// Overview for the SOL card's "Stake" window.
@@ -344,17 +410,30 @@ pub fn overview(rpc: &SolRpc, owner: &str) -> Result<Overview> {
         let min = scope.spawn(|| minimum_delegation(rpc));
         let rent = scope.spawn(|| rpc.minimum_rent_exempt_balance(STAKE_ACCOUNT_SPACE));
         let accounts = owned_accounts(rpc, &owner);
-        let epoch = epoch.join().map_err(|_| anyhow!("lecture de l'époque interrompue"))??;
-        let mut accounts: Vec<StakeAccount> = accounts?.iter().filter_map(|(address, state)| stake_account(address, state, &owner, epoch.epoch)).collect();
+        let epoch = epoch
+            .join()
+            .map_err(|_| anyhow!("lecture de l'époque interrompue"))??;
+        let mut accounts: Vec<StakeAccount> = accounts?
+            .iter()
+            .filter_map(|(address, state)| stake_account(address, state, &owner, epoch.epoch))
+            .collect();
         // Validator names (2 MB, kept for 10 min): only if there are any.
-        let wiz = if accounts.iter().any(|a| a.validator.is_some()) { wiz_cached() } else { HashMap::new() };
+        let wiz = if accounts.iter().any(|a| a.validator.is_some()) {
+            wiz_cached()
+        } else {
+            HashMap::new()
+        };
         for account in &mut accounts {
             if let Some(info) = account.validator.as_ref().and_then(|v| wiz.get(v)) {
                 account.validator_name = info.name.clone();
                 account.validator_flagged = info.flagged;
             }
         }
-        accounts.sort_by(|a, b| b.lamports.cmp(&a.lamports).then_with(|| a.address.cmp(&b.address)));
+        accounts.sort_by(|a, b| {
+            b.lamports
+                .cmp(&a.lamports)
+                .then_with(|| a.address.cmp(&b.address))
+        });
         Ok(Overview {
             accounts,
             epoch,
@@ -392,15 +471,36 @@ struct Candidate {
 /// announced), outside the superminority, at least 20,000 SOL, and vote credits for
 /// the last complete epoch of at least 97% of the 90th percentile.
 fn eligible(vote_accounts: &Value) -> Result<Vec<Candidate>> {
-    let current = vote_accounts["current"].as_array().context("réponse getVoteAccounts inattendue")?;
-    let delinquent_stake: u64 = vote_accounts["delinquent"].as_array().map_or(0, |list| list.iter().filter_map(|v| v["activatedStake"].as_u64()).sum());
-    let current_epoch = current.iter().filter_map(|v| v["epochCredits"].as_array()?.last()?.get(0)?.as_u64()).max().context("getVoteAccounts sans crédits de vote")?;
+    let current = vote_accounts["current"]
+        .as_array()
+        .context("réponse getVoteAccounts inattendue")?;
+    let delinquent_stake: u64 = vote_accounts["delinquent"].as_array().map_or(0, |list| {
+        list.iter()
+            .filter_map(|v| v["activatedStake"].as_u64())
+            .sum()
+    });
+    let current_epoch = current
+        .iter()
+        .filter_map(|v| v["epochCredits"].as_array()?.last()?.get(0)?.as_u64())
+        .max()
+        .context("getVoteAccounts sans crédits de vote")?;
     let last_epoch_credits = |v: &Value| -> u64 {
-        v["epochCredits"].as_array().into_iter().flatten().find(|e| e.get(0).and_then(Value::as_u64) == Some(current_epoch - 1)).map_or(0, |e| {
-            e.get(1).and_then(Value::as_u64).unwrap_or(0).saturating_sub(e.get(2).and_then(Value::as_u64).unwrap_or(u64::MAX))
-        })
+        v["epochCredits"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|e| e.get(0).and_then(Value::as_u64) == Some(current_epoch - 1))
+            .map_or(0, |e| {
+                e.get(1)
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0)
+                    .saturating_sub(e.get(2).and_then(Value::as_u64).unwrap_or(u64::MAX))
+            })
     };
-    let mut all: Vec<(&Value, u64)> = current.iter().map(|v| (v, v["activatedStake"].as_u64().unwrap_or(0))).collect();
+    let mut all: Vec<(&Value, u64)> = current
+        .iter()
+        .map(|v| (v, v["activatedStake"].as_u64().unwrap_or(0)))
+        .collect();
     let total: u64 = all.iter().map(|(_, s)| s).sum::<u64>() + delinquent_stake;
     all.sort_by_key(|(_, stake)| std::cmp::Reverse(*stake));
     // Superminority: the largest validators until their total exceeds a third of the
@@ -414,29 +514,45 @@ fn eligible(vote_accounts: &Value) -> Result<Vec<Candidate>> {
         cumulative += s;
         superminority += 1;
     }
-    let mut credits: Vec<u64> = current.iter().map(last_epoch_credits).filter(|c| *c > 0).collect();
+    let mut credits: Vec<u64> = current
+        .iter()
+        .map(last_epoch_credits)
+        .filter(|c| *c > 0)
+        .collect();
     credits.sort_unstable();
-    let p90 = *credits.get(credits.len() * 9 / 10).context("aucun crédit de vote")?;
+    let p90 = *credits
+        .get(credits.len() * 9 / 10)
+        .context("aucun crédit de vote")?;
     Ok(all
         .into_iter()
         .skip(superminority)
         .filter_map(|(v, stake)| {
             let commission = v["commission"].as_u64()?;
-            let inflation_bps = v["inflationRewardsCommissionBps"].as_u64().unwrap_or(commission * 100);
+            let inflation_bps = v["inflationRewardsCommissionBps"]
+                .as_u64()
+                .unwrap_or(commission * 100);
             let credits = last_epoch_credits(v);
             (v["epochVoteAccount"].as_bool() == Some(true)
                 && commission <= MAX_COMMISSION
                 && inflation_bps <= MAX_COMMISSION * 100
                 && stake >= MIN_VALIDATOR_STAKE_SOL * 1_000_000_000
                 && credits * 100 >= p90 * 97)
-                .then(|| Candidate { vote: v["votePubkey"].as_str().unwrap_or_default().to_string(), commission: commission as u8, stake, credits })
+                .then(|| Candidate {
+                    vote: v["votePubkey"].as_str().unwrap_or_default().to_string(),
+                    commission: commission as u8,
+                    stake,
+                    credits,
+                })
         })
         .filter(|c| key(&c.vote).is_ok())
         .collect())
 }
 
 fn vote_accounts(rpc: &SolRpc) -> Result<Value> {
-    rpc.call("getVoteAccounts", json!([{"commitment": "confirmed", "keepUnstakedDelinquents": false}]))
+    rpc.call(
+        "getVoteAccounts",
+        json!([{"commitment": "confirmed", "keepUnstakedDelinquents": false}]),
+    )
 }
 
 /// Displayable name: printable characters, 32 at most (third-party data).
@@ -461,13 +577,21 @@ struct Wiz {
 }
 
 fn wiz_entry(v: &Value) -> Option<(String, Wiz)> {
-    let flagged = v["admin_comment"].as_str().is_some_and(|c| !c.trim().is_empty()) || v["delinquent"].as_bool() == Some(true);
+    let flagged = v["admin_comment"]
+        .as_str()
+        .is_some_and(|c| !c.trim().is_empty())
+        || v["delinquent"].as_bool() == Some(true);
     Some((
         v["vote_identity"].as_str()?.to_string(),
         Wiz {
             name: v["name"].as_str().and_then(display_name),
-            apy: v["total_apy"].as_f64().filter(|a| a.is_finite() && *a > 0.0 && *a < 30.0),
-            score: v["wiz_score"].as_f64().filter(|s| s.is_finite()).unwrap_or(0.0),
+            apy: v["total_apy"]
+                .as_f64()
+                .filter(|a| a.is_finite() && *a > 0.0 && *a < 30.0),
+            score: v["wiz_score"]
+                .as_f64()
+                .filter(|s| s.is_finite())
+                .unwrap_or(0.0),
             flagged,
         },
     ))
@@ -476,10 +600,26 @@ fn wiz_entry(v: &Value) -> Option<(String, Wiz)> {
 /// Stakewiz records by vote account (empty if the site does not answer).
 fn stakewiz() -> HashMap<String, Wiz> {
     let fetch = || -> Option<Value> {
-        let client = reqwest::blocking::Client::builder().timeout(Duration::from_secs(10)).user_agent("openpgp-wallet").build().ok()?;
-        client.get(STAKEWIZ).send().ok()?.error_for_status().ok()?.json().ok()
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .user_agent("openpgp-wallet")
+            .build()
+            .ok()?;
+        client
+            .get(STAKEWIZ)
+            .send()
+            .ok()?
+            .error_for_status()
+            .ok()?
+            .json()
+            .ok()
     };
-    fetch().and_then(|v| v.as_array().cloned()).unwrap_or_default().iter().filter_map(wiz_entry).collect()
+    fetch()
+        .and_then(|v| v.as_array().cloned())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(wiz_entry)
+        .collect()
 }
 
 /// `stakewiz` kept for 10 minutes (2 MB per read).
@@ -499,7 +639,9 @@ fn wiz_cached() -> HashMap<String, Wiz> {
 
 /// A validator's published name (confirmation dialog).
 pub fn validator_name(vote: &str) -> Option<String> {
-    wiz_cached().get(vote.trim()).and_then(|info| info.name.clone())
+    wiz_cached()
+        .get(vote.trim())
+        .and_then(|info| info.name.clone())
 }
 
 /// Ordering of eligible validators. With stakewiz: flagged and unknown ones
@@ -517,7 +659,17 @@ fn ranked(candidates: Vec<Candidate>, wiz: &HashMap<String, Wiz>) -> Vec<Validat
                 None if !wiz.is_empty() => return None,
                 None => Wiz::default(),
             };
-            Some((Validator { vote: c.vote, name: info.name, commission: c.commission, active_stake_sol: c.stake / 1_000_000_000, apy: info.apy }, info.score, c.credits))
+            Some((
+                Validator {
+                    vote: c.vote,
+                    name: info.name,
+                    commission: c.commission,
+                    active_stake_sol: c.stake / 1_000_000_000,
+                    apy: info.apy,
+                },
+                info.score,
+                c.credits,
+            ))
         })
         .collect();
     list.sort_by(|(a, score_a, credits_a), (b, score_b, credits_b)| {
@@ -527,7 +679,10 @@ fn ranked(candidates: Vec<Candidate>, wiz: &HashMap<String, Wiz>) -> Vec<Validat
             .then_with(|| a.commission.cmp(&b.commission))
             .then_with(|| credits_b.cmp(credits_a))
     });
-    list.into_iter().take(MAX_VALIDATORS).map(|(v, _, _)| v).collect()
+    list.into_iter()
+        .take(MAX_VALIDATORS)
+        .map(|(v, _, _)| v)
+        .collect()
 }
 
 /// Validators offered (12 at most).
@@ -537,7 +692,10 @@ pub fn validators(rpc: &SolRpc) -> Result<Vec<Validator>> {
         (vote_accounts(rpc), names.join().unwrap_or_default())
     });
     let list = ranked(eligible(&accounts?)?, &names);
-    ensure!(!list.is_empty(), "aucun validateur Solana ne remplit les critères en ce moment — réessayez plus tard");
+    ensure!(
+        !list.is_empty(),
+        "aucun validateur Solana ne remplit les critères en ce moment — réessayez plus tard"
+    );
     Ok(list)
 }
 
@@ -572,11 +730,24 @@ fn instructions(plan: &Plan, owner: &[u8; 32]) -> Result<Vec<Instruction>> {
     let stake = key(&plan.stake_account)?;
     Ok(match plan.action {
         Action::Delegate => {
-            let seed = plan.seed.as_deref().context("graine du compte de mise absente")?;
-            ensure!(seed.len() <= 32 && derived_address(owner, seed) == stake, "adresse du compte de mise incohérente");
+            let seed = plan
+                .seed
+                .as_deref()
+                .context("graine du compte de mise absente")?;
+            ensure!(
+                seed.len() <= 32 && derived_address(owner, seed) == stake,
+                "adresse du compte de mise incohérente"
+            );
             let vote = key(plan.validator.as_deref().context("validateur absent")?)?;
-            let funded = plan.lamports.checked_add(plan.rent_reserve).context("montant trop grand")?;
-            vec![create_with_seed(owner, &stake, seed, funded), initialize(&stake, owner), delegate(&stake, &vote, owner)]
+            let funded = plan
+                .lamports
+                .checked_add(plan.rent_reserve)
+                .context("montant trop grand")?;
+            vec![
+                create_with_seed(owner, &stake, seed, funded),
+                initialize(&stake, owner),
+                delegate(&stake, &vote, owner),
+            ]
         }
         Action::Deactivate => vec![deactivate(&stake, owner)],
         Action::Withdraw => vec![withdraw(&stake, owner, plan.lamports)],
@@ -585,7 +756,11 @@ fn instructions(plan: &Plan, owner: &[u8; 32]) -> Result<Vec<Instruction>> {
 
 /// Message to sign (recent blockhash).
 pub fn message(plan: &Plan, owner: &[u8; 32], recent_blockhash: &[u8; 32]) -> Result<Vec<u8>> {
-    Ok(build_message(owner, &instructions(plan, owner)?, recent_blockhash))
+    Ok(build_message(
+        owner,
+        &instructions(plan, owner)?,
+        recent_blockhash,
+    ))
 }
 
 /// SOL kept on your address after staking: an account's minimum reserve (required
@@ -601,8 +776,14 @@ pub fn max_delegation(rpc: &SolRpc, owner: &str) -> Result<u64> {
         let rent = scope.spawn(|| rpc.minimum_rent_exempt_balance(STAKE_ACCOUNT_SPACE));
         let kept = scope.spawn(|| kept_after_delegation(rpc));
         let min = scope.spawn(|| minimum_delegation(rpc));
-        let join = |r: std::thread::Result<Result<u64>>| r.map_err(|_| anyhow!("lecture interrompue"))?;
-        (rpc.balance_lamports(owner.trim()), join(rent.join()), join(kept.join()), join(min.join()))
+        let join =
+            |r: std::thread::Result<Result<u64>>| r.map_err(|_| anyhow!("lecture interrompue"))?;
+        (
+            rpc.balance_lamports(owner.trim()),
+            join(rent.join()),
+            join(kept.join()),
+            join(min.join()),
+        )
     });
     let (rent, kept, min) = (rent?, kept?, min?);
     let max = balance?.saturating_sub(rent + FEE_LAMPORTS + kept);
@@ -618,10 +799,21 @@ pub fn max_delegation(rpc: &SolRpc, owner: &str) -> Result<u64> {
 /// First free seed (no account at that address, not even SOL sent by a third party,
 /// which would make the creation fail).
 fn free_seed(rpc: &SolRpc, owner: &[u8; 32]) -> Result<(String, String)> {
-    let seeds: Vec<String> = (0..SEED_SCAN).map(|i| format!("{SEED_PREFIX}{i}")).collect();
-    let addresses: Vec<String> = seeds.iter().map(|s| b58(&derived_address(owner, s))).collect();
+    let seeds: Vec<String> = (0..SEED_SCAN)
+        .map(|i| format!("{SEED_PREFIX}{i}"))
+        .collect();
+    let addresses: Vec<String> = seeds
+        .iter()
+        .map(|s| b58(&derived_address(owner, s)))
+        .collect();
     let states = rpc.multiple_accounts(&addresses)?;
-    seeds.into_iter().zip(addresses).zip(states).find(|(_, state)| state.is_none()).map(|(pair, _)| pair).context("trop de comptes de mise : retirez d'abord ceux qui sont arrêtés")
+    seeds
+        .into_iter()
+        .zip(addresses)
+        .zip(states)
+        .find(|(_, state)| state.is_none())
+        .map(|(pair, _)| pair)
+        .context("trop de comptes de mise : retirez d'abord ceux qui sont arrêtés")
 }
 
 pub fn plan_delegate(rpc: &SolRpc, owner: &str, lamports: u64, vote: &str) -> Result<Plan> {
@@ -634,16 +826,30 @@ pub fn plan_delegate(rpc: &SolRpc, owner: &str, lamports: u64, vote: &str) -> Re
         let accounts = scope.spawn(|| vote_accounts(rpc));
         let seed = scope.spawn(|| free_seed(rpc, &owner_key));
         let balance = rpc.balance_lamports(owner.trim());
-        let join = |r: std::thread::Result<Result<u64>>| r.map_err(|_| anyhow!("lecture interrompue"))?;
-        (balance, join(min.join()), join(rent.join()), join(kept.join()), accounts.join().map_err(|_| anyhow!("lecture interrompue")), seed.join().map_err(|_| anyhow!("lecture interrompue")))
+        let join =
+            |r: std::thread::Result<Result<u64>>| r.map_err(|_| anyhow!("lecture interrompue"))?;
+        (
+            balance,
+            join(min.join()),
+            join(rent.join()),
+            join(kept.join()),
+            accounts.join().map_err(|_| anyhow!("lecture interrompue")),
+            seed.join().map_err(|_| anyhow!("lecture interrompue")),
+        )
     });
     let (balance, min, rent, kept) = (balance?, min?, rent?, kept?);
-    ensure!(lamports >= min, "mise minimale sur Solana : {} SOL", format_lamports(min));
+    ensure!(
+        lamports >= min,
+        "mise minimale sur Solana : {} SOL",
+        format_lamports(min)
+    );
     let candidate = eligible(&accounts??)?
         .into_iter()
         .find(|c| c.vote == vote.trim())
         .ok_or_else(|| anyhow!("ce validateur n'est plus proposé (retard de votes, commission relevée ou mise trop grosse) — choisissez-en un autre"))?;
-    let needed = lamports.checked_add(rent + FEE_LAMPORTS + kept).context("montant trop grand")?;
+    let needed = lamports
+        .checked_add(rent + FEE_LAMPORTS + kept)
+        .context("montant trop grand")?;
     ensure!(
         balance >= needed,
         "SOL insuffisant : {} SOL disponibles, il en faut {} (mise, réserve du compte de mise {} SOL rendue au retrait, frais, et {} SOL gardés pour l'arrêt)",
@@ -668,25 +874,56 @@ pub fn plan_delegate(rpc: &SolRpc, owner: &str, lamports: u64, vote: &str) -> Re
 }
 
 /// `owner`'s stake account `stake`, read just now.
-fn read_own(rpc: &SolRpc, owner: &[u8; 32], stake: &str) -> Result<(AccountState, Parsed, EpochInfo, u64)> {
+fn read_own(
+    rpc: &SolRpc,
+    owner: &[u8; 32],
+    stake: &str,
+) -> Result<(AccountState, Parsed, EpochInfo, u64)> {
     let (state, epoch, balance) = std::thread::scope(|scope| {
         let epoch = scope.spawn(|| epoch_info(rpc));
         let balance = scope.spawn(|| rpc.balance_lamports(&b58(owner)));
-        (rpc.multiple_accounts(&[stake.trim().to_string()]), epoch.join(), balance.join())
+        (
+            rpc.multiple_accounts(&[stake.trim().to_string()]),
+            epoch.join(),
+            balance.join(),
+        )
     });
-    let state = state?.pop().flatten().context("compte de mise introuvable")?;
-    ensure!(state.owner == STAKE_PROGRAM, "ce compte n'est pas un compte de mise");
+    let state = state?
+        .pop()
+        .flatten()
+        .context("compte de mise introuvable")?;
+    ensure!(
+        state.owner == STAKE_PROGRAM,
+        "ce compte n'est pas un compte de mise"
+    );
     let parsed = parse(&state.data).context("compte de mise illisible")?;
     let balance = balance.map_err(|_| anyhow!("lecture interrompue"))??;
-    ensure!(balance >= FEE_LAMPORTS, "il faut au moins {} SOL sur votre adresse pour les frais", format_lamports(FEE_LAMPORTS));
-    Ok((state, parsed, epoch.map_err(|_| anyhow!("lecture interrompue"))??, balance))
+    ensure!(
+        balance >= FEE_LAMPORTS,
+        "il faut au moins {} SOL sur votre adresse pour les frais",
+        format_lamports(FEE_LAMPORTS)
+    );
+    Ok((
+        state,
+        parsed,
+        epoch.map_err(|_| anyhow!("lecture interrompue"))??,
+        balance,
+    ))
 }
 
 pub fn plan_deactivate(rpc: &SolRpc, owner: &str, stake: &str) -> Result<Plan> {
     let owner_key = key(owner)?;
     let (state, parsed, epoch, _) = read_own(rpc, &owner_key, stake)?;
-    ensure!(parsed.withdrawer == owner_key && parsed.staker == owner_key, "ce compte de mise n'est pas sous votre contrôle");
-    let delegation = parsed.delegation.filter(|_| matches!(status(parsed.delegation, epoch.epoch), StakeStatus::Activating | StakeStatus::Active));
+    ensure!(
+        parsed.withdrawer == owner_key && parsed.staker == owner_key,
+        "ce compte de mise n'est pas sous votre contrôle"
+    );
+    let delegation = parsed.delegation.filter(|_| {
+        matches!(
+            status(parsed.delegation, epoch.epoch),
+            StakeStatus::Activating | StakeStatus::Active
+        )
+    });
     let delegation = delegation.context("ce compte n'est pas en cours de staking")?;
     let plan = Plan {
         action: Action::Deactivate,
@@ -705,13 +942,19 @@ pub fn plan_deactivate(rpc: &SolRpc, owner: &str, stake: &str) -> Result<Plan> {
 pub fn plan_withdraw(rpc: &SolRpc, owner: &str, stake: &str) -> Result<Plan> {
     let owner_key = key(owner)?;
     let (state, parsed, epoch, _) = read_own(rpc, &owner_key, stake)?;
-    ensure!(parsed.withdrawer == owner_key, "ce compte de mise n'est pas sous votre contrôle");
+    ensure!(
+        parsed.withdrawer == owner_key,
+        "ce compte de mise n'est pas sous votre contrôle"
+    );
     match status(parsed.delegation, epoch.epoch) {
         StakeStatus::Inactive | StakeStatus::Undelegated => {}
         StakeStatus::Deactivating => bail!("retrait possible à la fin de l'époque en cours (dans {} environ)", duration_text(epoch.ends_in_secs)),
         StakeStatus::Activating | StakeStatus::Active => bail!("arrêtez d'abord le staking de ce compte (désactivation), puis retirez-le à l'époque suivante"),
     }
-    ensure!(!lockup_in_force(&parsed, &owner_key, epoch.epoch), "ce compte de mise est verrouillé par son créateur : retrait impossible pour l'instant");
+    ensure!(
+        !lockup_in_force(&parsed, &owner_key, epoch.epoch),
+        "ce compte de mise est verrouillé par son créateur : retrait impossible pour l'instant"
+    );
     let plan = Plan {
         action: Action::Withdraw,
         stake_account: stake.trim().to_string(),
@@ -751,14 +994,21 @@ fn simulate(rpc: &SolRpc, owner: &[u8; 32], plan: &Plan) -> Result<()> {
 }
 
 fn verify_after(plan: &Plan, owner: &[u8; 32], after: Option<AccountState>) -> Result<()> {
-    let wrong = || anyhow!("la simulation ne donne pas le résultat annoncé — opération refusée par sécurité");
+    let wrong = || {
+        anyhow!("la simulation ne donne pas le résultat annoncé — opération refusée par sécurité")
+    };
     match plan.action {
         Action::Withdraw => ensure!(after.is_none_or(|a| a.lamports == 0), wrong()),
         Action::Delegate | Action::Deactivate => {
             let after = after.ok_or_else(wrong)?;
             let parsed = parse(&after.data).ok_or_else(wrong)?;
             let delegation = parsed.delegation.ok_or_else(wrong)?;
-            ensure!(after.owner == STAKE_PROGRAM && parsed.withdrawer == *owner && parsed.staker == *owner, wrong());
+            ensure!(
+                after.owner == STAKE_PROGRAM
+                    && parsed.withdrawer == *owner
+                    && parsed.staker == *owner,
+                wrong()
+            );
             ensure!(Some(b58(&delegation.voter)) == plan.validator, wrong());
             if plan.action == Action::Delegate {
                 ensure!(
@@ -771,7 +1021,10 @@ fn verify_after(plan: &Plan, owner: &[u8; 32], after: Option<AccountState>) -> R
                     wrong()
                 );
             } else {
-                ensure!(after.lamports == plan.lamports && delegation.deactivation != NO_DEACTIVATION, wrong());
+                ensure!(
+                    after.lamports == plan.lamports && delegation.deactivation != NO_DEACTIVATION,
+                    wrong()
+                );
             }
         }
     }
@@ -782,7 +1035,12 @@ fn verify_after(plan: &Plan, owner: &[u8; 32], after: Option<AccountState>) -> R
 mod tests {
     use super::*;
 
-    fn stake_data(tag: u32, staker: [u8; 32], withdrawer: [u8; 32], delegation: Option<Delegation>) -> Vec<u8> {
+    fn stake_data(
+        tag: u32,
+        staker: [u8; 32],
+        withdrawer: [u8; 32],
+        delegation: Option<Delegation>,
+    ) -> Vec<u8> {
         let mut data = vec![0u8; 200];
         data[0..4].copy_from_slice(&tag.to_le_bytes());
         data[4..12].copy_from_slice(&1_666_240u64.to_le_bytes());
@@ -810,14 +1068,28 @@ mod tests {
         assert_eq!(&create.data[36..44], &7u64.to_le_bytes());
         assert_eq!(&create.data[51..59], &1_001_666_240u64.to_le_bytes());
         assert_eq!(&create.data[59..67], &200u64.to_le_bytes());
-        assert_eq!(create.accounts, vec![(owner, true, true), (stake, false, true), (owner, true, false)]);
+        assert_eq!(
+            create.accounts,
+            vec![
+                (owner, true, true),
+                (stake, false, true),
+                (owner, true, false)
+            ]
+        );
         let init = initialize(&stake, &owner);
         assert_eq!(init.data.len(), 116);
         assert!(init.data[68..].iter().all(|b| *b == 0));
         assert_eq!(delegate(&stake, &[9u8; 32], &owner).accounts.len(), 6);
         assert_eq!(deactivate(&stake, &owner).data, 5u32.to_le_bytes());
         let w = withdraw(&stake, &owner, 42);
-        assert_eq!(w.data, [4u32.to_le_bytes().as_slice(), 42u64.to_le_bytes().as_slice()].concat());
+        assert_eq!(
+            w.data,
+            [
+                4u32.to_le_bytes().as_slice(),
+                42u64.to_le_bytes().as_slice()
+            ]
+            .concat()
+        );
         // A single signature: yours (payer, base and authority).
         let plan = Plan {
             action: Action::Delegate,
@@ -832,7 +1104,10 @@ mod tests {
         let msg = message(&plan, &owner, &[1u8; 32]).unwrap();
         assert_eq!(msg[0], 1);
         // Seed that does not match the address: refused.
-        let wrong = Plan { seed: Some("stake:1".into()), ..plan };
+        let wrong = Plan {
+            seed: Some("stake:1".into()),
+            ..plan
+        };
         assert!(message(&wrong, &owner, &[1u8; 32]).is_err());
     }
 
@@ -840,29 +1115,80 @@ mod tests {
     fn stake_accounts_are_read() {
         let owner = [7u8; 32];
         let other = [8u8; 32];
-        let d = |activation, deactivation| Some(Delegation { voter: [9u8; 32], stake: 1_000_000_000, activation, deactivation });
+        let d = |activation, deactivation| {
+            Some(Delegation {
+                voter: [9u8; 32],
+                stake: 1_000_000_000,
+                activation,
+                deactivation,
+            })
+        };
         let parsed = parse(&stake_data(2, owner, owner, d(1000, NO_DEACTIVATION))).unwrap();
         assert_eq!(parsed.rent_reserve, 1_666_240);
         assert_eq!(parsed.delegation.unwrap().stake, 1_000_000_000);
-        assert_eq!(status(d(1000, NO_DEACTIVATION), 1000), StakeStatus::Activating);
+        assert_eq!(
+            status(d(1000, NO_DEACTIVATION), 1000),
+            StakeStatus::Activating
+        );
         assert_eq!(status(d(1000, NO_DEACTIVATION), 1001), StakeStatus::Active);
         assert_eq!(status(d(1000, 1005), 1005), StakeStatus::Deactivating);
         assert_eq!(status(d(1000, 1005), 1006), StakeStatus::Inactive);
         assert_eq!(status(d(1000, 1000), 1000), StakeStatus::Inactive);
         assert_eq!(status(None, 1000), StakeStatus::Undelegated);
-        let state = |data| AccountState { lamports: 1_001_666_240, owner: STAKE_PROGRAM.into(), data };
-        let mine = stake_account("A", &state(stake_data(2, owner, owner, d(1000, NO_DEACTIVATION))), &owner, 1001).unwrap();
-        assert_eq!((mine.status, mine.can_deactivate, mine.locked), (StakeStatus::Active, true, false));
+        let state = |data| AccountState {
+            lamports: 1_001_666_240,
+            owner: STAKE_PROGRAM.into(),
+            data,
+        };
+        let mine = stake_account(
+            "A",
+            &state(stake_data(2, owner, owner, d(1000, NO_DEACTIVATION))),
+            &owner,
+            1001,
+        )
+        .unwrap();
+        assert_eq!(
+            (mine.status, mine.can_deactivate, mine.locked),
+            (StakeStatus::Active, true, false)
+        );
         // Someone else's withdraw authority: not yours; someone else's stake authority: no deactivation.
-        assert!(stake_account("B", &state(stake_data(2, owner, other, d(1000, NO_DEACTIVATION))), &owner, 1001).is_none());
-        assert!(!stake_account("C", &state(stake_data(2, other, owner, d(1000, NO_DEACTIVATION))), &owner, 1001).unwrap().can_deactivate);
-        assert!(stake_account("D", &AccountState { owner: "11111111111111111111111111111111".into(), ..state(stake_data(1, owner, owner, None)) }, &owner, 1).is_none());
+        assert!(stake_account(
+            "B",
+            &state(stake_data(2, owner, other, d(1000, NO_DEACTIVATION))),
+            &owner,
+            1001
+        )
+        .is_none());
+        assert!(
+            !stake_account(
+                "C",
+                &state(stake_data(2, other, owner, d(1000, NO_DEACTIVATION))),
+                &owner,
+                1001
+            )
+            .unwrap()
+            .can_deactivate
+        );
+        assert!(stake_account(
+            "D",
+            &AccountState {
+                owner: "11111111111111111111111111111111".into(),
+                ..state(stake_data(1, owner, owner, None))
+            },
+            &owner,
+            1
+        )
+        .is_none());
         assert!(parse(&[3, 0, 0, 0]).is_none());
         // Lockup in force (future epoch, third-party custodian).
         let mut locked = stake_data(1, owner, owner, None);
         locked[84..92].copy_from_slice(&2000u64.to_le_bytes());
         locked[92..124].copy_from_slice(&other);
-        assert!(stake_account("E", &state(locked), &owner, 1001).unwrap().locked);
+        assert!(
+            stake_account("E", &state(locked), &owner, 1001)
+                .unwrap()
+                .locked
+        );
     }
 
     fn vote(vote: &str, stake_sol: u64, commission: u64, last: u64) -> Value {
@@ -892,25 +1218,52 @@ mod tests {
             ],
             "delinquent": [],
         });
-        let votes: Vec<String> = eligible(&accounts).unwrap().into_iter().map(|c| c.vote).collect();
-        assert!(!votes.contains(&k(1)) && !votes.contains(&k(3)) && !votes.contains(&k(4)) && !votes.contains(&k(5)));
+        let votes: Vec<String> = eligible(&accounts)
+            .unwrap()
+            .into_iter()
+            .map(|c| c.vote)
+            .collect();
+        assert!(
+            !votes.contains(&k(1))
+                && !votes.contains(&k(3))
+                && !votes.contains(&k(4))
+                && !votes.contains(&k(5))
+        );
         assert!(votes.contains(&k(2)) && votes.contains(&k(6)));
         // Without stakewiz: every eligible validator, the most established first.
         let all = ranked(eligible(&accounts).unwrap(), &HashMap::new());
         assert_eq!(all.len(), votes.len());
         // With stakewiz: best score first, flagged and unknown ones dropped, whatever the
         // advertised yield.
-        let wiz = |name: &str, apy: f64, score: f64, comment: Value| wiz_entry(&json!({ "vote_identity": "x", "name": name, "total_apy": apy, "wiz_score": score, "admin_comment": comment })).unwrap().1;
+        let wiz = |name: &str, apy: f64, score: f64, comment: Value| {
+            wiz_entry(&json!({ "vote_identity": "x", "name": name, "total_apy": apy, "wiz_score": score, "admin_comment": comment })).unwrap().1
+        };
         let mut info = HashMap::new();
         info.insert(k(6), wiz("Six", 5.1, 99.0, Value::Null));
         info.insert(k(2), wiz("Deux", 5.2, 95.0, Value::Null));
-        info.insert(k(7), wiz("Douteux", 8.2, 99.9, json!("Suspicious commission change pattern.")));
+        info.insert(
+            k(7),
+            wiz(
+                "Douteux",
+                8.2,
+                99.9,
+                json!("Suspicious commission change pattern."),
+            ),
+        );
         let list = ranked(eligible(&accounts).unwrap(), &info);
-        assert_eq!(list.iter().map(|v| v.name.as_deref().unwrap()).collect::<Vec<_>>(), ["Six", "Deux"]);
+        assert_eq!(
+            list.iter()
+                .map(|v| v.name.as_deref().unwrap())
+                .collect::<Vec<_>>(),
+            ["Six", "Deux"]
+        );
         assert_eq!(list[0].apy, Some(5.1));
         assert_eq!(display_name("  A\u{202E}b\nc  "), Some("Ab c".to_string()));
         assert_eq!(display_name("\u{200B}"), None);
-        assert_eq!(display_name("Yonta Labs - LST 0%Fee MEV - | - Low").as_deref(), Some("Yonta Labs - LST 0%Fee MEV"));
+        assert_eq!(
+            display_name("Yonta Labs - LST 0%Fee MEV - | - Low").as_deref(),
+            Some("Yonta Labs - LST 0%Fee MEV")
+        );
     }
 
     fn mainnet() -> SolRpc {
@@ -939,15 +1292,33 @@ mod tests {
     fn real_native_staking_simulates() {
         let rpc = mainnet();
         let list = validators(&rpc).unwrap();
-        println!("{} validateurs : {:?}", list.len(), list.iter().take(3).collect::<Vec<_>>());
+        println!(
+            "{} validateurs : {:?}",
+            list.len(),
+            list.iter().take(3).collect::<Vec<_>>()
+        );
         let payer = funded_payer(&rpc);
         let view = overview(&rpc, &payer).unwrap();
-        println!("époque {:?}, minimum {}, réserve {}, comptes {}", view.epoch, view.min_delegation, view.rent_reserve, view.accounts.len());
+        println!(
+            "époque {:?}, minimum {}, réserve {}, comptes {}",
+            view.epoch,
+            view.min_delegation,
+            view.rent_reserve,
+            view.accounts.len()
+        );
         let plan = plan_delegate(&rpc, &payer, view.min_delegation, &list[0].vote).unwrap();
         println!("{plan:?}");
         assert!(max_delegation(&rpc, &payer).unwrap() > view.min_delegation);
         // Validator outside the list (the largest one: superminority): refused.
-        let biggest = vote_accounts(&rpc).unwrap()["current"].as_array().unwrap().iter().max_by_key(|v| v["activatedStake"].as_u64()).unwrap()["votePubkey"].as_str().unwrap().to_string();
+        let biggest = vote_accounts(&rpc).unwrap()["current"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .max_by_key(|v| v["activatedStake"].as_u64())
+            .unwrap()["votePubkey"]
+            .as_str()
+            .unwrap()
+            .to_string();
         assert!(plan_delegate(&rpc, &payer, view.min_delegation, &biggest).is_err());
     }
 
@@ -965,7 +1336,12 @@ mod tests {
             .call("getProgramAccounts", json!([STAKE_PROGRAM, {"encoding": "base64", "dataSlice": {"offset": 0, "length": 0}, "filters": [{"dataSize": 200}, {"memcmp": {"offset": 124, "bytes": vote}}]}]))
             .unwrap();
         let address = found[0]["pubkey"].as_str().unwrap().to_string();
-        let state = rpc.multiple_accounts(std::slice::from_ref(&address)).unwrap().pop().flatten().unwrap();
+        let state = rpc
+            .multiple_accounts(std::slice::from_ref(&address))
+            .unwrap()
+            .pop()
+            .flatten()
+            .unwrap();
         let parsed = parse(&state.data).unwrap();
         let epoch = epoch_info(&rpc).unwrap().epoch;
         let account = stake_account(&address, &state, &parsed.withdrawer, epoch).unwrap();
@@ -975,14 +1351,35 @@ mod tests {
             .call("getProgramAccounts", json!([STAKE_PROGRAM, {"encoding": "base64", "dataSlice": {"offset": 0, "length": 0}, "filters": [{"dataSize": 200}, {"memcmp": {"offset": 164, "bytes": bs58::encode(epoch.to_le_bytes()).into_string()}}]}]))
             .unwrap();
         let fresh = fresh[0]["pubkey"].as_str().unwrap();
-        let entries = crate::history::sol_history(crate::wallet_flow::SOLANA_MAINNET.rpc, fresh, 1).unwrap();
-        println!("{fresh} : {:?}", entries.iter().map(|e| (&e.id[..8], &e.kind, e.net_amount_minor)).collect::<Vec<_>>());
+        let entries =
+            crate::history::sol_history(crate::wallet_flow::SOLANA_MAINNET.rpc, fresh, 1).unwrap();
+        println!(
+            "{fresh} : {:?}",
+            entries
+                .iter()
+                .map(|e| (&e.id[..8], &e.kind, e.net_amount_minor))
+                .collect::<Vec<_>>()
+        );
         assert_ne!(entries[0].kind, crate::history::TxKind::Stake);
-        let tx = rpc.call("getTransaction", json!([entries[0].id, {"encoding": "json", "maxSupportedTransactionVersion": 0}])).unwrap();
-        let payer = tx.pointer("/transaction/message/accountKeys/0").and_then(Value::as_str).unwrap().to_string();
-        let payer_entries = crate::history::sol_history(crate::wallet_flow::SOLANA_MAINNET.rpc, &payer, 10).unwrap();
+        let tx = rpc
+            .call(
+                "getTransaction",
+                json!([entries[0].id, {"encoding": "json", "maxSupportedTransactionVersion": 0}]),
+            )
+            .unwrap();
+        let payer = tx
+            .pointer("/transaction/message/accountKeys/0")
+            .and_then(Value::as_str)
+            .unwrap()
+            .to_string();
+        let payer_entries =
+            crate::history::sol_history(crate::wallet_flow::SOLANA_MAINNET.rpc, &payer, 10)
+                .unwrap();
         let creation = payer_entries.iter().find(|e| e.id == entries[0].id);
-        println!("payeur {payer} : {:?}", creation.map(|e| (&e.kind, e.net_amount_minor)));
+        println!(
+            "payeur {payer} : {:?}",
+            creation.map(|e| (&e.kind, e.net_amount_minor))
+        );
         assert!(creation.is_none() || creation.unwrap().kind == crate::history::TxKind::Stake);
     }
 
@@ -997,15 +1394,23 @@ mod tests {
         let payer_text = funded_payer(&rpc);
         let payer = key(&payer_text).unwrap();
         let vote = key(&validators(&rpc).unwrap()[0].vote).unwrap();
-        let rent = rpc.minimum_rent_exempt_balance(STAKE_ACCOUNT_SPACE).unwrap();
+        let rent = rpc
+            .minimum_rent_exempt_balance(STAKE_ACCOUNT_SPACE)
+            .unwrap();
         let seed = "stake:test-exit";
         let stake = derived_address(&payer, seed);
         let amount = 1_000_000_000;
         let run = |ixs: Vec<Instruction>| {
             let raw = assemble_transaction(&[0u8; 64], &build_message(&payer, &ixs, &[0u8; 32]));
-            rpc.simulate_with_account_states(&raw, &[b58(&stake)]).unwrap()
+            rpc.simulate_with_account_states(&raw, &[b58(&stake)])
+                .unwrap()
         };
-        match run(vec![create_with_seed(&payer, &stake, seed, amount + rent), initialize(&stake, &payer), delegate(&stake, &vote, &payer), deactivate(&stake, &payer)]) {
+        match run(vec![
+            create_with_seed(&payer, &stake, seed, amount + rent),
+            initialize(&stake, &payer),
+            delegate(&stake, &vote, &payer),
+            deactivate(&stake, &payer),
+        ]) {
             SimulationOutcome::Succeeded { post_states } => {
                 let parsed = parse(&post_states[0].as_ref().unwrap().data).unwrap();
                 let d = parsed.delegation.unwrap();
@@ -1013,8 +1418,14 @@ mod tests {
             }
             SimulationOutcome::Failed { err, logs } => panic!("{err}\n{logs}"),
         }
-        match run(vec![create_with_seed(&payer, &stake, seed, amount + rent), initialize(&stake, &payer), withdraw(&stake, &payer, amount + rent)]) {
-            SimulationOutcome::Succeeded { post_states } => assert!(post_states[0].as_ref().is_none_or(|a| a.lamports == 0)),
+        match run(vec![
+            create_with_seed(&payer, &stake, seed, amount + rent),
+            initialize(&stake, &payer),
+            withdraw(&stake, &payer, amount + rent),
+        ]) {
+            SimulationOutcome::Succeeded { post_states } => {
+                assert!(post_states[0].as_ref().is_none_or(|a| a.lamports == 0))
+            }
             SimulationOutcome::Failed { err, logs } => panic!("{err}\n{logs}"),
         }
     }

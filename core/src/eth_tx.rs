@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
-use k256::ecdsa::{RecoveryId, Signature, SigningKey};
 use k256::ecdsa::signature::hazmat::PrehashSigner;
+use k256::ecdsa::{RecoveryId, Signature, SigningKey};
 use rlp::RlpStream;
 use sha3::{Digest, Keccak256};
 
@@ -91,7 +91,11 @@ impl EthTx {
         let s_val = signature.s().to_bytes();
         let v = self.chain_id * 2 + 35 + u64::from(recid.to_byte());
 
-        Ok(self.encode(Some((v, trim_be(&r).as_slice(), trim_be(&s_val).as_slice()))))
+        Ok(self.encode(Some((
+            v,
+            trim_be(&r).as_slice(),
+            trim_be(&s_val).as_slice(),
+        ))))
     }
 }
 
@@ -103,7 +107,11 @@ impl EthTx {
 pub fn intrinsic_gas(data: &[u8]) -> u64 {
     const BASE: u64 = 21_000;
     let (zero, nonzero) = data.iter().fold((0u64, 0u64), |(zero, nonzero), &b| {
-        if b == 0 { (zero + 1, nonzero) } else { (zero, nonzero + 1) }
+        if b == 0 {
+            (zero + 1, nonzero)
+        } else {
+            (zero, nonzero + 1)
+        }
     });
     BASE + zero * 4 + nonzero * 16
 }
@@ -126,7 +134,13 @@ fn pad_left_32(bytes: &[u8]) -> [u8; 32] {
 /// after that offset. See the test
 /// `thorchain_deposit_calldata_matches_a_hand_computed_reference` for a
 /// byte-for-byte check against the spec.
-pub fn thorchain_deposit_calldata(vault: &[u8; 20], asset: &[u8; 20], amount: u128, memo: &str, expiration: u64) -> Vec<u8> {
+pub fn thorchain_deposit_calldata(
+    vault: &[u8; 20],
+    asset: &[u8; 20],
+    amount: u128,
+    memo: &str,
+    expiration: u64,
+) -> Vec<u8> {
     const SELECTOR: [u8; 4] = [0x44, 0xbc, 0x93, 0x7b];
     const HEAD_SLOTS: u128 = 5; // vault, asset, amount, offset(memo), expiration
 
@@ -143,7 +157,7 @@ pub fn thorchain_deposit_calldata(vault: &[u8; 20], asset: &[u8; 20], amount: u1
     data.extend_from_slice(&pad_left_32(&(memo_bytes.len() as u128).to_be_bytes()));
     data.extend_from_slice(memo_bytes);
     let padding = (32 - memo_bytes.len() % 32) % 32;
-    data.extend(std::iter::repeat(0u8).take(padding));
+    data.extend(std::iter::repeat_n(0u8, padding));
 
     data
 }
@@ -196,7 +210,7 @@ mod tests {
             gas_limit: 21_000,
             to: [0xABu8; 20],
             value: 1_000_000_000_000_000_000, // 1 ETH
-            chain_id: 11155111,                // Sepolia
+            chain_id: 11155111,               // Sepolia
             data: Vec::new(),
         };
 
@@ -223,7 +237,8 @@ mod tests {
         r_padded[32 - sig_r.len()..].copy_from_slice(&sig_r);
         let mut s_padded = [0u8; 32];
         s_padded[32 - sig_s.len()..].copy_from_slice(&sig_s);
-        let signature = Signature::from_scalars(r_padded, s_padded).expect("signature reconstructible");
+        let signature =
+            Signature::from_scalars(r_padded, s_padded).expect("signature reconstructible");
 
         let verifying_key = VerifyingKey::from(&key);
         let hash = tx.hash_unsigned();
@@ -290,6 +305,10 @@ mod tests {
         assert_eq!(&calldata[164..195], &[0u8; 31]);
         assert_eq!(calldata[195], 2);
         assert_eq!(&calldata[196..198], b"AB");
-        assert_eq!(&calldata[198..228], &[0u8; 30], "padding du memo jusqu'à 32 octets");
+        assert_eq!(
+            &calldata[198..228],
+            &[0u8; 30],
+            "padding du memo jusqu'à 32 octets"
+        );
     }
 }

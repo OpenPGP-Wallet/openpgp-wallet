@@ -15,8 +15,11 @@ const INITIAL_CHUNK: usize = 1024;
 
 pub fn get_address(trezor: &mut Trezor, path: &[u32], show: bool) -> Result<String> {
     let payload = Writer::new().uints(1, path).boolean(2, show).finish();
-    let response = trezor.call_expect(msg::ETHEREUM_GET_ADDRESS, &payload, msg::ETHEREUM_ADDRESS)?;
-    let address = Message::parse(&response)?.string(2).ok_or_else(|| anyhow!("adresse Ethereum du Trezor absente"))?;
+    let response =
+        trezor.call_expect(msg::ETHEREUM_GET_ADDRESS, &payload, msg::ETHEREUM_ADDRESS)?;
+    let address = Message::parse(&response)?
+        .string(2)
+        .ok_or_else(|| anyhow!("adresse Ethereum du Trezor absente"))?;
     let bytes: [u8; 20] = hex::decode(address.trim_start_matches("0x"))
         .ok()
         .and_then(|b| b.try_into().ok())
@@ -48,8 +51,17 @@ fn sign_request(path: &[u32], tx: &EthTx) -> Vec<u8> {
 
 /// Signs `tx` on the device and returns the signed transaction, ready to broadcast,
 /// after checking that it recovers to `expected`.
-pub fn sign_transaction(trezor: &mut Trezor, path: &[u32], tx: &EthTx, expected: &[u8; 20]) -> Result<Vec<u8>> {
-    let mut response = trezor.call_expect(msg::ETHEREUM_SIGN_TX, &sign_request(path, tx), msg::ETHEREUM_TX_REQUEST)?;
+pub fn sign_transaction(
+    trezor: &mut Trezor,
+    path: &[u32],
+    tx: &EthTx,
+    expected: &[u8; 20],
+) -> Result<Vec<u8>> {
+    let mut response = trezor.call_expect(
+        msg::ETHEREUM_SIGN_TX,
+        &sign_request(path, tx),
+        msg::ETHEREUM_TX_REQUEST,
+    )?;
     let mut offset = tx.data.len().min(INITIAL_CHUNK);
     // The device asks for the rest of the data chunk by chunk.
     loop {
@@ -57,28 +69,43 @@ pub fn sign_transaction(trezor: &mut Trezor, path: &[u32], tx: &EthTx, expected:
         if requested == 0 {
             break;
         }
-        let end = offset.checked_add(requested).filter(|end| *end <= tx.data.len()).ok_or_else(|| anyhow!("le Trezor demande des données inexistantes"))?;
+        let end = offset
+            .checked_add(requested)
+            .filter(|end| *end <= tx.data.len())
+            .ok_or_else(|| anyhow!("le Trezor demande des données inexistantes"))?;
         let ack = Writer::new().bytes(1, &tx.data[offset..end]).finish();
         response = trezor.call_expect(msg::ETHEREUM_TX_ACK, &ack, msg::ETHEREUM_TX_REQUEST)?;
         offset = end;
     }
     let signature = Message::parse(&response)?;
-    let v = signature.uint(2).ok_or_else(|| anyhow!("signature Ethereum du Trezor absente"))?;
-    let (r, s) = (signature.bytes(3).unwrap_or_default(), signature.bytes(4).unwrap_or_default());
-    ensure!(r.len() == 32 && s.len() == 32, "signature Ethereum du Trezor mal formée");
+    let v = signature
+        .uint(2)
+        .ok_or_else(|| anyhow!("signature Ethereum du Trezor absente"))?;
+    let (r, s) = (
+        signature.bytes(3).unwrap_or_default(),
+        signature.bytes(4).unwrap_or_default(),
+    );
+    ensure!(
+        r.len() == 32 && s.len() == 32,
+        "signature Ethereum du Trezor mal formée"
+    );
     // v = 35 + 2 × chain_id + parity (EIP-155), or 27/28.
-    let parity = v
-        .checked_sub(35 + 2 * tx.chain_id)
-        .or_else(|| v.checked_sub(27))
-        .filter(|p| *p <= 1)
-        .ok_or_else(|| anyhow!("valeur v inattendue renvoyée par le Trezor"))? as u8;
+    let parity =
+        v.checked_sub(35 + 2 * tx.chain_id)
+            .or_else(|| v.checked_sub(27))
+            .filter(|p| *p <= 1)
+            .ok_or_else(|| anyhow!("valeur v inattendue renvoyée par le Trezor"))? as u8;
     let (signature, parity) = normalized(r, s, parity)?;
     ensure!(
         recover_address(&keccak(&tx.unsigned_rlp()), &signature, parity)? == *expected,
         "la signature du Trezor ne correspond pas au compte attendu — transaction non diffusée"
     );
     let (r, s) = (signature.r().to_bytes(), signature.s().to_bytes());
-    Ok(tx.encode_with_signature(tx.chain_id * 2 + 35 + u64::from(parity), &r.into(), &s.into()))
+    Ok(tx.encode_with_signature(
+        tx.chain_id * 2 + 35 + u64::from(parity),
+        &r.into(),
+        &s.into(),
+    ))
 }
 
 #[cfg(test)]
@@ -87,7 +114,15 @@ mod tests {
     use crate::ledger::parse_path;
 
     fn sample_tx() -> EthTx {
-        EthTx { nonce: 7, gas_price: 20_000_000_000, gas_limit: 21_000, to: [0x44; 20], value: 10_000_000_000_000_000, chain_id: 11_155_111, data: Vec::new() }
+        EthTx {
+            nonce: 7,
+            gas_price: 20_000_000_000,
+            gas_limit: 21_000,
+            to: [0x44; 20],
+            value: 10_000_000_000_000_000,
+            chain_id: 11_155_111,
+            data: Vec::new(),
+        }
     }
 
     /// Same encoding, byte for byte, as trezorlib (`EthereumSignTx`, a 0.01 ETH
@@ -111,7 +146,9 @@ mod tests {
     fn trezor_ethereum_against_the_official_firmware() {
         use super::super::emulator::{connect, DebugLink};
         let path = parse_path("44'/60'/0'/0/0").unwrap();
-        let seed = bip39::Mnemonic::parse(crate::ledger::speculos::TEST_MNEMONIC).unwrap().to_seed("");
+        let seed = bip39::Mnemonic::parse(crate::ledger::speculos::TEST_MNEMONIC)
+            .unwrap()
+            .to_seed("");
         let (_, ours) = crate::derivation::derive_evm_key(&seed, 0).unwrap();
         let mut trezor = connect();
         trezor.initialize().unwrap();
@@ -129,7 +166,10 @@ mod tests {
         let screens = reviewer.join().unwrap().join(" | ");
         println!("écrans virement : {screens}");
         assert!(screens.contains("0.01"), "montant affiché");
-        assert!(screens.to_lowercase().contains("0x4444"), "destinataire affiché");
+        assert!(
+            screens.to_lowercase().contains("0x4444"),
+            "destinataire affiché"
+        );
         println!("transaction signée : 0x{}", hex::encode(&signed));
 
         let refuser = std::thread::spawn(|| DebugLink::connect().review(15, Some("")));

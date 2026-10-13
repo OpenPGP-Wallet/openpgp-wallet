@@ -45,7 +45,13 @@ pub struct Instruction {
 /// writable, never the other way round (understating a permission would make the
 /// network reject the transaction, never wrongly accept it: the error always falls
 /// on the safe side).
-fn note_account(key: [u8; 32], is_signer: bool, is_writable: bool, order: &mut Vec<[u8; 32]>, flags: &mut HashMap<[u8; 32], (bool, bool)>) {
+fn note_account(
+    key: [u8; 32],
+    is_signer: bool,
+    is_writable: bool,
+    order: &mut Vec<[u8; 32]>,
+    flags: &mut HashMap<[u8; 32], (bool, bool)>,
+) {
     match flags.get_mut(&key) {
         Some((s, w)) => {
             *s |= is_signer;
@@ -71,7 +77,12 @@ fn note_account(key: [u8; 32], is_signer: bool, is_writable: bool, order: &mut V
 /// the "owner" of every instruction are always the same wallet key). This is
 /// checked explicitly rather than silently assumed, so we never produce a
 /// transaction with more signer accounts than signatures actually attached.
-pub fn build_and_sign_transaction(signing_key: &SigningKey, payer: &[u8; 32], instructions: &[Instruction], recent_blockhash: &[u8; 32]) -> Vec<u8> {
+pub fn build_and_sign_transaction(
+    signing_key: &SigningKey,
+    payer: &[u8; 32],
+    instructions: &[Instruction],
+    recent_blockhash: &[u8; 32],
+) -> Vec<u8> {
     let message = build_message(payer, instructions, recent_blockhash);
     // ed25519 signs the message directly (no pre-hashing, unlike ECDSA).
     let signature = signing_key.sign(&message);
@@ -81,7 +92,11 @@ pub fn build_and_sign_transaction(signing_key: &SigningKey, payer: &[u8; 32], in
 /// The message (the signed part) of `build_and_sign_transaction`, without the
 /// signature: this is what a hardware wallet receives to display and then sign (see
 /// `ledger::solana`).
-pub fn build_message(payer: &[u8; 32], instructions: &[Instruction], recent_blockhash: &[u8; 32]) -> Vec<u8> {
+pub fn build_message(
+    payer: &[u8; 32],
+    instructions: &[Instruction],
+    recent_blockhash: &[u8; 32],
+) -> Vec<u8> {
     let mut order: Vec<[u8; 32]> = Vec::new();
     let mut flags: HashMap<[u8; 32], (bool, bool)> = HashMap::new();
 
@@ -120,12 +135,12 @@ pub fn build_message(payer: &[u8; 32], instructions: &[Instruction], recent_bloc
     account_keys.extend(nonsigner_writable);
     account_keys.extend(nonsigner_readonly);
 
-    let index_of = |key: &[u8; 32]| -> u8 {
-        account_keys
-            .iter()
-            .position(|k| k == key)
-            .expect("clé référencée par une instruction mais absente de account_keys (bug interne)") as u8
-    };
+    let index_of =
+        |key: &[u8; 32]| -> u8 {
+            account_keys.iter().position(|k| k == key).expect(
+                "clé référencée par une instruction mais absente de account_keys (bug interne)",
+            ) as u8
+        };
 
     let mut message = Vec::new();
     message.push(num_required_signatures as u8);
@@ -165,7 +180,11 @@ pub fn assemble_transaction(signature: &[u8; 64], message: &[u8]) -> Vec<u8> {
 /// System Program "Transfer" instruction, kept separate so it can be combined with
 /// other instructions in the same transaction (see `api::send_swap_sol`, which
 /// pairs it with a Memo instruction for a THORChain swap).
-pub fn transfer_instruction(from_pubkey: &[u8; 32], to_pubkey: &[u8; 32], lamports: u64) -> Instruction {
+pub fn transfer_instruction(
+    from_pubkey: &[u8; 32],
+    to_pubkey: &[u8; 32],
+    lamports: u64,
+) -> Instruction {
     let mut ix_data = Vec::new();
     ix_data.extend_from_slice(&2u32.to_le_bytes()); // System Program "Transfer" variant
     ix_data.extend_from_slice(&lamports.to_le_bytes());
@@ -207,7 +226,12 @@ mod tests {
 
     #[test]
     fn write_shortvec_len_boundaries() {
-        let cases: [(usize, &[u8]); 4] = [(0, &[0x00]), (127, &[0x7f]), (128, &[0x80, 0x01]), (16384, &[0x80, 0x80, 0x01])];
+        let cases: [(usize, &[u8]); 4] = [
+            (0, &[0x00]),
+            (127, &[0x7f]),
+            (128, &[0x80, 0x01]),
+            (16384, &[0x80, 0x80, 0x01]),
+        ];
         for (value, expected) in cases {
             let mut buf = Vec::new();
             write_shortvec_len(&mut buf, value);
@@ -241,7 +265,10 @@ mod tests {
         let keys_start = 4;
         assert_eq!(&message[keys_start..keys_start + 32], &from);
         assert_eq!(&message[keys_start + 32..keys_start + 64], &to);
-        assert_eq!(&message[keys_start + 64..keys_start + 96], &SYSTEM_PROGRAM_ID);
+        assert_eq!(
+            &message[keys_start + 64..keys_start + 96],
+            &SYSTEM_PROGRAM_ID
+        );
 
         let blockhash_start = keys_start + 96;
         assert_eq!(&message[blockhash_start..blockhash_start + 32], &blockhash);
@@ -269,7 +296,10 @@ mod tests {
         assert_eq!(message[3], 2);
         let keys_start = 4;
         assert_eq!(&message[keys_start..keys_start + 32], &from);
-        assert_eq!(&message[keys_start + 32..keys_start + 64], &SYSTEM_PROGRAM_ID);
+        assert_eq!(
+            &message[keys_start + 32..keys_start + 64],
+            &SYSTEM_PROGRAM_ID
+        );
     }
 
     /// A message with 2 instructions (needed to send USDC: idempotent creation of the
@@ -295,7 +325,11 @@ mod tests {
         // Instruction 1 ("CreateIdempotent"-like): payer is signer+writable.
         let ix1 = Instruction {
             program_id: prog_a,
-            accounts: vec![(payer, true, true), (dest_ata, false, true), (mint, false, false)],
+            accounts: vec![
+                (payer, true, true),
+                (dest_ata, false, true),
+                (mint, false, false),
+            ],
             data: vec![1],
         };
         // Instruction 2 ("TransferChecked"-like): payer is referenced again, but only as
@@ -303,7 +337,12 @@ mod tests {
         // keeps the higher of the two).
         let ix2 = Instruction {
             program_id: prog_b,
-            accounts: vec![(source_ata, false, true), (mint, false, false), (dest_ata, false, true), (payer, true, false)],
+            accounts: vec![
+                (source_ata, false, true),
+                (mint, false, false),
+                (dest_ata, false, true),
+                (payer, true, false),
+            ],
             data: vec![12, 1, 2, 3, 4, 5, 6, 7, 8, 6],
         };
 
@@ -315,7 +354,11 @@ mod tests {
 
         // Header: 1 required signer, 0 read-only signers (payer merged as writable), 3
         // read-only non-signer accounts (mint, prog_a, prog_b).
-        assert_eq!(&message[0..3], &[1, 0, 3], "header : payer doit être writable, jamais dégradé en lecture seule");
+        assert_eq!(
+            &message[0..3],
+            &[1, 0, 3],
+            "header : payer doit être writable, jamais dégradé en lecture seule"
+        );
 
         // 6 unique accounts expected, in this order:
         // - [payer] (signer+writable)
@@ -323,8 +366,13 @@ mod tests {
         // - [mint, prog_a, prog_b] (non-signer+read-only, order of first appearance)
         assert_eq!(message[3], 6);
         let keys_start = 4;
-        let key_at = |i: usize| -> &[u8] { &message[keys_start + i * 32..keys_start + (i + 1) * 32] };
-        assert_eq!(key_at(0), &payer, "payer doit être en position 0 (payeur des frais)");
+        let key_at =
+            |i: usize| -> &[u8] { &message[keys_start + i * 32..keys_start + (i + 1) * 32] };
+        assert_eq!(
+            key_at(0),
+            &payer,
+            "payer doit être en position 0 (payeur des frais)"
+        );
         assert_eq!(key_at(1), &dest_ata);
         assert_eq!(key_at(2), &source_ata);
         assert_eq!(key_at(3), &mint);
@@ -340,7 +388,11 @@ mod tests {
         // Instruction 1: program_id index 4 (prog_a), accounts [0 (payer), 1 (dest_ata), 3 (mint)].
         let ix1_pos = ix_count_pos + 1;
         assert_eq!(message[ix1_pos], 4, "index de prog_a dans account_keys");
-        assert_eq!(message[ix1_pos + 1], 3, "3 comptes utilisés par l'instruction 1");
+        assert_eq!(
+            message[ix1_pos + 1],
+            3,
+            "3 comptes utilisés par l'instruction 1"
+        );
         assert_eq!(&message[ix1_pos + 2..ix1_pos + 5], &[0, 1, 3]);
         assert_eq!(message[ix1_pos + 5], 1, "1 octet de données");
         assert_eq!(message[ix1_pos + 6], 1, "discriminant CreateIdempotent");
@@ -348,7 +400,11 @@ mod tests {
         // Instruction 2: program_id index 5 (prog_b), accounts [2 (source_ata), 3 (mint), 1 (dest_ata), 0 (payer)].
         let ix2_pos = ix1_pos + 7;
         assert_eq!(message[ix2_pos], 5, "index de prog_b dans account_keys");
-        assert_eq!(message[ix2_pos + 1], 4, "4 comptes utilisés par l'instruction 2");
+        assert_eq!(
+            message[ix2_pos + 1],
+            4,
+            "4 comptes utilisés par l'instruction 2"
+        );
         assert_eq!(&message[ix2_pos + 2..ix2_pos + 6], &[2, 3, 1, 0]);
         assert_eq!(message[ix2_pos + 6], 10, "10 octets de données");
 

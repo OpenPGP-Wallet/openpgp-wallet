@@ -41,7 +41,9 @@ pub(crate) struct Inner {
 
 impl Inner {
     fn engine(&self) -> MutexGuard<'_, Engine> {
-        self.engine.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.engine
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     fn emit(&self, event: WcEvent) {
@@ -68,10 +70,12 @@ impl Inner {
     /// Atomic write (temporary file, then rename): a power cut mid-write never leaves a
     /// truncated file.
     fn save(&self) -> Result<()> {
-        let content = serde_json::to_string_pretty(&self.engine().state).context("sérialisation de l'état WalletConnect")?;
+        let content = serde_json::to_string_pretty(&self.engine().state)
+            .context("sérialisation de l'état WalletConnect")?;
         let tmp = self.data_dir.join(format!("{STATE_FILE}.tmp"));
         std::fs::write(&tmp, content).context("écriture de l'état WalletConnect")?;
-        std::fs::rename(&tmp, self.data_dir.join(STATE_FILE)).context("écriture de l'état WalletConnect")
+        std::fs::rename(&tmp, self.data_dir.join(STATE_FILE))
+            .context("écriture de l'état WalletConnect")
     }
 }
 
@@ -98,7 +102,11 @@ impl WalletConnect {
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
-        let inner = Arc::new(Inner { engine: Mutex::new(Engine::new(state)?), data_dir: data_dir.to_path_buf(), events });
+        let inner = Arc::new(Inner {
+            engine: Mutex::new(Engine::new(state)?),
+            data_dir: data_dir.to_path_buf(),
+            events,
+        });
         inner.save()?;
         let (tx, rx) = mpsc::channel();
         let relay_inner = inner.clone();
@@ -106,7 +114,10 @@ impl WalletConnect {
             .name("walletconnect-relay".into())
             .spawn(move || relay::run(relay_inner, rx))
             .context("démarrage du fil WalletConnect impossible")?;
-        Ok(Self { inner, commands: Mutex::new(tx) })
+        Ok(Self {
+            inner,
+            commands: Mutex::new(tx),
+        })
     }
 
     fn dispatch(&self, actions: Vec<Action>) {
@@ -127,8 +138,16 @@ impl WalletConnect {
         Ok(())
     }
 
-    pub fn approve(&self, proposal_id: u64, profile_index: u32, account: &crate::dapp_requests::Account) -> Result<()> {
-        let actions = self.inner.engine().approve(proposal_id, profile_index, account)?;
+    pub fn approve(
+        &self,
+        proposal_id: u64,
+        profile_index: u32,
+        account: &crate::dapp_requests::Account,
+    ) -> Result<()> {
+        let actions = self
+            .inner
+            .engine()
+            .approve(proposal_id, profile_index, account)?;
         self.dispatch(actions);
         Ok(())
     }
@@ -139,7 +158,11 @@ impl WalletConnect {
         Ok(())
     }
 
-    pub fn respond(&self, request_id: u64, result: std::result::Result<serde_json::Value, (i64, String)>) -> Result<()> {
+    pub fn respond(
+        &self,
+        request_id: u64,
+        result: std::result::Result<serde_json::Value, (i64, String)>,
+    ) -> Result<()> {
         let actions = self.inner.engine().respond(request_id, result)?;
         self.dispatch(actions);
         Ok(())
@@ -153,7 +176,13 @@ impl WalletConnect {
 
     /// Disconnects every session (wallet reset).
     pub fn disconnect_all(&self) {
-        let topics: Vec<String> = self.inner.engine().sessions().iter().map(|s| s.topic.clone()).collect();
+        let topics: Vec<String> = self
+            .inner
+            .engine()
+            .sessions()
+            .iter()
+            .map(|s| s.topic.clone())
+            .collect();
         for topic in topics {
             let _ = self.disconnect(&topic);
         }
@@ -164,7 +193,13 @@ impl WalletConnect {
             .engine()
             .sessions()
             .iter()
-            .map(|s| SessionView { topic: s.topic.clone(), peer: s.peer.clone(), chains: s.chains(), profile_index: s.profile_index, expiry: s.expiry })
+            .map(|s| SessionView {
+                topic: s.topic.clone(),
+                peer: s.peer.clone(),
+                chains: s.chains(),
+                profile_index: s.profile_index,
+                expiry: s.expiry,
+            })
             .collect()
     }
 
@@ -177,6 +212,10 @@ impl WalletConnect {
     }
 
     pub fn proposal_peer(&self, id: u64) -> Result<engine::PeerMetadata> {
-        self.inner.engine().proposal(id).map(|p| p.peer.clone()).ok_or_else(|| anyhow!("proposition de connexion introuvable ou expirée"))
+        self.inner
+            .engine()
+            .proposal(id)
+            .map(|p| p.peer.clone())
+            .ok_or_else(|| anyhow!("proposition de connexion introuvable ou expirée"))
     }
 }

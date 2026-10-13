@@ -53,10 +53,15 @@ fn client() -> &'static reqwest::blocking::Client {
 }
 
 fn get_json<T: serde::de::DeserializeOwned>(url: &str) -> Result<T> {
-    let response = client().get(url).send().context("service Dogecoin injoignable")?;
+    let response = client()
+        .get(url)
+        .send()
+        .context("service Dogecoin injoignable")?;
     let status = response.status();
     ensure!(status.is_success(), "service Dogecoin : réponse {status}");
-    response.json().context("réponse du service Dogecoin illisible")
+    response
+        .json()
+        .context("réponse du service Dogecoin illisible")
 }
 
 // --- Addresses ---------------------------------------------------------------------
@@ -94,11 +99,18 @@ fn p2pkh_script(hash160: &[u8; 20]) -> Vec<u8> {
 
 /// Dogecoin mainnet address (D…, or 9…/A… for P2SH), checksum verified.
 pub fn parse_recipient(address: &str) -> Result<Recipient> {
-    let data = bs58::decode(address.trim()).into_vec().map_err(|_| anyhow!("adresse Dogecoin invalide"))?;
+    let data = bs58::decode(address.trim())
+        .into_vec()
+        .map_err(|_| anyhow!("adresse Dogecoin invalide"))?;
     ensure!(data.len() == 25, "adresse Dogecoin invalide");
     let (body, check) = data.split_at(21);
-    ensure!(btc_tx::dsha256(body)[..4] == *check, "adresse Dogecoin invalide (somme de contrôle)");
-    let hash: [u8; 20] = body[1..].try_into().map_err(|_| anyhow!("adresse Dogecoin invalide"))?;
+    ensure!(
+        btc_tx::dsha256(body)[..4] == *check,
+        "adresse Dogecoin invalide (somme de contrôle)"
+    );
+    let hash: [u8; 20] = body[1..]
+        .try_into()
+        .map_err(|_| anyhow!("adresse Dogecoin invalide"))?;
     match body[0] {
         P2PKH_VERSION => Ok(Recipient::P2pkh(hash)),
         P2SH_VERSION => Ok(Recipient::P2sh(hash)),
@@ -153,7 +165,11 @@ impl LegacyTx {
     fn sighash(&self, index: usize, script_code: &[u8], hash_type: u32) -> [u8; 32] {
         let mut copy = self.clone();
         for (i, input) in copy.inputs.iter_mut().enumerate() {
-            input.script_sig = if i == index { script_code.to_vec() } else { Vec::new() };
+            input.script_sig = if i == index {
+                script_code.to_vec()
+            } else {
+                Vec::new()
+            };
         }
         let mut preimage = copy.serialize();
         preimage.extend_from_slice(&hash_type.to_le_bytes());
@@ -169,21 +185,37 @@ struct Reader<'a> {
 
 impl Reader<'_> {
     fn take(&mut self, n: usize) -> Result<&[u8]> {
-        let end = self.at.checked_add(n).filter(|end| *end <= self.data.len()).context("transaction Dogecoin tronquée")?;
+        let end = self
+            .at
+            .checked_add(n)
+            .filter(|end| *end <= self.data.len())
+            .context("transaction Dogecoin tronquée")?;
         let slice = &self.data[self.at..end];
         self.at = end;
         Ok(slice)
     }
     fn u32(&mut self) -> Result<u32> {
-        Ok(u32::from_le_bytes(self.take(4)?.try_into().map_err(|_| anyhow!("transaction Dogecoin tronquée"))?))
+        Ok(u32::from_le_bytes(
+            self.take(4)?
+                .try_into()
+                .map_err(|_| anyhow!("transaction Dogecoin tronquée"))?,
+        ))
     }
     fn u64(&mut self) -> Result<u64> {
-        Ok(u64::from_le_bytes(self.take(8)?.try_into().map_err(|_| anyhow!("transaction Dogecoin tronquée"))?))
+        Ok(u64::from_le_bytes(
+            self.take(8)?
+                .try_into()
+                .map_err(|_| anyhow!("transaction Dogecoin tronquée"))?,
+        ))
     }
     fn varint(&mut self) -> Result<u64> {
         let first = self.take(1)?[0];
         Ok(match first {
-            0xfd => u64::from(u16::from_le_bytes(self.take(2)?.try_into().map_err(|_| anyhow!("transaction Dogecoin tronquée"))?)),
+            0xfd => u64::from(u16::from_le_bytes(
+                self.take(2)?
+                    .try_into()
+                    .map_err(|_| anyhow!("transaction Dogecoin tronquée"))?,
+            )),
             0xfe => u64::from(self.u32()?),
             0xff => self.u64()?,
             n => u64::from(n),
@@ -202,11 +234,19 @@ fn parse_tx(raw: &[u8]) -> Result<LegacyTx> {
     ensure!(n_in > 0 && n_in < 10_000, "transaction Dogecoin invalide");
     let mut inputs = Vec::new();
     for _ in 0..n_in {
-        let prev: [u8; 32] = r.take(32)?.try_into().map_err(|_| anyhow!("transaction Dogecoin tronquée"))?;
+        let prev: [u8; 32] = r
+            .take(32)?
+            .try_into()
+            .map_err(|_| anyhow!("transaction Dogecoin tronquée"))?;
         let vout = r.u32()?;
         let script_sig = r.bytes()?;
         let sequence = r.u32()?;
-        inputs.push(TxIn { prev, vout, script_sig, sequence });
+        inputs.push(TxIn {
+            prev,
+            vout,
+            script_sig,
+            sequence,
+        });
     }
     let n_out = r.varint()?;
     ensure!(n_out < 100_000, "transaction Dogecoin invalide");
@@ -216,8 +256,16 @@ fn parse_tx(raw: &[u8]) -> Result<LegacyTx> {
         outputs.push((value, r.bytes()?));
     }
     let locktime = r.u32()?;
-    ensure!(r.at == raw.len(), "transaction Dogecoin invalide (octets en trop)");
-    Ok(LegacyTx { version, inputs, outputs, locktime })
+    ensure!(
+        r.at == raw.len(),
+        "transaction Dogecoin invalide (octets en trop)"
+    );
+    Ok(LegacyTx {
+        version,
+        inputs,
+        outputs,
+        locktime,
+    })
 }
 
 fn txid_hex(raw: &[u8]) -> String {
@@ -263,20 +311,43 @@ pub fn plan_send(mut utxos: Vec<Utxo>, amount: u64, fee_per_kb: u64) -> Result<S
     let mut inputs = Vec::new();
     let mut total = 0u64;
     for utxo in utxos.into_iter().take(MAX_INPUTS) {
-        total = total.checked_add(utxo.value).context("montant hors limites")?;
+        total = total
+            .checked_add(utxo.value)
+            .context("montant hors limites")?;
         inputs.push(utxo);
         let with_change = fee_for(estimated_size(inputs.len(), 2), fee_per_kb);
         let without = fee_for(estimated_size(inputs.len(), 1), fee_per_kb);
         // `checked_add`: an amount close to u64::MAX must never wrap around into a tiny
         // requirement.
-        if let Some(change) = amount.checked_add(with_change).and_then(|need| total.checked_sub(need)).filter(|c| *c >= DUST) {
-            return Ok(SendPlan { inputs, amount, fee: with_change, change });
+        if let Some(change) = amount
+            .checked_add(with_change)
+            .and_then(|need| total.checked_sub(need))
+            .filter(|c| *c >= DUST)
+        {
+            return Ok(SendPlan {
+                inputs,
+                amount,
+                fee: with_change,
+                change,
+            });
         }
-        if amount.checked_add(without).is_some_and(|need| total >= need) {
-            return Ok(SendPlan { inputs, amount, fee: total - amount, change: 0 });
+        if amount
+            .checked_add(without)
+            .is_some_and(|need| total >= need)
+        {
+            return Ok(SendPlan {
+                inputs,
+                amount,
+                fee: total - amount,
+                change: 0,
+            });
         }
     }
-    bail!("DOGE insuffisants : {} DOGE demandés, {} DOGE envoyables au plus (frais déduits)", format_doge(amount), format_doge(sendable))
+    bail!(
+        "DOGE insuffisants : {} DOGE demandés, {} DOGE envoyables au plus (frais déduits)",
+        format_doge(amount),
+        format_doge(sendable)
+    )
 }
 
 /// Largest amount that can be sent in one output, with no change, at `fee_per_kb`:
@@ -290,7 +361,10 @@ pub fn max_amount(utxos: &[Utxo], fee_per_kb: u64) -> Result<u64> {
         total = total.saturating_add(*value);
         best = best.max(total.saturating_sub(fee_for(estimated_size(index + 1, 1), fee_per_kb)));
     }
-    ensure!(best >= DUST, "DOGE insuffisants pour couvrir les frais du réseau");
+    ensure!(
+        best >= DUST,
+        "DOGE insuffisants pour couvrir les frais du réseau"
+    );
     Ok(best)
 }
 
@@ -300,7 +374,12 @@ pub struct Signed {
 }
 
 /// Signed transaction for the plan: the recipient, then change back to ourselves.
-pub fn build_signed(plan: &SendPlan, key: &SigningKey, own_hash160: &[u8; 20], recipient: &Recipient) -> Result<Signed> {
+pub fn build_signed(
+    plan: &SendPlan,
+    key: &SigningKey,
+    own_hash160: &[u8; 20],
+    recipient: &Recipient,
+) -> Result<Signed> {
     let own_script = p2pkh_script(own_hash160);
     let mut outputs = vec![(plan.amount, recipient.script())];
     if plan.change > 0 {
@@ -308,16 +387,31 @@ pub fn build_signed(plan: &SendPlan, key: &SigningKey, own_hash160: &[u8; 20], r
     }
     let mut inputs = Vec::new();
     for utxo in &plan.inputs {
-        let mut prev: [u8; 32] = hex::decode(&utxo.txid).ok().and_then(|b| b.try_into().ok()).context("identifiant de transaction Dogecoin invalide")?;
+        let mut prev: [u8; 32] = hex::decode(&utxo.txid)
+            .ok()
+            .and_then(|b| b.try_into().ok())
+            .context("identifiant de transaction Dogecoin invalide")?;
         prev.reverse();
-        inputs.push(TxIn { prev, vout: utxo.vout, script_sig: Vec::new(), sequence: 0xffff_ffff });
+        inputs.push(TxIn {
+            prev,
+            vout: utxo.vout,
+            script_sig: Vec::new(),
+            sequence: 0xffff_ffff,
+        });
     }
-    let mut tx = LegacyTx { version: 1, inputs, outputs, locktime: 0 };
+    let mut tx = LegacyTx {
+        version: 1,
+        inputs,
+        outputs,
+        locktime: 0,
+    };
     let pubkey = key.verifying_key().to_encoded_point(true);
     let mut script_sigs = Vec::new();
     for index in 0..tx.inputs.len() {
         let digest = tx.sighash(index, &own_script, SIGHASH_ALL);
-        let signature: Signature = key.sign_prehash(&digest).map_err(|e| anyhow!("signature Dogecoin impossible ({e})"))?;
+        let signature: Signature = key
+            .sign_prehash(&digest)
+            .map_err(|e| anyhow!("signature Dogecoin impossible ({e})"))?;
         let signature = signature.normalize_s().unwrap_or(signature);
         let mut der = signature.to_der().as_bytes().to_vec();
         der.push(SIGHASH_ALL as u8);
@@ -332,7 +426,10 @@ pub fn build_signed(plan: &SendPlan, key: &SigningKey, own_hash160: &[u8; 20], r
         input.script_sig = script;
     }
     let raw = tx.serialize();
-    Ok(Signed { txid: txid_hex(&raw), raw })
+    Ok(Signed {
+        txid: txid_hex(&raw),
+        raw,
+    })
 }
 
 // --- Services ----------------------------------------------------------------------
@@ -369,7 +466,10 @@ fn is_txid(txid: &str) -> bool {
 /// Unspent outputs of the address (the 1,000 most recent), including pending ones
 /// (being received or being spent).
 fn coins(address: &str) -> Result<Vec<Coin>> {
-    get_json(&format!("{BITCORE}/address/{}/?unspent=true&limit=1000", checked(address)?))
+    get_json(&format!(
+        "{BITCORE}/address/{}/?unspent=true&limit=1000",
+        checked(address)?
+    ))
 }
 
 #[derive(Deserialize)]
@@ -386,8 +486,15 @@ fn totals(address: &str) -> Result<Totals> {
 /// outputs being spent, which it still counts until the next block.
 pub fn balance(address: &str) -> Result<u64> {
     let totals = totals(address)?;
-    let being_spent = coins(address)?.iter().filter(|c| c.spent_height == SPEND_PENDING).fold(0u64, |sum, c| sum.saturating_add(c.value));
-    Ok(u64::try_from(totals.confirmed.saturating_add(totals.unconfirmed)).unwrap_or(0).saturating_sub(being_spent))
+    let being_spent = coins(address)?
+        .iter()
+        .filter(|c| c.spent_height == SPEND_PENDING)
+        .fold(0u64, |sum, c| sum.saturating_add(c.value));
+    Ok(
+        u64::try_from(totals.confirmed.saturating_add(totals.unconfirmed))
+            .unwrap_or(0)
+            .saturating_sub(being_spent),
+    )
 }
 
 /// Reading compared by live monitoring (`balance_watch`): confirmed and pending
@@ -400,15 +507,24 @@ pub fn watch_reading(address: &str) -> Result<String> {
 
 /// A send or receipt not yet mined (the card refreshes more often).
 pub fn has_pending(address: &str) -> Result<bool> {
-    Ok(totals(address)?.unconfirmed != 0 || coins(address)?.iter().any(|c| c.mint_height <= 0 || c.spent_height == SPEND_PENDING))
+    Ok(totals(address)?.unconfirmed != 0
+        || coins(address)?
+            .iter()
+            .any(|c| c.mint_height <= 0 || c.spent_height == SPEND_PENDING))
 }
 
 /// Activity of a recipient address: (holds funds, has been used before).
 pub fn address_activity(address: &str) -> Result<(bool, bool)> {
-    if coins(address)?.iter().any(|c| c.spent_height == UNSPENT && c.value > 0) {
+    if coins(address)?
+        .iter()
+        .any(|c| c.spent_height == UNSPENT && c.value > 0)
+    {
         return Ok((true, true));
     }
-    let used: Vec<serde_json::Value> = get_json(&format!("{BITCORE}/address/{}/txs?limit=1", checked(address)?))?;
+    let used: Vec<serde_json::Value> = get_json(&format!(
+        "{BITCORE}/address/{}/txs?limit=1",
+        checked(address)?
+    ))?;
     Ok((false, !used.is_empty()))
 }
 
@@ -418,8 +534,15 @@ pub fn utxos(address: &str) -> Result<Vec<Utxo>> {
         .into_iter()
         .filter(|c| c.mint_height > 0 && c.spent_height == UNSPENT)
         .map(|c| {
-            ensure!(is_txid(&c.mint_txid), "identifiant de transaction Dogecoin invalide");
-            Ok(Utxo { txid: c.mint_txid, vout: c.mint_index, value: c.value })
+            ensure!(
+                is_txid(&c.mint_txid),
+                "identifiant de transaction Dogecoin invalide"
+            );
+            Ok(Utxo {
+                txid: c.mint_txid,
+                vout: c.mint_index,
+                value: c.value,
+            })
         })
         .collect()
 }
@@ -432,29 +555,45 @@ struct FeeEstimate {
 /// Fee rate (koinus per kB): the service's estimate, clamped.
 pub fn fee_per_kb() -> Result<u64> {
     let estimate: FeeEstimate = get_json(&format!("{BITCORE}/fee/2"))?;
-    let koinus = if estimate.feerate.is_finite() && estimate.feerate > 0.0 { (estimate.feerate * 1e8) as u64 } else { MIN_FEE_PER_KB };
+    let koinus = if estimate.feerate.is_finite() && estimate.feerate > 0.0 {
+        (estimate.feerate * 1e8) as u64
+    } else {
+        MIN_FEE_PER_KB
+    };
     Ok(koinus.clamp(MIN_FEE_PER_KB, MAX_FEE_PER_KB))
 }
 
 /// Raw source transaction, hash recomputed: Blockcypher, with Blockchair as a
 /// fallback.
 fn raw_transaction(txid: &str) -> Result<Vec<u8>> {
-    ensure!(is_txid(txid), "identifiant de transaction Dogecoin invalide");
+    ensure!(
+        is_txid(txid),
+        "identifiant de transaction Dogecoin invalide"
+    );
     #[derive(Deserialize)]
     struct Blockcypher {
         hex: String,
     }
     let from_blockcypher = || -> Result<Vec<u8>> {
-        let tx: Blockcypher = get_json(&format!("https://api.blockcypher.com/v1/doge/main/txs/{txid}?includeHex=true&limit=1"))?;
+        let tx: Blockcypher = get_json(&format!(
+            "https://api.blockcypher.com/v1/doge/main/txs/{txid}?includeHex=true&limit=1"
+        ))?;
         hex::decode(tx.hex).context("transaction Dogecoin illisible")
     };
     let from_blockchair = || -> Result<Vec<u8>> {
-        let value: serde_json::Value = get_json(&format!("https://api.blockchair.com/dogecoin/raw/transaction/{txid}"))?;
-        let raw = value["data"][txid]["raw_transaction"].as_str().context("transaction Dogecoin introuvable")?;
+        let value: serde_json::Value = get_json(&format!(
+            "https://api.blockchair.com/dogecoin/raw/transaction/{txid}"
+        ))?;
+        let raw = value["data"][txid]["raw_transaction"]
+            .as_str()
+            .context("transaction Dogecoin introuvable")?;
         hex::decode(raw).context("transaction Dogecoin illisible")
     };
     let raw = from_blockcypher().or_else(|_| from_blockchair())?;
-    ensure!(txid_hex(&raw) == txid, "transaction d'origine falsifiée (hash différent de son identifiant) — envoi refusé");
+    ensure!(
+        txid_hex(&raw) == txid,
+        "transaction d'origine falsifiée (hash différent de son identifiant) — envoi refusé"
+    );
     Ok(raw)
 }
 
@@ -465,11 +604,20 @@ type Outputs = Vec<(u64, Vec<u8>)>;
 static VERIFIED_OUTPUTS: Mutex<Option<HashMap<String, Outputs>>> = Mutex::new(None);
 
 fn verified_outputs(txid: &str) -> Result<Outputs> {
-    if let Some(outputs) = VERIFIED_OUTPUTS.lock().unwrap_or_else(|p| p.into_inner()).as_ref().and_then(|m| m.get(txid)) {
+    if let Some(outputs) = VERIFIED_OUTPUTS
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .as_ref()
+        .and_then(|m| m.get(txid))
+    {
         return Ok(outputs.clone());
     }
     let outputs = parse_tx(&raw_transaction(txid)?)?.outputs;
-    VERIFIED_OUTPUTS.lock().unwrap_or_else(|p| p.into_inner()).get_or_insert_with(HashMap::new).insert(txid.to_string(), outputs.clone());
+    VERIFIED_OUTPUTS
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .get_or_insert_with(HashMap::new)
+        .insert(txid.to_string(), outputs.clone());
     Ok(outputs)
 }
 
@@ -479,9 +627,17 @@ fn verify_inputs(inputs: &[Utxo], own_hash160: &[u8; 20]) -> Result<()> {
     let own_script = p2pkh_script(own_hash160);
     for utxo in inputs {
         let outputs = verified_outputs(&utxo.txid)?;
-        let (value, script) = outputs.get(utxo.vout as usize).context("sortie Dogecoin introuvable dans sa transaction d'origine")?;
-        ensure!(*script == own_script, "sortie Dogecoin qui n'appartient pas à votre adresse — envoi refusé");
-        ensure!(*value == utxo.value, "montant d'une sortie Dogecoin annoncé faux par le service — envoi refusé");
+        let (value, script) = outputs
+            .get(utxo.vout as usize)
+            .context("sortie Dogecoin introuvable dans sa transaction d'origine")?;
+        ensure!(
+            *script == own_script,
+            "sortie Dogecoin qui n'appartient pas à votre adresse — envoi refusé"
+        );
+        ensure!(
+            *value == utxo.value,
+            "montant d'une sortie Dogecoin annoncé faux par le service — envoi refusé"
+        );
     }
     Ok(())
 }
@@ -508,19 +664,28 @@ pub fn broadcast(signed: &Signed) -> Result<String> {
         .post(format!("{BITCORE}/tx/send"))
         .json(&serde_json::json!({ "rawTx": hex::encode(&signed.raw) }))
         .send()
-        .map_err(|e| crate::wallet_flow::broadcast_failure(e, "service Dogecoin injoignable", &signed.txid))?;
+        .map_err(|e| {
+            crate::wallet_flow::broadcast_failure(e, "service Dogecoin injoignable", &signed.txid)
+        })?;
     let status = response.status();
     let body = response.text().unwrap_or_default();
     // Already received ("transaction already in block chain",
     // "txn-already-in-mempool", "txn-already-known"); not "already spent", which is a
     // real refusal (audit round 33).
-    if status.is_success() || ["already in", "already-in", "already-known"].iter().any(|k| body.contains(k)) {
+    if status.is_success()
+        || ["already in", "already-in", "already-known"]
+            .iter()
+            .any(|k| body.contains(k))
+    {
         return Ok(signed.txid.clone());
     }
     if crate::wallet_flow::server_error_may_have_sent(status) {
         return Err(crate::wallet_flow::maybe_sent(&signed.txid));
     }
-    bail!("transaction Dogecoin refusée : {}", body.chars().take(200).collect::<String>())
+    bail!(
+        "transaction Dogecoin refusée : {}",
+        body.chars().take(200).collect::<String>()
+    )
 }
 
 // --- History -----------------------------------------------------------------------
@@ -534,24 +699,40 @@ struct TxInfo {
 /// Block time of a confirmed transaction (cached: it never changes).
 fn block_time(txid: &str) -> Option<i64> {
     static TIMES: Mutex<Option<HashMap<String, i64>>> = Mutex::new(None);
-    if let Some(time) = TIMES.lock().unwrap_or_else(|p| p.into_inner()).as_ref().and_then(|m| m.get(txid)) {
+    if let Some(time) = TIMES
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .as_ref()
+        .and_then(|m| m.get(txid))
+    {
         return Some(*time);
     }
-    let time = get_json::<TxInfo>(&format!("{BITCORE}/tx/{txid}")).ok()?.block_time.and_then(|t| chrono_like_parse(&t))?;
-    TIMES.lock().unwrap_or_else(|p| p.into_inner()).get_or_insert_with(HashMap::new).insert(txid.to_string(), time);
+    let time = get_json::<TxInfo>(&format!("{BITCORE}/tx/{txid}"))
+        .ok()?
+        .block_time
+        .and_then(|t| chrono_like_parse(&t))?;
+    TIMES
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .get_or_insert_with(HashMap::new)
+        .insert(txid.to_string(), time);
     Some(time)
 }
 
 /// Transactions of the address, newest first: net amount (received minus spent,
 /// including the fee for a send).
 pub fn history(address: &str, limit: usize) -> Result<Vec<history::TxEntry>> {
-    let coins: Vec<Coin> = get_json(&format!("{BITCORE}/address/{}/txs?limit=200", checked(address)?))?;
+    let coins: Vec<Coin> = get_json(&format!(
+        "{BITCORE}/address/{}/txs?limit=200",
+        checked(address)?
+    ))?;
     // txid → (net, height; < 0: pending)
     let mut txs: Vec<(String, i128, i64)> = Vec::new();
-    let mut add = |txid: &str, delta: i128, height: i64| match txs.iter_mut().find(|(t, _, _)| t == txid) {
-        Some(entry) => entry.1 += delta,
-        None => txs.push((txid.to_string(), delta, height)),
-    };
+    let mut add =
+        |txid: &str, delta: i128, height: i64| match txs.iter_mut().find(|(t, _, _)| t == txid) {
+            Some(entry) => entry.1 += delta,
+            None => txs.push((txid.to_string(), delta, height)),
+        };
     // Malformed identifiers are skipped (explorer links, requests).
     for coin in &coins {
         if is_txid(&coin.mint_txid) {
@@ -561,7 +742,9 @@ pub fn history(address: &str, limit: usize) -> Result<Vec<history::TxEntry>> {
             add(&coin.spent_txid, -i128::from(coin.value), coin.spent_height);
         }
     }
-    txs.sort_by_key(|(_, _, height)| std::cmp::Reverse(if *height > 0 { *height } else { i64::MAX }));
+    txs.sort_by_key(|(_, _, height)| {
+        std::cmp::Reverse(if *height > 0 { *height } else { i64::MAX })
+    });
     txs.truncate(limit);
     Ok(txs
         .into_iter()
@@ -570,7 +753,11 @@ pub fn history(address: &str, limit: usize) -> Result<Vec<history::TxEntry>> {
             history::TxEntry {
                 id,
                 timestamp_unix,
-                status: if height > 0 { history::TxStatus::Confirmed } else { history::TxStatus::Pending },
+                status: if height > 0 {
+                    history::TxStatus::Confirmed
+                } else {
+                    history::TxStatus::Pending
+                },
                 net_amount_minor: Some(net),
                 fee_minor: 0,
                 kind: match net {
@@ -589,9 +776,18 @@ fn chrono_like_parse(text: &str) -> Option<i64> {
     let mut d = date.split('-').map(|p| p.parse::<i64>().ok());
     let (y, m, day) = (d.next()??, d.next()??, d.next()??);
     let mut t = time.trim_end_matches('Z').split(':');
-    let (hh, mm) = (t.next()?.parse::<i64>().ok()?, t.next()?.parse::<i64>().ok()?);
+    let (hh, mm) = (
+        t.next()?.parse::<i64>().ok()?,
+        t.next()?.parse::<i64>().ok()?,
+    );
     let ss = t.next()?.split('.').next()?.parse::<i64>().ok()?;
-    if !(1970..=9999).contains(&y) || !(1..=12).contains(&m) || !(1..=31).contains(&day) || !(0..24).contains(&hh) || !(0..60).contains(&mm) || !(0..=60).contains(&ss) {
+    if !(1970..=9999).contains(&y)
+        || !(1..=12).contains(&m)
+        || !(1..=31).contains(&day)
+        || !(0..24).contains(&hh)
+        || !(0..60).contains(&mm)
+        || !(0..=60).contains(&ss)
+    {
         return None;
     }
     // Days since 1970 (Howard Hinnant's algorithm).
@@ -671,10 +867,19 @@ mod tests {
     #[test]
     fn addresses_round_trip_and_reject_other_networks() {
         // A real address (Bitcore) and its P2PKH script.
-        let hash: [u8; 20] = hex::decode("830a7420e63d76244ff7cbd1c248e94c14463259").unwrap().try_into().unwrap();
+        let hash: [u8; 20] = hex::decode("830a7420e63d76244ff7cbd1c248e94c14463259")
+            .unwrap()
+            .try_into()
+            .unwrap();
         assert_eq!(p2pkh_address(&hash), "DH5yaieqoZN36fDVciNyRueRGvGLR3mr7L");
-        assert_eq!(parse_recipient("DH5yaieqoZN36fDVciNyRueRGvGLR3mr7L").unwrap(), Recipient::P2pkh(hash));
-        assert_eq!(Recipient::P2pkh(hash).script(), hex::decode("76a914830a7420e63d76244ff7cbd1c248e94c1446325988ac").unwrap());
+        assert_eq!(
+            parse_recipient("DH5yaieqoZN36fDVciNyRueRGvGLR3mr7L").unwrap(),
+            Recipient::P2pkh(hash)
+        );
+        assert_eq!(
+            Recipient::P2pkh(hash).script(),
+            hex::decode("76a914830a7420e63d76244ff7cbd1c248e94c1446325988ac").unwrap()
+        );
         let p2sh = base58check(P2SH_VERSION, &hash);
         assert!(matches!(parse_recipient(&p2sh), Ok(Recipient::P2sh(_))));
         // Bitcoin address (version 0): refused; a wrong checksum too.
@@ -683,8 +888,14 @@ mod tests {
         assert!(parse_recipient("pas une adresse").is_err());
         // No malformed address or identifier in a URL.
         assert!(checked("DH5yaieqoZN36fDVciNyRueRGvGLR3mr7L/../../tx/send").is_err());
-        assert!(is_txid("484c94145e97c0b2dd96912c1f056c9e05c8d358ab96ea429c51039d75d0d3c4"));
-        for bad in ["484c94145e97c0b2dd96912c1f056c9e05c8d358ab96ea429c51039d75d0d3c", "484C94145E97C0B2DD96912C1F056C9E05C8D358AB96EA429C51039D75D0D3C4", "../../../../../../../../../../../../../../../../../../../../../../"] {
+        assert!(is_txid(
+            "484c94145e97c0b2dd96912c1f056c9e05c8d358ab96ea429c51039d75d0d3c4"
+        ));
+        for bad in [
+            "484c94145e97c0b2dd96912c1f056c9e05c8d358ab96ea429c51039d75d0d3c",
+            "484C94145E97C0B2DD96912C1F056C9E05C8D358AB96EA429C51039D75D0D3C4",
+            "../../../../../../../../../../../../../../../../../../../../../../",
+        ] {
             assert!(!is_txid(bad), "{bad}");
         }
     }
@@ -695,20 +906,33 @@ mod tests {
     #[test]
     fn derivation_matches_an_independent_implementation() {
         let seed = hex::decode("5eb00bbddcf069084889a8ab9155568165f5c453ccb85e70811aaed6f6da5fc19a5ac40b389cd370d086206dec8aa6c43daea6690f20ad3d8d48b2d2ce9e38e4").unwrap();
-        for (index, expected) in [(0, "DBus3bamQjgJULBJtYXpEzDWQRwF5iwxgC"), (1, "DAcDAtJRztxBHyA6D6h8du1HguyTR43Mas"), (7, "DFYfZKExgT3DB1FhgkxsPooTUsbWTsP7Rw")] {
+        for (index, expected) in [
+            (0, "DBus3bamQjgJULBJtYXpEzDWQRwF5iwxgC"),
+            (1, "DAcDAtJRztxBHyA6D6h8du1HguyTR43Mas"),
+            (7, "DFYfZKExgT3DB1FhgkxsPooTUsbWTsP7Rw"),
+        ] {
             let (_, hash160) = crate::derivation::derive_doge_key(&seed, index).unwrap();
             assert_eq!(p2pkh_address(&hash160), expected, "index {index}");
         }
     }
 
     fn utxo(value: u64) -> Utxo {
-        Utxo { txid: format!("{value:064x}"), vout: 0, value }
+        Utxo {
+            txid: format!("{value:064x}"),
+            vout: 0,
+            value,
+        }
     }
 
     #[test]
     fn plans_cover_amount_fee_and_dust() {
         let rate = 1_000_000; // 0.01 DOGE/kB
-        let plan = plan_send(vec![utxo(5 * 100_000_000), utxo(100_000_000)], 2 * 100_000_000, rate).unwrap();
+        let plan = plan_send(
+            vec![utxo(5 * 100_000_000), utxo(100_000_000)],
+            2 * 100_000_000,
+            rate,
+        )
+        .unwrap();
         assert_eq!(plan.inputs.len(), 1, "la plus grosse sortie suffit");
         assert_eq!(plan.fee, fee_for(estimated_size(1, 2), rate));
         assert_eq!(plan.amount + plan.fee + plan.change, 5 * 100_000_000);
@@ -716,14 +940,36 @@ mod tests {
         let exact = 100_000_000 + fee_for(estimated_size(1, 2), rate) + 10;
         let plan = plan_send(vec![utxo(exact)], 100_000_000, rate).unwrap();
         assert_eq!((plan.change, plan.amount + plan.fee), (0, exact));
-        assert!(plan_send(vec![utxo(100)], 50, rate).unwrap_err().to_string().contains("trop petit"));
-        assert!(plan_send(vec![utxo(1_000_000)], 2_000_000, rate).unwrap_err().to_string().contains("DOGE insuffisants"));
+        assert!(plan_send(vec![utxo(100)], 50, rate)
+            .unwrap_err()
+            .to_string()
+            .contains("trop petit"));
+        assert!(plan_send(vec![utxo(1_000_000)], 2_000_000, rate)
+            .unwrap_err()
+            .to_string()
+            .contains("DOGE insuffisants"));
         // An amount close to u64::MAX, huge outputs reported: refused, never a wrapped
         // requirement or an inconsistent plan.
-        assert!(plan_send(vec![utxo(u64::MAX / 2), utxo(u64::MAX / 2)], u64::MAX - 10, rate).is_err());
+        assert!(plan_send(
+            vec![utxo(u64::MAX / 2), utxo(u64::MAX / 2)],
+            u64::MAX - 10,
+            rate
+        )
+        .is_err());
         let huge = plan_send(vec![utxo(u64::MAX), utxo(u64::MAX)], 100_000_000, rate).unwrap();
-        assert_eq!((huge.inputs.len(), huge.amount + huge.fee + huge.change), (1, u64::MAX), "plan cohérent");
-        assert!(plan_send(vec![utxo(u64::MAX - 5), utxo(u64::MAX - 5)], u64::MAX - 1, rate).unwrap_err().to_string().contains("hors limites"));
+        assert_eq!(
+            (huge.inputs.len(), huge.amount + huge.fee + huge.change),
+            (1, u64::MAX),
+            "plan cohérent"
+        );
+        assert!(plan_send(
+            vec![utxo(u64::MAX - 5), utxo(u64::MAX - 5)],
+            u64::MAX - 1,
+            rate
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("hors limites"));
     }
 
     #[test]
@@ -734,11 +980,20 @@ mod tests {
         assert_eq!(max, 500_000_000 - fee_for(estimated_size(2, 1), rate));
         // The plan for this amount takes everything, no change, exact fee.
         let plan = plan_send(utxos, max, rate).unwrap();
-        assert_eq!((plan.inputs.len(), plan.change, plan.fee), (2, 0, fee_for(estimated_size(2, 1), rate)));
+        assert_eq!(
+            (plan.inputs.len(), plan.change, plan.fee),
+            (2, 0, fee_for(estimated_size(2, 1), rate))
+        );
         // A tiny output costs more than it brings: ignored.
         let with_dust = vec![utxo(300_000_000), utxo(1_000)];
-        assert_eq!(max_amount(&with_dust, rate).unwrap(), 300_000_000 - fee_for(estimated_size(1, 1), rate));
-        assert!(max_amount(&[utxo(100_000)], rate).is_err(), "rien d'envoyable");
+        assert_eq!(
+            max_amount(&with_dust, rate).unwrap(),
+            300_000_000 - fee_for(estimated_size(1, 1), rate)
+        );
+        assert!(
+            max_amount(&[utxo(100_000)], rate).is_err(),
+            "rien d'envoyable"
+        );
         assert!(max_amount(&[], rate).is_err());
     }
 
@@ -749,36 +1004,61 @@ mod tests {
         let own = {
             use ripemd::Ripemd160;
             use sha2::{Digest, Sha256};
-            let digest: [u8; 20] = Ripemd160::digest(Sha256::digest(key.verifying_key().to_encoded_point(true).as_bytes())).into();
+            let digest: [u8; 20] = Ripemd160::digest(Sha256::digest(
+                key.verifying_key().to_encoded_point(true).as_bytes(),
+            ))
+            .into();
             digest
         };
-        let plan = SendPlan { inputs: vec![utxo(300_000_000), utxo(200_000_000)], amount: 400_000_000, fee: 1_000_000, change: 99_000_000 };
+        let plan = SendPlan {
+            inputs: vec![utxo(300_000_000), utxo(200_000_000)],
+            amount: 400_000_000,
+            fee: 1_000_000,
+            change: 99_000_000,
+        };
         let to = Recipient::P2sh([7; 20]);
         let signed = build_signed(&plan, &key, &own, &to).unwrap();
         let tx = parse_tx(&signed.raw).unwrap();
         assert_eq!(signed.txid, txid_hex(&signed.raw));
-        assert_eq!(tx.outputs, vec![(400_000_000, to.script()), (99_000_000, p2pkh_script(&own))]);
+        assert_eq!(
+            tx.outputs,
+            vec![(400_000_000, to.script()), (99_000_000, p2pkh_script(&own))]
+        );
         let mut unsigned = tx.clone();
-        unsigned.inputs.iter_mut().for_each(|i| i.script_sig.clear());
+        unsigned
+            .inputs
+            .iter_mut()
+            .for_each(|i| i.script_sig.clear());
         for (index, input) in tx.inputs.iter().enumerate() {
             let sig_len = input.script_sig[0] as usize;
             let der = &input.script_sig[1..sig_len];
             assert_eq!(input.script_sig[sig_len], 0x01, "SIGHASH_ALL");
             let pubkey = &input.script_sig[sig_len + 2..];
-            assert_eq!(pubkey, key.verifying_key().to_encoded_point(true).as_bytes());
+            assert_eq!(
+                pubkey,
+                key.verifying_key().to_encoded_point(true).as_bytes()
+            );
             let signature = Signature::from_der(der).unwrap();
             assert!(signature.normalize_s().is_none(), "low-S");
             let digest = unsigned.sighash(index, &p2pkh_script(&own), SIGHASH_ALL);
-            key.verifying_key().verify_prehash(&digest, &signature).unwrap();
+            key.verifying_key()
+                .verify_prehash(&digest, &signature)
+                .unwrap();
         }
     }
 
     #[test]
     fn dates_are_parsed_in_utc() {
         assert_eq!(chrono_like_parse("1970-01-01T00:00:00.000Z"), Some(0));
-        assert_eq!(chrono_like_parse("2026-09-22T19:10:21.000Z"), Some(1_790_104_221));
+        assert_eq!(
+            chrono_like_parse("2026-09-22T19:10:21.000Z"),
+            Some(1_790_104_221)
+        );
         assert_eq!(chrono_like_parse("pas une date"), None);
-        assert_eq!(chrono_like_parse("9223372036854775807-01-01T00:00:00Z"), None);
+        assert_eq!(
+            chrono_like_parse("9223372036854775807-01-01T00:00:00Z"),
+            None
+        );
         assert_eq!(chrono_like_parse("2026-13-01T00:00:00Z"), None);
     }
 
@@ -793,24 +1073,52 @@ mod tests {
             Recipient::P2pkh(h) => h,
             Recipient::P2sh(_) => unreachable!(),
         };
-        println!("solde {} (en attente : {})", balance(address).unwrap(), has_pending(address).unwrap());
+        println!(
+            "solde {} (en attente : {})",
+            balance(address).unwrap(),
+            has_pending(address).unwrap()
+        );
         println!("activité {:?}", address_activity(address).unwrap());
         let unused = p2pkh_address(&[0x5a; 20]);
-        assert_eq!(address_activity(&unused).unwrap(), (false, false), "adresse jamais utilisée");
+        assert_eq!(
+            address_activity(&unused).unwrap(),
+            (false, false),
+            "adresse jamais utilisée"
+        );
         let utxos = utxos(address).unwrap();
-        println!("{} sorties, frais {} koinus/ko", utxos.len(), fee_per_kb().unwrap());
+        println!(
+            "{} sorties, frais {} koinus/ko",
+            utxos.len(),
+            fee_per_kb().unwrap()
+        );
         verify_inputs(&utxos[..1], &hash).unwrap();
         // Wrong reported amount: refused.
         let mut lie = utxos[0].clone();
         lie.value -= 1;
-        assert!(verify_inputs(&[lie], &hash).unwrap_err().to_string().contains("annoncé faux"));
+        assert!(verify_inputs(&[lie], &hash)
+            .unwrap_err()
+            .to_string()
+            .contains("annoncé faux"));
         // Real preparation (1 DOGE): outputs picked, then verified against their source
         // transaction.
         let planned = plan(&hash, 100_000_000).unwrap();
-        assert_eq!(planned.amount + planned.fee + planned.change, planned.inputs.iter().map(|u| u.value).sum::<u64>());
-        println!("plan : {} entrée(s), frais {} DOGE, monnaie {} DOGE", planned.inputs.len(), format_doge(planned.fee), format_doge(planned.change));
+        assert_eq!(
+            planned.amount + planned.fee + planned.change,
+            planned.inputs.iter().map(|u| u.value).sum::<u64>()
+        );
+        println!(
+            "plan : {} entrée(s), frais {} DOGE, monnaie {} DOGE",
+            planned.inputs.len(),
+            format_doge(planned.fee),
+            format_doge(planned.change)
+        );
         let entries = history(address, 5).unwrap();
-        println!("{} transactions, première : {:?} {:?}", entries.len(), entries[0].net_amount_minor, entries[0].timestamp_unix);
+        println!(
+            "{} transactions, première : {:?} {:?}",
+            entries.len(),
+            entries[0].net_amount_minor,
+            entries[0].timestamp_unix
+        );
     }
 
     /// Live: the signatures of a real (mined) Dogecoin transaction verify with OUR
@@ -830,7 +1138,11 @@ mod tests {
             prev.reverse();
             let outputs = verified_outputs(&hex::encode(prev)).unwrap();
             let script_code = &outputs[input.vout as usize].1;
-            assert_eq!((script_code.len(), script_code[0]), (25, 0x76), "sortie P2PKH");
+            assert_eq!(
+                (script_code.len(), script_code[0]),
+                (25, 0x76),
+                "sortie P2PKH"
+            );
             let script = &input.script_sig;
             let sig_len = script[0] as usize;
             let (der, hash_type) = (&script[1..sig_len], script[sig_len]);
@@ -838,7 +1150,10 @@ mod tests {
             let signature = Signature::from_der(der).unwrap();
             let signature = signature.normalize_s().unwrap_or(signature);
             let digest = tx.sighash(index, script_code, u32::from(hash_type));
-            VerifyingKey::from_sec1_bytes(pubkey).unwrap().verify_prehash(&digest, &signature).unwrap();
+            VerifyingKey::from_sec1_bytes(pubkey)
+                .unwrap()
+                .verify_prehash(&digest, &signature)
+                .unwrap();
             println!("entrée {index} : signature vérifiée (type {hash_type})");
         }
     }
@@ -851,11 +1166,22 @@ mod tests {
     fn real_broadcast_missing_input_is_the_only_rejection() {
         let key = SigningKey::from_slice(&[0x42; 32]).unwrap();
         let own = [0x11; 20];
-        let plan = SendPlan { inputs: vec![utxo(300_000_000)], amount: 200_000_000, fee: 1_000_000, change: 99_000_000 };
+        let plan = SendPlan {
+            inputs: vec![utxo(300_000_000)],
+            amount: 200_000_000,
+            fee: 1_000_000,
+            change: 99_000_000,
+        };
         let signed = build_signed(&plan, &key, &own, &Recipient::P2pkh([0x22; 20])).unwrap();
         let error = broadcast(&signed).unwrap_err().to_string();
         println!("{error}");
-        assert!(!error.contains("decode"), "transaction mal formée : {error}");
-        assert!(error.to_lowercase().contains("missing") || error.contains("inputs"), "{error}");
+        assert!(
+            !error.contains("decode"),
+            "transaction mal formée : {error}"
+        );
+        assert!(
+            error.to_lowercase().contains("missing") || error.contains("inputs"),
+            "{error}"
+        );
     }
 }

@@ -122,7 +122,13 @@ impl EthRpc {
     /// returns the bytes it produced. Used to read a contract (a token's decimals or
     /// symbol) and to detect, BEFORE signing, a dApp transaction that would fail (the
     /// node then returns an "execution reverted" error).
-    pub fn call_contract(&self, from: &str, to: &str, value_wei: u128, data: &[u8]) -> Result<Vec<u8>> {
+    pub fn call_contract(
+        &self,
+        from: &str,
+        to: &str,
+        value_wei: u128,
+        data: &[u8],
+    ) -> Result<Vec<u8>> {
         let result = self.call(
             "eth_call",
             json!([{
@@ -132,8 +138,11 @@ impl EthRpc {
                 "data": format!("0x{}", hex::encode(data)),
             }, "latest"]),
         )?;
-        let hex_str = result.as_str().ok_or_else(|| anyhow!("réponse eth_call non textuelle"))?;
-        hex::decode(hex_str.trim_start_matches("0x")).with_context(|| format!("réponse eth_call non hexadécimale : {hex_str}"))
+        let hex_str = result
+            .as_str()
+            .ok_or_else(|| anyhow!("réponse eth_call non textuelle"))?;
+        hex::decode(hex_str.trim_start_matches("0x"))
+            .with_context(|| format!("réponse eth_call non hexadécimale : {hex_str}"))
     }
 
     /// Simulates calls ONE AFTER ANOTHER in the same block (`eth_simulateV1`, "latest"
@@ -149,11 +158,18 @@ impl EthRpc {
     /// Like `simulate_v1`, plus every movement of the network's coin as a `Transfer`
     /// event emitted by the `NATIVE_TRANSFER_EMITTER` address (`traceTransfers`):
     /// otherwise, what a contract sends in ETH, BNB... emits no event at all.
-    pub fn simulate_v1_with_native_transfers(&self, calls: &[SimCallRequest]) -> Result<Vec<SimulatedCall>> {
+    pub fn simulate_v1_with_native_transfers(
+        &self,
+        calls: &[SimCallRequest],
+    ) -> Result<Vec<SimulatedCall>> {
         self.simulate(calls, true)
     }
 
-    fn simulate(&self, calls: &[SimCallRequest], trace_transfers: bool) -> Result<Vec<SimulatedCall>> {
+    fn simulate(
+        &self,
+        calls: &[SimCallRequest],
+        trace_transfers: bool,
+    ) -> Result<Vec<SimulatedCall>> {
         let calls_json: Vec<Value> = calls
             .iter()
             .map(|c| {
@@ -165,7 +181,8 @@ impl EthRpc {
                 })
             })
             .collect();
-        let mut options = json!({ "blockStateCalls": [{ "calls": calls_json }], "validation": false });
+        let mut options =
+            json!({ "blockStateCalls": [{ "calls": calls_json }], "validation": false });
         if trace_transfers {
             options["traceTransfers"] = json!(true);
         }
@@ -175,10 +192,16 @@ impl EthRpc {
             .and_then(|block| block.get("calls"))
             .and_then(Value::as_array)
             .ok_or_else(|| anyhow!("réponse eth_simulateV1 sans appels"))?;
-        anyhow::ensure!(simulated.len() == calls.len(), "réponse eth_simulateV1 incomplète");
+        anyhow::ensure!(
+            simulated.len() == calls.len(),
+            "réponse eth_simulateV1 incomplète"
+        );
         let hex_bytes = |v: &Value| -> Result<Vec<u8>> {
-            let s = v.as_str().ok_or_else(|| anyhow!("réponse eth_simulateV1 non textuelle"))?;
-            hex::decode(s.trim_start_matches("0x")).context("réponse eth_simulateV1 non hexadécimale")
+            let s = v
+                .as_str()
+                .ok_or_else(|| anyhow!("réponse eth_simulateV1 non textuelle"))?;
+            hex::decode(s.trim_start_matches("0x"))
+                .context("réponse eth_simulateV1 non hexadécimale")
         };
         simulated
             .iter()
@@ -190,18 +213,31 @@ impl EthRpc {
                     .unwrap_or_default()
                     .iter()
                     .map(|log| {
-                        let address: [u8; 20] = hex_bytes(&log["address"])?.try_into().map_err(|_| anyhow!("adresse d'événement invalide"))?;
+                        let address: [u8; 20] = hex_bytes(&log["address"])?
+                            .try_into()
+                            .map_err(|_| anyhow!("adresse d'événement invalide"))?;
                         let topics = log["topics"]
                             .as_array()
                             .map(Vec::as_slice)
                             .unwrap_or_default()
                             .iter()
-                            .map(|t| hex_bytes(t)?.try_into().map_err(|_| anyhow!("sujet d'événement invalide")))
+                            .map(|t| {
+                                hex_bytes(t)?
+                                    .try_into()
+                                    .map_err(|_| anyhow!("sujet d'événement invalide"))
+                            })
                             .collect::<Result<Vec<[u8; 32]>>>()?;
-                        Ok(SimulatedLog { address, topics, data: hex_bytes(&log["data"])? })
+                        Ok(SimulatedLog {
+                            address,
+                            topics,
+                            data: hex_bytes(&log["data"])?,
+                        })
                     })
                     .collect::<Result<Vec<_>>>()?;
-                Ok(SimulatedCall { success: call.get("status").and_then(Value::as_str) == Some("0x1"), logs })
+                Ok(SimulatedCall {
+                    success: call.get("status").and_then(Value::as_str) == Some("0x1"),
+                    logs,
+                })
             })
             .collect()
     }
@@ -209,8 +245,11 @@ impl EthRpc {
     /// Code deployed at `address` (empty for an ordinary address with no contract).
     pub fn code(&self, address: &str) -> Result<Vec<u8>> {
         let result = self.call("eth_getCode", json!([address, "latest"]))?;
-        let hex_str = result.as_str().ok_or_else(|| anyhow!("réponse eth_getCode non textuelle"))?;
-        hex::decode(hex_str.trim_start_matches("0x")).with_context(|| format!("réponse eth_getCode non hexadécimale : {hex_str}"))
+        let hex_str = result
+            .as_str()
+            .ok_or_else(|| anyhow!("réponse eth_getCode non textuelle"))?;
+        hex::decode(hex_str.trim_start_matches("0x"))
+            .with_context(|| format!("réponse eth_getCode non hexadécimale : {hex_str}"))
     }
 
     pub fn gas_price(&self) -> Result<u128> {
@@ -239,7 +278,10 @@ impl EthRpc {
         if result.is_null() {
             return Ok(None);
         }
-        let status = result.get("status").and_then(Value::as_str).ok_or_else(|| anyhow!("reçu de transaction sans statut"))?;
+        let status = result
+            .get("status")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("reçu de transaction sans statut"))?;
         Ok(Some(status == "0x1"))
     }
 
@@ -256,14 +298,29 @@ impl EthRpc {
             .post(&self.endpoint)
             .json(&body)
             .send()
-            .map_err(|e| crate::wallet_flow::broadcast_failure(e, "appel RPC eth_sendRawTransaction impossible", &hash))?;
-        let resp: Value = response.json().map_err(|_| crate::wallet_flow::maybe_sent(&hash))?;
+            .map_err(|e| {
+                crate::wallet_flow::broadcast_failure(
+                    e,
+                    "appel RPC eth_sendRawTransaction impossible",
+                    &hash,
+                )
+            })?;
+        let resp: Value = response
+            .json()
+            .map_err(|_| crate::wallet_flow::maybe_sent(&hash))?;
         if let Some(err) = resp.get("error") {
-            if err.to_string().to_ascii_lowercase().contains("already known") {
+            if err
+                .to_string()
+                .to_ascii_lowercase()
+                .contains("already known")
+            {
                 return Ok(hash);
             }
             return Err(anyhow!("erreur RPC eth_sendRawTransaction : {err}"));
         }
-        resp.get("result").and_then(Value::as_str).map(String::from).ok_or_else(|| crate::wallet_flow::maybe_sent(&hash))
+        resp.get("result")
+            .and_then(Value::as_str)
+            .map(String::from)
+            .ok_or_else(|| crate::wallet_flow::maybe_sent(&hash))
     }
 }

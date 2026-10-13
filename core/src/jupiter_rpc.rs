@@ -67,7 +67,8 @@ pub struct JupiterQuote {
 /// USDC). Measured cost of the exclusion on SOL → USDC: 0.0003% (Whirlpool,
 /// Manifest… routes). Labels from Jupiter (`/swap/v1/program-id-to-label`), with
 /// spaces encoded.
-const EXCLUDED_DEXES: &str = "HumidiFi,SolFi,SolFi%20V2,TesseraV,ZeroFi,GoonFi%20V2,Obric%20V2,AlphaQ,BisonFi,Aquifer";
+const EXCLUDED_DEXES: &str =
+    "HumidiFi,SolFi,SolFi%20V2,TesseraV,ZeroFi,GoonFi%20V2,Obric%20V2,AlphaQ,BisonFi,Aquifer";
 
 /// Priority fee cap requested from Jupiter (0.001 SOL), see
 /// `build_swap_transaction`; also set aside by a swap's "Max" (`api::swap_max`).
@@ -77,15 +78,39 @@ pub const PRIORITY_FEE_MAX_LAMPORTS: u64 = 1_000_000;
 /// USDC). `slippage_bps`: price slippage tolerance, in basis points (e.g. 50 = 0.50%).
 /// `fee_mint`: the token whose affiliate fee account will receive the 0.80% (it must
 /// exist, see `fee_mint_candidates`); `None`: no fee.
-pub fn quote(input_mint: &str, output_mint: &str, amount: u64, slippage_bps: u32, fee_mint: Option<[u8; 32]>) -> Result<JupiterQuote> {
-    quote_with_fee(input_mint, output_mint, amount, slippage_bps, fee_mint, AFFILIATE_FEE_BPS)
+pub fn quote(
+    input_mint: &str,
+    output_mint: &str,
+    amount: u64,
+    slippage_bps: u32,
+    fee_mint: Option<[u8; 32]>,
+) -> Result<JupiterQuote> {
+    quote_with_fee(
+        input_mint,
+        output_mint,
+        amount,
+        slippage_bps,
+        fee_mint,
+        AFFILIATE_FEE_BPS,
+    )
 }
 
 /// Like `quote`, at the rate `fee_bps` (liquid staking: lower, see
 /// `swap_routes::staking_fee_bps`). A zero rate means no fee account.
-pub fn quote_with_fee(input_mint: &str, output_mint: &str, amount: u64, slippage_bps: u32, fee_mint: Option<[u8; 32]>, fee_bps: u32) -> Result<JupiterQuote> {
+pub fn quote_with_fee(
+    input_mint: &str,
+    output_mint: &str,
+    amount: u64,
+    slippage_bps: u32,
+    fee_mint: Option<[u8; 32]>,
+    fee_bps: u32,
+) -> Result<JupiterQuote> {
     let fee_mint = fee_mint.filter(|_| fee_bps > 0);
-    let fee = if fee_mint.is_some() { format!("&platformFeeBps={fee_bps}") } else { String::new() };
+    let fee = if fee_mint.is_some() {
+        format!("&platformFeeBps={fee_bps}")
+    } else {
+        String::new()
+    };
     let url = format!("{JUPITER_BASE}/swap/v1/quote?inputMint={input_mint}&outputMint={output_mint}&amount={amount}&slippageBps={slippage_bps}{fee}&excludeDexes={EXCLUDED_DEXES}");
     let raw: Value = shared_client()
         .get(&url)
@@ -105,7 +130,11 @@ pub fn quote_with_fee(input_mint: &str, output_mint: &str, amount: u64, slippage
         .parse::<u64>()
         .context("montant de sortie Jupiter illisible")?;
 
-    Ok(JupiterQuote { raw, out_amount, fee_mint })
+    Ok(JupiterQuote {
+        raw,
+        out_amount,
+        fee_mint,
+    })
 }
 
 /// Possible fee accounts for a swap, in order of preference: the token received,
@@ -117,7 +146,12 @@ pub fn fee_mint_candidates(input_mint: &str, output_mint: &str) -> Vec<[u8; 32]>
     [output_mint, input_mint]
         .into_iter()
         .filter(|mint| *mint != SOL_MINT)
-        .filter_map(|mint| bs58::decode(mint).into_vec().ok().and_then(|v| v.try_into().ok()))
+        .filter_map(|mint| {
+            bs58::decode(mint)
+                .into_vec()
+                .ok()
+                .and_then(|v| v.try_into().ok())
+        })
         .collect()
 }
 
@@ -142,7 +176,11 @@ pub fn fee_account(mint: &[u8; 32]) -> Result<[u8; 32]> {
         .ok()
         .and_then(|v| v.try_into().ok())
         .context("adresse d'affiliation Jupiter mal formée (bug de compilation)")?;
-    Ok(crate::sol_spl::find_associated_token_address_for(&owner, mint, &fee_token_program(mint)))
+    Ok(crate::sol_spl::find_associated_token_address_for(
+        &owner,
+        mint,
+        &fee_token_program(mint),
+    ))
 }
 
 #[derive(Deserialize)]
@@ -191,7 +229,9 @@ pub fn build_swap_transaction(quote: &JupiterQuote, user_pubkey: &str) -> Result
     if let Some(error) = response.error {
         anyhow::bail!("construction du swap Jupiter refusée : {error}");
     }
-    let swap_transaction = response.swap_transaction.ok_or_else(|| anyhow!("réponse de swap Jupiter sans transaction"))?;
+    let swap_transaction = response
+        .swap_transaction
+        .ok_or_else(|| anyhow!("réponse de swap Jupiter sans transaction"))?;
     base64::Engine::decode(&base64::engine::general_purpose::STANDARD, swap_transaction)
         .context("transaction Jupiter illisible (base64 invalide)")
 }
@@ -220,7 +260,10 @@ fn read_shortvec_len(bytes: &[u8]) -> Result<(usize, usize)> {
 /// do.
 pub(crate) fn split_single_signer_transaction(raw_tx: &[u8]) -> Result<(usize, &[u8])> {
     let (sig_count, consumed) = read_shortvec_len(raw_tx)?;
-    anyhow::ensure!(sig_count == 1, "transaction Jupiter à {sig_count} signataires, un seul attendu");
+    anyhow::ensure!(
+        sig_count == 1,
+        "transaction Jupiter à {sig_count} signataires, un seul attendu"
+    );
     let message_start = consumed + 64 * sig_count;
     anyhow::ensure!(raw_tx.len() > message_start, "transaction Jupiter tronquée");
     Ok((message_start, &raw_tx[message_start..]))
@@ -234,12 +277,22 @@ pub(crate) fn message_fee_payer(message: &[u8]) -> Result<[u8; 32]> {
     // "legacy" message, where that same byte is `num_required_signatures`, always
     // small). The header (3 bytes) follows immediately, preceded by the version byte
     // in this case.
-    let header_start = if message.first().is_some_and(|b| b & 0x80 != 0) { 1 } else { 0 };
-    anyhow::ensure!(message.len() > header_start + 3, "message Jupiter tronqué (en-tête)");
+    let header_start = if message.first().is_some_and(|b| b & 0x80 != 0) {
+        1
+    } else {
+        0
+    };
+    anyhow::ensure!(
+        message.len() > header_start + 3,
+        "message Jupiter tronqué (en-tête)"
+    );
     let account_keys_start = header_start + 3;
     let (_count, consumed) = read_shortvec_len(&message[account_keys_start..])?;
     let fee_payer_start = account_keys_start + consumed;
-    anyhow::ensure!(message.len() >= fee_payer_start + 32, "message Jupiter tronqué (payeur de frais)");
+    anyhow::ensure!(
+        message.len() >= fee_payer_start + 32,
+        "message Jupiter tronqué (payeur de frais)"
+    );
     let mut fee_payer = [0u8; 32];
     fee_payer.copy_from_slice(&message[fee_payer_start..fee_payer_start + 32]);
     Ok(fee_payer)
@@ -272,7 +325,10 @@ struct Reader<'a> {
 
 impl<'a> Reader<'a> {
     fn take(&mut self, n: usize) -> Result<&'a [u8]> {
-        let end = self.pos.checked_add(n).ok_or_else(|| anyhow!("message Jupiter : longueur invalide"))?;
+        let end = self
+            .pos
+            .checked_add(n)
+            .ok_or_else(|| anyhow!("message Jupiter : longueur invalide"))?;
         anyhow::ensure!(end <= self.bytes.len(), "message Jupiter tronqué");
         let slice = &self.bytes[self.pos..end];
         self.pos = end;
@@ -299,11 +355,17 @@ impl<'a> Reader<'a> {
 /// `num_readonly_signed` are read-only; among the following ones, the last
 /// `num_readonly_unsigned` are too.
 pub fn message_writable_accounts(message: &[u8]) -> Result<WritableAccounts> {
-    let mut r = Reader { bytes: message, pos: 0 };
+    let mut r = Reader {
+        bytes: message,
+        pos: 0,
+    };
     let versioned = message.first().is_some_and(|b| b & 0x80 != 0);
     if versioned {
         let version = r.u8()? & 0x7f;
-        anyhow::ensure!(version == 0, "version de message Solana non prise en charge : {version}");
+        anyhow::ensure!(
+            version == 0,
+            "version de message Solana non prise en charge : {version}"
+        );
     }
     let num_signed = r.u8()? as usize;
     let num_ro_signed = r.u8()? as usize;
@@ -339,7 +401,9 @@ pub fn message_writable_accounts(message: &[u8]) -> Result<WritableAccounts> {
         let data_len = r.shortvec()?;
         let data = r.take(data_len)?;
         if i == 0 {
-            let program = keys.get(program_index).ok_or_else(|| anyhow!("message Solana : index de programme invalide"))?;
+            let program = keys
+                .get(program_index)
+                .ok_or_else(|| anyhow!("message Solana : index de programme invalide"))?;
             advances_durable_nonce = *program == [0u8; 32] && data.starts_with(&[4, 0, 0, 0]);
         }
     }
@@ -356,8 +420,15 @@ pub fn message_writable_accounts(message: &[u8]) -> Result<WritableAccounts> {
             lookups.push((table, writable));
         }
     }
-    anyhow::ensure!(r.pos == message.len(), "message Solana avec des octets en trop");
-    Ok(WritableAccounts { static_keys, lookups, advances_durable_nonce })
+    anyhow::ensure!(
+        r.pos == message.len(),
+        "message Solana avec des octets en trop"
+    );
+    Ok(WritableAccounts {
+        static_keys,
+        lookups,
+        advances_durable_nonce,
+    })
 }
 
 /// Splits a raw transaction and returns its message (see
@@ -375,13 +446,26 @@ pub fn transaction_message(raw_tx: &[u8]) -> Result<&[u8]> {
 /// value).
 pub fn with_recent_blockhash(raw_tx: &[u8], blockhash: &[u8; 32]) -> Result<Vec<u8>> {
     let (message_start, message) = split_single_signer_transaction(raw_tx)?;
-    anyhow::ensure!(!message_writable_accounts(message)?.advances_durable_nonce, "transaction à nonce durable : blockhash non remplaçable");
-    let header_start = if message.first().is_some_and(|b| b & 0x80 != 0) { 1 } else { 0 };
+    anyhow::ensure!(
+        !message_writable_accounts(message)?.advances_durable_nonce,
+        "transaction à nonce durable : blockhash non remplaçable"
+    );
+    let header_start = if message.first().is_some_and(|b| b & 0x80 != 0) {
+        1
+    } else {
+        0
+    };
     let keys_start = header_start + 3;
-    anyhow::ensure!(message.len() > keys_start, "message Solana tronqué (en-tête)");
+    anyhow::ensure!(
+        message.len() > keys_start,
+        "message Solana tronqué (en-tête)"
+    );
     let (count, consumed) = read_shortvec_len(&message[keys_start..])?;
     let start = message_start + keys_start + consumed + 32 * count;
-    anyhow::ensure!(raw_tx.len() >= start + 32, "message Solana tronqué (blockhash)");
+    anyhow::ensure!(
+        raw_tx.len() >= start + 32,
+        "message Solana tronqué (blockhash)"
+    );
     let mut out = raw_tx.to_vec();
     out[start..start + 32].copy_from_slice(blockhash);
     Ok(out)
@@ -390,7 +474,11 @@ pub fn with_recent_blockhash(raw_tx: &[u8], blockhash: &[u8; 32]) -> Result<Vec<
 /// Signs a Jupiter transaction (see `build_swap_transaction`) after checking that
 /// its fee payer is indeed `expected_signer`; refuses to sign otherwise, rather
 /// than blindly trusting a third-party transaction.
-pub fn sign_swap_transaction(raw_tx: &[u8], signing_key: &ed25519_dalek::SigningKey, expected_signer: &[u8; 32]) -> Result<Vec<u8>> {
+pub fn sign_swap_transaction(
+    raw_tx: &[u8],
+    signing_key: &ed25519_dalek::SigningKey,
+    expected_signer: &[u8; 32],
+) -> Result<Vec<u8>> {
     use ed25519_dalek::Signer;
 
     let (message_start, message) = split_single_signer_transaction(raw_tx)?;
@@ -415,7 +503,9 @@ mod tests {
     /// (wrong length, characters outside the base58 alphabet).
     #[test]
     fn affiliate_address_has_the_expected_base58_shape() {
-        let bytes = bs58::decode(AFFILIATE_ADDRESS).into_vec().expect("base58 valide");
+        let bytes = bs58::decode(AFFILIATE_ADDRESS)
+            .into_vec()
+            .expect("base58 valide");
         assert_eq!(bytes.len(), 32, "une adresse Solana fait 32 octets");
     }
 
@@ -437,13 +527,31 @@ mod tests {
 
     #[test]
     fn message_writable_accounts_parses_writability_and_detects_durable_nonces() {
-        let nonce = message_writable_accounts(&legacy_message_with_first_instruction(&[4, 0, 0, 0])).unwrap();
-        assert!(nonce.advances_durable_nonce, "AdvanceNonceAccount (discriminant 4) doit être détecté");
-        assert_eq!(nonce.static_keys, vec![[7u8; 32]], "seul l'utilisateur est inscriptible ici");
-        assert!(nonce.lookups.is_empty(), "un message legacy n'a pas de table de correspondance");
+        let nonce =
+            message_writable_accounts(&legacy_message_with_first_instruction(&[4, 0, 0, 0]))
+                .unwrap();
+        assert!(
+            nonce.advances_durable_nonce,
+            "AdvanceNonceAccount (discriminant 4) doit être détecté"
+        );
+        assert_eq!(
+            nonce.static_keys,
+            vec![[7u8; 32]],
+            "seul l'utilisateur est inscriptible ici"
+        );
+        assert!(
+            nonce.lookups.is_empty(),
+            "un message legacy n'a pas de table de correspondance"
+        );
 
-        let transfer = message_writable_accounts(&legacy_message_with_first_instruction(&[2, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0])).unwrap();
-        assert!(!transfer.advances_durable_nonce, "un simple transfert n'est pas un nonce durable");
+        let transfer = message_writable_accounts(&legacy_message_with_first_instruction(&[
+            2, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0,
+        ]))
+        .unwrap();
+        assert!(
+            !transfer.advances_durable_nonce,
+            "un simple transfert n'est pas un nonce durable"
+        );
 
         // Truncated message: a clean error, never a panic.
         let mut truncated = legacy_message_with_first_instruction(&[4, 0, 0, 0]);
@@ -462,13 +570,26 @@ mod tests {
         let replaced = with_recent_blockhash(&legacy, &fresh).unwrap();
         let start = 1 + 64 + 4 + 2 * 32; // signature, header + key count, 2 keys
         assert_eq!(replaced[start..start + 32], fresh);
-        assert_eq!((&replaced[..start], &replaced[start + 32..]), (&legacy[..start], &legacy[start + 32..]));
+        assert_eq!(
+            (&replaced[..start], &replaced[start + 32..]),
+            (&legacy[..start], &legacy[start + 32..])
+        );
         // v0: version byte first, no lookup table at the end.
         let v0 = tx(&[&[0x80u8][..], &transfer, &[0]].concat());
         let replaced = with_recent_blockhash(&v0, &fresh).unwrap();
         assert_eq!(replaced[start + 1..start + 33], fresh);
-        assert_eq!((&replaced[..start + 1], &replaced[start + 33..]), (&v0[..start + 1], &v0[start + 33..]));
-        assert!(with_recent_blockhash(&tx(&legacy_message_with_first_instruction(&[4, 0, 0, 0])), &fresh).is_err(), "nonce durable");
+        assert_eq!(
+            (&replaced[..start + 1], &replaced[start + 33..]),
+            (&v0[..start + 1], &v0[start + 33..])
+        );
+        assert!(
+            with_recent_blockhash(
+                &tx(&legacy_message_with_first_instruction(&[4, 0, 0, 0])),
+                &fresh
+            )
+            .is_err(),
+            "nonce durable"
+        );
     }
 
     #[test]
@@ -496,10 +617,17 @@ mod tests {
         assert!(q.out_amount > 0);
 
         let raw_tx = build_swap_transaction(&q, owner).expect("construction réelle");
-        let (message_start, message) = split_single_signer_transaction(&raw_tx).expect("découpage de la transaction");
-        assert_eq!(message_start, 65, "un seul signataire attendu (1 + 64 octets)");
+        let (message_start, message) =
+            split_single_signer_transaction(&raw_tx).expect("découpage de la transaction");
+        assert_eq!(
+            message_start, 65,
+            "un seul signataire attendu (1 + 64 octets)"
+        );
         let fee_payer = message_fee_payer(message).expect("payeur de frais lisible");
         let owner_bytes: [u8; 32] = bs58::decode(owner).into_vec().unwrap().try_into().unwrap();
-        assert_eq!(fee_payer, owner_bytes, "le payeur de frais doit être le compte demandé");
+        assert_eq!(
+            fee_payer, owner_bytes,
+            "le payeur de frais doit être le compte demandé"
+        );
     }
 }

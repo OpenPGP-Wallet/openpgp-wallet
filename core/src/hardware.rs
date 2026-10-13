@@ -65,10 +65,12 @@ fn load(data_dir: &Path) -> HardwareAccountsData {
 /// Atomic write (temporary file, then rename): never a half-written file if
 /// interrupted.
 fn save(data_dir: &Path, data: &HardwareAccountsData) -> Result<()> {
-    let content = serde_json::to_string_pretty(data).context("sérialisation des comptes matériels")?;
+    let content =
+        serde_json::to_string_pretty(data).context("sérialisation des comptes matériels")?;
     let tmp = data_dir.join(format!("{HARDWARE_ACCOUNTS_FILE}.tmp"));
     std::fs::write(&tmp, content).context("écriture des comptes matériels")?;
-    std::fs::rename(&tmp, data_dir.join(HARDWARE_ACCOUNTS_FILE)).context("écriture des comptes matériels")
+    std::fs::rename(&tmp, data_dir.join(HARDWARE_ACCOUNTS_FILE))
+        .context("écriture des comptes matériels")
 }
 
 pub fn list_accounts(data_dir: &Path) -> Vec<HardwareAccount> {
@@ -84,7 +86,10 @@ pub fn remove_account(data_dir: &Path, id: u32) -> Result<()> {
 }
 
 fn find(data_dir: &Path, id: u32) -> Result<HardwareAccount> {
-    list_accounts(data_dir).into_iter().find(|a| a.id == id).ok_or_else(|| anyhow!("compte matériel introuvable"))
+    list_accounts(data_dir)
+        .into_iter()
+        .find(|a| a.id == id)
+        .ok_or_else(|| anyhow!("compte matériel introuvable"))
 }
 
 enum Chain {
@@ -161,9 +166,13 @@ fn open(device: Device) -> Result<Session> {
         Device::Ledger => {
             #[cfg(any(debug_assertions, test))]
             if let Ok(address) = std::env::var("PGP_WALLET_LEDGER_EMULATOR") {
-                return Ok(Session::Ledger(Box::new(ledger::TcpTransport::connect(&address)?)));
+                return Ok(Session::Ledger(Box::new(ledger::TcpTransport::connect(
+                    &address,
+                )?)));
             }
-            Ok(Session::Ledger(Box::new(ledger::HidTransport::open_first()?)))
+            Ok(Session::Ledger(Box::new(
+                ledger::HidTransport::open_first()?
+            )))
         }
         Device::Trezor => {
             let mut session = Trezor::new(trezor_link()?);
@@ -192,13 +201,26 @@ fn btc_account(account: &HardwareAccount, testnet: bool) -> Result<ledger::btc::
         .ok()
         .and_then(|f| <[u8; 4]>::try_from(f).ok())
         .ok_or_else(|| anyhow!("compte Bitcoin matériel incomplet"))?;
-    let xpub = account.xpub.clone().ok_or_else(|| anyhow!("compte Bitcoin matériel incomplet"))?;
-    Ok(ledger::btc::Account { testnet, account: BTC_ACCOUNT, fingerprint, xpub })
+    let xpub = account
+        .xpub
+        .clone()
+        .ok_or_else(|| anyhow!("compte Bitcoin matériel incomplet"))?;
+    Ok(ledger::btc::Account {
+        testnet,
+        account: BTC_ACCOUNT,
+        fingerprint,
+        xpub,
+    })
 }
 
 /// Reads `network`'s account from the device (with the network's app open on a
 /// Ledger), without displaying anything.
-fn read_account(session: &mut Session, device: Device, network: &str, label: &str) -> Result<HardwareAccount> {
+fn read_account(
+    session: &mut Session,
+    device: Device,
+    network: &str,
+    label: &str,
+) -> Result<HardwareAccount> {
     let mut account = HardwareAccount {
         id: 0,
         label: label.to_string(),
@@ -244,16 +266,30 @@ fn read_account(session: &mut Session, device: Device, network: &str, label: &st
 
 /// Adds the connected device's account (`device`: "ledger" or "trezor") for
 /// `network` (on a Ledger, the network's app must be open).
-pub fn connect_device(data_dir: &Path, device: &str, network: &str, label: &str) -> Result<HardwareAccount> {
+pub fn connect_device(
+    data_dir: &Path,
+    device: &str,
+    network: &str,
+    label: &str,
+) -> Result<HardwareAccount> {
     let device = Device::parse(device)?;
     let label = label.trim();
-    ensure!(!label.is_empty() && label.chars().count() <= 60, "nom du compte invalide (1 à 60 caractères)");
+    ensure!(
+        !label.is_empty() && label.chars().count() <= 60,
+        "nom du compte invalide (1 à 60 caractères)"
+    );
     let mut session = open(device)?;
     let mut account = read_account(&mut session, device, network, label)?;
     let mut data = load(data_dir);
-    ensure!(data.accounts.len() < MAX_ACCOUNTS, "nombre maximal de comptes matériels atteint");
     ensure!(
-        !data.accounts.iter().any(|a| a.network == account.network && a.address == account.address),
+        data.accounts.len() < MAX_ACCOUNTS,
+        "nombre maximal de comptes matériels atteint"
+    );
+    ensure!(
+        !data
+            .accounts
+            .iter()
+            .any(|a| a.network == account.network && a.address == account.address),
         "ce compte est déjà ajouté"
     );
     account.id = data.accounts.iter().map(|a| a.id + 1).max().unwrap_or(1);
@@ -269,7 +305,9 @@ fn open_for(account: &HardwareAccount) -> Result<Session> {
     let mut session = open(device)?;
     let current = read_account(&mut session, device, &account.network, &account.label)?;
     ensure!(
-        current.address == account.address && current.xpub == account.xpub && current.fingerprint == account.fingerprint,
+        current.address == account.address
+            && current.xpub == account.xpub
+            && current.fingerprint == account.fingerprint,
         "ce {} ne correspond pas au compte « {} » (autre appareil ou autre phrase de récupération)",
         device.name(),
         account.label
@@ -284,20 +322,52 @@ pub fn verify_address_on_device(data_dir: &Path, id: u32) -> Result<()> {
     let account = find(data_dir, id)?;
     let mut session = open_for(&account)?;
     let shown = match (chain(&account.network)?, &mut session) {
-        (Chain::Evm(_), Session::Ledger(t)) => ledger::eth::get_address(t.as_mut(), &ledger::parse_path(&account.path)?, true)?,
-        (Chain::Evm(_), Session::Trezor(t)) => trezor::ethereum::get_address(t, &ledger::parse_path(&account.path)?, true)?,
-        (Chain::Sol(_), Session::Ledger(t)) => bs58::encode(ledger::solana::get_pubkey(t.as_mut(), &ledger::parse_path(&account.path)?, true)?).into_string(),
-        (Chain::Sol(_), Session::Trezor(t)) => bs58::encode(trezor::solana::get_pubkey(t, &ledger::parse_path(&account.path)?, true)?).into_string(),
-        (Chain::Btc(_, testnet), Session::Ledger(t)) => ledger::btc::wallet_address(t.as_mut(), &btc_account(&account, testnet)?, 0, BTC_ADDRESS_INDEX, true)?,
-        (Chain::Btc(_, testnet), Session::Trezor(t)) => trezor::bitcoin::get_address(t, &btc_account(&account, testnet)?, 0, BTC_ADDRESS_INDEX, true)?,
+        (Chain::Evm(_), Session::Ledger(t)) => {
+            ledger::eth::get_address(t.as_mut(), &ledger::parse_path(&account.path)?, true)?
+        }
+        (Chain::Evm(_), Session::Trezor(t)) => {
+            trezor::ethereum::get_address(t, &ledger::parse_path(&account.path)?, true)?
+        }
+        (Chain::Sol(_), Session::Ledger(t)) => bs58::encode(ledger::solana::get_pubkey(
+            t.as_mut(),
+            &ledger::parse_path(&account.path)?,
+            true,
+        )?)
+        .into_string(),
+        (Chain::Sol(_), Session::Trezor(t)) => bs58::encode(trezor::solana::get_pubkey(
+            t,
+            &ledger::parse_path(&account.path)?,
+            true,
+        )?)
+        .into_string(),
+        (Chain::Btc(_, testnet), Session::Ledger(t)) => ledger::btc::wallet_address(
+            t.as_mut(),
+            &btc_account(&account, testnet)?,
+            0,
+            BTC_ADDRESS_INDEX,
+            true,
+        )?,
+        (Chain::Btc(_, testnet), Session::Trezor(t)) => trezor::bitcoin::get_address(
+            t,
+            &btc_account(&account, testnet)?,
+            0,
+            BTC_ADDRESS_INDEX,
+            true,
+        )?,
     };
-    ensure!(shown == account.address, "l'adresse affichée par l'appareil diffère de celle enregistrée");
+    ensure!(
+        shown == account.address,
+        "l'adresse affichée par l'appareil diffère de celle enregistrée"
+    );
     Ok(())
 }
 
 /// The account's Bitcoin addresses: (receive, change).
 fn btc_addresses(account: &ledger::btc::Account) -> Result<(String, String)> {
-    Ok((account.address(0, BTC_ADDRESS_INDEX)?, account.address(1, BTC_ADDRESS_INDEX)?))
+    Ok((
+        account.address(0, BTC_ADDRESS_INDEX)?,
+        account.address(1, BTC_ADDRESS_INDEX)?,
+    ))
 }
 
 /// Balance in the smallest unit (wei, satoshi, lamport). Bitcoin: confirmed UTXOs
@@ -309,7 +379,8 @@ pub fn balance(data_dir: &Path, id: u32) -> Result<u128> {
         Chain::Sol(net) => api::get_sol_balance(&account.address, net)?.into(),
         Chain::Btc(net, testnet) => {
             let (receive, change) = btc_addresses(&btc_account(&account, testnet)?)?;
-            u128::from(api::get_btc_balance(&receive, net)?) + u128::from(api::get_btc_balance(&change, net)?)
+            u128::from(api::get_btc_balance(&receive, net)?)
+                + u128::from(api::get_btc_balance(&change, net)?)
         }
     })
 }
@@ -317,7 +388,9 @@ pub fn balance(data_dir: &Path, id: u32) -> Result<u128> {
 /// Fast/medium/slow fee for a Bitcoin send from the account.
 pub fn estimate_btc_fees(data_dir: &Path, id: u32) -> Result<api::BtcFeeEstimate> {
     let account = find(data_dir, id)?;
-    let Chain::Btc(net, testnet) = chain(&account.network)? else { bail!("compte non Bitcoin") };
+    let Chain::Btc(net, testnet) = chain(&account.network)? else {
+        bail!("compte non Bitcoin")
+    };
     let (receive, change) = btc_addresses(&btc_account(&account, testnet)?)?;
     api::estimate_btc_fees_for(&[&receive, &change], net)
 }
@@ -325,15 +398,28 @@ pub fn estimate_btc_fees(data_dir: &Path, id: u32) -> Result<api::BtcFeeEstimate
 /// Account and network of a send, checked.
 fn account_for(data_dir: &Path, id: u32, network: &str) -> Result<HardwareAccount> {
     let account = find(data_dir, id)?;
-    ensure!(account.network == network, "le compte « {} » n'est pas sur ce réseau", account.label);
+    ensure!(
+        account.network == network,
+        "le compte « {} » n'est pas sur ce réseau",
+        account.label
+    );
     Ok(account)
 }
 
 /// ETH transfer signed by the device. `fee`: the fee shown in the confirmation
 /// dialog, used as is (see `api::evm_fee_for_confirmation`).
-pub fn send_evm(data_dir: &Path, id: u32, network: &str, to: &str, amount_eth: &str, fee: api::EvmFee) -> Result<String> {
+pub fn send_evm(
+    data_dir: &Path,
+    id: u32,
+    network: &str,
+    to: &str,
+    amount_eth: &str,
+    fee: api::EvmFee,
+) -> Result<String> {
     let account = account_for(data_dir, id, network)?;
-    let Chain::Evm(net) = chain(network)? else { bail!("réseau EVM attendu") };
+    let Chain::Evm(net) = chain(network)? else {
+        bail!("réseau EVM attendu")
+    };
     let from = wallet_flow::parse_evm_address(&account.address)?;
     let tx = api::prepare_evm_transfer(net, &from, to, amount_eth, fee)?;
     let path = ledger::parse_path(&account.path)?;
@@ -345,9 +431,17 @@ pub fn send_evm(data_dir: &Path, id: u32, network: &str, to: &str, amount_eth: &
 }
 
 /// SOL transfer signed by the device.
-pub fn send_sol(data_dir: &Path, id: u32, network: &str, to: &str, amount_sol: &str) -> Result<String> {
+pub fn send_sol(
+    data_dir: &Path,
+    id: u32,
+    network: &str,
+    to: &str,
+    amount_sol: &str,
+) -> Result<String> {
     let account = account_for(data_dir, id, network)?;
-    let Chain::Sol(net) = chain(network)? else { bail!("réseau Solana attendu") };
+    let Chain::Sol(net) = chain(network)? else {
+        bail!("réseau Solana attendu")
+    };
     api::check_solana_recipient(to, net)?;
     let from: [u8; 32] = bs58::decode(&account.address)
         .into_vec()
@@ -357,18 +451,32 @@ pub fn send_sol(data_dir: &Path, id: u32, network: &str, to: &str, amount_sol: &
     let message = api::prepare_sol_transfer(net, &from, to, amount_sol)?;
     let path = ledger::parse_path(&account.path)?;
     let signature = match open_for(&account)? {
-        Session::Ledger(mut t) => ledger::solana::sign_transaction_message(t.as_mut(), &path, &message, &from)?,
-        Session::Trezor(mut t) => trezor::solana::sign_transaction_message(&mut t, &path, &message, &from)?,
+        Session::Ledger(mut t) => {
+            ledger::solana::sign_transaction_message(t.as_mut(), &path, &message, &from)?
+        }
+        Session::Trezor(mut t) => {
+            trezor::solana::sign_transaction_message(&mut t, &path, &message, &from)?
+        }
     };
-    sol_rpc::SolRpc::new(net.rpc).send_transaction(&sol_tx::assemble_transaction(&signature, &message))
+    sol_rpc::SolRpc::new(net.rpc)
+        .send_transaction(&sol_tx::assemble_transaction(&signature, &message))
 }
 
 /// Bitcoin transfer signed by the device: spends all the confirmed UTXOs of the
 /// receive and change addresses (like `api::send_btc`), with change sent back to
 /// the change address (recognized and hidden by the device).
-pub fn send_btc(data_dir: &Path, id: u32, network: &str, to: &str, amount_btc: &str, fee_sat: u64) -> Result<String> {
+pub fn send_btc(
+    data_dir: &Path,
+    id: u32,
+    network: &str,
+    to: &str,
+    amount_btc: &str,
+    fee_sat: u64,
+) -> Result<String> {
     let account = account_for(data_dir, id, network)?;
-    let Chain::Btc(net, testnet) = chain(network)? else { bail!("réseau Bitcoin attendu") };
+    let Chain::Btc(net, testnet) = chain(network)? else {
+        bail!("réseau Bitcoin attendu")
+    };
     let btc = btc_account(&account, testnet)?;
     let amount_sat = wallet_flow::parse_btc_to_sat(amount_btc)?;
     let to_script = api::btc_recipient(net, to, amount_sat)?;
@@ -377,19 +485,30 @@ pub fn send_btc(data_dir: &Path, id: u32, network: &str, to: &str, amount_btc: &
     let (receive, change) = btc_addresses(&btc)?;
     let mut utxos = Vec::new();
     for (change_path, address) in [(0, &receive), (1, &change)] {
-        utxos.extend(esplora.utxos(address)?.into_iter().map(|u| (change_path, u)));
+        utxos.extend(
+            esplora
+                .utxos(address)?
+                .into_iter()
+                .map(|u| (change_path, u)),
+        );
     }
-    let total_sat = utxos.iter().try_fold(0u64, |sum, (_, u)| sum.checked_add(u.value_sat)).context("total des UTXOs invalide")?;
+    let total_sat = utxos
+        .iter()
+        .try_fold(0u64, |sum, (_, u)| sum.checked_add(u.value_sat))
+        .context("total des UTXOs invalide")?;
     let change_sat = api::btc_change(total_sat, amount_sat, fee_sat)?;
 
     // Full transaction of each UTXO, required by the device (txid recomputed here and
     // then by the device: a lying server is detected).
-    let mut previous: std::collections::HashMap<[u8; 32], Vec<u8>> = std::collections::HashMap::new();
+    let mut previous: std::collections::HashMap<[u8; 32], Vec<u8>> =
+        std::collections::HashMap::new();
     let mut inputs = Vec::new();
     for (change_path, utxo) in utxos {
         let prev_tx = match previous.entry(utxo.txid) {
             std::collections::hash_map::Entry::Occupied(known) => known.get().clone(),
-            std::collections::hash_map::Entry::Vacant(slot) => slot.insert(esplora.raw_transaction(&utxo.txid)?).clone(),
+            std::collections::hash_map::Entry::Vacant(slot) => {
+                slot.insert(esplora.raw_transaction(&utxo.txid)?).clone()
+            }
         };
         inputs.push(ledger::btc::Input {
             txid: utxo.txid,
@@ -400,7 +519,11 @@ pub fn send_btc(data_dir: &Path, id: u32, network: &str, to: &str, amount_btc: &
             index: BTC_ADDRESS_INDEX,
         });
     }
-    let mut outputs = vec![ledger::btc::Output { value_sat: amount_sat, script_pubkey: to_script, change_index: None }];
+    let mut outputs = vec![ledger::btc::Output {
+        value_sat: amount_sat,
+        script_pubkey: to_script,
+        change_index: None,
+    }];
     if change_sat > 0 {
         outputs.push(ledger::btc::Output {
             value_sat: change_sat,
@@ -410,8 +533,12 @@ pub fn send_btc(data_dir: &Path, id: u32, network: &str, to: &str, amount_btc: &
     }
 
     let raw_tx = match open_for(&account)? {
-        Session::Ledger(mut t) => ledger::btc::sign_transaction(t.as_mut(), &btc, &inputs, &outputs)?,
-        Session::Trezor(mut t) => trezor::bitcoin::sign_transaction(&mut t, &btc, &inputs, &outputs)?,
+        Session::Ledger(mut t) => {
+            ledger::btc::sign_transaction(t.as_mut(), &btc, &inputs, &outputs)?
+        }
+        Session::Trezor(mut t) => {
+            trezor::bitcoin::sign_transaction(&mut t, &btc, &inputs, &outputs)?
+        }
     };
     esplora.broadcast(&raw_tx)
 }
@@ -421,14 +548,24 @@ mod tests {
     use super::*;
 
     fn temp_dir(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("pgp_wallet_hardware_{name}_{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("pgp_wallet_hardware_{name}_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
 
     fn sample(network: &str, address: &str) -> HardwareAccount {
-        HardwareAccount { id: 0, label: "Ledger".into(), device: "ledger".into(), network: network.into(), address: address.into(), path: EVM_PATH.into(), fingerprint: None, xpub: None }
+        HardwareAccount {
+            id: 0,
+            label: "Ledger".into(),
+            device: "ledger".into(),
+            network: network.into(),
+            address: address.into(),
+            path: EVM_PATH.into(),
+            fingerprint: None,
+            xpub: None,
+        }
     }
 
     /// Saving, deleting, refusing an account from another network; an unreadable file
@@ -438,20 +575,36 @@ mod tests {
     fn accounts_are_stored_and_removed() {
         let dir = temp_dir("store");
         let mut data = HardwareAccountsData::default();
-        data.accounts.push(HardwareAccount { id: 1, ..sample("evm_mainnet", "0xDad77910DbDFdE764fC21FCD4E74D71bBACA6D8D") });
-        data.accounts.push(HardwareAccount { id: 2, ..sample("sol_mainnet", "11111111111111111111111111111111") });
+        data.accounts.push(HardwareAccount {
+            id: 1,
+            ..sample("evm_mainnet", "0xDad77910DbDFdE764fC21FCD4E74D71bBACA6D8D")
+        });
+        data.accounts.push(HardwareAccount {
+            id: 2,
+            ..sample("sol_mainnet", "11111111111111111111111111111111")
+        });
         save(&dir, &data).unwrap();
         assert_eq!(list_accounts(&dir).len(), 2);
         remove_account(&dir, 1).unwrap();
-        assert_eq!(list_accounts(&dir).iter().map(|a| a.id).collect::<Vec<_>>(), vec![2]);
+        assert_eq!(
+            list_accounts(&dir).iter().map(|a| a.id).collect::<Vec<_>>(),
+            vec![2]
+        );
         assert!(remove_account(&dir, 1).is_err(), "déjà supprimé");
         assert!(find(&dir, 2).is_ok());
-        assert!(account_for(&dir, 2, "sol_devnet").is_err(), "compte d'un autre réseau refusé");
+        assert!(
+            account_for(&dir, 2, "sol_devnet").is_err(),
+            "compte d'un autre réseau refusé"
+        );
         std::fs::write(dir.join(HARDWARE_ACCOUNTS_FILE), "{pas du json").unwrap();
         assert!(list_accounts(&dir).is_empty());
         assert!(chain("evm_goerli").is_err());
         for net in wallet_flow::EVM_NETWORKS {
-            assert!(matches!(chain(net.id), Ok(Chain::Evm(n)) if n.chain_id == net.chain_id), "{}", net.id);
+            assert!(
+                matches!(chain(net.id), Ok(Chain::Evm(n)) if n.chain_id == net.chain_id),
+                "{}",
+                net.id
+            );
         }
         std::fs::write(
             dir.join(HARDWARE_ACCOUNTS_FILE),
@@ -464,19 +617,42 @@ mod tests {
 
     /// Expected address on the public test seed: OUR derivation.
     fn expected_address(network: &str, device: Device) -> String {
-        let seed = bip39::Mnemonic::parse(crate::ledger::speculos::TEST_MNEMONIC).unwrap().to_seed("");
+        let seed = bip39::Mnemonic::parse(crate::ledger::speculos::TEST_MNEMONIC)
+            .unwrap()
+            .to_seed("");
         match chain(network).unwrap() {
-            Chain::Evm(_) => crate::derivation::format_address(&crate::derivation::derive_evm_key(&seed, 0).unwrap().1),
+            Chain::Evm(_) => crate::derivation::format_address(
+                &crate::derivation::derive_evm_key(&seed, 0).unwrap().1,
+            ),
             Chain::Sol(_) => {
-                let path: Vec<u32> = ledger::parse_path(device.sol_path()).unwrap().iter().map(|i| i & !ledger::HARDENED).collect();
-                bs58::encode(crate::derivation::derive_ed25519_path(&seed, &path).verifying_key().to_bytes()).into_string()
+                let path: Vec<u32> = ledger::parse_path(device.sol_path())
+                    .unwrap()
+                    .iter()
+                    .map(|i| i & !ledger::HARDENED)
+                    .collect();
+                bs58::encode(
+                    crate::derivation::derive_ed25519_path(&seed, &path)
+                        .verifying_key()
+                        .to_bytes(),
+                )
+                .into_string()
             }
             Chain::Btc(_, testnet) => {
-                let root = bip32::XPrv::derive_from_path(seed, &format!("m/84'/{}'/0'/0/0", testnet as u32).parse().unwrap()).unwrap();
+                let root = bip32::XPrv::derive_from_path(
+                    seed,
+                    &format!("m/84'/{}'/0'/0/0", testnet as u32).parse().unwrap(),
+                )
+                .unwrap();
                 use sha2::Digest;
-                let hash = ripemd::Ripemd160::digest(sha2::Sha256::digest(root.public_key().to_bytes()));
+                let hash =
+                    ripemd::Ripemd160::digest(sha2::Sha256::digest(root.public_key().to_bytes()));
                 let hash: [u8; 20] = hash.into();
-                if testnet { crate::derivation::format_btc_testnet_address(&hash) } else { crate::derivation::format_btc_mainnet_address(&hash) }.unwrap()
+                if testnet {
+                    crate::derivation::format_btc_testnet_address(&hash)
+                } else {
+                    crate::derivation::format_btc_mainnet_address(&hash)
+                }
+                .unwrap()
             }
         }
     }
@@ -494,7 +670,10 @@ mod tests {
         let account = connect_device(&dir, "ledger", &network, "Mon Ledger").unwrap();
         println!("compte : {account:?}");
         assert_eq!(account.address, expected_address(&network, Device::Ledger));
-        assert!(connect_device(&dir, "ledger", &network, "Doublon").unwrap_err().to_string().contains("déjà"));
+        assert!(connect_device(&dir, "ledger", &network, "Doublon")
+            .unwrap_err()
+            .to_string()
+            .contains("déjà"));
         let approver = std::thread::spawn(|| speculos::review_and_accept(&["Confirm", "Approve"]));
         verify_address_on_device(&dir, account.id).unwrap();
         println!("écrans : {}", approver.join().unwrap().join(" | "));
@@ -512,8 +691,12 @@ mod tests {
             println!("compte : {account:?}");
             assert_eq!(account.device, "trezor");
             assert_eq!(account.address, expected_address(network, Device::Trezor));
-            assert!(connect_device(&dir, "trezor", network, "Doublon").unwrap_err().to_string().contains("déjà"));
-            let reviewer = std::thread::spawn(|| trezor::emulator::DebugLink::connect().review(8, None));
+            assert!(connect_device(&dir, "trezor", network, "Doublon")
+                .unwrap_err()
+                .to_string()
+                .contains("déjà"));
+            let reviewer =
+                std::thread::spawn(|| trezor::emulator::DebugLink::connect().review(8, None));
             verify_address_on_device(&dir, account.id).unwrap();
             println!("écrans : {:?}", reviewer.join().unwrap());
         }
@@ -534,7 +717,15 @@ mod tests {
         let fees = estimate_btc_fees(&dir, account.id).unwrap();
         println!("solde {before} sat, frais lent {} sat", fees.slow_sat);
         let approver = std::thread::spawn(|| speculos::review_and_accept(&["Sign transaction"]));
-        let txid = send_btc(&dir, account.id, "btc_testnet", &account.address, "0.0001", fees.slow_sat).unwrap();
+        let txid = send_btc(
+            &dir,
+            account.id,
+            "btc_testnet",
+            &account.address,
+            "0.0001",
+            fees.slow_sat,
+        )
+        .unwrap();
         let screens = approver.join().unwrap().join(" | ");
         println!("écrans : {screens}");
         println!("txid : {txid}");
@@ -553,8 +744,17 @@ mod tests {
         let before = balance(&dir, account.id).unwrap();
         let fees = estimate_btc_fees(&dir, account.id).unwrap();
         println!("solde {before} sat, frais lent {} sat", fees.slow_sat);
-        let reviewer = std::thread::spawn(|| trezor::emulator::DebugLink::connect().review(25, None));
-        let txid = send_btc(&dir, account.id, "btc_testnet", &account.address, "0.0001", fees.slow_sat).unwrap();
+        let reviewer =
+            std::thread::spawn(|| trezor::emulator::DebugLink::connect().review(25, None));
+        let txid = send_btc(
+            &dir,
+            account.id,
+            "btc_testnet",
+            &account.address,
+            "0.0001",
+            fees.slow_sat,
+        )
+        .unwrap();
         let screens = reviewer.join().unwrap().join(" | ");
         println!("écrans : {screens}");
         println!("txid : {txid}");

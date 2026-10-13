@@ -44,8 +44,12 @@ struct SpikeState {
 
 #[cfg(windows)]
 fn save_state(key_name: &str, sealed_blob: &[u8]) -> Result<()> {
-    let state = SpikeState { key_name: key_name.to_string(), sealed_blob_hex: hex::encode(sealed_blob) };
-    std::fs::write(STATE_FILE, serde_json::to_string_pretty(&state)?).context("écriture de l'état du spike")
+    let state = SpikeState {
+        key_name: key_name.to_string(),
+        sealed_blob_hex: hex::encode(sealed_blob),
+    };
+    std::fs::write(STATE_FILE, serde_json::to_string_pretty(&state)?)
+        .context("écriture de l'état du spike")
 }
 
 #[cfg(windows)]
@@ -62,13 +66,17 @@ fn main() {
 
 #[cfg(windows)]
 fn main() -> Result<()> {
-    let command = std::env::args().nth(1).unwrap_or_else(|| "enroll".to_string());
+    let command = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "enroll".to_string());
     println!("=== Spike Windows Hello / TPM — commande : {command} ===\n");
 
     match command.as_str() {
         "enroll" => {
-            println!("Vérification de la disponibilité de Windows Hello (heuristique d'affichage) : {}",
-                windows_hello::is_available());
+            println!(
+                "Vérification de la disponibilité de Windows Hello (heuristique d'affichage) : {}",
+                windows_hello::is_available()
+            );
             println!("Création d'une clé TPM + scellement du secret de test...");
             let (key_name, sealed_blob) = windows_hello::enroll(TEST_SECRET)?;
             println!("Clé créée : {key_name}");
@@ -83,27 +91,41 @@ fn main() -> Result<()> {
             } else {
                 println!("PROBLÈME : secret récupéré DIFFÉRENT de l'original — ne pas continuer l'implémentation.");
             }
-            println!("\nRelance maintenant `cargo run --bin tpm_hello_spike -- reopen` \
-                (idéalement depuis un second terminal, pour un vrai second processus).");
+            println!(
+                "\nRelance maintenant `cargo run --bin tpm_hello_spike -- reopen` \
+                (idéalement depuis un second terminal, pour un vrai second processus)."
+            );
         }
         "reopen" => {
             let state = load_state()?;
-            let sealed_blob = hex::decode(&state.sealed_blob_hex).context("blob scellé illisible")?;
-            println!("Ré-ouverture de la clé {} depuis CE processus (pid {}).", state.key_name, std::process::id());
-            println!(">>> Un prompt Windows Hello devrait apparaître — répondez-y normalement. <<<");
+            let sealed_blob =
+                hex::decode(&state.sealed_blob_hex).context("blob scellé illisible")?;
+            println!(
+                "Ré-ouverture de la clé {} depuis CE processus (pid {}).",
+                state.key_name,
+                std::process::id()
+            );
+            println!(
+                ">>> Un prompt Windows Hello devrait apparaître — répondez-y normalement. <<<"
+            );
             let recovered = windows_hello::unlock(&state.key_name, &sealed_blob)?;
             if recovered.as_slice() == TEST_SECRET {
-                println!("OK : la barrière tient depuis un autre processus, et le secret est correct.");
+                println!(
+                    "OK : la barrière tient depuis un autre processus, et le secret est correct."
+                );
             } else {
                 println!("PROBLÈME : secret récupéré différent de l'original.");
             }
         }
         "cancel" => {
             let state = load_state()?;
-            let sealed_blob = hex::decode(&state.sealed_blob_hex).context("blob scellé illisible")?;
+            let sealed_blob =
+                hex::decode(&state.sealed_blob_hex).context("blob scellé illisible")?;
             println!(">>> ANNULE le prompt Windows Hello qui va apparaître (Échap ou bouton Annuler). <<<");
             match windows_hello::unlock(&state.key_name, &sealed_blob) {
-                Ok(_) => println!("PROBLÈME : le déchiffrement a réussi malgré l'annulation — ne pas continuer."),
+                Ok(_) => println!(
+                    "PROBLÈME : le déchiffrement a réussi malgré l'annulation — ne pas continuer."
+                ),
                 Err(e) => println!("OK : échec propre après annulation, comme attendu ({e})."),
             }
         }

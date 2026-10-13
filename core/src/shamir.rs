@@ -6,7 +6,10 @@ use blahaj::{Share, Sharks};
 pub fn split_secret(secret: &[u8], threshold: u8, total_shares: u8) -> Result<Vec<Vec<u8>>> {
     let sharks = Sharks(threshold);
     let dealer = sharks.dealer(secret);
-    let shares: Vec<Vec<u8>> = dealer.take(total_shares as usize).map(|s| Vec::from(&s)).collect();
+    let shares: Vec<Vec<u8>> = dealer
+        .take(total_shares as usize)
+        .map(|s| Vec::from(&s))
+        .collect();
     Ok(shares)
 }
 

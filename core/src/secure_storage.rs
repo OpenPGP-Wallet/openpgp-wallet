@@ -71,7 +71,8 @@ impl KeyStore for OsKeyStore {
     }
 
     fn read(&self, username: &str) -> Result<Option<Zeroizing<String>>> {
-        let entry = keyring::Entry::new(SERVICE, username).context("ouverture de l'entrée du coffre natif de l'OS")?;
+        let entry = keyring::Entry::new(SERVICE, username)
+            .context("ouverture de l'entrée du coffre natif de l'OS")?;
         match entry.get_secret() {
             // `secret` (raw bytes) consumed directly by `from_utf8`, never cloned: only one
             // buffer exists at any time, the one that ends up wrapped in the returned
@@ -117,7 +118,10 @@ impl KeyStore for InMemoryKeyStore {
     }
 
     fn remove(&self, username: &str) -> Result<()> {
-        self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).remove(username);
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(username);
         Ok(())
     }
 }
@@ -131,8 +135,14 @@ mod tests {
         let a = entry_username(Path::new("/tmp/wallet_a"));
         let b = entry_username(Path::new("/tmp/wallet_a"));
         let c = entry_username(Path::new("/tmp/wallet_b"));
-        assert_eq!(a, b, "même data_dir -> même identifiant, sinon un wallet existant deviendrait illisible");
-        assert_ne!(c, a, "des data_dir différents ne doivent jamais partager la même entrée de coffre OS");
+        assert_eq!(
+            a, b,
+            "même data_dir -> même identifiant, sinon un wallet existant deviendrait illisible"
+        );
+        assert_ne!(
+            c, a,
+            "des data_dir différents ne doivent jamais partager la même entrée de coffre OS"
+        );
     }
 
     #[test]
@@ -143,7 +153,14 @@ mod tests {
         assert_eq!(store.read("alice").unwrap().unwrap().as_str(), "secret-a");
         assert_eq!(store.read("bob").unwrap().unwrap().as_str(), "secret-b");
         store.remove("alice").unwrap();
-        assert!(store.read("alice").unwrap().is_none(), "une entrée supprimée doit être absente, pas une erreur");
-        assert_eq!(store.read("bob").unwrap().unwrap().as_str(), "secret-b", "supprimer une entrée ne doit pas affecter les autres");
+        assert!(
+            store.read("alice").unwrap().is_none(),
+            "une entrée supprimée doit être absente, pas une erreur"
+        );
+        assert_eq!(
+            store.read("bob").unwrap().unwrap().as_str(),
+            "secret-b",
+            "supprimer une entrée ne doit pas affecter les autres"
+        );
     }
 }

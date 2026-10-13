@@ -22,13 +22,17 @@ fn main() -> Result<()> {
     let entropy_buf = Zeroizing::new(entropy::generate_master_entropy());
     let _entropy_lock = memory_guard::lock(&entropy_buf);
 
-    let answer = wallet_flow::prompt("Générer une seed phrase BIP39 (12 mots) pour cette démo ? [o/N] : ")?;
+    let answer =
+        wallet_flow::prompt("Générer une seed phrase BIP39 (12 mots) pour cette démo ? [o/N] : ")?;
     let want_mnemonic = matches!(answer.to_lowercase().as_str(), "o" | "oui" | "y" | "yes");
 
     let derivation_seed: Zeroizing<Vec<u8>> = Zeroizing::new(if want_mnemonic {
         let mnemonic = bip39::Mnemonic::from_entropy(&entropy_buf)
             .context("génération de la phrase BIP39 impossible")?;
-        println!("\n/!\\ Phrase de récupération BIP39 ({} mots) — DÉMO PÉDAGOGIQUE UNIQUEMENT.", mnemonic.word_count());
+        println!(
+            "\n/!\\ Phrase de récupération BIP39 ({} mots) — DÉMO PÉDAGOGIQUE UNIQUEMENT.",
+            mnemonic.word_count()
+        );
         println!("    Le produit final n'affichera jamais ça : ne réutilise pas");
         println!("    une phrase générée ainsi pour de vrais fonds, ne la stocke pas en clair.");
         println!("    {mnemonic}\n");

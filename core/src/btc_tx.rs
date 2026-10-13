@@ -58,9 +58,22 @@ pub fn txid(raw: &[u8]) -> Option<String> {
     fn varint(raw: &[u8], pos: &mut usize) -> Option<usize> {
         let first = *raw.get(*pos)?;
         let (value, len) = match first {
-            0xfd => (u64::from(u16::from_le_bytes(raw.get(*pos + 1..*pos + 3)?.try_into().ok()?)), 3),
-            0xfe => (u64::from(u32::from_le_bytes(raw.get(*pos + 1..*pos + 5)?.try_into().ok()?)), 5),
-            0xff => (u64::from_le_bytes(raw.get(*pos + 1..*pos + 9)?.try_into().ok()?), 9),
+            0xfd => (
+                u64::from(u16::from_le_bytes(
+                    raw.get(*pos + 1..*pos + 3)?.try_into().ok()?,
+                )),
+                3,
+            ),
+            0xfe => (
+                u64::from(u32::from_le_bytes(
+                    raw.get(*pos + 1..*pos + 5)?.try_into().ok()?,
+                )),
+                5,
+            ),
+            0xff => (
+                u64::from_le_bytes(raw.get(*pos + 1..*pos + 9)?.try_into().ok()?),
+                9,
+            ),
             n => (u64::from(n), 1),
         };
         *pos += len;
@@ -123,8 +136,14 @@ pub fn estimate_send_vsize(num_inputs: usize) -> u64 {
 /// P2PKH.
 pub fn dust_threshold(script: &[u8]) -> u64 {
     let output = 8 + varint_len(script.len() as u64) + script.len() as u64;
-    let witness_program = (4..=42).contains(&script.len()) && (script[0] == 0x00 || (0x51..=0x60).contains(&script[0])) && usize::from(script[1]) + 2 == script.len();
-    let spend = if witness_program { 32 + 4 + 1 + 107 / 4 + 4 } else { 32 + 4 + 1 + 107 + 4 };
+    let witness_program = (4..=42).contains(&script.len())
+        && (script[0] == 0x00 || (0x51..=0x60).contains(&script[0]))
+        && usize::from(script[1]) + 2 == script.len();
+    let spend = if witness_program {
+        32 + 4 + 1 + 107 / 4 + 4
+    } else {
+        32 + 4 + 1 + 107 + 4
+    };
     (output + spend) * 3
 }
 
@@ -246,7 +265,8 @@ impl RawTx {
 
     /// Size without witnesses (version, inputs, outputs, locktime).
     fn base_size(&self) -> u64 {
-        let mut size = 4 + 4 + varint_len(self.inputs.len() as u64) + varint_len(self.outputs.len() as u64);
+        let mut size =
+            4 + 4 + varint_len(self.inputs.len() as u64) + varint_len(self.outputs.len() as u64);
         size += self.inputs.len() as u64 * (32 + 4 + 1 + 4);
         for (_, script) in &self.outputs {
             size += 8 + varint_len(script.len() as u64) + script.len() as u64;
@@ -333,8 +353,22 @@ impl BtcTx {
         if let Some(data) = &self.op_return_data {
             outputs.push((0, op_return_script(data))); // value 0: unspendable
         }
-        let inputs = self.inputs.iter().map(|u| RawInput { txid: u.txid, vout: u.vout, sequence: 0xffff_ffff, value_sat: u.value_sat }).collect();
-        RawTx { version: 1, inputs, outputs, locktime: 0 }
+        let inputs = self
+            .inputs
+            .iter()
+            .map(|u| RawInput {
+                txid: u.txid,
+                vout: u.vout,
+                sequence: 0xffff_ffff,
+                value_sat: u.value_sat,
+            })
+            .collect();
+        RawTx {
+            version: 1,
+            inputs,
+            outputs,
+            locktime: 0,
+        }
     }
 
     #[cfg(test)]
@@ -401,7 +435,11 @@ mod tests {
     fn outputs_body_never_starts_with_a_count_byte() {
         let hash160 = [0x33u8; 20];
         let tx = BtcTx {
-            inputs: vec![Utxo { txid: [0u8; 32], vout: 0, value_sat: 10_000 }],
+            inputs: vec![Utxo {
+                txid: [0u8; 32],
+                vout: 0,
+                value_sat: 10_000,
+            }],
             to_script: p2wpkh_script_pubkey(&[0x44u8; 20]),
             value_sat: 9_000,
             change_hash160: hash160,
@@ -418,7 +456,11 @@ mod tests {
     fn outputs_body_includes_change_when_above_dust() {
         let hash160 = [0x11u8; 20];
         let tx = BtcTx {
-            inputs: vec![Utxo { txid: [0xAAu8; 32], vout: 0, value_sat: 100_000 }],
+            inputs: vec![Utxo {
+                txid: [0xAAu8; 32],
+                vout: 0,
+                value_sat: 100_000,
+            }],
             to_script: p2wpkh_script_pubkey(&[0x22u8; 20]),
             value_sat: 50_000,
             change_hash160: hash160,
@@ -438,7 +480,11 @@ mod tests {
         let hash160 = [0x11u8; 20];
         let memo = b"SWAP:BTC.BTC:bc1qxyz:0/1/0:thor1abc:80".to_vec();
         let tx = BtcTx {
-            inputs: vec![Utxo { txid: [0xAAu8; 32], vout: 0, value_sat: 100_000 }],
+            inputs: vec![Utxo {
+                txid: [0xAAu8; 32],
+                vout: 0,
+                value_sat: 100_000,
+            }],
             to_script: p2wpkh_script_pubkey(&[0x22u8; 20]),
             value_sat: 50_000,
             change_hash160: hash160,
@@ -451,18 +497,30 @@ mod tests {
         let expected_len = 2 * (8 + 1 + 22) + 8 + 1 + 1 + 1 + memo.len();
         assert_eq!(body.len(), expected_len);
         let op_return_offset = 2 * (8 + 1 + 22);
-        assert_eq!(&body[op_return_offset..op_return_offset + 8], &0u64.to_le_bytes());
+        assert_eq!(
+            &body[op_return_offset..op_return_offset + 8],
+            &0u64.to_le_bytes()
+        );
         assert_eq!(body[op_return_offset + 9], 0x6a, "OP_RETURN attendu");
-        assert_eq!(body[op_return_offset + 10], memo.len() as u8, "push direct de la longueur");
+        assert_eq!(
+            body[op_return_offset + 10],
+            memo.len() as u8,
+            "push direct de la longueur"
+        );
         assert_eq!(&body[op_return_offset + 11..], &memo[..]);
 
         let key = SigningKey::from_slice(&[9u8; 32]).expect("clé de test valide");
-        let raw = tx.sign(&key, &hash160).expect("signature réussie avec OP_RETURN");
+        let raw = tx
+            .sign(&key, &hash160)
+            .expect("signature réussie avec OP_RETURN");
         // 3 outputs now: the count varint must be 3. (marker+flag = 2 bytes after the 4
         // version bytes, then the input count varint = 1 byte here, 41 bytes of input,
         // then the output count varint)
         let outputs_count_offset = 4 + 2 + 1 + 41;
-        assert_eq!(raw[outputs_count_offset], 3, "3 sorties attendues (dest + monnaie + OP_RETURN)");
+        assert_eq!(
+            raw[outputs_count_offset], 3,
+            "3 sorties attendues (dest + monnaie + OP_RETURN)"
+        );
     }
 
     /// Regression test: the BIP143 sighash, recomputed independently, must be exactly
@@ -474,7 +532,11 @@ mod tests {
         let hash160 = [0x11u8; 20];
 
         let tx = BtcTx {
-            inputs: vec![Utxo { txid: [0xAAu8; 32], vout: 0, value_sat: 100_000 }],
+            inputs: vec![Utxo {
+                txid: [0xAAu8; 32],
+                vout: 0,
+                value_sat: 100_000,
+            }],
             to_script: p2wpkh_script_pubkey(&[0x22u8; 20]),
             value_sat: 50_000,
             change_hash160: hash160,
@@ -488,7 +550,9 @@ mod tests {
 
         let expected_hash = tx.sighash(0, &hash160);
         let verifying_key = VerifyingKey::from(&key);
-        let signature: Signature = key.sign_prehash(&expected_hash).expect("signature de contrôle");
+        let signature: Signature = key
+            .sign_prehash(&expected_hash)
+            .expect("signature de contrôle");
         verifying_key
             .verify_prehash(&expected_hash, &signature)
             .expect("la signature doit vérifier contre le sighash BIP143 recalculé");
@@ -507,25 +571,59 @@ mod tests {
         let tx = RawTx {
             version: 1,
             inputs: vec![
-                RawInput { txid: display("fff7f7881a8099afa6940d42d1e7f6362bec38171ea3edf433541db4e4ad969f"), vout: 0, sequence: 0xffff_ffee, value_sat: 625_000_000 },
-                RawInput { txid: display("ef51e1b804cc89d182d279655c3aa89e815b1b309fe287d9b2b55d57b90ec68a"), vout: 1, sequence: 0xffff_ffff, value_sat: 600_000_000 },
+                RawInput {
+                    txid: display(
+                        "fff7f7881a8099afa6940d42d1e7f6362bec38171ea3edf433541db4e4ad969f",
+                    ),
+                    vout: 0,
+                    sequence: 0xffff_ffee,
+                    value_sat: 625_000_000,
+                },
+                RawInput {
+                    txid: display(
+                        "ef51e1b804cc89d182d279655c3aa89e815b1b309fe287d9b2b55d57b90ec68a",
+                    ),
+                    vout: 1,
+                    sequence: 0xffff_ffff,
+                    value_sat: 600_000_000,
+                },
             ],
             outputs: vec![
-                (112_340_000, hex::decode("76a9148280b37df378db99f66f85c95a783a76ac7a6d5988ac").unwrap()),
-                (223_450_000, hex::decode("76a9143bde42dbee7e4dbe6a21b2d50ce2f0167faa815988ac").unwrap()),
+                (
+                    112_340_000,
+                    hex::decode("76a9148280b37df378db99f66f85c95a783a76ac7a6d5988ac").unwrap(),
+                ),
+                (
+                    223_450_000,
+                    hex::decode("76a9143bde42dbee7e4dbe6a21b2d50ce2f0167faa815988ac").unwrap(),
+                ),
             ],
             locktime: 17,
         };
-        let hash160: [u8; 20] = hex::decode("1d0f172a0ecb48aee1be1f2687d2963ae33f71a1").unwrap().try_into().unwrap();
-        assert_eq!(hex::encode(tx.sighash(1, &hash160)), "c37af31116d1b27caf68aae9e3ac82f1477929014d5b917657d0eb49478cb670");
+        let hash160: [u8; 20] = hex::decode("1d0f172a0ecb48aee1be1f2687d2963ae33f71a1")
+            .unwrap()
+            .try_into()
+            .unwrap();
+        assert_eq!(
+            hex::encode(tx.sighash(1, &hash160)),
+            "c37af31116d1b27caf68aae9e3ac82f1477929014d5b917657d0eb49478cb670"
+        );
 
         // Signature with the vector's key: valid for this sighash, and the real size stays
         // under the `signed_vsize` bound.
-        let key = SigningKey::from_slice(&hex::decode("619c335025c7f4012e556c2a58b2506e30b8511b53ade95ea316fd8c3286feb9").unwrap()).unwrap();
+        let key = SigningKey::from_slice(
+            &hex::decode("619c335025c7f4012e556c2a58b2506e30b8511b53ade95ea316fd8c3286feb9")
+                .unwrap(),
+        )
+        .unwrap();
         let raw = tx.sign(&key, &hash160).unwrap();
         let witness_bytes = raw.len() as u64 - (tx.base_size());
         let real_vsize = (tx.base_size() * 4 + witness_bytes).div_ceil(4);
-        assert!(real_vsize <= tx.signed_vsize(), "{real_vsize} > {}", tx.signed_vsize());
+        assert!(
+            real_vsize <= tx.signed_vsize(),
+            "{real_vsize} > {}",
+            tx.signed_vsize()
+        );
         assert_eq!(op_return_output_size(55), 8 + 1 + 57);
         assert_eq!(op_return_output_size(80), 8 + 1 + 83);
     }
@@ -537,11 +635,26 @@ mod tests {
     /// Scripts of every standard type (vectors from `derivation`).
     fn standard_scripts() -> [(&'static str, Vec<u8>); 5] {
         [
-            ("P2PKH", script("76a91462e907b15cbf27d5425399ebf6f0fb50ebb88f1888ac")),
-            ("P2SH", script("a914b472a266d0bd89c13706a4132ccfb16f7c3b9fcb87")),
-            ("P2WPKH", script("0014751e76e8199196d454941c45d1b3a323f1433bd6")),
-            ("P2WSH", script("00201863143c14c5166804bd19203356da136c985678cd4d27a1b8c6329604903262")),
-            ("P2TR", script("512079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798")),
+            (
+                "P2PKH",
+                script("76a91462e907b15cbf27d5425399ebf6f0fb50ebb88f1888ac"),
+            ),
+            (
+                "P2SH",
+                script("a914b472a266d0bd89c13706a4132ccfb16f7c3b9fcb87"),
+            ),
+            (
+                "P2WPKH",
+                script("0014751e76e8199196d454941c45d1b3a323f1433bd6"),
+            ),
+            (
+                "P2WSH",
+                script("00201863143c14c5166804bd19203356da136c985678cd4d27a1b8c6329604903262"),
+            ),
+            (
+                "P2TR",
+                script("512079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"),
+            ),
         ]
     }
 
@@ -562,11 +675,18 @@ mod tests {
     #[test]
     fn sends_to_every_standard_output_type_are_signed_and_sized() {
         let key = SigningKey::from_slice(&[9u8; 32]).unwrap();
-        let hash160 = crate::ledger::btc::hash160(key.verifying_key().to_encoded_point(true).as_bytes());
+        let hash160 =
+            crate::ledger::btc::hash160(key.verifying_key().to_encoded_point(true).as_bytes());
         for inputs in [1usize, 3] {
             for (name, to_script) in standard_scripts() {
                 let tx = BtcTx {
-                    inputs: (0..inputs).map(|i| Utxo { txid: [i as u8 + 1; 32], vout: i as u32, value_sat: 100_000 }).collect(),
+                    inputs: (0..inputs)
+                        .map(|i| Utxo {
+                            txid: [i as u8 + 1; 32],
+                            vout: i as u32,
+                            value_sat: 100_000,
+                        })
+                        .collect(),
                     to_script: to_script.clone(),
                     value_sat: 50_000,
                     change_hash160: hash160,
@@ -576,7 +696,11 @@ mod tests {
                 let raw = tx.sign(&key, &hash160).unwrap();
                 let parsed = crate::ledger::btc::parse_transaction(&raw).unwrap();
                 assert_eq!(parsed.outputs[0], (50_000, to_script.clone()), "{name}");
-                assert_eq!(parsed.outputs[1], (40_000, p2wpkh_script_pubkey(&hash160)), "{name}");
+                assert_eq!(
+                    parsed.outputs[1],
+                    (40_000, p2wpkh_script_pubkey(&hash160)),
+                    "{name}"
+                );
 
                 // Witnesses: between the non-witness part (version, inputs, outputs) and the
                 // locktime; per input, 2 items (DER signature + type, compressed key), lengths <
@@ -602,8 +726,14 @@ mod tests {
                 assert_eq!(parsed.stripped.len() as u64, unsigned.base_size(), "{name}");
                 let real_vsize = (parsed.stripped.len() as u64 * 3 + raw.len() as u64).div_ceil(4);
                 let estimate = estimate_send_vsize(inputs);
-                assert!(real_vsize <= estimate, "{name}, {inputs} entrée(s) : {real_vsize} > {estimate}");
-                assert!(estimate - real_vsize <= 12 + inputs as u64, "{name}, {inputs} entrée(s) : estimation {estimate}, réel {real_vsize}");
+                assert!(
+                    real_vsize <= estimate,
+                    "{name}, {inputs} entrée(s) : {real_vsize} > {estimate}"
+                );
+                assert!(
+                    estimate - real_vsize <= 12 + inputs as u64,
+                    "{name}, {inputs} entrée(s) : estimation {estimate}, réel {real_vsize}"
+                );
             }
         }
     }
@@ -615,8 +745,16 @@ mod tests {
     #[test]
     #[ignore]
     fn export_btc_vectors() {
-        use crate::derivation::{btc_mainnet_recipient_script, btc_script_address, btc_testnet_recipient_script};
-        let recipient = |address: &str, testnet: bool| if testnet { btc_testnet_recipient_script(address) } else { btc_mainnet_recipient_script(address) };
+        use crate::derivation::{
+            btc_mainnet_recipient_script, btc_script_address, btc_testnet_recipient_script,
+        };
+        let recipient = |address: &str, testnet: bool| {
+            if testnet {
+                btc_testnet_recipient_script(address)
+            } else {
+                btc_mainnet_recipient_script(address)
+            }
+        };
         let key = SigningKey::from_slice(&[9u8; 32]).unwrap();
         let pubkey = key.verifying_key().to_encoded_point(true);
         let hash160 = crate::ledger::btc::hash160(pubkey.as_bytes());
@@ -625,10 +763,25 @@ mod tests {
         for testnet in [false, true] {
             for (name, to_script) in standard_scripts() {
                 let address = btc_script_address(&to_script, testnet).unwrap();
-                assert_eq!(recipient(&address, testnet).unwrap(), to_script, "{address}");
+                assert_eq!(
+                    recipient(&address, testnet).unwrap(),
+                    to_script,
+                    "{address}"
+                );
                 addresses.push(serde_json::json!({ "address": address, "script": hex::encode(&to_script), "testnet": testnet }));
                 let tx = BtcTx {
-                    inputs: vec![Utxo { txid: [0x11; 32], vout: 0, value_sat: 70_000 }, Utxo { txid: [0x22; 32], vout: 3, value_sat: 30_000 }],
+                    inputs: vec![
+                        Utxo {
+                            txid: [0x11; 32],
+                            vout: 0,
+                            value_sat: 70_000,
+                        },
+                        Utxo {
+                            txid: [0x22; 32],
+                            vout: 3,
+                            value_sat: 30_000,
+                        },
+                    ],
                     to_script: to_script.clone(),
                     value_sat: 60_000,
                     change_hash160: hash160,
@@ -648,7 +801,14 @@ mod tests {
             }
         }
         let out = std::env::var("BTC_VECTORS_OUT").expect("BTC_VECTORS_OUT");
-        std::fs::write(&out, serde_json::to_string_pretty(&serde_json::json!({ "addresses": addresses, "transactions": transactions })).unwrap()).unwrap();
+        std::fs::write(
+            &out,
+            serde_json::to_string_pretty(
+                &serde_json::json!({ "addresses": addresses, "transactions": transactions }),
+            )
+            .unwrap(),
+        )
+        .unwrap();
         println!("vecteurs écrits dans {out}");
     }
 }

@@ -18,11 +18,11 @@
 use anyhow::{Context, Result};
 use windows::core::{Error as WinError, HSTRING, PCWSTR};
 use windows::Win32::Security::Cryptography::{
-    NCryptCreatePersistedKey, NCryptDecrypt, NCryptDeleteKey, NCryptEncrypt, NCryptFinalizeKey, NCryptFreeObject,
-    NCryptOpenKey, NCryptOpenStorageProvider, NCryptSetProperty, BCRYPT_OAEP_PADDING_INFO, BCRYPT_RSA_ALGORITHM,
-    CERT_KEY_SPEC, MS_PLATFORM_CRYPTO_PROVIDER, NCRYPT_FLAGS, NCRYPT_HANDLE, NCRYPT_KEY_HANDLE,
-    NCRYPT_LENGTH_PROPERTY, NCRYPT_PAD_OAEP_FLAG, NCRYPT_PROV_HANDLE, NCRYPT_UI_POLICY, NCRYPT_UI_POLICY_PROPERTY,
-    NCRYPT_UI_PROTECT_KEY_FLAG,
+    NCryptCreatePersistedKey, NCryptDecrypt, NCryptDeleteKey, NCryptEncrypt, NCryptFinalizeKey,
+    NCryptFreeObject, NCryptOpenKey, NCryptOpenStorageProvider, NCryptSetProperty,
+    BCRYPT_OAEP_PADDING_INFO, BCRYPT_RSA_ALGORITHM, CERT_KEY_SPEC, MS_PLATFORM_CRYPTO_PROVIDER,
+    NCRYPT_FLAGS, NCRYPT_HANDLE, NCRYPT_KEY_HANDLE, NCRYPT_LENGTH_PROPERTY, NCRYPT_PAD_OAEP_FLAG,
+    NCRYPT_PROV_HANDLE, NCRYPT_UI_POLICY, NCRYPT_UI_POLICY_PROPERTY, NCRYPT_UI_PROTECT_KEY_FLAG,
 };
 use zeroize::Zeroizing;
 
@@ -51,7 +51,9 @@ fn to_anyhow(context: &str, err: WinError) -> anyhow::Error {
 /// security, only degrade the experience (offering a button that will fail, or the
 /// reverse).
 pub fn is_available() -> bool {
-    use windows::Security::Credentials::UI::{UserConsentVerifier, UserConsentVerifierAvailability};
+    use windows::Security::Credentials::UI::{
+        UserConsentVerifier, UserConsentVerifierAvailability,
+    };
     let Ok(operation) = UserConsentVerifier::CheckAvailabilityAsync() else {
         return false;
     };
@@ -66,8 +68,14 @@ struct Provider(NCRYPT_PROV_HANDLE);
 impl Provider {
     fn open() -> Result<Self> {
         let mut handle = NCRYPT_PROV_HANDLE::default();
-        unsafe { NCryptOpenStorageProvider(&mut handle, MS_PLATFORM_CRYPTO_PROVIDER, 0) }
-            .map_err(|e| to_anyhow("ouverture du fournisseur TPM (Microsoft Platform Crypto Provider)", e))?;
+        unsafe { NCryptOpenStorageProvider(&mut handle, MS_PLATFORM_CRYPTO_PROVIDER, 0) }.map_err(
+            |e| {
+                to_anyhow(
+                    "ouverture du fournisseur TPM (Microsoft Platform Crypto Provider)",
+                    e,
+                )
+            },
+        )?;
         Ok(Self(handle))
     }
 }
@@ -93,7 +101,10 @@ impl Drop for KeyHandle {
 /// it too; useless without the matching TPM key).
 pub fn enroll(secret: &[u8]) -> Result<(String, Vec<u8>)> {
     let provider = Provider::open()?;
-    let key_name = format!("{KEY_NAME_PREFIX}{}", hex::encode(crate::entropy::generate_master_entropy()));
+    let key_name = format!(
+        "{KEY_NAME_PREFIX}{}",
+        hex::encode(crate::entropy::generate_master_entropy())
+    );
     let key_name_wide = HSTRING::from(&key_name);
 
     // `NCryptCreatePersistedKey` only really persists the key at `NCryptFinalizeKey`
@@ -113,15 +124,34 @@ pub fn enroll(secret: &[u8]) -> Result<(String, Vec<u8>)> {
         // behind a cleanup failure.
         let _: Result<()> = (|| {
             let mut handle = NCRYPT_KEY_HANDLE::default();
-            unsafe { NCryptOpenKey(provider.0, &mut handle, &key_name_wide, CERT_KEY_SPEC(0), NCRYPT_FLAGS(0)) }
-                .map_err(|e| to_anyhow("ré-ouverture de la clé TPM à nettoyer après échec d'enrôlement", e))?;
-            unsafe { NCryptDeleteKey(handle, 0) }.map_err(|e| to_anyhow("nettoyage de la clé TPM après échec d'enrôlement", e))
+            unsafe {
+                NCryptOpenKey(
+                    provider.0,
+                    &mut handle,
+                    &key_name_wide,
+                    CERT_KEY_SPEC(0),
+                    NCRYPT_FLAGS(0),
+                )
+            }
+            .map_err(|e| {
+                to_anyhow(
+                    "ré-ouverture de la clé TPM à nettoyer après échec d'enrôlement",
+                    e,
+                )
+            })?;
+            unsafe { NCryptDeleteKey(handle, 0) }
+                .map_err(|e| to_anyhow("nettoyage de la clé TPM après échec d'enrôlement", e))
         })();
     }
     result.map(|sealed| (key_name, sealed))
 }
 
-fn enroll_inner(provider: &Provider, key_name_wide: &HSTRING, secret: &[u8], finalized: &mut bool) -> Result<Vec<u8>> {
+fn enroll_inner(
+    provider: &Provider,
+    key_name_wide: &HSTRING,
+    secret: &[u8],
+    finalized: &mut bool,
+) -> Result<Vec<u8>> {
     let mut key_handle = NCRYPT_KEY_HANDLE::default();
     unsafe {
         NCryptCreatePersistedKey(
@@ -137,8 +167,15 @@ fn enroll_inner(provider: &Provider, key_name_wide: &HSTRING, secret: &[u8], fin
     let key = KeyHandle(key_handle);
 
     let length_bytes = RSA_KEY_BITS.to_le_bytes();
-    unsafe { NCryptSetProperty(NCRYPT_HANDLE(key.0 .0), NCRYPT_LENGTH_PROPERTY, &length_bytes, NCRYPT_FLAGS(0)) }
-        .map_err(|e| to_anyhow("réglage de la taille de clé TPM", e))?;
+    unsafe {
+        NCryptSetProperty(
+            NCRYPT_HANDLE(key.0 .0),
+            NCRYPT_LENGTH_PROPERTY,
+            &length_bytes,
+            NCRYPT_FLAGS(0),
+        )
+    }
+    .map_err(|e| to_anyhow("réglage de la taille de clé TPM", e))?;
 
     // `NCRYPT_UI_PROTECT_KEY_FLAG`: THIS setting is what the TPM provider itself
     // enforces on every future use of the private key (see `unlock`). It is not an
@@ -159,10 +196,18 @@ fn enroll_inner(provider: &Provider, key_name_wide: &HSTRING, secret: &[u8], fin
             std::mem::size_of::<NCRYPT_UI_POLICY>(),
         )
     };
-    unsafe { NCryptSetProperty(NCRYPT_HANDLE(key.0 .0), NCRYPT_UI_POLICY_PROPERTY, ui_policy_bytes, NCRYPT_FLAGS(0)) }
-        .map_err(|e| to_anyhow("réglage de la politique Windows Hello sur la clé TPM", e))?;
+    unsafe {
+        NCryptSetProperty(
+            NCRYPT_HANDLE(key.0 .0),
+            NCRYPT_UI_POLICY_PROPERTY,
+            ui_policy_bytes,
+            NCRYPT_FLAGS(0),
+        )
+    }
+    .map_err(|e| to_anyhow("réglage de la politique Windows Hello sur la clé TPM", e))?;
 
-    unsafe { NCryptFinalizeKey(key.0, NCRYPT_FLAGS(0)) }.map_err(|e| to_anyhow("finalisation de la clé TPM", e))?;
+    unsafe { NCryptFinalizeKey(key.0, NCRYPT_FLAGS(0)) }
+        .map_err(|e| to_anyhow("finalisation de la clé TPM", e))?;
     *finalized = true; // the key now really exists in the TPM
 
     let padding_algo = oaep_hash_algorithm();
@@ -171,7 +216,8 @@ fn enroll_inner(provider: &Provider, key_name_wide: &HSTRING, secret: &[u8], fin
         pbLabel: std::ptr::null_mut(),
         cbLabel: 0,
     };
-    let padding_info_ptr = &padding_info as *const BCRYPT_OAEP_PADDING_INFO as *const std::ffi::c_void;
+    let padding_info_ptr =
+        &padding_info as *const BCRYPT_OAEP_PADDING_INFO as *const std::ffi::c_void;
 
     let mut needed: u32 = 0;
     unsafe {
@@ -181,7 +227,7 @@ fn enroll_inner(provider: &Provider, key_name_wide: &HSTRING, secret: &[u8], fin
             Some(padding_info_ptr),
             None,
             &mut needed,
-            NCRYPT_FLAGS(NCRYPT_PAD_OAEP_FLAG.0 as u32),
+            NCRYPT_FLAGS(NCRYPT_PAD_OAEP_FLAG.0),
         )
     }
     .map_err(|e| to_anyhow("calcul de la taille du blob scellé", e))?;
@@ -195,7 +241,7 @@ fn enroll_inner(provider: &Provider, key_name_wide: &HSTRING, secret: &[u8], fin
             Some(padding_info_ptr),
             Some(&mut sealed),
             &mut written,
-            NCRYPT_FLAGS(NCRYPT_PAD_OAEP_FLAG.0 as u32),
+            NCRYPT_FLAGS(NCRYPT_PAD_OAEP_FLAG.0),
         )
     }
     .map_err(|e| to_anyhow("scellement du secret dans le TPM", e))?;
@@ -214,8 +260,21 @@ pub fn unlock(key_name: &str, sealed_blob: &[u8]) -> Result<Zeroizing<Vec<u8>>> 
     let key_name_wide = HSTRING::from(key_name);
 
     let mut key_handle = NCRYPT_KEY_HANDLE::default();
-    unsafe { NCryptOpenKey(provider.0, &mut key_handle, &key_name_wide, CERT_KEY_SPEC(0), NCRYPT_FLAGS(0)) }
-        .map_err(|e| to_anyhow("ouverture de la clé TPM (déverrouillage biométrique désactivé ou clé absente ?)", e))?;
+    unsafe {
+        NCryptOpenKey(
+            provider.0,
+            &mut key_handle,
+            &key_name_wide,
+            CERT_KEY_SPEC(0),
+            NCRYPT_FLAGS(0),
+        )
+    }
+    .map_err(|e| {
+        to_anyhow(
+            "ouverture de la clé TPM (déverrouillage biométrique désactivé ou clé absente ?)",
+            e,
+        )
+    })?;
     let key = KeyHandle(key_handle);
 
     let padding_algo = oaep_hash_algorithm();
@@ -224,7 +283,8 @@ pub fn unlock(key_name: &str, sealed_blob: &[u8]) -> Result<Zeroizing<Vec<u8>>> 
         pbLabel: std::ptr::null_mut(),
         cbLabel: 0,
     };
-    let padding_info_ptr = &padding_info as *const BCRYPT_OAEP_PADDING_INFO as *const std::ffi::c_void;
+    let padding_info_ptr =
+        &padding_info as *const BCRYPT_OAEP_PADDING_INFO as *const std::ffi::c_void;
 
     let mut needed: u32 = 0;
     unsafe {
@@ -234,7 +294,7 @@ pub fn unlock(key_name: &str, sealed_blob: &[u8]) -> Result<Zeroizing<Vec<u8>>> 
             Some(padding_info_ptr),
             None,
             &mut needed,
-            NCRYPT_FLAGS(NCRYPT_PAD_OAEP_FLAG.0 as u32),
+            NCRYPT_FLAGS(NCRYPT_PAD_OAEP_FLAG.0),
         )
     }
     .map_err(|e| to_anyhow("calcul de la taille du secret déchiffré", e))?;
@@ -250,7 +310,7 @@ pub fn unlock(key_name: &str, sealed_blob: &[u8]) -> Result<Zeroizing<Vec<u8>>> 
             Some(padding_info_ptr),
             Some(&mut secret),
             &mut written,
-            NCRYPT_FLAGS(NCRYPT_PAD_OAEP_FLAG.0 as u32),
+            NCRYPT_FLAGS(NCRYPT_PAD_OAEP_FLAG.0),
         )
     }
     .map_err(|e| to_anyhow("vérification Windows Hello refusée, annulée ou échouée", e))?;
@@ -267,9 +327,17 @@ pub fn remove(key_name: &str) -> Result<()> {
     let key_name_wide = HSTRING::from(key_name);
 
     let mut key_handle = NCRYPT_KEY_HANDLE::default();
-    unsafe { NCryptOpenKey(provider.0, &mut key_handle, &key_name_wide, CERT_KEY_SPEC(0), NCRYPT_FLAGS(0)) }
-        .context("ouverture de la clé TPM à supprimer")
-        .map_err(|_| anyhow::anyhow!("clé TPM déjà absente, rien à supprimer"))?;
+    unsafe {
+        NCryptOpenKey(
+            provider.0,
+            &mut key_handle,
+            &key_name_wide,
+            CERT_KEY_SPEC(0),
+            NCRYPT_FLAGS(0),
+        )
+    }
+    .context("ouverture de la clé TPM à supprimer")
+    .map_err(|_| anyhow::anyhow!("clé TPM déjà absente, rien à supprimer"))?;
     unsafe { NCryptDeleteKey(key_handle, 0) }.map_err(|e| to_anyhow("suppression de la clé TPM", e))
 }
 

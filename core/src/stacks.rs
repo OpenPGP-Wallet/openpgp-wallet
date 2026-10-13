@@ -26,9 +26,19 @@ pub struct Network {
     address_versions: (u8, u8),
 }
 
-pub const MAINNET: Network = Network { api: "https://api.hiro.so", tx_version: 0x00, chain_id: 0x0000_0001, address_versions: (22, 20) };
+pub const MAINNET: Network = Network {
+    api: "https://api.hiro.so",
+    tx_version: 0x00,
+    chain_id: 0x0000_0001,
+    address_versions: (22, 20),
+};
 #[cfg(test)]
-const TESTNET: Network = Network { api: "https://api.testnet.hiro.so", tx_version: 0x80, chain_id: 0x8000_0000, address_versions: (26, 21) };
+const TESTNET: Network = Network {
+    api: "https://api.testnet.hiro.so",
+    tx_version: 0x80,
+    chain_id: 0x8000_0000,
+    address_versions: (26, 21),
+};
 
 pub const DECIMALS: u8 = 6;
 /// Fee: at least 0.003 STX, at most 0.1 STX.
@@ -48,14 +58,23 @@ fn client() -> &'static reqwest::blocking::Client {
 }
 
 fn get(net: &Network, path: &str) -> Result<Value> {
-    let response = client().get(format!("{}{path}", net.api)).send().context("service Stacks injoignable")?;
+    let response = client()
+        .get(format!("{}{path}", net.api))
+        .send()
+        .context("service Stacks injoignable")?;
     let status = response.status();
     ensure!(status.is_success(), "service Stacks : réponse {status}");
-    response.json().context("réponse du service Stacks illisible")
+    response
+        .json()
+        .context("réponse du service Stacks illisible")
 }
 
 fn micro(value: &Value) -> Result<u64> {
-    value.as_str().and_then(|v| v.parse().ok()).or(value.as_u64()).context("montant Stacks illisible")
+    value
+        .as_str()
+        .and_then(|v| v.parse().ok())
+        .or(value.as_u64())
+        .context("montant Stacks illisible")
 }
 
 /// Amount in STX, 6 decimals ("12.500000").
@@ -132,26 +151,53 @@ pub fn encode_address(version: u8, hash160: &[u8; 20]) -> String {
 /// addresses (SP....name) are rejected.
 pub fn parse_address(net: &Network, text: &str) -> Result<(u8, [u8; 20])> {
     let text = text.trim();
-    ensure!(!text.contains('.'), "adresse de contrat Stacks : envoi refusé (adresse de portefeuille SP… attendue)");
+    ensure!(
+        !text.contains('.'),
+        "adresse de contrat Stacks : envoi refusé (adresse de portefeuille SP… attendue)"
+    );
     // c32 (Crockford) normalization: upper case, O → 0, I and L → 1.
-    let normalized: String = text.to_ascii_uppercase().chars().map(|c| match c {
-        'O' => '0',
-        'I' | 'L' => '1',
-        other => other,
-    }).collect();
-    ensure!(normalized.len() >= 5 && normalized.starts_with('S'), "adresse Stacks invalide");
-    let version = C32.iter().position(|&c| c == normalized.as_bytes()[1]).context("adresse Stacks invalide")? as u8;
-    let data = c32_decode(&normalized[2..]).filter(|d| d.len() == 24).context("adresse Stacks invalide")?;
+    let normalized: String = text
+        .to_ascii_uppercase()
+        .chars()
+        .map(|c| match c {
+            'O' => '0',
+            'I' | 'L' => '1',
+            other => other,
+        })
+        .collect();
+    ensure!(
+        normalized.len() >= 5 && normalized.starts_with('S'),
+        "adresse Stacks invalide"
+    );
+    let version = C32
+        .iter()
+        .position(|&c| c == normalized.as_bytes()[1])
+        .context("adresse Stacks invalide")? as u8;
+    let data = c32_decode(&normalized[2..])
+        .filter(|d| d.len() == 24)
+        .context("adresse Stacks invalide")?;
     let hash: [u8; 20] = data[..20].try_into().expect("20");
-    ensure!(btc_tx::dsha256(&[&[version][..], &hash].concat())[..4] == data[20..], "adresse Stacks invalide (somme de contrôle)");
-    ensure!(encode_address(version, &hash) == normalized, "adresse Stacks invalide");
+    ensure!(
+        btc_tx::dsha256(&[&[version][..], &hash].concat())[..4] == data[20..],
+        "adresse Stacks invalide (somme de contrôle)"
+    );
+    ensure!(
+        encode_address(version, &hash) == normalized,
+        "adresse Stacks invalide"
+    );
     let (single, multi) = net.address_versions;
-    ensure!(version == single || version == multi, "adresse Stacks d'un autre réseau — refusée");
+    ensure!(
+        version == single || version == multi,
+        "adresse Stacks d'un autre réseau — refusée"
+    );
     Ok((version, hash))
 }
 
 pub fn address_of(net: &Network, key: &SigningKey) -> String {
-    encode_address(net.address_versions.0, &hash160(key.verifying_key().to_encoded_point(true).as_bytes()))
+    encode_address(
+        net.address_versions.0,
+        &hash160(key.verifying_key().to_encoded_point(true).as_bytes()),
+    )
 }
 
 // --- Memo -----------------------------------------------------------------------
@@ -159,8 +205,14 @@ pub fn address_of(net: &Network, key: &SigningKey) -> String {
 /// Memo (34 bytes, printable ASCII); empty = none.
 pub fn parse_memo(text: Option<&str>) -> Result<String> {
     let text = text.map(str::trim).unwrap_or("");
-    ensure!(text.len() <= MEMO_LEN, "mémo Stacks trop long (34 caractères au plus)");
-    ensure!(text.bytes().all(|b| (0x20..=0x7e).contains(&b)), "mémo Stacks invalide (lettres, chiffres et ponctuation ASCII seulement)");
+    ensure!(
+        text.len() <= MEMO_LEN,
+        "mémo Stacks trop long (34 caractères au plus)"
+    );
+    ensure!(
+        text.bytes().all(|b| (0x20..=0x7e).contains(&b)),
+        "mémo Stacks invalide (lettres, chiffres et ponctuation ASCII seulement)"
+    );
     Ok(text.to_string())
 }
 
@@ -202,7 +254,12 @@ impl Transfer {
     /// fee ‖ nonce).
     fn presign_hash(&self, net: &Network) -> [u8; 32] {
         let initial = sha512_256(&[&self.serialize(net, &[0; 65], 0, 0)]);
-        sha512_256(&[&initial, &[0x04], &self.fee.to_be_bytes(), &self.nonce.to_be_bytes()])
+        sha512_256(&[
+            &initial,
+            &[0x04],
+            &self.fee.to_be_bytes(),
+            &self.nonce.to_be_bytes(),
+        ])
     }
 }
 
@@ -212,10 +269,16 @@ pub struct Signed {
 }
 
 pub fn sign(tx: &Transfer, key: &SigningKey, net: &Network) -> Result<Signed> {
-    let (signature, recovery) = key.sign_prehash_recoverable(&tx.presign_hash(net)).map_err(|e| anyhow!("signature Stacks impossible ({e})"))?;
+    let (signature, recovery) = key
+        .sign_prehash_recoverable(&tx.presign_hash(net))
+        .map_err(|e| anyhow!("signature Stacks impossible ({e})"))?;
     // Low S (required by the network): the recovery parity follows.
     let (signature, recovery) = match signature.normalize_s() {
-        Some(low) => (low, k256::ecdsa::RecoveryId::from_byte(recovery.to_byte() ^ 1).context("signature Stacks impossible")?),
+        Some(low) => (
+            low,
+            k256::ecdsa::RecoveryId::from_byte(recovery.to_byte() ^ 1)
+                .context("signature Stacks impossible")?,
+        ),
         None => (signature, recovery),
     };
     let mut vrs = [0u8; 65];
@@ -244,15 +307,27 @@ pub fn balance(net: &Network, address: &str) -> Result<u64> {
 /// Activity of a recipient address: (holds STX, has been used before).
 pub fn address_activity(net: &Network, address: &str) -> Result<(bool, bool)> {
     parse_address(net, address)?;
-    let txs = get(net, &format!("/extended/v2/addresses/{}/transactions?limit=1", address.trim()))?;
+    let txs = get(
+        net,
+        &format!(
+            "/extended/v2/addresses/{}/transactions?limit=1",
+            address.trim()
+        ),
+    )?;
     let used = txs["total"].as_u64().unwrap_or(0) > 0;
     Ok((balances(net, address)?.1 > 0, used))
 }
 
 fn fee(net: &Network, size: usize) -> Result<u64> {
-    let rate = get(net, "/v2/fees/transfer")?.as_u64().context("frais Stacks illisibles")?;
+    let rate = get(net, "/v2/fees/transfer")?
+        .as_u64()
+        .context("frais Stacks illisibles")?;
     let fee = (rate * size as u64 * 2).max(MIN_FEE);
-    ensure!(fee <= MAX_FEE, "frais du réseau Stacks anormalement élevés ({} STX) — réessayez plus tard", format_stx(fee));
+    ensure!(
+        fee <= MAX_FEE,
+        "frais du réseau Stacks anormalement élevés ({} STX) — réessayez plus tard",
+        format_stx(fee)
+    );
     Ok(fee)
 }
 
@@ -268,14 +343,26 @@ const TRANSFER_SIZE: usize = 180;
 
 pub fn plan(net: &Network, from: &str, to: &str, amount: u64) -> Result<StxPlan> {
     ensure!(amount > 0, "montant nul");
-    ensure!(parse_address(net, from)? != parse_address(net, to)?, "envoi vers votre propre adresse Stacks");
+    ensure!(
+        parse_address(net, from)? != parse_address(net, to)?,
+        "envoi vers votre propre adresse Stacks"
+    );
     let fee = fee(net, TRANSFER_SIZE)?;
     let (spendable, total) = balances(net, from)?;
     ensure!(
-        amount.checked_add(fee).is_some_and(|need| need <= spendable),
+        amount
+            .checked_add(fee)
+            .is_some_and(|need| need <= spendable),
         "STX insuffisants : {} STX disponibles{}, {} STX + {} STX de frais demandés",
         format_stx(spendable),
-        if total > spendable { format!(" ({} STX bloqués par le stacking)", format_stx(total - spendable)) } else { String::new() },
+        if total > spendable {
+            format!(
+                " ({} STX bloqués par le stacking)",
+                format_stx(total - spendable)
+            )
+        } else {
+            String::new()
+        },
         format_stx(amount),
         format_stx(fee)
     );
@@ -286,15 +373,34 @@ pub fn plan(net: &Network, from: &str, to: &str, amount: u64) -> Result<StxPlan>
 pub fn max_amount(net: &Network, from: &str) -> Result<u64> {
     parse_address(net, from)?;
     let fee = fee(net, TRANSFER_SIZE)?;
-    balances(net, from)?.0.checked_sub(fee).filter(|m| *m > 0).context("STX insuffisants pour couvrir les frais du réseau")
+    balances(net, from)?
+        .0
+        .checked_sub(fee)
+        .filter(|m| *m > 0)
+        .context("STX insuffisants pour couvrir les frais du réseau")
 }
 
 /// Builds, signs and broadcasts the prepared send; returns its ID.
-pub fn send(net: &Network, key: &SigningKey, to: &str, plan: &StxPlan, memo: &str) -> Result<String> {
+pub fn send(
+    net: &Network,
+    key: &SigningKey,
+    to: &str,
+    plan: &StxPlan,
+    memo: &str,
+) -> Result<String> {
     let from = address_of(net, key);
     // Next nonce, pending transactions included.
-    let nonce = get(net, &format!("/extended/v1/address/{from}/nonces"))?["possible_next_nonce"].as_u64().context("nonce Stacks illisible")?;
-    let tx = Transfer { signer: hash160(key.verifying_key().to_encoded_point(true).as_bytes()), nonce, fee: plan.fee, recipient: parse_address(net, to)?, amount: plan.amount, memo: parse_memo(Some(memo))? };
+    let nonce = get(net, &format!("/extended/v1/address/{from}/nonces"))?["possible_next_nonce"]
+        .as_u64()
+        .context("nonce Stacks illisible")?;
+    let tx = Transfer {
+        signer: hash160(key.verifying_key().to_encoded_point(true).as_bytes()),
+        nonce,
+        fee: plan.fee,
+        recipient: parse_address(net, to)?,
+        amount: plan.amount,
+        memo: parse_memo(Some(memo))?,
+    };
     submit(net, &sign(&tx, key, net)?)
 }
 
@@ -304,7 +410,9 @@ pub fn submit(net: &Network, signed: &Signed) -> Result<String> {
         .header("content-type", "application/octet-stream")
         .body(signed.bytes.clone())
         .send()
-        .map_err(|e| crate::wallet_flow::broadcast_failure(e, "service Stacks injoignable", &signed.txid))?;
+        .map_err(|e| {
+            crate::wallet_flow::broadcast_failure(e, "service Stacks injoignable", &signed.txid)
+        })?;
     let status = response.status();
     let text = response.text().unwrap_or_default();
     // Gateway error: maybe sent (see `wallet_flow::maybe_sent`).
@@ -312,7 +420,11 @@ pub fn submit(net: &Network, signed: &Signed) -> Result<String> {
         return Err(crate::wallet_flow::maybe_sent(&signed.txid));
     }
     if status.is_success() {
-        let returned = text.trim().trim_matches('"').trim_start_matches("0x").to_ascii_lowercase();
+        let returned = text
+            .trim()
+            .trim_matches('"')
+            .trim_start_matches("0x")
+            .to_ascii_lowercase();
         // Transaction accepted: an ID other than ours must not make it look refused, since
         // sending again would pay twice (32nd review round).
         if returned != signed.txid {
@@ -320,8 +432,15 @@ pub fn submit(net: &Network, signed: &Signed) -> Result<String> {
         }
         return Ok(signed.txid.clone());
     }
-    let reason = serde_json::from_str::<Value>(&text).ok().and_then(|v| v["reason"].as_str().map(str::to_string)).unwrap_or(text);
-    let reason: String = reason.chars().filter(|c| !matches!(c, '{' | '}' | '"')).take(200).collect();
+    let reason = serde_json::from_str::<Value>(&text)
+        .ok()
+        .and_then(|v| v["reason"].as_str().map(str::to_string))
+        .unwrap_or(text);
+    let reason: String = reason
+        .chars()
+        .filter(|c| !matches!(c, '{' | '}' | '"'))
+        .take(200)
+        .collect();
     bail!("transaction Stacks refusée : {reason}")
 }
 
@@ -330,12 +449,30 @@ pub fn submit(net: &Network, signed: &Signed) -> Result<String> {
 /// STX movements of the address (received − sent, fee included), newest first.
 pub fn history(net: &Network, address: &str, limit: usize) -> Result<Vec<history::TxEntry>> {
     parse_address(net, address)?;
-    let list = get(net, &format!("/extended/v2/addresses/{}/transactions?limit={}", address.trim(), limit.clamp(1, 50)))?;
+    let list = get(
+        net,
+        &format!(
+            "/extended/v2/addresses/{}/transactions?limit={}",
+            address.trim(),
+            limit.clamp(1, 50)
+        ),
+    )?;
     let mut entries = Vec::new();
-    for item in list["results"].as_array().map(Vec::as_slice).unwrap_or_default() {
+    for item in list["results"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+    {
         let tx = &item["tx"];
-        let Some(id) = tx["tx_id"].as_str().map(|t| t.trim_start_matches("0x")).filter(|t| t.len() == 64 && t.bytes().all(|b| b.is_ascii_hexdigit())) else { continue };
-        let net_amount = i128::from(micro(&item["stx_received"]).unwrap_or(0)) - i128::from(micro(&item["stx_sent"]).unwrap_or(0));
+        let Some(id) = tx["tx_id"]
+            .as_str()
+            .map(|t| t.trim_start_matches("0x"))
+            .filter(|t| t.len() == 64 && t.bytes().all(|b| b.is_ascii_hexdigit()))
+        else {
+            continue;
+        };
+        let net_amount = i128::from(micro(&item["stx_received"]).unwrap_or(0))
+            - i128::from(micro(&item["stx_sent"]).unwrap_or(0));
         if net_amount == 0 {
             continue;
         }
@@ -350,7 +487,11 @@ pub fn history(net: &Network, address: &str, limit: usize) -> Result<Vec<history
             status,
             net_amount_minor: Some(net_amount),
             fee_minor: 0,
-            kind: if net_amount > 0 { history::TxKind::Received } else { history::TxKind::Sent },
+            kind: if net_amount > 0 {
+                history::TxKind::Received
+            } else {
+                history::TxKind::Sent
+            },
         });
     }
     Ok(entries)
@@ -369,19 +510,52 @@ mod tests {
     /// Vectors from @stacks/transactions + bip32, independent of this code.
     #[test]
     fn addresses_match_the_official_library() {
-        for (index, main, test) in [(0, "SPC5KHM41H6WHAST7MWWDD807YSPRQKJ69FSH54J", "STC5KHM41H6WHAST7MWWDD807YSPRQKJ68T330BQ"), (1, "SP3XHES5990FYDV5BHBZCJRFYFD2Z4X3FMD2N3MGH", "ST3XHES5990FYDV5BHBZCJRFYFD2Z4X3FMEXRWMFR"), (7, "SP23HR2AW1CHQY48VVN0JE2NEC5MG87NMW53N328M", "ST23HR2AW1CHQY48VVN0JE2NEC5MG87NMW7JRDAE8")] {
+        for (index, main, test) in [
+            (
+                0,
+                "SPC5KHM41H6WHAST7MWWDD807YSPRQKJ69FSH54J",
+                "STC5KHM41H6WHAST7MWWDD807YSPRQKJ68T330BQ",
+            ),
+            (
+                1,
+                "SP3XHES5990FYDV5BHBZCJRFYFD2Z4X3FMD2N3MGH",
+                "ST3XHES5990FYDV5BHBZCJRFYFD2Z4X3FMEXRWMFR",
+            ),
+            (
+                7,
+                "SP23HR2AW1CHQY48VVN0JE2NEC5MG87NMW53N328M",
+                "ST23HR2AW1CHQY48VVN0JE2NEC5MG87NMW7JRDAE8",
+            ),
+        ] {
             assert_eq!(address_of(&MAINNET, &key(index)), main);
             assert_eq!(address_of(&TESTNET, &key(index)), test);
             assert_eq!(parse_address(&MAINNET, main).unwrap().0, 22);
-            assert!(parse_address(&MAINNET, test).unwrap_err().to_string().contains("autre réseau"));
+            assert!(parse_address(&MAINNET, test)
+                .unwrap_err()
+                .to_string()
+                .contains("autre réseau"));
         }
         // Lower case and Crockford look-alikes accepted (c32 normalization).
         assert!(parse_address(&MAINNET, "sp3xhes5990fydv5bhbzcjrfyfd2z4x3fmd2n3mgh").is_ok());
-        assert!(parse_address(&MAINNET, "SP3XHES5990FYDV5BHBZCJRFYFD2Z4X3FMD2N3MGJ").unwrap_err().to_string().contains("somme de contrôle"));
-        assert!(parse_address(&MAINNET, "SP3XHES5990FYDV5BHBZCJRFYFD2Z4X3FMD2N3MGH.my-contract").unwrap_err().to_string().contains("contrat"));
+        assert!(
+            parse_address(&MAINNET, "SP3XHES5990FYDV5BHBZCJRFYFD2Z4X3FMD2N3MGJ")
+                .unwrap_err()
+                .to_string()
+                .contains("somme de contrôle")
+        );
+        assert!(parse_address(
+            &MAINNET,
+            "SP3XHES5990FYDV5BHBZCJRFYFD2Z4X3FMD2N3MGH.my-contract"
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("contrat"));
         assert!(parse_address(&MAINNET, "1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2").is_err());
         // Leading zero bytes: leading "0" in c32, exact round trip.
-        assert_eq!(c32_decode(&c32_encode(&[0, 0, 1, 2, 255])).unwrap(), vec![0, 0, 1, 2, 255]);
+        assert_eq!(
+            c32_decode(&c32_encode(&[0, 0, 1, 2, 255])).unwrap(),
+            vec![0, 0, 1, 2, 255]
+        );
     }
 
     #[test]
@@ -423,7 +597,15 @@ mod tests {
         };
         let alice = random_key();
         let alice_address = address_of(&TESTNET, &alice);
-        let funded = client().post(format!("{}/extended/v1/faucets/stx?address={alice_address}", TESTNET.api)).send().unwrap().text().unwrap();
+        let funded = client()
+            .post(format!(
+                "{}/extended/v1/faucets/stx?address={alice_address}",
+                TESTNET.api
+            ))
+            .send()
+            .unwrap()
+            .text()
+            .unwrap();
         println!("robinet : {}", &funded[..funded.len().min(120)]);
         let wait_balance = |address: &str, at_least: u64| -> u64 {
             for _ in 0..60 {
@@ -443,16 +625,44 @@ mod tests {
         println!("virement : {txid} (frais {} STX)", format_stx(plan.fee));
         assert_eq!(wait_balance(&bob_address, 1_500_000), 1_500_000);
         let tx = get(&TESTNET, &format!("/extended/v1/tx/0x{txid}")).unwrap();
-        assert_eq!(tx["token_transfer"]["memo"].as_str().map(|m| m.starts_with("0x68656c6c6f00")), Some(true), "{}", tx["token_transfer"]);
+        assert_eq!(
+            tx["token_transfer"]["memo"]
+                .as_str()
+                .map(|m| m.starts_with("0x68656c6c6f00")),
+            Some(true),
+            "{}",
+            tx["token_transfer"]
+        );
         assert_eq!(tx["tx_status"].as_str(), Some("success"));
         // Tampered signature: rejected.
-        let mut signed = sign(&Transfer { signer: hash160(alice.verifying_key().to_encoded_point(true).as_bytes()), nonce: 1, fee: plan.fee, recipient: parse_address(&TESTNET, &bob_address).unwrap(), amount: 1, memo: String::new() }, &alice, &TESTNET).unwrap();
+        let mut signed = sign(
+            &Transfer {
+                signer: hash160(alice.verifying_key().to_encoded_point(true).as_bytes()),
+                nonce: 1,
+                fee: plan.fee,
+                recipient: parse_address(&TESTNET, &bob_address).unwrap(),
+                amount: 1,
+                memo: String::new(),
+            },
+            &alice,
+            &TESTNET,
+        )
+        .unwrap();
         signed.bytes[60] ^= 1;
         let error = submit(&TESTNET, &signed).unwrap_err().to_string();
         println!("{error}");
-        assert!(error.to_lowercase().contains("signature") || error.contains("SignatureValidation"), "{error}");
+        assert!(
+            error.to_lowercase().contains("signature") || error.contains("SignatureValidation"),
+            "{error}"
+        );
         // History and mainnet.
-        assert!(history(&TESTNET, &bob_address, 10).unwrap().iter().any(|e| e.net_amount_minor == Some(1_500_000)));
-        println!("principal : frais {} STX", format_stx(fee(&MAINNET, TRANSFER_SIZE).unwrap()));
+        assert!(history(&TESTNET, &bob_address, 10)
+            .unwrap()
+            .iter()
+            .any(|e| e.net_amount_minor == Some(1_500_000)));
+        println!(
+            "principal : frais {} STX",
+            format_stx(fee(&MAINNET, TRANSFER_SIZE).unwrap())
+        );
     }
 }

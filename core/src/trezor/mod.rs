@@ -14,8 +14,8 @@
 
 pub mod bitcoin;
 pub mod ethereum;
-pub mod solana;
 pub mod proto;
+pub mod solana;
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use proto::{Message, Writer};
@@ -110,9 +110,13 @@ impl UsbLink {
         let devices = rusb::devices().context("accès USB impossible")?;
         let mut legacy = false;
         for device in devices.iter() {
-            let Ok(descriptor) = device.device_descriptor() else { continue };
+            let Ok(descriptor) = device.device_descriptor() else {
+                continue;
+            };
             legacy |= descriptor.vendor_id() == LEGACY_VENDOR_ID;
-            if descriptor.vendor_id() != TREZOR_VENDOR_ID || descriptor.product_id() != TREZOR_PRODUCT_ID {
+            if descriptor.vendor_id() != TREZOR_VENDOR_ID
+                || descriptor.product_id() != TREZOR_PRODUCT_ID
+            {
                 continue;
             }
             let handle = device
@@ -132,7 +136,10 @@ impl UsbLink {
 
 impl Link for UsbLink {
     fn write_packet(&mut self, packet: &[u8; PACKET]) -> Result<()> {
-        let written = self.handle.write_interrupt(0x01, packet, Duration::from_secs(5)).context("écriture USB vers le Trezor impossible")?;
+        let written = self
+            .handle
+            .write_interrupt(0x01, packet, Duration::from_secs(5))
+            .context("écriture USB vers le Trezor impossible")?;
         ensure!(written == PACKET, "écriture USB vers le Trezor incomplète");
         Ok(())
     }
@@ -142,7 +149,10 @@ impl Link for UsbLink {
         // No global timeout: the device waits for the user's physical confirmation, which
         // can take as long as it takes.
         loop {
-            match self.handle.read_interrupt(0x81, &mut packet, Duration::from_secs(1)) {
+            match self
+                .handle
+                .read_interrupt(0x81, &mut packet, Duration::from_secs(1))
+            {
                 Ok(n) if n == PACKET => return Ok(packet),
                 Ok(_) => bail!("paquet USB Trezor incomplet"),
                 Err(rusb::Error::Timeout) => continue,
@@ -163,7 +173,8 @@ pub struct RelayLink {
 #[cfg(any(debug_assertions, test))]
 impl RelayLink {
     pub fn connect(address: &str) -> Result<Self> {
-        let stream = std::net::TcpStream::connect(address).with_context(|| format!("émulateur Trezor injoignable ({address})"))?;
+        let stream = std::net::TcpStream::connect(address)
+            .with_context(|| format!("émulateur Trezor injoignable ({address})"))?;
         stream.set_read_timeout(Some(Duration::from_secs(120)))?;
         stream.set_nodelay(true)?;
         Ok(Self { stream })
@@ -189,7 +200,10 @@ impl Link for RelayLink {
 fn failure_error(payload: &[u8]) -> anyhow::Error {
     let message = Message::parse(payload).ok();
     let code = message.as_ref().and_then(|m| m.uint(1)).unwrap_or(0);
-    let detail = message.as_ref().and_then(|m| m.string(2)).unwrap_or_default();
+    let detail = message
+        .as_ref()
+        .and_then(|m| m.string(2))
+        .unwrap_or_default();
     match code {
         4 => anyhow!("opération refusée sur le Trezor"),
         6 => anyhow!("saisie du PIN annulée sur le Trezor"),
@@ -234,7 +248,10 @@ impl Trezor {
             let (response_type, response) = read_message(self.link.as_mut())?;
             match response_type {
                 msg::BUTTON_REQUEST => self.send(msg::BUTTON_ACK, &[])?,
-                msg::PASSPHRASE_REQUEST => self.send(msg::PASSPHRASE_ACK, &Writer::new().boolean(3, true).finish())?,
+                msg::PASSPHRASE_REQUEST => self.send(
+                    msg::PASSPHRASE_ACK,
+                    &Writer::new().boolean(3, true).finish(),
+                )?,
                 msg::PIN_MATRIX_REQUEST => {
                     self.send(msg::CANCEL, &[])?;
                     let _ = read_message(self.link.as_mut());
@@ -249,7 +266,10 @@ impl Trezor {
     /// `call` with an expected answer type.
     pub fn call_expect(&mut self, msg_type: u16, payload: &[u8], expected: u16) -> Result<Vec<u8>> {
         let (response_type, response) = self.call(msg_type, payload)?;
-        ensure!(response_type == expected, "réponse inattendue du Trezor (message {response_type})");
+        ensure!(
+            response_type == expected,
+            "réponse inattendue du Trezor (message {response_type})"
+        );
         Ok(response)
     }
 
@@ -263,7 +283,10 @@ impl Trezor {
             version: (version(2), version(3), version(4)),
             initialized: features.uint(12) == Some(1),
         };
-        ensure!(result.initialized, "Trezor non initialisé : configurez-le d'abord avec Trezor Suite");
+        ensure!(
+            result.initialized,
+            "Trezor non initialisé : configurez-le d'abord avec Trezor Suite"
+        );
         Ok(result)
     }
 }
@@ -308,7 +331,12 @@ pub(crate) mod emulator {
             let (msg_type, payload) = read_message(&mut self.0).unwrap();
             assert_eq!(msg_type, DEBUG_STATE);
             let state = Message::parse(&payload).unwrap();
-            state.all_bytes(13).iter().map(|t| String::from_utf8_lossy(t)).collect::<Vec<_>>().join("")
+            state
+                .all_bytes(13)
+                .iter()
+                .map(|t| String::from_utf8_lossy(t))
+                .collect::<Vec<_>>()
+                .join("")
         }
 
         /// "Yes" button (also confirms a "hold to confirm" screen).
@@ -335,7 +363,8 @@ pub(crate) mod emulator {
                 // Never press on the home screen: the emulator would keep the decision pending and
                 // apply it to the next screen (observed: the recipient screen was confirmed
                 // without being seen).
-                if text.is_empty() || text.contains("\"Homescreen\"") || seen.last() == Some(&text) {
+                if text.is_empty() || text.contains("\"Homescreen\"") || seen.last() == Some(&text)
+                {
                     continue;
                 }
                 seen.push(text.clone());
@@ -363,7 +392,10 @@ mod tests {
         assert_eq!(packets.len(), 5);
         assert_eq!(&packets[0][..9], &[b'?', b'#', b'#', 0, 17, 0, 0, 1, 6]);
         assert!(packets[1..].iter().all(|p| p[0] == b'?'));
-        assert_eq!(encode_packets(msg::INITIALIZE, &[])[0][..9], [b'?', b'#', b'#', 0, 0, 0, 0, 0, 0]);
+        assert_eq!(
+            encode_packets(msg::INITIALIZE, &[])[0][..9],
+            [b'?', b'#', b'#', 0, 0, 0, 0, 0, 0]
+        );
 
         struct Replay(Vec<[u8; PACKET]>);
         impl Link for Replay {
@@ -384,9 +416,15 @@ mod tests {
     #[test]
     fn device_failures_become_clear_errors() {
         let failure = |code: u64, text: &str| Writer::new().uint(1, code).string(2, text).finish();
-        assert!(failure_error(&failure(4, "Cancelled")).to_string().contains("refusée"));
-        assert!(failure_error(&failure(7, "")).to_string().contains("PIN incorrect"));
-        assert!(failure_error(&failure(3, "Invalid path")).to_string().contains("Invalid path"));
+        assert!(failure_error(&failure(4, "Cancelled"))
+            .to_string()
+            .contains("refusée"));
+        assert!(failure_error(&failure(7, ""))
+            .to_string()
+            .contains("PIN incorrect"));
+        assert!(failure_error(&failure(3, "Invalid path"))
+            .to_string()
+            .contains("Invalid path"));
     }
 
     /// Official emulator (core firmware 2.7.0, Model T) through the bridge: session

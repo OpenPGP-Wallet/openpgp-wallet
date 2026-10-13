@@ -34,15 +34,23 @@ type Socket = WebSocket<MaybeTlsStream<TcpStream>>;
 fn connect(project_id: &str, client_seed: &[u8; 32]) -> Result<Socket> {
     let mut sub = [0u8; 32];
     getrandom::getrandom(&mut sub).map_err(|e| anyhow!("génération d'aléa impossible : {e}"))?;
-    let jwt = auth::sign_jwt(client_seed, &hex::encode(sub), RELAY_URL, super::engine::now());
-    let url = format!("{RELAY_URL}/?auth={jwt}&ua=wc-2/rust-0.1/windows/openpgp-wallet&projectId={project_id}");
+    let jwt = auth::sign_jwt(
+        client_seed,
+        &hex::encode(sub),
+        RELAY_URL,
+        super::engine::now(),
+    );
+    let url = format!(
+        "{RELAY_URL}/?auth={jwt}&ua=wc-2/rust-0.1/windows/openpgp-wallet&projectId={project_id}"
+    );
 
     let address = (RELAY_HOST, 443)
         .to_socket_addrs()
         .context("relais WalletConnect injoignable (DNS)")?
         .next()
         .ok_or_else(|| anyhow!("relais WalletConnect injoignable (DNS)"))?;
-    let tcp = TcpStream::connect_timeout(&address, Duration::from_secs(10)).context("relais WalletConnect injoignable")?;
+    let tcp = TcpStream::connect_timeout(&address, Duration::from_secs(10))
+        .context("relais WalletConnect injoignable")?;
     tcp.set_read_timeout(Some(Duration::from_secs(15)))?;
     let (mut socket, _) = tungstenite::client_tls(url, tcp).map_err(|e| match e {
         tungstenite::HandshakeError::Failure(tungstenite::Error::Http(response)) => {
@@ -57,7 +65,9 @@ fn connect(project_id: &str, client_seed: &[u8; 32]) -> Result<Socket> {
     })?;
     // Short read: the same thread also has to send the queued actions.
     match socket.get_mut() {
-        MaybeTlsStream::NativeTls(tls) => tls.get_ref().set_read_timeout(Some(Duration::from_millis(200)))?,
+        MaybeTlsStream::NativeTls(tls) => tls
+            .get_ref()
+            .set_read_timeout(Some(Duration::from_millis(200)))?,
         MaybeTlsStream::Plain(tcp) => tcp.set_read_timeout(Some(Duration::from_millis(200)))?,
         _ => {}
     }
@@ -73,10 +83,19 @@ struct Connection {
 }
 
 impl Connection {
-    fn request(&mut self, socket: &mut Socket, method: &str, params: Value, topic: &str) -> Result<()> {
+    fn request(
+        &mut self,
+        socket: &mut Socket,
+        method: &str,
+        params: Value,
+        topic: &str,
+    ) -> Result<()> {
         let id = payload_id();
-        self.in_flight.insert(id, (method.to_string(), topic.to_string()));
-        socket.send(Message::text(json!({"id": id, "jsonrpc": "2.0", "method": method, "params": params}).to_string()))?;
+        self.in_flight
+            .insert(id, (method.to_string(), topic.to_string()));
+        socket.send(Message::text(
+            json!({"id": id, "jsonrpc": "2.0", "method": method, "params": params}).to_string(),
+        ))?;
         Ok(())
     }
 
@@ -103,22 +122,35 @@ impl Connection {
 /// the engine), fetched pending messages, or the answer to one of our requests.
 /// Returns the network actions the engine produced, to send next.
 fn on_text(inner: &Inner, conn: &mut Connection, socket: &mut Socket, text: &str) -> Vec<Action> {
-    let Ok(payload) = serde_json::from_str::<Value>(text) else { return Vec::new() };
+    let Ok(payload) = serde_json::from_str::<Value>(text) else {
+        return Vec::new();
+    };
     let mut deliveries: Vec<(String, String)> = Vec::new();
     if payload.get("method").and_then(Value::as_str) == Some("irn_subscription") {
         if let Some(id) = payload.get("id") {
-            let _ = socket.send(Message::text(json!({"id": id, "jsonrpc": "2.0", "result": true}).to_string()));
+            let _ = socket.send(Message::text(
+                json!({"id": id, "jsonrpc": "2.0", "result": true}).to_string(),
+            ));
         }
         if let (Some(topic), Some(message)) = (
-            payload.pointer("/params/data/topic").and_then(Value::as_str),
-            payload.pointer("/params/data/message").and_then(Value::as_str),
+            payload
+                .pointer("/params/data/topic")
+                .and_then(Value::as_str),
+            payload
+                .pointer("/params/data/message")
+                .and_then(Value::as_str),
         ) {
             deliveries.push((topic.to_string(), message.to_string()));
         }
     } else if let Some(id) = payload.get("id").and_then(Value::as_u64) {
-        let Some((method, topic)) = conn.in_flight.remove(&id) else { return Vec::new() };
+        let Some((method, topic)) = conn.in_flight.remove(&id) else {
+            return Vec::new();
+        };
         if let Some(error) = payload.get("error") {
-            inner.emit(WcEvent::RelayStatus { connected: true, error: Some(format!("relais : échec de {method} ({error})")) });
+            inner.emit(WcEvent::RelayStatus {
+                connected: true,
+                error: Some(format!("relais : échec de {method} ({error})")),
+            });
             return Vec::new();
         }
         match method.as_str() {
@@ -128,8 +160,16 @@ fn on_text(inner: &Inner, conn: &mut Connection, socket: &mut Socket, text: &str
                 }
             }
             "irn_batchFetchMessages" => {
-                for m in payload.pointer("/result/messages").and_then(Value::as_array).cloned().unwrap_or_default() {
-                    if let (Some(t), Some(msg)) = (m.get("topic").and_then(Value::as_str), m.get("message").and_then(Value::as_str)) {
+                for m in payload
+                    .pointer("/result/messages")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default()
+                {
+                    if let (Some(t), Some(msg)) = (
+                        m.get("topic").and_then(Value::as_str),
+                        m.get("message").and_then(Value::as_str),
+                    ) {
                         deliveries.push((t.to_string(), msg.to_string()));
                     }
                 }
@@ -143,23 +183,6 @@ fn on_text(inner: &Inner, conn: &mut Connection, socket: &mut Socket, text: &str
         network.extend(inner.apply_local(actions));
     }
     network
-}
-
-#[cfg(test)]
-mod tests {
-    /// Real relay without a valid Project ID: the TLS connection and the WebSocket
-    /// handshake (JWT included) must get as far as the HTTP refusal of the Project ID,
-    /// and that refusal must be turned into a clear message.
-    /// `cargo test -- --ignored relay_refuses_a_missing_project_id --nocapture`
-    #[test]
-    #[ignore]
-    fn relay_refuses_a_missing_project_id() {
-        for project_id in ["", "00000000000000000000000000000000"] {
-            let err = super::connect(project_id, &[7u8; 32]).err().expect("refus attendu");
-            println!("Project ID « {project_id} » : {err:#}");
-            assert!(err.to_string().contains("HTTP"), "{err:#}");
-        }
-    }
 }
 
 pub(super) fn run(inner: Arc<Inner>, commands: Receiver<Action>) {
@@ -181,14 +204,20 @@ pub(super) fn run(inner: Arc<Inner>, commands: Receiver<Action>) {
         let seed = match inner.engine().client_seed() {
             Ok(seed) => seed,
             Err(e) => {
-                inner.emit(WcEvent::RelayStatus { connected: false, error: Some(format!("{e:#}")) });
+                inner.emit(WcEvent::RelayStatus {
+                    connected: false,
+                    error: Some(format!("{e:#}")),
+                });
                 return;
             }
         };
         let mut socket = match connect(super::PROJECT_ID, &seed) {
             Ok(socket) => socket,
             Err(e) => {
-                inner.emit(WcEvent::RelayStatus { connected: false, error: Some(format!("{e:#}")) });
+                inner.emit(WcEvent::RelayStatus {
+                    connected: false,
+                    error: Some(format!("{e:#}")),
+                });
                 std::thread::sleep(Duration::from_secs(backoff));
                 backoff = (backoff * 2).min(MAX_BACKOFF_SECS);
                 while let Ok(action) = commands.try_recv() {
@@ -201,12 +230,23 @@ pub(super) fn run(inner: Arc<Inner>, commands: Receiver<Action>) {
             }
         };
         backoff = 1;
-        inner.emit(WcEvent::RelayStatus { connected: true, error: None });
+        inner.emit(WcEvent::RelayStatus {
+            connected: true,
+            error: None,
+        });
 
         let mut conn = Connection::default();
         let (topics, pairings) = {
             let engine = inner.engine();
-            (engine.topics(), engine.state.pairings.iter().map(|p| p.topic.clone()).collect::<Vec<_>>())
+            (
+                engine.topics(),
+                engine
+                    .state
+                    .pairings
+                    .iter()
+                    .map(|p| p.topic.clone())
+                    .collect::<Vec<_>>(),
+            )
         };
         // Resubscribe to everything known (subscriptions do not survive the connection);
         // fetch the pending messages of pairings.
@@ -229,10 +269,16 @@ pub(super) fn run(inner: Arc<Inner>, commands: Receiver<Action>) {
                 break;
             }
             match socket.read() {
-                Ok(Message::Text(text)) => outgoing.extend(on_text(&inner, &mut conn, &mut socket, text.as_str())),
+                Ok(Message::Text(text)) => {
+                    outgoing.extend(on_text(&inner, &mut conn, &mut socket, text.as_str()))
+                }
                 Ok(Message::Close(_)) => broken = true,
                 Ok(_) => {}
-                Err(tungstenite::Error::Io(e)) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {}
+                Err(tungstenite::Error::Io(e))
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) => {}
                 Err(_) => broken = true,
             }
             if last_ping.elapsed() >= HEARTBEAT {
@@ -250,7 +296,29 @@ pub(super) fn run(inner: Arc<Inner>, commands: Receiver<Action>) {
                 break;
             }
         }
-        inner.emit(WcEvent::RelayStatus { connected: false, error: None });
+        inner.emit(WcEvent::RelayStatus {
+            connected: false,
+            error: None,
+        });
         queue.extend(outgoing);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// Real relay without a valid Project ID: the TLS connection and the WebSocket
+    /// handshake (JWT included) must get as far as the HTTP refusal of the Project ID,
+    /// and that refusal must be turned into a clear message.
+    /// `cargo test -- --ignored relay_refuses_a_missing_project_id --nocapture`
+    #[test]
+    #[ignore]
+    fn relay_refuses_a_missing_project_id() {
+        for project_id in ["", "00000000000000000000000000000000"] {
+            let Err(err) = super::connect(project_id, &[7u8; 32]) else {
+                panic!("refus attendu");
+            };
+            println!("Project ID « {project_id} » : {err:#}");
+            assert!(err.to_string().contains("HTTP"), "{err:#}");
+        }
     }
 }

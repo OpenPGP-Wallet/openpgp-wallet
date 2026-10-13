@@ -59,20 +59,36 @@ const PROBES: [Probe; 7] = [
 ];
 
 fn responds(probe: &Probe) -> bool {
-    let Ok(client) = reqwest::blocking::Client::builder().timeout(Duration::from_secs(6)).user_agent("openpgp-wallet").build() else { return false };
+    let Ok(client) = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(6))
+        .user_agent("openpgp-wallet")
+        .build()
+    else {
+        return false;
+    };
     let mut request = client.get(probe.url);
     if let Some(key) = probe.api_key {
         request = request.header("x-api-key", key);
     }
     match request.send() {
-        Ok(response) if response.status().is_success() => probe.expect.is_empty() || response.text().is_ok_and(|body| body.contains(probe.expect)),
+        Ok(response) if response.status().is_success() => {
+            probe.expect.is_empty()
+                || response
+                    .text()
+                    .is_ok_and(|body| body.contains(probe.expect))
+        }
         _ => false,
     }
 }
 
 /// Providers that are not answering right now.
 pub fn check() -> Vec<Issue> {
-    let unreachable = |protocol, provider| Issue { protocol, provider, severity: Severity::Error, kind: "unreachable" };
+    let unreachable = |protocol, provider| Issue {
+        protocol,
+        provider,
+        severity: Severity::Error,
+        kind: "unreachable",
+    };
     std::thread::scope(|scope| {
         let probes: Vec<_> = PROBES
             .iter()
@@ -83,8 +99,13 @@ pub fn check() -> Vec<Issue> {
             .collect();
         let thorchain = scope.spawn(|| THORCHAIN.halted_assets().is_ok());
         let maya = scope.spawn(|| MAYA.halted_assets().is_ok());
-        let mut issues: Vec<Issue> =
-            probes.into_iter().filter_map(|(probe, handle)| (!handle.join().unwrap_or(false)).then(|| unreachable(probe.protocol, probe.provider))).collect();
+        let mut issues: Vec<Issue> = probes
+            .into_iter()
+            .filter_map(|(probe, handle)| {
+                (!handle.join().unwrap_or(false))
+                    .then(|| unreachable(probe.protocol, probe.provider))
+            })
+            .collect();
         if !thorchain.join().unwrap_or(false) {
             issues.push(unreachable(Protocol::Thorchain, "THORChain"));
         }
@@ -108,13 +129,22 @@ mod tests {
         let issues = check();
         println!("{} ms : {issues:?}", start.elapsed().as_millis());
         assert!(issues.is_empty(), "{issues:?}");
-        assert!(start.elapsed() < Duration::from_secs(8), "vérifications en parallèle");
+        assert!(
+            start.elapsed() < Duration::from_secs(8),
+            "vérifications en parallèle"
+        );
     }
 
     /// An unreachable provider is flagged (an address that does not answer).
     #[test]
     fn an_unreachable_service_is_reported() {
-        let probe = Probe { protocol: Protocol::Cow, provider: "CoW", url: "http://127.0.0.1:9/", api_key: None, expect: "" };
+        let probe = Probe {
+            protocol: Protocol::Cow,
+            provider: "CoW",
+            url: "http://127.0.0.1:9/",
+            api_key: None,
+            expect: "",
+        };
         assert!(!responds(&probe));
     }
 }

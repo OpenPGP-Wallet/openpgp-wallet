@@ -67,7 +67,8 @@ fn next_page(page: u32, len: usize) -> Option<u32> {
 }
 
 fn number(s: &str, what: &str) -> Result<i128> {
-    s.parse::<i128>().map_err(|_| anyhow!("{what} invalide dans la réponse de Routescan"))
+    s.parse::<i128>()
+        .map_err(|_| anyhow!("{what} invalide dans la réponse de Routescan"))
 }
 
 /// Decoded function name ("swapExactETHForTokens(uint256 amountOutMin, ...)"): the
@@ -94,12 +95,23 @@ struct TxJson {
 
 /// Page `page` (starting at 1) of `address`'s history, newest to oldest, and the
 /// next page number.
-pub fn tx_history_page(chain_id: u64, address: &str, page: u32) -> Result<(Vec<EvmTx>, Option<u32>)> {
+pub fn tx_history_page(
+    chain_id: u64,
+    address: &str,
+    page: u32,
+) -> Result<(Vec<EvmTx>, Option<u32>)> {
     let page_text = page.to_string();
     let size = PAGE_SIZE.to_string();
     let body = get(
         chain_id,
-        &[("module", "account"), ("action", "txlist"), ("address", address), ("page", &page_text), ("offset", &size), ("sort", "desc")],
+        &[
+            ("module", "account"),
+            ("action", "txlist"),
+            ("address", address),
+            ("page", &page_text),
+            ("offset", &size),
+            ("sort", "desc"),
+        ],
     )?;
     let txs = parse_tx_list(&body, address)?;
     let next = next_page(page, txs.len());
@@ -122,7 +134,11 @@ fn parse_tx_list(body: &str, address: &str) -> Result<Vec<EvmTx>> {
                 (false, true, false) => -value,
                 (false, false, _) => value,
             };
-            let fee_wei = if sender { number(&tx.gas_used, "gas")? * number(&tx.gas_price, "prix du gas")? } else { 0 };
+            let fee_wei = if sender {
+                number(&tx.gas_used, "gas")? * number(&tx.gas_price, "prix du gas")?
+            } else {
+                0
+            };
             Ok(EvmTx {
                 hash: tx.hash,
                 timestamp_unix: tx.time_stamp.parse().ok(),
@@ -152,7 +168,12 @@ struct TokenTxJson {
 /// transfers, newest to oldest), grouped by transaction, and the next page number.
 /// Filtered by contract on the server side AND checked again here: a fake token
 /// with the same symbol never gets in.
-pub fn token_history_page(chain_id: u64, address: &str, contract: &str, page: u32) -> Result<(Vec<TokenMove>, Option<u32>)> {
+pub fn token_history_page(
+    chain_id: u64,
+    address: &str,
+    contract: &str,
+    page: u32,
+) -> Result<(Vec<TokenMove>, Option<u32>)> {
     let page_text = page.to_string();
     let size = PAGE_SIZE.to_string();
     let body = get(
@@ -174,24 +195,42 @@ pub fn token_history_page(chain_id: u64, address: &str, contract: &str, page: u3
 
 /// Transfers of a page grouped by transaction (one transaction can contain several,
 /// a swap for example), in page order.
-fn token_moves(transfers: Vec<TokenTxJson>, address: &str, contract: &str) -> Result<Vec<TokenMove>> {
+fn token_moves(
+    transfers: Vec<TokenTxJson>,
+    address: &str,
+    contract: &str,
+) -> Result<Vec<TokenMove>> {
     let address = address.to_lowercase();
     let mut moves: Vec<TokenMove> = Vec::new();
     for transfer in transfers {
-        anyhow::ensure!(transfer.contract_address.eq_ignore_ascii_case(contract), "Routescan a renvoyé un autre jeton que celui demandé");
+        anyhow::ensure!(
+            transfer.contract_address.eq_ignore_ascii_case(contract),
+            "Routescan a renvoyé un autre jeton que celui demandé"
+        );
         let value = number(&transfer.value, "montant de jeton")?;
-        let delta = match (transfer.from.to_lowercase() == address, transfer.to.to_lowercase() == address) {
+        let delta = match (
+            transfer.from.to_lowercase() == address,
+            transfer.to.to_lowercase() == address,
+        ) {
             (true, false) => -value,
             (false, true) => value,
             _ => 0,
         };
         let swap = is_swap_method(method_name(&transfer.function_name));
-        match moves.iter_mut().find(|m| m.hash.eq_ignore_ascii_case(&transfer.hash)) {
+        match moves
+            .iter_mut()
+            .find(|m| m.hash.eq_ignore_ascii_case(&transfer.hash))
+        {
             Some(existing) => {
                 existing.net += delta;
                 existing.swap |= swap;
             }
-            None => moves.push(TokenMove { timestamp_unix: transfer.time_stamp.parse().ok(), hash: transfer.hash, net: delta, swap }),
+            None => moves.push(TokenMove {
+                timestamp_unix: transfer.time_stamp.parse().ok(),
+                hash: transfer.hash,
+                net: delta,
+                swap,
+            }),
         }
     }
     Ok(moves)
@@ -218,20 +257,45 @@ mod tests {
             ME.to_uppercase().replacen("0X", "0x", 1)
         );
         let txs = parse_tx_list(&body, ME).unwrap();
-        let summary: Vec<_> = txs.iter().map(|t| (t.hash.as_str(), t.net_wei, t.fee_wei, t.failed, t.swap)).collect();
+        let summary: Vec<_> = txs
+            .iter()
+            .map(|t| (t.hash.as_str(), t.net_wei, t.fee_wei, t.failed, t.swap))
+            .collect();
         assert_eq!(
             summary,
-            vec![("0xa", 1000, 0, false, false), ("0xb", -400, 42_000, false, true), ("0xc", 0, 90_000, true, false), ("0xd", 0, 21_000, false, false)]
+            vec![
+                ("0xa", 1000, 0, false, false),
+                ("0xb", -400, 42_000, false, true),
+                ("0xc", 0, 90_000, true, false),
+                ("0xd", 0, 21_000, false, false)
+            ]
         );
         assert_eq!(txs[0].timestamp_unix, Some(1_738_731_709));
-        assert!(parse_tx_list(r#"{"status":"0","message":"No transactions found","result":[]}"#, ME).unwrap().is_empty());
-        let refused = parse_tx_list(r#"{"status":"0","message":"NOTOK","result":"Max rate limit reached"}"#, ME).err().unwrap();
+        assert!(parse_tx_list(
+            r#"{"status":"0","message":"No transactions found","result":[]}"#,
+            ME
+        )
+        .unwrap()
+        .is_empty());
+        let refused = parse_tx_list(
+            r#"{"status":"0","message":"NOTOK","result":"Max rate limit reached"}"#,
+            ME,
+        )
+        .err()
+        .unwrap();
         assert!(refused.to_string().contains("Max rate limit reached"));
     }
 
     const USDC: &str = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
 
-    fn transfer(hash: &str, from: &str, to: &str, value: &str, contract: &str, function: &str) -> String {
+    fn transfer(
+        hash: &str,
+        from: &str,
+        to: &str,
+        value: &str,
+        contract: &str,
+        function: &str,
+    ) -> String {
         format!(
             r#"{{"blockNumber":"26079962","timeStamp":"1790646827","hash":"{hash}","from":"{from}","contractAddress":"{contract}","to":"{to}",
                "value":"{value}","tokenName":"USD Coin","tokenSymbol":"USDC","tokenDecimal":"6","functionName":"{function}"}}"#
@@ -246,19 +310,77 @@ mod tests {
         let other = "0xa916b82ff122591cc88aac0d64ce30a8e3e16081";
         let body = format!(
             r#"{{"status":"1","message":"OK","result":[{},{},{},{},{}]}}"#,
-            transfer("0x01", other, ME, "420000", USDC, "transfer(address to, uint256 value)"),
-            transfer("0x02", &ME.to_uppercase().replacen("0X", "0x", 1), other, "1000000", USDC, ""),
-            transfer("0x03", ME, other, "500", USDC, "swapExactTokensForTokens(uint256 amountIn)"),
-            transfer("0x03", other, ME, "200", USDC, "swapExactTokensForTokens(uint256 amountIn)"),
+            transfer(
+                "0x01",
+                other,
+                ME,
+                "420000",
+                USDC,
+                "transfer(address to, uint256 value)"
+            ),
+            transfer(
+                "0x02",
+                &ME.to_uppercase().replacen("0X", "0x", 1),
+                other,
+                "1000000",
+                USDC,
+                ""
+            ),
+            transfer(
+                "0x03",
+                ME,
+                other,
+                "500",
+                USDC,
+                "swapExactTokensForTokens(uint256 amountIn)"
+            ),
+            transfer(
+                "0x03",
+                other,
+                ME,
+                "200",
+                USDC,
+                "swapExactTokensForTokens(uint256 amountIn)"
+            ),
             transfer("0x04", ME, ME, "7", USDC, ""),
         );
-        let moves = token_moves(result_list(&body).unwrap(), ME, &USDC.to_uppercase().replacen("0X", "0x", 1)).unwrap();
-        let summary: Vec<_> = moves.iter().map(|m| (m.hash.as_str(), m.net, m.swap)).collect();
-        assert_eq!(summary, vec![("0x01", 420_000, false), ("0x02", -1_000_000, false), ("0x03", -300, true), ("0x04", 0, false)]);
+        let moves = token_moves(
+            result_list(&body).unwrap(),
+            ME,
+            &USDC.to_uppercase().replacen("0X", "0x", 1),
+        )
+        .unwrap();
+        let summary: Vec<_> = moves
+            .iter()
+            .map(|m| (m.hash.as_str(), m.net, m.swap))
+            .collect();
+        assert_eq!(
+            summary,
+            vec![
+                ("0x01", 420_000, false),
+                ("0x02", -1_000_000, false),
+                ("0x03", -300, true),
+                ("0x04", 0, false)
+            ]
+        );
         assert_eq!(moves[0].timestamp_unix, Some(1_790_646_827));
-        assert!(result_list::<TokenTxJson>(r#"{"message":"No token transfers found","result":[],"status":"0"}"#).unwrap().is_empty());
+        assert!(result_list::<TokenTxJson>(
+            r#"{"message":"No token transfers found","result":[],"status":"0"}"#
+        )
+        .unwrap()
+        .is_empty());
 
-        let fake = format!(r#"{{"status":"1","message":"OK","result":[{}]}}"#, transfer("0x05", other, ME, "1", "0x0000000000000000000000000000000000000bad", ""));
+        let fake = format!(
+            r#"{{"status":"1","message":"OK","result":[{}]}}"#,
+            transfer(
+                "0x05",
+                other,
+                ME,
+                "1",
+                "0x0000000000000000000000000000000000000bad",
+                ""
+            )
+        );
         assert!(token_moves(result_list(&fake).unwrap(), ME, USDC).is_err());
     }
 
@@ -277,22 +399,41 @@ mod tests {
     #[test]
     #[ignore]
     fn real_routescan() {
-        let (txs, next) = tx_history_page(43114, "0x8894E0a0c962CB723c1976a4421c95949bE2D4E3", 1).unwrap();
+        let (txs, next) =
+            tx_history_page(43114, "0x8894E0a0c962CB723c1976a4421c95949bE2D4E3", 1).unwrap();
         println!("Avalanche : {} transactions, suivante {next:?}", txs.len());
         for tx in txs.iter().take(3) {
-            println!("{} {:?} net {} frais {}", &tx.hash[..12], tx.timestamp_unix, tx.net_wei, tx.fee_wei);
+            println!(
+                "{} {:?} net {} frais {}",
+                &tx.hash[..12],
+                tx.timestamp_unix,
+                tx.net_wei,
+                tx.fee_wei
+            );
         }
         assert!(!txs.is_empty());
-        assert!(txs.windows(2).all(|w| w[0].timestamp_unix >= w[1].timestamp_unix), "du plus récent au plus ancien");
+        assert!(
+            txs.windows(2)
+                .all(|w| w[0].timestamp_unix >= w[1].timestamp_unix),
+            "du plus récent au plus ancien"
+        );
 
         let vitalik = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
         let (first, next) = token_history_page(1, vitalik, USDC, 1).unwrap();
-        println!("USDC vitalik.eth : {} mouvements, suivante {next:?}", first.len());
+        println!(
+            "USDC vitalik.eth : {} mouvements, suivante {next:?}",
+            first.len()
+        );
         for m in first.iter().take(3) {
             println!("{} {:?} {}", &m.hash[..12], m.timestamp_unix, m.net);
         }
         assert!(!first.is_empty());
         let (second, _) = token_history_page(1, vitalik, USDC, next.unwrap()).unwrap();
-        assert!(second.iter().all(|m| !first.iter().any(|f| f.hash == m.hash)), "pages sans doublon");
+        assert!(
+            second
+                .iter()
+                .all(|m| !first.iter().any(|f| f.hash == m.hash)),
+            "pages sans doublon"
+        );
     }
 }

@@ -38,25 +38,38 @@ struct Reader<'a> {
 
 impl<'a> Reader<'a> {
     fn take(&mut self, n: usize) -> Result<&'a [u8]> {
-        let end = self.pos.checked_add(n).filter(|end| *end <= self.data.len()).ok_or_else(|| anyhow!("PSBT tronquée"))?;
+        let end = self
+            .pos
+            .checked_add(n)
+            .filter(|end| *end <= self.data.len())
+            .ok_or_else(|| anyhow!("PSBT tronquée"))?;
         let bytes = &self.data[self.pos..end];
         self.pos = end;
         Ok(bytes)
     }
 
     fn u32_le(&mut self) -> Result<u32> {
-        Ok(u32::from_le_bytes(self.take(4)?.try_into().expect("4 octets")))
+        Ok(u32::from_le_bytes(
+            self.take(4)?.try_into().expect("4 octets"),
+        ))
     }
 
     fn u64_le(&mut self) -> Result<u64> {
-        Ok(u64::from_le_bytes(self.take(8)?.try_into().expect("8 octets")))
+        Ok(u64::from_le_bytes(
+            self.take(8)?.try_into().expect("8 octets"),
+        ))
     }
 
     /// Bitcoin compact-size integer, in its minimal form only.
     fn varint(&mut self) -> Result<usize> {
         let first = self.take(1)?[0];
         let (value, min) = match first {
-            0xfd => (u64::from(u16::from_le_bytes(self.take(2)?.try_into().expect("2 octets"))), 0xfd),
+            0xfd => (
+                u64::from(u16::from_le_bytes(
+                    self.take(2)?.try_into().expect("2 octets"),
+                )),
+                0xfd,
+            ),
             0xfe => (u64::from(self.u32_le()?), 0x1_0000),
             0xff => (self.u64_le()?, 0x1_0000_0000),
             n => (u64::from(n), 0),
@@ -81,7 +94,10 @@ fn read_map<'a>(reader: &mut Reader<'a>) -> Result<Vec<(&'a [u8], &'a [u8])>> {
         let key = reader.take(key_len)?;
         let value_len = reader.varint()?;
         let value = reader.take(value_len)?;
-        ensure!(!entries.iter().any(|(k, _)| *k == key), "PSBT : clé en double");
+        ensure!(
+            !entries.iter().any(|(k, _)| *k == key),
+            "PSBT : clé en double"
+        );
         entries.push((key, value));
     }
 }
@@ -89,23 +105,39 @@ fn read_map<'a>(reader: &mut Reader<'a>) -> Result<Vec<(&'a [u8], &'a [u8])>> {
 /// Unsigned transaction (no-witness format, empty signature scripts, as BIP174
 /// requires).
 fn parse_unsigned_tx(bytes: &[u8]) -> Result<Psbt> {
-    let mut reader = Reader { data: bytes, pos: 0 };
+    let mut reader = Reader {
+        data: bytes,
+        pos: 0,
+    };
     let version = reader.u32_le()?;
     let input_count = reader.varint()?;
     // Zero inputs: that is the marker of a serialization with witnesses, not allowed
     // here.
-    ensure!((1..=MAX_INPUTS).contains(&input_count), "PSBT : nombre d'entrées invalide ({input_count})");
+    ensure!(
+        (1..=MAX_INPUTS).contains(&input_count),
+        "PSBT : nombre d'entrées invalide ({input_count})"
+    );
     let mut inputs = Vec::with_capacity(input_count);
     for _ in 0..input_count {
         let mut txid: [u8; 32] = reader.take(32)?.try_into().expect("32 octets");
         txid.reverse();
         let vout = reader.u32_le()?;
-        ensure!(reader.varint()? == 0, "PSBT : entrée déjà signée (script de signature non vide)");
+        ensure!(
+            reader.varint()? == 0,
+            "PSBT : entrée déjà signée (script de signature non vide)"
+        );
         let sequence = reader.u32_le()?;
-        inputs.push(PsbtInput { txid, vout, sequence });
+        inputs.push(PsbtInput {
+            txid,
+            vout,
+            sequence,
+        });
     }
     let output_count = reader.varint()?;
-    ensure!((1..=MAX_OUTPUTS).contains(&output_count), "PSBT : nombre de sorties invalide ({output_count})");
+    ensure!(
+        (1..=MAX_OUTPUTS).contains(&output_count),
+        "PSBT : nombre de sorties invalide ({output_count})"
+    );
     let mut outputs = Vec::with_capacity(output_count);
     for _ in 0..output_count {
         let value = reader.u64_le()?;
@@ -115,19 +147,35 @@ fn parse_unsigned_tx(bytes: &[u8]) -> Result<Psbt> {
     }
     let locktime = reader.u32_le()?;
     ensure!(reader.done(), "PSBT : octets en trop après la transaction");
-    Ok(Psbt { version, inputs, outputs, locktime })
+    Ok(Psbt {
+        version,
+        inputs,
+        outputs,
+        locktime,
+    })
 }
 
 /// Reads a version 0 PSBT: unsigned transaction (global key 0x00, unique), then one
 /// map per input and per output, with no trailing byte.
 pub fn parse(bytes: &[u8]) -> Result<Psbt> {
-    ensure!(bytes.starts_with(b"psbt\xff"), "ce n'est pas une PSBT (en-tête attendu « psbt\\xff »)");
-    let mut reader = Reader { data: bytes, pos: 5 };
+    ensure!(
+        bytes.starts_with(b"psbt\xff"),
+        "ce n'est pas une PSBT (en-tête attendu « psbt\\xff »)"
+    );
+    let mut reader = Reader {
+        data: bytes,
+        pos: 5,
+    };
     let mut psbt = None;
     for (key, value) in read_map(&mut reader)? {
         match key {
-            [0x00] => psbt = Some(parse_unsigned_tx(value).context("transaction de la PSBT illisible")?),
-            [0xfb] => ensure!(value == [0, 0, 0, 0], "PSBT d'une version non prise en charge"),
+            [0x00] => {
+                psbt = Some(parse_unsigned_tx(value).context("transaction de la PSBT illisible")?)
+            }
+            [0xfb] => ensure!(
+                value == [0, 0, 0, 0],
+                "PSBT d'une version non prise en charge"
+            ),
             _ => {}
         }
     }
@@ -155,7 +203,10 @@ mod tests {
         let psbt = parse(&hex::decode(LIFI_PSBT.trim()).unwrap()).unwrap();
         assert_eq!((psbt.version, psbt.locktime), (2, 0));
         assert_eq!(psbt.inputs.len(), 1);
-        assert_eq!(hex::encode(psbt.inputs[0].txid), "8b9ad00827c9db077bd4457238c4eb5a732fef9618ad4bb34ebc096af5de68c9");
+        assert_eq!(
+            hex::encode(psbt.inputs[0].txid),
+            "8b9ad00827c9db077bd4457238c4eb5a732fef9618ad4bb34ebc096af5de68c9"
+        );
         assert_eq!(psbt.inputs[0].sequence, 0xffff_fffd);
         let values: Vec<u64> = psbt.outputs.iter().map(|(v, _)| *v).collect();
         assert_eq!(values, [989_500, 0, 24_648_984_862, 2_500, 8_000]);

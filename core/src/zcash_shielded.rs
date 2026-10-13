@@ -25,9 +25,13 @@ use std::sync::Mutex;
 use zcash_client_backend::data_api::chain::{error as chain_error, BlockCache, BlockSource};
 use zcash_client_backend::data_api::scanning::ScanRange;
 use zcash_client_backend::data_api::wallet::ConfirmationsPolicy;
-use zcash_client_backend::data_api::{Account as _, AccountBirthday, AccountPurpose, WalletRead, WalletWrite, Zip32Derivation};
+use zcash_client_backend::data_api::{
+    Account as _, AccountBirthday, AccountPurpose, WalletRead, WalletWrite, Zip32Derivation,
+};
 use zcash_client_backend::proto::compact_formats::CompactBlock;
-use zcash_client_backend::proto::service::{compact_tx_streamer_client::CompactTxStreamerClient, BlockId};
+use zcash_client_backend::proto::service::{
+    compact_tx_streamer_client::CompactTxStreamerClient, BlockId,
+};
 use zcash_client_sqlite::{util::SystemClock, wallet::init::init_wallet_db, AccountUuid, WalletDb};
 use zcash_keys::keys::{UnifiedAddressRequest, UnifiedFullViewingKey, UnifiedSpendingKey};
 use zcash_protocol::consensus::{BlockHeight, MainNetwork};
@@ -45,8 +49,15 @@ const SYNC_BATCH: u32 = 1_000;
 type Db = WalletDb<rusqlite::Connection, MainNetwork, SystemClock, rand_core::OsRng>;
 
 fn open(data_dir: &Path) -> Result<Db> {
-    let mut db = WalletDb::for_path(data_dir.join(WALLET_FILE), MainNetwork, SystemClock, rand_core::OsRng).context("base Zcash protégée illisible")?;
-    init_wallet_db(&mut db, None).map_err(|e| anyhow!("base Zcash protégée : migration impossible ({e})"))?;
+    let mut db = WalletDb::for_path(
+        data_dir.join(WALLET_FILE),
+        MainNetwork,
+        SystemClock,
+        rand_core::OsRng,
+    )
+    .context("base Zcash protégée illisible")?;
+    init_wallet_db(&mut db, None)
+        .map_err(|e| anyhow!("base Zcash protégée : migration impossible ({e})"))?;
     Ok(db)
 }
 
@@ -67,18 +78,22 @@ pub(crate) fn forget_known() {
 }
 
 fn account_index(profile: u32) -> Result<zip32::AccountId> {
-    zip32::AccountId::try_from(profile).map_err(|_| anyhow!("profil hors des comptes Zcash possibles"))
+    zip32::AccountId::try_from(profile)
+        .map_err(|_| anyhow!("profil hors des comptes Zcash possibles"))
 }
 
 /// Viewing key of the profile's shielded account (computed locally from the seed).
 pub fn viewing_key(seed: &[u8], profile: u32) -> Result<UnifiedFullViewingKey> {
-    let usk = UnifiedSpendingKey::from_seed(&MainNetwork, seed, account_index(profile)?).map_err(|e| anyhow!("clé Zcash protégée : {e:?}"))?;
+    let usk = UnifiedSpendingKey::from_seed(&MainNetwork, seed, account_index(profile)?)
+        .map_err(|e| anyhow!("clé Zcash protégée : {e:?}"))?;
     Ok(usk.to_unified_full_viewing_key())
 }
 
 /// The profile's shielded address: a unified address with only an Orchard receiver.
 pub fn address(ufvk: &UnifiedFullViewingKey) -> Result<String> {
-    let (address, _) = ufvk.default_address(UnifiedAddressRequest::ORCHARD).map_err(|e| anyhow!("adresse Zcash protégée : {e:?}"))?;
+    let (address, _) = ufvk
+        .default_address(UnifiedAddressRequest::ORCHARD)
+        .map_err(|e| anyhow!("adresse Zcash protégée : {e:?}"))?;
     Ok(address.encode(&MainNetwork))
 }
 
@@ -89,7 +104,11 @@ fn find_account(db: &Db, profile: u32) -> Result<Option<AccountUuid>> {
         if let Some(account) = db.get_account(id)? {
             // Account imported from its viewing key (`AccountSource::Imported`) or derived:
             // same ZIP-32 derivation metadata.
-            if account.source().key_derivation().is_some_and(|d| d.account_index() == wanted) {
+            if account
+                .source()
+                .key_derivation()
+                .is_some_and(|d| d.account_index() == wanted)
+            {
                 return Ok(Some(id));
             }
         }
@@ -103,7 +122,9 @@ fn find_account(db: &Db, profile: u32) -> Result<Option<AccountUuid>> {
 /// longer than the transparent client's 30 s), servers tried in order. `future` is
 /// dropped as soon as a state wipe is requested (see `seed_state`): `None`. The
 /// database opened around it closes straight away.
-async fn unless_wiped<T>(future: impl std::future::Future<Output = Result<T>>) -> Result<Option<T>> {
+async fn unless_wiped<T>(
+    future: impl std::future::Future<Output = Result<T>>,
+) -> Result<Option<T>> {
     let wiped = async {
         while !crate::seed_state::cancelled() {
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -119,7 +140,9 @@ async fn client() -> Result<CompactTxStreamerClient<tonic::transport::Channel>> 
     let mut last = anyhow!("aucun serveur Zcash configuré");
     for server in zcash::SERVERS {
         let tls = tonic::transport::ClientTlsConfig::new().with_webpki_roots();
-        let endpoint = tonic::transport::Channel::from_static(server).tls_config(tls)?.connect_timeout(std::time::Duration::from_secs(10));
+        let endpoint = tonic::transport::Channel::from_static(server)
+            .tls_config(tls)?
+            .connect_timeout(std::time::Duration::from_secs(10));
         match endpoint.connect().await {
             Ok(channel) => return Ok(CompactTxStreamerClient::new(channel)),
             Err(e) => last = anyhow!("serveur Zcash {server} injoignable : {e}"),
@@ -129,13 +152,19 @@ async fn client() -> Result<CompactTxStreamerClient<tonic::transport::Channel>> 
 }
 
 fn runtime() -> Result<tokio::runtime::Runtime> {
-    tokio::runtime::Builder::new_current_thread().enable_all().build().context("démarrage du client Zcash impossible")
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("démarrage du client Zcash impossible")
 }
 
 /// Account birthday: the state of the commitment trees just before the first block
 /// to scan, shortly before the wallet was created when that is known (see
 /// `wallet_birthday`, ~75 s per block), otherwise `BIRTHDAY_HEIGHT`.
-async fn birthday(data_dir: &Path, client: &mut CompactTxStreamerClient<tonic::transport::Channel>) -> Result<AccountBirthday> {
+async fn birthday(
+    data_dir: &Path,
+    client: &mut CompactTxStreamerClient<tonic::transport::Channel>,
+) -> Result<AccountBirthday> {
     let tip = client
         .get_latest_block(zcash_client_backend::proto::service::ChainSpec {})
         .await
@@ -144,29 +173,47 @@ async fn birthday(data_dir: &Path, client: &mut CompactTxStreamerClient<tonic::t
         .height;
     let start = wallet_birthday::start_height(data_dir, tip, 75, u64::from(BIRTHDAY_HEIGHT));
     let state = client
-        .get_tree_state(BlockId { height: start - 1, hash: vec![] })
+        .get_tree_state(BlockId {
+            height: start - 1,
+            hash: vec![],
+        })
         .await
         .map_err(|e| anyhow!("état de la chaîne Zcash illisible : {}", e.message()))?
         .into_inner();
-    AccountBirthday::from_treestate(state, None).map_err(|_| anyhow!("état de la chaîne Zcash invalide"))
+    AccountBirthday::from_treestate(state, None)
+        .map_err(|_| anyhow!("état de la chaîne Zcash invalide"))
 }
 
 /// A profile's keys for `ensure_accounts`, derived from the seed: viewing key,
 /// public key of the t1 address, seed fingerprint.
-pub type ProfileKeys = (u32, UnifiedFullViewingKey, [u8; 33], zip32::fingerprint::SeedFingerprint);
+pub type ProfileKeys = (
+    u32,
+    UnifiedFullViewingKey,
+    [u8; 33],
+    zip32::fingerprint::SeedFingerprint,
+);
 
 pub fn profile_keys(seed: &[u8], profile: u32) -> Result<ProfileKeys> {
     let ufvk = viewing_key(seed, profile)?;
     let (t1_key, _) = derivation::derive_zec_key(seed, profile)?;
-    let pubkey: [u8; 33] = t1_key.verifying_key().to_encoded_point(true).as_bytes().try_into().context("clé publique Zcash invalide")?;
-    let seed_fp = zip32::fingerprint::SeedFingerprint::from_seed(seed).context("seed trop courte pour Zcash")?;
+    let pubkey: [u8; 33] = t1_key
+        .verifying_key()
+        .to_encoded_point(true)
+        .as_bytes()
+        .try_into()
+        .context("clé publique Zcash invalide")?;
+    let seed_fp = zip32::fingerprint::SeedFingerprint::from_seed(seed)
+        .context("seed trop courte pour Zcash")?;
     Ok((profile, ufvk, pubkey, seed_fp))
 }
 
 /// Creates (once) each profile's shielded account. Called after unlocking, without
 /// the seed (keys already derived).
 pub fn ensure_accounts(data_dir: &Path, profiles: &[ProfileKeys]) -> Result<()> {
-    let addresses = profiles.iter().map(|keys| Ok((address(&keys.1)?, keys.0))).collect::<Result<_>>()?;
+    let addresses = profiles
+        .iter()
+        .map(|keys| Ok((address(&keys.1)?, keys.0)))
+        .collect::<Result<_>>()?;
     *KNOWN.lock().unwrap_or_else(|p| p.into_inner()) = Some((data_dir.to_path_buf(), addresses));
     let mut db = open(data_dir)?;
     // "Rescan from the beginning": accounts deleted, then recreated below from the
@@ -174,7 +221,8 @@ pub fn ensure_accounts(data_dir: &Path, profiles: &[ProfileKeys]) -> Result<()> 
     let rescan = data_dir.join(RESCAN_FILE);
     if rescan.exists() {
         for id in db.get_account_ids()? {
-            db.delete_account(id).map_err(|e| anyhow!("réanalyse Zcash protégée : suppression impossible ({e})"))?;
+            db.delete_account(id)
+                .map_err(|e| anyhow!("réanalyse Zcash protégée : suppression impossible ({e})"))?;
         }
         std::fs::remove_file(&rescan).context("réanalyse Zcash protégée : demande illisible")?;
     }
@@ -187,17 +235,32 @@ pub fn ensure_accounts(data_dir: &Path, profiles: &[ProfileKeys]) -> Result<()> 
     if missing.is_empty() {
         return Ok(());
     }
-    let Some(birthday) = runtime()?.block_on(unless_wiped(async { birthday(data_dir, &mut client().await?).await }))? else { return Ok(()) };
+    let Some(birthday) = runtime()?.block_on(unless_wiped(async {
+        birthday(data_dir, &mut client().await?).await
+    }))?
+    else {
+        return Ok(());
+    };
     for (profile, ufvk, t1_pubkey, seed_fp) in missing {
-        let purpose = AccountPurpose::Spending { derivation: Some(Zip32Derivation::new(*seed_fp, account_index(*profile)?)) };
+        let purpose = AccountPurpose::Spending {
+            derivation: Some(Zip32Derivation::new(*seed_fp, account_index(*profile)?)),
+        };
         let account = db
-            .import_account_ufvk(&format!("Profil {profile}"), ufvk, &birthday, purpose, Some("openpgp-wallet"))
+            .import_account_ufvk(
+                &format!("Profil {profile}"),
+                ufvk,
+                &birthday,
+                purpose,
+                Some("openpgp-wallet"),
+            )
             .map_err(|e| anyhow!("compte Zcash protégé : création impossible ({e})"))?;
         // Main profile: its t1 address is already the first transparent address of account
         // 0; the others are imported.
         if *profile != 0 {
-            let pubkey = secp256k1::PublicKey::from_slice(t1_pubkey).context("clé publique Zcash invalide")?;
-            db.import_standalone_transparent_pubkey(account.id(), pubkey).map_err(|e| anyhow!("adresse t1 : import impossible ({e})"))?;
+            let pubkey = secp256k1::PublicKey::from_slice(t1_pubkey)
+                .context("clé publique Zcash invalide")?;
+            db.import_standalone_transparent_pubkey(account.id(), pubkey)
+                .map_err(|e| anyhow!("adresse t1 : import impossible ({e})"))?;
         }
     }
     Ok(())
@@ -211,12 +274,23 @@ pub fn forget_other_wallets(data_dir: &Path, seed: &[u8]) -> Result<()> {
     if !data_dir.join(WALLET_FILE).exists() {
         return Ok(());
     }
-    let fingerprint = zip32::fingerprint::SeedFingerprint::from_seed(seed).context("seed trop courte pour Zcash")?;
+    let fingerprint = zip32::fingerprint::SeedFingerprint::from_seed(seed)
+        .context("seed trop courte pour Zcash")?;
     let mut db = open(data_dir)?;
     for id in db.get_account_ids()? {
-        let Some(account) = db.get_account(id)? else { continue };
-        if !account.source().key_derivation().is_some_and(|d| d.seed_fingerprint() == &fingerprint) {
-            db.delete_account(id).map_err(|e| anyhow!("compte Zcash protégé d'un autre portefeuille : suppression impossible ({e})"))?;
+        let Some(account) = db.get_account(id)? else {
+            continue;
+        };
+        if !account
+            .source()
+            .key_derivation()
+            .is_some_and(|d| d.seed_fingerprint() == &fingerprint)
+        {
+            db.delete_account(id).map_err(|e| {
+                anyhow!(
+                    "compte Zcash protégé d'un autre portefeuille : suppression impossible ({e})"
+                )
+            })?;
         }
     }
     Ok(())
@@ -225,7 +299,8 @@ pub fn forget_other_wallets(data_dir: &Path, seed: &[u8]) -> Result<()> {
 /// Requests a full rescan (Settings): at the next sync, accounts are recreated from
 /// the fixed birthday.
 pub fn request_rescan(data_dir: &Path) -> Result<()> {
-    std::fs::write(data_dir.join(RESCAN_FILE), b"1").context("réanalyse Zcash protégée : demande impossible")
+    std::fs::write(data_dir.join(RESCAN_FILE), b"1")
+        .context("réanalyse Zcash protégée : demande impossible")
 }
 
 /// Syncs every shielded account up to the tip of the chain.
@@ -239,7 +314,9 @@ pub fn sync(data_dir: &Path) -> Result<()> {
         .block_on(unless_wiped(async {
             let mut client = client().await?;
             let cache = MemoryCache::default();
-            zcash_client_backend::sync::run(&mut client, &MainNetwork, &cache, &mut db, SYNC_BATCH).await.map_err(|e| anyhow!("synchronisation Zcash protégée : {e}"))
+            zcash_client_backend::sync::run(&mut client, &MainNetwork, &cache, &mut db, SYNC_BATCH)
+                .await
+                .map_err(|e| anyhow!("synchronisation Zcash protégée : {e}"))
         }))
         .map(|_| ())
 }
@@ -257,10 +334,18 @@ pub struct ShieldedBalance {
 }
 
 pub fn balance(data_dir: &Path, profile: u32) -> Result<ShieldedBalance> {
-    let Some(db) = open_existing(data_dir)? else { return Ok(ShieldedBalance::default()) };
-    let Some(account) = find_account(&db, profile)? else { return Ok(ShieldedBalance::default()) };
-    let Some(summary) = db.get_wallet_summary(ConfirmationsPolicy::default())? else { return Ok(ShieldedBalance::default()) };
-    let Some(balances) = summary.account_balances().get(&account) else { return Ok(ShieldedBalance::default()) };
+    let Some(db) = open_existing(data_dir)? else {
+        return Ok(ShieldedBalance::default());
+    };
+    let Some(account) = find_account(&db, profile)? else {
+        return Ok(ShieldedBalance::default());
+    };
+    let Some(summary) = db.get_wallet_summary(ConfirmationsPolicy::default())? else {
+        return Ok(ShieldedBalance::default());
+    };
+    let Some(balances) = summary.account_balances().get(&account) else {
+        return Ok(ShieldedBalance::default());
+    };
     // Since NU6.3 (block 3,428,143) the Orchard pool is sealed and every new shielded
     // note lands in Ironwood. Both pools are counted so that nothing the wallet holds
     // is ever left off the balance.
@@ -280,13 +365,20 @@ pub fn balance(data_dir: &Path, profile: u32) -> Result<ShieldedBalance> {
 /// Database folder and known shielded addresses (u1 address → profile), recorded by
 /// `ensure_accounts`: the portfolio chart reads balance and history by address
 /// (`balance_of_address`, `history_of_address`).
-static KNOWN: Mutex<Option<(std::path::PathBuf, std::collections::BTreeMap<String, u32>)>> = Mutex::new(None);
+static KNOWN: Mutex<Option<(std::path::PathBuf, std::collections::BTreeMap<String, u32>)>> =
+    Mutex::new(None);
 
 /// A shielded address from the app (mainnet u1…, Orchard receiver).
 pub fn parse_shielded_address(address: &str) -> Result<()> {
-    anyhow::ensure!(address.trim().starts_with("u1"), "adresse Zcash protégée invalide (u1… attendue)");
+    anyhow::ensure!(
+        address.trim().starts_with("u1"),
+        "adresse Zcash protégée invalide (u1… attendue)"
+    );
     let parsed = check_recipient(address)?;
-    anyhow::ensure!(parsed.can_receive_as(PoolType::ORCHARD), "adresse Zcash protégée invalide (u1… attendue)");
+    anyhow::ensure!(
+        parsed.can_receive_as(PoolType::ORCHARD),
+        "adresse Zcash protégée invalide (u1… attendue)"
+    );
     Ok(())
 }
 
@@ -295,12 +387,23 @@ pub fn parse_shielded_address(address: &str) -> Result<()> {
 /// received here and as sent on the transparent card; a send includes its fee. Read
 /// from the local database, no network calls.
 pub fn history(data_dir: &Path, profile: u32) -> Result<Vec<history::TxEntry>> {
-    let Some(db) = open_existing(data_dir)? else { return Ok(Vec::new()) };
-    let Some(account) = find_account(&db, profile)? else { return Ok(Vec::new()) };
-    let conn = rusqlite::Connection::open_with_flags(data_dir.join(WALLET_FILE), rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
-        .context("base Zcash protégée illisible")?;
+    let Some(db) = open_existing(data_dir)? else {
+        return Ok(Vec::new());
+    };
+    let Some(account) = find_account(&db, profile)? else {
+        return Ok(Vec::new());
+    };
+    let conn = rusqlite::Connection::open_with_flags(
+        data_dir.join(WALLET_FILE),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .context("base Zcash protégée illisible")?;
     let account_id: i64 = conn
-        .query_row("SELECT id FROM accounts WHERE uuid = ?1", [account.expose_uuid().as_bytes().to_vec()], |row| row.get(0))
+        .query_row(
+            "SELECT id FROM accounts WHERE uuid = ?1",
+            [account.expose_uuid().as_bytes().to_vec()],
+            |row| row.get(0),
+        )
         .context("compte Zcash protégé introuvable")?;
     shielded_history(&conn, account_id)
 }
@@ -308,7 +411,9 @@ pub fn history(data_dir: &Path, profile: u32) -> Result<Vec<history::TxEntry>> {
 /// Net shielded value per transaction, across the Orchard and Ironwood pools
 /// (Ironwood holds every note received since NU6.3).
 fn shielded_history(conn: &rusqlite::Connection, account_id: i64) -> Result<Vec<history::TxEntry>> {
-    let tip: Option<u32> = conn.query_row("SELECT MAX(height) FROM blocks", [], |row| row.get(0)).context("base Zcash protégée illisible")?;
+    let tip: Option<u32> = conn
+        .query_row("SELECT MAX(height) FROM blocks", [], |row| row.get(0))
+        .context("base Zcash protégée illisible")?;
     let mut statement = conn
         .prepare(
             "WITH deltas AS (
@@ -350,8 +455,11 @@ fn shielded_history(conn: &rusqlite::Connection, account_id: i64) -> Result<Vec<
     let mut entries = Vec::new();
     for row in rows {
         let (txid, mined, time, expiry, net) = row.context("base Zcash protégée illisible")?;
-        let txid: [u8; 32] = txid.try_into().map_err(|_| anyhow!("identifiant de transaction Zcash invalide"))?;
-        let expired = mined.is_none() && matches!((expiry, tip), (Some(e), Some(t)) if e > 0 && e <= t);
+        let txid: [u8; 32] = txid
+            .try_into()
+            .map_err(|_| anyhow!("identifiant de transaction Zcash invalide"))?;
+        let expired =
+            mined.is_none() && matches!((expiry, tip), (Some(e), Some(t)) if e > 0 && e <= t);
         entries.push(history::TxEntry {
             id: zcash_protocol::TxId::from_bytes(txid).to_string(),
             timestamp_unix: time,
@@ -374,8 +482,12 @@ fn shielded_history(conn: &rusqlite::Connection, account_id: i64) -> Result<Vec<
 
 fn known_profile(address: &str) -> Result<(std::path::PathBuf, u32)> {
     let known = KNOWN.lock().unwrap_or_else(|p| p.into_inner());
-    let (dir, addresses) = known.as_ref().ok_or_else(|| anyhow!("fonds protégés pas encore prêts (synchronisation en cours)"))?;
-    let profile = addresses.get(address.trim()).ok_or_else(|| anyhow!("adresse Zcash protégée inconnue de ce portefeuille"))?;
+    let (dir, addresses) = known
+        .as_ref()
+        .ok_or_else(|| anyhow!("fonds protégés pas encore prêts (synchronisation en cours)"))?;
+    let profile = addresses
+        .get(address.trim())
+        .ok_or_else(|| anyhow!("adresse Zcash protégée inconnue de ce portefeuille"))?;
     Ok((dir.clone(), *profile))
 }
 
@@ -399,11 +511,18 @@ pub fn history_of_address(address: &str) -> Result<Vec<history::TxEntry>> {
 // then THAT proposal is signed with the key derived from the seed (password) and
 // broadcast through lightwalletd.
 
-use zcash_client_backend::data_api::wallet::input_selection::{GreedyInputSelector, LockedInputPolicy, SpendPolicy};
-use zcash_client_backend::data_api::wallet::{create_proposed_transactions, propose_send_max_transfer, propose_shielding, propose_transfer, SpendingKeys};
-use zcash_client_backend::data_api::MaxSpendMode;
+use zcash_client_backend::data_api::wallet::input_selection::{
+    GreedyInputSelector, LockedInputPolicy, SpendPolicy,
+};
+use zcash_client_backend::data_api::wallet::{
+    create_proposed_transactions, propose_send_max_transfer, propose_shielding, propose_transfer,
+    SpendingKeys,
+};
 use zcash_client_backend::data_api::CoinbaseFilter;
-use zcash_client_backend::fees::{zip317::SingleOutputChangeStrategy, DustOutputPolicy, StandardFeeRule};
+use zcash_client_backend::data_api::MaxSpendMode;
+use zcash_client_backend::fees::{
+    zip317::SingleOutputChangeStrategy, DustOutputPolicy, StandardFeeRule,
+};
 use zcash_client_backend::proposal::Proposal;
 use zcash_client_backend::wallet::OvkPolicy;
 use zcash_client_backend::zip321::{Payment, TransactionRequest};
@@ -433,7 +552,12 @@ impl sapling_crypto::prover::SpendProver for NoSapling {
         None
     }
 
-    fn create_proof<R: rand_core::RngCore>(&self, _: sapling_crypto::circuit::Spend, _: &mut R) -> Self::Proof {}
+    fn create_proof<R: rand_core::RngCore>(
+        &self,
+        _: sapling_crypto::circuit::Spend,
+        _: &mut R,
+    ) -> Self::Proof {
+    }
 
     fn encode_proof(_: Self::Proof) -> sapling_crypto::bundle::GrothProofBytes {
         // Size of a Groth16 proof (48 + 96 + 48 bytes).
@@ -451,10 +575,20 @@ impl sapling_crypto::prover::OutputProver for NoSapling {
         _: sapling_crypto::value::NoteValue,
         _: sapling_crypto::value::ValueCommitTrapdoor,
     ) -> sapling_crypto::circuit::Output {
-        sapling_crypto::circuit::Output { value_commitment_opening: None, payment_address: None, commitment_randomness: None, esk: None }
+        sapling_crypto::circuit::Output {
+            value_commitment_opening: None,
+            payment_address: None,
+            commitment_randomness: None,
+            esk: None,
+        }
     }
 
-    fn create_proof<R: rand_core::RngCore>(&self, _: sapling_crypto::circuit::Output, _: &mut R) -> Self::Proof {}
+    fn create_proof<R: rand_core::RngCore>(
+        &self,
+        _: sapling_crypto::circuit::Output,
+        _: &mut R,
+    ) -> Self::Proof {
+    }
 
     fn encode_proof(_: Self::Proof) -> sapling_crypto::bundle::GrothProofBytes {
         // Size of a Groth16 proof (48 + 96 + 48 bytes).
@@ -477,33 +611,66 @@ pub struct SpendSummary {
 /// been sealed since NU6.3 and refuses new value. (The library would already
 /// redirect an Orchard fallback there; this states it outright.)
 fn change_strategy() -> SingleOutputChangeStrategy<StandardFeeRule, Db> {
-    SingleOutputChangeStrategy::new(StandardFeeRule::Zip317, None, ShieldedPool::Ironwood, DustOutputPolicy::default())
+    SingleOutputChangeStrategy::new(
+        StandardFeeRule::Zip317,
+        None,
+        ShieldedPool::Ironwood,
+        DustOutputPolicy::default(),
+    )
 }
 
 /// The profile's spending keys: unified key of the ZIP-32 account, and the key of
 /// the imported t1 address (profiles other than the main one).
 fn spending_keys(seed: &[u8], profile: u32) -> Result<SpendingKeys> {
-    let usk = UnifiedSpendingKey::from_seed(&MainNetwork, seed, account_index(profile)?).map_err(|e| anyhow!("clé Zcash protégée : {e:?}"))?;
+    let usk = UnifiedSpendingKey::from_seed(&MainNetwork, seed, account_index(profile)?)
+        .map_err(|e| anyhow!("clé Zcash protégée : {e:?}"))?;
     let mut standalone = std::collections::HashMap::new();
     if profile != 0 {
         let (key, hash160) = derivation::derive_zec_key(seed, profile)?;
-        let secret = secp256k1::SecretKey::from_slice(&key.to_bytes()).context("clé Zcash invalide")?;
-        standalone.insert(zcash_transparent::address::TransparentAddress::PublicKeyHash(hash160), vec![secret]);
+        let secret =
+            secp256k1::SecretKey::from_slice(&key.to_bytes()).context("clé Zcash invalide")?;
+        standalone.insert(
+            zcash_transparent::address::TransparentAddress::PublicKeyHash(hash160),
+            vec![secret],
+        );
     }
     Ok(SpendingKeys::new(usk, standalone))
 }
 
 /// Signs the proposal and broadcasts its transactions; returns the last identifier.
-fn create_and_broadcast<N: std::fmt::Display>(db: &mut Db, proposal: &Proposal<StandardFeeRule, N>, keys: &SpendingKeys) -> Result<String> {
+fn create_and_broadcast<N: std::fmt::Display>(
+    db: &mut Db,
+    proposal: &Proposal<StandardFeeRule, N>,
+    keys: &SpendingKeys,
+) -> Result<String> {
     // Input selection and change error types: specific to the proposal, never produced
     // while building.
-    let txids = create_proposed_transactions::<_, _, std::convert::Infallible, _, std::convert::Infallible, _>(db, &MainNetwork, &NoSapling, &NoSapling, keys, OvkPolicy::Sender, proposal, None)
-        .map_err(|e| anyhow!("transaction Zcash protégée : construction impossible ({e})"))?;
+    let txids = create_proposed_transactions::<
+        _,
+        _,
+        std::convert::Infallible,
+        _,
+        std::convert::Infallible,
+        _,
+    >(
+        db,
+        &MainNetwork,
+        &NoSapling,
+        &NoSapling,
+        keys,
+        OvkPolicy::Sender,
+        proposal,
+        None,
+    )
+    .map_err(|e| anyhow!("transaction Zcash protégée : construction impossible ({e})"))?;
     let mut last = String::new();
     for txid in txids {
-        let tx = db.get_transaction(txid)?.context("transaction Zcash protégée introuvable après sa construction")?;
+        let tx = db
+            .get_transaction(txid)?
+            .context("transaction Zcash protégée introuvable après sa construction")?;
         let mut raw = Vec::new();
-        tx.write(&mut raw).context("sérialisation de la transaction Zcash impossible")?;
+        tx.write(&mut raw)
+            .context("sérialisation de la transaction Zcash impossible")?;
         last = zcash::broadcast(&raw, &txid.to_string())?;
     }
     Ok(last)
@@ -515,17 +682,28 @@ fn create_and_broadcast<N: std::fmt::Display>(db: &mut Db, proposal: &Proposal<S
 fn insufficient(message: &str) -> Option<anyhow::Error> {
     let number_after = |marker: &str| -> Option<u64> {
         let rest = &message[message.find(marker)? + marker.len()..];
-        rest.split(|c: char| !c.is_ascii_digit()).next()?.parse().ok()
+        rest.split(|c: char| !c.is_ascii_digit())
+            .next()?
+            .parse()
+            .ok()
     };
     let (have, need) = match (number_after("have "), number_after("need ")) {
         (Some(have), Some(need)) => (have, need),
         _ => (number_after("but only ")?, number_after("required ")?),
     };
-    Some(anyhow!("ZEC insuffisants : {} disponibles, {} nécessaires (frais compris)", zcash::format_zec(have), zcash::format_zec(need)))
+    Some(anyhow!(
+        "ZEC insuffisants : {} disponibles, {} nécessaires (frais compris)",
+        zcash::format_zec(have),
+        zcash::format_zec(need)
+    ))
 }
 
 fn proposal_fee<N>(proposal: &Proposal<StandardFeeRule, N>) -> u64 {
-    proposal.steps().iter().map(|step| u64::from(step.balance().fee_required())).sum()
+    proposal
+        .steps()
+        .iter()
+        .map(|step| u64::from(step.balance().fee_required()))
+        .sum()
 }
 
 /// Shields the ZEC on the profile's t1 address `t1` (to its shielded address):
@@ -539,9 +717,12 @@ pub fn shield(
     seed: impl FnOnce() -> Result<zeroize::Zeroizing<Vec<u8>>>,
 ) -> Result<Option<String>> {
     let mut db = open(data_dir)?;
-    let account = find_account(&db, profile)?.context("fonds protégés pas encore prêts (synchronisation en cours)")?;
+    let account = find_account(&db, profile)?
+        .context("fonds protégés pas encore prêts (synchronisation en cours)")?;
     let from = match zcash::parse_recipient(t1)? {
-        zcash::Recipient::P2pkh(hash) => zcash_transparent::address::TransparentAddress::PublicKeyHash(hash),
+        zcash::Recipient::P2pkh(hash) => {
+            zcash_transparent::address::TransparentAddress::PublicKeyHash(hash)
+        }
         zcash::Recipient::P2sh(_) => anyhow::bail!("adresse t1 du profil attendue"),
     };
     let proposal = propose_shielding::<_, _, _, _, std::convert::Infallible>(
@@ -556,11 +737,26 @@ pub fn shield(
         CoinbaseFilter::AllTransparentOutputs,
         None,
     )
-    .map_err(|e| insufficient(&e.to_string()).unwrap_or_else(|| anyhow!("rien à protéger pour l'instant ({e})")))?;
+    .map_err(|e| {
+        insufficient(&e.to_string())
+            .unwrap_or_else(|| anyhow!("rien à protéger pour l'instant ({e})"))
+    })?;
     let fee = proposal_fee(&proposal);
-    let inputs: u64 = proposal.steps().iter().flat_map(|s| s.transparent_inputs()).map(|i| u64::from(i.txout().value())).sum();
-    let ufvk = db.get_account(account)?.and_then(|a| a.ufvk().cloned()).context("compte Zcash protégé sans clé de visualisation")?;
-    let summary = SpendSummary { amount: inputs.saturating_sub(fee), fee, recipient: address(&ufvk)? };
+    let inputs: u64 = proposal
+        .steps()
+        .iter()
+        .flat_map(|s| s.transparent_inputs())
+        .map(|i| u64::from(i.txout().value()))
+        .sum();
+    let ufvk = db
+        .get_account(account)?
+        .and_then(|a| a.ufvk().cloned())
+        .context("compte Zcash protégé sans clé de visualisation")?;
+    let summary = SpendSummary {
+        amount: inputs.saturating_sub(fee),
+        fee,
+        recipient: address(&ufvk)?,
+    };
     if !confirm(&summary) {
         return Ok(None);
     }
@@ -571,9 +767,15 @@ pub fn shield(
 /// Can the recipient receive without Sapling (transparent, or a unified address
 /// with an Orchard receiver)?
 pub fn check_recipient(address: &str) -> Result<zcash_address::ZcashAddress> {
-    let parsed = zcash_address::ZcashAddress::try_from_encoded(address.trim()).map_err(|_| anyhow!("adresse Zcash invalide"))?;
-    anyhow::ensure!(parsed.can_receive_as(PoolType::ORCHARD) || parsed.can_receive_as(PoolType::TRANSPARENT), "adresse Zcash Sapling seule (zs…) pas prise en charge — demandez une adresse u1… ou t1…");
-    let mainnet = ["u1", "t1", "t3", "tex1"].iter().any(|prefix| address.trim().starts_with(prefix));
+    let parsed = zcash_address::ZcashAddress::try_from_encoded(address.trim())
+        .map_err(|_| anyhow!("adresse Zcash invalide"))?;
+    anyhow::ensure!(
+        parsed.can_receive_as(PoolType::ORCHARD) || parsed.can_receive_as(PoolType::TRANSPARENT),
+        "adresse Zcash Sapling seule (zs…) pas prise en charge — demandez une adresse u1… ou t1…"
+    );
+    let mainnet = ["u1", "t1", "t3", "tex1"]
+        .iter()
+        .any(|prefix| address.trim().starts_with(prefix));
     anyhow::ensure!(mainnet, "adresse Zcash d'un autre réseau (test) — refusée");
     Ok(parsed)
 }
@@ -590,9 +792,11 @@ pub fn send(
 ) -> Result<Option<String>> {
     let recipient = check_recipient(to)?;
     let mut db = open(data_dir)?;
-    let account = find_account(&db, profile)?.context("fonds protégés pas encore prêts (synchronisation en cours)")?;
+    let account = find_account(&db, profile)?
+        .context("fonds protégés pas encore prêts (synchronisation en cours)")?;
     let value = Zatoshis::from_u64(amount).map_err(|_| anyhow!("montant hors limites"))?;
-    let request = TransactionRequest::new(vec![Payment::without_memo(recipient, value)]).map_err(|e| anyhow!("demande de paiement invalide ({e:?})"))?;
+    let request = TransactionRequest::new(vec![Payment::without_memo(recipient, value)])
+        .map_err(|e| anyhow!("demande de paiement invalide ({e:?})"))?;
     let proposal = propose_transfer::<_, _, _, _, std::convert::Infallible>(
         &mut db,
         &MainNetwork,
@@ -605,8 +809,15 @@ pub fn send(
         None,
         None,
     )
-    .map_err(|e| insufficient(&e.to_string()).unwrap_or_else(|| anyhow!("envoi Zcash protégé impossible ({e})")))?;
-    let summary = SpendSummary { amount, fee: proposal_fee(&proposal), recipient: to.trim().to_string() };
+    .map_err(|e| {
+        insufficient(&e.to_string())
+            .unwrap_or_else(|| anyhow!("envoi Zcash protégé impossible ({e})"))
+    })?;
+    let summary = SpendSummary {
+        amount,
+        fee: proposal_fee(&proposal),
+        recipient: to.trim().to_string(),
+    };
     if !confirm(&summary) {
         return Ok(None);
     }
@@ -616,7 +827,14 @@ pub fn send(
 
 /// Proposal to send ALL spendable shielded funds (fee deducted through the
 /// library's input selection, the only part that knows it) and the amount it sends.
-fn max_proposal(db: &mut Db, account: AccountUuid, recipient: zcash_address::ZcashAddress) -> Result<(Proposal<StandardFeeRule, zcash_client_sqlite::ReceivedNoteId>, u64)> {
+fn max_proposal(
+    db: &mut Db,
+    account: AccountUuid,
+    recipient: zcash_address::ZcashAddress,
+) -> Result<(
+    Proposal<StandardFeeRule, zcash_client_sqlite::ReceivedNoteId>,
+    u64,
+)> {
     let proposal = propose_send_max_transfer::<_, _, _, std::convert::Infallible>(
         db,
         &MainNetwork,
@@ -632,7 +850,10 @@ fn max_proposal(db: &mut Db, account: AccountUuid, recipient: zcash_address::Zca
         &LockedInputPolicy::Exclude,
         None,
     )
-    .map_err(|e| insufficient(&e.to_string()).unwrap_or_else(|| anyhow!("envoi Zcash protégé impossible ({e})")))?;
+    .map_err(|e| {
+        insufficient(&e.to_string())
+            .unwrap_or_else(|| anyhow!("envoi Zcash protégé impossible ({e})"))
+    })?;
     let amount = proposal
         .steps()
         .first()
@@ -650,8 +871,10 @@ fn max_proposal(db: &mut Db, account: AccountUuid, recipient: zcash_address::Zca
 /// to its own address for an estimate: same shielded fees).
 pub fn max_amount(data_dir: &Path, profile: u32, to: &str) -> Result<u64> {
     let recipient = check_recipient(to)?;
-    let mut db = open_existing(data_dir)?.context("fonds protégés pas encore prêts (synchronisation en cours)")?;
-    let account = find_account(&db, profile)?.context("fonds protégés pas encore prêts (synchronisation en cours)")?;
+    let mut db = open_existing(data_dir)?
+        .context("fonds protégés pas encore prêts (synchronisation en cours)")?;
+    let account = find_account(&db, profile)?
+        .context("fonds protégés pas encore prêts (synchronisation en cours)")?;
     Ok(max_proposal(&mut db, account, recipient)?.1)
 }
 
@@ -666,9 +889,14 @@ pub fn send_max(
 ) -> Result<Option<String>> {
     let recipient = check_recipient(to)?;
     let mut db = open(data_dir)?;
-    let account = find_account(&db, profile)?.context("fonds protégés pas encore prêts (synchronisation en cours)")?;
+    let account = find_account(&db, profile)?
+        .context("fonds protégés pas encore prêts (synchronisation en cours)")?;
     let (proposal, amount) = max_proposal(&mut db, account, recipient)?;
-    let summary = SpendSummary { amount, fee: proposal_fee(&proposal), recipient: to.trim().to_string() };
+    let summary = SpendSummary {
+        amount,
+        fee: proposal_fee(&proposal),
+        recipient: to.trim().to_string(),
+    };
     if !confirm(&summary) {
         return Ok(None);
     }
@@ -705,13 +933,25 @@ fn poisoned() -> CacheError {
 impl BlockSource for MemoryCache {
     type Error = CacheError;
 
-    fn with_blocks<F, WalletErrT>(&self, from_height: Option<BlockHeight>, limit: Option<usize>, mut with_block: F) -> Result<(), chain_error::Error<WalletErrT, Self::Error>>
+    fn with_blocks<F, WalletErrT>(
+        &self,
+        from_height: Option<BlockHeight>,
+        limit: Option<usize>,
+        mut with_block: F,
+    ) -> Result<(), chain_error::Error<WalletErrT, Self::Error>>
     where
         F: FnMut(CompactBlock) -> Result<(), chain_error::Error<WalletErrT, Self::Error>>,
     {
         let mut blocks: Vec<CompactBlock> = {
-            let cached = self.blocks.lock().map_err(|_| chain_error::Error::BlockSource(poisoned()))?;
-            cached.iter().filter(|b| from_height.is_none_or(|h| height_of(b) >= h)).cloned().collect()
+            let cached = self
+                .blocks
+                .lock()
+                .map_err(|_| chain_error::Error::BlockSource(poisoned()))?;
+            cached
+                .iter()
+                .filter(|b| from_height.is_none_or(|h| height_of(b) >= h))
+                .cloned()
+                .collect()
         };
         blocks.sort_by_key(|b| b.height);
         for block in blocks.into_iter().take(limit.unwrap_or(usize::MAX)) {
@@ -723,25 +963,42 @@ impl BlockSource for MemoryCache {
 
 #[async_trait]
 impl BlockCache for MemoryCache {
-    fn get_tip_height(&self, range: Option<&ScanRange>) -> Result<Option<BlockHeight>, Self::Error> {
+    fn get_tip_height(
+        &self,
+        range: Option<&ScanRange>,
+    ) -> Result<Option<BlockHeight>, Self::Error> {
         let cached = self.blocks.lock().map_err(|_| poisoned())?;
-        Ok(cached.iter().map(height_of).filter(|h| range.is_none_or(|r| r.block_range().contains(h))).max())
+        Ok(cached
+            .iter()
+            .map(height_of)
+            .filter(|h| range.is_none_or(|r| r.block_range().contains(h)))
+            .max())
     }
 
     async fn read(&self, range: &ScanRange) -> Result<Vec<CompactBlock>, Self::Error> {
         let cached = self.blocks.lock().map_err(|_| poisoned())?;
-        let mut blocks: Vec<CompactBlock> = cached.iter().filter(|b| range.block_range().contains(&height_of(b))).cloned().collect();
+        let mut blocks: Vec<CompactBlock> = cached
+            .iter()
+            .filter(|b| range.block_range().contains(&height_of(b)))
+            .cloned()
+            .collect();
         blocks.sort_by_key(|b| b.height);
         Ok(blocks)
     }
 
     async fn insert(&self, mut compact_blocks: Vec<CompactBlock>) -> Result<(), Self::Error> {
-        self.blocks.lock().map_err(|_| poisoned())?.append(&mut compact_blocks);
+        self.blocks
+            .lock()
+            .map_err(|_| poisoned())?
+            .append(&mut compact_blocks);
         Ok(())
     }
 
     async fn delete(&self, range: ScanRange) -> Result<(), Self::Error> {
-        self.blocks.lock().map_err(|_| poisoned())?.retain(|b| !range.block_range().contains(&height_of(b)));
+        self.blocks
+            .lock()
+            .map_err(|_| poisoned())?
+            .retain(|b| !range.block_range().contains(&height_of(b)));
         Ok(())
     }
 }
@@ -763,7 +1020,10 @@ mod tests {
         assert_eq!(balance(&dir, 0).unwrap(), ShieldedBalance::default());
         assert!(history(&dir, 0).unwrap().is_empty());
         assert!(max_amount(&dir, 0, &address(&viewing_key(&SEED, 0).unwrap()).unwrap()).is_err());
-        assert!(!dir.join(WALLET_FILE).exists(), "base recréée par une lecture");
+        assert!(
+            !dir.join(WALLET_FILE).exists(),
+            "base recréée par une lecture"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -777,7 +1037,10 @@ mod tests {
         drop(open(&dir).unwrap());
         let conn = rusqlite::Connection::open(dir.join(WALLET_FILE)).unwrap();
         assert!(shielded_history(&conn, 1).unwrap().is_empty());
-        assert!(history(&dir, 0).unwrap().is_empty(), "profil sans compte : historique vide");
+        assert!(
+            history(&dir, 0).unwrap().is_empty(),
+            "profil sans compte : historique vide"
+        );
         drop(conn);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -788,7 +1051,8 @@ mod tests {
     /// block rows are needed for the query).
     #[test]
     fn history_counts_ironwood_notes() {
-        let dir = std::env::temp_dir().join(format!("zec-shielded-ironwood-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("zec-shielded-ironwood-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         drop(open(&dir).unwrap());
@@ -812,8 +1076,13 @@ mod tests {
         assert_eq!(entries[0].net_amount_minor, Some(-60_000));
         assert_eq!(entries[1].kind, history::TxKind::Received);
         assert_eq!(entries[1].net_amount_minor, Some(150_000));
-        assert!(entries.iter().all(|e| matches!(e.status, history::TxStatus::Confirmed)));
-        assert!(shielded_history(&conn, 2).unwrap().is_empty(), "another account sees nothing");
+        assert!(entries
+            .iter()
+            .all(|e| matches!(e.status, history::TxStatus::Confirmed)));
+        assert!(
+            shielded_history(&conn, 2).unwrap().is_empty(),
+            "another account sees nothing"
+        );
         drop(conn);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -827,19 +1096,34 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("zec-shielded-forget-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let birthday = AccountBirthday::from_parts(ChainState::empty(BlockHeight::from_u32(BIRTHDAY_HEIGHT - 1), zcash_primitives::block::BlockHash([0; 32])), None);
+        let birthday = AccountBirthday::from_parts(
+            ChainState::empty(
+                BlockHeight::from_u32(BIRTHDAY_HEIGHT - 1),
+                zcash_primitives::block::BlockHash([0; 32]),
+            ),
+            None,
+        );
         let import = |seed: &[u8]| {
             let mut db = open(&dir).unwrap();
             let (profile, ufvk, _, fp) = profile_keys(seed, 0).unwrap();
-            let purpose = AccountPurpose::Spending { derivation: Some(Zip32Derivation::new(fp, account_index(profile).unwrap())) };
-            db.import_account_ufvk("test", &ufvk, &birthday, purpose, None).unwrap();
+            let purpose = AccountPurpose::Spending {
+                derivation: Some(Zip32Derivation::new(fp, account_index(profile).unwrap())),
+            };
+            db.import_account_ufvk("test", &ufvk, &birthday, purpose, None)
+                .unwrap();
         };
         import(&SEED);
         forget_other_wallets(&dir, &SEED).unwrap();
-        assert!(find_account(&open(&dir).unwrap(), 0).unwrap().is_some(), "compte du portefeuille courant gardé");
+        assert!(
+            find_account(&open(&dir).unwrap(), 0).unwrap().is_some(),
+            "compte du portefeuille courant gardé"
+        );
         let other = [8u8; 64];
         forget_other_wallets(&dir, &other).unwrap();
-        assert!(find_account(&open(&dir).unwrap(), 0).unwrap().is_none(), "compte d'un autre portefeuille supprimé");
+        assert!(
+            find_account(&open(&dir).unwrap(), 0).unwrap().is_none(),
+            "compte d'un autre portefeuille supprimé"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -852,17 +1136,37 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("zec-birthday-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let fixed = runtime().unwrap().block_on(async { birthday(&dir, &mut client().await.unwrap()).await }).unwrap();
+        let fixed = runtime()
+            .unwrap()
+            .block_on(async { birthday(&dir, &mut client().await.unwrap()).await })
+            .unwrap();
         assert_eq!(u32::from(fixed.height()), BIRTHDAY_HEIGHT);
         wallet_birthday::record_created(&dir).unwrap();
-        let fresh = runtime().unwrap().block_on(async { birthday(&dir, &mut client().await.unwrap()).await }).unwrap();
+        let fresh = runtime()
+            .unwrap()
+            .block_on(async { birthday(&dir, &mut client().await.unwrap()).await })
+            .unwrap();
         let tip = runtime().unwrap().block_on(async {
-            client().await.unwrap().get_latest_block(zcash_client_backend::proto::service::ChainSpec {}).await.unwrap().into_inner().height
+            client()
+                .await
+                .unwrap()
+                .get_latest_block(zcash_client_backend::proto::service::ChainSpec {})
+                .await
+                .unwrap()
+                .into_inner()
+                .height
         });
-        println!("dernier bloc {tip} ; naissance fixe {} ; portefeuille neuf {}", u32::from(fixed.height()), u32::from(fresh.height()));
+        println!(
+            "dernier bloc {tip} ; naissance fixe {} ; portefeuille neuf {}",
+            u32::from(fixed.height()),
+            u32::from(fresh.height())
+        );
         // 3 days of margin at ~75 s per block, never before the fixed birthday.
         let expected = (tip - 3 * 86_400 / 75).max(u64::from(BIRTHDAY_HEIGHT));
-        assert!(u64::from(u32::from(fresh.height())).abs_diff(expected) <= 2, "attendu ~{expected}");
+        assert!(
+            u64::from(u32::from(fresh.height())).abs_diff(expected) <= 2,
+            "attendu ~{expected}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -881,10 +1185,17 @@ mod tests {
         let a0 = address(&viewing_key(&SEED, 0).unwrap()).unwrap();
         let a1 = address(&viewing_key(&SEED, 1).unwrap()).unwrap();
         assert!(a0.starts_with("u1") && a1.starts_with("u1") && a0 != a1);
-        assert_eq!(a0, address(&viewing_key(&SEED, 0).unwrap()).unwrap(), "déterministe");
+        assert_eq!(
+            a0,
+            address(&viewing_key(&SEED, 0).unwrap()).unwrap(),
+            "déterministe"
+        );
         let parsed = zcash_address::ZcashAddress::try_from_encoded(&a0).unwrap();
         assert!(parsed.can_receive_as(zcash_protocol::PoolType::ORCHARD));
-        assert!(!parsed.can_receive_as(zcash_protocol::PoolType::SAPLING) && !parsed.can_receive_as(zcash_protocol::PoolType::TRANSPARENT));
+        assert!(
+            !parsed.can_receive_as(zcash_protocol::PoolType::SAPLING)
+                && !parsed.can_receive_as(zcash_protocol::PoolType::TRANSPARENT)
+        );
     }
 
     /// Recipients: t1 and Orchard u1 accepted; Sapling-only refused.
@@ -894,10 +1205,24 @@ mod tests {
         assert!(check_recipient(&u1).is_ok());
         assert!(check_recipient("t1VtnnhTYhmADh7L2uKU3Sev7GscBHT6HfE").is_ok());
         // A well-formed Sapling-only address (official encoding, valid checksum).
-        let sapling = zcash_address::ZcashAddress::from_sapling(zcash_protocol::consensus::NetworkType::Main, [7u8; 43]).encode();
+        let sapling = zcash_address::ZcashAddress::from_sapling(
+            zcash_protocol::consensus::NetworkType::Main,
+            [7u8; 43],
+        )
+        .encode();
         assert!(sapling.starts_with("zs1"));
-        assert!(check_recipient(&sapling).unwrap_err().to_string().contains("Sapling"), "Sapling seule");
-        let testnet = zcash_address::ZcashAddress::from_transparent_p2pkh(zcash_protocol::consensus::NetworkType::Test, [7u8; 20]).encode();
+        assert!(
+            check_recipient(&sapling)
+                .unwrap_err()
+                .to_string()
+                .contains("Sapling"),
+            "Sapling seule"
+        );
+        let testnet = zcash_address::ZcashAddress::from_transparent_p2pkh(
+            zcash_protocol::consensus::NetworkType::Test,
+            [7u8; 20],
+        )
+        .encode();
         assert!(check_recipient(&testnet).is_err(), "réseau de test");
         assert!(check_recipient("pas une adresse").is_err());
     }
@@ -905,10 +1230,18 @@ mod tests {
     /// Insufficient funds: the library's real messages, in plain words.
     #[test]
     fn insufficient_funds_in_plain_words() {
-        let send = insufficient("Insufficient balance (have 0, need 1010000 including fee)").unwrap().to_string();
-        assert_eq!(send, "ZEC insuffisants : 0.00000000 disponibles, 0.01010000 nécessaires (frais compris)");
+        let send = insufficient("Insufficient balance (have 0, need 1010000 including fee)")
+            .unwrap()
+            .to_string();
+        assert_eq!(
+            send,
+            "ZEC insuffisants : 0.00000000 disponibles, 0.01010000 nécessaires (frais compris)"
+        );
         let shield = insufficient("Change output generation failed: Insufficient funds: required 10000 zatoshis, but only 0 zatoshis were available.").unwrap().to_string();
-        assert_eq!(shield, "ZEC insuffisants : 0.00000000 disponibles, 0.00010000 nécessaires (frais compris)");
+        assert_eq!(
+            shield,
+            "ZEC insuffisants : 0.00000000 disponibles, 0.00010000 nécessaires (frais compris)"
+        );
         assert!(insufficient("autre erreur").is_none());
     }
 
@@ -920,7 +1253,10 @@ mod tests {
     fn real_shielded_sync() {
         let dir = std::env::temp_dir().join(format!("zec-shielded-sync-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let keys = [profile_keys(&SEED, 0).unwrap(), profile_keys(&SEED, 1).unwrap()];
+        let keys = [
+            profile_keys(&SEED, 0).unwrap(),
+            profile_keys(&SEED, 1).unwrap(),
+        ];
         ensure_accounts(&dir, &keys).unwrap();
         ensure_accounts(&dir, &keys).unwrap();
         let start = std::time::Instant::now();
@@ -928,8 +1264,15 @@ mod tests {
         let b = balance(&dir, 1).unwrap();
         println!("synchronisé en {:?} : {b:?}", start.elapsed());
         assert_eq!((b.spendable, b.pending), (0, 0));
-        assert!(b.scanned_height.unwrap() + 5 >= b.chain_height.unwrap() && b.chain_height.unwrap() > BIRTHDAY_HEIGHT);
-        assert_eq!(open(&dir).unwrap().get_account_ids().unwrap().len(), 2, "un compte par profil, une seule fois");
+        assert!(
+            b.scanned_height.unwrap() + 5 >= b.chain_height.unwrap()
+                && b.chain_height.unwrap() > BIRTHDAY_HEIGHT
+        );
+        assert_eq!(
+            open(&dir).unwrap().get_account_ids().unwrap().len(),
+            2,
+            "un compte par profil, une seule fois"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 }

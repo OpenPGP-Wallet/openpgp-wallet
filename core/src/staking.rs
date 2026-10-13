@@ -26,7 +26,11 @@ pub struct Aprs {
 }
 
 fn get(url: &str) -> Option<Value> {
-    let client = reqwest::blocking::Client::builder().timeout(Duration::from_secs(6)).user_agent("openpgp-wallet").build().ok()?;
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(6))
+        .user_agent("openpgp-wallet")
+        .build()
+        .ok()?;
     client.get(url).send().ok()?.json().ok()
 }
 
@@ -49,10 +53,15 @@ fn jito(value: &Value) -> Option<f64> {
 /// computed yet) relative to the active stake, over a year (73 epochs of 5 days).
 /// Observed on 2026-10-07: about 2.1%.
 fn cardano(value: &Value) -> Option<f64> {
-    let epoch = value.as_array()?.iter().find(|e| e["total_rewards"].is_string())?;
+    let epoch = value
+        .as_array()?
+        .iter()
+        .find(|e| e["total_rewards"].is_string())?;
     let rewards: f64 = epoch["total_rewards"].as_str()?.parse().ok()?;
     let stake: f64 = epoch["active_stake"].as_str()?.parse().ok()?;
-    (stake > 0.0).then(|| rewards / stake * 73.0 * 100.0).and_then(plausible)
+    (stake > 0.0)
+        .then(|| rewards / stake * 73.0 * 100.0)
+        .and_then(plausible)
 }
 
 pub fn aprs() -> Aprs {
@@ -60,7 +69,11 @@ pub fn aprs() -> Aprs {
         let steth = scope.spawn(|| get(LIDO_APR).as_ref().and_then(lido));
         let jitosol = scope.spawn(|| get(JITO_STATS).as_ref().and_then(jito));
         let ada = scope.spawn(|| get(KOIOS_EPOCHS).as_ref().and_then(cardano));
-        Aprs { jitosol: jitosol.join().ok().flatten(), steth: steth.join().ok().flatten(), ada: ada.join().ok().flatten() }
+        Aprs {
+            jitosol: jitosol.join().ok().flatten(),
+            steth: steth.join().ok().flatten(),
+            ada: ada.join().ok().flatten(),
+        }
     })
 }
 
@@ -73,7 +86,10 @@ mod tests {
     #[test]
     fn rates_are_read_and_bounded() {
         assert_eq!(lido(&json!({ "data": { "smaApr": 2.225 } })), Some(2.225));
-        assert_eq!(jito(&json!({ "apy": [{ "data": 0.0490 }, { "data": 0.0483 }] })), Some(4.83));
+        assert_eq!(
+            jito(&json!({ "apy": [{ "data": 0.0490 }, { "data": 0.0483 }] })),
+            Some(4.83)
+        );
         assert_eq!(lido(&json!({ "data": { "smaApr": 250.0 } })), None);
         assert_eq!(jito(&json!({ "apy": [] })), None);
         assert_eq!(lido(&json!({ "error": "x" })), None);
@@ -84,7 +100,10 @@ mod tests {
         ]);
         let ada = cardano(&epochs).unwrap();
         assert!((ada - 2.123).abs() < 0.01, "{ada}");
-        assert_eq!(cardano(&json!([{ "active_stake": "0", "total_rewards": "5" }])), None);
+        assert_eq!(
+            cardano(&json!([{ "active_stake": "0", "total_rewards": "5" }])),
+            None
+        );
     }
 
     /// Real network: both sources answer with a plausible rate.

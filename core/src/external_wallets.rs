@@ -49,7 +49,8 @@ fn load(data_dir: &Path) -> ExternalWalletsData {
 }
 
 fn save(data_dir: &Path, data: &ExternalWalletsData) -> Result<()> {
-    let content = serde_json::to_string_pretty(data).context("sérialisation des wallets externes")?;
+    let content =
+        serde_json::to_string_pretty(data).context("sérialisation des wallets externes")?;
     std::fs::write(path(data_dir), content).context("écriture des wallets externes")
 }
 
@@ -135,7 +136,11 @@ pub(crate) fn validate_address(network: &str, address: &str) -> Result<()> {
 /// Wallets tracked on the app's networks; those of a removed network (HyperEVM, on
 /// 2026-10-07) stay in the file without being shown.
 pub fn list_wallets(data_dir: &Path) -> Vec<ExternalWallet> {
-    load(data_dir).wallets.into_iter().filter(|w| validate_address(&w.network, &w.address).is_ok()).collect()
+    load(data_dir)
+        .wallets
+        .into_iter()
+        .filter(|w| validate_address(&w.network, &w.address).is_ok())
+        .collect()
 }
 
 pub fn list_groups(data_dir: &Path) -> Vec<ExternalWalletGroup> {
@@ -152,7 +157,10 @@ pub fn add_wallet(
     validate_address(network, address)?;
     let mut data = load(data_dir);
     if let Some(gid) = group_id {
-        anyhow::ensure!(data.groups.iter().any(|g| g.id == gid), "groupe introuvable (id {gid})");
+        anyhow::ensure!(
+            data.groups.iter().any(|g| g.id == gid),
+            "groupe introuvable (id {gid})"
+        );
     }
     let next_id = data.wallets.iter().map(|w| w.id).max().map_or(0, |m| m + 1);
     let wallet = ExternalWallet {
@@ -171,7 +179,10 @@ pub fn remove_wallet(data_dir: &Path, id: u32) -> Result<()> {
     let mut data = load(data_dir);
     let before = data.wallets.len();
     data.wallets.retain(|w| w.id != id);
-    anyhow::ensure!(data.wallets.len() < before, "wallet externe introuvable (id {id})");
+    anyhow::ensure!(
+        data.wallets.len() < before,
+        "wallet externe introuvable (id {id})"
+    );
     save(data_dir, &data)
 }
 
@@ -180,7 +191,10 @@ pub fn remove_wallet(data_dir: &Path, id: u32) -> Result<()> {
 pub fn set_wallet_group(data_dir: &Path, id: u32, group_id: Option<u32>) -> Result<()> {
     let mut data = load(data_dir);
     if let Some(gid) = group_id {
-        anyhow::ensure!(data.groups.iter().any(|g| g.id == gid), "groupe introuvable (id {gid})");
+        anyhow::ensure!(
+            data.groups.iter().any(|g| g.id == gid),
+            "groupe introuvable (id {gid})"
+        );
     }
     let wallet = data
         .wallets
@@ -194,7 +208,10 @@ pub fn set_wallet_group(data_dir: &Path, id: u32, group_id: Option<u32>) -> Resu
 pub fn create_group(data_dir: &Path, name: &str) -> Result<ExternalWalletGroup> {
     let mut data = load(data_dir);
     let next_id = data.groups.iter().map(|g| g.id).max().map_or(0, |m| m + 1);
-    let group = ExternalWalletGroup { id: next_id, name: name.trim().to_string() };
+    let group = ExternalWalletGroup {
+        id: next_id,
+        name: name.trim().to_string(),
+    };
     data.groups.push(group.clone());
     save(data_dir, &data)?;
     Ok(group)
@@ -232,7 +249,8 @@ mod tests {
     use super::*;
 
     fn temp_dir(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("pgp_wallet_external_{name}_{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("pgp_wallet_external_{name}_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -260,7 +278,8 @@ mod tests {
     #[test]
     fn add_wallet_accepts_usdc_solana_network_with_a_valid_solana_address() {
         let dir = temp_dir("usdc_solana");
-        let wallet = add_wallet(&dir, "Ami USDC", "usdc_solana", VALID_SOL_ADDRESS, None).expect("ajout valide");
+        let wallet = add_wallet(&dir, "Ami USDC", "usdc_solana", VALID_SOL_ADDRESS, None)
+            .expect("ajout valide");
         assert_eq!(wallet.network, "usdc_solana");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -276,7 +295,8 @@ mod tests {
     #[test]
     fn add_wallet_then_list_round_trips() {
         let dir = temp_dir("roundtrip");
-        let wallet = add_wallet(&dir, "Ami", "evm_mainnet", VALID_EVM_ADDRESS, None).expect("ajout valide");
+        let wallet =
+            add_wallet(&dir, "Ami", "evm_mainnet", VALID_EVM_ADDRESS, None).expect("ajout valide");
         let listed = list_wallets(&dir);
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].id, wallet.id);
@@ -295,14 +315,24 @@ mod tests {
     fn deleting_a_group_ungroups_its_wallets_instead_of_deleting_them() {
         let dir = temp_dir("delete_group");
         let group = create_group(&dir, "Famille").expect("création du groupe");
-        let wallet = add_wallet(&dir, "Ami", "sol_mainnet", VALID_SOL_ADDRESS, Some(group.id)).expect("ajout dans le groupe");
+        let wallet = add_wallet(
+            &dir,
+            "Ami",
+            "sol_mainnet",
+            VALID_SOL_ADDRESS,
+            Some(group.id),
+        )
+        .expect("ajout dans le groupe");
 
         delete_group(&dir, group.id).expect("suppression du groupe");
 
         let wallets = list_wallets(&dir);
         assert_eq!(wallets.len(), 1, "le wallet ne doit pas être supprimé");
         assert_eq!(wallets[0].id, wallet.id);
-        assert_eq!(wallets[0].group_id, None, "le wallet doit redevenir non groupé");
+        assert_eq!(
+            wallets[0].group_id, None,
+            "le wallet doit redevenir non groupé"
+        );
         assert!(list_groups(&dir).is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }

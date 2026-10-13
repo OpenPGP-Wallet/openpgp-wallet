@@ -137,8 +137,18 @@ pub struct Asset {
 }
 
 pub fn asset(coin: &str, network: &str) -> Option<Asset> {
-    if let Some(&(coin, network, chain, decimals, symbol)) = NATIVES.iter().find(|n| n.0 == coin && n.1 == network) {
-        return Some(Asset { coin, network, chain, token: NATIVE, decimals, symbol, native: true });
+    if let Some(&(coin, network, chain, decimals, symbol)) =
+        NATIVES.iter().find(|n| n.0 == coin && n.1 == network)
+    {
+        return Some(Asset {
+            coin,
+            network,
+            chain,
+            token: NATIVE,
+            decimals,
+            symbol,
+            native: true,
+        });
     }
     let (token, deployment) = tokens::find(coin, network)?;
     let address = match deployment.kind {
@@ -147,12 +157,25 @@ pub fn asset(coin: &str, network: &str) -> Option<Asset> {
         _ => return None,
     };
     let chain = NATIVES.iter().find(|n| n.1 == network)?.2;
-    Some(Asset { coin: token.id, network: deployment.network, chain, token: address, decimals: deployment.decimals, symbol: token.symbol, native: false })
+    Some(Asset {
+        coin: token.id,
+        network: deployment.network,
+        chain,
+        token: address,
+        decimals: deployment.decimals,
+        symbol: token.symbol,
+        native: false,
+    })
 }
 
 pub fn tradable() -> Vec<(&'static str, &'static str)> {
     let natives = NATIVES.iter().map(|n| (n.0, n.1));
-    let registry = tokens::TOKENS.iter().flat_map(|t| t.deployments.iter().filter(|d| asset(t.id, d.network).is_some()).map(move |d| (t.id, d.network)));
+    let registry = tokens::TOKENS.iter().flat_map(|t| {
+        t.deployments
+            .iter()
+            .filter(|d| asset(t.id, d.network).is_some())
+            .map(move |d| (t.id, d.network))
+    });
     natives.chain(registry).collect()
 }
 
@@ -180,10 +203,17 @@ pub enum TradeTx {
     /// A call to the UTB router (same EVM network), simulated before signing
     /// (`verify_router`). `value`: the amount sold if it is the network's native coin,
     /// 0 otherwise (the token sold is approved for the router, for the exact amount).
-    Router { router: [u8; 20], data: Vec<u8>, value: u128 },
+    Router {
+        router: [u8; 20],
+        data: Vec<u8>,
+        value: u128,
+    },
     /// Deposit: an ordinary transfer of the exact amount to `address` (memo: XRP
     /// destination tag), built and signed by the app.
-    Deposit { address: String, memo: Option<String> },
+    Deposit {
+        address: String,
+        memo: Option<String>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -207,26 +237,45 @@ fn api_error(body: &Value, status: u16) -> anyhow::Error {
     let error = &body["error"];
     let details = &error["details"];
     match error["code"].as_str() {
-        Some("NO_AVAILABLE_ROUTE" | "UNSUPPORTED_NETWORK" | "UNSUPPORTED_NETWORK_PAIR" | "UNSUPPORTED_NETWORK_TOKEN_PAIR" | "INSUFFICIENT_LIQUIDITY") => {
+        Some(
+            "NO_AVAILABLE_ROUTE"
+            | "UNSUPPORTED_NETWORK"
+            | "UNSUPPORTED_NETWORK_PAIR"
+            | "UNSUPPORTED_NETWORK_TOKEN_PAIR"
+            | "INSUFFICIENT_LIQUIDITY",
+        ) => {
             anyhow!("MoonPay Trade ne propose pas d'échange pour cette paire en ce moment")
         }
         Some("AMOUNT_TOO_LOW") => match details["minAmount"].as_str() {
-            Some(min) if min.len() <= 40 && min.bytes().all(|b| b.is_ascii_digit() || b == b'.') => anyhow!("montant trop faible pour MoonPay Trade (minimum {min})"),
+            Some(min)
+                if min.len() <= 40 && min.bytes().all(|b| b.is_ascii_digit() || b == b'.') =>
+            {
+                anyhow!("montant trop faible pour MoonPay Trade (minimum {min})")
+            }
             _ => anyhow!("montant trop faible pour MoonPay Trade"),
         },
         Some("AMOUNT_TOO_HIGH") => anyhow!("montant trop élevé pour MoonPay Trade"),
         Some("GEO_BLOCKED") => anyhow!("MoonPay Trade n'est pas disponible dans votre pays"),
-        Some("WALLET_SCREENED") => anyhow!("adresse refusée par le contrôle de conformité de MoonPay Trade"),
+        Some("WALLET_SCREENED") => {
+            anyhow!("adresse refusée par le contrôle de conformité de MoonPay Trade")
+        }
         Some("INVALID_ADDRESS_FORMAT") => anyhow!("adresse refusée par MoonPay Trade (format)"),
-        Some("INVALID_API_KEY" | "MISSING_API_KEY" | "FORBIDDEN_API_KEY") => anyhow!("clé MoonPay Trade refusée"),
+        Some("INVALID_API_KEY" | "MISSING_API_KEY" | "FORBIDDEN_API_KEY") => {
+            anyhow!("clé MoonPay Trade refusée")
+        }
         _ => anyhow!("MoonPay Trade : réponse {status}"),
     }
 }
 
 /// Payment (`amountIn`, `amountOut`…): (chain, token, amount).
 fn payment(value: &Value, what: &str) -> Result<(u64, String, u128)> {
-    let chain = value["chainId"].as_u64().with_context(|| format!("devis MoonPay Trade illisible ({what})"))?;
-    let token = value["address"].as_str().with_context(|| format!("devis MoonPay Trade illisible ({what})"))?.to_string();
+    let chain = value["chainId"]
+        .as_u64()
+        .with_context(|| format!("devis MoonPay Trade illisible ({what})"))?;
+    let token = value["address"]
+        .as_str()
+        .with_context(|| format!("devis MoonPay Trade illisible ({what})"))?
+        .to_string();
     let amount = match &value["amount"] {
         Value::String(text) => text.parse::<u128>().ok(),
         other => other.as_u64().map(u128::from),
@@ -287,8 +336,13 @@ fn fee_bps(body: &Value, field: &str, from: &Asset, amount: u128) -> Result<Opti
     if fee == 0 {
         return Ok(Some(0.0));
     }
-    match (body[field]["usdAmount"].as_f64(), body["amountIn"]["usdAmount"].as_f64()) {
-        (Some(fee_usd), Some(sold_usd)) if sold_usd > 0.0 && fee_usd >= 0.0 => Ok(Some(fee_usd * 10_000.0 / sold_usd)),
+    match (
+        body[field]["usdAmount"].as_f64(),
+        body["amountIn"]["usdAmount"].as_f64(),
+    ) {
+        (Some(fee_usd), Some(sold_usd)) if sold_usd > 0.0 && fee_usd >= 0.0 => {
+            Ok(Some(fee_usd * 10_000.0 / sold_usd))
+        }
         _ => bail!("devis MoonPay Trade illisible (commission)"),
     }
 }
@@ -299,13 +353,28 @@ fn fee_bps(body: &Value, field: &str, from: &Asset, amount: u128) -> Result<Opti
 /// deposit transfer). Pure function.
 pub fn parse_action(body: &Value, from: &Asset, to: &Asset, amount: u128) -> Result<Quote> {
     let (chain, token, amount_in) = payment(&body["amountIn"], "montant vendu")?;
-    ensure!(chain == from.chain && same_token(from, &token), "le devis MoonPay Trade vend une autre crypto — refus");
-    ensure!(amount_in == amount, "le devis MoonPay Trade porte sur un autre montant — refus");
+    ensure!(
+        chain == from.chain && same_token(from, &token),
+        "le devis MoonPay Trade vend une autre crypto — refus"
+    );
+    ensure!(
+        amount_in == amount,
+        "le devis MoonPay Trade porte sur un autre montant — refus"
+    );
     let (chain, token, expected_out) = payment(&body["amountOut"], "montant reçu")?;
-    ensure!(chain == to.chain && same_token(to, &token), "le devis MoonPay Trade livre une autre crypto — refus");
+    ensure!(
+        chain == to.chain && same_token(to, &token),
+        "le devis MoonPay Trade livre une autre crypto — refus"
+    );
     let (chain, token, min_out) = payment(&body["amountOutMin"], "minimum reçu")?;
-    ensure!(chain == to.chain && same_token(to, &token), "le devis MoonPay Trade livre une autre crypto — refus");
-    ensure!(min_out > 0 && min_out <= expected_out, "minimum de réception MoonPay Trade incohérent — refus");
+    ensure!(
+        chain == to.chain && same_token(to, &token),
+        "le devis MoonPay Trade livre une autre crypto — refus"
+    );
+    ensure!(
+        min_out > 0 && min_out <= expected_out,
+        "minimum de réception MoonPay Trade incohérent — refus"
+    );
     // App commission: at most `FEE_BPS` of the amount sold; MoonPay's own fee: at most
     // `MAX_PROTOCOL_FEE_BPS` (shown to the user).
     let app_fee = fee_bps(body, "applicationFee", from, amount)?;
@@ -320,14 +389,29 @@ pub fn parse_action(body: &Value, from: &Asset, to: &Asset, amount: u128) -> Res
         "le devis MoonPay Trade annonce des frais MoonPay supérieurs à {:.2} % — refus",
         f64::from(MAX_PROTOCOL_FEE_BPS) / 100.0
     );
-    ensure!(body["executionsType"].as_str().is_none_or(|t| t == "DEFAULT"), "devis MoonPay Trade d'une forme non prise en charge — refus");
-    let tx_id = body["txId"].as_str().filter(|id| id.len() == 66 && id.starts_with("0x") && id[2..].bytes().all(|b| b.is_ascii_hexdigit())).context("devis MoonPay Trade sans identifiant")?;
+    ensure!(
+        body["executionsType"]
+            .as_str()
+            .is_none_or(|t| t == "DEFAULT"),
+        "devis MoonPay Trade d'une forme non prise en charge — refus"
+    );
+    let tx_id = body["txId"]
+        .as_str()
+        .filter(|id| {
+            id.len() == 66 && id.starts_with("0x") && id[2..].bytes().all(|b| b.is_ascii_hexdigit())
+        })
+        .context("devis MoonPay Trade sans identifiant")?;
     let tx = &body["tx"];
     let vm = body["vmId"].as_str().unwrap_or("");
     let tx_chain = tx["chainId"].as_u64();
     let trade_tx = if verifiable((from.coin, from.network), (to.coin, to.network)) {
-        ensure!(vm == "evm" && tx_chain == Some(from.chain), "devis MoonPay Trade d'une forme inattendue — refus");
-        let target = tx["to"].as_str().context("devis MoonPay Trade sans destinataire")?;
+        ensure!(
+            vm == "evm" && tx_chain == Some(from.chain),
+            "devis MoonPay Trade d'une forme inattendue — refus"
+        );
+        let target = tx["to"]
+            .as_str()
+            .context("devis MoonPay Trade sans destinataire")?;
         let expected_router = router(from.network).expect("réseau EVM");
         ensure!(target.eq_ignore_ascii_case(expected_router), "la transaction MoonPay Trade appelle un autre contrat que son routeur — refus de signer");
         let data = hex_data(tx["data"].as_str().unwrap_or(""))?;
@@ -335,13 +419,28 @@ pub fn parse_action(body: &Value, from: &Asset, to: &Asset, amount: u128) -> Res
         // The minimum shown must be the one the router will enforce
         // (`swapParams.amountOut`, recorded on 2026-10-08 in real transactions);
         // otherwise, refused (audit round 32).
-        ensure!(contains_word(&data[4..], min_out), "la transaction MoonPay Trade ne garantit pas le minimum affiché — refus de signer");
+        ensure!(
+            contains_word(&data[4..], min_out),
+            "la transaction MoonPay Trade ne garantit pas le minimum affiché — refus de signer"
+        );
         let value = amount_value(&tx["value"]).context("devis MoonPay Trade illisible (valeur)")?;
-        ensure!(value == if from.native { amount } else { 0 }, "la transaction MoonPay Trade enverrait un autre montant — refus de signer");
-        TradeTx::Router { router: wallet_flow::parse_evm_address(expected_router)?, data, value }
+        ensure!(
+            value == if from.native { amount } else { 0 },
+            "la transaction MoonPay Trade enverrait un autre montant — refus de signer"
+        );
+        TradeTx::Router {
+            router: wallet_flow::parse_evm_address(expected_router)?,
+            data,
+            value,
+        }
     } else if is_evm(from.network) {
-        ensure!(vm == "evm" && tx_chain == Some(from.chain), "devis MoonPay Trade d'une forme inattendue — refus");
-        let target = tx["to"].as_str().context("devis MoonPay Trade sans destinataire")?;
+        ensure!(
+            vm == "evm" && tx_chain == Some(from.chain),
+            "devis MoonPay Trade d'une forme inattendue — refus"
+        );
+        let target = tx["to"]
+            .as_str()
+            .context("devis MoonPay Trade sans destinataire")?;
         let data = hex_data(tx["data"].as_str().unwrap_or("0x"))?;
         let value = amount_value(&tx["value"]).context("devis MoonPay Trade illisible (valeur)")?;
         let deposit = if from.native {
@@ -349,27 +448,52 @@ pub fn parse_action(body: &Value, from: &Asset, to: &Asset, amount: u128) -> Res
             wallet_flow::parse_evm_address(target)?
         } else {
             // Token transfer: `transfer(deposit, exact amount)` on its contract.
-            ensure!(target.eq_ignore_ascii_case(from.token) && value == 0 && data.len() == 68, "le dépôt MoonPay Trade n'est pas un simple virement du jeton — refus de signer");
+            ensure!(
+                target.eq_ignore_ascii_case(from.token) && value == 0 && data.len() == 68,
+                "le dépôt MoonPay Trade n'est pas un simple virement du jeton — refus de signer"
+            );
             let deposit: [u8; 20] = data[16..36].try_into().expect("20 octets");
             ensure!(data == erc20_transfer_data(&deposit, amount), "le dépôt MoonPay Trade n'est pas un simple virement du montant exact — refus de signer");
             deposit
         };
-        ensure!(deposit != [0u8; 20], "adresse de dépôt MoonPay Trade invalide — refus");
-        TradeTx::Deposit { address: crate::derivation::format_address(&deposit), memo: None }
+        ensure!(
+            deposit != [0u8; 20],
+            "adresse de dépôt MoonPay Trade invalide — refus"
+        );
+        TradeTx::Deposit {
+            address: crate::derivation::format_address(&deposit),
+            memo: None,
+        }
     } else {
-        ensure!(vm == "alt-vm" && tx_chain == Some(from.chain), "devis MoonPay Trade d'une forme inattendue — refus");
+        ensure!(
+            vm == "alt-vm" && tx_chain == Some(from.chain),
+            "devis MoonPay Trade d'une forme inattendue — refus"
+        );
         let value = amount_value(&tx["value"]).context("devis MoonPay Trade illisible (valeur)")?;
-        ensure!(value == amount, "le dépôt MoonPay Trade porte sur un autre montant — refus de signer");
-        let address = tx["to"].as_str().context("devis MoonPay Trade sans adresse de dépôt")?.trim().to_string();
+        ensure!(
+            value == amount,
+            "le dépôt MoonPay Trade porte sur un autre montant — refus de signer"
+        );
+        let address = tx["to"]
+            .as_str()
+            .context("devis MoonPay Trade sans adresse de dépôt")?
+            .trim()
+            .to_string();
         // An address of a shape the app cannot pay (another network, future SegWit
         // version…): a new quote usually gives a different one. Bitcoin: every standard
         // type (P2SH 3… included, which MoonPay Trade sometimes gives, recorded on
         // 2026-10-07).
         external_wallets::validate_address(from.network, &address).map_err(|_| anyhow!("adresse de dépôt MoonPay Trade d'une forme que l'app ne sait pas payer — demandez un nouveau devis"))?;
-        let memo = match tx["toExtra"].as_str().map(str::trim).filter(|m| !m.is_empty()) {
+        let memo = match tx["toExtra"]
+            .as_str()
+            .map(str::trim)
+            .filter(|m| !m.is_empty())
+        {
             None => None,
             // XRP: destination tag (32-bit integer).
-            Some(tag) if from.network == "xrp_mainnet" && tag.parse::<u32>().is_ok() => Some(tag.to_string()),
+            Some(tag) if from.network == "xrp_mainnet" && tag.parse::<u32>().is_ok() => {
+                Some(tag.to_string())
+            }
             Some(_) => bail!("mémo de dépôt MoonPay Trade non pris en charge — refus"),
         };
         TradeTx::Deposit { address, memo }
@@ -379,9 +503,15 @@ pub fn parse_action(body: &Value, from: &Asset, to: &Asset, amount: u128) -> Res
         amount,
         expected_out,
         min_out,
-        duration_secs: body["estimatedTxTime"].as_f64().filter(|s| s.is_finite() && *s >= 0.0).map(|s| s.ceil() as u64).unwrap_or(0),
+        duration_secs: body["estimatedTxTime"]
+            .as_f64()
+            .filter(|s| s.is_finite() && *s >= 0.0)
+            .map(|s| s.ceil() as u64)
+            .unwrap_or(0),
         protocol_fee_bps: protocol_fee.round() as u32,
-        register: body["requiresRegisterTransaction"].as_bool().unwrap_or(false),
+        register: body["requiresRegisterTransaction"]
+            .as_bool()
+            .unwrap_or(false),
         tx: trade_tx,
     })
 }
@@ -389,7 +519,13 @@ pub fn parse_action(body: &Value, from: &Asset, to: &Asset, amount: u128) -> Res
 /// `getAction` parameters. The app's commission is requested on every route, paid
 /// to an EVM address (MoonPay Trade requires this even for a Bitcoin or XRP
 /// deposit, recorded on 2026-10-07); refunds go to the sender.
-fn action_params(from: &Asset, to: &Asset, amount: u128, sender: &str, recipient: &str) -> Vec<(&'static str, String)> {
+fn action_params(
+    from: &Asset,
+    to: &Asset,
+    amount: u128,
+    sender: &str,
+    recipient: &str,
+) -> Vec<(&'static str, String)> {
     vec![
         ("actionType", "swap-action".to_string()),
         ("sender", sender.trim().to_string()),
@@ -402,16 +538,28 @@ fn action_params(from: &Asset, to: &Asset, amount: u128, sender: &str, recipient
         ("slippage", SLIPPAGE_BPS.to_string()),
         ("amount", amount.to_string()),
         ("swapDirection", "exact-amount-in".to_string()),
-        ("appFees", format!("[{{\"bps\":{FEE_BPS},\"receiverAddress\":\"{FEE_RECEIVER}\"}}]")),
+        (
+            "appFees",
+            format!("[{{\"bps\":{FEE_BPS},\"receiverAddress\":\"{FEE_RECEIVER}\"}}]"),
+        ),
     ]
 }
 
 /// Executable MoonPay Trade quote (`getAction`): `sender` sells `amount` of `from`,
 /// `recipient` receives `to`; refunds to `sender` (deposit from a non-EVM network).
 /// Checked by `parse_action`.
-pub fn quote(from: &Asset, to: &Asset, amount: u128, sender: &str, recipient: &str) -> Result<Quote> {
+pub fn quote(
+    from: &Asset,
+    to: &Asset,
+    amount: u128,
+    sender: &str,
+    recipient: &str,
+) -> Result<Quote> {
     let key = key().context("MoonPay Trade indisponible dans cette version de l'app")?;
-    ensure!(links((from.coin, from.network), (to.coin, to.network)), "MoonPay Trade ne relie pas ces deux cryptos");
+    ensure!(
+        links((from.coin, from.network), (to.coin, to.network)),
+        "MoonPay Trade ne relie pas ces deux cryptos"
+    );
     external_wallets::validate_address(to.network, recipient)?;
     let response = client()
         .get(format!("{API_BASE}/getAction"))
@@ -420,7 +568,9 @@ pub fn quote(from: &Asset, to: &Asset, amount: u128, sender: &str, recipient: &s
         .send()
         .map_err(|e| anyhow!("MoonPay Trade injoignable : {}", e.without_url()))?;
     let status = response.status().as_u16();
-    let body: Value = response.json().context("réponse de MoonPay Trade illisible")?;
+    let body: Value = response
+        .json()
+        .context("réponse de MoonPay Trade illisible")?;
     if status != 200 {
         return Err(api_error(&body, status));
     }
@@ -437,7 +587,11 @@ pub fn register(tx_id: &str, tx_hash: &str) -> Result<()> {
         .json(&serde_json::json!({ "txId": tx_id, "txHash": tx_hash }))
         .send()
         .map_err(|e| anyhow!("MoonPay Trade injoignable : {}", e.without_url()))?;
-    ensure!(response.status().is_success(), "MoonPay Trade : enregistrement du dépôt refusé ({})", response.status().as_u16());
+    ensure!(
+        response.status().is_success(),
+        "MoonPay Trade : enregistrement du dépôt refusé ({})",
+        response.status().as_u16()
+    );
     Ok(())
 }
 
@@ -456,9 +610,13 @@ pub struct Expected {
 }
 
 fn word(data: &[u8], index: usize) -> Result<u128> {
-    let slot = data.get(index * 32..index * 32 + 32).context("événement illisible")?;
+    let slot = data
+        .get(index * 32..index * 32 + 32)
+        .context("événement illisible")?;
     ensure!(slot[..16].iter().all(|b| *b == 0), "montant hors limites");
-    Ok(u128::from_be_bytes(slot[16..].try_into().expect("16 octets")))
+    Ok(u128::from_be_bytes(
+        slot[16..].try_into().expect("16 octets"),
+    ))
 }
 
 fn padded(address: &[u8; 20]) -> [u8; 32] {
@@ -473,7 +631,10 @@ fn padded(address: &[u8; 20]) -> [u8; 32] {
 /// bought lands on the user's address, at least the guaranteed minimum. Pure
 /// function.
 pub fn verify_router(calls: &[crate::eth_rpc::SimulatedCall], expected: &Expected) -> Result<u128> {
-    ensure!(calls.iter().all(|c| c.success), "l'échange MoonPay Trade échouerait (simulation) — rien n'a été envoyé");
+    ensure!(
+        calls.iter().all(|c| c.success),
+        "l'échange MoonPay Trade échouerait (simulation) — rien n'a été envoyé"
+    );
     let transfer = evm_sign::keccak(b"Transfer(address,address,uint256)");
     let approval = evm_sign::keccak(b"Approval(address,address,uint256)");
     let approval_for_all = evm_sign::keccak(b"ApprovalForAll(address,address,bool)");
@@ -483,8 +644,12 @@ pub fn verify_router(calls: &[crate::eth_rpc::SimulatedCall], expected: &Expecte
     let bought_token = expected.buy_token.unwrap_or(native);
     let (mut sent, mut received) = (0u128, 0u128);
     for log in calls.iter().flat_map(|c| &c.logs) {
-        let Some(kind) = log.topics.first() else { continue };
-        if (*kind == transfer || *kind == approval || *kind == approval_for_all) && log.topics.get(1) == Some(&user) {
+        let Some(kind) = log.topics.first() else {
+            continue;
+        };
+        if (*kind == transfer || *kind == approval || *kind == approval_for_all)
+            && log.topics.get(1) == Some(&user)
+        {
             ensure!(
                 *kind != approval_for_all && log.topics.len() == 3,
                 "l'échange MoonPay Trade toucherait un autre actif de votre portefeuille (NFT ou autorisation globale) — refus de signer"
@@ -499,11 +664,21 @@ pub fn verify_router(calls: &[crate::eth_rpc::SimulatedCall], expected: &Expecte
                     "l'échange MoonPay Trade autoriserait un autre contrat ou un autre montant — refus de signer"
                 );
             }
-        } else if *kind == transfer && log.topics.len() == 3 && log.topics[2] == user && log.address == bought_token {
-            received = received.checked_add(word(&log.data, 0)?).context("montant hors limites")?;
+        } else if *kind == transfer
+            && log.topics.len() == 3
+            && log.topics[2] == user
+            && log.address == bought_token
+        {
+            received = received
+                .checked_add(word(&log.data, 0)?)
+                .context("montant hors limites")?;
         }
     }
-    ensure!(sent == expected.amount, "l'échange MoonPay Trade ferait sortir {sent} unité(s) au lieu de {} — refus de signer", expected.amount);
+    ensure!(
+        sent == expected.amount,
+        "l'échange MoonPay Trade ferait sortir {sent} unité(s) au lieu de {} — refus de signer",
+        expected.amount
+    );
     ensure!(
         received >= expected.min_out,
         "l'échange MoonPay Trade livrerait moins que le minimum garanti à votre adresse ({received} au lieu d'au moins {}) — refus de signer",
@@ -553,29 +728,55 @@ mod tests {
     fn assets_and_links() {
         assert_eq!(a("btc", "btc_mainnet").chain, 999_000_313);
         assert_eq!(a("usdc", "evm_mainnet").token, USDC);
-        assert_eq!(a("usdc", "sol_mainnet").token, "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
-        assert!(asset("tao", "tao_mainnet").is_none(), "TAO absent de MoonPay Trade");
-        assert!(asset("usdt", "tron_mainnet").is_none(), "jetons Tron pas encore pris en charge");
+        assert_eq!(
+            a("usdc", "sol_mainnet").token,
+            "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+        );
+        assert!(
+            asset("tao", "tao_mainnet").is_none(),
+            "TAO absent de MoonPay Trade"
+        );
+        assert!(
+            asset("usdt", "tron_mainnet").is_none(),
+            "jetons Tron pas encore pris en charge"
+        );
         // Same EVM network: verifiable.
-        assert!(verifiable(("evm", "evm_mainnet"), ("usdc", "evm_mainnet")) && links(("evm", "evm_mainnet"), ("usdc", "evm_mainnet")));
+        assert!(
+            verifiable(("evm", "evm_mainnet"), ("usdc", "evm_mainnet"))
+                && links(("evm", "evm_mainnet"), ("usdc", "evm_mainnet"))
+        );
         // Deposit from a network the app knows, to any network.
-        assert!(links(("evm", "evm_mainnet"), ("xmr", "xmr_mainnet")) && !verifiable(("evm", "evm_mainnet"), ("xmr", "xmr_mainnet")));
+        assert!(
+            links(("evm", "evm_mainnet"), ("xmr", "xmr_mainnet"))
+                && !verifiable(("evm", "evm_mainnet"), ("xmr", "xmr_mainnet"))
+        );
         assert!(links(("xrp", "xrp_mainnet"), ("evm", "evm_mainnet")));
         // No deposit from Monero, Solana, Stellar…; no swap on the same non-EVM network.
-        assert!(!links(("xmr", "xmr_mainnet"), ("evm", "evm_mainnet")) && !links(("sol", "sol_mainnet"), ("evm", "evm_mainnet")));
+        assert!(
+            !links(("xmr", "xmr_mainnet"), ("evm", "evm_mainnet"))
+                && !links(("sol", "sol_mainnet"), ("evm", "evm_mainnet"))
+        );
         assert!(!links(("sol", "sol_mainnet"), ("usdc", "sol_mainnet")));
         // Avalanche: node without simulation, router unverifiable, so no swap on that
         // network; deposit to another network possible.
-        assert!(!verifiable(("avax", "avax_mainnet"), ("usdc", "avax_mainnet")) && !links(("avax", "avax_mainnet"), ("usdt", "avax_mainnet")));
+        assert!(
+            !verifiable(("avax", "avax_mainnet"), ("usdc", "avax_mainnet"))
+                && !links(("avax", "avax_mainnet"), ("usdt", "avax_mainnet"))
+        );
         assert!(links(("avax", "avax_mainnet"), ("xmr", "xmr_mainnet")));
-        assert!(tradable().contains(&("xmr", "xmr_mainnet")) && tradable().contains(&("link", "evm_mainnet")));
+        assert!(
+            tradable().contains(&("xmr", "xmr_mainnet"))
+                && tradable().contains(&("link", "evm_mainnet"))
+        );
     }
 
     /// MoonPay widget key (publishable or secret): not a Trade key.
     #[test]
     fn widget_keys_are_not_trade_keys() {
         for widget in ["pk_test_x", "pk_live_x", "sk_live_x"] {
-            assert!(Some(widget).filter(|k| !k.starts_with("pk_") && !k.starts_with("sk_")).is_none());
+            assert!(Some(widget)
+                .filter(|k| !k.starts_with("pk_") && !k.starts_with("sk_"))
+                .is_none());
         }
     }
 
@@ -583,32 +784,70 @@ mod tests {
     fn router_quote_is_read_and_checked() {
         let (eth, usdc) = (a("evm", "evm_mainnet"), a("usdc", "evm_mainnet"));
         let quote = parse_action(&eth_usdc(), &eth, &usdc, 10_000_000_000_000_000).unwrap();
-        assert_eq!((quote.expected_out, quote.min_out, quote.register, quote.protocol_fee_bps), (25_449_094, 25_194_603, false, 30));
-        assert!(matches!(&quote.tx, TradeTx::Router { value, .. } if *value == 10_000_000_000_000_000));
+        assert_eq!(
+            (
+                quote.expected_out,
+                quote.min_out,
+                quote.register,
+                quote.protocol_fee_bps
+            ),
+            (25_449_094, 25_194_603, false, 30)
+        );
+        assert!(
+            matches!(&quote.tx, TradeTx::Router { value, .. } if *value == 10_000_000_000_000_000)
+        );
         // Tampering: every discrepancy is refused.
         let refused = |edit: &dyn Fn(&mut Value)| {
             let mut body = eth_usdc();
             edit(&mut body);
-            parse_action(&body, &eth, &usdc, 10_000_000_000_000_000).unwrap_err().to_string()
+            parse_action(&body, &eth, &usdc, 10_000_000_000_000_000)
+                .unwrap_err()
+                .to_string()
         };
-        assert!(refused(&|b| b["tx"]["to"] = json!("0x1111111254eeb25477b68fb85ed929f73a960582")).contains("autre contrat"));
-        assert!(refused(&|b| b["tx"]["value"] = json!("20000000000000000")).contains("autre montant"));
+        assert!(
+            refused(&|b| b["tx"]["to"] = json!("0x1111111254eeb25477b68fb85ed929f73a960582"))
+                .contains("autre contrat")
+        );
+        assert!(
+            refused(&|b| b["tx"]["value"] = json!("20000000000000000")).contains("autre montant")
+        );
         assert!(refused(&|b| b["amountIn"]["amount"] = json!("1")).contains("autre montant"));
-        assert!(refused(&|b| b["amountOut"]["address"] = json!("0xdac17f958d2ee523a2206206994597c13d831ec7")).contains("autre crypto"));
-        assert!(refused(&|b| b["amountOutMin"]["amount"] = json!("99999999")).contains("incohérent"));
-        assert!(refused(&|b| b["applicationFee"]["amount"] = json!("100000000000000")).contains("commission"));
-        assert!(refused(&|b| b["protocolFee"]["amount"] = json!("150000000000000")).contains("frais MoonPay"));
+        assert!(refused(
+            &|b| b["amountOut"]["address"] = json!("0xdac17f958d2ee523a2206206994597c13d831ec7")
+        )
+        .contains("autre crypto"));
+        assert!(
+            refused(&|b| b["amountOutMin"]["amount"] = json!("99999999")).contains("incohérent")
+        );
+        assert!(
+            refused(&|b| b["applicationFee"]["amount"] = json!("100000000000000"))
+                .contains("commission")
+        );
+        assert!(
+            refused(&|b| b["protocolFee"]["amount"] = json!("150000000000000"))
+                .contains("frais MoonPay")
+        );
         // Fees counted in another crypto: bounded using the quote's dollar amounts.
-        assert!(refused(&|b| b["applicationFee"] = json!({ "chainId": 1, "address": USDC, "amount": "260000", "usdAmount": 0.26 })).contains("commission"));
+        assert!(refused(&|b| b["applicationFee"] =
+            json!({ "chainId": 1, "address": USDC, "amount": "260000", "usdAmount": 0.26 }))
+        .contains("commission"));
         assert!(refused(&|b| b["executionsType"] = json!("GASLESS")).contains("forme"));
         // The router must enforce the minimum shown.
-        assert!(refused(&|b| b["amountOutMin"]["amount"] = json!("25000000")).contains("minimum affiché"));
+        assert!(
+            refused(&|b| b["amountOutMin"]["amount"] = json!("25000000"))
+                .contains("minimum affiché")
+        );
         assert!(refused(&|b| b["tx"]["chainId"] = json!(42161)).contains("forme"));
     }
 
     #[test]
     fn deposit_quotes_are_read_and_checked() {
-        let (eth, usdc, btc, xrp) = (a("evm", "evm_mainnet"), a("usdc", "evm_mainnet"), a("btc", "btc_mainnet"), a("xrp", "xrp_mainnet"));
+        let (eth, usdc, btc, xrp) = (
+            a("evm", "evm_mainnet"),
+            a("usdc", "evm_mainnet"),
+            a("btc", "btc_mainnet"),
+            a("xrp", "xrp_mainnet"),
+        );
         let body = |tx: Value, from: &Asset, amount: &str, vm: &str| {
             json!({
                 "tx": tx, "txId": "0xe6f0437787eb10d3bedc71d6e79c87524bc0cbe3dd494ea567a5d41702d2cb7c", "vmId": vm,
@@ -618,13 +857,27 @@ mod tests {
             })
         };
         // ETH → BTC (real): a plain transfer to the deposit address.
-        let eth_btc = body(json!({ "to": "0x3De23013a152628C8ad4a122c77732aa5252ad65", "value": "50000000000000000", "chainId": 1, "data": "0x" }), &eth, "50000000000000000", "evm");
+        let eth_btc = body(
+            json!({ "to": "0x3De23013a152628C8ad4a122c77732aa5252ad65", "value": "50000000000000000", "chainId": 1, "data": "0x" }),
+            &eth,
+            "50000000000000000",
+            "evm",
+        );
         let quote = parse_action(&eth_btc, &eth, &btc, 50_000_000_000_000_000).unwrap();
-        assert_eq!(quote.tx, TradeTx::Deposit { address: "0x3De23013a152628C8ad4a122c77732aa5252ad65".into(), memo: None });
+        assert_eq!(
+            quote.tx,
+            TradeTx::Deposit {
+                address: "0x3De23013a152628C8ad4a122c77732aa5252ad65".into(),
+                memo: None
+            }
+        );
         assert!(quote.register);
         let mut with_call = eth_btc.clone();
         with_call["tx"]["data"] = json!("0x12345678");
-        assert!(parse_action(&with_call, &eth, &btc, 50_000_000_000_000_000).unwrap_err().to_string().contains("simple virement"));
+        assert!(parse_action(&with_call, &eth, &btc, 50_000_000_000_000_000)
+            .unwrap_err()
+            .to_string()
+            .contains("simple virement"));
         // USDC → BTC (real): `transfer(deposit, amount)` on the USDC contract.
         let usdc_btc = body(
             json!({ "to": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", "value": "0", "chainId": 1, "data": "0xa9059cbb000000000000000000000000e3cf74a4b0690400a2390683d0e2eef46427c6f70000000000000000000000000000000000000000000000000000000008f0d180" }),
@@ -633,39 +886,77 @@ mod tests {
             "evm",
         );
         let quote = parse_action(&usdc_btc, &usdc, &btc, 150_000_000).unwrap();
-        assert!(matches!(&quote.tx, TradeTx::Deposit { address, .. } if address.eq_ignore_ascii_case("0xe3cf74a4b0690400a2390683d0e2eef46427c6f7")));
+        assert!(
+            matches!(&quote.tx, TradeTx::Deposit { address, .. } if address.eq_ignore_ascii_case("0xe3cf74a4b0690400a2390683d0e2eef46427c6f7"))
+        );
         let mut approve = usdc_btc.clone();
         approve["tx"]["data"] = json!("0x095ea7b3000000000000000000000000e3cf74a4b0690400a2390683d0e2eef46427c6f70000000000000000000000000000000000000000000000000000000008f0d180");
-        assert!(parse_action(&approve, &usdc, &btc, 150_000_000).is_err(), "autorisation au lieu d'un virement");
+        assert!(
+            parse_action(&approve, &usdc, &btc, 150_000_000).is_err(),
+            "autorisation au lieu d'un virement"
+        );
         // XRP → ETH (real): r… deposit with a destination tag.
-        let mut xrp_eth = body(json!({ "to": "rKKbNYZRqwPgZYkFWvqNUFBuscEyiFyCE", "toExtra": "962769451", "value": "50000000", "chainId": 999_000_346, "chainKey": "xrp" }), &xrp, "50000000", "alt-vm");
+        let mut xrp_eth = body(
+            json!({ "to": "rKKbNYZRqwPgZYkFWvqNUFBuscEyiFyCE", "toExtra": "962769451", "value": "50000000", "chainId": 999_000_346, "chainKey": "xrp" }),
+            &xrp,
+            "50000000",
+            "alt-vm",
+        );
         xrp_eth["amountOut"] = pay(1, NATIVE, "27284700000000000");
         xrp_eth["amountOutMin"] = pay(1, NATIVE, "27284700000000000");
         let quote = parse_action(&xrp_eth, &xrp, &eth, 50_000_000).unwrap();
-        assert_eq!(quote.tx, TradeTx::Deposit { address: "rKKbNYZRqwPgZYkFWvqNUFBuscEyiFyCE".into(), memo: Some("962769451".into()) });
+        assert_eq!(
+            quote.tx,
+            TradeTx::Deposit {
+                address: "rKKbNYZRqwPgZYkFWvqNUFBuscEyiFyCE".into(),
+                memo: Some("962769451".into())
+            }
+        );
         let mut bad_tag = xrp_eth.clone();
         bad_tag["tx"]["toExtra"] = json!("memo texte");
         assert!(parse_action(&bad_tag, &xrp, &eth, 50_000_000).is_err());
         let mut bad_address = xrp_eth.clone();
         bad_address["tx"]["to"] = json!("rKKbNYZRqwPgZYkFWvqNUFBuscEyiFyCF");
-        assert!(parse_action(&bad_address, &xrp, &eth, 50_000_000).unwrap_err().to_string().contains("ne sait pas payer"));
+        assert!(parse_action(&bad_address, &xrp, &eth, 50_000_000)
+            .unwrap_err()
+            .to_string()
+            .contains("ne sait pas payer"));
         // BTC → ETH (real): P2SH deposit, payable; a deposit address with a future SegWit
         // version: a new quote is requested.
-        let mut p2sh = body(json!({ "to": "3PFQuK2rjdCSHxCxT7p4jeVB34Fva3qwps", "toExtra": null, "value": "100000", "chainId": 999_000_313, "chainKey": "btc" }), &btc, "100000", "alt-vm");
+        let mut p2sh = body(
+            json!({ "to": "3PFQuK2rjdCSHxCxT7p4jeVB34Fva3qwps", "toExtra": null, "value": "100000", "chainId": 999_000_313, "chainKey": "btc" }),
+            &btc,
+            "100000",
+            "alt-vm",
+        );
         p2sh["amountOut"] = pay(1, NATIVE, "31776200000000000");
         p2sh["amountOutMin"] = pay(1, NATIVE, "31776200000000000");
-        assert_eq!(parse_action(&p2sh, &btc, &eth, 100_000).unwrap().tx, TradeTx::Deposit { address: "3PFQuK2rjdCSHxCxT7p4jeVB34Fva3qwps".into(), memo: None });
+        assert_eq!(
+            parse_action(&p2sh, &btc, &eth, 100_000).unwrap().tx,
+            TradeTx::Deposit {
+                address: "3PFQuK2rjdCSHxCxT7p4jeVB34Fva3qwps".into(),
+                memo: None
+            }
+        );
         p2sh["tx"]["to"] = json!("bc1zw508d6qejxtdg4y5r3zarvaryvaxxpcs");
-        assert!(parse_action(&p2sh, &btc, &eth, 100_000).unwrap_err().to_string().contains("nouveau devis"));
+        assert!(parse_action(&p2sh, &btc, &eth, 100_000)
+            .unwrap_err()
+            .to_string()
+            .contains("nouveau devis"));
         p2sh["tx"]["to"] = json!("bc1qp4lu3qxd45jv5lnw9uauhm70238fgrzlv5s8he");
         assert!(parse_action(&p2sh, &btc, &eth, 100_000).is_ok());
     }
 
     #[test]
     fn api_errors_are_explained() {
-        let error = |code: &str| api_error(&json!({ "success": false, "error": { "code": code, "details": { "minAmount": "0.0012" } } }), 400).to_string();
+        let error = |code: &str| {
+            api_error(&json!({ "success": false, "error": { "code": code, "details": { "minAmount": "0.0012" } } }), 400).to_string()
+        };
         assert!(error("NO_AVAILABLE_ROUTE").contains("ne propose pas"));
-        assert_eq!(error("AMOUNT_TOO_LOW"), "montant trop faible pour MoonPay Trade (minimum 0.0012)");
+        assert_eq!(
+            error("AMOUNT_TOO_LOW"),
+            "montant trop faible pour MoonPay Trade (minimum 0.0012)"
+        );
         assert!(error("WALLET_SCREENED").contains("conformité"));
         assert!(error("INVALID_API_KEY").contains("clé"));
     }
@@ -673,7 +964,11 @@ mod tests {
     fn log(address: &str, topics: Vec<[u8; 32]>, amount: u128) -> SimulatedLog {
         let mut data = vec![0u8; 16];
         data.extend_from_slice(&amount.to_be_bytes());
-        SimulatedLog { address: wallet_flow::parse_evm_address(address).unwrap(), topics, data }
+        SimulatedLog {
+            address: wallet_flow::parse_evm_address(address).unwrap(),
+            topics,
+            data,
+        }
     }
 
     fn topic_addr(address: &str) -> [u8; 32] {
@@ -691,10 +986,30 @@ mod tests {
         let executor = "0x18dc2961ddcca0d61b4d2e9c42ff5e1f5c8d25b4";
         let real = || {
             vec![
-                log(eth, vec![transfer, topic_addr(USER), topic_addr(router)], 10_000_000_000_000_000),
-                log(eth, vec![transfer, topic_addr(router), topic_addr("0x79ad858cdff50ca6728d2531894001f221e805c7")], 80_000_000_000_000),
-                log(USDC, vec![transfer, topic_addr(executor), topic_addr(USER)], 25_194_603),
-                log(USDC, vec![transfer, topic_addr(executor), topic_addr(USER)], 254_491),
+                log(
+                    eth,
+                    vec![transfer, topic_addr(USER), topic_addr(router)],
+                    10_000_000_000_000_000,
+                ),
+                log(
+                    eth,
+                    vec![
+                        transfer,
+                        topic_addr(router),
+                        topic_addr("0x79ad858cdff50ca6728d2531894001f221e805c7"),
+                    ],
+                    80_000_000_000_000,
+                ),
+                log(
+                    USDC,
+                    vec![transfer, topic_addr(executor), topic_addr(USER)],
+                    25_194_603,
+                ),
+                log(
+                    USDC,
+                    vec![transfer, topic_addr(executor), topic_addr(USER)],
+                    254_491,
+                ),
             ]
         };
         let expected = Expected {
@@ -705,48 +1020,125 @@ mod tests {
             min_out: 25_194_603,
             router: wallet_flow::parse_evm_address(router).unwrap(),
         };
-        let ok = |logs: Vec<SimulatedLog>| verify_router(&[SimulatedCall { success: true, logs }], &expected);
+        let ok = |logs: Vec<SimulatedLog>| {
+            verify_router(
+                &[SimulatedCall {
+                    success: true,
+                    logs,
+                }],
+                &expected,
+            )
+        };
         assert_eq!(ok(real()).unwrap(), 25_449_094);
         // Less than the minimum to the user's address.
         let mut short = real();
         short.pop();
-        short[2] = log(USDC, vec![transfer, topic_addr(executor), topic_addr(USER)], 25_000_000);
+        short[2] = log(
+            USDC,
+            vec![transfer, topic_addr(executor), topic_addr(USER)],
+            25_000_000,
+        );
         assert!(ok(short).unwrap_err().to_string().contains("minimum"));
         // USDC delivered to someone else.
         let mut elsewhere = real();
-        elsewhere[2] = log(USDC, vec![transfer, topic_addr(executor), topic_addr(router)], 25_194_603);
+        elsewhere[2] = log(
+            USDC,
+            vec![transfer, topic_addr(executor), topic_addr(router)],
+            25_194_603,
+        );
         elsewhere.pop();
         assert!(ok(elsewhere).is_err());
         // More ETH than expected, or an extra token from the user.
         let mut more = real();
-        more.push(log(eth, vec![transfer, topic_addr(USER), topic_addr(router)], 1));
+        more.push(log(
+            eth,
+            vec![transfer, topic_addr(USER), topic_addr(router)],
+            1,
+        ));
         assert!(ok(more).unwrap_err().to_string().contains("au lieu de"));
         let mut other_token = real();
-        other_token.push(log("0xdac17f958d2ee523a2206206994597c13d831ec7", vec![transfer, topic_addr(USER), topic_addr(router)], 5));
-        assert!(ok(other_token).unwrap_err().to_string().contains("autre crypto"));
+        other_token.push(log(
+            "0xdac17f958d2ee523a2206206994597c13d831ec7",
+            vec![transfer, topic_addr(USER), topic_addr(router)],
+            5,
+        ));
+        assert!(ok(other_token)
+            .unwrap_err()
+            .to_string()
+            .contains("autre crypto"));
         // Token sold: approval to the router only, at most the amount.
-        let usdc_sell = Expected { sell_token: Some(wallet_flow::parse_evm_address(USDC).unwrap()), buy_token: None, amount: 50_000_000, min_out: 1, ..expected };
-        let approve = |spender: &str, amount: u128| log(USDC, vec![approval, topic_addr(USER), topic_addr(spender)], amount);
+        let usdc_sell = Expected {
+            sell_token: Some(wallet_flow::parse_evm_address(USDC).unwrap()),
+            buy_token: None,
+            amount: 50_000_000,
+            min_out: 1,
+            ..expected
+        };
+        let approve = |spender: &str, amount: u128| {
+            log(
+                USDC,
+                vec![approval, topic_addr(USER), topic_addr(spender)],
+                amount,
+            )
+        };
         let sell = |approval: SimulatedLog| {
             let logs = vec![
                 approval,
-                log(USDC, vec![transfer, topic_addr(USER), topic_addr(router)], 50_000_000),
-                log(eth, vec![transfer, topic_addr(executor), topic_addr(USER)], 19_000_000_000_000_000),
+                log(
+                    USDC,
+                    vec![transfer, topic_addr(USER), topic_addr(router)],
+                    50_000_000,
+                ),
+                log(
+                    eth,
+                    vec![transfer, topic_addr(executor), topic_addr(USER)],
+                    19_000_000_000_000_000,
+                ),
             ];
-            verify_router(&[SimulatedCall { success: true, logs }], &usdc_sell)
+            verify_router(
+                &[SimulatedCall {
+                    success: true,
+                    logs,
+                }],
+                &usdc_sell,
+            )
         };
         assert!(sell(approve(router, 50_000_000)).is_ok());
-        assert!(sell(approve(executor, 50_000_000)).unwrap_err().to_string().contains("autre contrat"));
+        assert!(sell(approve(executor, 50_000_000))
+            .unwrap_err()
+            .to_string()
+            .contains("autre contrat"));
         assert!(sell(approve(router, 50_000_001)).is_err());
         // Failed simulation.
-        assert!(verify_router(&[SimulatedCall { success: false, logs: real() }], &expected).unwrap_err().to_string().contains("échouerait"));
+        assert!(verify_router(
+            &[SimulatedCall {
+                success: false,
+                logs: real()
+            }],
+            &expected
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("échouerait"));
     }
 
     /// Same request as the app (`action_params`), with the demo key.
     fn demo_quote(from: &Asset, to: &Asset, amount: u128, sender: &str, recipient: &str) -> Quote {
         let params = action_params(from, to, amount, sender, recipient);
-        let body: Value = client().get(format!("{API_BASE}/getAction")).header("x-api-key", DEMO_KEY).query(&params).send().unwrap().json().unwrap();
-        parse_action(&body, from, to, amount).unwrap_or_else(|e| panic!("{e} : {}", body.to_string().chars().take(400).collect::<String>()))
+        let body: Value = client()
+            .get(format!("{API_BASE}/getAction"))
+            .header("x-api-key", DEMO_KEY)
+            .query(&params)
+            .send()
+            .unwrap()
+            .json()
+            .unwrap();
+        parse_action(&body, from, to, amount).unwrap_or_else(|e| {
+            panic!(
+                "{e} : {}",
+                body.to_string().chars().take(400).collect::<String>()
+            )
+        })
     }
 
     /// Live (demo key, nothing is broadcast): ETH → USDC on Ethereum; the router
@@ -759,10 +1151,24 @@ mod tests {
         let rich = "0xd8da6bf26964af9d7eed9e03e53415d37aa96045";
         let (eth, usdc) = (a("evm", "evm_mainnet"), a("usdc", "evm_mainnet"));
         let quote = demo_quote(&eth, &usdc, 10_000_000_000_000_000, rich, rich);
-        let TradeTx::Router { router, data, value } = &quote.tx else { panic!("routeur attendu") };
+        let TradeTx::Router {
+            router,
+            data,
+            value,
+        } = &quote.tx
+        else {
+            panic!("routeur attendu")
+        };
         let rpc = crate::eth_rpc::EthRpc::new(wallet_flow::evm_network("evm_mainnet").unwrap().rpc);
         let to = crate::derivation::format_address(router);
-        let simulated = rpc.simulate_v1_with_native_transfers(&[crate::eth_rpc::SimCallRequest { from: rich, to: &to, value: *value, data }]).unwrap();
+        let simulated = rpc
+            .simulate_v1_with_native_transfers(&[crate::eth_rpc::SimCallRequest {
+                from: rich,
+                to: &to,
+                value: *value,
+                data,
+            }])
+            .unwrap();
         let expected = Expected {
             user: wallet_flow::parse_evm_address(rich).unwrap(),
             sell_token: None,
@@ -772,8 +1178,14 @@ mod tests {
             router: *router,
         };
         let received = verify_router(&simulated, &expected).unwrap();
-        println!("0,01 ETH → {received} unités USDC (minimum {}, attendu {})", quote.min_out, quote.expected_out);
-        let inflated = Expected { min_out: received + 1, ..expected };
+        println!(
+            "0,01 ETH → {received} unités USDC (minimum {}, attendu {})",
+            quote.min_out, quote.expected_out
+        );
+        let inflated = Expected {
+            min_out: received + 1,
+            ..expected
+        };
         assert!(verify_router(&simulated, &inflated).is_err());
     }
 
@@ -783,18 +1195,49 @@ mod tests {
     #[ignore]
     fn explore_deposit_address_formats() {
         let seed = [7u8; 64];
-        let doge = crate::doge::p2pkh_address(&crate::derivation::derive_doge_key(&seed, 0).unwrap().1);
-        let zec = crate::zcash::p2pkh_address(&crate::derivation::derive_zec_key(&seed, 0).unwrap().1);
+        let doge =
+            crate::doge::p2pkh_address(&crate::derivation::derive_doge_key(&seed, 0).unwrap().1);
+        let zec =
+            crate::zcash::p2pkh_address(&crate::derivation::derive_zec_key(&seed, 0).unwrap().1);
         let ada = crate::cardano::address_of(&seed[..32], 0);
         let near = crate::near::implicit_account(&crate::derivation::derive_near_key(&seed, 0));
-        let btc = crate::derivation::format_btc_mainnet_address(&crate::derivation::derive_btc_mainnet_key(&seed, 0).unwrap().1).unwrap();
+        let btc = crate::derivation::format_btc_mainnet_address(
+            &crate::derivation::derive_btc_mainnet_key(&seed, 0)
+                .unwrap()
+                .1,
+        )
+        .unwrap();
         let eth = a("evm", "evm_mainnet");
-        for (coin, network, amount, sender) in [("doge", "doge_mainnet", 50_000_000_000u128, doge), ("zec", "zec_mainnet", 50_000_000, zec), ("ada", "ada_mainnet", 200_000_000, ada), ("near", "near_mainnet", 50_000_000_000_000_000_000_000_000, near), ("btc", "btc_mainnet", 200_000, btc)] {
+        for (coin, network, amount, sender) in [
+            ("doge", "doge_mainnet", 50_000_000_000u128, doge),
+            ("zec", "zec_mainnet", 50_000_000, zec),
+            ("ada", "ada_mainnet", 200_000_000, ada),
+            (
+                "near",
+                "near_mainnet",
+                50_000_000_000_000_000_000_000_000,
+                near,
+            ),
+            ("btc", "btc_mainnet", 200_000, btc),
+        ] {
             let from = a(coin, network);
-            let body: Value = client().get(format!("{API_BASE}/getAction")).header("x-api-key", DEMO_KEY).query(&action_params(&from, &eth, amount, &sender, USER)).send().unwrap().json().unwrap();
-            println!("{coin} ({sender}) → dépôt {} mémo {} vm {}", body["tx"]["to"], body["tx"]["toExtra"], body["vmId"]);
+            let body: Value = client()
+                .get(format!("{API_BASE}/getAction"))
+                .header("x-api-key", DEMO_KEY)
+                .query(&action_params(&from, &eth, amount, &sender, USER))
+                .send()
+                .unwrap()
+                .json()
+                .unwrap();
+            println!(
+                "{coin} ({sender}) → dépôt {} mémo {} vm {}",
+                body["tx"]["to"], body["tx"]["toExtra"], body["vmId"]
+            );
             if body["tx"].is_null() {
-                println!("   {}", body.to_string().chars().take(300).collect::<String>());
+                println!(
+                    "   {}",
+                    body.to_string().chars().take(300).collect::<String>()
+                );
             }
         }
     }
@@ -806,20 +1249,51 @@ mod tests {
     #[ignore]
     fn real_moonpay_trade_deposits() {
         let xmr_donation = "44AFFq5kSiGBoZ4NMDwYtN18obc8AemS33DBLWs3H7otXft3XjrpDtQGv7SqSsaBYBb98uNbr2VBBEt7f2wfn3RVGQBEP3A";
-        let (eth, xmr, btc, xrp) = (a("evm", "evm_mainnet"), a("xmr", "xmr_mainnet"), a("btc", "btc_mainnet"), a("xrp", "xrp_mainnet"));
+        let (eth, xmr, btc, xrp) = (
+            a("evm", "evm_mainnet"),
+            a("xmr", "xmr_mainnet"),
+            a("btc", "btc_mainnet"),
+            a("xrp", "xrp_mainnet"),
+        );
         for (from, to, amount, sender, recipient) in [
             (&eth, &xmr, 50_000_000_000_000_000u128, USER, xmr_donation),
-            (&btc, &eth, 100_000, "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh", USER),
-            (&xrp, &eth, 50_000_000, "rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh", USER),
+            (
+                &btc,
+                &eth,
+                100_000,
+                "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+                USER,
+            ),
+            (
+                &xrp,
+                &eth,
+                50_000_000,
+                "rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh",
+                USER,
+            ),
         ] {
-            let body: Value = client().get(format!("{API_BASE}/getAction")).header("x-api-key", DEMO_KEY).query(&action_params(from, to, amount, sender, recipient)).send().unwrap().json().unwrap();
+            let body: Value = client()
+                .get(format!("{API_BASE}/getAction"))
+                .header("x-api-key", DEMO_KEY)
+                .query(&action_params(from, to, amount, sender, recipient))
+                .send()
+                .unwrap()
+                .json()
+                .unwrap();
             match parse_action(&body, from, to, amount) {
                 Ok(quote) => {
-                    println!("{} → {} : {:?}, minimum {} (~{} s)", from.symbol, to.symbol, quote.tx, quote.min_out, quote.duration_secs);
+                    println!(
+                        "{} → {} : {:?}, minimum {} (~{} s)",
+                        from.symbol, to.symbol, quote.tx, quote.min_out, quote.duration_secs
+                    );
                     assert!(matches!(quote.tx, TradeTx::Deposit { .. }));
                 }
                 // Bitcoin: a deposit of a non-payable shape (future SegWit version), refused cleanly.
-                Err(e) if from.network == "btc_mainnet" && e.to_string().contains("nouveau devis") => println!("BTC → ETH : {e} ({})", body["tx"]["to"]),
+                Err(e)
+                    if from.network == "btc_mainnet" && e.to_string().contains("nouveau devis") =>
+                {
+                    println!("BTC → ETH : {e} ({})", body["tx"]["to"])
+                }
                 Err(e) => panic!("{e}"),
             }
         }

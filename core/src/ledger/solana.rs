@@ -38,7 +38,14 @@ fn send_chunked(transport: &mut dyn Transport, ins: u8, p1: u8, payload: &[u8]) 
     let mut p2 = 0u8;
     for (i, chunk) in chunks.iter().enumerate() {
         let last = i + 1 == chunks.len();
-        let (response, sw) = send_raw(transport, CLA, ins, p1, if last { p2 } else { p2 | P2_MORE }, chunk)?;
+        let (response, sw) = send_raw(
+            transport,
+            CLA,
+            ins,
+            p1,
+            if last { p2 } else { p2 | P2_MORE },
+            chunk,
+        )?;
         check(sw)?;
         if last {
             return Ok(response);
@@ -51,18 +58,32 @@ fn send_chunked(transport: &mut dyn Transport, ins: u8, p1: u8, payload: &[u8]) 
 /// Public key (address) of the `path` account. `confirm`: shown on the device for
 /// visual verification.
 pub fn get_pubkey(transport: &mut dyn Transport, path: &[u32], confirm: bool) -> Result<[u8; 32]> {
-    let response = send_chunked(transport, INS_GET_PUBKEY, if confirm { P1_CONFIRM } else { P1_NON_CONFIRM }, &encode_path(path)?)?;
-    response.try_into().map_err(|_| anyhow!("clé publique Solana du Ledger mal formée"))
+    let response = send_chunked(
+        transport,
+        INS_GET_PUBKEY,
+        if confirm { P1_CONFIRM } else { P1_NON_CONFIRM },
+        &encode_path(path)?,
+    )?;
+    response
+        .try_into()
+        .map_err(|_| anyhow!("clé publique Solana du Ledger mal formée"))
 }
 
 /// Signs a transaction message (`message` = the signed part, without signatures);
 /// the signature must verify against `expected`.
-pub fn sign_transaction_message(transport: &mut dyn Transport, path: &[u32], message: &[u8], expected: &[u8; 32]) -> Result<[u8; 64]> {
+pub fn sign_transaction_message(
+    transport: &mut dyn Transport,
+    path: &[u32],
+    message: &[u8],
+    expected: &[u8; 32],
+) -> Result<[u8; 64]> {
     let mut payload = vec![1u8]; // single signer
     payload.extend_from_slice(&encode_path(path)?);
     payload.extend_from_slice(message);
     let response = send_chunked(transport, INS_SIGN, P1_CONFIRM, &payload)?;
-    let signature: [u8; 64] = response.try_into().map_err(|_| anyhow!("signature Solana du Ledger mal formée"))?;
+    let signature: [u8; 64] = response
+        .try_into()
+        .map_err(|_| anyhow!("signature Solana du Ledger mal formée"))?;
     VerifyingKey::from_bytes(expected)
         .map_err(|_| anyhow!("clé publique Solana invalide"))?
         .verify(message, &Signature::from_bytes(&signature))
@@ -88,7 +109,10 @@ mod tests {
     fn chunking_flags_match_hw_app_solana() {
         let mut t = Recorder(Vec::new());
         send_chunked(&mut t, INS_SIGN, P1_CONFIRM, &[0u8; 600]).unwrap();
-        assert_eq!(t.0, vec![(0x01, 0x02, 255), (0x01, 0x03, 255), (0x01, 0x01, 90)]);
+        assert_eq!(
+            t.0,
+            vec![(0x01, 0x02, 255), (0x01, 0x03, 255), (0x01, 0x01, 90)]
+        );
         let mut t = Recorder(Vec::new());
         send_chunked(&mut t, INS_GET_PUBKEY, P1_NON_CONFIRM, &[0u8; 13]).unwrap();
         assert_eq!(t.0, vec![(0x00, 0x00, 13)]);
@@ -104,27 +128,56 @@ mod tests {
     fn ledger_solana_against_the_official_app_in_speculos() {
         use super::super::{parse_path, speculos, TcpTransport};
         let mut t = TcpTransport::connect(speculos::APDU).unwrap();
-        let seed = bip39::Mnemonic::parse(speculos::TEST_MNEMONIC).unwrap().to_seed("");
+        let seed = bip39::Mnemonic::parse(speculos::TEST_MNEMONIC)
+            .unwrap()
+            .to_seed("");
 
         let phantom = parse_path("44'/501'/0'/0'").unwrap();
         let device = get_pubkey(&mut t, &phantom, false).unwrap();
-        assert_eq!(device, crate::derivation::derive_solana_key(&seed, 0).verifying_key().to_bytes());
+        assert_eq!(
+            device,
+            crate::derivation::derive_solana_key(&seed, 0)
+                .verifying_key()
+                .to_bytes()
+        );
         let ledger_live = parse_path("44'/501'/0'").unwrap();
         let device_ll = get_pubkey(&mut t, &ledger_live, false).unwrap();
-        assert_eq!(device_ll, crate::derivation::derive_ed25519_path(&seed, &[44, 501, 0]).verifying_key().to_bytes());
-        println!("clés Ledger = dérivations : {} / {}", bs58::encode(device).into_string(), bs58::encode(device_ll).into_string());
+        assert_eq!(
+            device_ll,
+            crate::derivation::derive_ed25519_path(&seed, &[44, 501, 0])
+                .verifying_key()
+                .to_bytes()
+        );
+        println!(
+            "clés Ledger = dérivations : {} / {}",
+            bs58::encode(device).into_string(),
+            bs58::encode(device_ll).into_string()
+        );
 
         // A 0.0123 SOL transfer built by our code (legacy message).
         let to = [0x44u8; 32];
         let dummy = ed25519_dalek::SigningKey::from_bytes(&[9u8; 32]);
-        let tx = crate::sol_tx::build_and_sign_transaction(&dummy, &device_ll, &[crate::sol_tx::transfer_instruction(&device_ll, &to, 12_300_000)], &[7u8; 32]);
+        let tx = crate::sol_tx::build_and_sign_transaction(
+            &dummy,
+            &device_ll,
+            &[crate::sol_tx::transfer_instruction(
+                &device_ll, &to, 12_300_000,
+            )],
+            &[7u8; 32],
+        );
         let message = &tx[65..];
-        let approver = std::thread::spawn(|| speculos::review_and_accept(&["Approve", "Sign transaction", "Accept"]));
-        let signature = sign_transaction_message(&mut t, &ledger_live, message, &device_ll).unwrap();
+        let approver = std::thread::spawn(|| {
+            speculos::review_and_accept(&["Approve", "Sign transaction", "Accept"])
+        });
+        let signature =
+            sign_transaction_message(&mut t, &ledger_live, message, &device_ll).unwrap();
         let screens = approver.join().unwrap().join(" | ");
         println!("écrans : {screens}");
         assert!(screens.contains("0.0123"), "montant affiché");
-        assert!(screens.contains(&bs58::encode(to).into_string()[..8]), "destinataire affiché");
+        assert!(
+            screens.contains(&bs58::encode(to).into_string()[..8]),
+            "destinataire affiché"
+        );
         assert_eq!(signature.len(), 64);
 
         let rejecter = std::thread::spawn(|| speculos::review_and_accept(&["Reject"]));
@@ -143,9 +196,17 @@ mod tests {
     #[test]
     fn solana_specific_status_words() {
         let path = super::super::parse_path("44'/501'/0'").unwrap();
-        let refused = sign_transaction_message(&mut Status(0x6982), &path, &[1, 2, 3], &[0; 32]).unwrap_err();
-        assert!(refused.to_string().contains("refusée"), "0x6982 = refus de l'utilisateur pour Solana : {refused}");
-        let blind = sign_transaction_message(&mut Status(0x6808), &path, &[1, 2, 3], &[0; 32]).unwrap_err();
-        assert!(blind.to_string().contains("signature à l'aveugle"), "{blind}");
+        let refused =
+            sign_transaction_message(&mut Status(0x6982), &path, &[1, 2, 3], &[0; 32]).unwrap_err();
+        assert!(
+            refused.to_string().contains("refusée"),
+            "0x6982 = refus de l'utilisateur pour Solana : {refused}"
+        );
+        let blind =
+            sign_transaction_message(&mut Status(0x6808), &path, &[1, 2, 3], &[0; 32]).unwrap_err();
+        assert!(
+            blind.to_string().contains("signature à l'aveugle"),
+            "{blind}"
+        );
     }
 }

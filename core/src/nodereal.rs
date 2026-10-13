@@ -43,7 +43,12 @@ pub fn available() -> bool {
 
 fn shared_client() -> &'static reqwest::blocking::Client {
     static CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
-    CLIENT.get_or_init(|| reqwest::blocking::Client::builder().timeout(Duration::from_secs(20)).build().expect("configuration du client HTTP valide"))
+    CLIENT.get_or_init(|| {
+        reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(20))
+            .build()
+            .expect("configuration du client HTTP valide")
+    })
 }
 
 fn pace() {
@@ -115,13 +120,20 @@ fn transfer(value: &Value) -> Result<Transfer> {
 fn call(params: Value) -> Result<(Vec<Transfer>, Option<String>)> {
     let key = API_KEY.ok_or_else(|| anyhow!(KEY_MISSING))?;
     pace();
-    let body = json!({ "jsonrpc": "2.0", "id": 1, "method": "nr_getAssetTransfers", "params": [params] });
+    let body =
+        json!({ "jsonrpc": "2.0", "id": 1, "method": "nr_getAssetTransfers", "params": [params] });
     // The key travels in the URL: network errors are rephrased WITHOUT the URL.
-    let response = shared_client().post(format!("{ENDPOINT}{key}")).json(&body).send().map_err(|e| anyhow!("NodeReal injoignable : {}", e.without_url()))?;
+    let response = shared_client()
+        .post(format!("{ENDPOINT}{key}"))
+        .json(&body)
+        .send()
+        .map_err(|e| anyhow!("NodeReal injoignable : {}", e.without_url()))?;
     if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
         bail!(LIMITED);
     }
-    let reply: Value = response.json().map_err(|e| anyhow!("réponse NodeReal illisible : {}", e.without_url()))?;
+    let reply: Value = response
+        .json()
+        .map_err(|e| anyhow!("réponse NodeReal illisible : {}", e.without_url()))?;
     parse_reply(&reply)
 }
 
@@ -129,14 +141,25 @@ fn parse_reply(reply: &Value) -> Result<(Vec<Transfer>, Option<String>)> {
     if let Some(error) = reply.get("error") {
         let message = error["message"].as_str().unwrap_or_default();
         let lower = message.to_lowercase();
-        if ["limit", "quota", "exceed", "too many"].iter().any(|word| lower.contains(word)) {
+        if ["limit", "quota", "exceed", "too many"]
+            .iter()
+            .any(|word| lower.contains(word))
+        {
             bail!(LIMITED);
         }
         bail!("NodeReal a refusé la demande : {message}");
     }
     let result = &reply["result"];
-    let transfers = result["transfers"].as_array().context("réponse NodeReal : virements absents")?.iter().map(transfer).collect::<Result<Vec<_>>>()?;
-    let next = result["pageKey"].as_str().filter(|k| !k.is_empty()).map(String::from);
+    let transfers = result["transfers"]
+        .as_array()
+        .context("réponse NodeReal : virements absents")?
+        .iter()
+        .map(transfer)
+        .collect::<Result<Vec<_>>>()?;
+    let next = result["pageKey"]
+        .as_str()
+        .filter(|k| !k.is_empty())
+        .map(String::from);
     Ok((transfers, next))
 }
 
@@ -159,7 +182,11 @@ pub struct Cursor {
 
 impl Stream {
     /// Fills the buffer up to a page, if the direction is not exhausted.
-    fn fill(&mut self, mut params: Value, fetch: &mut impl FnMut(Value) -> Result<(Vec<Transfer>, Option<String>)>) -> Result<()> {
+    fn fill(
+        &mut self,
+        mut params: Value,
+        fetch: &mut impl FnMut(Value) -> Result<(Vec<Transfer>, Option<String>)>,
+    ) -> Result<()> {
         if self.done || self.buffer.len() >= BATCH {
             return Ok(());
         }
@@ -196,12 +223,23 @@ pub(crate) fn next_page(
     fetch: &mut impl FnMut(Value) -> Result<(Vec<Transfer>, Option<String>)>,
 ) -> Result<(Vec<Transfer>, Option<Cursor>)> {
     let mut state = cursor.cloned().unwrap_or_default();
-    state.sent.fill(json_with(sent_params, "fromAddress", address), fetch)?;
-    state.received.fill(json_with(received_params, "toAddress", address), fetch)?;
-    let frontier = state.sent.frontier().into_iter().chain(state.received.frontier()).max();
+    state
+        .sent
+        .fill(json_with(sent_params, "fromAddress", address), fetch)?;
+    state
+        .received
+        .fill(json_with(received_params, "toAddress", address), fetch)?;
+    let frontier = state
+        .sent
+        .frontier()
+        .into_iter()
+        .chain(state.received.frontier())
+        .max();
     let mut page: Vec<Transfer> = Vec::new();
     for stream in [&mut state.sent, &mut state.received] {
-        let (ready, later): (Vec<_>, Vec<_>) = std::mem::take(&mut stream.buffer).into_iter().partition(|t| frontier.is_none_or(|f| t.block > f));
+        let (ready, later): (Vec<_>, Vec<_>) = std::mem::take(&mut stream.buffer)
+            .into_iter()
+            .partition(|t| frontier.is_none_or(|f| t.block > f));
         page.extend(ready);
         stream.buffer = later;
     }
@@ -215,7 +253,10 @@ pub(crate) fn next_page(
     let mut seen = std::collections::HashSet::new();
     page.retain(|t| seen.insert(t.id.clone()));
     page.sort_by(|a, b| b.block.cmp(&a.block).then_with(|| a.hash.cmp(&b.hash)));
-    let more = !(state.sent.done && state.received.done && state.sent.buffer.is_empty() && state.received.buffer.is_empty());
+    let more = !(state.sent.done
+        && state.received.done
+        && state.sent.buffer.is_empty()
+        && state.received.buffer.is_empty());
     Ok((page, more.then_some(state)))
 }
 
@@ -238,7 +279,14 @@ pub(crate) fn transactions(page: &[Transfer], address: &str) -> Vec<EvmTx> {
         let index = match txs.iter().position(|tx| tx.hash == t.hash) {
             Some(index) => index,
             None => {
-                txs.push(EvmTx { hash: t.hash.clone(), timestamp_unix: t.timestamp, failed: false, net_wei: 0, fee_wei: 0, swap: false });
+                txs.push(EvmTx {
+                    hash: t.hash.clone(),
+                    timestamp_unix: t.timestamp,
+                    failed: false,
+                    net_wei: 0,
+                    fee_wei: 0,
+                    swap: false,
+                });
                 txs.len() - 1
             }
         };
@@ -259,7 +307,8 @@ pub(crate) fn transactions(page: &[Transfer], address: &str) -> Vec<EvmTx> {
                 tx.net_wei -= value;
             }
         }
-        tx.swap |= (external && t.from == address && t.to == LIFI_DIAMOND) || (t.to == address && t.from == LIFI_DIAMOND);
+        tx.swap |= (external && t.from == address && t.to == LIFI_DIAMOND)
+            || (t.to == address && t.from == LIFI_DIAMOND);
     }
     for tx in &mut txs {
         if tx.failed {
@@ -271,15 +320,28 @@ pub(crate) fn transactions(page: &[Transfer], address: &str) -> Vec<EvmTx> {
 
 /// Page of `address`'s BNB history (transactions sent, BNB received, including from
 /// a contract) and continuation.
-pub fn tx_history_page(address: &str, cursor: Option<&Cursor>) -> Result<(Vec<EvmTx>, Option<Cursor>)> {
-    let (page, next) = next_page(address, base_params(&["external"]), base_params(&["external", "internal"]), cursor, &mut call)?;
+pub fn tx_history_page(
+    address: &str,
+    cursor: Option<&Cursor>,
+) -> Result<(Vec<EvmTx>, Option<Cursor>)> {
+    let (page, next) = next_page(
+        address,
+        base_params(&["external"]),
+        base_params(&["external", "internal"]),
+        cursor,
+        &mut call,
+    )?;
     Ok((transactions(&page, address), next))
 }
 
 /// Page of the transfers of BEP-20 token `contract` for `address`, grouped by
 /// transaction, and continuation. Filtered by contract at NodeReal AND checked
 /// again here: a fake token with the same symbol never gets in.
-pub fn token_history_page(address: &str, contract: &str, cursor: Option<&Cursor>) -> Result<(Vec<TokenMove>, Option<Cursor>)> {
+pub fn token_history_page(
+    address: &str,
+    contract: &str,
+    cursor: Option<&Cursor>,
+) -> Result<(Vec<TokenMove>, Option<Cursor>)> {
     let contract = contract.to_lowercase();
     let mut params = base_params(&["20"]);
     params["contractAddresses"] = json!([contract]);
@@ -287,11 +349,18 @@ pub fn token_history_page(address: &str, contract: &str, cursor: Option<&Cursor>
     token_moves(&page, address, &contract).map(|moves| (moves, next))
 }
 
-pub(crate) fn token_moves(page: &[Transfer], address: &str, contract: &str) -> Result<Vec<TokenMove>> {
+pub(crate) fn token_moves(
+    page: &[Transfer],
+    address: &str,
+    contract: &str,
+) -> Result<Vec<TokenMove>> {
     let address = address.to_lowercase();
     let mut moves: Vec<TokenMove> = Vec::new();
     for t in page {
-        anyhow::ensure!(t.contract.as_deref() == Some(contract), "le service d'historique a renvoyé un autre jeton que celui demandé");
+        anyhow::ensure!(
+            t.contract.as_deref() == Some(contract),
+            "le service d'historique a renvoyé un autre jeton que celui demandé"
+        );
         let value = i128::try_from(t.value).unwrap_or(i128::MAX);
         let delta = match (t.from == address, t.to == address) {
             (true, false) => -value,
@@ -300,7 +369,12 @@ pub(crate) fn token_moves(page: &[Transfer], address: &str, contract: &str) -> R
         };
         match moves.iter_mut().find(|m| m.hash == t.hash) {
             Some(existing) => existing.net += delta,
-            None => moves.push(TokenMove { hash: t.hash.clone(), timestamp_unix: t.timestamp, net: delta, swap: false }),
+            None => moves.push(TokenMove {
+                hash: t.hash.clone(),
+                timestamp_unix: t.timestamp,
+                net: delta,
+                swap: false,
+            }),
         }
     }
     Ok(moves)
@@ -316,7 +390,16 @@ mod tests {
     /// Transfer in the real format (fields captured on 2026-10-07 from an
     /// `nr_getAssetTransfers` response).
     #[allow(clippy::too_many_arguments)]
-    fn raw(id: u64, category: &str, block: u64, from: &str, to: &str, value: u128, hash: &str, status: u64) -> Value {
+    fn raw(
+        id: u64,
+        category: &str,
+        block: u64,
+        from: &str,
+        to: &str,
+        value: u128,
+        hash: &str,
+        status: u64,
+    ) -> Value {
         json!({
             "id": id, "category": category, "blockNum": format!("0x{block:x}"), "from": from, "to": to,
             "value": format!("0x{value:x}"), "asset": "BNB", "hash": hash, "contractAddress": null,
@@ -333,7 +416,16 @@ mod tests {
     #[test]
     fn transfers_become_transactions() {
         let page = parsed(vec![
-            raw(1, "external", 100, &ME.to_uppercase().replacen("0X", "0x", 1), OTHER, 1_000, "0xa", 1),
+            raw(
+                1,
+                "external",
+                100,
+                &ME.to_uppercase().replacen("0X", "0x", 1),
+                OTHER,
+                1_000,
+                "0xa",
+                1,
+            ),
             raw(2, "external", 99, OTHER, ME, 5_000, "0xb", 1),
             raw(3, "internal", 98, "0xcontract", ME, 700, "0xc", 1),
             raw(4, "external", 97, ME, OTHER, 9_999, "0xd", 0),
@@ -341,7 +433,10 @@ mod tests {
             raw(6, "external", 95, ME, LIFI_DIAMOND, 300, "0xf", 1),
         ]);
         let txs = transactions(&page, ME);
-        let summary: Vec<_> = txs.iter().map(|t| (t.hash.as_str(), t.net_wei, t.fee_wei, t.failed, t.swap)).collect();
+        let summary: Vec<_> = txs
+            .iter()
+            .map(|t| (t.hash.as_str(), t.net_wei, t.fee_wei, t.failed, t.swap))
+            .collect();
         let fee = 21_000 * 1_000_000_000;
         assert_eq!(
             summary,
@@ -369,21 +464,57 @@ mod tests {
             let second = params.get("pageKey").is_some();
             Ok(match (sent, second) {
                 // Sends: blocks 100 and 90, then 50.
-                (true, false) => (parsed(vec![raw(1, "external", 100, ME, OTHER, 1, "0xa", 1), raw(2, "external", 90, ME, ME, 2, "0xs", 1)]), Some("k1".into())),
-                (true, true) => (parsed(vec![raw(3, "external", 50, ME, OTHER, 3, "0xc", 1)]), None),
+                (true, false) => (
+                    parsed(vec![
+                        raw(1, "external", 100, ME, OTHER, 1, "0xa", 1),
+                        raw(2, "external", 90, ME, ME, 2, "0xs", 1),
+                    ]),
+                    Some("k1".into()),
+                ),
+                (true, true) => (
+                    parsed(vec![raw(3, "external", 50, ME, OTHER, 3, "0xc", 1)]),
+                    None,
+                ),
                 // Receipts: blocks 95, 90 (to self) and 40, then nothing.
                 (false, _) => (
-                    parsed(vec![raw(4, "external", 95, OTHER, ME, 4, "0xd", 1), raw(2, "external", 90, ME, ME, 2, "0xs", 1), raw(5, "external", 40, OTHER, ME, 5, "0xe", 1)]),
+                    parsed(vec![
+                        raw(4, "external", 95, OTHER, ME, 4, "0xd", 1),
+                        raw(2, "external", 90, ME, ME, 2, "0xs", 1),
+                        raw(5, "external", 40, OTHER, ME, 5, "0xe", 1),
+                    ]),
                     None,
                 ),
             })
         };
-        let (first, cursor) = next_page(ME, base_params(&["external"]), base_params(&["external"]), None, &mut fetch).unwrap();
+        let (first, cursor) = next_page(
+            ME,
+            base_params(&["external"]),
+            base_params(&["external"]),
+            None,
+            &mut fetch,
+        )
+        .unwrap();
         // Frontier: block 90 (sends still open); returned: 100 and 95.
-        assert_eq!(first.iter().map(|t| t.block).collect::<Vec<_>>(), vec![100, 95]);
+        assert_eq!(
+            first.iter().map(|t| t.block).collect::<Vec<_>>(),
+            vec![100, 95]
+        );
         let cursor = cursor.expect("suite attendue");
-        let (second, cursor) = next_page(ME, base_params(&["external"]), base_params(&["external"]), Some(&cursor), &mut fetch).unwrap();
-        assert_eq!(second.iter().map(|t| (t.block, t.hash.as_str())).collect::<Vec<_>>(), vec![(90, "0xs"), (50, "0xc"), (40, "0xe")]);
+        let (second, cursor) = next_page(
+            ME,
+            base_params(&["external"]),
+            base_params(&["external"]),
+            Some(&cursor),
+            &mut fetch,
+        )
+        .unwrap();
+        assert_eq!(
+            second
+                .iter()
+                .map(|t| (t.block, t.hash.as_str()))
+                .collect::<Vec<_>>(),
+            vec![(90, "0xs"), (50, "0xc"), (40, "0xe")]
+        );
         assert!(cursor.is_none(), "les deux sens sont épuisés");
         assert_eq!(calls, 3);
     }
@@ -397,7 +528,13 @@ mod tests {
         let mut b = raw(2, "20", 10, ME, OTHER, 200, "0x1", 1);
         b["contractAddress"] = json!(token);
         let moves = token_moves(&parsed(vec![a, b]), ME, token).unwrap();
-        assert_eq!(moves.iter().map(|m| (m.hash.as_str(), m.net)).collect::<Vec<_>>(), vec![("0x1", 300)]);
+        assert_eq!(
+            moves
+                .iter()
+                .map(|m| (m.hash.as_str(), m.net))
+                .collect::<Vec<_>>(),
+            vec![("0x1", 300)]
+        );
         let mut fake = raw(3, "20", 9, OTHER, ME, 1, "0x2", 1);
         fake["contractAddress"] = json!("0x0000000000000000000000000000000000000bad");
         assert!(token_moves(&parsed(vec![fake]), ME, token).is_err());
@@ -411,10 +548,23 @@ mod tests {
         assert_eq!(number(&json!(7)), Some(7));
         let (transfers, next) = parse_reply(&json!({ "result": { "transfers": [raw(1, "external", 5, ME, OTHER, 1, "0xa", 1)], "pageKey": "abc" } })).unwrap();
         assert_eq!((transfers.len(), next.as_deref()), (1, Some("abc")));
-        assert_eq!(parse_reply(&json!({ "result": { "transfers": [], "pageKey": null } })).unwrap().1, None);
-        let limited = parse_reply(&json!({ "error": { "code": -32005, "message": "monthly CU limit exceeded" } })).unwrap_err();
+        assert_eq!(
+            parse_reply(&json!({ "result": { "transfers": [], "pageKey": null } }))
+                .unwrap()
+                .1,
+            None
+        );
+        let limited = parse_reply(
+            &json!({ "error": { "code": -32005, "message": "monthly CU limit exceeded" } }),
+        )
+        .unwrap_err();
         assert_eq!(limited.to_string(), LIMITED);
-        assert!(parse_reply(&json!({ "error": { "code": -32601, "message": "method does not exist" } })).unwrap_err().to_string().contains("refusé"));
+        assert!(parse_reply(
+            &json!({ "error": { "code": -32601, "message": "method does not exist" } })
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("refusé"));
     }
 
     /// Real network (key required): net amounts compared with the transaction read from
@@ -425,7 +575,14 @@ mod tests {
     fn real_nodereal_amounts() {
         let rpc = "https://bsc-dataseed.bnbchain.org";
         let node = |method: &str, hash: &str| -> Value {
-            reqwest::blocking::Client::new().post(rpc).json(&json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": [hash] })).send().unwrap().json::<Value>().unwrap()["result"].clone()
+            reqwest::blocking::Client::new()
+                .post(rpc)
+                .json(&json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": [hash] }))
+                .send()
+                .unwrap()
+                .json::<Value>()
+                .unwrap()["result"]
+                .clone()
         };
         let (txs, _) = tx_history_page(OTHER, None).unwrap();
         let mut checked = 0;
@@ -436,11 +593,31 @@ mod tests {
             let from = chain["from"].as_str().unwrap().to_lowercase();
             let to = chain["to"].as_str().unwrap_or_default().to_lowercase();
             // Direct transfer (not from a contract): the net amount is the transaction's value.
-            let expected = if from == OTHER { -value } else if to == OTHER { value } else { continue };
+            let expected = if from == OTHER {
+                -value
+            } else if to == OTHER {
+                value
+            } else {
+                continue;
+            };
             // Receipt not served (yet) by the public node: next transaction.
-            let (Some(gas_used), Some(gas_price)) = (number(&receipt["gasUsed"]), number(&receipt["effectiveGasPrice"])) else { continue };
-            let fee = if from == OTHER { (gas_used * gas_price) as i128 } else { 0 };
-            println!("{} net {} (nœud {expected}) frais {} (nœud {fee})", &tx.hash[..12], tx.net_wei, tx.fee_wei);
+            let (Some(gas_used), Some(gas_price)) = (
+                number(&receipt["gasUsed"]),
+                number(&receipt["effectiveGasPrice"]),
+            ) else {
+                continue;
+            };
+            let fee = if from == OTHER {
+                (gas_used * gas_price) as i128
+            } else {
+                0
+            };
+            println!(
+                "{} net {} (nœud {expected}) frais {} (nœud {fee})",
+                &tx.hash[..12],
+                tx.net_wei,
+                tx.fee_wei
+            );
             assert_eq!((tx.net_wei, tx.fee_wei), (expected, fee), "{}", tx.hash);
             checked += 1;
         }
@@ -460,9 +637,17 @@ mod tests {
         let mut newest = None;
         for page in 0..10 {
             let (transfers, next) = call(params.clone()).unwrap();
-            let (low, high) = (transfers.iter().map(|t| t.block).min(), transfers.iter().map(|t| t.block).max());
+            let (low, high) = (
+                transfers.iter().map(|t| t.block).min(),
+                transfers.iter().map(|t| t.block).max(),
+            );
             newest = newest.or(high);
-            println!("page {page} : {} virements, blocs {low:?}..{high:?}, recul {:?} blocs, suite {}", transfers.len(), newest.zip(low).map(|(n, l)| n - l), next.is_some());
+            println!(
+                "page {page} : {} virements, blocs {low:?}..{high:?}, recul {:?} blocs, suite {}",
+                transfers.len(),
+                newest.zip(low).map(|(n, l)| n - l),
+                next.is_some()
+            );
             match next {
                 Some(key) => params["pageKey"] = json!(key),
                 None => break,
@@ -472,7 +657,10 @@ mod tests {
         explicit["toAddress"] = json!(quiet);
         explicit["fromBlock"] = json!("0x0");
         explicit["toBlock"] = json!("latest");
-        println!("bornes 0..latest : {:?}", call(explicit).map(|(t, n)| (t.len(), n.is_some())));
+        println!(
+            "bornes 0..latest : {:?}",
+            call(explicit).map(|(t, n)| (t.len(), n.is_some()))
+        );
     }
 
     /// Real network (key required): history of Binance's hot address, successive pages
@@ -487,26 +675,53 @@ mod tests {
         let (first, cursor) = tx_history_page(OTHER, None).unwrap();
         println!("{} transactions, suite : {}", first.len(), cursor.is_some());
         for tx in first.iter().take(3) {
-            println!("{} {:?} net {} frais {}", &tx.hash[..12], tx.timestamp_unix, tx.net_wei, tx.fee_wei);
+            println!(
+                "{} {:?} net {} frais {}",
+                &tx.hash[..12],
+                tx.timestamp_unix,
+                tx.net_wei,
+                tx.fee_wei
+            );
         }
         assert!(!first.is_empty() && cursor.is_some());
         let (second, _) = tx_history_page(OTHER, cursor.as_ref()).unwrap();
-        assert!(second.iter().all(|t| !first.iter().any(|f| f.hash == t.hash)), "pages sans doublon");
+        assert!(
+            second
+                .iter()
+                .all(|t| !first.iter().any(|f| f.hash == t.hash)),
+            "pages sans doublon"
+        );
         // Low-activity address: walk back through the pages until past 100,000 blocks.
         let quiet = "0x000000000000000000000000000000000000dead";
         let mut cursor = None;
         let mut oldest = i64::MAX;
-        let newest = tx_history_page(quiet, None).unwrap().0.first().and_then(|t| t.timestamp_unix).unwrap_or(0);
+        let newest = tx_history_page(quiet, None)
+            .unwrap()
+            .0
+            .first()
+            .and_then(|t| t.timestamp_unix)
+            .unwrap_or(0);
         for _ in 0..8 {
             let (page, next) = tx_history_page(quiet, cursor.as_ref()).unwrap();
-            oldest = oldest.min(page.iter().filter_map(|t| t.timestamp_unix).min().unwrap_or(oldest));
+            oldest = oldest.min(
+                page.iter()
+                    .filter_map(|t| t.timestamp_unix)
+                    .min()
+                    .unwrap_or(oldest),
+            );
             cursor = next;
             if cursor.is_none() || newest - oldest > 20 * 3600 {
                 break;
             }
         }
         // 100,000 blocks ≈ 11.7 h (0.42 s per block, measured on 2026-10-07).
-        println!("adresse peu active : remonté de {} h", (newest - oldest) / 3600);
-        assert!(newest - oldest > 15 * 3600, "historique limité à la dernière plage de blocs");
+        println!(
+            "adresse peu active : remonté de {} h",
+            (newest - oldest) / 3600
+        );
+        assert!(
+            newest - oldest > 15 * 3600,
+            "historique limité à la dernière plage de blocs"
+        );
     }
 }

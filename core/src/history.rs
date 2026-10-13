@@ -78,7 +78,10 @@ fn classify(net_amount_minor: Option<i128>, swap: bool) -> TxKind {
 pub(crate) fn is_swap_memo(memo: &str) -> bool {
     let memo = memo.trim_start();
     let prefix = memo.split_once(':').map(|(p, _)| p.to_ascii_lowercase());
-    matches!(prefix.as_deref(), Some("=" | "s" | "swap" | "out" | "refund"))
+    matches!(
+        prefix.as_deref(),
+        Some("=" | "s" | "swap" | "out" | "refund")
+    )
 }
 
 /// Transparent Zcash history (see `zcash::history`).
@@ -92,7 +95,11 @@ pub fn zec_history(address: &str) -> Result<Vec<TxEntry>> {
             kind: classify(Some(tx.net_zat), false),
             id: tx.txid,
             timestamp_unix: tx.time,
-            status: if tx.height > 0 { TxStatus::Confirmed } else { TxStatus::Pending },
+            status: if tx.height > 0 {
+                TxStatus::Confirmed
+            } else {
+                TxStatus::Pending
+            },
             net_amount_minor: Some(tx.net_zat),
             fee_minor: 0,
         })
@@ -105,15 +112,26 @@ pub fn btc_history(network: &wallet_flow::BtcNetwork, address: &str) -> Result<V
 
 /// Page of Bitcoin history: without `after`, the mempool then 25 confirmed
 /// transactions; with it, the 25 confirmed transactions older than txid `after`.
-pub fn btc_history_after(network: &wallet_flow::BtcNetwork, address: &str, after: Option<&str>) -> Result<Vec<TxEntry>> {
+pub fn btc_history_after(
+    network: &wallet_flow::BtcNetwork,
+    address: &str,
+    after: Option<&str>,
+) -> Result<Vec<TxEntry>> {
     let txs = EsploraClient::new(network.esplora_base).address_history_after(address, after)?;
     Ok(txs
         .into_iter()
         .map(|tx| TxEntry {
-            kind: classify(Some(tx.net_sat), tx.memo.as_deref().is_some_and(is_swap_memo)),
+            kind: classify(
+                Some(tx.net_sat),
+                tx.memo.as_deref().is_some_and(is_swap_memo),
+            ),
             id: tx.txid,
             timestamp_unix: tx.block_time,
-            status: if tx.confirmed { TxStatus::Confirmed } else { TxStatus::Pending },
+            status: if tx.confirmed {
+                TxStatus::Confirmed
+            } else {
+                TxStatus::Pending
+            },
             net_amount_minor: Some(tx.net_sat),
             fee_minor: 0,
         })
@@ -123,7 +141,11 @@ pub fn btc_history_after(network: &wallet_flow::BtcNetwork, address: &str, after
 fn sol_entries(txs: Vec<SolTx>) -> Vec<TxEntry> {
     txs.into_iter()
         .map(|tx| TxEntry {
-            kind: if tx.stake && !tx.swap { TxKind::Stake } else { classify(tx.net_lamports, tx.swap) },
+            kind: if tx.stake && !tx.swap {
+                TxKind::Stake
+            } else {
+                classify(tx.net_lamports, tx.swap)
+            },
             id: tx.signature,
             timestamp_unix: tx.block_time,
             status: if tx.failed {
@@ -144,8 +166,15 @@ pub fn sol_history(rpc_url: &str, pubkey_b58: &str, limit: u32) -> Result<Vec<Tx
 }
 
 /// Page of Solana history: `limit` signatures older than `before`.
-pub fn sol_history_before(rpc_url: &str, pubkey_b58: &str, limit: u32, before: Option<&str>) -> Result<Vec<TxEntry>> {
-    Ok(sol_entries(SolRpc::new(rpc_url).signature_history_before(pubkey_b58, limit, before)?))
+pub fn sol_history_before(
+    rpc_url: &str,
+    pubkey_b58: &str,
+    limit: u32,
+    before: Option<&str>,
+) -> Result<Vec<TxEntry>> {
+    Ok(sol_entries(
+        SolRpc::new(rpc_url).signature_history_before(pubkey_b58, limit, before)?,
+    ))
 }
 
 /// History of an SPL token: `ata_b58` is the owner's associated token account (ATA)
@@ -157,8 +186,15 @@ pub fn spl_history(rpc_url: &str, ata_b58: &str, limit: u32) -> Result<Vec<TxEnt
 }
 
 /// Page of an SPL token's history: `limit` signatures older than `before`.
-pub fn spl_history_before(rpc_url: &str, ata_b58: &str, limit: u32, before: Option<&str>) -> Result<Vec<TxEntry>> {
-    Ok(sol_entries(SolRpc::new(rpc_url).token_signature_history_before(ata_b58, limit, before)?))
+pub fn spl_history_before(
+    rpc_url: &str,
+    ata_b58: &str,
+    limit: u32,
+    before: Option<&str>,
+) -> Result<Vec<TxEntry>> {
+    Ok(sol_entries(
+        SolRpc::new(rpc_url).token_signature_history_before(ata_b58, limit, before)?,
+    ))
 }
 
 /// Continuation of an EVM history, specific to the network's source.
@@ -203,14 +239,19 @@ pub fn evm_history(chain_id: u64, address: &str, limit: usize) -> Result<Vec<TxE
 
 /// Page of EVM history (50 transactions) and the cursor of the next one, `None`
 /// after the last.
-pub fn evm_history_page(chain_id: u64, address: &str, cursor: Option<&EvmCursor>) -> Result<(Vec<TxEntry>, Option<EvmCursor>)> {
+pub fn evm_history_page(
+    chain_id: u64,
+    address: &str,
+    cursor: Option<&EvmCursor>,
+) -> Result<(Vec<TxEntry>, Option<EvmCursor>)> {
     let (txs, next) = match evm_source(chain_id)? {
         EvmHistory::Blockscout(base_url) => {
             let page = match cursor {
                 Some(EvmCursor::Blockscout(params)) => Some(params),
                 _ => None,
             };
-            let (txs, next) = BlockscoutClient::new(base_url, chain_id).tx_history_page(address, page)?;
+            let (txs, next) =
+                BlockscoutClient::new(base_url, chain_id).tx_history_page(address, page)?;
             (txs, next.map(EvmCursor::Blockscout))
         }
         EvmHistory::Routescan => {
@@ -222,7 +263,8 @@ pub fn evm_history_page(chain_id: u64, address: &str, cursor: Option<&EvmCursor>
             (txs, next.map(EvmCursor::NodeReal))
         }
         EvmHistory::Alchemy => {
-            let (txs, next) = crate::alchemy::tx_history_page(chain_id, address, alchemy_cursor(cursor))?;
+            let (txs, next) =
+                crate::alchemy::tx_history_page(chain_id, address, alchemy_cursor(cursor))?;
             (txs, next.map(EvmCursor::Alchemy))
         }
     };
@@ -234,7 +276,11 @@ fn evm_entry(tx: EvmTx) -> TxEntry {
         kind: classify(Some(tx.net_wei), tx.swap),
         id: tx.hash,
         timestamp_unix: tx.timestamp_unix,
-        status: if tx.failed { TxStatus::Failed } else { TxStatus::Confirmed },
+        status: if tx.failed {
+            TxStatus::Failed
+        } else {
+            TxStatus::Confirmed
+        },
         net_amount_minor: Some(tx.net_wei),
         fee_minor: tx.fee_wei,
     }
@@ -243,26 +289,39 @@ fn evm_entry(tx: EvmTx) -> TxEntry {
 /// Page of the history of ERC-20 token `contract` for `address` on network
 /// `chain_id` (amounts in the token's smallest unit, no fee: it is paid in the
 /// network's coin), through the network's source.
-pub fn erc20_history_page(chain_id: u64, address: &str, contract: &str, cursor: Option<&EvmCursor>) -> Result<(Vec<TxEntry>, Option<EvmCursor>)> {
+pub fn erc20_history_page(
+    chain_id: u64,
+    address: &str,
+    contract: &str,
+    cursor: Option<&EvmCursor>,
+) -> Result<(Vec<TxEntry>, Option<EvmCursor>)> {
     let (moves, next) = match evm_source(chain_id)? {
         EvmHistory::Blockscout(base_url) => {
             let page = match cursor {
                 Some(EvmCursor::Blockscout(params)) => Some(params),
                 _ => None,
             };
-            let (moves, next) = BlockscoutClient::new(base_url, chain_id).token_transfers_page(address, contract, page)?;
+            let (moves, next) = BlockscoutClient::new(base_url, chain_id)
+                .token_transfers_page(address, contract, page)?;
             (moves, next.map(EvmCursor::Blockscout))
         }
         EvmHistory::Routescan => {
-            let (moves, next) = routescan::token_history_page(chain_id, address, contract, page_number(cursor))?;
+            let (moves, next) =
+                routescan::token_history_page(chain_id, address, contract, page_number(cursor))?;
             (moves, next.map(EvmCursor::Page))
         }
         EvmHistory::NodeReal => {
-            let (moves, next) = nodereal::token_history_page(address, contract, nodereal_cursor(cursor))?;
+            let (moves, next) =
+                nodereal::token_history_page(address, contract, nodereal_cursor(cursor))?;
             (moves, next.map(EvmCursor::NodeReal))
         }
         EvmHistory::Alchemy => {
-            let (moves, next) = crate::alchemy::token_history_page(chain_id, address, contract, alchemy_cursor(cursor))?;
+            let (moves, next) = crate::alchemy::token_history_page(
+                chain_id,
+                address,
+                contract,
+                alchemy_cursor(cursor),
+            )?;
             (moves, next.map(EvmCursor::Alchemy))
         }
     };
@@ -343,27 +402,65 @@ mod tests {
             }
         };
         fn find<'a>(entries: &'a [TxEntry], id: &str) -> Option<&'a TxKind> {
-            entries.iter().find(|e| e.id.eq_ignore_ascii_case(id)).map(|e| &e.kind)
+            entries
+                .iter()
+                .find(|e| e.id.eq_ignore_ascii_case(id))
+                .map(|e| &e.kind)
         }
 
         // The address is still receiving: the known transaction moves back page after page
         // (observed on 2026-10-07), so a few pages are walked through.
-        let mut btc = btc_history(&wallet_flow::BTC_MAINNET, "bc1qwqap30shafhtfd0k5hda4xep6xypgm6fyvphnw").unwrap();
+        let mut btc = btc_history(
+            &wallet_flow::BTC_MAINNET,
+            "bc1qwqap30shafhtfd0k5hda4xep6xypgm6fyvphnw",
+        )
+        .unwrap();
         for _ in 0..6 {
-            if find(&btc, "909686b5b485c49ab270ea0b86d6c981129b6b67ac4ce5c333a722fa2fb6796c").is_some() {
+            if find(
+                &btc,
+                "909686b5b485c49ab270ea0b86d6c981129b6b67ac4ce5c333a722fa2fb6796c",
+            )
+            .is_some()
+            {
                 break;
             }
-            let Some(last) = btc.last().map(|e| e.id.clone()) else { break };
-            btc.extend(btc_history_after(&wallet_flow::BTC_MAINNET, "bc1qwqap30shafhtfd0k5hda4xep6xypgm6fyvphnw", Some(&last)).unwrap());
+            let Some(last) = btc.last().map(|e| e.id.clone()) else {
+                break;
+            };
+            btc.extend(
+                btc_history_after(
+                    &wallet_flow::BTC_MAINNET,
+                    "bc1qwqap30shafhtfd0k5hda4xep6xypgm6fyvphnw",
+                    Some(&last),
+                )
+                .unwrap(),
+            );
         }
         show("BTC destinataire d'un paiement THORChain", &btc);
-        assert_eq!(find(&btc, "909686b5b485c49ab270ea0b86d6c981129b6b67ac4ce5c333a722fa2fb6796c"), Some(&TxKind::Swap));
+        assert_eq!(
+            find(
+                &btc,
+                "909686b5b485c49ab270ea0b86d6c981129b6b67ac4ce5c333a722fa2fb6796c"
+            ),
+            Some(&TxKind::Swap)
+        );
 
         let eth = evm_history(1, "0x34deb5AF3e37BD0495dDc1bb1C53c14d7CE064c3", 50).unwrap();
         show("ETH déposant THORChain", &eth);
-        assert_eq!(find(&eth, "0xfce530aa6e05ccc95df9e6bd3f660966d48233458a3a1fa4e089c080a62c5387"), Some(&TxKind::Swap));
+        assert_eq!(
+            find(
+                &eth,
+                "0xfce530aa6e05ccc95df9e6bd3f660966d48233458a3a1fa4e089c080a62c5387"
+            ),
+            Some(&TxKind::Swap)
+        );
 
-        let sol = sol_history(wallet_flow::SOLANA_MAINNET.rpc, "3iUShJYbFX6it5ArcR31Pm6SqqowccAe5NwQrfaG1yvG", 25).unwrap();
+        let sol = sol_history(
+            wallet_flow::SOLANA_MAINNET.rpc,
+            "3iUShJYbFX6it5ArcR31Pm6SqqowccAe5NwQrfaG1yvG",
+            25,
+        )
+        .unwrap();
         show("SOL destinataire d'un paiement THORChain", &sol);
         assert_eq!(find(&sol, "4HuniHVGia6nAXvdMXVWdwvcBg9z5ehjjvha9MYrq1K121btuuaCUV9XzK8qHmPs28inzFEanrZ2BUQh2is55vb8"), Some(&TxKind::Swap));
     }
@@ -372,7 +469,11 @@ mod tests {
     fn kind_follows_the_amount_unless_it_is_a_swap() {
         assert_eq!(classify(Some(5), false), TxKind::Received);
         assert_eq!(classify(Some(-5), false), TxKind::Sent);
-        assert_eq!(classify(Some(0), false), TxKind::Other, "aucun montant de l'actif déplacé");
+        assert_eq!(
+            classify(Some(0), false),
+            TxKind::Other,
+            "aucun montant de l'actif déplacé"
+        );
         assert_eq!(classify(Some(-5), true), TxKind::Swap);
         assert_eq!(classify(Some(5), true), TxKind::Swap);
         assert_eq!(classify(None, false), TxKind::Other);

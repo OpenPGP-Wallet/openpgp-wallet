@@ -57,17 +57,28 @@ fn client() -> &'static reqwest::blocking::Client {
 }
 
 fn koios_get(path: &str) -> Result<Value> {
-    let response = client().get(format!("{KOIOS}{path}")).send().context("service Cardano injoignable")?;
+    let response = client()
+        .get(format!("{KOIOS}{path}"))
+        .send()
+        .context("service Cardano injoignable")?;
     let status = response.status();
     ensure!(status.is_success(), "service Cardano : réponse {status}");
-    response.json().context("réponse du service Cardano illisible")
+    response
+        .json()
+        .context("réponse du service Cardano illisible")
 }
 
 fn koios_post(path: &str, body: Value) -> Result<Value> {
-    let response = client().post(format!("{KOIOS}{path}")).json(&body).send().context("service Cardano injoignable")?;
+    let response = client()
+        .post(format!("{KOIOS}{path}"))
+        .json(&body)
+        .send()
+        .context("service Cardano injoignable")?;
     let status = response.status();
     ensure!(status.is_success(), "service Cardano : réponse {status}");
-    response.json().context("réponse du service Cardano illisible")
+    response
+        .json()
+        .context("réponse du service Cardano illisible")
 }
 
 /// Amount in ADA, 6 decimals ("12.500000").
@@ -76,11 +87,19 @@ pub fn format_ada(lovelace: u64) -> String {
 }
 
 fn lovelace(value: &Value) -> Result<u64> {
-    value.as_str().and_then(|v| v.parse().ok()).or(value.as_u64()).context("montant Cardano illisible")
+    value
+        .as_str()
+        .and_then(|v| v.parse().ok())
+        .or(value.as_u64())
+        .context("montant Cardano illisible")
 }
 
 fn blake2b(data: &[u8], len: usize) -> Vec<u8> {
-    blake2b_simd::Params::new().hash_length(len).hash(data).as_bytes().to_vec()
+    blake2b_simd::Params::new()
+        .hash_length(len)
+        .hash(data)
+        .as_bytes()
+        .to_vec()
 }
 
 // --- BIP32-Ed25519 keys (CIP-3 Icarus, "V2" derivation) -------------------------------
@@ -134,23 +153,35 @@ impl XPrv {
         out[0] &= 0b1111_1000;
         out[31] &= 0b0001_1111;
         out[31] |= 0b0100_0000;
-        let key = XPrv { kl: out[..32].try_into().expect("32"), kr: out[32..64].try_into().expect("32"), chain: out[64..].try_into().expect("32") };
+        let key = XPrv {
+            kl: out[..32].try_into().expect("32"),
+            kr: out[32..64].try_into().expect("32"),
+            chain: out[64..].try_into().expect("32"),
+        };
         out.zeroize();
         key
     }
 
     pub fn public(&self) -> [u8; 32] {
-        EdwardsPoint::mul_base(&Scalar::from_bytes_mod_order(self.kl)).compress().to_bytes()
+        EdwardsPoint::mul_base(&Scalar::from_bytes_mod_order(self.kl))
+            .compress()
+            .to_bytes()
     }
 
     /// Child no. `index` (hardened above 2³¹).
     pub fn derive(&self, index: u32) -> XPrv {
         let idx = index.to_le_bytes();
         let (mut z, i) = if index >= 0x8000_0000 {
-            (hmac(&self.chain, &[&[0x00], &self.kl, &self.kr, &idx]), hmac(&self.chain, &[&[0x01], &self.kl, &self.kr, &idx]))
+            (
+                hmac(&self.chain, &[&[0x00], &self.kl, &self.kr, &idx]),
+                hmac(&self.chain, &[&[0x01], &self.kl, &self.kr, &idx]),
+            )
         } else {
             let public = self.public();
-            (hmac(&self.chain, &[&[0x02], &public, &idx]), hmac(&self.chain, &[&[0x03], &public, &idx]))
+            (
+                hmac(&self.chain, &[&[0x02], &public, &idx]),
+                hmac(&self.chain, &[&[0x03], &public, &idx]),
+            )
         };
         // kL' = kL + 8 × ZL (first 28 bytes), kR' = kR + ZR (mod 2²⁵⁶).
         let mut kl = [0u8; 32];
@@ -158,8 +189,16 @@ impl XPrv {
         for k in 0..32 {
             // Byte k of 8 × ZL: the low 5 bits of ZL[k] shifted, plus the high 3 bits of
             // ZL[k-1].
-            let low = if k < 28 { (u16::from(z[k]) << 3) & 0xff } else { 0 };
-            let high = if k > 0 && k <= 28 { u16::from(z[k - 1]) >> 5 } else { 0 };
+            let low = if k < 28 {
+                (u16::from(z[k]) << 3) & 0xff
+            } else {
+                0
+            };
+            let high = if k > 0 && k <= 28 {
+                u16::from(z[k - 1]) >> 5
+            } else {
+                0
+            };
             let zl8 = low | high;
             let sum = u16::from(self.kl[k]) + zl8 + carry;
             kl[k] = sum as u8;
@@ -173,15 +212,32 @@ impl XPrv {
             carry = sum >> 8;
         }
         z.zeroize();
-        XPrv { kl, kr, chain: i[32..].try_into().expect("32") }
+        XPrv {
+            kl,
+            kr,
+            chain: i[32..].try_into().expect("32"),
+        }
     }
 
     /// Ed25519 signature with the extended key (r = H(kR ‖ M)).
     pub fn sign(&self, message: &[u8]) -> [u8; 64] {
         let public = self.public();
-        let r = Scalar::from_bytes_mod_order_wide(&Sha512::new().chain_update(self.kr).chain_update(message).finalize().into());
+        let r = Scalar::from_bytes_mod_order_wide(
+            &Sha512::new()
+                .chain_update(self.kr)
+                .chain_update(message)
+                .finalize()
+                .into(),
+        );
         let big_r = EdwardsPoint::mul_base(&r).compress().to_bytes();
-        let h = Scalar::from_bytes_mod_order_wide(&Sha512::new().chain_update(big_r).chain_update(public).chain_update(message).finalize().into());
+        let h = Scalar::from_bytes_mod_order_wide(
+            &Sha512::new()
+                .chain_update(big_r)
+                .chain_update(public)
+                .chain_update(message)
+                .finalize()
+                .into(),
+        );
         let s = r + h * Scalar::from_bytes_mod_order(self.kl);
         let mut signature = [0u8; 64];
         signature[..32].copy_from_slice(&big_r);
@@ -192,7 +248,10 @@ impl XPrv {
 
 /// Payment and stake keys of account no. `account` (CIP-1852).
 pub fn account_keys(entropy: &[u8], account: u32) -> (XPrv, XPrv) {
-    let acct = XPrv::master(entropy).derive(0x8000_0000 | 1852).derive(0x8000_0000 | 1815).derive(0x8000_0000 | account);
+    let acct = XPrv::master(entropy)
+        .derive(0x8000_0000 | 1852)
+        .derive(0x8000_0000 | 1815)
+        .derive(0x8000_0000 | account);
     (acct.derive(0).derive(0), acct.derive(2).derive(0))
 }
 
@@ -203,7 +262,8 @@ pub fn base_address(payment: &[u8; 32], stake: &[u8; 32]) -> String {
     let mut bytes = vec![0x01];
     bytes.extend(blake2b(payment, 28));
     bytes.extend(blake2b(stake, 28));
-    bech32::encode("addr", bytes.to_base32(), bech32::Variant::Bech32).expect("adresse Cardano encodable")
+    bech32::encode("addr", bytes.to_base32(), bech32::Variant::Bech32)
+        .expect("adresse Cardano encodable")
 }
 
 pub fn address_of(entropy: &[u8], account: u32) -> String {
@@ -215,16 +275,32 @@ pub fn address_of(entropy: &[u8], account: u32) -> String {
 /// address bytes. Anything else is refused with the reason.
 pub fn parse_address(text: &str) -> Result<Vec<u8>> {
     let text = text.trim();
-    ensure!(!text.starts_with("stake"), "adresse de mise en jeu Cardano (stake1…), pas une adresse de paiement");
-    ensure!(!text.starts_with("addr_test"), "adresse Cardano d'un réseau de test — refusée");
-    ensure!(!text.starts_with("Ae2") && !text.starts_with("DdzFF"), "ancienne adresse Cardano (Byron) non prise en charge : demandez une adresse addr1…");
-    let (hrp, data, variant) = bech32::decode(text).map_err(|_| anyhow!("adresse Cardano invalide"))?;
-    ensure!(hrp == "addr" && variant == bech32::Variant::Bech32, "adresse Cardano invalide");
+    ensure!(
+        !text.starts_with("stake"),
+        "adresse de mise en jeu Cardano (stake1…), pas une adresse de paiement"
+    );
+    ensure!(
+        !text.starts_with("addr_test"),
+        "adresse Cardano d'un réseau de test — refusée"
+    );
+    ensure!(
+        !text.starts_with("Ae2") && !text.starts_with("DdzFF"),
+        "ancienne adresse Cardano (Byron) non prise en charge : demandez une adresse addr1…"
+    );
+    let (hrp, data, variant) =
+        bech32::decode(text).map_err(|_| anyhow!("adresse Cardano invalide"))?;
+    ensure!(
+        hrp == "addr" && variant == bech32::Variant::Bech32,
+        "adresse Cardano invalide"
+    );
     let bytes = Vec::<u8>::from_base32(&data).map_err(|_| anyhow!("adresse Cardano invalide"))?;
     let header = *bytes.first().context("adresse Cardano invalide")?;
     let (kind, network) = (header >> 4, header & 0x0f);
     ensure!(network == 1, "adresse Cardano d'un autre réseau — refusée");
-    ensure!(kind & 1 == 0 || kind > 7, "adresse de contrat Cardano (script) : envoi refusé, les fonds pourraient y rester bloqués");
+    ensure!(
+        kind & 1 == 0 || kind > 7,
+        "adresse de contrat Cardano (script) : envoi refusé, les fonds pourraient y rester bloqués"
+    );
     let expected = match kind {
         0 | 2 => bytes.len() == 57,
         4 => bytes.len() > 29,
@@ -303,7 +379,11 @@ fn output_cbor(out: &Output) -> Vec<u8> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Cert {
     /// Registration + pool delegation + "abstain" vote, with deposit (13).
-    RegisterDelegate { stake: [u8; 28], pool: [u8; 28], deposit: u64 },
+    RegisterDelegate {
+        stake: [u8; 28],
+        pool: [u8; 28],
+        deposit: u64,
+    },
     /// Pool delegation + "abstain" vote, key already registered (10).
     Delegate { stake: [u8; 28], pool: [u8; 28] },
     /// "Abstain" vote alone (required to withdraw rewards) (9).
@@ -324,7 +404,11 @@ fn abstain(c: &mut Cbor) {
 
 fn cert_cbor(c: &mut Cbor, cert: &Cert) {
     match cert {
-        Cert::RegisterDelegate { stake, pool, deposit } => {
+        Cert::RegisterDelegate {
+            stake,
+            pool,
+            deposit,
+        } => {
             c.array(5).uint(13);
             credential(c, stake);
             c.bytes(pool);
@@ -363,7 +447,9 @@ pub struct Body {
 impl Body {
     fn cbor(&self) -> Vec<u8> {
         let mut c = Cbor::default();
-        c.map(4 + usize::from(!self.certs.is_empty()) + usize::from(self.withdrawal.is_some())).uint(0).set(self.inputs.len());
+        c.map(4 + usize::from(!self.certs.is_empty()) + usize::from(self.withdrawal.is_some()))
+            .uint(0)
+            .set(self.inputs.len());
         for input in &self.inputs {
             c.array(2).bytes(&input.hash).uint(u64::from(input.index));
         }
@@ -416,8 +502,14 @@ pub fn sign(body: &Body, key: &XPrv) -> Signed {
 /// Signed by each key (payment, then stake).
 pub fn sign_with(body: &Body, keys: &[&XPrv]) -> Signed {
     let hash = body.hash();
-    let witnesses: Vec<([u8; 32], [u8; 64])> = keys.iter().map(|key| (key.public(), key.sign(&hash))).collect();
-    Signed { cbor: signed_cbor(body, &witnesses), hash: hex::encode(hash) }
+    let witnesses: Vec<([u8; 32], [u8; 64])> = keys
+        .iter()
+        .map(|key| (key.public(), key.sign(&hash)))
+        .collect();
+    Signed {
+        cbor: signed_cbor(body, &witnesses),
+        hash: hex::encode(hash),
+    }
 }
 
 // --- Network -----------------------------------------------------------------------------
@@ -434,28 +526,46 @@ fn params() -> Result<Params> {
     let value = koios_get("/epoch_params?limit=1&order=epoch_no.desc&select=epoch_no,min_fee_a,min_fee_b,coins_per_utxo_size,key_deposit")?;
     let p = &value[0];
     Ok(Params {
-        fee_a: p["min_fee_a"].as_u64().context("paramètres Cardano illisibles")?,
-        fee_b: p["min_fee_b"].as_u64().context("paramètres Cardano illisibles")?,
-        coins_per_byte: lovelace(&p["coins_per_utxo_size"]).context("paramètres Cardano illisibles")?,
+        fee_a: p["min_fee_a"]
+            .as_u64()
+            .context("paramètres Cardano illisibles")?,
+        fee_b: p["min_fee_b"]
+            .as_u64()
+            .context("paramètres Cardano illisibles")?,
+        coins_per_byte: lovelace(&p["coins_per_utxo_size"])
+            .context("paramètres Cardano illisibles")?,
         key_deposit: lovelace(&p["key_deposit"]).context("paramètres Cardano illisibles")?,
     })
 }
 
 fn tip_slot() -> Result<u64> {
-    koios_get("/tip")?[0]["abs_slot"].as_u64().context("état du réseau Cardano illisible")
+    koios_get("/tip")?[0]["abs_slot"]
+        .as_u64()
+        .context("état du réseau Cardano illisible")
 }
 
 impl Params {
     /// Minimum ADA for an output (CIP-55: 160 bytes + the output's size).
     fn min_output(&self, address: &[u8]) -> u64 {
         // Size with a maximum amount (5 or 9 bytes): on the safe side.
-        let size = output_cbor(&Output { address: address.to_vec(), lovelace: u64::MAX }).len() as u64;
+        let size = output_cbor(&Output {
+            address: address.to_vec(),
+            lovelace: u64::MAX,
+        })
+        .len() as u64;
         self.coins_per_byte * (160 + size)
     }
 
     /// Exact fee for a transaction of this shape (dummy signature of the same size).
     fn fee(&self, inputs: &[Input], outputs: &[Output], ttl: u64) -> u64 {
-        let body = Body { inputs: inputs.to_vec(), outputs: outputs.to_vec(), fee: MAX_FEE, ttl, certs: Vec::new(), withdrawal: None };
+        let body = Body {
+            inputs: inputs.to_vec(),
+            outputs: outputs.to_vec(),
+            fee: MAX_FEE,
+            ttl,
+            certs: Vec::new(),
+            withdrawal: None,
+        };
         self.fee_of(&body, 1)
     }
 
@@ -476,20 +586,36 @@ struct Utxo {
 
 /// (ADA-only outputs, total balance including outputs with tokens).
 fn utxos(address: &str) -> Result<(Vec<Utxo>, u64)> {
-    let list = koios_post("/address_utxos", json!({ "_addresses": [address], "_extended": true }))?;
+    let list = koios_post(
+        "/address_utxos",
+        json!({ "_addresses": [address], "_extended": true }),
+    )?;
     let mut spendable = Vec::new();
     let mut total = 0u64;
     for u in list.as_array().map(Vec::as_slice).unwrap_or_default() {
         let value = lovelace(&u["value"])?;
         total += value;
         // Outputs with tokens or datums: never spent here.
-        let plain = u["asset_list"].as_array().is_none_or(Vec::is_empty) && u["datum_hash"].is_null() && u["inline_datum"].is_null() && u["reference_script"].is_null();
+        let plain = u["asset_list"].as_array().is_none_or(Vec::is_empty)
+            && u["datum_hash"].is_null()
+            && u["inline_datum"].is_null()
+            && u["reference_script"].is_null();
         if !plain {
             continue;
         }
-        let hash: [u8; 32] = u["tx_hash"].as_str().and_then(|h| hex::decode(h).ok()).and_then(|h| h.try_into().ok()).context("sortie Cardano illisible")?;
-        let index = u["tx_index"].as_u64().and_then(|i| u32::try_from(i).ok()).context("sortie Cardano illisible")?;
-        spendable.push(Utxo { input: Input { hash, index }, lovelace: value });
+        let hash: [u8; 32] = u["tx_hash"]
+            .as_str()
+            .and_then(|h| hex::decode(h).ok())
+            .and_then(|h| h.try_into().ok())
+            .context("sortie Cardano illisible")?;
+        let index = u["tx_index"]
+            .as_u64()
+            .and_then(|i| u32::try_from(i).ok())
+            .context("sortie Cardano illisible")?;
+        spendable.push(Utxo {
+            input: Input { hash, index },
+            lovelace: value,
+        });
     }
     spendable.sort_by_key(|u| std::cmp::Reverse(u.lovelace));
     Ok((spendable, total))
@@ -525,22 +651,44 @@ pub struct AdaPlan {
 
 fn plan_with(from: &str, to: &str, amount: Option<u64>) -> Result<AdaPlan> {
     let (from_bytes, to_bytes) = (parse_address(from)?, parse_address(to)?);
-    ensure!(from_bytes != to_bytes, "envoi vers votre propre adresse Cardano");
+    ensure!(
+        from_bytes != to_bytes,
+        "envoi vers votre propre adresse Cardano"
+    );
     let params = params()?;
     let ttl = tip_slot()? + TTL_SLOTS;
     let (utxos, _) = utxos(from.trim())?;
     ensure!(!utxos.is_empty(), "aucun ADA envoyable sur cette adresse");
     let min_to = params.min_output(&to_bytes);
-    let pay = |lovelace| Output { address: to_bytes.clone(), lovelace };
+    let pay = |lovelace| Output {
+        address: to_bytes.clone(),
+        lovelace,
+    };
     // Max: all spendable ADA, a single output.
     let Some(amount) = amount else {
-        let inputs: Vec<Input> = utxos.iter().take(MAX_INPUTS).map(|u| u.input.clone()).collect();
+        let inputs: Vec<Input> = utxos
+            .iter()
+            .take(MAX_INPUTS)
+            .map(|u| u.input.clone())
+            .collect();
         let total: u64 = utxos.iter().take(MAX_INPUTS).map(|u| u.lovelace).sum();
         let fee = params.fee(&inputs, &[pay(total)], ttl);
-        let amount = total.checked_sub(fee).filter(|a| *a >= min_to).context("ADA insuffisants pour couvrir les frais et le minimum d'une sortie")?;
-        return Ok(AdaPlan { amount, fee, change: 0, inputs });
+        let amount = total
+            .checked_sub(fee)
+            .filter(|a| *a >= min_to)
+            .context("ADA insuffisants pour couvrir les frais et le minimum d'une sortie")?;
+        return Ok(AdaPlan {
+            amount,
+            fee,
+            change: 0,
+            inputs,
+        });
     };
-    ensure!(amount >= min_to, "montant trop petit : chaque envoi Cardano porte au moins {} ADA (minimum du réseau)", format_ada(min_to));
+    ensure!(
+        amount >= min_to,
+        "montant trop petit : chaque envoi Cardano porte au moins {} ADA (minimum du réseau)",
+        format_ada(min_to)
+    );
     let min_change = params.min_output(&from_bytes);
     let mut inputs = Vec::new();
     let mut total = 0u64;
@@ -548,14 +696,37 @@ fn plan_with(from: &str, to: &str, amount: Option<u64>) -> Result<AdaPlan> {
         inputs.push(utxo.input.clone());
         total += utxo.lovelace;
         // With change returned.
-        let fee = params.fee(&inputs, &[pay(amount), Output { address: from_bytes.clone(), lovelace: total }], ttl);
+        let fee = params.fee(
+            &inputs,
+            &[
+                pay(amount),
+                Output {
+                    address: from_bytes.clone(),
+                    lovelace: total,
+                },
+            ],
+            ttl,
+        );
         if let Some(change) = total.checked_sub(amount + fee).filter(|c| *c >= min_change) {
-            return Ok(AdaPlan { amount, fee, change, inputs });
+            return Ok(AdaPlan {
+                amount,
+                fee,
+                change,
+                inputs,
+            });
         }
         // No change: a tiny remainder goes to the fee.
         let fee = params.fee(&inputs, &[pay(amount)], ttl);
-        if let Some(rest) = total.checked_sub(amount + fee).filter(|r| *r <= MAX_ABSORBED_CHANGE) {
-            return Ok(AdaPlan { amount, fee: fee + rest, change: 0, inputs });
+        if let Some(rest) = total
+            .checked_sub(amount + fee)
+            .filter(|r| *r <= MAX_ABSORBED_CHANGE)
+        {
+            return Ok(AdaPlan {
+                amount,
+                fee: fee + rest,
+                change: 0,
+                inputs,
+            });
         }
     }
     let spendable: u64 = utxos.iter().take(MAX_INPUTS).map(|u| u.lovelace).sum();
@@ -570,7 +741,11 @@ fn plan_with(from: &str, to: &str, amount: Option<u64>) -> Result<AdaPlan> {
 /// Sends a precise amount (change returned to our own address).
 pub fn plan(from: &str, to: &str, amount: u64) -> Result<AdaPlan> {
     let plan = plan_with(from, to, Some(amount))?;
-    ensure!(plan.fee <= MAX_FEE, "frais Cardano anormalement élevés ({} ADA) — envoi refusé", format_ada(plan.fee));
+    ensure!(
+        plan.fee <= MAX_FEE,
+        "frais Cardano anormalement élevés ({} ADA) — envoi refusé",
+        format_ada(plan.fee)
+    );
     Ok(plan)
 }
 
@@ -592,20 +767,40 @@ fn from_placeholder() -> &'static str {
 
 /// Builds, signs and broadcasts the prepared send; returns its identifier.
 pub fn send(payment: &XPrv, from: &str, to: &str, plan: &AdaPlan) -> Result<String> {
-    let mut outputs = vec![Output { address: parse_address(to)?, lovelace: plan.amount }];
+    let mut outputs = vec![Output {
+        address: parse_address(to)?,
+        lovelace: plan.amount,
+    }];
     if plan.change > 0 {
-        outputs.push(Output { address: parse_address(from)?, lovelace: plan.change });
+        outputs.push(Output {
+            address: parse_address(from)?,
+            lovelace: plan.change,
+        });
     }
-    let body = Body { inputs: plan.inputs.clone(), outputs, fee: plan.fee, ttl: tip_slot()? + TTL_SLOTS, certs: Vec::new(), withdrawal: None };
+    let body = Body {
+        inputs: plan.inputs.clone(),
+        outputs,
+        fee: plan.fee,
+        ttl: tip_slot()? + TTL_SLOTS,
+        certs: Vec::new(),
+        withdrawal: None,
+    };
     // The real validity can change the size by one byte: fee checked again.
     let params = params()?;
-    ensure!(params.fee(&body.inputs, &body.outputs, body.ttl) <= plan.fee, "les frais Cardano ont changé depuis la confirmation — relancez l'envoi");
+    ensure!(
+        params.fee(&body.inputs, &body.outputs, body.ttl) <= plan.fee,
+        "les frais Cardano ont changé depuis la confirmation — relancez l'envoi"
+    );
     submit(&sign(&body, payment))
 }
 
 pub fn submit(signed: &Signed) -> Result<String> {
     submit_full(signed)?.map_err(|text| {
-        let detail: String = text.chars().filter(|c| !matches!(c, '{' | '}' | '"' | '\\')).take(300).collect();
+        let detail: String = text
+            .chars()
+            .filter(|c| !matches!(c, '{' | '}' | '"' | '\\'))
+            .take(300)
+            .collect();
         anyhow!("transaction Cardano refusée : {detail}")
     })
 }
@@ -617,7 +812,9 @@ fn submit_full(signed: &Signed) -> Result<std::result::Result<String, String>> {
         .header("content-type", "application/cbor")
         .body(signed.cbor.clone())
         .send()
-        .map_err(|e| crate::wallet_flow::broadcast_failure(e, "service Cardano injoignable", &signed.hash))?;
+        .map_err(|e| {
+            crate::wallet_flow::broadcast_failure(e, "service Cardano injoignable", &signed.hash)
+        })?;
     let status = response.status();
     let text = response.text().unwrap_or_default();
     // Gateway error: maybe sent (see `wallet_flow::maybe_sent`).
@@ -646,7 +843,10 @@ fn key_hash(public: &[u8; 32]) -> [u8; 28] {
 /// delegated.
 pub fn stake_key_hash(address: &str) -> Result<[u8; 28]> {
     let bytes = parse_address(address)?;
-    ensure!(bytes.len() == 57 && bytes[0] >> 4 == 0, "adresse Cardano sans clé de mise en jeu : délégation impossible");
+    ensure!(
+        bytes.len() == 57 && bytes[0] >> 4 == 0,
+        "adresse Cardano sans clé de mise en jeu : délégation impossible"
+    );
     Ok(bytes[29..].try_into().expect("28"))
 }
 
@@ -659,14 +859,26 @@ fn reward_bytes(stake: &[u8; 28]) -> Vec<u8> {
 
 /// Reward address (stake1…) of a base address.
 pub fn reward_address(address: &str) -> Result<String> {
-    Ok(bech32::encode("stake", reward_bytes(&stake_key_hash(address)?).to_base32(), bech32::Variant::Bech32).expect("adresse Cardano encodable"))
+    Ok(bech32::encode(
+        "stake",
+        reward_bytes(&stake_key_hash(address)?).to_base32(),
+        bech32::Variant::Bech32,
+    )
+    .expect("adresse Cardano encodable"))
 }
 
 /// Pool ID (pool1…) → 28-byte hash.
 pub fn parse_pool(text: &str) -> Result<[u8; 28]> {
-    let (hrp, data, variant) = bech32::decode(text.trim()).map_err(|_| anyhow!("identifiant de pool Cardano invalide"))?;
-    ensure!(hrp == "pool" && variant == bech32::Variant::Bech32, "identifiant de pool Cardano invalide");
-    Vec::<u8>::from_base32(&data).ok().and_then(|b| b.try_into().ok()).context("identifiant de pool Cardano invalide")
+    let (hrp, data, variant) =
+        bech32::decode(text.trim()).map_err(|_| anyhow!("identifiant de pool Cardano invalide"))?;
+    ensure!(
+        hrp == "pool" && variant == bech32::Variant::Bech32,
+        "identifiant de pool Cardano invalide"
+    );
+    Vec::<u8>::from_base32(&data)
+        .ok()
+        .and_then(|b| b.try_into().ok())
+        .context("identifiant de pool Cardano invalide")
 }
 
 /// Staking state of an address.
@@ -684,18 +896,28 @@ pub struct StakeAccount {
 }
 
 fn stake_account_from(value: &Value) -> Result<StakeAccount> {
-    let Some(info) = value.as_array().and_then(|a| a.first()) else { return Ok(StakeAccount::default()) };
+    let Some(info) = value.as_array().and_then(|a| a.first()) else {
+        return Ok(StakeAccount::default());
+    };
     Ok(StakeAccount {
         registered: info["status"].as_str() == Some("registered"),
-        pool: info["delegated_pool"].as_str().filter(|p| p.starts_with("pool1")).map(str::to_string),
-        voting: info["delegated_drep"].as_str().is_some_and(|d| !d.is_empty()),
+        pool: info["delegated_pool"]
+            .as_str()
+            .filter(|p| p.starts_with("pool1"))
+            .map(str::to_string),
+        voting: info["delegated_drep"]
+            .as_str()
+            .is_some_and(|d| !d.is_empty()),
         rewards: lovelace(&info["rewards_available"]).unwrap_or(0),
         deposit: lovelace(&info["deposit"]).unwrap_or(0),
     })
 }
 
 pub fn stake_account(address: &str) -> Result<StakeAccount> {
-    stake_account_from(&koios_post("/account_info", json!({ "_stake_addresses": [reward_address(address)?] }))?)
+    stake_account_from(&koios_post(
+        "/account_info",
+        json!({ "_stake_addresses": [reward_address(address)?] }),
+    )?)
 }
 
 /// An offered pool: ID, ticker, margin, fixed cost per epoch, active stake
@@ -718,16 +940,35 @@ fn pick_pools(list: &[Value]) -> Vec<Pool> {
         .iter()
         .filter_map(|p| {
             Some(Pool {
-                id: p["pool_id_bech32"].as_str().filter(|id| parse_pool(id).is_ok())?.to_string(),
-                ticker: p["ticker"].as_str().map(|t| t.chars().filter(|c| c.is_ascii_alphanumeric()).take(8).collect::<String>()).filter(|t| !t.is_empty())?,
+                id: p["pool_id_bech32"]
+                    .as_str()
+                    .filter(|id| parse_pool(id).is_ok())?
+                    .to_string(),
+                ticker: p["ticker"]
+                    .as_str()
+                    .map(|t| {
+                        t.chars()
+                            .filter(|c| c.is_ascii_alphanumeric())
+                            .take(8)
+                            .collect::<String>()
+                    })
+                    .filter(|t| !t.is_empty())?,
                 margin: p["margin"].as_f64()?,
                 fixed_cost: lovelace(&p["fixed_cost"]).ok()?,
                 active_stake: lovelace(&p["active_stake"]).ok()?,
             })
         })
-        .filter(|p| p.margin <= 0.02 && p.fixed_cost <= 340_000_000 && (10_000_000_000_000..=55_000_000_000_000).contains(&p.active_stake))
+        .filter(|p| {
+            p.margin <= 0.02
+                && p.fixed_cost <= 340_000_000
+                && (10_000_000_000_000..=55_000_000_000_000).contains(&p.active_stake)
+        })
         .collect();
-    pools.sort_by(|a, b| a.margin.total_cmp(&b.margin).then(b.active_stake.cmp(&a.active_stake)));
+    pools.sort_by(|a, b| {
+        a.margin
+            .total_cmp(&b.margin)
+            .then(b.active_stake.cmp(&a.active_stake))
+    });
     pools.truncate(12);
     pools
 }
@@ -744,15 +985,26 @@ pub fn pools() -> Result<Vec<Pool>> {
         }
     }
     let pools = pick_pools(&list);
-    ensure!(!pools.is_empty(), "liste des pools Cardano indisponible pour l'instant");
+    ensure!(
+        !pools.is_empty(),
+        "liste des pools Cardano indisponible pour l'instant"
+    );
     Ok(pools)
 }
 
 /// A pool's ticker (state display), `None` if unknown.
 pub fn pool_ticker(pool: &str) -> Option<String> {
     parse_pool(pool).ok()?;
-    let rows = koios_get(&format!("/pool_list?pool_id_bech32=eq.{pool}&select=ticker")).ok()?;
-    rows[0]["ticker"].as_str().map(|t| t.chars().filter(|c| c.is_ascii_alphanumeric()).take(8).collect())
+    let rows = koios_get(&format!(
+        "/pool_list?pool_id_bech32=eq.{pool}&select=ticker"
+    ))
+    .ok()?;
+    rows[0]["ticker"].as_str().map(|t| {
+        t.chars()
+            .filter(|c| c.is_ascii_alphanumeric())
+            .take(8)
+            .collect()
+    })
 }
 
 /// A prepared staking transaction: exactly what will be signed (except the
@@ -772,13 +1024,22 @@ pub struct StakePlan {
 
 /// Picks the inputs: the fee (two signatures) and any deposit are paid, and
 /// everything else is returned to our own address.
-fn plan_stake(from: &str, certs: Vec<Cert>, withdrawal: u64, deposit: u64, refund: u64) -> Result<StakePlan> {
+fn plan_stake(
+    from: &str,
+    certs: Vec<Cert>,
+    withdrawal: u64,
+    deposit: u64,
+    refund: u64,
+) -> Result<StakePlan> {
     let from_bytes = parse_address(from)?;
     let stake = stake_key_hash(from)?;
     let params = params()?;
     let ttl = tip_slot()? + TTL_SLOTS;
     let (utxos, _) = utxos(from.trim())?;
-    ensure!(!utxos.is_empty(), "aucun ADA sur cette adresse pour payer les frais du réseau");
+    ensure!(
+        !utxos.is_empty(),
+        "aucun ADA sur cette adresse pour payer les frais du réseau"
+    );
     let min_change = params.min_output(&from_bytes);
     let mut inputs = Vec::new();
     let mut total = 0u64;
@@ -787,7 +1048,10 @@ fn plan_stake(from: &str, certs: Vec<Cert>, withdrawal: u64, deposit: u64, refun
         total += utxo.lovelace;
         let body = Body {
             inputs: inputs.clone(),
-            outputs: vec![Output { address: from_bytes.clone(), lovelace: total }],
+            outputs: vec![Output {
+                address: from_bytes.clone(),
+                lovelace: total,
+            }],
             fee: MAX_FEE,
             ttl,
             certs: certs.clone(),
@@ -795,23 +1059,63 @@ fn plan_stake(from: &str, certs: Vec<Cert>, withdrawal: u64, deposit: u64, refun
         };
         let fee = params.fee_of(&body, 2);
         let available = total.saturating_add(withdrawal).saturating_add(refund);
-        if let Some(change) = available.checked_sub(deposit + fee).filter(|c| *c >= min_change) {
-            ensure!(fee <= MAX_FEE, "frais Cardano anormalement élevés ({} ADA) — refusé", format_ada(fee));
-            return Ok(StakePlan { certs, withdrawal, deposit, refund, fee, change, inputs });
+        if let Some(change) = available
+            .checked_sub(deposit + fee)
+            .filter(|c| *c >= min_change)
+        {
+            ensure!(
+                fee <= MAX_FEE,
+                "frais Cardano anormalement élevés ({} ADA) — refusé",
+                format_ada(fee)
+            );
+            return Ok(StakePlan {
+                certs,
+                withdrawal,
+                deposit,
+                refund,
+                fee,
+                change,
+                inputs,
+            });
         }
     }
-    bail!("ADA insuffisants : il faut au moins {} ADA (dépôt et frais du réseau compris)", format_ada(deposit + min_change + 300_000))
+    bail!(
+        "ADA insuffisants : il faut au moins {} ADA (dépôt et frais du réseau compris)",
+        format_ada(deposit + min_change + 300_000)
+    )
 }
 
 /// Delegate to `pool`: registration (deposit) if needed, "abstain" vote.
 pub fn plan_delegate(from: &str, account: &StakeAccount, pool: &str) -> Result<StakePlan> {
     let (stake, pool_hash) = (stake_key_hash(from)?, parse_pool(pool)?);
-    ensure!(!(account.pool.as_deref() == Some(pool.trim()) && account.voting), "vos ADA sont déjà délégués à ce pool");
+    ensure!(
+        !(account.pool.as_deref() == Some(pool.trim()) && account.voting),
+        "vos ADA sont déjà délégués à ce pool"
+    );
     if account.registered {
-        plan_stake(from, vec![Cert::Delegate { stake, pool: pool_hash }], 0, 0, 0)
+        plan_stake(
+            from,
+            vec![Cert::Delegate {
+                stake,
+                pool: pool_hash,
+            }],
+            0,
+            0,
+            0,
+        )
     } else {
         let deposit = params()?.key_deposit;
-        plan_stake(from, vec![Cert::RegisterDelegate { stake, pool: pool_hash, deposit }], 0, deposit, 0)
+        plan_stake(
+            from,
+            vec![Cert::RegisterDelegate {
+                stake,
+                pool: pool_hash,
+                deposit,
+            }],
+            0,
+            deposit,
+            0,
+        )
     }
 }
 
@@ -823,7 +1127,15 @@ fn vote_first(from: &str, account: &StakeAccount) -> Result<Option<StakePlan>> {
     if account.rewards == 0 || account.voting {
         return Ok(None);
     }
-    Ok(Some(plan_stake(from, vec![Cert::VoteAbstain { stake: stake_key_hash(from)? }], 0, 0, 0)?))
+    Ok(Some(plan_stake(
+        from,
+        vec![Cert::VoteAbstain {
+            stake: stake_key_hash(from)?,
+        }],
+        0,
+        0,
+        0,
+    )?))
 }
 
 impl StakePlan {
@@ -835,7 +1147,10 @@ impl StakePlan {
 
 /// Withdraw the rewards.
 pub fn plan_withdraw(from: &str, account: &StakeAccount) -> Result<StakePlan> {
-    ensure!(account.registered && account.rewards > 0, "aucune récompense à retirer pour l'instant");
+    ensure!(
+        account.registered && account.rewards > 0,
+        "aucune récompense à retirer pour l'instant"
+    );
     if let Some(vote) = vote_first(from, account)? {
         return Ok(vote);
     }
@@ -849,21 +1164,40 @@ pub fn plan_undelegate(from: &str, account: &StakeAccount) -> Result<StakePlan> 
         return Ok(vote);
     }
     let stake = stake_key_hash(from)?;
-    plan_stake(from, vec![Cert::Unregister { stake, deposit: account.deposit }], account.rewards, 0, account.deposit)
+    plan_stake(
+        from,
+        vec![Cert::Unregister {
+            stake,
+            deposit: account.deposit,
+        }],
+        account.rewards,
+        0,
+        account.deposit,
+    )
 }
 
 /// Builds, signs (payment + stake) and broadcasts; returns the identifier.
 pub fn send_stake(payment: &XPrv, stake: &XPrv, from: &str, plan: &StakePlan) -> Result<String> {
-    ensure!(key_hash(&stake.public()) == stake_key_hash(from)?, "clé de mise en jeu d'un autre compte — refusé");
+    ensure!(
+        key_hash(&stake.public()) == stake_key_hash(from)?,
+        "clé de mise en jeu d'un autre compte — refusé"
+    );
     let body = Body {
         inputs: plan.inputs.clone(),
-        outputs: vec![Output { address: parse_address(from)?, lovelace: plan.change }],
+        outputs: vec![Output {
+            address: parse_address(from)?,
+            lovelace: plan.change,
+        }],
         fee: plan.fee,
         ttl: tip_slot()? + TTL_SLOTS,
         certs: plan.certs.clone(),
-        withdrawal: (plan.withdrawal > 0).then(|| (reward_bytes(&key_hash(&stake.public())), plan.withdrawal)),
+        withdrawal: (plan.withdrawal > 0)
+            .then(|| (reward_bytes(&key_hash(&stake.public())), plan.withdrawal)),
     };
-    ensure!(params()?.fee_of(&body, 2) <= plan.fee, "les frais Cardano ont changé depuis la confirmation — relancez l'opération");
+    ensure!(
+        params()?.fee_of(&body, 2) <= plan.fee,
+        "les frais Cardano ont changé depuis la confirmation — relancez l'opération"
+    );
     submit(&sign_with(&body, &[payment, stake]))
 }
 
@@ -880,7 +1214,12 @@ pub fn history(address: &str, limit: usize) -> Result<Vec<history::TxEntry>> {
         .map(Vec::as_slice)
         .unwrap_or_default()
         .iter()
-        .filter_map(|t| Some((t["block_height"].as_u64().unwrap_or(u64::MAX), t["tx_hash"].as_str()?.to_string())))
+        .filter_map(|t| {
+            Some((
+                t["block_height"].as_u64().unwrap_or(u64::MAX),
+                t["tx_hash"].as_str()?.to_string(),
+            ))
+        })
         .collect();
     txs.sort_by_key(|t| std::cmp::Reverse(t.0));
     txs.truncate(limit.clamp(1, 25));
@@ -900,9 +1239,19 @@ pub fn history(address: &str, limit: usize) -> Result<Vec<history::TxEntry>> {
 }
 
 fn history_entry(tx: &Value, address: &str) -> Option<history::TxEntry> {
-    let hash = tx["tx_hash"].as_str().filter(|h| h.len() == 64 && h.bytes().all(|b| b.is_ascii_hexdigit()))?;
+    let hash = tx["tx_hash"]
+        .as_str()
+        .filter(|h| h.len() == 64 && h.bytes().all(|b| b.is_ascii_hexdigit()))?;
     let sum = |side: &str| -> i128 {
-        tx[side].as_array().map(Vec::as_slice).unwrap_or_default().iter().filter(|io| io["payment_addr"]["bech32"].as_str() == Some(address)).filter_map(|io| lovelace(&io["value"]).ok()).map(i128::from).sum()
+        tx[side]
+            .as_array()
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+            .iter()
+            .filter(|io| io["payment_addr"]["bech32"].as_str() == Some(address))
+            .filter_map(|io| lovelace(&io["value"]).ok())
+            .map(i128::from)
+            .sum()
     };
     let net = sum("outputs") - sum("inputs");
     if net == 0 {
@@ -914,7 +1263,11 @@ fn history_entry(tx: &Value, address: &str) -> Option<history::TxEntry> {
         status: history::TxStatus::Confirmed,
         net_amount_minor: Some(net),
         fee_minor: 0,
-        kind: if net > 0 { history::TxKind::Received } else { history::TxKind::Sent },
+        kind: if net > 0 {
+            history::TxKind::Received
+        } else {
+            history::TxKind::Sent
+        },
     })
 }
 
@@ -952,16 +1305,29 @@ mod tests {
 
     #[test]
     fn addresses_are_parsed_strictly() {
-        assert!(parse_address("stake1uyehkck0lajq8gr28t9uxnuvgcqrc6070x3k9r8048z8y5gh6ffgw").unwrap_err().to_string().contains("mise en jeu"));
+        assert!(
+            parse_address("stake1uyehkck0lajq8gr28t9uxnuvgcqrc6070x3k9r8048z8y5gh6ffgw")
+                .unwrap_err()
+                .to_string()
+                .contains("mise en jeu")
+        );
         assert!(parse_address("addr_test1qz2fxv2umyhttkxyxp8x0dlpdt3k6cwng5pxj3jhsydzer3n0d3vllmyqwsx5wktcd8cc3sq835lu7drv2xwl2wywfgs68faae").unwrap_err().to_string().contains("test"));
         assert!(parse_address("DdzFFzCqrhsrcTVhLygT24QwTnNqQqQ8mZrq5jykUzMveU26sxaH529kMpo7VhPrt5pwW3dXeB2k3EEvKcNBRmzCfcQ7dTkyGzTs658C").unwrap_err().to_string().contains("Byron"));
         // "Enterprise" address (key payment, no staking) accepted.
-        assert_eq!(parse_address("addr1vxlsvgpdqusfhceq0m4tunz4j7vyhd60qlyqglpjm7xu0xswl723x").unwrap().len(), 29);
+        assert_eq!(
+            parse_address("addr1vxlsvgpdqusfhceq0m4tunz4j7vyhd60qlyqglpjm7xu0xswl723x")
+                .unwrap()
+                .len(),
+            29
+        );
         // Contract (payment script, type 1/3/5/7): refused.
         let mut script = parse_address("addr1qxgzh24yclh838lhpraz7htsqk3p6p3xvrwex8h7uakx6vv0ufdahf4ccw55my2vr4ck52z9kjv5rneqkehcf23sqm3smxw2mj").unwrap();
         script[0] = 0x11;
         let text = bech32::encode("addr", script.to_base32(), bech32::Variant::Bech32).unwrap();
-        assert!(parse_address(&text).unwrap_err().to_string().contains("script"));
+        assert!(parse_address(&text)
+            .unwrap_err()
+            .to_string()
+            .contains("script"));
         assert!(parse_address("addr1qxgzh24yclh838lhpraz7htsqk3p6p3xvrwex8h7uakx6vv0ufdahf4ccw55my2vr4ck52z9kjv5rneqkehcf23sqm3smxw2mk").is_err(), "somme de contrôle");
     }
 
@@ -973,24 +1339,57 @@ mod tests {
         let addr = |a| parse_address(&address_of(&seq(), a)).unwrap();
         let body = Body {
             inputs: vec![
-                Input { hash: hex::decode("2c80db2dc0e3a3b957d6e96c5d3b2ca024fccd9eed5319b0c65127896216baaf").unwrap().try_into().unwrap(), index: 1 },
-                Input { hash: hex::decode("0a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20212223242526272829").unwrap().try_into().unwrap(), index: 0 },
+                Input {
+                    hash: hex::decode(
+                        "2c80db2dc0e3a3b957d6e96c5d3b2ca024fccd9eed5319b0c65127896216baaf",
+                    )
+                    .unwrap()
+                    .try_into()
+                    .unwrap(),
+                    index: 1,
+                },
+                Input {
+                    hash: hex::decode(
+                        "0a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20212223242526272829",
+                    )
+                    .unwrap()
+                    .try_into()
+                    .unwrap(),
+                    index: 0,
+                },
             ],
-            outputs: vec![Output { address: addr(1), lovelace: 1_500_000 }, Output { address: addr(0), lovelace: 3_200_000 }],
+            outputs: vec![
+                Output {
+                    address: addr(1),
+                    lovelace: 1_500_000,
+                },
+                Output {
+                    address: addr(0),
+                    lovelace: 3_200_000,
+                },
+            ],
             fee: 170_253,
             ttl: 199_580_000,
             certs: Vec::new(),
             withdrawal: None,
         };
         assert_eq!(hex::encode(body.cbor()), "a400d90102828258202c80db2dc0e3a3b957d6e96c5d3b2ca024fccd9eed5319b0c65127896216baaf018258200a0b0c0d0e0f101112131415161718191a1b1c1d1e1f2021222324252627282900018282583901902baaa4c7ee789ff708fa2f5d7005a21d062660dd931efee76c6d318fe25bdba6b8c3a94d914c1d716a2845b49941cf20b66f84aa3006e31a0016e36082583901bea93b16729fcd152fc01ecb0e7c12cc58df1b0ba0e9774f5983330f93e1d7c41b2f7c5fbf708c98a37f8432ae547913e5c16b80732f47581a0030d400021a0002990d031a0be55960");
-        assert_eq!(hex::encode(body.hash()), "5da0afaa7e0263f217bdd2feb93ebbca5509f8473c90c9b86a3b1c05e9d1ed99");
+        assert_eq!(
+            hex::encode(body.hash()),
+            "5da0afaa7e0263f217bdd2feb93ebbca5509f8473c90c9b86a3b1c05e9d1ed99"
+        );
         let (payment, _) = account_keys(&seq(), 0);
         let signed = sign(&body, &payment);
         assert_eq!(hex::encode(&signed.cbor[signed.cbor.len() - 68..signed.cbor.len() - 2]), "58406d3cc99b37682ca401accb447a7d77dd5d21bae2262afa2d3ac4ffc9077e957072bda7d448c702f25c66f734ca13914c4780be424c16c55d020cd724b001180f");
         assert_eq!(signed.cbor.len(), 332);
         assert!(hex::encode(&signed.cbor).starts_with("84a400d9010282"));
         assert!(hex::encode(&signed.cbor).ends_with("a100d9010281825820af7875f0a44da469a31e4d27fa46fde45713039279e1c4f3c6269e36aa5ecf2658406d3cc99b37682ca401accb447a7d77dd5d21bae2262afa2d3ac4ffc9077e957072bda7d448c702f25c66f734ca13914c4780be424c16c55d020cd724b001180ff5f6"));
-        let params = Params { fee_a: 44, fee_b: 155_381, coins_per_byte: 4310, key_deposit: 2_000_000 };
+        let params = Params {
+            fee_a: 44,
+            fee_b: 155_381,
+            coins_per_byte: 4310,
+            key_deposit: 2_000_000,
+        };
         assert_eq!(params.fee(&body.inputs, &body.outputs, body.ttl), 169_989);
         // Minimum for an output to a base address: 969,750 lovelace for a 5-byte amount;
         // on the safe side with a 9-byte amount.
@@ -1003,9 +1402,15 @@ mod tests {
         let io = |a: &str, v: &str| json!({ "payment_addr": { "bech32": a }, "value": v });
         let sent = json!({ "tx_hash": "a".repeat(64), "tx_timestamp": 1_791_000_000, "inputs": [io(me, "5000000")], "outputs": [io("addr1other", "1500000"), io(me, "3330000")] });
         let entry = history_entry(&sent, me).unwrap();
-        assert_eq!((entry.net_amount_minor, entry.kind == history::TxKind::Sent), (Some(-1_670_000), true));
+        assert_eq!(
+            (entry.net_amount_minor, entry.kind == history::TxKind::Sent),
+            (Some(-1_670_000), true)
+        );
         let received = json!({ "tx_hash": "b".repeat(64), "tx_timestamp": 1, "inputs": [io("addr1other", "9000000")], "outputs": [io(me, "2000000"), io("addr1other", "6800000")] });
-        assert_eq!(history_entry(&received, me).unwrap().net_amount_minor, Some(2_000_000));
+        assert_eq!(
+            history_entry(&received, me).unwrap().net_amount_minor,
+            Some(2_000_000)
+        );
     }
 
     /// Live, mainnet: reads, then a well-formed signed transaction spending a
@@ -1017,9 +1422,16 @@ mod tests {
     #[ignore]
     fn real_cardano_reads_and_signature() {
         let rich = "addr1qx2fxv2umyhttkxyxp8x0dlpdt3k6cwng5pxj3jhsydzer3n0d3vllmyqwsx5wktcd8cc3sq835lu7drv2xwl2wywfgse35a3x";
-        println!("solde {} ADA, {} transactions récentes", format_ada(balance(rich).unwrap()), history(rich, 5).unwrap().len());
+        println!(
+            "solde {} ADA, {} transactions récentes",
+            format_ada(balance(rich).unwrap()),
+            history(rich, 5).unwrap().len()
+        );
         let p = params().unwrap();
-        println!("frais {} × octet + {}, {} lovelace/octet de sortie", p.fee_a, p.fee_b, p.coins_per_byte);
+        println!(
+            "frais {} × octet + {}, {} lovelace/octet de sortie",
+            p.fee_a, p.fee_b, p.coins_per_byte
+        );
         let mut entropy = [0u8; 32];
         getrandom::getrandom(&mut entropy).unwrap();
         let (payment, _) = account_keys(&entropy, 0);
@@ -1028,18 +1440,38 @@ mod tests {
         // input outright, before the signatures): the node checks the signatures provided
         // and only asks for the input owner's.
         let (theirs, _) = utxos(rich).unwrap();
-        let input = theirs.first().expect("aucune sortie de référence").input.clone();
-        let body = Body { inputs: vec![input.clone()], outputs: vec![Output { address: parse_address(rich).unwrap(), lovelace: 1_500_000 }], fee: 200_000, ttl: tip_slot().unwrap() + TTL_SLOTS, certs: Vec::new(), withdrawal: None };
+        let input = theirs
+            .first()
+            .expect("aucune sortie de référence")
+            .input
+            .clone();
+        let body = Body {
+            inputs: vec![input.clone()],
+            outputs: vec![Output {
+                address: parse_address(rich).unwrap(),
+                lovelace: 1_500_000,
+            }],
+            fee: 200_000,
+            ttl: tip_slot().unwrap() + TTL_SLOTS,
+            certs: Vec::new(),
+            withdrawal: None,
+        };
         let error = submit_full(&sign(&body, &payment)).unwrap().unwrap_err();
         println!("{}", &error[..error.len().min(600)]);
-        assert!(error.contains("MissingVKeyWitnessesUTXOW") && !error.contains("InvalidWitnessesUTXOW"), "{error}");
+        assert!(
+            error.contains("MissingVKeyWitnessesUTXOW") && !error.contains("InvalidWitnessesUTXOW"),
+            "{error}"
+        );
         let mut tampered = sign(&body, &payment);
         let at = tampered.cbor.len() - 3;
         tampered.cbor[at] ^= 1;
         let error = submit_full(&tampered).unwrap().unwrap_err();
         assert!(error.contains("InvalidWitnessesUTXOW"), "{error}");
         // New address: nothing to send.
-        assert!(plan(&from, rich, 2_000_000).unwrap_err().to_string().contains("aucun ADA"));
+        assert!(plan(&from, rich, 2_000_000)
+            .unwrap_err()
+            .to_string()
+            .contains("aucun ADA"));
 
         // Delegation (registration + pool + vote) and withdrawal + deregistration, signed
         // by the payment AND stake keys: the node reads the certificates (no decoding
@@ -1050,13 +1482,47 @@ mod tests {
         let pool = pools().unwrap().first().unwrap().id.clone();
         let deposit = params().unwrap().key_deposit;
         for (certs, withdrawal) in [
-            (vec![Cert::RegisterDelegate { stake: stake_hash, pool: parse_pool(&pool).unwrap(), deposit }], None),
-            (vec![Cert::VoteAbstain { stake: stake_hash }, Cert::Unregister { stake: stake_hash, deposit }], Some((reward_bytes(&stake_hash), 1_000_000))),
+            (
+                vec![Cert::RegisterDelegate {
+                    stake: stake_hash,
+                    pool: parse_pool(&pool).unwrap(),
+                    deposit,
+                }],
+                None,
+            ),
+            (
+                vec![
+                    Cert::VoteAbstain { stake: stake_hash },
+                    Cert::Unregister {
+                        stake: stake_hash,
+                        deposit,
+                    },
+                ],
+                Some((reward_bytes(&stake_hash), 1_000_000)),
+            ),
         ] {
-            let body = Body { inputs: vec![input.clone()], outputs: vec![Output { address: parse_address(rich).unwrap(), lovelace: 1_500_000 }], fee: 300_000, ttl: tip_slot().unwrap() + TTL_SLOTS, certs, withdrawal };
-            let error = submit_full(&sign_with(&body, &[&payment, &stake])).unwrap().unwrap_err();
+            let body = Body {
+                inputs: vec![input.clone()],
+                outputs: vec![Output {
+                    address: parse_address(rich).unwrap(),
+                    lovelace: 1_500_000,
+                }],
+                fee: 300_000,
+                ttl: tip_slot().unwrap() + TTL_SLOTS,
+                certs,
+                withdrawal,
+            };
+            let error = submit_full(&sign_with(&body, &[&payment, &stake]))
+                .unwrap()
+                .unwrap_err();
             println!("{}", &error[..error.len().min(900)]);
-            assert!(error.contains("MissingVKeyWitnessesUTXOW") && !error.contains("InvalidWitnessesUTXOW") && !error.contains("Deserialis") && !error.contains("DecoderError"), "{error}");
+            assert!(
+                error.contains("MissingVKeyWitnessesUTXOW")
+                    && !error.contains("InvalidWitnessesUTXOW")
+                    && !error.contains("Deserialis")
+                    && !error.contains("DecoderError"),
+                "{error}"
+            );
         }
     }
 
@@ -1067,27 +1533,79 @@ mod tests {
         let stake = [7u8; 28];
         let pool = [9u8; 28];
         let mut c = Cbor::default();
-        cert_cbor(&mut c, &Cert::RegisterDelegate { stake, pool, deposit: 2_000_000 });
-        assert_eq!(hex::encode(&c.0), format!("850d8200581c{}581c{}8102{}", hex::encode(stake), hex::encode(pool), "1a001e8480"));
+        cert_cbor(
+            &mut c,
+            &Cert::RegisterDelegate {
+                stake,
+                pool,
+                deposit: 2_000_000,
+            },
+        );
+        assert_eq!(
+            hex::encode(&c.0),
+            format!(
+                "850d8200581c{}581c{}8102{}",
+                hex::encode(stake),
+                hex::encode(pool),
+                "1a001e8480"
+            )
+        );
         let mut c = Cbor::default();
-        cert_cbor(&mut c, &Cert::Unregister { stake, deposit: 2_000_000 });
-        assert_eq!(hex::encode(&c.0), format!("83088200581c{}1a001e8480", hex::encode(stake)));
+        cert_cbor(
+            &mut c,
+            &Cert::Unregister {
+                stake,
+                deposit: 2_000_000,
+            },
+        );
+        assert_eq!(
+            hex::encode(&c.0),
+            format!("83088200581c{}1a001e8480", hex::encode(stake))
+        );
         let mut c = Cbor::default();
         cert_cbor(&mut c, &Cert::VoteAbstain { stake });
-        assert_eq!(hex::encode(&c.0), format!("83098200581c{}8102", hex::encode(stake)));
-        let body = Body { inputs: vec![Input { hash: [1; 32], index: 0 }], outputs: vec![], fee: 1, ttl: 2, certs: vec![Cert::Delegate { stake, pool }], withdrawal: Some((reward_bytes(&stake), 5)) };
+        assert_eq!(
+            hex::encode(&c.0),
+            format!("83098200581c{}8102", hex::encode(stake))
+        );
+        let body = Body {
+            inputs: vec![Input {
+                hash: [1; 32],
+                index: 0,
+            }],
+            outputs: vec![],
+            fee: 1,
+            ttl: 2,
+            certs: vec![Cert::Delegate { stake, pool }],
+            withdrawal: Some((reward_bytes(&stake), 5)),
+        };
         let cbor = hex::encode(body.cbor());
         assert!(cbor.starts_with("a6"), "6 champs");
-        assert!(cbor.contains(&format!("04d9010281840a8200581c{}581c{}8102", hex::encode(stake), hex::encode(pool))));
+        assert!(cbor.contains(&format!(
+            "04d9010281840a8200581c{}581c{}8102",
+            hex::encode(stake),
+            hex::encode(pool)
+        )));
         assert!(cbor.ends_with(&format!("05a1581de1{}05", hex::encode(stake))));
         // Reward address of the reference base address (cardano-serialization-lib vector:
         // stake key of account 0).
         let address = address_of(&[0u8; 32], 0);
         let (_, stake_key) = account_keys(&[0u8; 32], 0);
-        assert_eq!(stake_key_hash(&address).unwrap(), key_hash(&stake_key.public()));
+        assert_eq!(
+            stake_key_hash(&address).unwrap(),
+            key_hash(&stake_key.public())
+        );
         assert!(reward_address(&address).unwrap().starts_with("stake1u"));
-        assert!(reward_address("addr1vxlsvgpdqusfhceq0m4tunz4j7vyhd60qlyqglpjm7xu0xswl723x").is_err(), "adresse sans clé de mise en jeu");
-        assert_eq!(parse_pool("pool1z5uqdk7dzdxaae5633fqfcu2eqzy3a3rgtuvy087fdld7yws0xt").unwrap().to_vec(), hex::decode("153806dbcd134ddee69a8c5204e38ac80448f62342f8c23cfe4b7edf").unwrap());
+        assert!(
+            reward_address("addr1vxlsvgpdqusfhceq0m4tunz4j7vyhd60qlyqglpjm7xu0xswl723x").is_err(),
+            "adresse sans clé de mise en jeu"
+        );
+        assert_eq!(
+            parse_pool("pool1z5uqdk7dzdxaae5633fqfcu2eqzy3a3rgtuvy087fdld7yws0xt")
+                .unwrap()
+                .to_vec(),
+            hex::decode("153806dbcd134ddee69a8c5204e38ac80448f62342f8c23cfe4b7edf").unwrap()
+        );
         assert!(parse_pool("stake1uyehkck0lajq8gr28t9uxnuvgcqrc6070x3k9r8048z8y5gh6ffgw").is_err());
     }
 
@@ -1095,12 +1613,33 @@ mod tests {
     #[test]
     fn stake_account_and_pools_are_read() {
         let account = stake_account_from(&json!([{ "status": "registered", "delegated_pool": "pool1pu5jlj4q9w9jlxeu370a3c9myx47md5j5m2str0naunn2q3lkdy", "delegated_drep": null, "rewards_available": "1500000", "deposit": "2000000" }])).unwrap();
-        assert_eq!((account.registered, account.voting, account.rewards, account.deposit), (true, false, 1_500_000, 2_000_000));
-        assert_eq!(stake_account_from(&json!([])).unwrap(), StakeAccount::default(), "jamais inscrite");
+        assert_eq!(
+            (
+                account.registered,
+                account.voting,
+                account.rewards,
+                account.deposit
+            ),
+            (true, false, 1_500_000, 2_000_000)
+        );
+        assert_eq!(
+            stake_account_from(&json!([])).unwrap(),
+            StakeAccount::default(),
+            "jamais inscrite"
+        );
         let row = |ticker: &str, margin: f64, stake: &str| json!({ "pool_id_bech32": "pool1z5uqdk7dzdxaae5633fqfcu2eqzy3a3rgtuvy087fdld7yws0xt", "ticker": ticker, "margin": margin, "fixed_cost": "340000000", "active_stake": stake });
-        let picked = pick_pools(&[row("BIG", 0.01, "30000000000000"), row("CHEAP", 0.0, "20000000000000"), row("TINY", 0.0, "100000000"), row("FULL", 0.0, "70000000000000"), row("<b>", 0.0, "20000000000000")]);
+        let picked = pick_pools(&[
+            row("BIG", 0.01, "30000000000000"),
+            row("CHEAP", 0.0, "20000000000000"),
+            row("TINY", 0.0, "100000000"),
+            row("FULL", 0.0, "70000000000000"),
+            row("<b>", 0.0, "20000000000000"),
+        ]);
         let tickers: Vec<&str> = picked.iter().map(|p| p.ticker.as_str()).collect();
-        assert_eq!(tickers, vec!["CHEAP", "b", "BIG"], "trop petit et saturé écartés ; nom nettoyé");
+        assert_eq!(
+            tickers,
+            vec!["CHEAP", "b", "BIG"],
+            "trop petit et saturé écartés ; nom nettoyé"
+        );
     }
-
 }

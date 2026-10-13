@@ -126,7 +126,14 @@ fn msg_deposit(chain: &NativeChain, amount: u128, memo: &str, signer: &[u8; 20])
 
 fn body_bytes(chain: &NativeChain, amount: u128, memo: &str, signer: &[u8; 20]) -> Vec<u8> {
     let mut body = Vec::new();
-    field_bytes(&mut body, 1, &any("/types.MsgDeposit", &msg_deposit(chain, amount, memo, signer)));
+    field_bytes(
+        &mut body,
+        1,
+        &any(
+            "/types.MsgDeposit",
+            &msg_deposit(chain, amount, memo, signer),
+        ),
+    );
     if chain.body_memo {
         field_bytes(&mut body, 2, memo.as_bytes());
     }
@@ -141,7 +148,11 @@ fn auth_info_bytes(chain: &NativeChain, pubkey: &[u8; 33], sequence: u64) -> Vec
     let mut mode = Vec::new();
     field_bytes(&mut mode, 1, &single);
     let mut signer = Vec::new();
-    field_bytes(&mut signer, 1, &any("/cosmos.crypto.secp256k1.PubKey", &key));
+    field_bytes(
+        &mut signer,
+        1,
+        &any("/cosmos.crypto.secp256k1.PubKey", &key),
+    );
     field_bytes(&mut signer, 2, &mode);
     field_varint(&mut signer, 3, sequence);
     let mut fee = Vec::new();
@@ -178,9 +189,21 @@ pub fn network_fee(chain: &NativeChain) -> Result<u128> {
 
 /// Signed deposit (`TxRaw` bytes) of `amount` (smallest unit) with `memo`, on
 /// behalf of key `key`, for the account (`account_number`, `sequence`).
-pub fn signed_deposit(chain: &NativeChain, key: &SigningKey, amount: u128, memo: &str, account_number: u64, sequence: u64) -> Result<Vec<u8>> {
+pub fn signed_deposit(
+    chain: &NativeChain,
+    key: &SigningKey,
+    amount: u128,
+    memo: &str,
+    account_number: u64,
+    sequence: u64,
+) -> Result<Vec<u8>> {
     ensure!(amount > 0, "dépôt nul");
-    let pubkey: [u8; 33] = key.verifying_key().to_encoded_point(true).as_bytes().try_into().context("clé publique invalide")?;
+    let pubkey: [u8; 33] = key
+        .verifying_key()
+        .to_encoded_point(true)
+        .as_bytes()
+        .try_into()
+        .context("clé publique invalide")?;
     let signer = hash160(&pubkey);
     let body = body_bytes(chain, amount, memo, &signer);
     let auth = auth_info_bytes(chain, &pubkey, sequence);
@@ -222,15 +245,24 @@ fn get_json(chain: &NativeChain, path: &str) -> Result<Value> {
 
 /// Protocol constant (`/{module}/constants`, integer value).
 pub fn constant(chain: &NativeChain, name: &str) -> Result<u64> {
-    let module = if chain.hrp == "maya" { "mayachain" } else { "thorchain" };
+    let module = if chain.hrp == "maya" {
+        "mayachain"
+    } else {
+        "thorchain"
+    };
     let constants = get_json(chain, &format!("/{module}/constants"))?;
-    constants["int_64_values"][name].as_i64().and_then(|v| u64::try_from(v).ok()).ok_or_else(|| anyhow!("constante {name} absente chez {}", chain.name))
+    constants["int_64_values"][name]
+        .as_i64()
+        .and_then(|v| u64::try_from(v).ok())
+        .ok_or_else(|| anyhow!("constante {name} absente chez {}", chain.name))
 }
 
 /// Balance of the network's coin (smallest unit).
 pub fn balance(chain: &NativeChain, address: &str) -> Result<u128> {
     let body = get_json(chain, &format!("/cosmos/bank/v1beta1/balances/{address}"))?;
-    let balances = body["balances"].as_array().ok_or_else(|| anyhow!("solde {} illisible", chain.name))?;
+    let balances = body["balances"]
+        .as_array()
+        .ok_or_else(|| anyhow!("solde {} illisible", chain.name))?;
     Ok(balances
         .iter()
         .find(|b| b["denom"] == chain.denom)
@@ -245,7 +277,11 @@ pub fn account(chain: &NativeChain, address: &str) -> Result<Option<(u64, u64)>>
     if body.get("account").is_none() {
         return Ok(None);
     }
-    let number = |field: &str| body["account"][field].as_str().and_then(|s| s.parse::<u64>().ok());
+    let number = |field: &str| {
+        body["account"][field]
+            .as_str()
+            .and_then(|s| s.parse::<u64>().ok())
+    };
     match (number("account_number"), number("sequence")) {
         (Some(n), Some(s)) => Ok(Some((n, s))),
         _ => bail!("compte {} illisible", chain.name),
@@ -267,9 +303,19 @@ pub fn broadcast(chain: &NativeChain, tx: &[u8]) -> Result<String> {
         .json()
         .with_context(|| format!("réponse du nœud {} illisible", chain.name))?;
     let response = &body["tx_response"];
-    let code = response["code"].as_u64().ok_or_else(|| anyhow!("réponse de diffusion {} inattendue : {body}", chain.name))?;
-    ensure!(code == 0, "transaction refusée par {} : {}", chain.name, response["raw_log"].as_str().unwrap_or("raison inconnue"));
-    response["txhash"].as_str().map(str::to_string).ok_or_else(|| anyhow!("réponse de diffusion {} sans identifiant", chain.name))
+    let code = response["code"]
+        .as_u64()
+        .ok_or_else(|| anyhow!("réponse de diffusion {} inattendue : {body}", chain.name))?;
+    ensure!(
+        code == 0,
+        "transaction refusée par {} : {}",
+        chain.name,
+        response["raw_log"].as_str().unwrap_or("raison inconnue")
+    );
+    response["txhash"]
+        .as_str()
+        .map(str::to_string)
+        .ok_or_else(|| anyhow!("réponse de diffusion {} sans identifiant", chain.name))
 }
 
 #[cfg(test)]
@@ -313,18 +359,52 @@ mod tests {
     /// Rebuilds a real registration (body and signer info identical to the byte) and
     /// verifies its original signature over the sign document computed here.
     #[allow(clippy::too_many_arguments)]
-    fn check_real(chain: &NativeChain, raw_hex: &str, amount: u128, memo: &str, signer: &str, pubkey_hex: &str, sequence: u64, account_number: u64) {
+    fn check_real(
+        chain: &NativeChain,
+        raw_hex: &str,
+        amount: u128,
+        memo: &str,
+        signer: &str,
+        pubkey_hex: &str,
+        sequence: u64,
+        account_number: u64,
+    ) {
         let raw = hex::decode(raw_hex.trim()).unwrap();
         let parts = top_fields(&raw);
         let (body, auth, sig) = (&parts[0].1, &parts[1].1, &parts[2].1);
-        assert_eq!(&body_bytes(chain, amount, memo, &signer_of(signer)), body, "corps {}", chain.name);
+        assert_eq!(
+            &body_bytes(chain, amount, memo, &signer_of(signer)),
+            body,
+            "corps {}",
+            chain.name
+        );
         let pubkey: [u8; 33] = hex::decode(pubkey_hex).unwrap().try_into().unwrap();
-        assert_eq!(&auth_info_bytes(chain, &pubkey, sequence), auth, "informations de signature {}", chain.name);
-        assert_eq!(hash160(&pubkey), signer_of(signer), "signataire = hash160 de la clé");
+        assert_eq!(
+            &auth_info_bytes(chain, &pubkey, sequence),
+            auth,
+            "informations de signature {}",
+            chain.name
+        );
+        assert_eq!(
+            hash160(&pubkey),
+            signer_of(signer),
+            "signataire = hash160 de la clé"
+        );
         let key = VerifyingKey::from_sec1_bytes(&pubkey).unwrap();
         let signature = Signature::from_slice(sig).unwrap();
-        key.verify(&sign_doc(body, auth, chain.chain_id, account_number), &signature).expect("signature d'origine valide");
-        assert!(key.verify(&sign_doc(body, auth, chain.chain_id, account_number + 1), &signature).is_err(), "autre compte : invalide");
+        key.verify(
+            &sign_doc(body, auth, chain.chain_id, account_number),
+            &signature,
+        )
+        .expect("signature d'origine valide");
+        assert!(
+            key.verify(
+                &sign_doc(body, auth, chain.chain_id, account_number + 1),
+                &signature
+            )
+            .is_err(),
+            "autre compte : invalide"
+        );
     }
 
     /// Real registration of the THORName "zafu" (block 28,067,419, account 156,733,
@@ -365,7 +445,12 @@ mod tests {
             let parts = top_fields(&tx);
             let signature = Signature::from_slice(&parts[2].1).unwrap();
             assert!(signature.normalize_s().is_none(), "S bas");
-            key.verifying_key().verify(&sign_doc(&parts[0].1, &parts[1].1, chain.chain_id, 12), &signature).unwrap();
+            key.verifying_key()
+                .verify(
+                    &sign_doc(&parts[0].1, &parts[1].1, chain.chain_id, 12),
+                    &signature,
+                )
+                .unwrap();
         }
         assert!(signed_deposit(&THORCHAIN, &key, 0, "~:ow", 1, 0).is_err());
     }

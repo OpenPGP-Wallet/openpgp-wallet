@@ -65,15 +65,26 @@ pub struct HidReassembler {
 
 impl HidReassembler {
     pub fn new(channel: u16) -> Self {
-        Self { channel, expected: None, sequence: 0, data: Vec::new() }
+        Self {
+            channel,
+            expected: None,
+            sequence: 0,
+            data: Vec::new(),
+        }
     }
 
     /// Adds a packet; returns the answer once it is complete.
     pub fn push(&mut self, frame: &[u8]) -> Result<Option<Vec<u8>>> {
         anyhow::ensure!(frame.len() >= 7, "paquet USB Ledger trop court");
-        anyhow::ensure!(u16::from_be_bytes([frame[0], frame[1]]) == self.channel, "paquet USB Ledger d'un autre canal");
+        anyhow::ensure!(
+            u16::from_be_bytes([frame[0], frame[1]]) == self.channel,
+            "paquet USB Ledger d'un autre canal"
+        );
         anyhow::ensure!(frame[2] == HID_TAG, "paquet USB Ledger d'un type inattendu");
-        anyhow::ensure!(u16::from_be_bytes([frame[3], frame[4]]) == self.sequence, "paquet USB Ledger hors séquence");
+        anyhow::ensure!(
+            u16::from_be_bytes([frame[3], frame[4]]) == self.sequence,
+            "paquet USB Ledger hors séquence"
+        );
         let payload = if self.expected.is_none() {
             self.expected = Some(u16::from_be_bytes([frame[5], frame[6]]) as usize);
             &frame[7..]
@@ -105,10 +116,16 @@ impl HidTransport {
             .device_list()
             .find(|d| d.vendor_id() == LEDGER_VENDOR_ID && (d.usage_page() == LEDGER_USAGE_PAGE || d.interface_number() == 0))
             .ok_or_else(|| anyhow!("aucun Ledger détecté : branchez-le, déverrouillez-le et ouvrez l'application du réseau"))?;
-        let device = info.open_device(&api).context("ouverture du Ledger impossible (déjà utilisé par une autre application ?)")?;
+        let device = info
+            .open_device(&api)
+            .context("ouverture du Ledger impossible (déjà utilisé par une autre application ?)")?;
         let mut channel = [0u8; 2];
-        getrandom::getrandom(&mut channel).map_err(|e| anyhow!("génération d'aléa impossible : {e}"))?;
-        Ok(Self { device, channel: u16::from_be_bytes(channel) })
+        getrandom::getrandom(&mut channel)
+            .map_err(|e| anyhow!("génération d'aléa impossible : {e}"))?;
+        Ok(Self {
+            device,
+            channel: u16::from_be_bytes(channel),
+        })
     }
 }
 
@@ -118,14 +135,19 @@ impl Transport for HidTransport {
             // Report ID byte (0) required in front of each HID write.
             let mut report = vec![0u8];
             report.extend_from_slice(&frame);
-            self.device.write(&report).context("écriture USB vers le Ledger impossible")?;
+            self.device
+                .write(&report)
+                .context("écriture USB vers le Ledger impossible")?;
         }
         let mut reassembler = HidReassembler::new(self.channel);
         loop {
             let mut frame = [0u8; HID_PACKET_SIZE];
             // No timeout: the device waits for the user's physical confirmation, which can
             // take as long as it takes.
-            let n = self.device.read(&mut frame).context("lecture USB depuis le Ledger impossible")?;
+            let n = self
+                .device
+                .read(&mut frame)
+                .context("lecture USB depuis le Ledger impossible")?;
             if let Some(response) = reassembler.push(&frame[..n])? {
                 return Ok(response);
             }
@@ -142,7 +164,8 @@ pub struct TcpTransport {
 
 impl TcpTransport {
     pub fn connect(address: &str) -> Result<Self> {
-        let stream = TcpStream::connect(address).with_context(|| format!("émulateur Ledger injoignable ({address})"))?;
+        let stream = TcpStream::connect(address)
+            .with_context(|| format!("émulateur Ledger injoignable ({address})"))?;
         stream.set_read_timeout(Some(Duration::from_secs(120)))?;
         Ok(Self { stream })
     }
@@ -181,8 +204,19 @@ pub(crate) fn status_error(sw: u16) -> anyhow::Error {
 /// Sends a command and returns the data and status word without interpreting them
 /// (some apps give a status word their own meaning: 0x6982 means the user refused,
 /// for Solana, for example).
-pub fn send_raw(transport: &mut dyn Transport, cla: u8, ins: u8, p1: u8, p2: u8, data: &[u8]) -> Result<(Vec<u8>, u16)> {
-    anyhow::ensure!(data.len() <= 255, "commande Ledger trop longue ({} octets)", data.len());
+pub fn send_raw(
+    transport: &mut dyn Transport,
+    cla: u8,
+    ins: u8,
+    p1: u8,
+    p2: u8,
+    data: &[u8],
+) -> Result<(Vec<u8>, u16)> {
+    anyhow::ensure!(
+        data.len() <= 255,
+        "commande Ledger trop longue ({} octets)",
+        data.len()
+    );
     let mut apdu = vec![cla, ins, p1, p2, data.len() as u8];
     apdu.extend_from_slice(data);
     let mut response = transport.exchange(&apdu)?;
@@ -194,7 +228,14 @@ pub fn send_raw(transport: &mut dyn Transport, cla: u8, ins: u8, p1: u8, p2: u8,
 
 /// Sends a command and returns the response data (status word 0x9000 required; any
 /// other status word becomes an explicit error).
-pub fn send(transport: &mut dyn Transport, cla: u8, ins: u8, p1: u8, p2: u8, data: &[u8]) -> Result<Vec<u8>> {
+pub fn send(
+    transport: &mut dyn Transport,
+    cla: u8,
+    ins: u8,
+    p1: u8,
+    p2: u8,
+    data: &[u8],
+) -> Result<Vec<u8>> {
     let (response, sw) = send_raw(transport, cla, ins, p1, p2, data)?;
     if sw != 0x9000 {
         return Err(status_error(sw));
@@ -205,7 +246,10 @@ pub fn send(transport: &mut dyn Transport, cla: u8, ins: u8, p1: u8, p2: u8, dat
 /// BIP32 derivation path in the Ledger apps' format: number of indices (1 byte),
 /// then each index on 4 big-endian bytes (most significant bit = hardened index).
 pub fn encode_path(path: &[u32]) -> Result<Vec<u8>> {
-    anyhow::ensure!(!path.is_empty() && path.len() <= 10, "chemin de dérivation invalide (1 à 10 niveaux)");
+    anyhow::ensure!(
+        !path.is_empty() && path.len() <= 10,
+        "chemin de dérivation invalide (1 à 10 niveaux)"
+    );
     let mut out = vec![path.len() as u8];
     for index in path {
         out.extend_from_slice(&index.to_be_bytes());
@@ -220,11 +264,14 @@ pub fn parse_path(path: &str) -> Result<Vec<u32>> {
     path.trim_start_matches("m/")
         .split('/')
         .map(|part| {
-            let (digits, hardened) = match part.strip_suffix('\'').or_else(|| part.strip_suffix('h')) {
-                Some(d) => (d, true),
-                None => (part, false),
-            };
-            let index: u32 = digits.parse().map_err(|_| anyhow!("chemin de dérivation invalide : {path}"))?;
+            let (digits, hardened) =
+                match part.strip_suffix('\'').or_else(|| part.strip_suffix('h')) {
+                    Some(d) => (d, true),
+                    None => (part, false),
+                };
+            let index: u32 = digits
+                .parse()
+                .map_err(|_| anyhow!("chemin de dérivation invalide : {path}"))?;
             if index >= HARDENED {
                 bail!("chemin de dérivation invalide : {path}");
             }
@@ -243,8 +290,17 @@ pub(crate) mod speculos {
     pub const TEST_MNEMONIC: &str = "glory promote mansion idle axis finger extra february uncover one trip resource lawn turtle enact monster seven myth punch hobby comfort wild raise skin";
 
     pub fn screen() -> Vec<String> {
-        let events: serde_json::Value = reqwest::blocking::get(format!("{API}/events?currentscreenonly=true")).unwrap().json().unwrap();
-        events["events"].as_array().unwrap().iter().filter_map(|e| e["text"].as_str().map(str::to_string)).collect()
+        let events: serde_json::Value =
+            reqwest::blocking::get(format!("{API}/events?currentscreenonly=true"))
+                .unwrap()
+                .json()
+                .unwrap();
+        events["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|e| e["text"].as_str().map(str::to_string))
+            .collect()
     }
 
     pub fn press(button: &str) {
@@ -274,10 +330,17 @@ pub(crate) mod speculos {
     pub fn set_blind_signing(enabled: bool) {
         back_to_home();
         press("right");
-        assert!(screen().join(" ").contains("App settings"), "menu inattendu : {:?}", screen());
+        assert!(
+            screen().join(" ").contains("App settings"),
+            "menu inattendu : {:?}",
+            screen()
+        );
         press("both");
         let state = screen().join(" ");
-        assert!(state.contains("Blind signing"), "réglage inattendu : {state}");
+        assert!(
+            state.contains("Blind signing"),
+            "réglage inattendu : {state}"
+        );
         if state.contains("Enabled") != enabled {
             press("both");
         }
@@ -352,8 +415,14 @@ mod tests {
             "01010500018f969da4abb2b9c0c7ced5900000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
         ];
         let mut reassembler = HidReassembler::new(0x0101);
-        assert!(reassembler.push(&hex::decode(response_frames[0]).unwrap()).unwrap().is_none());
-        let response = reassembler.push(&hex::decode(response_frames[1]).unwrap()).unwrap().unwrap();
+        assert!(reassembler
+            .push(&hex::decode(response_frames[0]).unwrap())
+            .unwrap()
+            .is_none());
+        let response = reassembler
+            .push(&hex::decode(response_frames[1]).unwrap())
+            .unwrap()
+            .unwrap();
         assert_eq!(
             hex::encode(response),
             "00070e151c232a31383f464d545b626970777e858c939aa1a8afb6bdc4cbd2d9e0e7eef5fc030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced59000"
@@ -363,22 +432,40 @@ mod tests {
     #[test]
     fn hid_reassembly_refuses_foreign_or_out_of_order_frames() {
         let frame = hex::decode("0101050000004600070e151c").unwrap();
-        assert!(HidReassembler::new(0x0202).push(&frame).is_err(), "autre canal");
+        assert!(
+            HidReassembler::new(0x0202).push(&frame).is_err(),
+            "autre canal"
+        );
         let mut wrong_tag = frame.clone();
         wrong_tag[2] = 0x06;
-        assert!(HidReassembler::new(0x0101).push(&wrong_tag).is_err(), "autre étiquette");
+        assert!(
+            HidReassembler::new(0x0101).push(&wrong_tag).is_err(),
+            "autre étiquette"
+        );
         let mut out_of_order = frame.clone();
         out_of_order[4] = 1;
-        assert!(HidReassembler::new(0x0101).push(&out_of_order).is_err(), "hors séquence");
-        assert!(HidReassembler::new(0x0101).push(&[1, 1, 5]).is_err(), "trop court");
+        assert!(
+            HidReassembler::new(0x0101).push(&out_of_order).is_err(),
+            "hors séquence"
+        );
+        assert!(
+            HidReassembler::new(0x0101).push(&[1, 1, 5]).is_err(),
+            "trop court"
+        );
     }
 
     /// Same encoding as hw-app-eth's `splitPath` + path buffer.
     #[test]
     fn path_encoding_matches_ledgerjs() {
         let path = parse_path("44'/60'/0'/0/0").unwrap();
-        assert_eq!(hex::encode(encode_path(&path).unwrap()), "058000002c8000003c800000000000000000000000");
-        assert_eq!(parse_path("m/84h/0h/1h/0/7").unwrap(), vec![84 | HARDENED, HARDENED, 1 | HARDENED, 0, 7]);
+        assert_eq!(
+            hex::encode(encode_path(&path).unwrap()),
+            "058000002c8000003c800000000000000000000000"
+        );
+        assert_eq!(
+            parse_path("m/84h/0h/1h/0/7").unwrap(),
+            vec![84 | HARDENED, HARDENED, 1 | HARDENED, 0, 7]
+        );
         for bad in ["", "44'/x", "2147483648/0", "44''/0"] {
             assert!(parse_path(bad).is_err(), "{bad}");
         }
@@ -394,12 +481,33 @@ mod tests {
 
     #[test]
     fn status_words_become_clear_errors() {
-        let mut t = Scripted(vec![vec![0xaa, 0x90, 0x00], vec![0x69, 0x85], vec![0x55, 0x15], vec![0x6e, 0x00], vec![0x12, 0x34]]);
+        let mut t = Scripted(vec![
+            vec![0xaa, 0x90, 0x00],
+            vec![0x69, 0x85],
+            vec![0x55, 0x15],
+            vec![0x6e, 0x00],
+            vec![0x12, 0x34],
+        ]);
         assert_eq!(send(&mut t, 0xe0, 0x02, 0, 0, &[]).unwrap(), vec![0xaa]);
-        assert!(send(&mut t, 0xe0, 0x02, 0, 0, &[]).unwrap_err().to_string().contains("refusée"));
-        assert!(send(&mut t, 0xe0, 0x02, 0, 0, &[]).unwrap_err().to_string().contains("verrouillé"));
-        assert!(send(&mut t, 0xe0, 0x02, 0, 0, &[]).unwrap_err().to_string().contains("application non ouverte"));
-        assert!(send(&mut t, 0xe0, 0x02, 0, 0, &[]).unwrap_err().to_string().contains("0x1234"));
-        assert!(send(&mut t, 0xe0, 0x02, 0, 0, &[0; 256]).is_err(), "APDU > 255 octets refusée avant envoi");
+        assert!(send(&mut t, 0xe0, 0x02, 0, 0, &[])
+            .unwrap_err()
+            .to_string()
+            .contains("refusée"));
+        assert!(send(&mut t, 0xe0, 0x02, 0, 0, &[])
+            .unwrap_err()
+            .to_string()
+            .contains("verrouillé"));
+        assert!(send(&mut t, 0xe0, 0x02, 0, 0, &[])
+            .unwrap_err()
+            .to_string()
+            .contains("application non ouverte"));
+        assert!(send(&mut t, 0xe0, 0x02, 0, 0, &[])
+            .unwrap_err()
+            .to_string()
+            .contains("0x1234"));
+        assert!(
+            send(&mut t, 0xe0, 0x02, 0, 0, &[0; 256]).is_err(),
+            "APDU > 255 octets refusée avant envoi"
+        );
     }
 }

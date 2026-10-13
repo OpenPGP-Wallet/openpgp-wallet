@@ -20,7 +20,11 @@ pub enum Difference {
     /// Extra character `typed` at `position`.
     Extra { position: usize, typed: char },
     /// `typed` instead of `expected` at `position`.
-    Changed { position: usize, typed: char, expected: char },
+    Changed {
+        position: usize,
+        typed: char,
+        expected: char,
+    },
     /// Characters `position` and `position + 1` swapped.
     Swapped { position: usize },
     /// Two characters differ.
@@ -56,7 +60,9 @@ fn distance(a: &[char], b: &[char]) -> Option<usize> {
     for i in 1..=a.len() {
         for j in 1..=b.len() {
             let cost = usize::from(a[i - 1] != b[j - 1]);
-            let mut best = (d[(i - 1) * width + j] + 1).min(d[i * width + j - 1] + 1).min(d[(i - 1) * width + j - 1] + cost);
+            let mut best = (d[(i - 1) * width + j] + 1)
+                .min(d[i * width + j - 1] + 1)
+                .min(d[(i - 1) * width + j - 1] + cost);
             if i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1] {
                 best = best.min(d[(i - 2) * width + j - 2] + 1);
             }
@@ -71,14 +77,32 @@ fn describe(typed: &[char], known: &[char], distance: usize) -> Difference {
     if distance != 1 {
         return Difference::Two;
     }
-    let first = typed.iter().zip(known).position(|(t, k)| t != k).unwrap_or(typed.len().min(known.len()));
+    let first = typed
+        .iter()
+        .zip(known)
+        .position(|(t, k)| t != k)
+        .unwrap_or(typed.len().min(known.len()));
     match typed.len().cmp(&known.len()) {
-        std::cmp::Ordering::Less => Difference::Missing { position: first, expected: known[first] },
-        std::cmp::Ordering::Greater => Difference::Extra { position: first, typed: typed[first] },
-        std::cmp::Ordering::Equal if typed.get(first + 1) == known.get(first) && typed.get(first) == known.get(first + 1) && typed[first + 2..] == known[first + 2..] => {
+        std::cmp::Ordering::Less => Difference::Missing {
+            position: first,
+            expected: known[first],
+        },
+        std::cmp::Ordering::Greater => Difference::Extra {
+            position: first,
+            typed: typed[first],
+        },
+        std::cmp::Ordering::Equal
+            if typed.get(first + 1) == known.get(first)
+                && typed.get(first) == known.get(first + 1)
+                && typed[first + 2..] == known[first + 2..] =>
+        {
             Difference::Swapped { position: first }
         }
-        std::cmp::Ordering::Equal => Difference::Changed { position: first, typed: typed[first], expected: known[first] },
+        std::cmp::Ordering::Equal => Difference::Changed {
+            position: first,
+            typed: typed[first],
+            expected: known[first],
+        },
     }
 }
 
@@ -91,7 +115,10 @@ pub fn validate(network: &str, address: &str) -> anyhow::Result<()> {
 /// The address in `known` closest to `typed` among the near-identical ones (on a
 /// tie, the first: the caller's priority order), with the difference. Never
 /// identical: `None` if `typed` is one of them.
-pub fn near_miss<'a>(known: impl IntoIterator<Item = &'a str>, typed: &str) -> Option<(&'a str, Difference)> {
+pub fn near_miss<'a>(
+    known: impl IntoIterator<Item = &'a str>,
+    typed: &str,
+) -> Option<(&'a str, Difference)> {
     let typed_chars = normalize(typed);
     if typed_chars.is_empty() {
         return None;
@@ -117,21 +144,73 @@ mod tests {
     #[test]
     fn the_real_missing_first_character_is_caught() {
         let typed = "1YBYFJWBteTwi5eS5BjdSy3xDGGv8bhHBJ54n78nzdc";
-        assert_eq!(near_miss([USER], typed), Some((USER, Difference::Missing { position: 0, expected: 'F' })));
+        assert_eq!(
+            near_miss([USER], typed),
+            Some((
+                USER,
+                Difference::Missing {
+                    position: 0,
+                    expected: 'F'
+                }
+            ))
+        );
     }
 
     #[test]
     fn each_kind_of_slip_is_described() {
         let last = USER.len() - 1;
-        assert_eq!(near_miss([USER], &USER[..last]).unwrap().1, Difference::Missing { position: last, expected: 'c' });
-        assert_eq!(near_miss([USER], &format!("{USER}c")).unwrap().1, Difference::Extra { position: last + 1, typed: 'c' });
-        assert_eq!(near_miss([USER], &USER.replacen("YBYF", "YBZF", 1)).unwrap().1, Difference::Changed { position: 4, typed: 'Z', expected: 'Y' });
-        assert_eq!(near_miss([USER], &USER.replacen("1Y", "Y1", 1)).unwrap().1, Difference::Swapped { position: 1 });
-        assert_eq!(near_miss([USER], &format!("{}x", &USER[..last])).unwrap().1, Difference::Changed { position: last, typed: 'x', expected: 'c' });
-        assert_eq!(near_miss([USER], &format!("{}cd", &USER[..last - 1])).unwrap().1, Difference::Swapped { position: last - 1 });
+        assert_eq!(
+            near_miss([USER], &USER[..last]).unwrap().1,
+            Difference::Missing {
+                position: last,
+                expected: 'c'
+            }
+        );
+        assert_eq!(
+            near_miss([USER], &format!("{USER}c")).unwrap().1,
+            Difference::Extra {
+                position: last + 1,
+                typed: 'c'
+            }
+        );
+        assert_eq!(
+            near_miss([USER], &USER.replacen("YBYF", "YBZF", 1))
+                .unwrap()
+                .1,
+            Difference::Changed {
+                position: 4,
+                typed: 'Z',
+                expected: 'Y'
+            }
+        );
+        assert_eq!(
+            near_miss([USER], &USER.replacen("1Y", "Y1", 1)).unwrap().1,
+            Difference::Swapped { position: 1 }
+        );
+        assert_eq!(
+            near_miss([USER], &format!("{}x", &USER[..last])).unwrap().1,
+            Difference::Changed {
+                position: last,
+                typed: 'x',
+                expected: 'c'
+            }
+        );
+        assert_eq!(
+            near_miss([USER], &format!("{}cd", &USER[..last - 1]))
+                .unwrap()
+                .1,
+            Difference::Swapped { position: last - 1 }
+        );
         assert_eq!(near_miss([USER], &USER[2..]).unwrap().1, Difference::Two);
         // Base58: case matters (a different address, one character apart).
-        assert_eq!(near_miss([USER], &USER.replacen('F', "f", 1)).unwrap().1, Difference::Changed { position: 0, typed: 'f', expected: 'F' });
+        assert_eq!(
+            near_miss([USER], &USER.replacen('F', "f", 1)).unwrap().1,
+            Difference::Changed {
+                position: 0,
+                typed: 'f',
+                expected: 'F'
+            }
+        );
     }
 
     /// Identical (apart from spaces, or from case in hex/bech32): nothing; unrelated:
@@ -141,8 +220,15 @@ mod tests {
         assert_eq!(near_miss([USER], &format!(" {USER} ")), None);
         let evm = "0x34deb5AF3e37BD0495dDc1bb1C53c14d7CE064c3";
         assert_eq!(near_miss([evm], &evm.to_ascii_lowercase()), None);
-        assert_eq!(near_miss([USER], "4PUcVV4Ax8jXHXsGaRZfh69oRkeRGJyGZbDBPFUD2okm"), None);
-        assert_eq!(near_miss([USER], &USER[3..]), None, "trois caractères de moins : au-delà");
+        assert_eq!(
+            near_miss([USER], "4PUcVV4Ax8jXHXsGaRZfh69oRkeRGJyGZbDBPFUD2okm"),
+            None
+        );
+        assert_eq!(
+            near_miss([USER], &USER[3..]),
+            None,
+            "trois caractères de moins : au-delà"
+        );
         assert_eq!(near_miss([USER], ""), None);
         // An address identical to another known one wins.
         assert_eq!(near_miss([USER, &USER[1..]], &USER[1..]), None);
@@ -155,13 +241,29 @@ mod tests {
     fn the_closest_known_address_wins() {
         let slip = &USER[1..];
         let typed = format!("{}d", &USER[..USER.len() - 1]);
-        assert_eq!(near_miss([slip, USER], &typed), Some((USER, Difference::Changed { position: USER.len() - 1, typed: 'd', expected: 'c' })));
+        assert_eq!(
+            near_miss([slip, USER], &typed),
+            Some((
+                USER,
+                Difference::Changed {
+                    position: USER.len() - 1,
+                    typed: 'd',
+                    expected: 'c'
+                }
+            ))
+        );
     }
 
     #[test]
     fn evm_comparison_ignores_case() {
         let evm = "0x34deb5AF3e37BD0495dDc1bb1C53c14d7CE064c3";
         let typed = "0x34deb5af3e37bd0495ddc1bb1c53c14d7ce064c";
-        assert_eq!(near_miss([evm], typed).unwrap().1, Difference::Missing { position: 41, expected: '3' });
+        assert_eq!(
+            near_miss([evm], typed).unwrap().1,
+            Difference::Missing {
+                position: 41,
+                expected: '3'
+            }
+        );
     }
 }

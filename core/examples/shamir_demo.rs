@@ -23,7 +23,9 @@ fn prompt(message: &str) -> Result<String> {
 }
 
 fn main() -> Result<()> {
-    println!("=== Démo Shamir's Secret Sharing (sans PGP) — seuil {THRESHOLD}-sur-{TOTAL_SHARES} ===\n");
+    println!(
+        "=== Démo Shamir's Secret Sharing (sans PGP) — seuil {THRESHOLD}-sur-{TOTAL_SHARES} ===\n"
+    );
 
     let master_entropy = Zeroizing::new(entropy::generate_master_entropy());
     println!(
@@ -64,7 +66,9 @@ fn main() -> Result<()> {
     let recovered = Zeroizing::new(shamir::reconstruct_secret(THRESHOLD, &subset)?);
 
     if *recovered == *master_entropy {
-        println!("\nReconstruction réussie : l'entropie récupérée correspond exactement à l'originale.");
+        println!(
+            "\nReconstruction réussie : l'entropie récupérée correspond exactement à l'originale."
+        );
     } else {
         println!("\nPROBLÈME : l'entropie récupérée NE correspond PAS à l'originale.");
     }

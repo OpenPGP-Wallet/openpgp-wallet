@@ -29,8 +29,9 @@ pub fn personal_message_hash(message: &[u8]) -> [u8; 32] {
 /// Recoverable signature in the format dApps expect: r (32) ‖ s (32) ‖ v (27 +
 /// recovery ID), with s normalized "low" (EIP-2).
 pub fn sign_digest(key: &SigningKey, digest: &[u8; 32]) -> Result<[u8; 65]> {
-    let (signature, recid): (Signature, RecoveryId) =
-        key.sign_prehash(digest).map_err(|e| anyhow!("échec de signature ECDSA : {e}"))?;
+    let (signature, recid): (Signature, RecoveryId) = key
+        .sign_prehash(digest)
+        .map_err(|e| anyhow!("échec de signature ECDSA : {e}"))?;
     let mut out = [0u8; 65];
     out[..32].copy_from_slice(&signature.r().to_bytes());
     out[32..64].copy_from_slice(&signature.s().to_bytes());
@@ -81,7 +82,8 @@ impl U256 {
     }
 
     pub fn to_u128(&self) -> Option<u128> {
-        (self.bits() <= 128).then(|| u128::from_be_bytes(self.0[16..].try_into().expect("16 octets")))
+        (self.bits() <= 128)
+            .then(|| u128::from_be_bytes(self.0[16..].try_into().expect("16 octets")))
     }
 
     fn twos_complement(&self) -> Self {
@@ -119,7 +121,9 @@ fn parse_magnitude(text: &str) -> Result<U256> {
     };
     anyhow::ensure!(!digits.is_empty(), "nombre vide");
     for c in digits.chars() {
-        let d = c.to_digit(base).ok_or_else(|| anyhow!("nombre invalide : « {text} »"))?;
+        let d = c
+            .to_digit(base)
+            .ok_or_else(|| anyhow!("nombre invalide : « {text} »"))?;
         add_digit(&mut out, base, d)?;
     }
     Ok(U256(out))
@@ -150,19 +154,29 @@ fn parse_integer(value: &Value) -> Result<(bool, U256)> {
 
 pub fn parse_uint256(value: &Value) -> Result<U256> {
     let (negative, magnitude) = parse_integer(value)?;
-    anyhow::ensure!(!negative || magnitude.bits() == 0, "entier non signé négatif");
+    anyhow::ensure!(
+        !negative || magnitude.bits() == 0,
+        "entier non signé négatif"
+    );
     Ok(magnitude)
 }
 
 fn hex_bytes(value: &Value) -> Result<Vec<u8>> {
-    let s = value.as_str().ok_or_else(|| anyhow!("octets hexadécimaux attendus"))?;
-    let s = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")).ok_or_else(|| anyhow!("octets hexadécimaux « 0x… » attendus"))?;
+    let s = value
+        .as_str()
+        .ok_or_else(|| anyhow!("octets hexadécimaux attendus"))?;
+    let s = s
+        .strip_prefix("0x")
+        .or_else(|| s.strip_prefix("0X"))
+        .ok_or_else(|| anyhow!("octets hexadécimaux « 0x… » attendus"))?;
     hex::decode(s).context("octets hexadécimaux invalides")
 }
 
 pub fn parse_address(value: &Value) -> Result<[u8; 20]> {
     let bytes = hex_bytes(value).context("adresse invalide")?;
-    bytes.try_into().map_err(|_| anyhow!("une adresse EVM fait 20 octets"))
+    bytes
+        .try_into()
+        .map_err(|_| anyhow!("une adresse EVM fait 20 octets"))
 }
 
 // --- EIP-712 --------------------------------------------------------------------
@@ -188,20 +202,35 @@ pub fn parse_typed_data(value: &Value) -> Result<TypedData> {
     let owned;
     let obj = match value {
         Value::String(s) => {
-            owned = serde_json::from_str::<Value>(s).context("données structurées : JSON invalide")?;
+            owned =
+                serde_json::from_str::<Value>(s).context("données structurées : JSON invalide")?;
             &owned
         }
         other => other,
     };
-    let types_json = obj.get("types").and_then(Value::as_object).ok_or_else(|| anyhow!("données structurées sans « types »"))?;
+    let types_json = obj
+        .get("types")
+        .and_then(Value::as_object)
+        .ok_or_else(|| anyhow!("données structurées sans « types »"))?;
     let mut types = HashMap::new();
     for (name, fields) in types_json {
-        let fields = fields.as_array().ok_or_else(|| anyhow!("type « {name} » mal formé"))?;
+        let fields = fields
+            .as_array()
+            .ok_or_else(|| anyhow!("type « {name} » mal formé"))?;
         let mut parsed = Vec::with_capacity(fields.len());
         for field in fields {
-            let fname = field.get("name").and_then(Value::as_str).ok_or_else(|| anyhow!("champ sans nom dans « {name} »"))?;
-            let kind = field.get("type").and_then(Value::as_str).ok_or_else(|| anyhow!("champ sans type dans « {name} »"))?;
-            parsed.push(TypedField { name: fname.to_string(), kind: kind.to_string() });
+            let fname = field
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow!("champ sans nom dans « {name} »"))?;
+            let kind = field
+                .get("type")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow!("champ sans type dans « {name} »"))?;
+            parsed.push(TypedField {
+                name: fname.to_string(),
+                kind: kind.to_string(),
+            });
         }
         types.insert(name.clone(), parsed);
     }
@@ -210,17 +239,34 @@ pub fn parse_typed_data(value: &Value) -> Result<TypedData> {
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("données structurées sans « primaryType »"))?
         .to_string();
-    let domain = obj.get("domain").cloned().ok_or_else(|| anyhow!("données structurées sans « domain »"))?;
+    let domain = obj
+        .get("domain")
+        .cloned()
+        .ok_or_else(|| anyhow!("données structurées sans « domain »"))?;
     let message = obj.get("message").cloned().unwrap_or(Value::Null);
-    let mut data = TypedData { types, primary_type, domain, message };
+    let mut data = TypedData {
+        types,
+        primary_type,
+        domain,
+        message,
+    };
     // Domain type missing (the ethers.js form): deduced from the fields present, in
     // the specification's canonical order, like ethers' `hashDomain`.
     if !data.types.contains_key("EIP712Domain") {
-        let canonical = [("name", "string"), ("version", "string"), ("chainId", "uint256"), ("verifyingContract", "address"), ("salt", "bytes32")];
+        let canonical = [
+            ("name", "string"),
+            ("version", "string"),
+            ("chainId", "uint256"),
+            ("verifyingContract", "address"),
+            ("salt", "bytes32"),
+        ];
         let fields = canonical
             .iter()
             .filter(|(name, _)| data.domain.get(name).is_some())
-            .map(|(name, kind)| TypedField { name: name.to_string(), kind: kind.to_string() })
+            .map(|(name, kind)| TypedField {
+                name: name.to_string(),
+                kind: kind.to_string(),
+            })
             .collect();
         data.types.insert("EIP712Domain".to_string(), fields);
     }
@@ -238,7 +284,14 @@ fn array_parts(kind: &str) -> Option<(&str, Option<usize>)> {
     let inner = kind.strip_suffix(']')?;
     let open = inner.rfind('[')?;
     let len = &inner[open + 1..];
-    Some((&inner[..open], if len.is_empty() { None } else { len.parse().ok() }))
+    Some((
+        &inner[..open],
+        if len.is_empty() {
+            None
+        } else {
+            len.parse().ok()
+        },
+    ))
 }
 
 fn base_struct_name(kind: &str) -> &str {
@@ -251,7 +304,9 @@ fn base_struct_name(kind: &str) -> &str {
 
 impl TypedData {
     fn fields(&self, name: &str) -> Result<&Vec<TypedField>> {
-        self.types.get(name).ok_or_else(|| anyhow!("type « {name} » non défini"))
+        self.types
+            .get(name)
+            .ok_or_else(|| anyhow!("type « {name} » non défini"))
     }
 
     /// Struct types that `name` depends on (itself included); cycles are handled.
@@ -274,7 +329,10 @@ impl TypedData {
         let mut out = String::new();
         for t in std::iter::once(name.to_string()).chain(deps) {
             let fields = self.fields(&t)?;
-            let list: Vec<String> = fields.iter().map(|f| format!("{} {}", f.kind, f.name)).collect();
+            let list: Vec<String> = fields
+                .iter()
+                .map(|f| format!("{} {}", f.kind, f.name))
+                .collect();
             out.push_str(&format!("{t}({})", list.join(",")));
         }
         Ok(out)
@@ -293,9 +351,15 @@ impl TypedData {
 
     fn encode_value(&self, kind: &str, value: &Value) -> Result<[u8; 32]> {
         if let Some((base, fixed_len)) = array_parts(kind) {
-            let items = value.as_array().ok_or_else(|| anyhow!("tableau attendu pour « {kind} »"))?;
+            let items = value
+                .as_array()
+                .ok_or_else(|| anyhow!("tableau attendu pour « {kind} »"))?;
             if let Some(n) = fixed_len {
-                anyhow::ensure!(items.len() == n, "tableau « {kind} » : {} éléments au lieu de {n}", items.len());
+                anyhow::ensure!(
+                    items.len() == n,
+                    "tableau « {kind} » : {} éléments au lieu de {n}",
+                    items.len()
+                );
             }
             let mut concat = Vec::with_capacity(items.len() * 32);
             for item in items {
@@ -308,7 +372,14 @@ impl TypedData {
         }
         let mut word = [0u8; 32];
         match kind {
-            "string" => return Ok(keccak(value.as_str().ok_or_else(|| anyhow!("texte attendu"))?.as_bytes())),
+            "string" => {
+                return Ok(keccak(
+                    value
+                        .as_str()
+                        .ok_or_else(|| anyhow!("texte attendu"))?
+                        .as_bytes(),
+                ))
+            }
             "bytes" => return Ok(keccak(&hex_bytes(value)?)),
             "bool" => {
                 let b = match value {
@@ -324,25 +395,45 @@ impl TypedData {
                     let n: usize = n.parse().map_err(|_| anyhow!("type inconnu « {kind} »"))?;
                     anyhow::ensure!((1..=32).contains(&n), "type inconnu « {kind} »");
                     let bytes = hex_bytes(value)?;
-                    anyhow::ensure!(bytes.len() == n, "« {kind} » : {} octets au lieu de {n}", bytes.len());
+                    anyhow::ensure!(
+                        bytes.len() == n,
+                        "« {kind} » : {} octets au lieu de {n}",
+                        bytes.len()
+                    );
                     word[..n].copy_from_slice(&bytes);
                 } else if let Some((signed, bits)) = kind
                     .strip_prefix("uint")
                     .map(|b| (false, b))
                     .or_else(|| kind.strip_prefix("int").map(|b| (true, b)))
                 {
-                    let bits: u32 = bits.parse().map_err(|_| anyhow!("type inconnu « {kind} »"))?;
-                    anyhow::ensure!(bits.is_multiple_of(8) && (8..=256).contains(&bits), "type inconnu « {kind} »");
+                    let bits: u32 = bits
+                        .parse()
+                        .map_err(|_| anyhow!("type inconnu « {kind} »"))?;
+                    anyhow::ensure!(
+                        bits.is_multiple_of(8) && (8..=256).contains(&bits),
+                        "type inconnu « {kind} »"
+                    );
                     let (negative, magnitude) = parse_integer(value)?;
                     if signed {
                         // Range [-2^(bits-1), 2^(bits-1) - 1], two's complement on 256 bits.
                         let limit = bits - 1;
-                        let fits = magnitude.bits() <= limit || (negative && magnitude == pow2(limit));
+                        let fits =
+                            magnitude.bits() <= limit || (negative && magnitude == pow2(limit));
                         anyhow::ensure!(fits, "« {kind} » : valeur hors limites");
-                        word = if negative && magnitude.bits() > 0 { magnitude.twos_complement().0 } else { magnitude.0 };
+                        word = if negative && magnitude.bits() > 0 {
+                            magnitude.twos_complement().0
+                        } else {
+                            magnitude.0
+                        };
                     } else {
-                        anyhow::ensure!(!negative || magnitude.bits() == 0, "« {kind} » : valeur négative");
-                        anyhow::ensure!(magnitude.bits() <= bits, "« {kind} » : valeur hors limites");
+                        anyhow::ensure!(
+                            !negative || magnitude.bits() == 0,
+                            "« {kind} » : valeur négative"
+                        );
+                        anyhow::ensure!(
+                            magnitude.bits() <= bits,
+                            "« {kind} » : valeur hors limites"
+                        );
                         word = magnitude.0;
                     }
                 } else {
@@ -390,14 +481,32 @@ fn pow2(n: u32) -> U256 {
 pub enum CallKind {
     /// No data: a plain ETH send.
     PlainTransfer,
-    TokenTransfer { to: [u8; 20], amount: U256 },
-    TokenTransferFrom { from: [u8; 20], to: [u8; 20], amount: U256 },
+    TokenTransfer {
+        to: [u8; 20],
+        amount: U256,
+    },
+    TokenTransferFrom {
+        from: [u8; 20],
+        to: [u8; 20],
+        amount: U256,
+    },
     /// Allows `spender` to spend `amount` of the user's tokens later, without them.
-    TokenApprove { spender: [u8; 20], amount: U256 },
-    IncreaseAllowance { spender: [u8; 20], amount: U256 },
+    TokenApprove {
+        spender: [u8; 20],
+        amount: U256,
+    },
+    IncreaseAllowance {
+        spender: [u8; 20],
+        amount: U256,
+    },
     /// Allows `operator` to transfer ALL the NFTs of the collection.
-    SetApprovalForAll { operator: [u8; 20], approved: bool },
-    Unknown { selector: [u8; 4] },
+    SetApprovalForAll {
+        operator: [u8; 20],
+        approved: bool,
+    },
+    Unknown {
+        selector: [u8; 4],
+    },
 }
 
 fn word(args: &[u8], i: usize) -> Option<&[u8]> {
@@ -407,7 +516,10 @@ fn word(args: &[u8], i: usize) -> Option<&[u8]> {
 fn word_address(args: &[u8], i: usize) -> Option<[u8; 20]> {
     let w = word(args, i)?;
     // An ABI address has its first 12 bytes at zero; otherwise the call is malformed.
-    w[..12].iter().all(|&b| b == 0).then(|| w[12..].try_into().expect("20 octets"))
+    w[..12]
+        .iter()
+        .all(|&b| b == 0)
+        .then(|| w[12..].try_into().expect("20 octets"))
 }
 
 fn word_uint(args: &[u8], i: usize) -> Option<U256> {
@@ -423,24 +535,27 @@ pub fn decode_call(data: &[u8]) -> CallKind {
     if data.is_empty() {
         return CallKind::PlainTransfer;
     }
-    let Some(selector) = data.get(..4).map(|s| <[u8; 4]>::try_from(s).expect("4 octets")) else {
+    let Some(selector) = data
+        .get(..4)
+        .map(|s| <[u8; 4]>::try_from(s).expect("4 octets"))
+    else {
         return CallKind::Unknown { selector: [0; 4] };
     };
     let args = &data[4..];
     let decoded = match selector {
-        [0xa9, 0x05, 0x9c, 0xbb] if args.len() == 64 => {
-            word_address(args, 0).zip(word_uint(args, 1)).map(|(to, amount)| CallKind::TokenTransfer { to, amount })
-        }
+        [0xa9, 0x05, 0x9c, 0xbb] if args.len() == 64 => word_address(args, 0)
+            .zip(word_uint(args, 1))
+            .map(|(to, amount)| CallKind::TokenTransfer { to, amount }),
         [0x23, 0xb8, 0x72, 0xdd] if args.len() == 96 => word_address(args, 0)
             .zip(word_address(args, 1))
             .zip(word_uint(args, 2))
             .map(|((from, to), amount)| CallKind::TokenTransferFrom { from, to, amount }),
-        [0x09, 0x5e, 0xa7, 0xb3] if args.len() == 64 => {
-            word_address(args, 0).zip(word_uint(args, 1)).map(|(spender, amount)| CallKind::TokenApprove { spender, amount })
-        }
-        [0x39, 0x50, 0x93, 0x51] if args.len() == 64 => {
-            word_address(args, 0).zip(word_uint(args, 1)).map(|(spender, amount)| CallKind::IncreaseAllowance { spender, amount })
-        }
+        [0x09, 0x5e, 0xa7, 0xb3] if args.len() == 64 => word_address(args, 0)
+            .zip(word_uint(args, 1))
+            .map(|(spender, amount)| CallKind::TokenApprove { spender, amount }),
+        [0x39, 0x50, 0x93, 0x51] if args.len() == 64 => word_address(args, 0)
+            .zip(word_uint(args, 1))
+            .map(|(spender, amount)| CallKind::IncreaseAllowance { spender, amount }),
         [0xa2, 0x2c, 0xb4, 0x65] if args.len() == 64 => word_address(args, 0)
             .zip(word_bool(args, 1))
             .map(|(operator, approved)| CallKind::SetApprovalForAll { operator, approved }),
@@ -468,13 +583,19 @@ mod tests {
     #[test]
     fn personal_sign_matches_ethers() {
         let hash = personal_message_hash(b"Hello World");
-        assert_eq!(h(&hex::encode(hash)), "0xa1de988600a42c4b4ab089b619297c17d53cffae5d5120d82d8a92d0bb3b78f2");
+        assert_eq!(
+            h(&hex::encode(hash)),
+            "0xa1de988600a42c4b4ab089b619297c17d53cffae5d5120d82d8a92d0bb3b78f2"
+        );
         assert_eq!(
             h(&hex::encode(sign_digest(&key(), &hash).unwrap())),
             "0x6f267aa61dda3067280942299172e2b9f6b4252b492e7c0343ecce6e7edfe0b24110a805ba6777e4303501ea9dfae133855f4ee2e34fd0444bb23d11f296eef31c"
         );
         let hash = personal_message_hash(&[0xde, 0xad, 0xbe, 0xef]);
-        assert_eq!(h(&hex::encode(hash)), "0xd1c7f1a06a4f9a535077e50ad23244ce2c6ae443fcd412965226f3df5d28eaaa");
+        assert_eq!(
+            h(&hex::encode(hash)),
+            "0xd1c7f1a06a4f9a535077e50ad23244ce2c6ae443fcd412965226f3df5d28eaaa"
+        );
         assert_eq!(
             h(&hex::encode(sign_digest(&key(), &hash).unwrap())),
             "0x27c9251b613f25a4d52f5375c0be39ea8b8f5bb46a29034620f613d71520ac24034d84dcd3e6251af82cff1bda9c38141a238abaa1830bd8ca064474b60c641f1c"
@@ -506,13 +627,21 @@ mod tests {
     #[test]
     fn eip712_matches_the_specification_example() {
         let data = parse_typed_data(&mail()).unwrap();
-        assert_eq!(h(&hex::encode(data.domain_separator().unwrap())), "0xf2cee375fa42b42143804025fc449deafd50cc031ca257e0b194a650a912090f");
         assert_eq!(
-            h(&hex::encode(data.hash_struct("Mail", &data.message).unwrap())),
+            h(&hex::encode(data.domain_separator().unwrap())),
+            "0xf2cee375fa42b42143804025fc449deafd50cc031ca257e0b194a650a912090f"
+        );
+        assert_eq!(
+            h(&hex::encode(
+                data.hash_struct("Mail", &data.message).unwrap()
+            )),
             "0xc52c0ee5d84264471806290a3f2c4cecfc5490626bf912d01f240d7a274b371e"
         );
         let digest = data.digest().unwrap();
-        assert_eq!(h(&hex::encode(digest)), "0xbe609aee343fb3c4b28e1df9e632fca64fcfaede20f02e86244efddf30957bd2");
+        assert_eq!(
+            h(&hex::encode(digest)),
+            "0xbe609aee343fb3c4b28e1df9e632fca64fcfaede20f02e86244efddf30957bd2"
+        );
         assert_eq!(
             h(&hex::encode(sign_digest(&key(), &digest).unwrap())),
             "0x19e4c5dcf77c10f4b30df3d4cb5822a99a69ec18e6f5d7b9a889a5a4815740732656ebdcc5a9c8eee63e684a5ed282d6b59ffe2914076b025a77df76559403111c"
@@ -520,7 +649,10 @@ mod tests {
         assert_eq!(data.domain_chain_id(), Some(1));
         // Same content sent as a JSON STRING (the other common form).
         let as_string = Value::String(mail().to_string());
-        assert_eq!(parse_typed_data(&as_string).unwrap().digest().unwrap(), digest);
+        assert_eq!(
+            parse_typed_data(&as_string).unwrap().digest().unwrap(),
+            digest
+        );
     }
 
     /// Complex v4 case (ethers.js): arrays of structs, an empty address array, bytes,
@@ -559,7 +691,10 @@ mod tests {
         });
         let data = parse_typed_data(&typed).unwrap();
         let digest = data.digest().unwrap();
-        assert_eq!(h(&hex::encode(digest)), "0xb645bfd445b07b0a707e3a8d6f82dcca796926e59cbb56550744d0835a54795c");
+        assert_eq!(
+            h(&hex::encode(digest)),
+            "0xb645bfd445b07b0a707e3a8d6f82dcca796926e59cbb56550744d0835a54795c"
+        );
         assert_eq!(
             h(&hex::encode(sign_digest(&key(), &digest).unwrap())),
             "0xb8fc401dab95360b12e1a06bcbdb192a577d54380442e69a08c4c03afaef8f2e1a3dee6a9a114dce0f2dad76d68723fd443ba0429b151d469ebab972d1eacc581c"
@@ -585,10 +720,16 @@ mod tests {
             }
         });
         let data = parse_typed_data(&typed).unwrap();
-        assert_eq!(h(&hex::encode(data.digest().unwrap())), "0xfffcc838333500a1d6462f879368eff7deeecc267930a1ff855464b076981216");
+        assert_eq!(
+            h(&hex::encode(data.digest().unwrap())),
+            "0xfffcc838333500a1d6462f879368eff7deeecc267930a1ff855464b076981216"
+        );
         let value = parse_uint256(&data.message["value"]).unwrap();
         assert!(value.is_practically_unlimited());
-        assert_eq!(value.to_decimal(), "115792089237316195423570985008687907853269984665640564039457584007913129639935");
+        assert_eq!(
+            value.to_decimal(),
+            "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+        );
     }
 
     #[test]
@@ -596,16 +737,28 @@ mod tests {
         let mut typed = mail();
         // JSON number beyond 2^53: already rounded by the JSON parser.
         typed["domain"]["chainId"] = serde_json::from_str("1e30").unwrap();
-        assert!(parse_typed_data(&typed).unwrap().digest().is_err(), "nombre flottant ambigu");
+        assert!(
+            parse_typed_data(&typed).unwrap().digest().is_err(),
+            "nombre flottant ambigu"
+        );
         let mut typed = mail();
         typed["message"]["from"]["wallet"] = json!("0x1234");
-        assert!(parse_typed_data(&typed).unwrap().digest().is_err(), "adresse tronquée");
+        assert!(
+            parse_typed_data(&typed).unwrap().digest().is_err(),
+            "adresse tronquée"
+        );
         let mut typed = mail();
         typed["message"].as_object_mut().unwrap().remove("contents");
-        assert!(parse_typed_data(&typed).unwrap().digest().is_err(), "champ manquant");
+        assert!(
+            parse_typed_data(&typed).unwrap().digest().is_err(),
+            "champ manquant"
+        );
         let mut typed = mail();
         typed["types"]["Mail"][2]["type"] = json!("uint7");
-        assert!(parse_typed_data(&typed).unwrap().digest().is_err(), "type inconnu");
+        assert!(
+            parse_typed_data(&typed).unwrap().digest().is_err(),
+            "type inconnu"
+        );
         // Cyclic types without finite data: a clean error, no stack overflow.
         let cyclic = json!({
             "types": {"A": [{"name": "b", "type": "B"}], "B": [{"name": "a", "type": "A"}]},
@@ -616,7 +769,9 @@ mod tests {
 
     #[test]
     fn int_and_uint_ranges_are_enforced() {
-        let data = parse_typed_data(&json!({"types": {}, "primaryType": "EIP712Domain", "domain": {}})).unwrap();
+        let data =
+            parse_typed_data(&json!({"types": {}, "primaryType": "EIP712Domain", "domain": {}}))
+                .unwrap();
         assert!(data.encode_value("uint8", &json!(255)).is_ok());
         assert!(data.encode_value("uint8", &json!(256)).is_err());
         assert!(data.encode_value("uint8", &json!("-1")).is_err());
@@ -625,7 +780,10 @@ mod tests {
         assert!(data.encode_value("int8", &json!(-128)).is_ok());
         assert!(data.encode_value("int8", &json!(-129)).is_err());
         assert_eq!(data.encode_value("int256", &json!(-1)).unwrap(), [0xff; 32]);
-        assert!(data.encode_value("bytes4", &json!("0x0102")).is_err(), "bytesN : longueur exacte");
+        assert!(
+            data.encode_value("bytes4", &json!("0x0102")).is_err(),
+            "bytesN : longueur exacte"
+        );
         assert!(data.encode_value("bool", &json!(1)).is_err());
     }
 
@@ -649,29 +807,66 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
-        match decode_call(&call("a9059cbb", &[addr_word(spender), format!("{:0>64}", "3e8")])) {
+        match decode_call(&call(
+            "a9059cbb",
+            &[addr_word(spender), format!("{:0>64}", "3e8")],
+        )) {
             CallKind::TokenTransfer { amount, .. } => assert_eq!(amount.to_decimal(), "1000"),
             other => panic!("{other:?}"),
         }
         assert_eq!(
-            decode_call(&call("a22cb465", &[addr_word(spender), format!("{:0>64}", "1")])),
-            CallKind::SetApprovalForAll { operator: hex::decode(spender).unwrap().try_into().unwrap(), approved: true }
+            decode_call(&call(
+                "a22cb465",
+                &[addr_word(spender), format!("{:0>64}", "1")]
+            )),
+            CallKind::SetApprovalForAll {
+                operator: hex::decode(spender).unwrap().try_into().unwrap(),
+                approved: true
+            }
         );
         // ABI address with non-zero high bytes, a missing or extra argument, an unknown
         // selector: never presented as a recognized call.
-        assert!(matches!(decode_call(&call("095ea7b3", &[format!("ff{}", &addr_word(spender)[2..]), max.clone()])), CallKind::Unknown { .. }));
-        assert!(matches!(decode_call(&call("095ea7b3", &[addr_word(spender)])), CallKind::Unknown { .. }));
-        assert!(matches!(decode_call(&call("095ea7b3", &[addr_word(spender), max.clone(), max])), CallKind::Unknown { .. }));
-        assert!(matches!(decode_call(&call("12345678", &[])), CallKind::Unknown { selector: [0x12, 0x34, 0x56, 0x78] }));
-        assert!(matches!(decode_call(&[0x09, 0x5e]), CallKind::Unknown { .. }));
+        assert!(matches!(
+            decode_call(&call(
+                "095ea7b3",
+                &[format!("ff{}", &addr_word(spender)[2..]), max.clone()]
+            )),
+            CallKind::Unknown { .. }
+        ));
+        assert!(matches!(
+            decode_call(&call("095ea7b3", &[addr_word(spender)])),
+            CallKind::Unknown { .. }
+        ));
+        assert!(matches!(
+            decode_call(&call("095ea7b3", &[addr_word(spender), max.clone(), max])),
+            CallKind::Unknown { .. }
+        ));
+        assert!(matches!(
+            decode_call(&call("12345678", &[])),
+            CallKind::Unknown {
+                selector: [0x12, 0x34, 0x56, 0x78]
+            }
+        ));
+        assert!(matches!(
+            decode_call(&[0x09, 0x5e]),
+            CallKind::Unknown { .. }
+        ));
     }
 
     #[test]
     fn u256_decimal_and_bit_length() {
         assert_eq!(parse_uint256(&json!("0")).unwrap().to_decimal(), "0");
         assert_eq!(parse_uint256(&json!("0x10")).unwrap().to_decimal(), "16");
-        assert_eq!(parse_uint256(&json!(u64::MAX)).unwrap().to_decimal(), u64::MAX.to_string());
-        assert!(parse_uint256(&json!(format!("0x1{}", "0".repeat(64)))).is_err(), "> 2^256");
-        assert!(!parse_uint256(&json!("1000000")).unwrap().is_practically_unlimited());
+        assert_eq!(
+            parse_uint256(&json!(u64::MAX)).unwrap().to_decimal(),
+            u64::MAX.to_string()
+        );
+        assert!(
+            parse_uint256(&json!(format!("0x1{}", "0".repeat(64)))).is_err(),
+            "> 2^256"
+        );
+        assert!(!parse_uint256(&json!("1000000"))
+            .unwrap()
+            .is_practically_unlimited());
     }
 }

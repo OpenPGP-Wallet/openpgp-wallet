@@ -53,6 +53,12 @@ fn shared_client() -> &'static reqwest::blocking::Client {
     })
 }
 
+impl Default for PriceRpc {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PriceRpc {
     pub fn new() -> Self {
         Self {
@@ -61,7 +67,11 @@ impl PriceRpc {
     }
 
     pub fn get_prices(&self) -> Result<Prices> {
-        let response = self.client.get(COINGECKO_URL).send().context("appel CoinGecko impossible")?;
+        let response = self
+            .client
+            .get(COINGECKO_URL)
+            .send()
+            .context("appel CoinGecko impossible")?;
         // Explicitly tells a rate limit (free public API without a key, expected now and
         // then, especially when several devices or dev instances hit the same service
         // within a short time) apart from a real outage. Without this, the generic
@@ -99,7 +109,9 @@ impl PriceRpc {
             "CoinGecko a répondu {} pour les données de marché",
             response.status()
         );
-        let raw: Vec<MarketCoinRaw> = response.json().context("réponse CoinGecko (marchés) illisible")?;
+        let raw: Vec<MarketCoinRaw> = response
+            .json()
+            .context("réponse CoinGecko (marchés) illisible")?;
         let mut coins: Vec<MarketCoin> = raw
             .into_iter()
             // Only the requested IDs, with a price: CoinGecko puts `null` for an asset that
@@ -147,24 +159,40 @@ pub struct StockPrice {
 /// about the user). Purely informative: never used to build or sign a transaction.
 /// A mint without a valid price is left out.
 pub fn jupiter_stock_prices(mints: &[&str]) -> Result<Vec<StockPrice>> {
-    anyhow::ensure!(mints.len() <= 50, "trop de jetons pour un seul appel de prix");
+    anyhow::ensure!(
+        mints.len() <= 50,
+        "trop de jetons pour un seul appel de prix"
+    );
     if mints.is_empty() {
         return Ok(Vec::new());
     }
     let url = format!("https://lite-api.jup.ag/price/v3?ids={}", mints.join(","));
-    let response = shared_client().get(url).send().context("appel des prix Jupiter impossible")?;
-    anyhow::ensure!(response.status().is_success(), "les prix Jupiter ont répondu {}", response.status());
-    let body: serde_json::Value = response.json().context("réponse des prix Jupiter illisible")?;
+    let response = shared_client()
+        .get(url)
+        .send()
+        .context("appel des prix Jupiter impossible")?;
+    anyhow::ensure!(
+        response.status().is_success(),
+        "les prix Jupiter ont répondu {}",
+        response.status()
+    );
+    let body: serde_json::Value = response
+        .json()
+        .context("réponse des prix Jupiter illisible")?;
     Ok(mints
         .iter()
         .filter_map(|mint| {
             let entry = body.get(*mint)?;
-            let usd = entry["usdPrice"].as_f64().filter(|p| p.is_finite() && *p > 0.0)?;
+            let usd = entry["usdPrice"]
+                .as_f64()
+                .filter(|p| p.is_finite() && *p > 0.0)?;
             Some(StockPrice {
                 mint: mint.to_string(),
                 usd,
                 change_24h_percent: entry["priceChange24h"].as_f64().filter(|c| c.is_finite()),
-                market_cap_usd: entry["stockData"]["mcap"].as_f64().filter(|m| m.is_finite() && *m > 0.0),
+                market_cap_usd: entry["stockData"]["mcap"]
+                    .as_f64()
+                    .filter(|m| m.is_finite() && *m > 0.0),
             })
         })
         .collect())
@@ -241,8 +269,13 @@ mod tests {
     #[test]
     #[ignore]
     fn real_coingecko_call_succeeds() {
-        let prices = PriceRpc::new().get_prices().expect("l'appel CoinGecko doit réussir");
-        println!("ETH={} BTC={} SOL={}", prices.eth_usd, prices.btc_usd, prices.sol_usd);
+        let prices = PriceRpc::new()
+            .get_prices()
+            .expect("l'appel CoinGecko doit réussir");
+        println!(
+            "ETH={} BTC={} SOL={}",
+            prices.eth_usd, prices.btc_usd, prices.sol_usd
+        );
         assert!(prices.eth_usd > 0.0);
         assert!(prices.btc_usd > 0.0);
         assert!(prices.sol_usd > 0.0);
@@ -251,8 +284,14 @@ mod tests {
     #[test]
     #[ignore]
     fn real_coingecko_markets_call_is_sorted_by_market_cap_desc() {
-        let coins = PriceRpc::new().get_market_data().expect("l'appel CoinGecko (marchés) doit réussir");
-        assert_eq!(coins.len(), MARKET_IDS.len(), "une entrée par identifiant demandé");
+        let coins = PriceRpc::new()
+            .get_market_data()
+            .expect("l'appel CoinGecko (marchés) doit réussir");
+        assert_eq!(
+            coins.len(),
+            MARKET_IDS.len(),
+            "une entrée par identifiant demandé"
+        );
         for pair in coins.windows(2) {
             assert!(
                 pair[0].market_cap_usd >= pair[1].market_cap_usd,

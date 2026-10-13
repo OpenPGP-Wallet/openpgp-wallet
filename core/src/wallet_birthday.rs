@@ -25,12 +25,19 @@ struct Created {
 }
 
 fn now() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 /// Wallet created on this device just now.
 pub fn record_created(data_dir: &Path) -> Result<()> {
-    std::fs::write(data_dir.join(FILE), serde_json::to_vec(&Created { unix: now() })?).context("date de création du portefeuille : enregistrement impossible")
+    std::fs::write(
+        data_dir.join(FILE),
+        serde_json::to_vec(&Created { unix: now() })?,
+    )
+    .context("date de création du portefeuille : enregistrement impossible")
 }
 
 /// Date forgotten (restore, reset, full rescan).
@@ -40,7 +47,9 @@ pub fn forget(data_dir: &Path) {
 
 fn created_unix(data_dir: &Path) -> Option<u64> {
     let bytes = std::fs::read(data_dir.join(FILE)).ok()?;
-    serde_json::from_slice::<Created>(&bytes).ok().map(|c| c.unix)
+    serde_json::from_slice::<Created>(&bytes)
+        .ok()
+        .map(|c| c.unix)
 }
 
 /// First block to scan on a chain whose tip is `tip` (`block_secs` seconds per
@@ -53,7 +62,9 @@ pub fn start_height(data_dir: &Path, tip: u64, block_secs: u64, fixed: u64) -> u
 fn start_height_at(created: Option<u64>, now: u64, tip: u64, block_secs: u64, fixed: u64) -> u64 {
     let Some(created) = created else { return fixed };
     let elapsed = now.saturating_sub(created).saturating_add(MARGIN_SECS);
-    tip.saturating_sub(elapsed / block_secs.max(1)).max(fixed).min(tip.max(fixed))
+    tip.saturating_sub(elapsed / block_secs.max(1))
+        .max(fixed)
+        .min(tip.max(fixed))
 }
 
 #[cfg(test)]
@@ -67,14 +78,23 @@ mod tests {
         assert_eq!(start_height_at(None, 1_000_000, tip, 120, fixed), fixed);
         // Created 10 days ago: 10 + 3 days of Monero blocks back.
         let now = 2_000_000_000;
-        assert_eq!(start_height_at(Some(now - 10 * 86_400), now, tip, 120, fixed), tip - 13 * 720);
+        assert_eq!(
+            start_height_at(Some(now - 10 * 86_400), now, tip, 120, fixed),
+            tip - 13 * 720
+        );
         // Created a very long time ago: never before the fixed birthday.
         assert_eq!(start_height_at(Some(0), now, tip, 120, fixed), fixed);
         // Clock moved back since creation: margin only (3 days).
-        assert_eq!(start_height_at(Some(now + 86_400), now, tip, 120, fixed), tip - 3 * 720);
+        assert_eq!(
+            start_height_at(Some(now + 86_400), now, tip, 120, fixed),
+            tip - 3 * 720
+        );
         // Chain still below the fixed birthday (lagging node): never past the last known block... and never before the
         // birthday.
-        assert_eq!(start_height_at(Some(now), now, fixed - 5, 120, fixed), fixed);
+        assert_eq!(
+            start_height_at(Some(now), now, fixed - 5, 120, fixed),
+            fixed
+        );
     }
 
     #[test]
@@ -84,7 +104,10 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         assert_eq!(start_height(&dir, 3_900_000, 120, 3_776_000), 3_776_000);
         record_created(&dir).unwrap();
-        assert_eq!(start_height(&dir, 3_900_000, 120, 3_776_000), 3_900_000 - 3 * 720);
+        assert_eq!(
+            start_height(&dir, 3_900_000, 120, 3_776_000),
+            3_900_000 - 3 * 720
+        );
         forget(&dir);
         assert_eq!(start_height(&dir, 3_900_000, 120, 3_776_000), 3_776_000);
         let _ = std::fs::remove_dir_all(&dir);

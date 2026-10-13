@@ -48,16 +48,29 @@ impl KeyPair {
     /// library's `x25519.getPublicKey`.
     pub fn from_private(private: [u8; 32]) -> Self {
         let public = MontgomeryPoint::mul_base_clamped(private).to_bytes();
-        Self { private: Zeroizing::new(private), public }
+        Self {
+            private: Zeroizing::new(private),
+            public,
+        }
     }
 }
 
 /// Symmetric key of a session, derived from our private key and the peer's public
 /// key. Refuses an all-zero shared secret: a small-order peer public key
 /// (degenerate point) would give a key everyone knows.
-pub fn derive_sym_key(own_private: &[u8; 32], peer_public: &[u8; 32]) -> Result<Zeroizing<[u8; 32]>> {
-    let shared = Zeroizing::new(MontgomeryPoint(*peer_public).mul_clamped(*own_private).to_bytes());
-    anyhow::ensure!(shared.iter().any(|&b| b != 0), "clé publique du pair invalide (point de petit ordre)");
+pub fn derive_sym_key(
+    own_private: &[u8; 32],
+    peer_public: &[u8; 32],
+) -> Result<Zeroizing<[u8; 32]>> {
+    let shared = Zeroizing::new(
+        MontgomeryPoint(*peer_public)
+            .mul_clamped(*own_private)
+            .to_bytes(),
+    );
+    anyhow::ensure!(
+        shared.iter().any(|&b| b != 0),
+        "clé publique du pair invalide (point de petit ordre)"
+    );
     let mut sym_key = Zeroizing::new([0u8; 32]);
     Hkdf::<Sha256>::new(None, shared.as_slice())
         .expand(&[], sym_key.as_mut_slice())
@@ -86,7 +99,11 @@ pub fn encrypt_type0(sym_key: &[u8; 32], plaintext: &str) -> Result<String> {
     encrypt_type0_with_iv(sym_key, &random_bytes::<IV_LENGTH>()?, plaintext)
 }
 
-fn encrypt_type0_with_iv(sym_key: &[u8; 32], iv: &[u8; IV_LENGTH], plaintext: &str) -> Result<String> {
+fn encrypt_type0_with_iv(
+    sym_key: &[u8; 32],
+    iv: &[u8; IV_LENGTH],
+    plaintext: &str,
+) -> Result<String> {
     let mut out = vec![TYPE_0];
     out.extend_from_slice(iv);
     out.extend_from_slice(&seal(sym_key, iv, plaintext)?);
@@ -108,22 +125,32 @@ pub fn decrypt(sym_key: &[u8; 32], encoded: &str) -> Result<Opened> {
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(encoded.trim())
         .context("enveloppe WalletConnect : base64 invalide")?;
-    let (&kind, rest) = bytes.split_first().ok_or_else(|| anyhow!("enveloppe WalletConnect vide"))?;
+    let (&kind, rest) = bytes
+        .split_first()
+        .ok_or_else(|| anyhow!("enveloppe WalletConnect vide"))?;
     let (sender_public, rest) = match kind {
         TYPE_0 => (None, rest),
         TYPE_1 => {
             anyhow::ensure!(rest.len() >= KEY_LENGTH, "enveloppe WalletConnect tronquée");
             let (key, rest) = rest.split_at(KEY_LENGTH);
-            (Some(<[u8; 32]>::try_from(key).expect("longueur vérifiée")), rest)
+            (
+                Some(<[u8; 32]>::try_from(key).expect("longueur vérifiée")),
+                rest,
+            )
         }
         other => anyhow::bail!("type d'enveloppe WalletConnect non pris en charge : {other}"),
     };
-    anyhow::ensure!(rest.len() >= IV_LENGTH + TAG_LENGTH, "enveloppe WalletConnect tronquée");
+    anyhow::ensure!(
+        rest.len() >= IV_LENGTH + TAG_LENGTH,
+        "enveloppe WalletConnect tronquée"
+    );
     let (iv, sealed) = rest.split_at(IV_LENGTH);
     let iv: [u8; IV_LENGTH] = iv.try_into().expect("longueur vérifiée");
     let plaintext = cipher(sym_key)?
         .decrypt(&Nonce::from(iv), sealed)
-        .map_err(|_| anyhow!("enveloppe WalletConnect indéchiffrable (mauvaise clé ou message altéré)"))?;
+        .map_err(|_| {
+            anyhow!("enveloppe WalletConnect indéchiffrable (mauvaise clé ou message altéré)")
+        })?;
     Ok(Opened {
         plaintext: String::from_utf8(plaintext).context("message WalletConnect non UTF-8")?,
         sender_public,
@@ -145,12 +172,28 @@ mod tests {
     fn key_agreement_and_topic_match_the_official_sdk() {
         let a = KeyPair::from_private([0xaa; 32]);
         let b = KeyPair::from_private([0xbb; 32]);
-        assert_eq!(hex::encode(a.public), "14ca9e4d387bccf35746e0407daaacc6b28a4f8445ef5a5158894db983e24070");
-        assert_eq!(hex::encode(b.public), "6b0b616d718e53691236d3be3ce6d44f9d28836426d81305d131f488206f8d2b");
+        assert_eq!(
+            hex::encode(a.public),
+            "14ca9e4d387bccf35746e0407daaacc6b28a4f8445ef5a5158894db983e24070"
+        );
+        assert_eq!(
+            hex::encode(b.public),
+            "6b0b616d718e53691236d3be3ce6d44f9d28836426d81305d131f488206f8d2b"
+        );
         let sym = derive_sym_key(&a.private, &b.public).unwrap();
-        assert_eq!(hex::encode(*sym), "4c8ef98d347067c5ec8db6833c8d2ff633650c21b72fb864caee11f70f6e8916");
-        assert_eq!(*derive_sym_key(&b.private, &a.public).unwrap(), *sym, "les deux côtés obtiennent la même clé");
-        assert_eq!(topic_for_key(&sym), "3ffcb98d9e16876dc79de08095d125359d1139e209f408c48c027e5f8776d599");
+        assert_eq!(
+            hex::encode(*sym),
+            "4c8ef98d347067c5ec8db6833c8d2ff633650c21b72fb864caee11f70f6e8916"
+        );
+        assert_eq!(
+            *derive_sym_key(&b.private, &a.public).unwrap(),
+            *sym,
+            "les deux côtés obtiennent la même clé"
+        );
+        assert_eq!(
+            topic_for_key(&sym),
+            "3ffcb98d9e16876dc79de08095d125359d1139e209f408c48c027e5f8776d599"
+        );
     }
 
     #[test]
@@ -168,10 +211,18 @@ mod tests {
         let type1 = "ARTKnk04e8zzV0bgQH2qrMayik+ERe9aUViJTbmD4kBwIiIiIiIiIiIiIiIi/le8eh+qnFv/CIKTlXC6DAXHY6p14vDaXDBKld37znVwC9Ubi98utvX3ujC4dWuQB+wlshOmI7MX2cvaDHuIRWqXKGUUKeuhU+WKqXdc";
         let opened = decrypt(&key, type1).unwrap();
         assert_eq!(opened.plaintext, msg);
-        assert_eq!(opened.sender_public, Some(h32("14ca9e4d387bccf35746e0407daaacc6b28a4f8445ef5a5158894db983e24070")));
+        assert_eq!(
+            opened.sender_public,
+            Some(h32(
+                "14ca9e4d387bccf35746e0407daaacc6b28a4f8445ef5a5158894db983e24070"
+            ))
+        );
 
         // Random nonce: two encryptions of the same message differ, and both decrypt.
-        let (x, y) = (encrypt_type0(&key, msg).unwrap(), encrypt_type0(&key, msg).unwrap());
+        let (x, y) = (
+            encrypt_type0(&key, msg).unwrap(),
+            encrypt_type0(&key, msg).unwrap(),
+        );
         assert_ne!(x, y);
         assert_eq!(decrypt(&key, &x).unwrap().plaintext, msg);
     }
@@ -180,7 +231,9 @@ mod tests {
     fn tampered_truncated_or_foreign_envelopes_are_refused_without_panic() {
         let key = [0x11; 32];
         let good = encrypt_type0(&key, "bonjour").unwrap();
-        let mut bytes = base64::engine::general_purpose::STANDARD.decode(&good).unwrap();
+        let mut bytes = base64::engine::general_purpose::STANDARD
+            .decode(&good)
+            .unwrap();
         let last = bytes.len() - 1;
         bytes[last] ^= 1;
         let tampered = base64::engine::general_purpose::STANDARD.encode(&bytes);

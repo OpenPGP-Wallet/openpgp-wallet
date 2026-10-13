@@ -77,21 +77,36 @@ fn pro_reply(status: StatusCode, credits_left: Option<i64>, reset_ms: Option<i64
         s if s.is_success() => ProReply::Ok,
         StatusCode::TOO_MANY_REQUESTS => match (credits_left, reset_ms) {
             (Some(credits), _) if credits <= 0 => ProReply::Limited,
-            (_, Some(ms)) if (0..=PRO_MAX_RETRY_WAIT.as_millis() as i64).contains(&ms) => ProReply::RetryAfter(Duration::from_millis(ms as u64)),
+            (_, Some(ms)) if (0..=PRO_MAX_RETRY_WAIT.as_millis() as i64).contains(&ms) => {
+                ProReply::RetryAfter(Duration::from_millis(ms as u64))
+            }
             _ => ProReply::Limited,
         },
-        StatusCode::UNAUTHORIZED | StatusCode::PAYMENT_REQUIRED | StatusCode::FORBIDDEN => ProReply::Refused,
+        StatusCode::UNAUTHORIZED | StatusCode::PAYMENT_REQUIRED | StatusCode::FORBIDDEN => {
+            ProReply::Refused
+        }
         s => ProReply::Other(s),
     }
 }
 
 fn header_number(response: &reqwest::blocking::Response, name: &str) -> Option<i64> {
-    response.headers().get(name)?.to_str().ok()?.trim().parse().ok()
+    response
+        .headers()
+        .get(name)?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
 }
 
 /// Cloudflare's bot-check page (403 as HTML) instead of JSON.
 fn is_challenge(response: &reqwest::blocking::Response) -> bool {
-    let html = response.headers().get(reqwest::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).is_some_and(|v| v.starts_with("text/html"));
+    let html = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.starts_with("text/html"));
     html && response.status() == StatusCode::FORBIDDEN
 }
 
@@ -195,33 +210,72 @@ impl BlockscoutClient {
     /// Cloudflare's bot-check page (403 "Just a moment…", whatever the headers), the
     /// official API with the app's key; without a key, `BLOCKSCOUT_BLOCKED`, rather
     /// than an "unreadable" response with no explanation.
-    fn get_json<T: serde::de::DeserializeOwned>(&self, path: &str, query: &[(String, String)]) -> Result<T> {
-        let blocked = blocked_sites().lock().unwrap_or_else(|p| p.into_inner()).contains(self.base_url);
+    fn get_json<T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        query: &[(String, String)],
+    ) -> Result<T> {
+        let blocked = blocked_sites()
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .contains(self.base_url);
         if !blocked {
-            let response = self.client.get(format!("{}{path}", self.base_url)).query(query).send().context("appel Blockscout impossible")?;
+            let response = self
+                .client
+                .get(format!("{}{path}", self.base_url))
+                .query(query)
+                .send()
+                .context("appel Blockscout impossible")?;
             if !is_challenge(&response) {
                 return response.json().context("réponse Blockscout illisible");
             }
-            blocked_sites().lock().unwrap_or_else(|p| p.into_inner()).insert(self.base_url);
+            blocked_sites()
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .insert(self.base_url);
         }
         let key = API_KEY.ok_or_else(|| anyhow!(BLOCKSCOUT_BLOCKED))?;
-        anyhow::ensure!(!refused_chains().lock().unwrap_or_else(|p| p.into_inner()).contains(&self.chain_id), BLOCKSCOUT_BLOCKED);
+        anyhow::ensure!(
+            !refused_chains()
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .contains(&self.chain_id),
+            BLOCKSCOUT_BLOCKED
+        );
         self.pro_json(key, path, query)
     }
 
     /// JSON response from the official API. The key travels in the `authorization`
     /// header, never in the URL (which network errors quote).
-    fn pro_json<T: serde::de::DeserializeOwned>(&self, key: &str, path: &str, query: &[(String, String)]) -> Result<T> {
+    fn pro_json<T: serde::de::DeserializeOwned>(
+        &self,
+        key: &str,
+        path: &str,
+        query: &[(String, String)],
+    ) -> Result<T> {
         let url = format!("{PRO_API}/{}{path}", self.chain_id);
         for attempt in 0..2 {
             pace();
-            let response = self.client.get(&url).query(query).bearer_auth(key).send().context("appel Blockscout impossible")?;
-            match pro_reply(response.status(), header_number(&response, "x-credits-remaining"), header_number(&response, "x-ratelimit-reset")) {
+            let response = self
+                .client
+                .get(&url)
+                .query(query)
+                .bearer_auth(key)
+                .send()
+                .context("appel Blockscout impossible")?;
+            match pro_reply(
+                response.status(),
+                header_number(&response, "x-credits-remaining"),
+                header_number(&response, "x-ratelimit-reset"),
+            ) {
                 ProReply::Ok => return response.json().context("réponse Blockscout illisible"),
                 ProReply::RetryAfter(wait) if attempt == 0 => std::thread::sleep(wait),
                 ProReply::RetryAfter(_) | ProReply::Limited => bail!(BLOCKSCOUT_LIMITED),
                 ProReply::Refused => {
-                    refused_chains().lock().unwrap_or_else(|p| p.into_inner()).insert(self.chain_id);
+                    refused_chains()
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .insert(self.chain_id);
                     bail!(BLOCKSCOUT_BLOCKED)
                 }
                 ProReply::Other(status) => bail!("Blockscout a répondu {status}"),
@@ -232,9 +286,14 @@ impl BlockscoutClient {
 
     /// A page of history (50 transactions, newest first) and the cursor for the next
     /// one, `None` after the last.
-    pub fn tx_history_page(&self, address: &str, page: Option<&PageParams>) -> Result<(Vec<EvmTx>, Option<PageParams>)> {
+    pub fn tx_history_page(
+        &self,
+        address: &str,
+        page: Option<&PageParams>,
+    ) -> Result<(Vec<EvmTx>, Option<PageParams>)> {
         let path = format!("/api/v2/addresses/{address}/transactions");
-        let resp: TxListResponse = self.get_json(&path, page.map(Vec::as_slice).unwrap_or_default())?;
+        let resp: TxListResponse =
+            self.get_json(&path, page.map(Vec::as_slice).unwrap_or_default())?;
 
         let next = resp.next_page_params.map(page_params);
         let address_lower = address.to_lowercase();
@@ -242,7 +301,10 @@ impl BlockscoutClient {
             .items
             .into_iter()
             .map(|tx| {
-                let value: i128 = tx.value.parse().context("montant de transaction Blockscout invalide")?;
+                let value: i128 = tx
+                    .value
+                    .parse()
+                    .context("montant de transaction Blockscout invalide")?;
                 let sender = tx.from.hash.to_lowercase() == address_lower;
                 let failed = tx.status.as_deref() == Some("error");
                 let net_wei = match (failed, sender) {
@@ -251,7 +313,9 @@ impl BlockscoutClient {
                     (false, false) => value,
                 };
                 let fee_wei = match (sender, tx.fee.as_ref().and_then(|f| f.value.as_deref())) {
-                    (true, Some(fee)) => fee.parse().context("frais de transaction Blockscout invalides")?,
+                    (true, Some(fee)) => fee
+                        .parse()
+                        .context("frais de transaction Blockscout invalides")?,
                     _ => 0,
                 };
                 Ok(EvmTx {
@@ -272,11 +336,23 @@ impl BlockscoutClient {
     /// by contract on the server side AND checked again here: a fake token with the
     /// same symbol never gets in. Measured: 0.45 s for an ordinary address, 21 s for a
     /// very active one (vitalik.eth), hence the client's long timeout.
-    pub fn token_transfers_page(&self, address: &str, contract: &str, page: Option<&PageParams>) -> Result<(Vec<TokenMove>, Option<PageParams>)> {
+    pub fn token_transfers_page(
+        &self,
+        address: &str,
+        contract: &str,
+        page: Option<&PageParams>,
+    ) -> Result<(Vec<TokenMove>, Option<PageParams>)> {
         let path = format!("/api/v2/addresses/{address}/token-transfers");
-        let mut query: PageParams = vec![("type".into(), "ERC-20".into()), ("token".into(), contract.into())];
+        let mut query: PageParams = vec![
+            ("type".into(), "ERC-20".into()),
+            ("token".into(), contract.into()),
+        ];
         if let Some(page) = page {
-            query.extend(page.iter().filter(|(key, _)| key != "type" && key != "token").cloned());
+            query.extend(
+                page.iter()
+                    .filter(|(key, _)| key != "type" && key != "token")
+                    .cloned(),
+            );
         }
         let resp: TokenTransferListResponse = self.get_json(&path, &query)?;
         let moves = token_moves(resp.items, address, contract)?;
@@ -335,24 +411,37 @@ struct TokenRef {
 
 /// A page's transfers grouped by transaction (one transaction can contain several,
 /// a swap for example), in page order.
-fn token_moves(items: Vec<TokenTransferJson>, address: &str, contract: &str) -> Result<Vec<TokenMove>> {
+fn token_moves(
+    items: Vec<TokenTransferJson>,
+    address: &str,
+    contract: &str,
+) -> Result<Vec<TokenMove>> {
     let address = address.to_lowercase();
     let mut moves: Vec<TokenMove> = Vec::new();
     for item in items {
-        anyhow::ensure!(item.token.address_hash.eq_ignore_ascii_case(contract), "Blockscout a renvoyé un autre jeton que celui demandé");
+        anyhow::ensure!(
+            item.token.address_hash.eq_ignore_ascii_case(contract),
+            "Blockscout a renvoyé un autre jeton que celui demandé"
+        );
         let value: i128 = item
             .total
             .value
             .as_deref()
             .and_then(|v| v.parse().ok())
             .ok_or_else(|| anyhow::anyhow!("montant de virement de jeton Blockscout invalide"))?;
-        let delta = match (item.from.hash.to_lowercase() == address, item.to.hash.to_lowercase() == address) {
+        let delta = match (
+            item.from.hash.to_lowercase() == address,
+            item.to.hash.to_lowercase() == address,
+        ) {
             (true, false) => -value,
             (false, true) => value,
             _ => 0,
         };
         let swap = item.method.as_deref().is_some_and(is_swap_method);
-        match moves.iter_mut().find(|m| m.hash.eq_ignore_ascii_case(&item.transaction_hash)) {
+        match moves
+            .iter_mut()
+            .find(|m| m.hash.eq_ignore_ascii_case(&item.transaction_hash))
+        {
             Some(existing) => {
                 existing.net += delta;
                 existing.swap |= swap;
@@ -429,7 +518,10 @@ mod tests {
     fn parse_iso8601_utc_matches_known_unix_timestamps() {
         assert_eq!(parse_iso8601_utc("1970-01-01T00:00:00.000000Z"), Some(0));
         // 2024-01-01T00:00:00Z, checked independently (e.g. `date -u -d ... +%s`).
-        assert_eq!(parse_iso8601_utc("2024-01-01T00:00:00.000000Z"), Some(1_704_067_200));
+        assert_eq!(
+            parse_iso8601_utc("2024-01-01T00:00:00.000000Z"),
+            Some(1_704_067_200)
+        );
     }
 
     /// Official API statuses (documentation as of 2026-10-10: 402 without a key, 429
@@ -437,18 +529,45 @@ mod tests {
     #[test]
     fn pro_api_replies_are_understood() {
         assert_eq!(pro_reply(StatusCode::OK, Some(99_980), None), ProReply::Ok);
-        assert_eq!(pro_reply(StatusCode::TOO_MANY_REQUESTS, Some(5_000), Some(400)), ProReply::RetryAfter(Duration::from_millis(400)));
-        assert_eq!(pro_reply(StatusCode::TOO_MANY_REQUESTS, None, Some(2_000)), ProReply::RetryAfter(Duration::from_secs(2)));
+        assert_eq!(
+            pro_reply(StatusCode::TOO_MANY_REQUESTS, Some(5_000), Some(400)),
+            ProReply::RetryAfter(Duration::from_millis(400))
+        );
+        assert_eq!(
+            pro_reply(StatusCode::TOO_MANY_REQUESTS, None, Some(2_000)),
+            ProReply::RetryAfter(Duration::from_secs(2))
+        );
         // Credits used up: waiting is pointless before midnight UTC.
-        assert_eq!(pro_reply(StatusCode::TOO_MANY_REQUESTS, Some(0), Some(300)), ProReply::Limited);
-        assert_eq!(pro_reply(StatusCode::TOO_MANY_REQUESTS, Some(10), Some(60_000)), ProReply::Limited);
-        assert_eq!(pro_reply(StatusCode::TOO_MANY_REQUESTS, None, None), ProReply::Limited);
-        assert_eq!(pro_reply(StatusCode::TOO_MANY_REQUESTS, None, Some(-1)), ProReply::Limited);
-        for refused in [StatusCode::UNAUTHORIZED, StatusCode::PAYMENT_REQUIRED, StatusCode::FORBIDDEN] {
+        assert_eq!(
+            pro_reply(StatusCode::TOO_MANY_REQUESTS, Some(0), Some(300)),
+            ProReply::Limited
+        );
+        assert_eq!(
+            pro_reply(StatusCode::TOO_MANY_REQUESTS, Some(10), Some(60_000)),
+            ProReply::Limited
+        );
+        assert_eq!(
+            pro_reply(StatusCode::TOO_MANY_REQUESTS, None, None),
+            ProReply::Limited
+        );
+        assert_eq!(
+            pro_reply(StatusCode::TOO_MANY_REQUESTS, None, Some(-1)),
+            ProReply::Limited
+        );
+        for refused in [
+            StatusCode::UNAUTHORIZED,
+            StatusCode::PAYMENT_REQUIRED,
+            StatusCode::FORBIDDEN,
+        ] {
             assert_eq!(pro_reply(refused, None, None), ProReply::Refused);
         }
-        assert_eq!(pro_reply(StatusCode::BAD_GATEWAY, None, None), ProReply::Other(StatusCode::BAD_GATEWAY));
-        assert!(unavailable(&anyhow!(BLOCKSCOUT_BLOCKED)) && unavailable(&anyhow!(BLOCKSCOUT_LIMITED)));
+        assert_eq!(
+            pro_reply(StatusCode::BAD_GATEWAY, None, None),
+            ProReply::Other(StatusCode::BAD_GATEWAY)
+        );
+        assert!(
+            unavailable(&anyhow!(BLOCKSCOUT_BLOCKED)) && unavailable(&anyhow!(BLOCKSCOUT_LIMITED))
+        );
         assert!(!unavailable(&anyhow!("appel Blockscout impossible")));
     }
 
@@ -464,22 +583,50 @@ mod tests {
             println!("BLOCKSCOUT_API_KEY absente de partner-keys.env : rien à vérifier");
             return;
         }
-        for (site, chain) in [("https://base.blockscout.com", 8_453), ("https://polygon.blockscout.com", 137)] {
-            let Err(error) = BlockscoutClient::new(site, chain).tx_history_page(ME, None) else { panic!("{site} : offre payante exigée") };
+        for (site, chain) in [
+            ("https://base.blockscout.com", 8_453),
+            ("https://polygon.blockscout.com", 137),
+        ] {
+            let Err(error) = BlockscoutClient::new(site, chain).tx_history_page(ME, None) else {
+                panic!("{site} : offre payante exigée")
+            };
             assert_eq!(error.to_string(), BLOCKSCOUT_BLOCKED, "{site}");
-            assert!(refused_chains().lock().unwrap().contains(&chain), "{site} : plus redemandé");
+            assert!(
+                refused_chains().lock().unwrap().contains(&chain),
+                "{site} : plus redemandé"
+            );
             println!("{site} : refusé à l'offre gratuite");
         }
-        let (site, usdc) = ("https://arbitrum.blockscout.com", "0xaf88d065e77c8cC2239327C5EDb3A432268e5831");
+        let (site, usdc) = (
+            "https://arbitrum.blockscout.com",
+            "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+        );
         let client = BlockscoutClient::new(site, 42_161);
         let (txs, next) = client.tx_history_page(ME, None).unwrap();
-        println!("{site} : {} transactions, suivante {}", txs.len(), next.is_some());
-        assert!(!txs.is_empty() && txs.iter().all(|tx| tx.hash.starts_with("0x") && tx.timestamp_unix.is_some()));
+        println!(
+            "{site} : {} transactions, suivante {}",
+            txs.len(),
+            next.is_some()
+        );
+        assert!(
+            !txs.is_empty()
+                && txs
+                    .iter()
+                    .all(|tx| tx.hash.starts_with("0x") && tx.timestamp_unix.is_some())
+        );
         let (second, _) = client.tx_history_page(ME, next.as_ref()).unwrap();
-        assert!(second.iter().all(|tx| !txs.iter().any(|t| t.hash == tx.hash)), "pages sans doublon");
+        assert!(
+            second
+                .iter()
+                .all(|tx| !txs.iter().any(|t| t.hash == tx.hash)),
+            "pages sans doublon"
+        );
         let (moves, _) = client.token_transfers_page(ME, usdc, None).unwrap();
         println!("  USDC : {} mouvements", moves.len());
-        println!("  site public bloqué : {}", blocked_sites().lock().unwrap().contains(site));
+        println!(
+            "  site public bloqué : {}",
+            blocked_sites().lock().unwrap().contains(site)
+        );
     }
 
     /// Methods read from real transactions (Blockscout): THORChain deposit
@@ -487,7 +634,12 @@ mod tests {
     /// the user), a token transfer.
     #[test]
     fn swap_methods_are_recognised() {
-        for swap in ["depositWithExpiry", "swapExactETHForTokens", "swapETHForExactTokens", "multiSwap"] {
+        for swap in [
+            "depositWithExpiry",
+            "swapExactETHForTokens",
+            "swapETHForExactTokens",
+            "multiSwap",
+        ] {
             assert!(is_swap_method(swap), "{swap}");
         }
         for other in ["transfer", "approve", "transferOut", "deposit", "execute"] {
@@ -498,7 +650,14 @@ mod tests {
     const USDC: &str = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
     const ME: &str = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
 
-    fn transfer(hash: &str, from: &str, to: &str, value: &str, token: &str, method: &str) -> String {
+    fn transfer(
+        hash: &str,
+        from: &str,
+        to: &str,
+        value: &str,
+        token: &str,
+        method: &str,
+    ) -> String {
         format!(
             r#"{{"transaction_hash":"{hash}","timestamp":"2026-07-19T00:32:23.000000Z","from":{{"hash":"{from}"}},"to":{{"hash":"{to}"}},
                "total":{{"decimals":"6","value":"{value}"}},"token":{{"address_hash":"{token}","symbol":"USDC"}},"method":"{method}","type":"token_transfer"}}"#
@@ -514,7 +673,14 @@ mod tests {
         let body = format!(
             r#"{{"items":[{},{},{},{},{}],"next_page_params":{{"index":696,"token":"{USDC}","block_number":24433087}}}}"#,
             transfer("0x01", other, ME, "420000", USDC, "0xa9059cbb"),
-            transfer("0x02", &ME.to_lowercase(), other, "1000000", USDC, "transfer"),
+            transfer(
+                "0x02",
+                &ME.to_lowercase(),
+                other,
+                "1000000",
+                USDC,
+                "transfer"
+            ),
             transfer("0x03", ME, other, "500", USDC, "swapExactTokensForTokens"),
             transfer("0x03", other, ME, "200", USDC, "swapExactTokensForTokens"),
             transfer("0x04", ME, ME, "7", USDC, "transfer"),
@@ -522,11 +688,32 @@ mod tests {
         let resp: TokenTransferListResponse = serde_json::from_str(&body).unwrap();
         assert_eq!(page_params(resp.next_page_params.clone().unwrap()).len(), 3);
         let moves = token_moves(resp.items, ME, &USDC.to_lowercase()).unwrap();
-        let summary: Vec<_> = moves.iter().map(|m| (m.hash.as_str(), m.net, m.swap)).collect();
-        assert_eq!(summary, vec![("0x01", 420_000, false), ("0x02", -1_000_000, false), ("0x03", -300, true), ("0x04", 0, false)]);
+        let summary: Vec<_> = moves
+            .iter()
+            .map(|m| (m.hash.as_str(), m.net, m.swap))
+            .collect();
+        assert_eq!(
+            summary,
+            vec![
+                ("0x01", 420_000, false),
+                ("0x02", -1_000_000, false),
+                ("0x03", -300, true),
+                ("0x04", 0, false)
+            ]
+        );
         assert_eq!(moves[0].timestamp_unix, Some(1_784_421_143));
 
-        let fake = format!(r#"{{"items":[{}]}}"#, transfer("0x05", other, ME, "1", "0x0000000000000000000000000000000000000bad", "transfer"));
+        let fake = format!(
+            r#"{{"items":[{}]}}"#,
+            transfer(
+                "0x05",
+                other,
+                ME,
+                "1",
+                "0x0000000000000000000000000000000000000bad",
+                "transfer"
+            )
+        );
         let resp: TokenTransferListResponse = serde_json::from_str(&fake).unwrap();
         assert!(token_moves(resp.items, ME, USDC).is_err());
     }
@@ -542,13 +729,25 @@ mod tests {
         for address in ["0x34deb5AF3e37BD0495dDc1bb1C53c14d7CE064c3", ME] {
             let started = std::time::Instant::now();
             let (first, next) = client.token_transfers_page(address, USDC, None).unwrap();
-            println!("{address} : {} mouvements en {:?}, suivante {}", first.len(), started.elapsed(), next.is_some());
+            println!(
+                "{address} : {} mouvements en {:?}, suivante {}",
+                first.len(),
+                started.elapsed(),
+                next.is_some()
+            );
             for m in first.iter().take(3) {
                 println!("  {} {:?} {}", &m.hash[..12], m.timestamp_unix, m.net);
             }
             if let Some(next) = next {
-                let (second, _) = client.token_transfers_page(address, USDC, Some(&next)).unwrap();
-                assert!(second.iter().all(|m| !first.iter().any(|f| f.hash == m.hash)), "pages sans doublon");
+                let (second, _) = client
+                    .token_transfers_page(address, USDC, Some(&next))
+                    .unwrap();
+                assert!(
+                    second
+                        .iter()
+                        .all(|m| !first.iter().any(|f| f.hash == m.hash)),
+                    "pages sans doublon"
+                );
             }
         }
     }

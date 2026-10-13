@@ -38,7 +38,8 @@ fn load(data_dir: &Path) -> AddressBookData {
 }
 
 fn save(data_dir: &Path, data: &AddressBookData) -> Result<()> {
-    let content = serde_json::to_string_pretty(data).context("sérialisation du carnet d'adresses")?;
+    let content =
+        serde_json::to_string_pretty(data).context("sérialisation du carnet d'adresses")?;
     std::fs::write(path(data_dir), content).context("écriture du carnet d'adresses")
 }
 
@@ -46,7 +47,11 @@ fn save(data_dir: &Path, data: &AddressBookData) -> Result<()> {
 /// 2026-10-07) stay in the file but are no longer offered: a deposit address valid
 /// on one network is not necessarily valid on another.
 pub fn list_entries(data_dir: &Path) -> Vec<AddressBookEntry> {
-    load(data_dir).entries.into_iter().filter(|e| NETWORKS.contains(&e.network.as_str())).collect()
+    load(data_dir)
+        .entries
+        .into_iter()
+        .filter(|e| NETWORKS.contains(&e.network.as_str()))
+        .collect()
 }
 
 /// Networks that can be offered for an address (address book, external wallets), in
@@ -89,17 +94,32 @@ pub fn networks_for(address: &str) -> Vec<&'static str> {
     if address.is_empty() {
         return Vec::new();
     }
-    let mut found: Vec<&'static str> = NETWORKS.iter().copied().filter(|n| *n != "near_mainnet" && validate_address(n, address).is_ok()).collect();
+    let mut found: Vec<&'static str> = NETWORKS
+        .iter()
+        .copied()
+        .filter(|n| *n != "near_mainnet" && validate_address(n, address).is_ok())
+        .collect();
     let implicit = address.len() == 64 && address.bytes().all(|b| b.is_ascii_hexdigit());
-    if found.is_empty() && (implicit || address.contains('.')) && validate_address("near_mainnet", address).is_ok() {
+    if found.is_empty()
+        && (implicit || address.contains('.'))
+        && validate_address("near_mainnet", address).is_ok()
+    {
         found.push("near_mainnet");
     }
     found
 }
 
-pub fn add_entry(data_dir: &Path, label: &str, network: &str, address: &str) -> Result<AddressBookEntry> {
+pub fn add_entry(
+    data_dir: &Path,
+    label: &str,
+    network: &str,
+    address: &str,
+) -> Result<AddressBookEntry> {
     validate_address(network, address)?;
-    anyhow::ensure!(networks_for(address).contains(&network), "cette adresse n'est pas une adresse de ce réseau");
+    anyhow::ensure!(
+        networks_for(address).contains(&network),
+        "cette adresse n'est pas une adresse de ce réseau"
+    );
     let mut data = load(data_dir);
     let next_id = data.entries.iter().map(|e| e.id).max().map_or(0, |m| m + 1);
     let entry = AddressBookEntry {
@@ -117,7 +137,10 @@ pub fn remove_entry(data_dir: &Path, id: u32) -> Result<()> {
     let mut data = load(data_dir);
     let before = data.entries.len();
     data.entries.retain(|e| e.id != id);
-    anyhow::ensure!(data.entries.len() < before, "entrée du carnet d'adresses introuvable (id {id})");
+    anyhow::ensure!(
+        data.entries.len() < before,
+        "entrée du carnet d'adresses introuvable (id {id})"
+    );
     save(data_dir, &data)
 }
 
@@ -150,7 +173,10 @@ fn same_address(a: &str, b: &str) -> bool {
 /// address that mimics the start and end of a usual contact's, so that it gets
 /// copied by mistake; those are exactly the parts the eye checks). `None` if the
 /// address is exactly a contact's, or looks like none of them.
-pub fn lookalike_entry<'a>(entries: &'a [AddressBookEntry], address: &str) -> Option<&'a AddressBookEntry> {
+pub fn lookalike_entry<'a>(
+    entries: &'a [AddressBookEntry],
+    address: &str,
+) -> Option<&'a AddressBookEntry> {
     const EDGE: usize = 4;
     // `.get()` rather than direct slicing: the address is typed by the user, and a
     // non-ASCII character (é, an emoji pasted by mistake) would make direct slicing
@@ -161,13 +187,18 @@ pub fn lookalike_entry<'a>(entries: &'a [AddressBookEntry], address: &str) -> Op
         if s.len() < 2 * EDGE {
             return None;
         }
-        Some((s.get(..EDGE)?.to_string(), s.get(s.len() - EDGE..)?.to_string()))
+        Some((
+            s.get(..EDGE)?.to_string(),
+            s.get(s.len() - EDGE..)?.to_string(),
+        ))
     };
     let target = edges(address)?;
     if entries.iter().any(|e| same_address(&e.address, address)) {
         return None;
     }
-    entries.iter().find(|entry| edges(&entry.address).as_ref() == Some(&target))
+    entries
+        .iter()
+        .find(|entry| edges(&entry.address).as_ref() == Some(&target))
 }
 
 #[cfg(test)]
@@ -181,10 +212,20 @@ mod tests {
         let evm = networks_for("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045");
         assert_eq!(evm.first(), Some(&"evm_mainnet"));
         assert_eq!(evm.last(), Some(&"evm_sepolia"));
-        assert!(evm.iter().all(|n| crate::wallet_flow::evm_network(n).is_some()), "{evm:?}");
+        assert!(
+            evm.iter()
+                .all(|n| crate::wallet_flow::evm_network(n).is_some()),
+            "{evm:?}"
+        );
         assert_eq!(evm.len(), crate::wallet_flow::EVM_NETWORKS.len());
-        assert_eq!(networks_for("bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh"), vec!["btc_mainnet"]);
-        assert_eq!(networks_for("So11111111111111111111111111111111111111112"), vec!["sol_mainnet", "usdc_solana", "sol_devnet"]);
+        assert_eq!(
+            networks_for("bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh"),
+            vec!["btc_mainnet"]
+        );
+        assert_eq!(
+            networks_for("So11111111111111111111111111111111111111112"),
+            vec!["sol_mainnet", "usdc_solana", "sol_devnet"]
+        );
         assert_eq!(networks_for("alice.near"), vec!["near_mainnet"]);
         assert_eq!(networks_for(&"ab".repeat(32)), vec!["near_mainnet"]);
         assert!(networks_for("pas une adresse !").is_empty());
@@ -192,18 +233,44 @@ mod tests {
         assert!(networks_for("bc1qpasuneadresse").is_empty());
         assert!(networks_for("  ").is_empty());
 
-        let dir = std::env::temp_dir().join(format!("pgp_wallet_book_networks_{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("pgp_wallet_book_networks_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        assert!(add_entry(&dir, "x", "evm_mainnet", "So11111111111111111111111111111111111111112").is_err());
-        let err = add_entry(&dir, "x", "near_mainnet", "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh").err().unwrap().to_string();
+        assert!(add_entry(
+            &dir,
+            "x",
+            "evm_mainnet",
+            "So11111111111111111111111111111111111111112"
+        )
+        .is_err());
+        let err = add_entry(
+            &dir,
+            "x",
+            "near_mainnet",
+            "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+        )
+        .err()
+        .unwrap()
+        .to_string();
         assert_eq!(err, "cette adresse n'est pas une adresse de ce réseau");
-        assert!(add_entry(&dir, "x", "btc_mainnet", "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh").is_ok());
+        assert!(add_entry(
+            &dir,
+            "x",
+            "btc_mainnet",
+            "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh"
+        )
+        .is_ok());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     fn entry(label: &str, address: &str) -> AddressBookEntry {
-        AddressBookEntry { id: 0, label: label.into(), network: "evm_mainnet".into(), address: address.into() }
+        AddressBookEntry {
+            id: 0,
+            label: label.into(),
+            network: "evm_mainnet".into(),
+            address: address.into(),
+        }
     }
 
     #[test]
@@ -214,14 +281,18 @@ mod tests {
         ];
         // Same start (7a2f) and same end (9e1f), different middle: poisoned.
         let poisoned = "0x7A2F000000000000000000000000000000009E1F";
-        assert_eq!(lookalike_entry(&book, poisoned).map(|e| e.label.as_str()), Some("Alice"));
+        assert_eq!(
+            lookalike_entry(&book, poisoned).map(|e| e.label.as_str()),
+            Some("Alice")
+        );
         // The real address (different case, hex is case-insensitive): no warning.
         assert!(lookalike_entry(&book, "0x7a2f5c1e8b9d0e3f4a6b7c8d9e0f1a2b3c4d9e1f").is_none());
         // Unrelated Bitcoin address: the shared "bc1q" prefix must not be enough.
         assert!(lookalike_entry(&book, "bc1qp0jus87dalh7xku22tx3uhyhlf8cjuc0vvkhjz").is_none());
         // Bitcoin address mimicking the start and end of Bob's: flagged.
         assert_eq!(
-            lookalike_entry(&book, "bc1qxy2k000000000000000000000000000000x0wlh").map(|e| e.label.as_str()),
+            lookalike_entry(&book, "bc1qxy2k000000000000000000000000000000x0wlh")
+                .map(|e| e.label.as_str()),
             Some("Bob BTC")
         );
         // Non-ASCII input: never a panic, simply no warning.
@@ -230,7 +301,10 @@ mod tests {
     }
 
     fn temp_dir(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("pgp_wallet_address_book_{name}_{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "pgp_wallet_address_book_{name}_{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -242,7 +316,8 @@ mod tests {
     #[test]
     fn add_entry_then_list_round_trips() {
         let dir = temp_dir("roundtrip");
-        let entry = add_entry(&dir, "Alice", "evm_mainnet", VALID_EVM_ADDRESS).expect("ajout valide");
+        let entry =
+            add_entry(&dir, "Alice", "evm_mainnet", VALID_EVM_ADDRESS).expect("ajout valide");
         let listed = list_entries(&dir);
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].id, entry.id);

@@ -31,9 +31,17 @@ pub struct Network {
     nodes: &'static [&'static str],
 }
 
-pub const MAINNET: Network = Network { nodes: &["https://xrplcluster.com", "https://s1.ripple.com:51234", "https://s2.ripple.com:51234"] };
+pub const MAINNET: Network = Network {
+    nodes: &[
+        "https://xrplcluster.com",
+        "https://s1.ripple.com:51234",
+        "https://s2.ripple.com:51234",
+    ],
+};
 #[cfg(test)]
-const TESTNET: Network = Network { nodes: &["https://s.altnet.rippletest.net:51234"] };
+const TESTNET: Network = Network {
+    nodes: &["https://s.altnet.rippletest.net:51234"],
+};
 pub const DECIMALS: u8 = 6;
 /// Cap on the accepted fee (0.001 XRP; 0.00001 when the network is quiet).
 const MAX_FEE_DROPS: u64 = 1_000;
@@ -41,7 +49,14 @@ const MAX_FEE_DROPS: u64 = 1_000;
 /// one.
 const LEDGER_MARGIN: u32 = 20;
 /// Node errors that say nothing about the account or the transaction.
-const TRANSIENT_ERRORS: [&str; 6] = ["tooBusy", "slowDown", "noNetwork", "noCurrent", "noClosed", "amendmentBlocked"];
+const TRANSIENT_ERRORS: [&str; 6] = [
+    "tooBusy",
+    "slowDown",
+    "noNetwork",
+    "noCurrent",
+    "noClosed",
+    "amendmentBlocked",
+];
 /// "Destination tag required" account flag.
 const LSF_REQUIRE_DEST_TAG: u64 = 0x0002_0000;
 /// "Deposit-authorized only" account flag (DepositAuth).
@@ -62,13 +77,20 @@ fn rpc(net: &Network, method: &str, params: Value) -> Result<Value> {
     let mut last = anyhow!("nœud XRP injoignable");
     for &node in net.nodes {
         let attempt = (|| -> Result<Value> {
-            let response = client().post(node).json(&json!({ "method": method, "params": [params] })).send().context("nœud XRP injoignable")?;
+            let response = client()
+                .post(node)
+                .json(&json!({ "method": method, "params": [params] }))
+                .send()
+                .context("nœud XRP injoignable")?;
             let status = response.status();
             ensure!(status.is_success(), "nœud XRP : réponse {status}");
             let value: Value = response.json().context("réponse du nœud XRP illisible")?;
             let result = value["result"].clone();
             // Node overloaded or not up to date: try the next one.
-            if let Some(error) = result["error"].as_str().filter(|e| TRANSIENT_ERRORS.contains(e)) {
+            if let Some(error) = result["error"]
+                .as_str()
+                .filter(|e| TRANSIENT_ERRORS.contains(e))
+            {
                 bail!("nœud XRP : réponse {error}");
             }
             Ok(result)
@@ -93,7 +115,10 @@ pub type AccountId = [u8; 20];
 /// Account ID of a key: RIPEMD-160(SHA-256(compressed public key)).
 pub fn account_id(key: &SigningKey) -> AccountId {
     use ripemd::Ripemd160;
-    Ripemd160::digest(Sha256::digest(key.verifying_key().to_encoded_point(true).as_bytes())).into()
+    Ripemd160::digest(Sha256::digest(
+        key.verifying_key().to_encoded_point(true).as_bytes(),
+    ))
+    .into()
 }
 
 pub fn encode_address(account: &AccountId) -> String {
@@ -101,7 +126,9 @@ pub fn encode_address(account: &AccountId) -> String {
     data.extend_from_slice(account);
     let check = btc_tx::dsha256(&data);
     data.extend_from_slice(&check[..4]);
-    bs58::encode(data).with_alphabet(bs58::Alphabet::RIPPLE).into_string()
+    bs58::encode(data)
+        .with_alphabet(bs58::Alphabet::RIPPLE)
+        .into_string()
 }
 
 /// Classic r... address, checksum checked. "X" addresses (with an embedded tag) are
@@ -109,12 +136,20 @@ pub fn encode_address(account: &AccountId) -> String {
 pub fn parse_address(text: &str) -> Result<AccountId> {
     let text = text.trim();
     ensure!(!text.starts_with('X'), "adresse XRP « X » non prise en charge : demandez l'adresse classique r… et le tag de destination");
-    let data = bs58::decode(text).with_alphabet(bs58::Alphabet::RIPPLE).into_vec().map_err(|_| anyhow!("adresse XRP invalide"))?;
+    let data = bs58::decode(text)
+        .with_alphabet(bs58::Alphabet::RIPPLE)
+        .into_vec()
+        .map_err(|_| anyhow!("adresse XRP invalide"))?;
     ensure!(data.len() == 25, "adresse XRP invalide");
     let (body, check) = data.split_at(21);
-    ensure!(btc_tx::dsha256(body)[..4] == *check, "adresse XRP invalide (somme de contrôle)");
+    ensure!(
+        btc_tx::dsha256(body)[..4] == *check,
+        "adresse XRP invalide (somme de contrôle)"
+    );
     ensure!(body[0] == 0, "adresse XRP invalide");
-    body[1..].try_into().map_err(|_| anyhow!("adresse XRP invalide"))
+    body[1..]
+        .try_into()
+        .map_err(|_| anyhow!("adresse XRP invalide"))
 }
 
 // --- Canonical serialization (Payment) ------------------------------------------
@@ -202,7 +237,9 @@ pub struct Signed {
 }
 
 pub fn sign(payment: &Payment, key: &SigningKey) -> Result<Signed> {
-    let signature: Signature = key.sign_prehash(&payment.signing_hash()).map_err(|e| anyhow!("signature XRP impossible ({e})"))?;
+    let signature: Signature = key
+        .sign_prehash(&payment.signing_hash())
+        .map_err(|e| anyhow!("signature XRP impossible ({e})"))?;
     let signature = signature.normalize_s().unwrap_or(signature);
     let der = signature.to_der();
     let blob = payment.serialize(Some(der.as_bytes()));
@@ -222,15 +259,28 @@ struct AccountState {
 
 fn account_state(net: &Network, address: &str) -> Result<Option<AccountState>> {
     parse_address(address)?;
-    let result = rpc(net, "account_info", json!({ "account": address.trim(), "ledger_index": "validated" }))?;
+    let result = rpc(
+        net,
+        "account_info",
+        json!({ "account": address.trim(), "ledger_index": "validated" }),
+    )?;
     if result["error"].as_str() == Some("actNotFound") {
         return Ok(None);
     }
     let data = &result["account_data"];
-    ensure!(result["status"].as_str() == Some("success") && data.is_object(), "réponse du nœud XRP illisible");
+    ensure!(
+        result["status"].as_str() == Some("success") && data.is_object(),
+        "réponse du nœud XRP illisible"
+    );
     Ok(Some(AccountState {
-        balance: data["Balance"].as_str().and_then(|b| b.parse().ok()).context("solde XRP illisible")?,
-        sequence: data["Sequence"].as_u64().and_then(|s| u32::try_from(s).ok()).context("séquence XRP illisible")?,
+        balance: data["Balance"]
+            .as_str()
+            .and_then(|b| b.parse().ok())
+            .context("solde XRP illisible")?,
+        sequence: data["Sequence"]
+            .as_u64()
+            .and_then(|s| u32::try_from(s).ok())
+            .context("séquence XRP illisible")?,
         owner_count: data["OwnerCount"].as_u64().unwrap_or(0),
         flags: data["Flags"].as_u64().unwrap_or(0),
     }))
@@ -246,17 +296,32 @@ fn ledger_state(net: &Network) -> Result<LedgerState> {
     let state = rpc(net, "server_state", json!({}))?;
     let ledger = &state["state"]["validated_ledger"];
     Ok(LedgerState {
-        base_reserve: ledger["reserve_base"].as_u64().context("réserve XRP illisible")?,
-        owner_reserve: ledger["reserve_inc"].as_u64().context("réserve XRP illisible")?,
-        validated_ledger: ledger["seq"].as_u64().and_then(|s| u32::try_from(s).ok()).context("registre XRP illisible")?,
+        base_reserve: ledger["reserve_base"]
+            .as_u64()
+            .context("réserve XRP illisible")?,
+        owner_reserve: ledger["reserve_inc"]
+            .as_u64()
+            .context("réserve XRP illisible")?,
+        validated_ledger: ledger["seq"]
+            .as_u64()
+            .and_then(|s| u32::try_from(s).ok())
+            .context("registre XRP illisible")?,
     })
 }
 
 /// Current fee (drops), capped.
 fn current_fee(net: &Network) -> Result<u64> {
     let result = rpc(net, "fee", json!({}))?;
-    let fee = result["drops"]["open_ledger_fee"].as_str().and_then(|f| f.parse::<u64>().ok()).context("frais XRP illisibles")?.max(10);
-    ensure!(fee <= MAX_FEE_DROPS, "frais du réseau XRP anormalement élevés ({} XRP) — réessayez plus tard", format_xrp(fee));
+    let fee = result["drops"]["open_ledger_fee"]
+        .as_str()
+        .and_then(|f| f.parse::<u64>().ok())
+        .context("frais XRP illisibles")?
+        .max(10);
+    ensure!(
+        fee <= MAX_FEE_DROPS,
+        "frais du réseau XRP anormalement élevés ({} XRP) — réessayez plus tard",
+        format_xrp(fee)
+    );
     Ok(fee)
 }
 
@@ -285,11 +350,21 @@ pub struct XrpPlan {
 }
 
 /// Network checks (reserve, activation, required tag) and fee.
-pub fn plan_xrp(net: &Network, from: &str, to: &str, amount: u64, destination_tag: Option<u32>) -> Result<XrpPlan> {
+pub fn plan_xrp(
+    net: &Network,
+    from: &str,
+    to: &str,
+    amount: u64,
+    destination_tag: Option<u32>,
+) -> Result<XrpPlan> {
     ensure!(amount > 0, "montant nul");
-    ensure!(parse_address(from)? != parse_address(to)?, "envoi vers votre propre adresse XRP");
+    ensure!(
+        parse_address(from)? != parse_address(to)?,
+        "envoi vers votre propre adresse XRP"
+    );
     let ledger = ledger_state(net)?;
-    let sender = account_state(net, from)?.context("compte XRP pas encore activé : il doit d'abord recevoir au moins 1 XRP")?;
+    let sender = account_state(net, from)?
+        .context("compte XRP pas encore activé : il doit d'abord recevoir au moins 1 XRP")?;
     let reserve = ledger.base_reserve + ledger.owner_reserve * sender.owner_count;
     let fee = current_fee(net)?;
     let spendable = sender.balance.saturating_sub(reserve);
@@ -310,28 +385,60 @@ pub fn plan_xrp(net: &Network, from: &str, to: &str, amount: u64, destination_ta
         );
     }
     if let Some(d) = &destination {
-        ensure!(destination_tag.is_some() || d.flags & LSF_REQUIRE_DEST_TAG == 0, "ce destinataire exige un tag de destination (plateforme d'échange) : renseignez-le");
+        ensure!(
+            destination_tag.is_some() || d.flags & LSF_REQUIRE_DEST_TAG == 0,
+            "ce destinataire exige un tag de destination (plateforme d'échange) : renseignez-le"
+        );
         if d.flags & LSF_DEPOSIT_AUTH != 0 {
-            let result = rpc(net, "deposit_authorized", json!({ "source_account": from.trim(), "destination_account": to.trim(), "ledger_index": "validated" }))?;
-            ensure!(result["deposit_authorized"].as_bool() == Some(true), "ce destinataire n'accepte que les paiements qu'il a autorisés, et pas le vôtre");
+            let result = rpc(
+                net,
+                "deposit_authorized",
+                json!({ "source_account": from.trim(), "destination_account": to.trim(), "ledger_index": "validated" }),
+            )?;
+            ensure!(
+                result["deposit_authorized"].as_bool() == Some(true),
+                "ce destinataire n'accepte que les paiements qu'il a autorisés, et pas le vôtre"
+            );
         }
     }
-    Ok(XrpPlan { amount, fee, reserve, activates: destination.is_none() })
+    Ok(XrpPlan {
+        amount,
+        fee,
+        reserve,
+        activates: destination.is_none(),
+    })
 }
 
 /// Largest amount that can be sent: balance minus reserve and fee.
 pub fn max_xrp(net: &Network, from: &str) -> Result<u64> {
     let ledger = ledger_state(net)?;
-    let sender = account_state(net, from)?.context("compte XRP pas encore activé : il doit d'abord recevoir au moins 1 XRP")?;
+    let sender = account_state(net, from)?
+        .context("compte XRP pas encore activé : il doit d'abord recevoir au moins 1 XRP")?;
     let reserve = ledger.base_reserve + ledger.owner_reserve * sender.owner_count;
-    sender.balance.saturating_sub(reserve).checked_sub(current_fee(net)?).filter(|m| *m > 0).context("XRP insuffisants : tout le solde est bloqué par la réserve du réseau")
+    sender
+        .balance
+        .saturating_sub(reserve)
+        .checked_sub(current_fee(net)?)
+        .filter(|m| *m > 0)
+        .context("XRP insuffisants : tout le solde est bloqué par la réserve du réseau")
 }
 
 /// Builds, signs and broadcasts a payment; returns its ID.
-pub fn send_xrp(net: &Network, key: &SigningKey, to: &AccountId, amount: u64, fee: u64, destination_tag: Option<u32>) -> Result<String> {
-    ensure!(fee <= MAX_FEE_DROPS, "frais du réseau XRP anormalement élevés — envoi refusé");
+pub fn send_xrp(
+    net: &Network,
+    key: &SigningKey,
+    to: &AccountId,
+    amount: u64,
+    fee: u64,
+    destination_tag: Option<u32>,
+) -> Result<String> {
+    ensure!(
+        fee <= MAX_FEE_DROPS,
+        "frais du réseau XRP anormalement élevés — envoi refusé"
+    );
     let account = account_id(key);
-    let state = account_state(net, &encode_address(&account))?.context("compte XRP pas encore activé")?;
+    let state =
+        account_state(net, &encode_address(&account))?.context("compte XRP pas encore activé")?;
     let ledger = ledger_state(net)?;
     let payment = Payment {
         account,
@@ -341,7 +448,12 @@ pub fn send_xrp(net: &Network, key: &SigningKey, to: &AccountId, amount: u64, fe
         sequence: state.sequence,
         destination_tag,
         last_ledger_sequence: ledger.validated_ledger + LEDGER_MARGIN,
-        signing_pub_key: key.verifying_key().to_encoded_point(true).as_bytes().try_into().map_err(|_| anyhow!("clé XRP invalide"))?,
+        signing_pub_key: key
+            .verifying_key()
+            .to_encoded_point(true)
+            .as_bytes()
+            .try_into()
+            .map_err(|_| anyhow!("clé XRP invalide"))?,
     };
     let signed = sign(&payment, key)?;
     submit(net, &signed)
@@ -353,7 +465,8 @@ pub fn send_xrp(net: &Network, key: &SigningKey, to: &AccountId, amount: u64, fe
 /// same transaction, already sent. Never "refused": sending again would take the
 /// next sequence and pay twice.
 pub fn submit(net: &Network, signed: &Signed) -> Result<String> {
-    let body = json!({ "method": "submit", "params": [{ "tx_blob": hex::encode_upper(&signed.blob) }] });
+    let body =
+        json!({ "method": "submit", "params": [{ "tx_blob": hex::encode_upper(&signed.blob) }] });
     let mut uncertain = false;
     let mut last = anyhow!("nœud XRP injoignable");
     for &node in net.nodes {
@@ -377,20 +490,37 @@ pub fn submit(net: &Network, signed: &Signed) -> Result<String> {
             }
         };
         // Node overloaded or not up to date: try the next one.
-        if let Some(error) = result["error"].as_str().filter(|e| TRANSIENT_ERRORS.contains(e)) {
+        if let Some(error) = result["error"]
+            .as_str()
+            .filter(|e| TRANSIENT_ERRORS.contains(e))
+        {
             last = anyhow!("nœud XRP : réponse {error}");
             continue;
         }
-        let known = || rpc(net, "tx", json!({ "transaction": signed.hash })).is_ok_and(|tx| tx["hash"].as_str().is_some_and(|h| h.eq_ignore_ascii_case(&signed.hash)));
+        let known = || {
+            rpc(net, "tx", json!({ "transaction": signed.hash })).is_ok_and(|tx| {
+                tx["hash"]
+                    .as_str()
+                    .is_some_and(|h| h.eq_ignore_ascii_case(&signed.hash))
+            })
+        };
         return submit_outcome(&result, &signed.hash, known);
     }
-    Err(if uncertain { crate::wallet_flow::maybe_sent(&signed.hash) } else { last })
+    Err(if uncertain {
+        crate::wallet_flow::maybe_sent(&signed.hash)
+    } else {
+        last
+    })
 }
 
 fn submit_outcome(result: &Value, hash: &str, known: impl FnOnce() -> bool) -> Result<String> {
     let engine = result["engine_result"].as_str().unwrap_or("");
     // Accepted (or queued) by the network, or already received.
-    if engine == "tesSUCCESS" || engine == "terQUEUED" || engine == "tefALREADY" || (engine == "tefPAST_SEQ" && known()) {
+    if engine == "tesSUCCESS"
+        || engine == "terQUEUED"
+        || engine == "tefALREADY"
+        || (engine == "tefPAST_SEQ" && known())
+    {
         return Ok(hash.to_string());
     }
     // ter... (except a missing source account): not applied yet, but it can be in the
@@ -400,8 +530,21 @@ fn submit_outcome(result: &Value, hash: &str, known: impl FnOnce() -> bool) -> R
         return Err(crate::wallet_flow::maybe_sent(hash));
     }
     let signed_hash = hash;
-    let message = ["engine_result_message", "error_exception", "error_message", "error"].iter().find_map(|k| result[*k].as_str()).unwrap_or("erreur inconnue");
-    let detail = [engine, message].iter().filter(|p| !p.is_empty()).copied().collect::<Vec<_>>().join(" ");
+    let message = [
+        "engine_result_message",
+        "error_exception",
+        "error_message",
+        "error",
+    ]
+    .iter()
+    .find_map(|k| result[*k].as_str())
+    .unwrap_or("erreur inconnue");
+    let detail = [engine, message]
+        .iter()
+        .filter(|p| !p.is_empty())
+        .copied()
+        .collect::<Vec<_>>()
+        .join(" ");
     // tec...: the payment fails, but the transaction goes into the ledger and its fee
     // is charged (the checks before the dialog prevent this).
     if engine.starts_with("tec") {
@@ -415,36 +558,69 @@ fn submit_outcome(result: &Value, hash: &str, known: impl FnOnce() -> bool) -> R
 /// XRP payments of the address, newest first.
 pub fn history(net: &Network, address: &str, limit: usize) -> Result<Vec<history::TxEntry>> {
     parse_address(address)?;
-    let result = rpc(net, "account_tx", json!({ "account": address.trim(), "limit": limit.clamp(1, 50), "ledger_index_min": -1, "ledger_index_max": -1 }))?;
+    let result = rpc(
+        net,
+        "account_tx",
+        json!({ "account": address.trim(), "limit": limit.clamp(1, 50), "ledger_index_min": -1, "ledger_index_max": -1 }),
+    )?;
     if result["error"].as_str() == Some("actNotFound") {
         return Ok(Vec::new());
     }
     let mut entries = Vec::new();
-    for item in result["transactions"].as_array().map(Vec::as_slice).unwrap_or_default() {
+    for item in result["transactions"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+    {
         let tx = &item["tx"];
         if tx["TransactionType"].as_str() != Some("Payment") {
             continue;
         }
-        let Some(hash) = tx["hash"].as_str().filter(|h| h.len() == 64 && h.bytes().all(|b| b.is_ascii_hexdigit())) else { continue };
+        let Some(hash) = tx["hash"]
+            .as_str()
+            .filter(|h| h.len() == 64 && h.bytes().all(|b| b.is_ascii_hexdigit()))
+        else {
+            continue;
+        };
         // Amount actually delivered, in XRP only (tokens ignored).
-        let Some(delivered) = item["meta"]["delivered_amount"].as_str().and_then(|d| d.parse::<i128>().ok()) else { continue };
-        let fee = tx["Fee"].as_str().and_then(|f| f.parse::<i128>().ok()).unwrap_or(0);
+        let Some(delivered) = item["meta"]["delivered_amount"]
+            .as_str()
+            .and_then(|d| d.parse::<i128>().ok())
+        else {
+            continue;
+        };
+        let fee = tx["Fee"]
+            .as_str()
+            .and_then(|f| f.parse::<i128>().ok())
+            .unwrap_or(0);
         let outgoing = tx["Account"].as_str() == Some(address.trim());
         // A third party's payment that only passes through the account: ignored.
         if !outgoing && tx["Destination"].as_str() != Some(address.trim()) {
             continue;
         }
-        let net = if outgoing { -(delivered + fee) } else { delivered };
+        let net = if outgoing {
+            -(delivered + fee)
+        } else {
+            delivered
+        };
         let success = item["meta"]["TransactionResult"].as_str() == Some("tesSUCCESS");
         // Ledger date: seconds since January 1, 2000 (UTC).
         let timestamp_unix = tx["date"].as_i64().map(|d| d + 946_684_800);
         entries.push(history::TxEntry {
             id: hash.to_string(),
             timestamp_unix,
-            status: if success { history::TxStatus::Confirmed } else { history::TxStatus::Failed },
+            status: if success {
+                history::TxStatus::Confirmed
+            } else {
+                history::TxStatus::Failed
+            },
             net_amount_minor: Some(net),
             fee_minor: 0,
-            kind: if outgoing { history::TxKind::Sent } else { history::TxKind::Received },
+            kind: if outgoing {
+                history::TxKind::Sent
+            } else {
+                history::TxKind::Received
+            },
         });
     }
     Ok(entries)
@@ -458,17 +634,34 @@ mod tests {
     /// same one, already sent; a sequence taken by another one: refused.
     #[test]
     fn an_already_received_payment_counts_as_sent() {
-        let outcome = |engine: &str, known: bool| submit_outcome(&json!({ "engine_result": engine }), "AB", || known);
+        let outcome = |engine: &str, known: bool| {
+            submit_outcome(&json!({ "engine_result": engine }), "AB", || known)
+        };
         assert!(outcome("tesSUCCESS", false).is_ok());
         assert!(outcome("tefALREADY", false).is_ok());
         assert!(outcome("tefPAST_SEQ", true).is_ok());
-        assert!(outcome("tefPAST_SEQ", false).unwrap_err().to_string().starts_with("transaction XRP refusée"));
-        assert!(outcome("tecUNFUNDED_PAYMENT", false).unwrap_err().to_string().contains("frais du réseau prélevés (identifiant AB)"));
+        assert!(outcome("tefPAST_SEQ", false)
+            .unwrap_err()
+            .to_string()
+            .starts_with("transaction XRP refusée"));
+        assert!(outcome("tecUNFUNDED_PAYMENT", false)
+            .unwrap_err()
+            .to_string()
+            .contains("frais du réseau prélevés (identifiant AB)"));
         // Not applied yet (ter...): maybe sent; missing source account: refused.
         for engine in ["terPRE_SEQ", "terRETRY", "terINSUF_FEE_B"] {
-            assert!(outcome(engine, false).unwrap_err().to_string().contains("peut-être partie"), "{engine}");
+            assert!(
+                outcome(engine, false)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("peut-être partie"),
+                "{engine}"
+            );
         }
-        assert!(outcome("terNO_ACCOUNT", false).unwrap_err().to_string().starts_with("transaction XRP refusée"));
+        assert!(outcome("terNO_ACCOUNT", false)
+            .unwrap_err()
+            .to_string()
+            .starts_with("transaction XRP refusée"));
     }
 
     const SEED: &str = "5eb00bbddcf069084889a8ab9155568165f5c453ccb85e70811aaed6f6da5fc19a5ac40b389cd370d086206dec8aa6c43daea6690f20ad3d8d48b2d2ce9e38e4";
@@ -478,14 +671,26 @@ mod tests {
     #[test]
     fn addresses_and_serialization_match_the_official_libraries() {
         let seed = hex::decode(SEED).unwrap();
-        for (index, expected) in [(0, "rHsMGQEkVNJmpGWs8XUBoTBiAAbwxZN5v3"), (1, "r3AgF9mMBFtaLhKcg96weMhbbEFLZ3mx17"), (7, "rny6pTkxmEcJhTJoUKVK3Xri1QGjjuAXFu")] {
+        for (index, expected) in [
+            (0, "rHsMGQEkVNJmpGWs8XUBoTBiAAbwxZN5v3"),
+            (1, "r3AgF9mMBFtaLhKcg96weMhbbEFLZ3mx17"),
+            (7, "rny6pTkxmEcJhTJoUKVK3Xri1QGjjuAXFu"),
+        ] {
             let (key, account) = crate::derivation::derive_xrp_key(&seed, index).unwrap();
             assert_eq!(account, account_id(&key));
             assert_eq!(encode_address(&account), expected, "index {index}");
             assert_eq!(parse_address(expected).unwrap(), account);
         }
-        assert!(parse_address("rHsMGQEkVNJmpGWs8XUBoTBiAAbwxZN5v4").is_err(), "somme de contrôle");
-        assert!(parse_address("XVLhHMPHU98es4dbozjVtdWzVrDjtV5fdx1mHp98tDMoQXb").unwrap_err().to_string().contains("« X »"));
+        assert!(
+            parse_address("rHsMGQEkVNJmpGWs8XUBoTBiAAbwxZN5v4").is_err(),
+            "somme de contrôle"
+        );
+        assert!(
+            parse_address("XVLhHMPHU98es4dbozjVtdWzVrDjtV5fdx1mHp98tDMoQXb")
+                .unwrap_err()
+                .to_string()
+                .contains("« X »")
+        );
         let (key, account) = crate::derivation::derive_xrp_key(&seed, 0).unwrap();
         let payment = Payment {
             account,
@@ -495,20 +700,31 @@ mod tests {
             sequence: 7,
             destination_tag: Some(12345),
             last_ledger_sequence: 107_433_100,
-            signing_pub_key: key.verifying_key().to_encoded_point(true).as_bytes().try_into().unwrap(),
+            signing_pub_key: key
+                .verifying_key()
+                .to_encoded_point(true)
+                .as_bytes()
+                .try_into()
+                .unwrap(),
         };
         assert_eq!(
             hex::encode_upper([b"STX\0".as_slice(), &payment.serialize(None)].concat()),
             "53545800120000220000000024000000072E00003039201B06674C8C61400000000016E36068400000000000000C7321031D68BC1A142E6766B2BDFB006CCFE135EF2E0E2E94ABB5CF5C9AB6104776FBAE8114AFF3C2E33458B30714CA16FFEE19952DD35C17C88314F667B0CA50CC7709A220B0561B85E53A48461FA8"
         );
-        assert_eq!(hex::encode(payment.signing_hash()), "4d82007370e98e47d4b1fd2a60d740d6b1b62287cd2b0cdb6b79885bde48c0da");
+        assert_eq!(
+            hex::encode(payment.signing_hash()),
+            "4d82007370e98e47d4b1fd2a60d740d6b1b62287cd2b0cdb6b79885bde48c0da"
+        );
         let dummy = hex::decode("3045022100AABBCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566778899022011223344556677889900AABBCCDDEEFF00112233445566778899AABBCCDDEEFF").unwrap();
         let blob = payment.serialize(Some(&dummy));
         assert_eq!(
             hex::encode_upper(&blob),
             "120000220000000024000000072E00003039201B06674C8C61400000000016E36068400000000000000C7321031D68BC1A142E6766B2BDFB006CCFE135EF2E0E2E94ABB5CF5C9AB6104776FBAE74473045022100AABBCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566778899022011223344556677889900AABBCCDDEEFF00112233445566778899AABBCCDDEEFF8114AFF3C2E33458B30714CA16FFEE19952DD35C17C88314F667B0CA50CC7709A220B0561B85E53A48461FA8"
         );
-        assert_eq!(hex::encode_upper(sha512_half(&[b"TXN\0".as_slice(), &blob].concat())), "8DFC2DEFA82649C9CBAF5205F88C4F971AFFCA477398CA1CD1C2601270BBECF7");
+        assert_eq!(
+            hex::encode_upper(sha512_half(&[b"TXN\0".as_slice(), &blob].concat())),
+            "8DFC2DEFA82649C9CBAF5205F88C4F971AFFCA477398CA1CD1C2601270BBECF7"
+        );
     }
 
     #[test]
@@ -516,14 +732,34 @@ mod tests {
         use k256::ecdsa::signature::hazmat::PrehashVerifier;
         let seed = hex::decode(SEED).unwrap();
         let (key, account) = crate::derivation::derive_xrp_key(&seed, 0).unwrap();
-        let payment = Payment { account, destination: [7; 20], amount: 1, fee: 10, sequence: 1, destination_tag: None, last_ledger_sequence: 1, signing_pub_key: key.verifying_key().to_encoded_point(true).as_bytes().try_into().unwrap() };
+        let payment = Payment {
+            account,
+            destination: [7; 20],
+            amount: 1,
+            fee: 10,
+            sequence: 1,
+            destination_tag: None,
+            last_ledger_sequence: 1,
+            signing_pub_key: key
+                .verifying_key()
+                .to_encoded_point(true)
+                .as_bytes()
+                .try_into()
+                .unwrap(),
+        };
         let signed = sign(&payment, &key).unwrap();
         // TxnSignature: field 0x74, length, DER.
-        let at = signed.blob.windows(2).position(|w| w[0] == 0x74 && (70..=72).contains(&w[1])).unwrap();
+        let at = signed
+            .blob
+            .windows(2)
+            .position(|w| w[0] == 0x74 && (70..=72).contains(&w[1]))
+            .unwrap();
         let der = &signed.blob[at + 2..at + 2 + signed.blob[at + 1] as usize];
         let signature = Signature::from_der(der).unwrap();
         assert!(signature.normalize_s().is_none(), "low-S");
-        key.verifying_key().verify_prehash(&payment.signing_hash(), &signature).unwrap();
+        key.verifying_key()
+            .verify_prehash(&payment.signing_hash(), &signature)
+            .unwrap();
         assert_eq!(signed.hash.len(), 64);
     }
 
@@ -537,8 +773,17 @@ mod tests {
         let rich = "rEb8TK3gBgk5auZkwc6sHnwrGVJH8DuaLh";
         println!("solde {} XRP", format_xrp(balance(&MAINNET, rich).unwrap()));
         let net = ledger_state(&MAINNET).unwrap();
-        println!("réserve {} + {} XRP, registre {}, frais {} drops", format_xrp(net.base_reserve), format_xrp(net.owner_reserve), net.validated_ledger, current_fee(&MAINNET).unwrap());
-        println!("{} paiements récents", history(&MAINNET, rich, 10).unwrap().len());
+        println!(
+            "réserve {} + {} XRP, registre {}, frais {} drops",
+            format_xrp(net.base_reserve),
+            format_xrp(net.owner_reserve),
+            net.validated_ledger,
+            current_fee(&MAINNET).unwrap()
+        );
+        println!(
+            "{} paiements récents",
+            history(&MAINNET, rich, 10).unwrap().len()
+        );
         let key = SigningKey::from_slice(&[0x5a; 32]).unwrap();
         let account = account_id(&key);
         let payment = Payment {
@@ -549,7 +794,12 @@ mod tests {
             sequence: 1,
             destination_tag: None,
             last_ledger_sequence: net.validated_ledger + LEDGER_MARGIN,
-            signing_pub_key: key.verifying_key().to_encoded_point(true).as_bytes().try_into().unwrap(),
+            signing_pub_key: key
+                .verifying_key()
+                .to_encoded_point(true)
+                .as_bytes()
+                .try_into()
+                .unwrap(),
         };
         let signed = sign(&payment, &key).unwrap();
         let error = submit(&MAINNET, &signed).unwrap_err().to_string();
@@ -558,22 +808,52 @@ mod tests {
         // Counter-check: the same transaction with a tampered signature is refused
         // EARLIER.
         let mut blob = signed.blob.clone();
-        let at = blob.windows(2).position(|w| w[0] == 0x74 && (70..=72).contains(&w[1])).unwrap();
+        let at = blob
+            .windows(2)
+            .position(|w| w[0] == 0x74 && (70..=72).contains(&w[1]))
+            .unwrap();
         blob[at + 10] ^= 1;
-        let error = submit(&MAINNET, &Signed { blob, hash: signed.hash.clone() }).unwrap_err().to_string();
+        let error = submit(
+            &MAINNET,
+            &Signed {
+                blob,
+                hash: signed.hash.clone(),
+            },
+        )
+        .unwrap_err()
+        .to_string();
         println!("{error}");
-        assert!(!error.contains("terNO_ACCOUNT") && error.to_lowercase().contains("signature"), "{error}");
-        assert!(plan_xrp(&MAINNET, &encode_address(&account), rich, 1_000_000, None).unwrap_err().to_string().contains("pas encore activé"));
+        assert!(
+            !error.contains("terNO_ACCOUNT") && error.to_lowercase().contains("signature"),
+            "{error}"
+        );
+        assert!(
+            plan_xrp(&MAINNET, &encode_address(&account), rich, 1_000_000, None)
+                .unwrap_err()
+                .to_string()
+                .contains("pas encore activé")
+        );
         // Network rules, from a funded account (read-only).
         let funded = "rMQ98K56yXJbDGv49ZSmW51sLn94Xe1mu1";
-        let error = plan_xrp(&MAINNET, funded, rich, 1_000_000, None).unwrap_err().to_string();
+        let error = plan_xrp(&MAINNET, funded, rich, 1_000_000, None)
+            .unwrap_err()
+            .to_string();
         assert!(error.contains("exige un tag"), "{error}");
         let plan = plan_xrp(&MAINNET, funded, rich, 1_000_000, Some(7)).unwrap();
-        assert!(!plan.activates && plan.fee >= 10 && plan.reserve >= 1_000_000, "{plan:?}");
+        assert!(
+            !plan.activates && plan.fee >= 10 && plan.reserve >= 1_000_000,
+            "{plan:?}"
+        );
         let fresh = encode_address(&account);
-        let error = plan_xrp(&MAINNET, funded, &fresh, 999_999, None).unwrap_err().to_string();
+        let error = plan_xrp(&MAINNET, funded, &fresh, 999_999, None)
+            .unwrap_err()
+            .to_string();
         assert!(error.contains("au moins 1.000000 XRP"), "{error}");
-        assert!(plan_xrp(&MAINNET, funded, &fresh, 1_000_000, None).unwrap().activates);
+        assert!(
+            plan_xrp(&MAINNET, funded, &fresh, 1_000_000, None)
+                .unwrap()
+                .activates
+        );
         assert!(max_xrp(&MAINNET, funded).unwrap() > 0);
     }
 
@@ -591,7 +871,11 @@ mod tests {
         };
         let alice = random_key();
         let alice_address = encode_address(&account_id(&alice));
-        let funded = client().post("https://faucet.altnet.rippletest.net/accounts").json(&json!({ "destination": alice_address })).send().unwrap();
+        let funded = client()
+            .post("https://faucet.altnet.rippletest.net/accounts")
+            .json(&json!({ "destination": alice_address }))
+            .send()
+            .unwrap();
         println!("robinet : {}", funded.status());
         let wait_balance = |address: &str, expected: Option<u64>| -> u64 {
             for _ in 0..30 {
@@ -607,20 +891,55 @@ mod tests {
         let bob = random_key();
         let bob_account = account_id(&bob);
         let bob_address = encode_address(&bob_account);
-        assert!(plan_xrp(&TESTNET, &alice_address, &bob_address, 500_000, None).unwrap_err().to_string().contains("au moins"));
+        assert!(
+            plan_xrp(&TESTNET, &alice_address, &bob_address, 500_000, None)
+                .unwrap_err()
+                .to_string()
+                .contains("au moins")
+        );
         let first = plan_xrp(&TESTNET, &alice_address, &bob_address, 2_000_000, None).unwrap();
         assert!(first.activates, "{first:?}");
-        let activated = send_xrp(&TESTNET, &alice, &bob_account, first.amount, first.fee, None).unwrap();
+        let activated = send_xrp(
+            &TESTNET,
+            &alice,
+            &bob_account,
+            first.amount,
+            first.fee,
+            None,
+        )
+        .unwrap();
         println!("activation : {activated}");
         assert_eq!(wait_balance(&bob_address, Some(2_000_000)), 2_000_000);
-        let second = plan_xrp(&TESTNET, &alice_address, &bob_address, 250_000, Some(12345)).unwrap();
+        let second =
+            plan_xrp(&TESTNET, &alice_address, &bob_address, 250_000, Some(12345)).unwrap();
         assert!(!second.activates);
-        let paid = send_xrp(&TESTNET, &alice, &bob_account, second.amount, second.fee, Some(12345)).unwrap();
+        let paid = send_xrp(
+            &TESTNET,
+            &alice,
+            &bob_account,
+            second.amount,
+            second.fee,
+            Some(12345),
+        )
+        .unwrap();
         println!("paiement : {paid}");
         assert_eq!(wait_balance(&bob_address, Some(2_250_000)), 2_250_000);
         let tx = rpc(&TESTNET, "tx", json!({ "transaction": paid })).unwrap();
-        assert_eq!((tx["DestinationTag"].as_u64(), tx["meta"]["TransactionResult"].as_str()), (Some(12345), Some("tesSUCCESS")), "{tx}");
+        assert_eq!(
+            (
+                tx["DestinationTag"].as_u64(),
+                tx["meta"]["TransactionResult"].as_str()
+            ),
+            (Some(12345), Some("tesSUCCESS")),
+            "{tx}"
+        );
         let received = history(&TESTNET, &bob_address, 10).unwrap();
-        assert!(received.iter().filter(|e| e.kind == history::TxKind::Received).count() >= 2);
+        assert!(
+            received
+                .iter()
+                .filter(|e| e.kind == history::TxKind::Received)
+                .count()
+                >= 2
+        );
     }
 }

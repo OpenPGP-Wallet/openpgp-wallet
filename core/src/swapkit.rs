@@ -109,18 +109,90 @@ const fn asset(
     near: Option<&'static str>,
     chainflip: Option<(&'static str, &'static str)>,
 ) -> Asset {
-    Asset { coin, network, symbol, swapkit, decimals, near, chainflip }
+    Asset {
+        coin,
+        network,
+        symbol,
+        swapkit,
+        decimals,
+        near,
+        chainflip,
+    }
 }
 
 pub const ASSETS: [Asset; 20] = [
-    asset("btc", "btc_mainnet", "BTC", "BTC.BTC", 8, Some("nep141:btc.omft.near"), Some(("BTC", "Bitcoin"))),
-    asset("evm", "evm_mainnet", "ETH", "ETH.ETH", 18, Some("nep141:eth.omft.near"), Some(("ETH", "Ethereum"))),
-    asset("evm", "arbitrum_mainnet", "ETH", "ARB.ETH", 18, Some("nep141:arb.omft.near"), Some(("ETH", "Arbitrum"))),
-    asset("evm", "base_mainnet", "ETH", "BASE.ETH", 18, Some("nep141:base.omft.near"), None),
-    asset("sol", "sol_mainnet", "SOL", "SOL.SOL", 9, Some("nep141:sol.omft.near"), Some(("SOL", "Solana"))),
-    asset("bnb", "bsc_mainnet", "BNB", "BSC.BNB", 18, Some("nep245:v2_1.omni.hot.tg:56_11111111111111111111"), None),
-    asset("avax", "avax_mainnet", "AVAX", "AVAX.AVAX", 18, Some("nep245:v2_1.omni.hot.tg:43114_11111111111111111111"), None),
-    asset("pol", "polygon_mainnet", "POL", "POL.POL", 18, Some("nep245:v2_1.omni.hot.tg:137_11111111111111111111"), None),
+    asset(
+        "btc",
+        "btc_mainnet",
+        "BTC",
+        "BTC.BTC",
+        8,
+        Some("nep141:btc.omft.near"),
+        Some(("BTC", "Bitcoin")),
+    ),
+    asset(
+        "evm",
+        "evm_mainnet",
+        "ETH",
+        "ETH.ETH",
+        18,
+        Some("nep141:eth.omft.near"),
+        Some(("ETH", "Ethereum")),
+    ),
+    asset(
+        "evm",
+        "arbitrum_mainnet",
+        "ETH",
+        "ARB.ETH",
+        18,
+        Some("nep141:arb.omft.near"),
+        Some(("ETH", "Arbitrum")),
+    ),
+    asset(
+        "evm",
+        "base_mainnet",
+        "ETH",
+        "BASE.ETH",
+        18,
+        Some("nep141:base.omft.near"),
+        None,
+    ),
+    asset(
+        "sol",
+        "sol_mainnet",
+        "SOL",
+        "SOL.SOL",
+        9,
+        Some("nep141:sol.omft.near"),
+        Some(("SOL", "Solana")),
+    ),
+    asset(
+        "bnb",
+        "bsc_mainnet",
+        "BNB",
+        "BSC.BNB",
+        18,
+        Some("nep245:v2_1.omni.hot.tg:56_11111111111111111111"),
+        None,
+    ),
+    asset(
+        "avax",
+        "avax_mainnet",
+        "AVAX",
+        "AVAX.AVAX",
+        18,
+        Some("nep245:v2_1.omni.hot.tg:43114_11111111111111111111"),
+        None,
+    ),
+    asset(
+        "pol",
+        "polygon_mainnet",
+        "POL",
+        "POL.POL",
+        18,
+        Some("nep245:v2_1.omni.hot.tg:137_11111111111111111111"),
+        None,
+    ),
     asset(
         "usdc",
         "evm_mainnet",
@@ -175,16 +247,66 @@ pub const ASSETS: [Asset; 20] = [
         Some("nep141:sol-c800a4bd850783ccb82c2b2c7e84175443606352.omft.near"),
         Some(("USDT", "Solana")),
     ),
-    asset("doge", "doge_mainnet", "DOGE", "DOGE.DOGE", 8, Some("nep141:doge.omft.near"), None),
-    asset("zec", "zec_mainnet", "ZEC", "ZEC.ZEC", 8, Some("nep141:zec.omft.near"), None),
-    asset("trx", "tron_mainnet", "TRX", "TRON.TRX", 6, Some("nep141:tron.omft.near"), None),
-    asset("xrp", "xrp_mainnet", "XRP", "XRP.XRP", 6, Some("nep141:xrp.omft.near"), None),
-    asset("near", "near_mainnet", "NEAR", "NEAR.NEAR", 24, Some("nep141:wrap.near"), None),
-    asset("ada", "ada_mainnet", "ADA", "ADA.ADA", 6, Some("nep141:cardano.omft.near"), None),
+    asset(
+        "doge",
+        "doge_mainnet",
+        "DOGE",
+        "DOGE.DOGE",
+        8,
+        Some("nep141:doge.omft.near"),
+        None,
+    ),
+    asset(
+        "zec",
+        "zec_mainnet",
+        "ZEC",
+        "ZEC.ZEC",
+        8,
+        Some("nep141:zec.omft.near"),
+        None,
+    ),
+    asset(
+        "trx",
+        "tron_mainnet",
+        "TRX",
+        "TRON.TRX",
+        6,
+        Some("nep141:tron.omft.near"),
+        None,
+    ),
+    asset(
+        "xrp",
+        "xrp_mainnet",
+        "XRP",
+        "XRP.XRP",
+        6,
+        Some("nep141:xrp.omft.near"),
+        None,
+    ),
+    asset(
+        "near",
+        "near_mainnet",
+        "NEAR",
+        "NEAR.NEAR",
+        24,
+        Some("nep141:wrap.near"),
+        None,
+    ),
+    asset(
+        "ada",
+        "ada_mainnet",
+        "ADA",
+        "ADA.ADA",
+        6,
+        Some("nep141:cardano.omft.near"),
+        None,
+    ),
 ];
 
 pub fn find(coin: &str, network: &str) -> Option<&'static Asset> {
-    ASSETS.iter().find(|a| a.coin == coin && a.network == network && (a.near.is_some() || a.chainflip.is_some()))
+    ASSETS.iter().find(|a| {
+        a.coin == coin && a.network == network && (a.near.is_some() || a.chainflip.is_some())
+    })
 }
 
 /// Selected SwapKit providers that connect `from` to `to`.
@@ -201,7 +323,11 @@ pub fn providers(from: &Asset, to: &Asset) -> Vec<Provider> {
 
 /// Does SwapKit connect these two cryptos directly (key present)?
 pub fn links(from: (&str, &str), to: (&str, &str)) -> bool {
-    enabled() && from != to && find(from.0, from.1).zip(find(to.0, to.1)).is_some_and(|(f, t)| !providers(f, t).is_empty())
+    enabled()
+        && from != to
+        && find(from.0, from.1)
+            .zip(find(to.0, to.1))
+            .is_some_and(|(f, t)| !providers(f, t).is_empty())
 }
 
 /// Cryptos that can be swapped through SwapKit (empty without a key).
@@ -209,7 +335,11 @@ pub fn tradable() -> Vec<(&'static str, &'static str)> {
     if !enabled() {
         return Vec::new();
     }
-    ASSETS.iter().filter(|a| a.near.is_some() || a.chainflip.is_some()).map(|a| (a.coin, a.network)).collect()
+    ASSETS
+        .iter()
+        .filter(|a| a.near.is_some() || a.chainflip.is_some())
+        .map(|a| (a.coin, a.network))
+        .collect()
 }
 
 // --- Amounts --------------------------------------------------------------------
@@ -217,14 +347,41 @@ pub fn tradable() -> Vec<(&'static str, &'static str)> {
 /// "2.217785954" → units (truncated to `decimals` decimals).
 fn decimal_units(text: &str, decimals: u8) -> Result<u128> {
     let text = text.trim();
-    ensure!(!text.is_empty() && text.bytes().all(|b| b.is_ascii_digit() || b == b'.'), "montant SwapKit illisible ({text})");
+    ensure!(
+        !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit() || b == b'.'),
+        "montant SwapKit illisible ({text})"
+    );
     let (whole, fraction) = text.split_once('.').unwrap_or((text, ""));
-    ensure!(!fraction.contains('.'), "montant SwapKit illisible ({text})");
-    let fraction: String = fraction.chars().chain(std::iter::repeat('0')).take(decimals as usize).collect();
-    let scale = 10u128.checked_pow(u32::from(decimals)).context("décimales invalides")?;
-    let whole: u128 = if whole.is_empty() { 0 } else { whole.parse().map_err(|_| anyhow!("montant SwapKit illisible ({text})"))? };
-    let fraction: u128 = if fraction.is_empty() { 0 } else { fraction.parse().map_err(|_| anyhow!("montant SwapKit illisible ({text})"))? };
-    whole.checked_mul(scale).and_then(|w| w.checked_add(fraction)).context("montant SwapKit hors limites")
+    ensure!(
+        !fraction.contains('.'),
+        "montant SwapKit illisible ({text})"
+    );
+    let fraction: String = fraction
+        .chars()
+        .chain(std::iter::repeat('0'))
+        .take(decimals as usize)
+        .collect();
+    let scale = 10u128
+        .checked_pow(u32::from(decimals))
+        .context("décimales invalides")?;
+    let whole: u128 = if whole.is_empty() {
+        0
+    } else {
+        whole
+            .parse()
+            .map_err(|_| anyhow!("montant SwapKit illisible ({text})"))?
+    };
+    let fraction: u128 = if fraction.is_empty() {
+        0
+    } else {
+        fraction
+            .parse()
+            .map_err(|_| anyhow!("montant SwapKit illisible ({text})"))?
+    };
+    whole
+        .checked_mul(scale)
+        .and_then(|w| w.checked_add(fraction))
+        .context("montant SwapKit hors limites")
 }
 
 // --- Quote and deposit ----------------------------------------------------------
@@ -242,22 +399,44 @@ pub struct Route {
 
 fn post(path: &str, body: Value) -> Result<Value> {
     let key = API_KEY.context("SwapKit non configuré")?;
-    let response = client().post(format!("{API_BASE}{path}")).header("x-api-key", key).json(&body).send().context("SwapKit injoignable")?;
+    let response = client()
+        .post(format!("{API_BASE}{path}"))
+        .header("x-api-key", key)
+        .json(&body)
+        .send()
+        .context("SwapKit injoignable")?;
     let status = response.status();
     let text = response.text().unwrap_or_default();
     // Never the key in a message (it is not echoed back, but on principle).
     let text = text.replace(key, "<clé>");
-    let value: Value = serde_json::from_str(&text).map_err(|_| anyhow!("réponse SwapKit illisible ({status})"))?;
-    ensure!(status.is_success(), "SwapKit a refusé la demande : {}", value["message"].as_str().or(value["error"].as_str()).unwrap_or("erreur inconnue"));
+    let value: Value =
+        serde_json::from_str(&text).map_err(|_| anyhow!("réponse SwapKit illisible ({status})"))?;
+    ensure!(
+        status.is_success(),
+        "SwapKit a refusé la demande : {}",
+        value["message"]
+            .as_str()
+            .or(value["error"].as_str())
+            .unwrap_or("erreur inconnue")
+    );
     Ok(value)
 }
 
 /// Quotes from the selected providers for selling `amount` (units) of `from` for
 /// `to`; `source` and `destination` are the user's addresses (refund and arrival).
 /// Best first.
-pub fn quote(from: &Asset, to: &Asset, amount: u128, source: &str, destination: &str) -> Result<Vec<Route>> {
+pub fn quote(
+    from: &Asset,
+    to: &Asset,
+    amount: u128,
+    source: &str,
+    destination: &str,
+) -> Result<Vec<Route>> {
     let wanted = providers(from, to);
-    ensure!(!wanted.is_empty(), "échange non disponible via SwapKit entre ces deux cryptos");
+    ensure!(
+        !wanted.is_empty(),
+        "échange non disponible via SwapKit entre ces deux cryptos"
+    );
     let value = post(
         "/v3/quote",
         json!({
@@ -274,9 +453,27 @@ pub fn quote(from: &Asset, to: &Asset, amount: u128, source: &str, destination: 
     if routes.is_empty() {
         let reasons: Vec<String> = value["providerErrors"]
             .as_array()
-            .map(|errors| errors.iter().filter_map(|e| Some(format!("{} : {}", e["provider"].as_str()?, e["errorCode"].as_str()?))).collect())
+            .map(|errors| {
+                errors
+                    .iter()
+                    .filter_map(|e| {
+                        Some(format!(
+                            "{} : {}",
+                            e["provider"].as_str()?,
+                            e["errorCode"].as_str()?
+                        ))
+                    })
+                    .collect()
+            })
             .unwrap_or_default();
-        bail!("aucune route SwapKit pour cet échange{}", if reasons.is_empty() { String::new() } else { format!(" ({})", reasons.join(", ")) });
+        bail!(
+            "aucune route SwapKit pour cet échange{}",
+            if reasons.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", reasons.join(", "))
+            }
+        );
     }
     routes.sort_by_key(|r| std::cmp::Reverse(r.expected_out));
     Ok(routes)
@@ -284,23 +481,56 @@ pub fn quote(from: &Asset, to: &Asset, amount: u128, source: &str, destination: 
 
 fn parse_routes(value: &Value, from: &Asset, to: &Asset) -> Result<Vec<Route>> {
     let mut routes = Vec::new();
-    for route in value["routes"].as_array().map(Vec::as_slice).unwrap_or_default() {
+    for route in value["routes"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+    {
         // A single provider, one of the two selected; a plain transfer.
-        let providers: Vec<&str> = route["providers"].as_array().map(|p| p.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
-        let [name] = providers.as_slice() else { continue };
-        let Some(provider) = Provider::from_api(name) else { continue };
+        let providers: Vec<&str> = route["providers"]
+            .as_array()
+            .map(|p| p.iter().filter_map(Value::as_str).collect())
+            .unwrap_or_default();
+        let [name] = providers.as_slice() else {
+            continue;
+        };
+        let Some(provider) = Provider::from_api(name) else {
+            continue;
+        };
         if route["txHint"].as_str() != Some("simpleTransfer") {
             continue;
         }
-        if !route["sellAsset"].as_str().is_some_and(|s| s.eq_ignore_ascii_case(from.swapkit)) || !route["buyAsset"].as_str().is_some_and(|s| s.eq_ignore_ascii_case(to.swapkit)) {
+        if !route["sellAsset"]
+            .as_str()
+            .is_some_and(|s| s.eq_ignore_ascii_case(from.swapkit))
+            || !route["buyAsset"]
+                .as_str()
+                .is_some_and(|s| s.eq_ignore_ascii_case(to.swapkit))
+        {
             continue;
         }
         routes.push(Route {
             provider,
-            route_id: route["routeId"].as_str().context("route SwapKit sans identifiant")?.to_string(),
-            expected_out: decimal_units(route["expectedBuyAmount"].as_str().context("réception SwapKit absente")?, to.decimals)?,
-            min_out: decimal_units(route["expectedBuyAmountMaxSlippage"].as_str().context("minimum SwapKit absent")?, to.decimals)?,
-            total_secs: route["estimatedTime"]["total"].as_f64().unwrap_or(0.0).max(0.0) as u64,
+            route_id: route["routeId"]
+                .as_str()
+                .context("route SwapKit sans identifiant")?
+                .to_string(),
+            expected_out: decimal_units(
+                route["expectedBuyAmount"]
+                    .as_str()
+                    .context("réception SwapKit absente")?,
+                to.decimals,
+            )?,
+            min_out: decimal_units(
+                route["expectedBuyAmountMaxSlippage"]
+                    .as_str()
+                    .context("minimum SwapKit absent")?,
+                to.decimals,
+            )?,
+            total_secs: route["estimatedTime"]["total"]
+                .as_f64()
+                .unwrap_or(0.0)
+                .max(0.0) as u64,
         });
     }
     Ok(routes)
@@ -319,7 +549,13 @@ pub struct Deposit {
 }
 
 /// Opens the deposit for route `route_id` (no funds are sent here).
-pub fn open_deposit(route: &Route, from: &Asset, to: &Asset, source: &str, destination: &str) -> Result<Deposit> {
+pub fn open_deposit(
+    route: &Route,
+    from: &Asset,
+    to: &Asset,
+    source: &str,
+    destination: &str,
+) -> Result<Deposit> {
     // The app builds and signs the deposit itself (an ordinary transfer) and checks
     // the balance before the dialog: neither a transaction nor a balance check is
     // requested from SwapKit.
@@ -338,29 +574,82 @@ fn same_address(a: &str, b: &str) -> bool {
     }
 }
 
-fn parse_deposit(value: &Value, provider: Provider, from: &Asset, to: &Asset, source: &str, destination: &str) -> Result<Deposit> {
-    let providers: Vec<&str> = value["providers"].as_array().map(|p| p.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
-    ensure!(providers == [provider.api_name()], "SwapKit a changé de fournisseur ({providers:?}) — échange refusé");
-    ensure!(value["txHint"].as_str() == Some("simpleTransfer"), "dépôt SwapKit d'un type inattendu — échange refusé");
-    ensure!(value["memo"].as_str().is_none_or(str::is_empty), "dépôt SwapKit avec memo, non pris en charge — échange refusé");
+fn parse_deposit(
+    value: &Value,
+    provider: Provider,
+    from: &Asset,
+    to: &Asset,
+    source: &str,
+    destination: &str,
+) -> Result<Deposit> {
+    let providers: Vec<&str> = value["providers"]
+        .as_array()
+        .map(|p| p.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
     ensure!(
-        value["sellAsset"].as_str().is_some_and(|s| s.eq_ignore_ascii_case(from.swapkit)) && value["buyAsset"].as_str().is_some_and(|s| s.eq_ignore_ascii_case(to.swapkit)),
+        providers == [provider.api_name()],
+        "SwapKit a changé de fournisseur ({providers:?}) — échange refusé"
+    );
+    ensure!(
+        value["txHint"].as_str() == Some("simpleTransfer"),
+        "dépôt SwapKit d'un type inattendu — échange refusé"
+    );
+    ensure!(
+        value["memo"].as_str().is_none_or(str::is_empty),
+        "dépôt SwapKit avec memo, non pris en charge — échange refusé"
+    );
+    ensure!(
+        value["sellAsset"]
+            .as_str()
+            .is_some_and(|s| s.eq_ignore_ascii_case(from.swapkit))
+            && value["buyAsset"]
+                .as_str()
+                .is_some_and(|s| s.eq_ignore_ascii_case(to.swapkit)),
         "SwapKit a changé les cryptos de l'échange — échange refusé"
     );
     ensure!(
-        value["sourceAddress"].as_str().is_some_and(|a| same_address(a, source)) && value["destinationAddress"].as_str().is_some_and(|a| same_address(a, destination)),
+        value["sourceAddress"]
+            .as_str()
+            .is_some_and(|a| same_address(a, source))
+            && value["destinationAddress"]
+                .as_str()
+                .is_some_and(|a| same_address(a, destination)),
         "SwapKit a changé les adresses de l'échange — échange refusé"
     );
-    let address = value["targetAddress"].as_str().filter(|a| !a.is_empty()).context("adresse de dépôt SwapKit absente")?;
-    ensure!(address.len() <= 128 && address.bytes().all(|b| b.is_ascii_alphanumeric()), "adresse de dépôt SwapKit invalide");
-    let channel_id = value["meta"]["providerDepositChannelId"].as_str().context("identifiant du dépôt absent")?;
-    ensure!(channel_id.len() <= 80 && channel_id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'), "identifiant du dépôt invalide");
+    let address = value["targetAddress"]
+        .as_str()
+        .filter(|a| !a.is_empty())
+        .context("adresse de dépôt SwapKit absente")?;
+    ensure!(
+        address.len() <= 128 && address.bytes().all(|b| b.is_ascii_alphanumeric()),
+        "adresse de dépôt SwapKit invalide"
+    );
+    let channel_id = value["meta"]["providerDepositChannelId"]
+        .as_str()
+        .context("identifiant du dépôt absent")?;
+    ensure!(
+        channel_id.len() <= 80
+            && channel_id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-'),
+        "identifiant du dépôt invalide"
+    );
     Ok(Deposit {
         provider,
         address: address.to_string(),
         channel_id: channel_id.to_string(),
-        expected_out: decimal_units(value["expectedBuyAmount"].as_str().context("réception SwapKit absente")?, to.decimals)?,
-        min_out: decimal_units(value["expectedBuyAmountMaxSlippage"].as_str().context("minimum SwapKit absent")?, to.decimals)?,
+        expected_out: decimal_units(
+            value["expectedBuyAmount"]
+                .as_str()
+                .context("réception SwapKit absente")?,
+            to.decimals,
+        )?,
+        min_out: decimal_units(
+            value["expectedBuyAmountMaxSlippage"]
+                .as_str()
+                .context("minimum SwapKit absent")?,
+            to.decimals,
+        )?,
     })
 }
 
@@ -378,7 +667,10 @@ pub struct Verified {
 }
 
 fn now() -> i64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 /// "2026-10-07T17:01:26.000Z" → Unix seconds (UTC).
@@ -387,9 +679,18 @@ fn parse_iso(text: &str) -> Option<i64> {
     let mut d = date.split('-').map(|p| p.parse::<i64>().ok());
     let (y, m, day) = (d.next()??, d.next()??, d.next()??);
     let mut t = time.trim_end_matches('Z').split(':');
-    let (hh, mm) = (t.next()?.parse::<i64>().ok()?, t.next()?.parse::<i64>().ok()?);
+    let (hh, mm) = (
+        t.next()?.parse::<i64>().ok()?,
+        t.next()?.parse::<i64>().ok()?,
+    );
     let ss = t.next()?.split('.').next()?.parse::<i64>().ok()?;
-    if !(1970..=9999).contains(&y) || !(1..=12).contains(&m) || !(1..=31).contains(&day) || !(0..24).contains(&hh) || !(0..60).contains(&mm) || !(0..=60).contains(&ss) {
+    if !(1970..=9999).contains(&y)
+        || !(1..=12).contains(&m)
+        || !(1..=31).contains(&day)
+        || !(0..24).contains(&hh)
+        || !(0..60).contains(&mm)
+        || !(0..=60).contains(&ss)
+    {
         return None;
     }
     let (y, m) = if m <= 2 { (y - 1, m + 9) } else { (y, m - 3) };
@@ -400,25 +701,60 @@ fn parse_iso(text: &str) -> Option<i64> {
 }
 
 /// The deposit, as confirmed by the provider itself.
-pub fn verify(deposit: &Deposit, from: &Asset, to: &Asset, amount: u128, source: &str, destination: &str) -> Result<Verified> {
+pub fn verify(
+    deposit: &Deposit,
+    from: &Asset,
+    to: &Asset,
+    amount: u128,
+    source: &str,
+    destination: &str,
+) -> Result<Verified> {
     match deposit.provider {
         Provider::Near => {
             let url = format!("{NEAR_STATUS}?depositAddress={}", deposit.address);
-            let status: Value = client().get(url).send().context("NEAR Intents injoignable")?.json().context("réponse NEAR Intents illisible")?;
-            check_near(&status, deposit, from, to, amount, source, destination, now())
+            let status: Value = client()
+                .get(url)
+                .send()
+                .context("NEAR Intents injoignable")?
+                .json()
+                .context("réponse NEAR Intents illisible")?;
+            check_near(
+                &status,
+                deposit,
+                from,
+                to,
+                amount,
+                source,
+                destination,
+                now(),
+            )
         }
         Provider::Chainflip => {
             // A freshly opened channel takes a few seconds to be indexed.
             let url = format!("{CHAINFLIP_STATUS}/{}", deposit.channel_id);
             for attempt in 0..15 {
-                let status: Value = client().get(&url).send().context("Chainflip injoignable")?.json().context("réponse Chainflip illisible")?;
+                let status: Value = client()
+                    .get(&url)
+                    .send()
+                    .context("Chainflip injoignable")?
+                    .json()
+                    .context("réponse Chainflip illisible")?;
                 if status["message"].as_str() == Some("resource not found") {
                     if attempt < 14 {
                         std::thread::sleep(std::time::Duration::from_secs(2));
                     }
                     continue;
                 }
-                return check_chainflip(&status, deposit, from, to, amount, source, destination, now());
+                return check_chainflip(
+                    &status,
+                    deposit,
+                    from,
+                    to,
+                    amount,
+                    source,
+                    destination,
+                    now(),
+                );
             }
             bail!("canal Chainflip introuvable auprès de Chainflip — échange refusé")
         }
@@ -432,64 +768,191 @@ fn min_consistent(provider_min: u128, swapkit_min: u128) -> bool {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn check_near(status: &Value, deposit: &Deposit, from: &Asset, to: &Asset, amount: u128, source: &str, destination: &str, now: i64) -> Result<Verified> {
+fn check_near(
+    status: &Value,
+    deposit: &Deposit,
+    from: &Asset,
+    to: &Asset,
+    amount: u128,
+    source: &str,
+    destination: &str,
+    now: i64,
+) -> Result<Verified> {
     let refused = |what: &str| anyhow!("NEAR Intents ne confirme pas {what} — échange refusé");
     let request = &status["quoteResponse"]["quoteRequest"];
     let quote = &status["quoteResponse"]["quote"];
-    ensure!(status["status"].as_str() == Some("PENDING_DEPOSIT"), refused("un dépôt en attente"));
-    ensure!(quote["depositAddress"].as_str().is_some_and(|a| same_address(a, &deposit.address)), refused("l'adresse de dépôt"));
-    ensure!(request["originAsset"].as_str() == from.near && request["destinationAsset"].as_str() == to.near, refused("les cryptos de l'échange"));
-    ensure!(request["amount"].as_str() == Some(amount.to_string().as_str()) && request["swapType"].as_str() == Some("EXACT_INPUT"), refused("le montant"));
     ensure!(
-        request["depositType"].as_str() == Some("ORIGIN_CHAIN") && request["recipientType"].as_str() == Some("DESTINATION_CHAIN") && request["refundType"].as_str() == Some("ORIGIN_CHAIN"),
+        status["status"].as_str() == Some("PENDING_DEPOSIT"),
+        refused("un dépôt en attente")
+    );
+    ensure!(
+        quote["depositAddress"]
+            .as_str()
+            .is_some_and(|a| same_address(a, &deposit.address)),
+        refused("l'adresse de dépôt")
+    );
+    ensure!(
+        request["originAsset"].as_str() == from.near
+            && request["destinationAsset"].as_str() == to.near,
+        refused("les cryptos de l'échange")
+    );
+    ensure!(
+        request["amount"].as_str() == Some(amount.to_string().as_str())
+            && request["swapType"].as_str() == Some("EXACT_INPUT"),
+        refused("le montant")
+    );
+    ensure!(
+        request["depositType"].as_str() == Some("ORIGIN_CHAIN")
+            && request["recipientType"].as_str() == Some("DESTINATION_CHAIN")
+            && request["refundType"].as_str() == Some("ORIGIN_CHAIN"),
         refused("le type de dépôt")
     );
     // "Simple" deposits only: in memo mode (a shared address where a memo identifies
     // the swap), the app's ordinary transfer, without a memo, would be attributed to
     // no swap at all and the funds would be stuck (31st review round).
     ensure!(
-        request["depositMode"].as_str().is_none_or(|mode| mode == "SIMPLE") && quote["depositMemo"].as_str().is_none_or(str::is_empty),
+        request["depositMode"]
+            .as_str()
+            .is_none_or(|mode| mode == "SIMPLE")
+            && quote["depositMemo"].as_str().is_none_or(str::is_empty),
         refused("un dépôt simple, sans memo")
     );
-    ensure!(request["recipient"].as_str().is_some_and(|a| same_address(a, destination)), refused("votre adresse d'arrivée"));
-    ensure!(request["refundTo"].as_str().is_some_and(|a| same_address(a, source)), refused("votre adresse de remboursement"));
-    let min_out: u128 = quote["minAmountOut"].as_str().and_then(|m| m.parse().ok()).ok_or_else(|| refused("le minimum de réception"))?;
-    ensure!(min_consistent(min_out, deposit.min_out), refused("le minimum de réception annoncé"));
-    let deadline = quote["deadline"].as_str().and_then(parse_iso).ok_or_else(|| refused("l'échéance"))?;
-    ensure!(deadline >= now + MIN_VALIDITY_SECS, refused("une échéance assez lointaine"));
-    let fees_bps: u64 = request["appFees"].as_array().map(|fees| fees.iter().filter_map(|f| f["fee"].as_u64()).sum()).unwrap_or(0);
-    ensure!(fees_bps <= MAX_FEE_BPS, refused("des commissions raisonnables"));
-    Ok(Verified { min_out, deadline, fees_bps })
+    ensure!(
+        request["recipient"]
+            .as_str()
+            .is_some_and(|a| same_address(a, destination)),
+        refused("votre adresse d'arrivée")
+    );
+    ensure!(
+        request["refundTo"]
+            .as_str()
+            .is_some_and(|a| same_address(a, source)),
+        refused("votre adresse de remboursement")
+    );
+    let min_out: u128 = quote["minAmountOut"]
+        .as_str()
+        .and_then(|m| m.parse().ok())
+        .ok_or_else(|| refused("le minimum de réception"))?;
+    ensure!(
+        min_consistent(min_out, deposit.min_out),
+        refused("le minimum de réception annoncé")
+    );
+    let deadline = quote["deadline"]
+        .as_str()
+        .and_then(parse_iso)
+        .ok_or_else(|| refused("l'échéance"))?;
+    ensure!(
+        deadline >= now + MIN_VALIDITY_SECS,
+        refused("une échéance assez lointaine")
+    );
+    let fees_bps: u64 = request["appFees"]
+        .as_array()
+        .map(|fees| fees.iter().filter_map(|f| f["fee"].as_u64()).sum())
+        .unwrap_or(0);
+    ensure!(
+        fees_bps <= MAX_FEE_BPS,
+        refused("des commissions raisonnables")
+    );
+    Ok(Verified {
+        min_out,
+        deadline,
+        fees_bps,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
-fn check_chainflip(status: &Value, deposit: &Deposit, from: &Asset, to: &Asset, amount: u128, source: &str, destination: &str, now: i64) -> Result<Verified> {
+fn check_chainflip(
+    status: &Value,
+    deposit: &Deposit,
+    from: &Asset,
+    to: &Asset,
+    amount: u128,
+    source: &str,
+    destination: &str,
+    now: i64,
+) -> Result<Verified> {
     let refused = |what: &str| anyhow!("Chainflip ne confirme pas {what} — échange refusé");
-    let (src, dst) = from.chainflip.zip(to.chainflip).ok_or_else(|| refused("ces cryptos"))?;
+    let (src, dst) = from
+        .chainflip
+        .zip(to.chainflip)
+        .ok_or_else(|| refused("ces cryptos"))?;
     let channel = &status["depositChannel"];
-    ensure!(status["state"].as_str() == Some("WAITING"), refused("un canal en attente de dépôt"));
-    ensure!(channel["id"].as_str() == Some(deposit.channel_id.as_str()), refused("le canal"));
-    ensure!(channel["depositAddress"].as_str().is_some_and(|a| same_address(a, &deposit.address)), refused("l'adresse de dépôt"));
     ensure!(
-        status["srcAsset"].as_str() == Some(src.0) && status["srcChain"].as_str() == Some(src.1) && status["destAsset"].as_str() == Some(dst.0) && status["destChain"].as_str() == Some(dst.1),
+        status["state"].as_str() == Some("WAITING"),
+        refused("un canal en attente de dépôt")
+    );
+    ensure!(
+        channel["id"].as_str() == Some(deposit.channel_id.as_str()),
+        refused("le canal")
+    );
+    ensure!(
+        channel["depositAddress"]
+            .as_str()
+            .is_some_and(|a| same_address(a, &deposit.address)),
+        refused("l'adresse de dépôt")
+    );
+    ensure!(
+        status["srcAsset"].as_str() == Some(src.0)
+            && status["srcChain"].as_str() == Some(src.1)
+            && status["destAsset"].as_str() == Some(dst.0)
+            && status["destChain"].as_str() == Some(dst.1),
         refused("les cryptos de l'échange")
     );
-    ensure!(status["destAddress"].as_str().is_some_and(|a| same_address(a, destination)), refused("votre adresse d'arrivée"));
+    ensure!(
+        status["destAddress"]
+            .as_str()
+            .is_some_and(|a| same_address(a, destination)),
+        refused("votre adresse d'arrivée")
+    );
     let fill_or_kill = &status["fillOrKillParams"];
-    ensure!(fill_or_kill["refundAddress"].as_str().is_some_and(|a| same_address(a, source)), refused("votre adresse de remboursement"));
+    ensure!(
+        fill_or_kill["refundAddress"]
+            .as_str()
+            .is_some_and(|a| same_address(a, source)),
+        refused("votre adresse de remboursement")
+    );
     // Minimum price (crypto received per unit sold) × amount sold.
-    let min_price: f64 = fill_or_kill["minPrice"].as_str().and_then(|p| p.parse().ok()).filter(|p: &f64| p.is_finite() && *p > 0.0).ok_or_else(|| refused("le prix minimum"))?;
+    let min_price: f64 = fill_or_kill["minPrice"]
+        .as_str()
+        .and_then(|p| p.parse().ok())
+        .filter(|p: &f64| p.is_finite() && *p > 0.0)
+        .ok_or_else(|| refused("le prix minimum"))?;
     let sold = amount as f64 / 10f64.powi(i32::from(from.decimals));
     let min_out = (sold * min_price * 10f64.powi(i32::from(to.decimals))).floor();
-    ensure!(min_out.is_finite() && min_out > 0.0, refused("le minimum de réception"));
+    ensure!(
+        min_out.is_finite() && min_out > 0.0,
+        refused("le minimum de réception")
+    );
     let min_out = min_out as u128;
-    ensure!(min_consistent(min_out, deposit.min_out), refused("le minimum de réception annoncé"));
-    ensure!(channel["isExpired"].as_bool() == Some(false), refused("un canal encore ouvert"));
-    let deadline = channel["estimatedExpiryTime"].as_i64().map(|ms| ms / 1000).ok_or_else(|| refused("l'échéance du canal"))?;
-    ensure!(deadline >= now + MIN_VALIDITY_SECS, refused("une échéance assez lointaine"));
-    let fees_bps: u64 = status["brokers"].as_array().map(|b| b.iter().filter_map(|x| x["commissionBps"].as_u64()).sum()).unwrap_or(0);
-    ensure!(fees_bps <= MAX_FEE_BPS, refused("des commissions raisonnables"));
-    Ok(Verified { min_out, deadline, fees_bps })
+    ensure!(
+        min_consistent(min_out, deposit.min_out),
+        refused("le minimum de réception annoncé")
+    );
+    ensure!(
+        channel["isExpired"].as_bool() == Some(false),
+        refused("un canal encore ouvert")
+    );
+    let deadline = channel["estimatedExpiryTime"]
+        .as_i64()
+        .map(|ms| ms / 1000)
+        .ok_or_else(|| refused("l'échéance du canal"))?;
+    ensure!(
+        deadline >= now + MIN_VALIDITY_SECS,
+        refused("une échéance assez lointaine")
+    );
+    let fees_bps: u64 = status["brokers"]
+        .as_array()
+        .map(|b| b.iter().filter_map(|x| x["commissionBps"].as_u64()).sum())
+        .unwrap_or(0);
+    ensure!(
+        fees_bps <= MAX_FEE_BPS,
+        refused("des commissions raisonnables")
+    );
+    Ok(Verified {
+        min_out,
+        deadline,
+        fees_bps,
+    })
 }
 
 // --- Tracking after the deposit -------------------------------------------------
@@ -530,15 +993,34 @@ fn chainflip_state(state: &str) -> SwapState {
 /// Stage of the swap whose deposit is `deposit_address` (NEAR) or whose channel is
 /// `channel_id` (Chainflip), read from the provider.
 pub fn status(provider: Provider, channel_id: &str, deposit_address: &str) -> Result<SwapState> {
-    ensure!(deposit_address.len() <= 128 && deposit_address.bytes().all(|b| b.is_ascii_alphanumeric()), "adresse de dépôt SwapKit invalide");
-    ensure!(channel_id.len() <= 80 && channel_id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'), "identifiant du dépôt invalide");
+    ensure!(
+        deposit_address.len() <= 128 && deposit_address.bytes().all(|b| b.is_ascii_alphanumeric()),
+        "adresse de dépôt SwapKit invalide"
+    );
+    ensure!(
+        channel_id.len() <= 80
+            && channel_id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-'),
+        "identifiant du dépôt invalide"
+    );
     Ok(match provider {
         Provider::Near => {
-            let value: Value = client().get(format!("{NEAR_STATUS}?depositAddress={deposit_address}")).send().context("NEAR Intents injoignable")?.json().context("réponse NEAR Intents illisible")?;
+            let value: Value = client()
+                .get(format!("{NEAR_STATUS}?depositAddress={deposit_address}"))
+                .send()
+                .context("NEAR Intents injoignable")?
+                .json()
+                .context("réponse NEAR Intents illisible")?;
             near_state(value["status"].as_str().unwrap_or_default())
         }
         Provider::Chainflip => {
-            let value: Value = client().get(format!("{CHAINFLIP_STATUS}/{channel_id}")).send().context("Chainflip injoignable")?.json().context("réponse Chainflip illisible")?;
+            let value: Value = client()
+                .get(format!("{CHAINFLIP_STATUS}/{channel_id}"))
+                .send()
+                .context("Chainflip injoignable")?
+                .json()
+                .context("réponse Chainflip illisible")?;
             chainflip_state(value["state"].as_str().unwrap_or_default())
         }
     })
@@ -572,8 +1054,15 @@ mod tests {
 
     #[test]
     fn assets_and_providers() {
-        assert_eq!(providers(eth(), sol()), vec![Provider::Near, Provider::Chainflip]);
-        assert_eq!(providers(find("doge", "doge_mainnet").unwrap(), eth()), vec![Provider::Near], "DOGE : NEAR seulement");
+        assert_eq!(
+            providers(eth(), sol()),
+            vec![Provider::Near, Provider::Chainflip]
+        );
+        assert_eq!(
+            providers(find("doge", "doge_mainnet").unwrap(), eth()),
+            vec![Provider::Near],
+            "DOGE : NEAR seulement"
+        );
         assert!(find("xmr", "xmr_mainnet").is_none());
         for a in &ASSETS {
             if let Some((_, deployment)) = crate::tokens::find(a.coin, a.network) {
@@ -581,8 +1070,15 @@ mod tests {
             }
         }
         assert_eq!(decimal_units("2.217785954", 9).unwrap(), 2_217_785_954);
-        assert_eq!(decimal_units("0.315729440128514247", 18).unwrap(), 315_729_440_128_514_247);
-        assert_eq!(decimal_units("1.123456789", 6).unwrap(), 1_123_456, "tronqué");
+        assert_eq!(
+            decimal_units("0.315729440128514247", 18).unwrap(),
+            315_729_440_128_514_247
+        );
+        assert_eq!(
+            decimal_units("1.123456789", 6).unwrap(),
+            1_123_456,
+            "tronqué"
+        );
         assert!(decimal_units("1e5", 6).is_err());
         assert_eq!(parse_iso("2026-10-07T17:01:26.000Z"), Some(1_791_392_486));
     }
@@ -605,7 +1101,17 @@ mod tests {
     #[test]
     fn near_deposit_is_confirmed_field_by_field() {
         let now = 1_791_129_000;
-        let ok = check_near(&near_status(), &near_deposit(), eth(), sol(), 100_000_000_000_000_000, EVM, SOL, now).unwrap();
+        let ok = check_near(
+            &near_status(),
+            &near_deposit(),
+            eth(),
+            sol(),
+            100_000_000_000_000_000,
+            EVM,
+            SOL,
+            now,
+        )
+        .unwrap();
         assert_eq!((ok.min_out, ok.fees_bps), (2_173_430_234, 15));
         let tampered = |path: &[&str], value: Value| {
             let mut s = near_status();
@@ -614,21 +1120,79 @@ mod tests {
                 target = &mut target[*key];
             }
             target[path[path.len() - 1]] = value;
-            check_near(&s, &near_deposit(), eth(), sol(), 100_000_000_000_000_000, EVM, SOL, now).unwrap_err().to_string()
+            check_near(
+                &s,
+                &near_deposit(),
+                eth(),
+                sol(),
+                100_000_000_000_000_000,
+                EVM,
+                SOL,
+                now,
+            )
+            .unwrap_err()
+            .to_string()
         };
-        assert!(tampered(&["quoteResponse", "quoteRequest", "recipient"], json!("AttackerSo1anaAddress111111111111111111111111")).contains("arrivée"));
-        assert!(tampered(&["quoteResponse", "quoteRequest", "refundTo"], json!("0x0000000000000000000000000000000000000001")).contains("remboursement"));
-        assert!(tampered(&["quoteResponse", "quote", "depositAddress"], json!("0x0000000000000000000000000000000000000002")).contains("dépôt"));
-        assert!(tampered(&["quoteResponse", "quoteRequest", "destinationAsset"], json!("nep141:btc.omft.near")).contains("cryptos"));
-        assert!(tampered(&["quoteResponse", "quoteRequest", "amount"], json!("99999999999999999")).contains("montant"));
-        assert!(tampered(&["quoteResponse", "quote", "minAmountOut"], json!("2000000000")).contains("minimum"));
-        assert!(tampered(&["quoteResponse", "quote", "deadline"], json!("2026-10-04T16:00:00.000Z")).contains("échéance"));
+        assert!(tampered(
+            &["quoteResponse", "quoteRequest", "recipient"],
+            json!("AttackerSo1anaAddress111111111111111111111111")
+        )
+        .contains("arrivée"));
+        assert!(tampered(
+            &["quoteResponse", "quoteRequest", "refundTo"],
+            json!("0x0000000000000000000000000000000000000001")
+        )
+        .contains("remboursement"));
+        assert!(tampered(
+            &["quoteResponse", "quote", "depositAddress"],
+            json!("0x0000000000000000000000000000000000000002")
+        )
+        .contains("dépôt"));
+        assert!(tampered(
+            &["quoteResponse", "quoteRequest", "destinationAsset"],
+            json!("nep141:btc.omft.near")
+        )
+        .contains("cryptos"));
+        assert!(tampered(
+            &["quoteResponse", "quoteRequest", "amount"],
+            json!("99999999999999999")
+        )
+        .contains("montant"));
+        assert!(tampered(
+            &["quoteResponse", "quote", "minAmountOut"],
+            json!("2000000000")
+        )
+        .contains("minimum"));
+        assert!(tampered(
+            &["quoteResponse", "quote", "deadline"],
+            json!("2026-10-04T16:00:00.000Z")
+        )
+        .contains("échéance"));
         assert!(tampered(&["status"], json!("PROCESSING")).contains("attente"));
-        assert!(tampered(&["quoteResponse", "quoteRequest", "depositMode"], json!("MEMO")).contains("sans memo"));
-        assert!(tampered(&["quoteResponse", "quote", "depositMemo"], json!("1234567")).contains("sans memo"));
+        assert!(tampered(
+            &["quoteResponse", "quoteRequest", "depositMode"],
+            json!("MEMO")
+        )
+        .contains("sans memo"));
+        assert!(
+            tampered(&["quoteResponse", "quote", "depositMemo"], json!("1234567"))
+                .contains("sans memo")
+        );
         let mut greedy = near_status();
         greedy["quoteResponse"]["quoteRequest"]["appFees"] = json!([{ "fee": 500 }]);
-        assert!(check_near(&greedy, &near_deposit(), eth(), sol(), 100_000_000_000_000_000, EVM, SOL, now).unwrap_err().to_string().contains("commissions"));
+        assert!(check_near(
+            &greedy,
+            &near_deposit(),
+            eth(),
+            sol(),
+            100_000_000_000_000_000,
+            EVM,
+            SOL,
+            now
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("commissions"));
     }
 
     fn chainflip_deposit() -> Deposit {
@@ -649,39 +1213,97 @@ mod tests {
     #[test]
     fn chainflip_channel_is_confirmed_field_by_field() {
         let now = 1_791_129_700;
-        let ok = check_chainflip(&chainflip_status(), &chainflip_deposit(), eth(), sol(), 100_000_000_000_000_000, EVM, SOL, now).unwrap();
+        let ok = check_chainflip(
+            &chainflip_status(),
+            &chainflip_deposit(),
+            eth(),
+            sol(),
+            100_000_000_000_000_000,
+            EVM,
+            SOL,
+            now,
+        )
+        .unwrap();
         assert_eq!(ok.fees_bps, 15);
         assert!(ok.min_out.abs_diff(2_171_372_851) <= 1, "{}", ok.min_out);
         let tampered = |key: &str, value: Value| {
             let mut s = chainflip_status();
             s[key] = value;
-            check_chainflip(&s, &chainflip_deposit(), eth(), sol(), 100_000_000_000_000_000, EVM, SOL, now).unwrap_err().to_string()
+            check_chainflip(
+                &s,
+                &chainflip_deposit(),
+                eth(),
+                sol(),
+                100_000_000_000_000_000,
+                EVM,
+                SOL,
+                now,
+            )
+            .unwrap_err()
+            .to_string()
         };
-        assert!(tampered("destAddress", json!("AttackerSo1anaAddress111111111111111111111111")).contains("arrivée"));
+        assert!(tampered(
+            "destAddress",
+            json!("AttackerSo1anaAddress111111111111111111111111")
+        )
+        .contains("arrivée"));
         assert!(tampered("destAsset", json!("USDC")).contains("cryptos"));
         assert!(tampered("fillOrKillParams", json!({ "refundAddress": "0x0000000000000000000000000000000000000001", "minPrice": "21.7" })).contains("remboursement"));
-        assert!(tampered("fillOrKillParams", json!({ "refundAddress": EVM, "minPrice": "15" })).contains("minimum"));
+        assert!(tampered(
+            "fillOrKillParams",
+            json!({ "refundAddress": EVM, "minPrice": "15" })
+        )
+        .contains("minimum"));
         assert!(tampered("state", json!("RECEIVING")).contains("attente"));
         assert!(tampered("brokers", json!([{ "commissionBps": 300 }])).contains("commissions"));
         let mut moved = chainflip_status();
-        moved["depositChannel"]["depositAddress"] = json!("0x0000000000000000000000000000000000000003");
-        assert!(check_chainflip(&moved, &chainflip_deposit(), eth(), sol(), 100_000_000_000_000_000, EVM, SOL, now).unwrap_err().to_string().contains("dépôt"));
+        moved["depositChannel"]["depositAddress"] =
+            json!("0x0000000000000000000000000000000000000003");
+        assert!(check_chainflip(
+            &moved,
+            &chainflip_deposit(),
+            eth(),
+            sol(),
+            100_000_000_000_000_000,
+            EVM,
+            SOL,
+            now
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("dépôt"));
         // Amount different from the channel's: the minimum no longer holds.
-        assert!(check_chainflip(&chainflip_status(), &chainflip_deposit(), eth(), sol(), 50_000_000_000_000_000, EVM, SOL, now).is_err());
+        assert!(check_chainflip(
+            &chainflip_status(),
+            &chainflip_deposit(),
+            eth(),
+            sol(),
+            50_000_000_000_000_000,
+            EVM,
+            SOL,
+            now
+        )
+        .is_err());
     }
 
     #[test]
     fn deposits_are_parsed_strictly() {
         let value: Value = serde_json::from_str(r#"{"providers":["NEAR"],"txHint":"simpleTransfer","sellAsset":"ETH.ETH","buyAsset":"SOL.SOL","sourceAddress":"0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045","destinationAddress":"9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM","targetAddress":"0x343e292d9508A8D3f1C462f9B6C382F3dEAD296E","expectedBuyAmount":"2.217785954","expectedBuyAmountMaxSlippage":"2.173430235","meta":{"providerDepositChannelId":"644eedea-41f6-4e3f-835c-049a09ffd589"}}"#).unwrap();
         let deposit = parse_deposit(&value, Provider::Near, eth(), sol(), EVM, SOL).unwrap();
-        assert_eq!((deposit.address.as_str(), deposit.min_out), ("0x343e292d9508A8D3f1C462f9B6C382F3dEAD296E", 2_173_430_235));
+        assert_eq!(
+            (deposit.address.as_str(), deposit.min_out),
+            ("0x343e292d9508A8D3f1C462f9B6C382F3dEAD296E", 2_173_430_235)
+        );
         let mut memo = value.clone();
         memo["memo"] = json!("=:e:0xattacker");
         assert!(parse_deposit(&memo, Provider::Near, eth(), sol(), EVM, SOL).is_err());
         let mut other = value.clone();
         other["destinationAddress"] = json!("AttackerSo1anaAddress111111111111111111111111");
         assert!(parse_deposit(&other, Provider::Near, eth(), sol(), EVM, SOL).is_err());
-        assert!(parse_deposit(&value, Provider::Chainflip, eth(), sol(), EVM, SOL).is_err(), "fournisseur changé");
+        assert!(
+            parse_deposit(&value, Provider::Chainflip, eth(), sol(), EVM, SOL).is_err(),
+            "fournisseur changé"
+        );
         let mut injected = value.clone();
         injected["meta"]["providerDepositChannelId"] = json!("../../admin");
         assert!(parse_deposit(&injected, Provider::Near, eth(), sol(), EVM, SOL).is_err());
@@ -697,13 +1319,33 @@ mod tests {
         let amount = 100_000_000_000_000_000;
         let routes = quote(eth(), sol(), amount, EVM, SOL).unwrap();
         for provider in [Provider::Near, Provider::Chainflip] {
-            let route = routes.iter().find(|r| r.provider == provider).unwrap_or_else(|| panic!("pas de route {provider:?}"));
+            let route = routes
+                .iter()
+                .find(|r| r.provider == provider)
+                .unwrap_or_else(|| panic!("pas de route {provider:?}"));
             let deposit = open_deposit(route, eth(), sol(), EVM, SOL).unwrap();
             let verified = verify(&deposit, eth(), sol(), amount, EVM, SOL).unwrap();
-            println!("{} : dépôt {} ; minimum {} SOL ; commissions {} pb", provider.name(), deposit.address, verified.min_out as f64 / 1e9, verified.fees_bps);
-            assert_eq!(status(provider, &deposit.channel_id, &deposit.address).unwrap(), SwapState::AwaitingDeposit);
+            println!(
+                "{} : dépôt {} ; minimum {} SOL ; commissions {} pb",
+                provider.name(),
+                deposit.address,
+                verified.min_out as f64 / 1e9,
+                verified.fees_bps
+            );
+            assert_eq!(
+                status(provider, &deposit.channel_id, &deposit.address).unwrap(),
+                SwapState::AwaitingDeposit
+            );
             // Arrival address other than the channel's: refused.
-            assert!(verify(&deposit, eth(), sol(), amount, EVM, "So11111111111111111111111111111111111111112").is_err());
+            assert!(verify(
+                &deposit,
+                eth(),
+                sol(),
+                amount,
+                EVM,
+                "So11111111111111111111111111111111111111112"
+            )
+            .is_err());
         }
     }
 
@@ -718,12 +1360,23 @@ mod tests {
         let source = "5510e2b44cae6eb807e3e0e45d579dda058c274abcba15e5cb84636f5d1ee412";
         let amount = 10_000_000_000_000_000_000_000_000;
         let routes = quote(near, eth(), amount, source, EVM).unwrap();
-        let route = routes.iter().find(|r| r.provider == Provider::Near).expect("pas de route NEAR");
+        let route = routes
+            .iter()
+            .find(|r| r.provider == Provider::Near)
+            .expect("pas de route NEAR");
         let deposit = open_deposit(route, near, eth(), source, EVM).unwrap();
         crate::near::parse_account(&deposit.address).unwrap();
         let verified = verify(&deposit, near, eth(), amount, source, EVM).unwrap();
-        println!("NEAR → ETH : dépôt {} ; minimum {} ETH ; commissions {} pb", deposit.address, verified.min_out as f64 / 1e18, verified.fees_bps);
-        assert_eq!(status(Provider::Near, &deposit.channel_id, &deposit.address).unwrap(), SwapState::AwaitingDeposit);
+        println!(
+            "NEAR → ETH : dépôt {} ; minimum {} ETH ; commissions {} pb",
+            deposit.address,
+            verified.min_out as f64 / 1e18,
+            verified.fees_bps
+        );
+        assert_eq!(
+            status(Provider::Near, &deposit.channel_id, &deposit.address).unwrap(),
+            SwapState::AwaitingDeposit
+        );
         // Reverse direction: arrival on the implicit account.
         let back = quote(eth(), near, 50_000_000_000_000_000, EVM, source).unwrap();
         assert!(back.iter().any(|r| r.provider == Provider::Near));
@@ -740,13 +1393,27 @@ mod tests {
         let source = "addr1qxl2jwckw20u69f0cq0vkrnuztx93hcmpwswja60txpnxrunu8tugxe0030m7uyvnz3hlppj4e28jyl9c94cque0gavquchxun";
         let amount = 100_000_000;
         let routes = quote(ada, eth(), amount, source, EVM).unwrap();
-        let route = routes.iter().find(|r| r.provider == Provider::Near).expect("pas de route NEAR");
+        let route = routes
+            .iter()
+            .find(|r| r.provider == Provider::Near)
+            .expect("pas de route NEAR");
         let deposit = open_deposit(route, ada, eth(), source, EVM).unwrap();
         crate::cardano::parse_address(&deposit.address).unwrap();
         let verified = verify(&deposit, ada, eth(), amount, source, EVM).unwrap();
-        println!("ADA → ETH : dépôt {} ; minimum {} ETH ; commissions {} pb", deposit.address, verified.min_out as f64 / 1e18, verified.fees_bps);
-        assert_eq!(status(Provider::Near, &deposit.channel_id, &deposit.address).unwrap(), SwapState::AwaitingDeposit);
-        assert!(quote(eth(), ada, 50_000_000_000_000_000, EVM, source).unwrap().iter().any(|r| r.provider == Provider::Near));
+        println!(
+            "ADA → ETH : dépôt {} ; minimum {} ETH ; commissions {} pb",
+            deposit.address,
+            verified.min_out as f64 / 1e18,
+            verified.fees_bps
+        );
+        assert_eq!(
+            status(Provider::Near, &deposit.channel_id, &deposit.address).unwrap(),
+            SwapState::AwaitingDeposit
+        );
+        assert!(quote(eth(), ada, 50_000_000_000_000_000, EVM, source)
+            .unwrap()
+            .iter()
+            .any(|r| r.provider == Provider::Near));
     }
 
     /// Real network: XRP → ETH deposit opened with NEAR Intents (no funds sent); a
@@ -761,11 +1428,22 @@ mod tests {
         let source = "rMQ98K56yXJbDGv49ZSmW51sLn94Xe1mu1";
         let amount = 20_000_000;
         let routes = quote(xrp, eth(), amount, source, EVM).unwrap();
-        let route = routes.iter().find(|r| r.provider == Provider::Near).expect("pas de route NEAR");
+        let route = routes
+            .iter()
+            .find(|r| r.provider == Provider::Near)
+            .expect("pas de route NEAR");
         let deposit = open_deposit(route, xrp, eth(), source, EVM).unwrap();
         crate::xrp::parse_address(&deposit.address).unwrap();
         let verified = verify(&deposit, xrp, eth(), amount, source, EVM).unwrap();
-        println!("dépôt {} ; minimum {} ETH ; commissions {} pb", deposit.address, verified.min_out as f64 / 1e18, verified.fees_bps);
-        assert_eq!(status(Provider::Near, &deposit.channel_id, &deposit.address).unwrap(), SwapState::AwaitingDeposit);
+        println!(
+            "dépôt {} ; minimum {} ETH ; commissions {} pb",
+            deposit.address,
+            verified.min_out as f64 / 1e18,
+            verified.fees_bps
+        );
+        assert_eq!(
+            status(Provider::Near, &deposit.channel_id, &deposit.address).unwrap(),
+            SwapState::AwaitingDeposit
+        );
     }
 }

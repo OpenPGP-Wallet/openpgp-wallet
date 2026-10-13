@@ -70,7 +70,11 @@ fn normalize(address: &str) -> String {
 /// addresses already paid, across every network (no duplicates), to spot an almost
 /// identical address (`recipient_check`).
 pub fn addresses(data_dir: &Path) -> Vec<String> {
-    let mut list: Vec<String> = load(data_dir).entries.into_iter().map(|e| e.address).collect();
+    let mut list: Vec<String> = load(data_dir)
+        .entries
+        .into_iter()
+        .map(|e| e.address)
+        .collect();
     list.sort();
     list.dedup();
     list
@@ -78,20 +82,27 @@ pub fn addresses(data_dir: &Path) -> Vec<String> {
 
 pub fn has_sent_to(data_dir: &Path, network: &str, address: &str) -> bool {
     let address = normalize(address);
-    load(data_dir).entries.iter().any(|e| e.network == network && e.address == address)
+    load(data_dir)
+        .entries
+        .iter()
+        .any(|e| e.network == network && e.address == address)
 }
 
 /// Call this after a SUCCESSFUL broadcast only. No effect if the address is already
 /// known.
 pub fn record_sent(data_dir: &Path, network: &str, address: &str) -> Result<()> {
     let _serialize = JOURNAL_MUTEX.lock().unwrap_or_else(|p| p.into_inner());
-    let entry = Entry { network: network.to_string(), address: normalize(address) };
+    let entry = Entry {
+        network: network.to_string(),
+        address: normalize(address),
+    };
     let mut journal = load(data_dir);
     if journal.entries.contains(&entry) {
         return Ok(());
     }
     journal.entries.push(entry);
-    let content = serde_json::to_string_pretty(&journal).context("sérialisation du journal des destinataires")?;
+    let content = serde_json::to_string_pretty(&journal)
+        .context("sérialisation du journal des destinataires")?;
     // Temporary file, then rename: a power cut during the write does not leave a
     // truncated log.
     let tmp = path(data_dir).with_extension("json.tmp");
@@ -104,7 +115,10 @@ mod tests {
     use super::*;
 
     fn temp_dir(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("pgp_wallet_sent_recipients_{name}_{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "pgp_wallet_sent_recipients_{name}_{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -114,22 +128,44 @@ mod tests {
     fn records_and_recognizes_recipients_per_network() {
         let dir = temp_dir("per_network");
         let evm = "0xAbCdEf0123456789abcdef0123456789ABCDEF01";
-        assert!(!has_sent_to(&dir, "evm_mainnet", evm), "journal vide : tout est nouveau");
+        assert!(
+            !has_sent_to(&dir, "evm_mainnet", evm),
+            "journal vide : tout est nouveau"
+        );
 
         record_sent(&dir, "evm_mainnet", evm).unwrap();
         assert!(has_sent_to(&dir, "evm_mainnet", evm));
-        assert!(has_sent_to(&dir, "evm_mainnet", &evm.to_lowercase()), "hex EVM : insensible à la casse");
-        assert!(!has_sent_to(&dir, "evm_sepolia", evm), "autre réseau = autre destinataire");
-        assert!(!has_sent_to(&dir, "evm_mainnet", "0xabcdef0123456789abcdef0123456789abcdef02"), "autre adresse");
+        assert!(
+            has_sent_to(&dir, "evm_mainnet", &evm.to_lowercase()),
+            "hex EVM : insensible à la casse"
+        );
+        assert!(
+            !has_sent_to(&dir, "evm_sepolia", evm),
+            "autre réseau = autre destinataire"
+        );
+        assert!(
+            !has_sent_to(
+                &dir,
+                "evm_mainnet",
+                "0xabcdef0123456789abcdef0123456789abcdef02"
+            ),
+            "autre adresse"
+        );
 
         let sol = "9waCLiN9G99f1GXMVBQqifbPMwGMYvJZFUHywRCQPG5F";
         record_sent(&dir, "sol_mainnet", sol).unwrap();
         assert!(has_sent_to(&dir, "sol_mainnet", sol));
-        assert!(!has_sent_to(&dir, "sol_mainnet", &sol.to_lowercase()), "base58 : la casse change l'adresse");
+        assert!(
+            !has_sent_to(&dir, "sol_mainnet", &sol.to_lowercase()),
+            "base58 : la casse change l'adresse"
+        );
 
         let btc = "bc1qp0jus87dalh7xku22tx3uhyhlf8cjuc0vvkhjz";
         record_sent(&dir, "btc_mainnet", &btc.to_uppercase()).unwrap();
-        assert!(has_sent_to(&dir, "btc_mainnet", btc), "bech32 : insensible à la casse");
+        assert!(
+            has_sent_to(&dir, "btc_mainnet", btc),
+            "bech32 : insensible à la casse"
+        );
 
         // Idempotent: no duplicate.
         record_sent(&dir, "evm_mainnet", evm).unwrap();
@@ -141,7 +177,11 @@ mod tests {
     fn a_corrupted_journal_treats_every_address_as_new() {
         let dir = temp_dir("corrupted");
         std::fs::write(path(&dir), "{ pas du json").unwrap();
-        assert!(!has_sent_to(&dir, "btc_mainnet", "bc1qp0jus87dalh7xku22tx3uhyhlf8cjuc0vvkhjz"));
+        assert!(!has_sent_to(
+            &dir,
+            "btc_mainnet",
+            "bc1qp0jus87dalh7xku22tx3uhyhlf8cjuc0vvkhjz"
+        ));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

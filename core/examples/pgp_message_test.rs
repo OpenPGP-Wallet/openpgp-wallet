@@ -26,24 +26,31 @@ fn main() -> Result<()> {
     let text = "bonjour";
     println!("Message en clair : \"{text}\"\n");
 
-    let encrypted = pgp_engine::encrypt_share(text.as_bytes(), "keys/test_pubkey.asc")
-        .context("chiffrement impossible (as-tu lancé `cargo run --bin pgp_demo` au moins une fois ?)")?;
+    let encrypted = pgp_engine::encrypt_share(text.as_bytes(), "keys/test_pubkey.asc").context(
+        "chiffrement impossible (as-tu lancé `cargo run --bin pgp_demo` au moins une fois ?)",
+    )?;
 
     println!("--- Résultat chiffré (PGP armored, format standard OpenPGP) ---");
     println!("{}", String::from_utf8_lossy(&encrypted));
 
     // Checks that this is a structurally valid PGP message (not just text that looks
     // like PGP).
-    OpenpgpMessage::from_bytes(&encrypted).context("le résultat n'est pas un message PGP valide")?;
+    OpenpgpMessage::from_bytes(&encrypted)
+        .context("le résultat n'est pas un message PGP valide")?;
     println!("(structure PGP valide confirmée : c'est un vrai message OpenPGP, pas juste du texte formaté)\n");
 
-    let passphrase = Zeroizing::new(prompt("Passphrase de la clé de test (celle donnée à `pgp_demo`) : ")?);
+    let passphrase = Zeroizing::new(prompt(
+        "Passphrase de la clé de test (celle donnée à `pgp_demo`) : ",
+    )?);
     let decrypted = pgp_engine::decrypt_share(&encrypted, "keys/test_privkey.asc", &passphrase)?;
-    let decrypted_text = String::from_utf8(decrypted).context("le contenu déchiffré n'est pas du texte UTF-8")?;
+    let decrypted_text =
+        String::from_utf8(decrypted).context("le contenu déchiffré n'est pas du texte UTF-8")?;
 
     println!("\nMessage déchiffré : \"{decrypted_text}\"");
     if decrypted_text == text {
-        println!("Ça correspond exactement à l'original : le chiffrement/déchiffrement PGP fonctionne.");
+        println!(
+            "Ça correspond exactement à l'original : le chiffrement/déchiffrement PGP fonctionne."
+        );
     } else {
         println!("PROBLÈME : le message déchiffré ne correspond pas à l'original.");
     }

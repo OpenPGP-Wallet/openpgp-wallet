@@ -21,7 +21,9 @@ fn derive_key_from_path(seed: &[u8], path: &str) -> Result<SigningKey> {
 
     let mut child = root;
     for c in path.iter() {
-        child = child.derive_child(c).context("échec de dérivation d'un segment")?;
+        child = child
+            .derive_child(c)
+            .context("échec de dérivation d'un segment")?;
     }
 
     Ok(child.private_key().clone())
@@ -188,7 +190,8 @@ pub fn derive_monero_base_key(seed: &[u8], index: u32) -> Result<zeroize::Zeroiz
 /// WITHOUT a witness version byte (no SegWit on Cosmos SDK): the hash160 is encoded
 /// directly.
 pub fn format_thor_address(hash160: &[u8; 20]) -> Result<String> {
-    bech32::encode("thor", hash160.to_base32(), Variant::Bech32).context("encodage bech32 impossible")
+    bech32::encode("thor", hash160.to_base32(), Variant::Bech32)
+        .context("encodage bech32 impossible")
 }
 
 /// SLIP-0010 derivation for ed25519: unlike BIP32/secp256k1, non-hardened derivation
@@ -205,7 +208,11 @@ fn slip10_ed25519_master(seed: &[u8]) -> ([u8; 32], [u8; 32]) {
     (key, chain_code)
 }
 
-fn slip10_ed25519_child(parent_key: &[u8; 32], parent_chain_code: &[u8; 32], index: u32) -> ([u8; 32], [u8; 32]) {
+fn slip10_ed25519_child(
+    parent_key: &[u8; 32],
+    parent_chain_code: &[u8; 32],
+    index: u32,
+) -> ([u8; 32], [u8; 32]) {
     let hardened_index = index | 0x8000_0000; // forces hardening, whatever the caller
     let mut mac = HmacSha512::new_from_slice(parent_chain_code).expect("clé HMAC de taille valide");
     mac.update(&[0x00]);
@@ -285,7 +292,8 @@ pub fn derive_near_key(seed: &[u8], account_index: u32) -> ed25519_dalek::Signin
 
 /// Refusal of a Bitcoin destination address, in plain words.
 pub const BTC_ADDRESS_UNSUPPORTED: &str = "type d'adresse Bitcoin pas encore pris en charge (version SegWit future) : demandez une autre adresse au destinataire";
-pub const BTC_ADDRESS_MISCOPIED: &str = "adresse Bitcoin non reconnue : un caractère semble mal recopié";
+pub const BTC_ADDRESS_MISCOPIED: &str =
+    "adresse Bitcoin non reconnue : un caractère semble mal recopié";
 pub const BTC_ADDRESS_OTHER_NETWORK: &str = "adresse d'un autre réseau que Bitcoin";
 
 /// Decodes a Bitcoin testnet P2WPKH address (bech32) into a hash160 (20 bytes): the
@@ -319,8 +327,11 @@ pub fn btc_testnet_recipient_script(address: &str) -> Result<Vec<u8>> {
 /// in plain words: typo, address from another network.
 fn btc_recipient_script(address: &str, testnet: bool) -> Result<Vec<u8>> {
     let address = address.trim();
-    let (hrp, network, p2pkh, p2sh, legacy_prefixes) =
-        if testnet { ("tb", "testnet", 0x6f, 0xc4, &['m', 'n', '2'][..]) } else { ("bc", "mainnet", 0x00, 0x05, &['1', '3'][..]) };
+    let (hrp, network, p2pkh, p2sh, legacy_prefixes) = if testnet {
+        ("tb", "testnet", 0x6f, 0xc4, &['m', 'n', '2'][..])
+    } else {
+        ("bc", "mainnet", 0x00, 0x05, &['1', '3'][..])
+    };
     if let Some((version, hash)) = base58check_hash160(address) {
         return match version {
             v if v == p2pkh => Ok([&[0x76, 0xa9, 0x14][..], &hash, &[0x88, 0xac]].concat()),
@@ -333,7 +344,12 @@ fn btc_recipient_script(address: &str, testnet: bool) -> Result<Vec<u8>> {
         Ok((0, program)) => Ok([&[0x00, program.len() as u8][..], &program].concat()),
         Ok((1, program)) if program.len() == 32 => Ok([&[0x51, 0x20][..], &program].concat()),
         Ok(_) => Err(anyhow!(BTC_ADDRESS_UNSUPPORTED)),
-        Err(_) if address.starts_with(legacy_prefixes) || address.to_ascii_lowercase().starts_with(&format!("{hrp}1")) => Err(anyhow!(BTC_ADDRESS_MISCOPIED)),
+        Err(_)
+            if address.starts_with(legacy_prefixes)
+                || address.to_ascii_lowercase().starts_with(&format!("{hrp}1")) =>
+        {
+            Err(anyhow!(BTC_ADDRESS_MISCOPIED))
+        }
         Err(e) => Err(e),
     }
 }
@@ -351,7 +367,11 @@ fn base58check_hash160(address: &str) -> Option<(u8, [u8; 20])> {
 /// Address of a standard output script (the inverse of `btc_recipient_script`, for
 /// display on a Trezor, which expects the address itself).
 pub fn btc_script_address(script: &[u8], testnet: bool) -> Result<String> {
-    let (hrp, p2pkh, p2sh) = if testnet { ("tb", 0x6f, 0xc4) } else { ("bc", 0x00, 0x05) };
+    let (hrp, p2pkh, p2sh) = if testnet {
+        ("tb", 0x6f, 0xc4)
+    } else {
+        ("bc", 0x00, 0x05)
+    };
     let base58check = |version: u8, hash: &[u8]| {
         let mut payload = vec![version];
         payload.extend_from_slice(hash);
@@ -365,9 +385,15 @@ pub fn btc_script_address(script: &[u8], testnet: bool) -> Result<String> {
         bech32::encode(hrp, data, variant).context("encodage bech32 impossible")
     };
     match script {
-        [0x76, 0xa9, 0x14, hash @ .., 0x88, 0xac] if hash.len() == 20 => Ok(base58check(p2pkh, hash)),
+        [0x76, 0xa9, 0x14, hash @ .., 0x88, 0xac] if hash.len() == 20 => {
+            Ok(base58check(p2pkh, hash))
+        }
         [0xa9, 0x14, hash @ .., 0x87] if hash.len() == 20 => Ok(base58check(p2sh, hash)),
-        [0x00, len, program @ ..] if usize::from(*len) == program.len() && matches!(program.len(), 20 | 32) => segwit(0, program, Variant::Bech32),
+        [0x00, len, program @ ..]
+            if usize::from(*len) == program.len() && matches!(program.len(), 20 | 32) =>
+        {
+            segwit(0, program, Variant::Bech32)
+        }
         [0x51, 0x20, program @ ..] if program.len() == 32 => segwit(1, program, Variant::Bech32m),
         _ => Err(anyhow!("type de sortie Bitcoin non pris en charge")),
     }
@@ -378,7 +404,10 @@ pub fn btc_script_address(script: &[u8], testnet: bool) -> Result<String> {
 /// which the app pays without owning it.
 pub fn btc_mainnet_script_pubkey(address: &str) -> Result<Vec<u8>> {
     let (version, program) = decode_segwit(address, "bc", "mainnet")?;
-    anyhow::ensure!(version <= 1, "adresse Bitcoin d'une version SegWit future (v{version}) — refusée");
+    anyhow::ensure!(
+        version <= 1,
+        "adresse Bitcoin d'une version SegWit future (v{version}) — refusée"
+    );
     // OP_0, or OP_1 (0x51); then the program pushed as is.
     let mut script = vec![if version == 0 { 0x00 } else { 0x51 }, program.len() as u8];
     script.extend_from_slice(&program);
@@ -393,21 +422,36 @@ pub fn btc_mainnet_script_pubkey(address: &str) -> Result<Vec<u8>> {
 fn decode_segwit(address: &str, expected_hrp: &str, network: &str) -> Result<(u8, Vec<u8>)> {
     let (hrp, data, variant) = bech32::decode(address).context("adresse bech32 invalide")?;
     if hrp != expected_hrp {
-        return Err(anyhow!("adresse non-{network} (préfixe '{expected_hrp}' attendu, trouvé '{hrp}')"));
+        return Err(anyhow!(
+            "adresse non-{network} (préfixe '{expected_hrp}' attendu, trouvé '{hrp}')"
+        ));
     }
-    let (version, program) = data.split_first().ok_or_else(|| anyhow!("adresse bech32 vide"))?;
+    let (version, program) = data
+        .split_first()
+        .ok_or_else(|| anyhow!("adresse bech32 vide"))?;
     let version = version.to_u8();
-    let program = Vec::<u8>::from_base32(program).context("conversion base32 -> octets impossible")?;
-    let expected_variant = if version == 0 { Variant::Bech32 } else { Variant::Bech32m };
+    let program =
+        Vec::<u8>::from_base32(program).context("conversion base32 -> octets impossible")?;
+    let expected_variant = if version == 0 {
+        Variant::Bech32
+    } else {
+        Variant::Bech32m
+    };
     anyhow::ensure!(
-        version <= 16 && variant == expected_variant && (2..=40).contains(&program.len()) && (version != 0 || matches!(program.len(), 20 | 32)),
+        version <= 16
+            && variant == expected_variant
+            && (2..=40).contains(&program.len())
+            && (version != 0 || matches!(program.len(), 20 | 32)),
         "adresse Bitcoin mal formée (version SegWit, encodage ou longueur incohérents)"
     );
     Ok((version, program))
 }
 
 fn p2wpkh_hash160((version, program): (u8, Vec<u8>)) -> Result<[u8; 20]> {
-    anyhow::ensure!(version == 0, "programme témoin de taille inattendue (P2WPKH attend 20 octets)");
+    anyhow::ensure!(
+        version == 0,
+        "programme témoin de taille inattendue (P2WPKH attend 20 octets)"
+    );
     program
         .try_into()
         .map_err(|_| anyhow!("programme témoin de taille inattendue (P2WPKH attend 20 octets)"))
@@ -447,13 +491,25 @@ mod tests {
 
         let mainnet_address = format_btc_mainnet_address(&mainnet_hash160).unwrap();
         let testnet_address = format_btc_testnet_address(&testnet_hash160).unwrap();
-        assert!(mainnet_address.starts_with("bc1"), "adresse mainnet inattendue : {mainnet_address}");
-        assert!(testnet_address.starts_with("tb1"), "adresse testnet inattendue : {testnet_address}");
+        assert!(
+            mainnet_address.starts_with("bc1"),
+            "adresse mainnet inattendue : {mainnet_address}"
+        );
+        assert!(
+            testnet_address.starts_with("tb1"),
+            "adresse testnet inattendue : {testnet_address}"
+        );
 
         // Round trip: each address must only decode with its own network's parser, never
         // with the other one.
-        assert_eq!(parse_btc_mainnet_address(&mainnet_address).unwrap(), mainnet_hash160);
-        assert_eq!(parse_btc_testnet_address(&testnet_address).unwrap(), testnet_hash160);
+        assert_eq!(
+            parse_btc_mainnet_address(&mainnet_address).unwrap(),
+            mainnet_hash160
+        );
+        assert_eq!(
+            parse_btc_testnet_address(&testnet_address).unwrap(),
+            testnet_hash160
+        );
         assert!(parse_btc_mainnet_address(&testnet_address).is_err());
         assert!(parse_btc_testnet_address(&mainnet_address).is_err());
     }
@@ -466,10 +522,16 @@ mod tests {
         let seed = [7u8; 32];
         let (_key, hash160) = derive_thor_key(&seed, 0).unwrap();
         let address = format_thor_address(&hash160).unwrap();
-        assert!(address.starts_with("thor1"), "adresse THOR inattendue : {address}");
+        assert!(
+            address.starts_with("thor1"),
+            "adresse THOR inattendue : {address}"
+        );
 
         let (_key_again, hash160_again) = derive_thor_key(&seed, 0).unwrap();
-        assert_eq!(hash160, hash160_again, "la dérivation doit être déterministe");
+        assert_eq!(
+            hash160, hash160_again,
+            "la dérivation doit être déterministe"
+        );
 
         // Derivation path distinct from Bitcoin (coin_type 931' vs 0'): no reason to
         // produce the same hash160 for the same seed/index.
@@ -482,14 +544,26 @@ mod tests {
     #[test]
     fn segwit_addresses_follow_bip173_and_bip350() {
         assert_eq!(
-            hex::encode(btc_mainnet_script_pubkey("BC1QW508D6QEJXTDG4Y5R3ZARVARY0C5XW7KV8F3T4").unwrap()),
+            hex::encode(
+                btc_mainnet_script_pubkey("BC1QW508D6QEJXTDG4Y5R3ZARVARY0C5XW7KV8F3T4").unwrap()
+            ),
             "0014751e76e8199196d454941c45d1b3a323f1433bd6"
         );
         assert_eq!(
-            hex::encode(btc_mainnet_script_pubkey("bc1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqzk5jj0").unwrap()),
+            hex::encode(
+                btc_mainnet_script_pubkey(
+                    "bc1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqzk5jj0"
+                )
+                .unwrap()
+            ),
             "512079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
         );
-        assert_eq!(hex::encode(parse_btc_mainnet_address("bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4").unwrap()), "751e76e8199196d454941c45d1b3a323f1433bd6");
+        assert_eq!(
+            hex::encode(
+                parse_btc_mainnet_address("bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4").unwrap()
+            ),
+            "751e76e8199196d454941c45d1b3a323f1433bd6"
+        );
 
         let encode = |version: u8, program: &[u8], variant: Variant| {
             let mut data = vec![bech32::u5::try_from_u8(version).unwrap()];
@@ -497,14 +571,33 @@ mod tests {
             bech32::encode("bc", data, variant).unwrap()
         };
         let taproot_20 = encode(1, &[0x75; 20], Variant::Bech32m);
-        assert!(parse_btc_mainnet_address(&taproot_20).is_err(), "v1 de 20 octets n'est pas une P2WPKH");
+        assert!(
+            parse_btc_mainnet_address(&taproot_20).is_err(),
+            "v1 de 20 octets n'est pas une P2WPKH"
+        );
         let v0_bech32m = encode(0, &[0x75; 20], Variant::Bech32m);
-        assert!(parse_btc_mainnet_address(&v0_bech32m).is_err() && btc_mainnet_script_pubkey(&v0_bech32m).is_err(), "v0 en bech32m");
+        assert!(
+            parse_btc_mainnet_address(&v0_bech32m).is_err()
+                && btc_mainnet_script_pubkey(&v0_bech32m).is_err(),
+            "v0 en bech32m"
+        );
         let v1_bech32 = encode(1, &[0x79; 32], Variant::Bech32);
-        assert!(btc_mainnet_script_pubkey(&v1_bech32).is_err(), "v1 en bech32");
-        assert!(btc_mainnet_script_pubkey(&encode(2, &[0x75; 16], Variant::Bech32m)).is_err(), "version future refusée");
-        assert!(btc_mainnet_script_pubkey(&encode(0, &[0x75; 25], Variant::Bech32)).is_err(), "v0 : 20 ou 32 octets");
-        assert!(parse_btc_mainnet_address("tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx").is_err(), "testnet");
+        assert!(
+            btc_mainnet_script_pubkey(&v1_bech32).is_err(),
+            "v1 en bech32"
+        );
+        assert!(
+            btc_mainnet_script_pubkey(&encode(2, &[0x75; 16], Variant::Bech32m)).is_err(),
+            "version future refusée"
+        );
+        assert!(
+            btc_mainnet_script_pubkey(&encode(0, &[0x75; 25], Variant::Bech32)).is_err(),
+            "v0 : 20 ou 32 octets"
+        );
+        assert!(
+            parse_btc_mainnet_address("tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx").is_err(),
+            "testnet"
+        );
     }
 
     /// Destination addresses: each standard form gives its script (BIP173/BIP350
@@ -513,49 +606,118 @@ mod tests {
     #[test]
     fn recipient_addresses_of_every_standard_type_give_their_script() {
         for (address, script) in [
-            ("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa", "76a91462e907b15cbf27d5425399ebf6f0fb50ebb88f1888ac"),
-            ("3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy", "a914b472a266d0bd89c13706a4132ccfb16f7c3b9fcb87"),
-            ("bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", "0014751e76e8199196d454941c45d1b3a323f1433bd6"),
-            ("bc1qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3qccfmv3", "00201863143c14c5166804bd19203356da136c985678cd4d27a1b8c6329604903262"),
-            ("bc1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqzk5jj0", "512079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"),
+            (
+                "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa",
+                "76a91462e907b15cbf27d5425399ebf6f0fb50ebb88f1888ac",
+            ),
+            (
+                "3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy",
+                "a914b472a266d0bd89c13706a4132ccfb16f7c3b9fcb87",
+            ),
+            (
+                "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4",
+                "0014751e76e8199196d454941c45d1b3a323f1433bd6",
+            ),
+            (
+                "bc1qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3qccfmv3",
+                "00201863143c14c5166804bd19203356da136c985678cd4d27a1b8c6329604903262",
+            ),
+            (
+                "bc1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqzk5jj0",
+                "512079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+            ),
         ] {
             let decoded = btc_mainnet_recipient_script(address).unwrap();
             assert_eq!(hex::encode(&decoded), script, "{address}");
-            assert_eq!(btc_script_address(&decoded, false).unwrap(), address, "{address}");
-            assert!(btc_testnet_recipient_script(address).is_err(), "{address} : adresse du réseau principal refusée sur testnet");
+            assert_eq!(
+                btc_script_address(&decoded, false).unwrap(),
+                address,
+                "{address}"
+            );
+            assert!(
+                btc_testnet_recipient_script(address).is_err(),
+                "{address} : adresse du réseau principal refusée sur testnet"
+            );
         }
-        assert_eq!(hex::encode(btc_mainnet_recipient_script(" BC1QW508D6QEJXTDG4Y5R3ZARVARY0C5XW7KV8F3T4 ").unwrap()), "0014751e76e8199196d454941c45d1b3a323f1433bd6");
+        assert_eq!(
+            hex::encode(
+                btc_mainnet_recipient_script(" BC1QW508D6QEJXTDG4Y5R3ZARVARY0C5XW7KV8F3T4 ")
+                    .unwrap()
+            ),
+            "0014751e76e8199196d454941c45d1b3a323f1433bd6"
+        );
         let p2wsh = "tb1qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3q0sl5k7";
-        assert_eq!(hex::encode(btc_testnet_recipient_script(p2wsh).unwrap()), "00201863143c14c5166804bd19203356da136c985678cd4d27a1b8c6329604903262");
-        for script in ["76a91462e907b15cbf27d5425399ebf6f0fb50ebb88f1888ac", "a914b472a266d0bd89c13706a4132ccfb16f7c3b9fcb87", "512079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"] {
+        assert_eq!(
+            hex::encode(btc_testnet_recipient_script(p2wsh).unwrap()),
+            "00201863143c14c5166804bd19203356da136c985678cd4d27a1b8c6329604903262"
+        );
+        for script in [
+            "76a91462e907b15cbf27d5425399ebf6f0fb50ebb88f1888ac",
+            "a914b472a266d0bd89c13706a4132ccfb16f7c3b9fcb87",
+            "512079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+        ] {
             let script = hex::decode(script).unwrap();
             let address = btc_script_address(&script, true).unwrap();
-            assert!(address.starts_with(['m', 'n', '2']) || address.starts_with("tb1p"), "{address}");
-            assert_eq!(btc_testnet_recipient_script(&address).unwrap(), script, "{address}");
+            assert!(
+                address.starts_with(['m', 'n', '2']) || address.starts_with("tb1p"),
+                "{address}"
+            );
+            assert_eq!(
+                btc_testnet_recipient_script(&address).unwrap(),
+                script,
+                "{address}"
+            );
         }
-        assert!(btc_script_address(&hex::decode("6a0568656c6c6f").unwrap(), false).is_err(), "OP_RETURN");
+        assert!(
+            btc_script_address(&hex::decode("6a0568656c6c6f").unwrap(), false).is_err(),
+            "OP_RETURN"
+        );
     }
 
     /// Refusals explained in plain words: future SegWit version or Taproot of another
     /// size, typo, other network.
     #[test]
     fn rejected_bitcoin_recipients_are_explained_plainly() {
-        let message = |address: &str| btc_mainnet_recipient_script(address).unwrap_err().to_string();
+        let message = |address: &str| {
+            btc_mainnet_recipient_script(address)
+                .unwrap_err()
+                .to_string()
+        };
         for unsupported in [
             "bc1pw508d6qejxtdg4y5r3zarvary0c5xw7kw508d6qejxtdg4y5r3zarvary0c5xw7kt5nd6y",
             "BC1SW50QGDZ25J",
             "bc1zw508d6qejxtdg4y5r3zarvaryvaxxpcs",
         ] {
-            assert_eq!(message(unsupported), BTC_ADDRESS_UNSUPPORTED, "{unsupported}");
+            assert_eq!(
+                message(unsupported),
+                BTC_ADDRESS_UNSUPPORTED,
+                "{unsupported}"
+            );
         }
-        for miscopied in ["bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t5", "BC1QW508D6QEJXTDG4Y5R3ZARVARY0C5XW7KV8F3T", "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNb", "3J98t1WpEZ73CNmQviecrnyiWrnqRhWNL"] {
+        for miscopied in [
+            "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t5",
+            "BC1QW508D6QEJXTDG4Y5R3ZARVARY0C5XW7KV8F3T",
+            "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNb",
+            "3J98t1WpEZ73CNmQviecrnyiWrnqRhWNL",
+        ] {
             assert_eq!(message(miscopied), BTC_ADDRESS_MISCOPIED, "{miscopied}");
         }
-        assert_eq!(message("DH5yaieqoZN36fDVciNyRueRGvGLR3mr7L"), BTC_ADDRESS_OTHER_NETWORK);
-        assert_eq!(btc_testnet_recipient_script("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa").unwrap_err().to_string(), BTC_ADDRESS_OTHER_NETWORK);
+        assert_eq!(
+            message("DH5yaieqoZN36fDVciNyRueRGvGLR3mr7L"),
+            BTC_ADDRESS_OTHER_NETWORK
+        );
+        assert_eq!(
+            btc_testnet_recipient_script("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa")
+                .unwrap_err()
+                .to_string(),
+            BTC_ADDRESS_OTHER_NETWORK
+        );
         assert!(message("tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx").contains("non-mainnet"));
         // The wallet's own address: P2WPKH only, unchanged.
         assert!(parse_btc_mainnet_address("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa").is_err());
-        assert!(parse_btc_mainnet_address("bc1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqzk5jj0").is_err());
+        assert!(parse_btc_mainnet_address(
+            "bc1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqzk5jj0"
+        )
+        .is_err());
     }
 }
