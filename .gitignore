@@ -1,10 +1,9 @@
 /target
-# "**/" et pas d'ancrage racine : un motif contenant un "/" (ex. "keys/*.asc")
-# reste ancré au répertoire du .gitignore même sans "/" en tête, donc il raterait
-# core/keys/, core/vault/, ou une clé copiée à la main ailleurs pour un test GUI.
-# "**/" force le match à n'importe quelle profondeur. Les clés privées et parts
-# Shamir ne doivent jamais entrer dans l'historique git, quel que soit l'endroit
-# où elles finissent créées.
+# "**/" rather than a root-anchored pattern: a pattern containing "/" (such as
+# "keys/*.asc") stays anchored to this directory even without a leading "/",
+# so it would miss core/keys/, core/vault/, or a key copied by hand elsewhere
+# for a GUI test. "**/" matches at any depth. Private keys and Shamir shares
+# must never enter git history, wherever they end up being created.
 **/*_privkey.asc
 **/vault/*.asc
 **/*_sealed_secret.bin
@@ -12,12 +11,16 @@
 .env
 node_modules/
 
-# Notes internes à la racine, gardées hors du dépôt partagé — motif générique
-# (pas de nom de fichier explicite) plutôt qu'une liste, pour ne rien révéler sur
-# leur contenu ou leur origine. README.md reste le seul .md public à la racine.
+# Private notes at the root stay out of the repository. A generic pattern,
+# rather than a list of names, so this file reveals nothing about them; the
+# public documents are listed explicitly below.
 /*.md
 !/README.md
+!/SECURITY.md
+!/CONTRIBUTING.md
+!/CODE_OF_CONDUCT.md
+!/CHANGELOG.md
 
-# Clés d'API des partenaires (SwapKit, MoonPay Trade), lues à la compilation
-# par core/build.rs : jamais dans l'historique.
+# Partner API keys (SwapKit, MoonPay Trade, indexers), read at build time by
+# core/build.rs: never in git history.
 /partner-keys.env
