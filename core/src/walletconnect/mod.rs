@@ -1,17 +1,16 @@
-//! WalletConnect v2 (Reown), côté PORTEFEUILLE, implémenté en Rust : permet à
-//! une dApp (site web) de demander des signatures à ce portefeuille, via un
-//! relais chiffré de bout en bout. Choix de l'utilisateur plutôt que le SDK
-//! JavaScript officiel : aucune dépendance npm dans la webview où le mot de
-//! passe est saisi, CSP inchangée, et toute la cryptographie reste en Rust.
+//! WalletConnect v2 (Reown), WALLET side, implemented in Rust: lets a dApp
+//! (website) ask this wallet for signatures through an end-to-end encrypted relay.
+//! Chosen over the official JavaScript SDK: no npm dependency in the webview where
+//! the password is typed, an unchanged CSP, and all the cryptography stays in Rust.
 //!
-//! Référence : le code du SDK officiel (monorepo `WalletConnect/walletconnect-
-//! monorepo`, branche v2.0, et `walletconnect-utils`), lu directement plutôt
-//! que supposé ; chaque primitive est vérifiée contre des vecteurs produits par
-//! les bibliothèques mêmes de ce SDK.
+//! Reference: the official SDK's code (the `WalletConnect/walletconnect-monorepo`
+//! monorepo, v2.0 branch, and `walletconnect-utils`), read directly rather than
+//! assumed. Every primitive is checked against vectors produced by that SDK's own
+//! libraries.
 //!
-//! Aucune fonction de ce module ne signe quoi que ce soit : il transporte les
-//! demandes des dApps et renvoie les réponses. Les signatures passent par
-//! `api::sign_dapp_request` (mot de passe exigé) et la boîte native de l'app.
+//! No function in this module signs anything: it carries the dApps' requests and
+//! returns the answers. Signatures go through `api::sign_dapp_request` (password
+//! required) and the app's native dialog.
 
 pub mod auth;
 pub mod crypto;
@@ -25,9 +24,9 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-/// Identifiant du projet chez Reown (dashboard.reown.com), exigé par le relais
-/// pour toute connexion. Public par nature (inclus dans l'app, comme dans
-/// toute dApp) : ce n'est pas un secret. Projet de type « WalletKit ».
+/// Project ID at Reown (dashboard.reown.com), required by the relay for any
+/// connection. Public by nature (shipped in the app, as in any dApp): it is not a
+/// secret. Project type: "WalletKit".
 pub const PROJECT_ID: &str = "b40fbfec04c3137a8f14a25edd9905e6";
 
 const STATE_FILE: &str = "walletconnect.json";
@@ -49,9 +48,9 @@ impl Inner {
         (self.events)(event);
     }
 
-    /// Exécute sur place ce qui est local (sauvegarde, événements pour
-    /// l'interface) et renvoie les actions réseau, pour le fil du relais. Le
-    /// moteur n'est jamais verrouillé pendant l'appel des événements.
+    /// Runs the local work in place (saving, events for the interface) and returns the
+    /// network actions for the relay thread. The engine is never locked while events
+    /// are dispatched.
     fn apply_local(&self, actions: Vec<Action>) -> Vec<Action> {
         let mut network = Vec::new();
         for action in actions {
@@ -66,8 +65,8 @@ impl Inner {
         network
     }
 
-    /// Écriture atomique (fichier temporaire puis renommage) : une coupure en
-    /// pleine écriture ne laisse jamais un fichier tronqué.
+    /// Atomic write (temporary file, then rename): a power cut mid-write never leaves a
+    /// truncated file.
     fn save(&self) -> Result<()> {
         let content = serde_json::to_string_pretty(&self.engine().state).context("sérialisation de l'état WalletConnect")?;
         let tmp = self.data_dir.join(format!("{STATE_FILE}.tmp"));
@@ -76,7 +75,7 @@ impl Inner {
     }
 }
 
-/// Session telle qu'affichée (sans aucune clé).
+/// Session as displayed (without any key).
 #[derive(serde::Serialize, Clone)]
 pub struct SessionView {
     pub topic: String,
@@ -92,8 +91,8 @@ pub struct WalletConnect {
 }
 
 impl WalletConnect {
-    /// Charge l'état enregistré et démarre le fil du relais (qui ne se
-    /// connecte que s'il y a un canal à écouter).
+    /// Loads the saved state and starts the relay thread (which only connects when
+    /// there is a channel to listen to).
     pub fn start(data_dir: &Path, events: EventSink) -> Result<Self> {
         let state: PersistedState = std::fs::read_to_string(data_dir.join(STATE_FILE))
             .ok()
@@ -152,7 +151,7 @@ impl WalletConnect {
         Ok(())
     }
 
-    /// Déconnecte toutes les sessions (réinitialisation du portefeuille).
+    /// Disconnects every session (wallet reset).
     pub fn disconnect_all(&self) {
         let topics: Vec<String> = self.inner.engine().sessions().iter().map(|s| s.topic.clone()).collect();
         for topic in topics {

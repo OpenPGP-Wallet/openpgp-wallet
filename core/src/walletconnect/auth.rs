@@ -1,19 +1,19 @@
-//! Authentification auprès du relais WalletConnect : un JWT signé en Ed25519
-//! par une clé propre à ce client (sans rapport avec les clés du portefeuille),
-//! reproduit d'après `relay-auth` (dépôt `walletconnect-utils`, lu directement) :
-//! en-tête `{"alg":"EdDSA","typ":"JWT"}`, charge `{"iss","sub","aud","iat","exp"}`
-//! dans CET ordre, `iss` = `did:key:z` + base58btc(0xED 0x01 + clé publique),
-//! `sub` = 32 octets aléatoires en hexadécimal, `aud` = URL du relais, durée 1 jour,
-//! le tout en base64url sans remplissage, signature Ed25519 de `en-tête.charge`.
+//! Authentication with the WalletConnect relay: a JWT signed with Ed25519 by a key
+//! specific to this client (unrelated to the wallet's keys), reproduced from
+//! `relay-auth` (in the `walletconnect-utils` repository, read directly): header
+//! `{"alg":"EdDSA","typ":"JWT"}`, payload `{"iss","sub","aud","iat","exp"}` in THAT
+//! order, `iss` = `did:key:z` + base58btc(0xED 0x01 + public key), `sub` = 32 random
+//! bytes in hex, `aud` = relay URL, valid for 1 day, all in unpadded base64url, with
+//! an Ed25519 signature of `header.payload`.
 
 use base64::Engine;
 use ed25519_dalek::{Signer, SigningKey};
 
-/// Préfixe multicodec d'une clé publique Ed25519 ("K36" en base58btc).
+/// Multicodec prefix of an Ed25519 public key ("K36" in base58btc).
 const MULTICODEC_ED25519: [u8; 2] = [0xed, 0x01];
 pub const JWT_TTL_SECS: u64 = 86_400;
 
-/// Identifiant DID de la clé du client (`iss` du JWT).
+/// DID of the client key (the JWT's `iss`).
 pub fn did_key(public: &[u8; 32]) -> String {
     let mut bytes = MULTICODEC_ED25519.to_vec();
     bytes.extend_from_slice(public);
@@ -24,10 +24,10 @@ fn b64url(bytes: &[u8]) -> String {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
 }
 
-/// JWT d'authentification. `client_seed` : graine Ed25519 de ce client
-/// (persistée, voir `store`) ; `sub` : identifiant aléatoire de la connexion.
-/// Les trois valeurs interpolées ci-dessous (DID base58, hexadécimal, URL fixe
-/// du relais) ne contiennent jamais de caractère à échapper en JSON.
+/// Authentication JWT. `client_seed`: this client's Ed25519 seed (persisted, see
+/// `store`); `sub`: random connection identifier. The three values interpolated
+/// below (base58 DID, hex, fixed relay URL) never contain a character that needs
+/// escaping in JSON.
 pub fn sign_jwt(client_seed: &[u8; 32], sub: &str, aud: &str, iat: u64) -> String {
     let key = SigningKey::from_bytes(client_seed);
     let iss = did_key(&key.verifying_key().to_bytes());
@@ -43,10 +43,9 @@ pub fn sign_jwt(client_seed: &[u8; 32], sub: &str, aud: &str, iat: u64) -> Strin
 mod tests {
     use super::*;
 
-    /// Vecteur produit par `@walletconnect/relay-auth` (`generateKeyPair(seed)`,
-    /// `signJWT(sub, aud, 86400, keyPair, iat)`), vérifié valide par son propre
-    /// `verifyJWT` : Ed25519 étant déterministe, le JWT doit être identique au
-    /// caractère près.
+    /// Vector produced by `@walletconnect/relay-auth` (`generateKeyPair(seed)`,
+    /// `signJWT(sub, aud, 86400, keyPair, iat)`) and accepted by its own `verifyJWT`:
+    /// since Ed25519 is deterministic, the JWT must match character for character.
     #[test]
     fn relay_jwt_matches_the_official_relay_auth_library() {
         let seed = [0x33; 32];

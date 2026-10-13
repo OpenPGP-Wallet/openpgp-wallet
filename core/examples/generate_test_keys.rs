@@ -1,8 +1,8 @@
-//! Génère les 3 paires de clés PGP de test attendues par main.rs (une par "backup" :
-//! user, backup_a, backup_b), chacune avec sa propre passphrase. À lancer une seule
-//! fois avant `cargo run` (le binaire principal), tant qu'on n'a pas de vraies clés.
+//! Generates the 3 test PGP key pairs the shamir_pgp_cli example expects (one per
+//! backup: user, backup_a, backup_b), each with its own passphrase. Run it once
+//! before `cargo run --example shamir_pgp_cli`, as long as there are no real keys.
 //!
-//! Les clés vont dans keys/ (déjà ignoré par .gitignore, jamais commit).
+//! The keys go to keys/ (ignored by git, never committed).
 
 use anyhow::{Context, Result};
 use openpgp::armor;

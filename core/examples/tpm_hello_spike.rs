@@ -1,30 +1,27 @@
-//! Spike manuel — PAS un test automatisé, aucune vérification biométrique réelle
-//! n'est automatisable. À lancer soi-même sur une machine avec Windows Hello
-//! configuré, pour valider empiriquement `windows_hello.rs` avant de lui faire
-//! confiance dans `api.rs`/`lib.rs` (voir le plan : "Étape 0 — Spike Windows
-//! Hello/TPM, à valider AVANT tout le reste").
+//! Manual spike, NOT an automated test: no real biometric check can be automated.
+//! Run it yourself on a machine with Windows Hello set up, to validate
+//! `windows_hello.rs` empirically before trusting it in `api.rs`/`lib.rs` (from the
+//! plan: "Step 0: Windows Hello/TPM spike, to validate BEFORE anything else").
 //!
-//! Usage (`cargo run --bin tpm_hello_spike -- <commande>`, depuis `core/`) :
-//!   enroll   : crée une clé TPM, scelle un secret de test, le déchiffre tout de
-//!              suite dans le même processus — un prompt Windows Hello doit
-//!              apparaître à la création ET/OU au déchiffrement. Écrit l'état
-//!              (nom de clé + blob scellé) dans tpm_hello_spike_state.json.
-//!   reopen   : relit l'état écrit par `enroll` et retente SEULEMENT le
-//!              déchiffrement, depuis CE lancement (processus séparé) — doit
-//!              re-déclencher le prompt, jamais réussir silencieusement :
-//!              c'est toute la justification du choix face à DPAPI.
-//!   cancel   : mêmes étapes que `reopen`, mais avec l'instruction d'ANNULER le
-//!              prompt manuellement — doit échouer proprement (pas de secret
-//!              renvoyé), jamais réussir.
-//!   cleanup  : supprime la clé TPM et l'état local.
+//! Usage (`cargo run --example tpm_hello_spike -- <command>`, from `core/`):
+//! - `enroll`: creates a TPM key, seals a test secret and decrypts it right away in
+//!   the same process. A Windows Hello prompt must appear at creation AND/OR at
+//!   decryption. Writes the state (key name + sealed blob) to
+//!   tpm_hello_spike_state.json.
+//! - `reopen`: reads the state written by `enroll` and retries ONLY the decryption,
+//!   from THIS run (a separate process). It must trigger the prompt again and never
+//!   succeed silently: that is the whole reason for choosing this over DPAPI.
+//! - `cancel`: same steps as `reopen`, but you CANCEL the prompt by hand. It must
+//!   fail cleanly (no secret returned), never succeed.
+//! - `cleanup`: deletes the TPM key and the local state.
 //!
-//! Critères de succès à cocher avant de continuer l'implémentation :
-//! (a) un vrai prompt Windows Hello apparaît de façon fiable au déchiffrement ;
-//! (b) annuler le prompt échoue proprement (voir `cancel`) plutôt que de
-//!     réussir silencieusement ;
-//! (c) `reopen` (autre lancement du processus) est SOUMIS AU MÊME prompt, pas
-//!     silencieusement autorisé ;
-//! (d) le comportement reste stable après un redémarrage de la machine.
+//! Success criteria to tick before going on with the implementation:
+//! - (a) a real Windows Hello prompt reliably appears at decryption;
+//! - (b) cancelling the prompt fails cleanly (see `cancel`) instead of succeeding
+//!   silently;
+//! - (c) `reopen` (another run of the process) is SUBJECT TO THE SAME prompt, not
+//!   silently allowed;
+//! - (d) the behavior stays stable after rebooting the machine.
 
 #[cfg(windows)]
 use anyhow::{Context, Result};

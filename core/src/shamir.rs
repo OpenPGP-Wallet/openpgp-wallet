@@ -1,8 +1,8 @@
 use anyhow::{anyhow, Result};
 use blahaj::{Share, Sharks};
 
-/// Découpe `secret` en `total_shares` parts, dont `threshold` suffisent
-/// à le reconstruire (schéma de Shamir).
+/// Splits `secret` into `total_shares` shares, any `threshold` of which rebuild it
+/// (Shamir's scheme).
 pub fn split_secret(secret: &[u8], threshold: u8, total_shares: u8) -> Result<Vec<Vec<u8>>> {
     let sharks = Sharks(threshold);
     let dealer = sharks.dealer(secret);
@@ -10,11 +10,10 @@ pub fn split_secret(secret: &[u8], threshold: u8, total_shares: u8) -> Result<Ve
     Ok(shares)
 }
 
-/// Reconstitue le secret à partir d'au moins `threshold` parts déchiffrées.
-/// Prend des `&[u8]` plutôt que des `Vec<u8>` pour permettre à l'appelant de passer
-/// des parts enveloppées dans `Zeroizing` (2 parts suffisant à reconstruire le
-/// secret, elles sont aussi sensibles que lui) sans avoir à en cloner le contenu
-/// dans un buffer intermédiaire non protégé.
+/// Rebuilds the secret from at least `threshold` decrypted shares. Takes `&[u8]`
+/// rather than `Vec<u8>` so the caller can pass shares wrapped in `Zeroizing` (2
+/// shares are enough to rebuild the secret, so they are as sensitive as the secret
+/// itself) without cloning their contents into an unprotected intermediate buffer.
 pub fn reconstruct_secret(threshold: u8, raw_shares: &[&[u8]]) -> Result<Vec<u8>> {
     let sharks = Sharks(threshold);
     let shares: std::result::Result<Vec<Share>, _> =
@@ -31,11 +30,11 @@ mod tests {
 
     #[test]
     fn split_and_reconstruct_roundtrip() {
-        let secret = b"01234567890123456789012345678901".to_vec(); // 32 octets
+        let secret = b"01234567890123456789012345678901".to_vec(); // 32 bytes
         let shares = split_secret(&secret, 2, 3).unwrap();
         assert_eq!(shares.len(), 3);
 
-        // 2 parts sur 3 doivent suffire, peu importe lesquelles
+        // Any 2 of the 3 shares must be enough, whichever they are
         let subset: Vec<&[u8]> = vec![shares[0].as_slice(), shares[2].as_slice()];
         let recovered = reconstruct_secret(2, &subset).unwrap();
         assert_eq!(recovered, secret);

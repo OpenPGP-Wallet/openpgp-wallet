@@ -1,22 +1,22 @@
-// Fenêtre de confirmation ouverte par Rust pour les actions sensibles qui ne
-// sont pas des transactions (voir lib.rs, `secure_confirm`). Elle affiche le
-// contenu donné par Rust et lui renvoie la réponse ; c'est Rust qui vérifie le
-// délai et la phrase, et qui n'accepte la réponse que de CETTE fenêtre — la
-// page principale de l'app ne peut ni l'ouvrir, ni l'atteindre, ni répondre.
+// Confirmation window opened by Rust for sensitive actions that are not
+// transactions (see lib.rs, `secure_confirm`). It shows the content Rust gives it
+// and sends back the answer. Rust checks the delay and the typed phrase, and only
+// accepts the answer from THIS window: the app's main page can neither open it,
+// reach it, nor answer for it.
 const { invoke } = window.__TAURI__.core;
 
-// Même thème que l'app (même stockage local).
+// Same theme as the app (same local storage).
 const THEMES = ["default", "purple", "emerald", "ocean", "rose", "orange", "dark", "light"];
 let theme = "default";
 try {
   const saved = localStorage.getItem("pgp-wallet-theme");
   if (THEMES.includes(saved)) theme = saved;
 } catch (e) {
-  // Stockage indisponible : thème par défaut.
+  // Storage unavailable: default theme.
 }
 if (theme !== "default") document.documentElement.dataset.theme = theme;
 
-// Pictogrammes : constantes, jamais de contenu reçu inséré comme HTML.
+// Icons: constants only, received content is never inserted as HTML.
 const svg = (paths) =>
   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${paths}</svg>`;
 const ICONS = {
@@ -29,8 +29,8 @@ const ICONS = {
   ),
 };
 
-// Délai avant de pouvoir confirmer (Rust le vérifie aussi) : une touche
-// Entrée tapée dans l'app au moment où la fenêtre apparaît ne la valide pas.
+// Delay before confirming is possible (Rust checks it too): an Enter key typed in
+// the app just as the window appears does not confirm it.
 const CONFIRM_DELAY_MS = 1000;
 
 const normalize = (text) => text.trim().split(/\s+/).join(" ").toLocaleUpperCase();
@@ -89,7 +89,7 @@ async function start() {
   refreshOk();
   root.classList.remove("hidden");
   await invoke("secure_confirm_ready", { theme, height: Math.ceil(root.getBoundingClientRect().height) + 2 });
-  // « Annuler » par défaut ; la phrase, s'il faut l'écrire.
+  // "Cancel" by default; the phrase, if it has to be typed.
   (phrase !== null ? input : cancel).focus();
   setTimeout(() => {
     delayOver = true;

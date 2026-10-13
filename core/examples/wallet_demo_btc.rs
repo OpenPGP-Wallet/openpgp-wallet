@@ -1,10 +1,10 @@
-//! Démo autonome : dérive une adresse Bitcoin testnet (P2WPKH) depuis une entropie
-//! maître fraîche (SANS Shamir/PGP) et effectue un vrai virement sur le testnet
-//! Bitcoin (voir wallet_flow::run_btc_transfer, aussi utilisé après restauration
-//! Shamir+PGP dans main.rs).
+//! Standalone demo: derives a Bitcoin testnet (P2WPKH) address from fresh master
+//! entropy (WITHOUT Shamir or PGP) and makes a real transfer on Bitcoin testnet
+//! (see wallet_flow::run_btc_transfer, also used after a Shamir + PGP restore in
+//! the shamir_pgp_cli example).
 //!
-//! ATTENTION : comme wallet_demo (EVM), la clé privée n'est protégée par rien.
-//! Testnet uniquement, jamais de vrais fonds.
+//! WARNING: as in wallet_demo (EVM), the private key is not protected at all.
+//! Testnet only, never real funds.
 
 use anyhow::Result;
 use openpgp_wallet_core::{entropy, memory_guard, wallet_flow};

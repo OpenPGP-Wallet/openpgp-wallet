@@ -1,33 +1,32 @@
-//! PSBT (BIP174, version 0) fournie par un tiers — LI.FI pour un échange
-//! depuis Bitcoin : lecture de la transaction non signée qu'elle contient.
-//! Rien n'est repris des champs propres à chaque entrée (sorties dépensées
-//! annoncées, chemins de dérivation…) : l'app relit les sorties qu'elle
-//! dépense auprès de son propre serveur (Esplora), vérifie chaque sortie de
-//! la transaction (voir `lifi::verify_btc_deposit`), puis signe une
-//! transaction qu'elle re-sérialise elle-même (`btc_tx::RawTx`).
+//! PSBT (BIP174, version 0) provided by a third party, LI.FI for a swap from
+//! Bitcoin: reads the unsigned transaction inside it. Nothing is taken from the
+//! per-input fields (announced spent outputs, derivation paths...): the app reads
+//! the outputs it spends from its own server (Esplora), checks every output of the
+//! transaction (see `lifi::verify_btc_deposit`), then signs a transaction it
+//! serializes again itself (`btc_tx::RawTx`).
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
 
-/// Entrées et sorties au plus : bien au-delà d'un dépôt normal (quelques
-/// entrées, 5 sorties), borne contre une PSBT démesurée.
+/// Maximum number of inputs and outputs: far above a normal deposit (a few inputs,
+/// 5 outputs), a bound against an oversized PSBT.
 const MAX_INPUTS: usize = 200;
 const MAX_OUTPUTS: usize = 16;
 
-/// Entrée de la transaction non signée.
+/// Input of the unsigned transaction.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PsbtInput {
-    /// Ordre "affiché" (big-endian), comme `btc_tx::Utxo::txid`.
+    /// "Display" order (big-endian), like `btc_tx::Utxo::txid`.
     pub txid: [u8; 32],
     pub vout: u32,
     pub sequence: u32,
 }
 
-/// Transaction non signée d'une PSBT.
+/// Unsigned transaction of a PSBT.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Psbt {
     pub version: u32,
     pub inputs: Vec<PsbtInput>,
-    /// (valeur en satoshis, script de sortie).
+    /// (value in satoshis, output script).
     pub outputs: Vec<(u64, Vec<u8>)>,
     pub locktime: u32,
 }
@@ -53,7 +52,7 @@ impl<'a> Reader<'a> {
         Ok(u64::from_le_bytes(self.take(8)?.try_into().expect("8 octets")))
     }
 
-    /// Entier compact de Bitcoin, sous sa forme minimale seulement.
+    /// Bitcoin compact-size integer, in its minimal form only.
     fn varint(&mut self) -> Result<usize> {
         let first = self.take(1)?[0];
         let (value, min) = match first {
@@ -71,7 +70,7 @@ impl<'a> Reader<'a> {
     }
 }
 
-/// Une table clé → valeur de la PSBT (jusqu'au séparateur 0x00).
+/// A key → value map of the PSBT (up to the 0x00 separator).
 fn read_map<'a>(reader: &mut Reader<'a>) -> Result<Vec<(&'a [u8], &'a [u8])>> {
     let mut entries: Vec<(&[u8], &[u8])> = Vec::new();
     loop {
@@ -87,13 +86,14 @@ fn read_map<'a>(reader: &mut Reader<'a>) -> Result<Vec<(&'a [u8], &'a [u8])>> {
     }
 }
 
-/// Transaction non signée (format sans témoins, scripts de signature vides,
-/// exigés par BIP174).
+/// Unsigned transaction (no-witness format, empty signature scripts, as BIP174
+/// requires).
 fn parse_unsigned_tx(bytes: &[u8]) -> Result<Psbt> {
     let mut reader = Reader { data: bytes, pos: 0 };
     let version = reader.u32_le()?;
     let input_count = reader.varint()?;
-    // 0 entrée : c'est le marqueur d'une sérialisation avec témoins, interdite ici.
+    // Zero inputs: that is the marker of a serialization with witnesses, not allowed
+    // here.
     ensure!((1..=MAX_INPUTS).contains(&input_count), "PSBT : nombre d'entrées invalide ({input_count})");
     let mut inputs = Vec::with_capacity(input_count);
     for _ in 0..input_count {
@@ -118,8 +118,8 @@ fn parse_unsigned_tx(bytes: &[u8]) -> Result<Psbt> {
     Ok(Psbt { version, inputs, outputs, locktime })
 }
 
-/// Lit une PSBT version 0 : transaction non signée (clé globale 0x00,
-/// unique), puis une table par entrée et par sortie, sans octet en trop.
+/// Reads a version 0 PSBT: unsigned transaction (global key 0x00, unique), then one
+/// map per input and per output, with no trailing byte.
 pub fn parse(bytes: &[u8]) -> Result<Psbt> {
     ensure!(bytes.starts_with(b"psbt\xff"), "ce n'est pas une PSBT (en-tête attendu « psbt\\xff »)");
     let mut reader = Reader { data: bytes, pos: 5 };
@@ -145,10 +145,9 @@ pub fn parse(bytes: &[u8]) -> Result<Psbt> {
 mod tests {
     use super::*;
 
-    /// PSBT réelle renvoyée par LI.FI (BTC → ETH via LayerSwap, 1 000 000
-    /// sats depuis une adresse publique, relevée le 03/10/2026) : 1 entrée,
-    /// dépôt Taproot, memo, monnaie, frais LI.FI (0,25 %) et intégrateur
-    /// (0,80 %).
+    /// A real PSBT returned by LI.FI (BTC → ETH through LayerSwap, 1,000,000 sats from
+    /// a public address, captured on 2026-10-03): 1 input, Taproot deposit, memo,
+    /// change, LI.FI fee (0.25%) and integrator fee (0.80%).
     pub(crate) const LIFI_PSBT: &str = include_str!("../testdata/lifi_btc_psbt.hex");
 
     #[test]

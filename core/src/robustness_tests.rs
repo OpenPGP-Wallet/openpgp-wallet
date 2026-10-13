@@ -1,19 +1,18 @@
-//! Tests de robustesse (checklist « avant confiance publique ») : transaction
-//! Bitcoin à plusieurs entrées vérifiée signature par signature, montants aux
-//! limites (u64/u128), et fuzzing déterministe des lectures de montants et
-//! d'adresses — entrées aléatoires (jamais de panique, jamais acceptées à
-//! tort) et adresses valides altérées d'un seul caractère (rejetées par leur
-//! somme de contrôle).
+//! Robustness tests (from the "before public trust" checklist): a multi-input
+//! Bitcoin transaction checked signature by signature, amounts at the limits
+//! (u64/u128), and deterministic fuzzing of amount and address parsing: random
+//! inputs (never a panic, never wrongly accepted) and valid addresses with a single
+//! character altered (rejected by their checksum).
 //!
-//! Générateur pseudo-aléatoire maison à graine fixe : chaque échec se rejoue
-//! à l'identique, sans dépendance de test supplémentaire.
+//! Home-made pseudo-random generator with a fixed seed: every failure replays
+//! identically, with no extra test dependency.
 
 use crate::btc_tx::{BtcTx, Utxo};
 use crate::{derivation, monero, tokens, zcash, zcash_shielded};
 use k256::ecdsa::signature::hazmat::PrehashVerifier;
 use k256::ecdsa::{Signature, SigningKey, VerifyingKey};
 
-/// xorshift64* : suffisant pour générer des entrées de test variées.
+/// xorshift64*: good enough to generate varied test inputs.
 struct Rng(u64);
 
 impl Rng {
@@ -50,9 +49,9 @@ fn read_varint(raw: &[u8], at: &mut usize) -> u64 {
     value
 }
 
-/// Transaction à 5 entrées : relue octet par octet, chaque témoin porte une
-/// signature DER valide (low-S) contre le sighash BIP143 de SON entrée, avec
-/// la clé publique de l'adresse ; montants cohérents (sorties < entrées).
+/// Transaction with 5 inputs: read back byte by byte, each witness carries a valid
+/// DER signature (low-S) against the BIP143 sighash of ITS input, with the
+/// address's public key; consistent amounts (outputs < inputs).
 #[test]
 fn multi_input_bitcoin_transaction_signs_every_input() {
     let key = SigningKey::from_slice(&[7u8; 32]).unwrap();
@@ -70,7 +69,7 @@ fn multi_input_bitcoin_transaction_signs_every_input() {
     let tx = BtcTx { inputs, to_script: crate::btc_tx::p2wpkh_script_pubkey(&[0x42; 20]), value_sat: 100_000_000, change_hash160: hash160, change_sat: total - 100_000_000 - 2_000, op_return_data: None };
     let raw = tx.sign(&key, &hash160).unwrap();
 
-    let mut at = 6; // version + marqueur/drapeau segwit
+    let mut at = 6; // version + segwit marker/flag
     assert_eq!(&raw[4..6], &[0x00, 0x01]);
     let n_inputs = read_varint(&raw, &mut at);
     assert_eq!(n_inputs, 5);
@@ -112,9 +111,8 @@ fn multi_input_bitcoin_transaction_signs_every_input() {
     assert_eq!(raw.len(), at + 4, "locktime en fin de transaction");
 }
 
-/// Montants : bornes exactes de u128 et de u64 (ZEC, XMR), puis 20 000
-/// entrées aléatoires — aucune panique, et tout montant accepté se relit à
-/// l'identique.
+/// Amounts: exact u128 and u64 bounds (ZEC, XMR), then 20,000 random inputs. No
+/// panic, and every accepted amount reads back identically.
 #[test]
 fn amounts_at_the_limits_and_under_fuzzing() {
     let max = u128::MAX.to_string();
@@ -123,7 +121,7 @@ fn amounts_at_the_limits_and_under_fuzzing() {
     assert_eq!(tokens::parse_amount("3.40282366920938463463374607431768211455", 38).unwrap(), u128::MAX);
     assert!(tokens::parse_amount("1", 39).is_err(), "10^39 ne tient pas dans u128");
     assert!(tokens::parse_amount("0", 18).is_err() && tokens::parse_amount("0.000", 18).is_err(), "montant nul refusé");
-    // XMR (12 décimales, u64 de piconeros) et ZEC (8 décimales, u64 de zatoshis).
+    // XMR (12 decimals, u64 of piconeros) and ZEC (8 decimals, u64 of zatoshis).
     assert_eq!(monero::parse_xmr("18446744.073709551615").unwrap(), u64::MAX);
     assert!(monero::parse_xmr("18446744.073709551616").is_err());
     let zat = |s: &str| tokens::parse_amount(s, 8).ok().and_then(|u| u64::try_from(u).ok());
@@ -134,9 +132,8 @@ fn amounts_at_the_limits_and_under_fuzzing() {
     let mut rng = Rng(0x5eed_1234_abcd_ef01);
     let (mut accepted, mut refused) = (0, 0);
     for round in 0..40_000 {
-        // Une moitié de bruit (caractères mêlés), une moitié de nombres bien
-        // formés : chiffres, au plus un point, parfois plus de décimales que
-        // permis ou des espaces autour.
+        // Half noise (mixed characters), half well-formed numbers: digits, at most one
+        // dot, sometimes more decimals than allowed or surrounding spaces.
         let input: String = if round % 2 == 0 {
             let len = rng.below(24);
             (0..len).map(|_| *rng.pick(&alphabet)).collect()
@@ -162,7 +159,7 @@ fn amounts_at_the_limits_and_under_fuzzing() {
             assert!(input.trim().bytes().all(|b| b.is_ascii_digit() || b == b'.'), "accepté à tort : {input:?}");
             let shown = tokens::format_amount(units, decimals);
             assert_eq!(tokens::parse_amount(&shown, decimals).unwrap(), units, "aller-retour {input:?} -> {shown}");
-            // Solde affiché tronqué : jamais au-dessus du solde réel.
+            // Truncated displayed balance: never above the real balance.
             let cut = rng.below(usize::from(decimals) + 1) as u8;
             let balance = tokens::format_balance(units, decimals, cut);
             if let Ok(back) = tokens::parse_amount(&balance, decimals) {
@@ -174,9 +171,9 @@ fn amounts_at_the_limits_and_under_fuzzing() {
     assert!(accepted > 5_000 && refused > 5_000, "fuzzing trop peu varié ({accepted}/{refused})");
 }
 
-/// Un caractère d'une adresse valide remplacé par un autre du même alphabet :
-/// toujours refusé (bech32/bech32m, base58check, base58 Monero à somme
-/// keccak) ; et des chaînes aléatoires ne font jamais paniquer les lecteurs.
+/// One character of a valid address replaced by another from the same alphabet:
+/// always rejected (bech32/bech32m, base58check, Monero base58 with a keccak
+/// checksum); and random strings never make the parsers panic.
 #[test]
 fn addresses_reject_single_character_typos_and_survive_fuzzing() {
     let btc = derivation::format_btc_mainnet_address(&[0x5a; 20]).unwrap();

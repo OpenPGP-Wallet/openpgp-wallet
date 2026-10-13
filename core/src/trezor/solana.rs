@@ -1,7 +1,7 @@
-//! Solana sur Trezor : clé publique (adresse) et signature du message d'une
-//! transaction, affiché sur l'appareil avant signature. Chemin de Trezor
-//! Suite pour le premier compte : m/44'/501'/0'/0'. Toute signature est
-//! vérifiée ici contre la clé publique du compte.
+//! Solana on Trezor: public key (address) and signature of a transaction message,
+//! shown on the device before signing. Trezor Suite path for the first account:
+//! m/44'/501'/0'/0'. Every signature is checked here against the account's public
+//! key.
 
 use super::proto::{Message, Writer};
 use super::{msg, Trezor};
@@ -23,8 +23,8 @@ fn sign_request(path: &[u32], message: &[u8]) -> Vec<u8> {
     Writer::new().uints(1, path).bytes(2, message).finish()
 }
 
-/// Signe le message (partie signée d'une transaction) ; la signature doit
-/// vérifier contre `expected`.
+/// Signs the message (the signed part of a transaction); the signature must verify
+/// against `expected`.
 pub fn sign_transaction_message(trezor: &mut Trezor, path: &[u32], message: &[u8], expected: &[u8; 32]) -> Result<[u8; 64]> {
     let response = trezor.call_expect(msg::SOLANA_SIGN_TX, &sign_request(path, message), msg::SOLANA_TX_SIGNATURE)?;
     let signature: [u8; 64] = Message::parse(&response)?
@@ -43,7 +43,7 @@ mod tests {
     use super::*;
     use crate::ledger::parse_path;
 
-    /// Même encodage que trezorlib (`SolanaSignTx`).
+    /// Same encoding as trezorlib (`SolanaSignTx`).
     #[test]
     fn sign_request_matches_trezorlib() {
         assert_eq!(
@@ -52,10 +52,9 @@ mod tests {
         );
     }
 
-    /// Firmware officiel dans l'émulateur : clé publique = NOTRE dérivation
-    /// (même chemin que le portefeuille logiciel) ; adresse affichée ; vrai
-    /// virement construit par notre code, signé après revue (montant,
-    /// destinataire) et vérifié ; refus -> erreur claire.
+    /// Official firmware in the emulator: public key = OUR derivation (same path as the software wallet);
+    /// address shown; a real transfer built by our code, signed after review (amount, recipient) and
+    /// verified; a rejection gives a clear error.
     /// `cargo test -- --ignored trezor_solana_against_the_official_firmware --nocapture --test-threads=1`
     #[test]
     #[ignore]

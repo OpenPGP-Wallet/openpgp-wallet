@@ -1,9 +1,10 @@
-//! Démo autonome : génère une paire de clés PGP de test (via sequoia, pas besoin
-//! de GnuPG installé), chiffre une part factice avec la clé publique, puis la
-//! déchiffre avec la clé privée + passphrase. Valide encrypt_share/decrypt_share
-//! avant de les câbler dans le flux complet (main.rs, avec les vraies parts Shamir).
+//! Standalone demo: generates a test PGP key pair (with Sequoia, no GnuPG install
+//! needed), encrypts a dummy share with the public key, then decrypts it with the
+//! private key and passphrase. It validated encrypt_share/decrypt_share before they
+//! were wired into the full flow (the shamir_pgp_cli example, with real Shamir
+//! shares).
 //!
-//! Les clés générées vont dans keys/ (déjà ignoré par .gitignore, jamais commit).
+//! The generated keys go to keys/ (ignored by git, never committed).
 
 use anyhow::{Context, Result};
 use openpgp::armor;

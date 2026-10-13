@@ -1,11 +1,10 @@
-// Courbes en SVG, sans dépendance (la politique de sécurité de l'app n'admet
-// que ses propres scripts). Une seule série par graphique : ligne de 2 px
-// avec un léger voile, point final cerclé de la couleur du fond, grille en
-// traits fins, graduations arrondies ; au survol ou au clavier (flèches), un
-// réticule suit l'instant le plus proche et une bulle donne valeur et date.
-// Les couleurs viennent des variables CSS du thème (--chart-line…) ; `trend`
-// ("up" | "down") passe la courbe en vert ou en rouge (classes trend-up /
-// trend-down sur le conteneur, voir styles.css).
+// SVG charts with no dependency (the app's security policy only allows its own
+// scripts). One series per chart: a 2 px line with a light fill, the last point
+// ringed with the background color, a thin grid and rounded ticks. On hover or
+// with the keyboard (arrow keys), a crosshair follows the nearest point in time
+// and a tooltip shows the value and date. Colors come from the theme's CSS
+// variables (--chart-line...); `trend` ("up" | "down") turns the line green or red
+// (trend-up / trend-down classes on the container, see styles.css).
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -15,7 +14,7 @@ function svgEl(name, attrs) {
   return el;
 }
 
-// Graduations « rondes » (1, 2, 2,5, 5 × 10^n) couvrant [min, max].
+// "Round" ticks (1, 2, 2.5, 5 × 10^n) covering [min, max].
 function niceTicks(min, max, count) {
   if (min === max) {
     const pad = Math.abs(min) * 0.01 || 1;
@@ -32,7 +31,7 @@ function niceTicks(min, max, count) {
   return { ticks, step };
 }
 
-// Point le plus proche de l'abscisse x (points triés par date).
+// Point closest to the x coordinate (points sorted by date).
 function nearestIndex(xs, x) {
   let lo = 0;
   let hi = xs.length - 1;
@@ -45,11 +44,10 @@ function nearestIndex(xs, x) {
 }
 
 /**
- * Trace `points` ([[instant en secondes, valeur], …], triés) dans `container`.
- * options : height, formatValue(v), formatAxis(v, step), formatTime(t, span),
- * formatTooltipTime(t, span), emptyText, ariaLabel, trend — `span` : durée
- * réellement couverte par les points (secondes), qui décide de la précision des
- * dates.
+ * Draws `points` ([[time in seconds, value], …], sorted) into `container`.
+ * options: height, formatValue(v), formatAxis(v, step), formatTime(t, span),
+ * formatTooltipTime(t, span), emptyText, ariaLabel, trend. `span` is the time
+ * the points actually cover (seconds), which decides how precise dates are.
  */
 export function renderLineChart(container, points, options) {
   container._chart = { points, options };
@@ -66,7 +64,7 @@ export function renderLineChart(container, points, options) {
   draw(container, points, options);
 }
 
-// Couleur de la courbe selon le sens de la variation (`null` : couleur du thème).
+// Line color from the direction of the change (`null`: theme color).
 function applyTrend(container, trend) {
   container.classList.toggle("trend-up", trend === "up");
   container.classList.toggle("trend-down", trend === "down");
@@ -100,15 +98,14 @@ function draw(container, points, options) {
   const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, width: "100%", height, role: "img" });
   svg.setAttribute("aria-label", options.ariaLabel ?? "");
 
-  // Grille horizontale et graduations des valeurs.
+  // Horizontal grid and value ticks.
   for (const v of ticks) {
     svg.appendChild(svgEl("line", { x1: pad.left, x2: width - pad.right, y1: y(v), y2: y(v), class: "chart-grid" }));
     const label = svgEl("text", { x: pad.left - 8, y: y(v), class: "chart-axis", "text-anchor": "end", "dominant-baseline": "middle" });
     label.textContent = options.formatAxis(v, step);
     svg.appendChild(label);
   }
-  // Graduations du temps réparties, moins nombreuses sur un graphique étroit
-  // pour ne jamais se chevaucher.
+  // Evenly spread time ticks, fewer on a narrow chart so they never overlap.
   const span = t1 - t0;
   const timeTicks = width < 520 ? 3 : 4;
   for (let i = 0; i <= timeTicks; i++) {
@@ -127,7 +124,7 @@ function draw(container, points, options) {
   const last = points[points.length - 1];
   svg.appendChild(svgEl("circle", { cx: xs[xs.length - 1], cy: y(last[1]), r: 4, class: "chart-dot" }));
 
-  // Couche de survol : réticule, point, bulle.
+  // Hover layer: crosshair, point, tooltip.
   const cross = svgEl("line", { y1: pad.top, y2: height - pad.bottom, class: "chart-crosshair", visibility: "hidden" });
   const hoverDot = svgEl("circle", { r: 4, class: "chart-dot", visibility: "hidden" });
   svg.appendChild(cross);
@@ -188,7 +185,7 @@ function draw(container, points, options) {
   container.append(svg, tooltip);
 }
 
-/** Petite courbe sans axe ni interaction (la ligne porte déjà ses chiffres). */
+/** Small chart with no axis and no interaction (the row already carries the figures). */
 export function renderSparkline(container, points, trend = null) {
   container.replaceChildren();
   applyTrend(container, points.length < 2 ? null : trend);

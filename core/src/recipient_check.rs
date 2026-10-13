@@ -1,34 +1,34 @@
-//! Adresse PRESQUE identique à une adresse connue (destinataire déjà payé,
-//! contact du carnet, profil de ce portefeuille) : un caractère manquant, en
-//! trop, différent, ou deux inversés — l'erreur de copie typique. Constaté le
-//! 05/10/2026 : 1,18 USDC envoyés à l'adresse de l'utilisateur privée de son
-//! premier caractère (encore une adresse Solana valide), malgré les
-//! avertissements génériques « nouvelle adresse » / « jamais servi ».
+//! Address ALMOST identical to a known address (a recipient already paid, an
+//! address book contact, one of this wallet's profiles): a missing, extra or
+//! different character, or two swapped characters, which is the typical copy
+//! mistake. Observed on 2026-10-05: 1.18 USDC sent to the user's own address
+//! missing its first character (still a valid Solana address), despite the generic
+//! "new address" / "never used" warnings.
 //!
-//! Deux adresses distinctes générées normalement ne sont jamais à deux
-//! caractères près : à cette distance, c'est une faute de frappe ou de copie.
+//! Two distinct, normally generated addresses are never within two characters of
+//! each other: at that distance, it is a typing or copying mistake.
 
-/// Distance retenue (au-delà : adresse sans rapport).
+/// Distance threshold (beyond it: an unrelated address).
 const MAX_DISTANCE: usize = 2;
 
-/// Ce qui distingue l'adresse saisie de l'adresse connue (positions à partir
-/// de 0, en caractères).
+/// What separates the typed address from the known one (0-based positions, in
+/// characters).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Difference {
-    /// Caractère `expected` absent à `position`.
+    /// Character `expected` missing at `position`.
     Missing { position: usize, expected: char },
-    /// Caractère `typed` en trop à `position`.
+    /// Extra character `typed` at `position`.
     Extra { position: usize, typed: char },
-    /// `typed` au lieu de `expected` à `position`.
+    /// `typed` instead of `expected` at `position`.
     Changed { position: usize, typed: char, expected: char },
-    /// Caractères `position` et `position + 1` inversés.
+    /// Characters `position` and `position + 1` swapped.
     Swapped { position: usize },
-    /// Deux caractères diffèrent.
+    /// Two characters differ.
     Two,
 }
 
-/// Forme de comparaison : hex EVM et bech32 sont insensibles à la casse
-/// (même adresse), base58 y est SENSIBLE (autre adresse).
+/// Comparison form: EVM hex and bech32 are case-insensitive (same address), base58
+/// IS case-sensitive (a different address).
 fn normalize(address: &str) -> Vec<char> {
     let trimmed = address.trim();
     let lower = trimmed.to_ascii_lowercase();
@@ -39,8 +39,8 @@ fn normalize(address: &str) -> Vec<char> {
     }
 }
 
-/// Distance d'édition avec inversion de deux voisins (« optimal string
-/// alignment ») ; `None` au-delà de `MAX_DISTANCE`.
+/// Edit distance where swapping two neighbors counts as one step ("optimal string
+/// alignment"); `None` beyond `MAX_DISTANCE`.
 fn distance(a: &[char], b: &[char]) -> Option<usize> {
     if a.len().abs_diff(b.len()) > MAX_DISTANCE {
         return None;
@@ -82,15 +82,15 @@ fn describe(typed: &[char], known: &[char], distance: usize) -> Difference {
     }
 }
 
-/// Format de `address` pour `network` (mêmes parseurs que le reste de
-/// l'app) : l'aperçu de l'envoi n'avertit que pour une adresse valide.
+/// Format of `address` for `network` (the same parsers as the rest of the app): the
+/// send preview only warns about a valid address.
 pub fn validate(network: &str, address: &str) -> anyhow::Result<()> {
     crate::external_wallets::validate_address(network, address)
 }
 
-/// Adresse de `known` la plus proche de `typed` parmi les presque
-/// identiques (à égalité, la première : ordre de priorité de l'appelant),
-/// avec la différence. Jamais identique : `None` si `typed` est l'une d'elles.
+/// The address in `known` closest to `typed` among the near-identical ones (on a
+/// tie, the first: the caller's priority order), with the difference. Never
+/// identical: `None` if `typed` is one of them.
 pub fn near_miss<'a>(known: impl IntoIterator<Item = &'a str>, typed: &str) -> Option<(&'a str, Difference)> {
     let typed_chars = normalize(typed);
     if typed_chars.is_empty() {
@@ -113,7 +113,7 @@ mod tests {
 
     const USER: &str = "F1YBYFJWBteTwi5eS5BjdSy3xDGGv8bhHBJ54n78nzdc";
 
-    /// Le cas réel du 05/10/2026 : premier caractère oublié.
+    /// The real case of 2026-10-05: first character dropped.
     #[test]
     fn the_real_missing_first_character_is_caught() {
         let typed = "1YBYFJWBteTwi5eS5BjdSy3xDGGv8bhHBJ54n78nzdc";
@@ -130,12 +130,12 @@ mod tests {
         assert_eq!(near_miss([USER], &format!("{}x", &USER[..last])).unwrap().1, Difference::Changed { position: last, typed: 'x', expected: 'c' });
         assert_eq!(near_miss([USER], &format!("{}cd", &USER[..last - 1])).unwrap().1, Difference::Swapped { position: last - 1 });
         assert_eq!(near_miss([USER], &USER[2..]).unwrap().1, Difference::Two);
-        // Base58 : la casse compte (une autre adresse, à un caractère près).
+        // Base58: case matters (a different address, one character apart).
         assert_eq!(near_miss([USER], &USER.replacen('F', "f", 1)).unwrap().1, Difference::Changed { position: 0, typed: 'f', expected: 'F' });
     }
 
-    /// Identique (aux espaces près, ou à la casse près en hex/bech32) : rien ;
-    /// sans rapport : rien.
+    /// Identical (apart from spaces, or from case in hex/bech32): nothing; unrelated:
+    /// nothing.
     #[test]
     fn same_or_unrelated_addresses_are_not_flagged() {
         assert_eq!(near_miss([USER], &format!(" {USER} ")), None);
@@ -144,13 +144,13 @@ mod tests {
         assert_eq!(near_miss([USER], "4PUcVV4Ax8jXHXsGaRZfh69oRkeRGJyGZbDBPFUD2okm"), None);
         assert_eq!(near_miss([USER], &USER[3..]), None, "trois caractères de moins : au-delà");
         assert_eq!(near_miss([USER], ""), None);
-        // Une adresse identique à une autre connue l'emporte.
+        // An address identical to another known one wins.
         assert_eq!(near_miss([USER, &USER[1..]], &USER[1..]), None);
     }
 
-    /// La plus proche l'emporte, pas la première : constaté en vrai, la faute
-    /// déjà payée (« 1YBY… », à deux caractères) passait avant l'adresse
-    /// exacte (à un caractère).
+    /// The closest one wins, not the first: seen for real, the mistake that had already
+    /// been paid ("1YBY...", two characters off) came before the exact address (one
+    /// character off).
     #[test]
     fn the_closest_known_address_wins() {
         let slip = &USER[1..];

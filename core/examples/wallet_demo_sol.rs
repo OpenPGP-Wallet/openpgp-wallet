@@ -1,10 +1,10 @@
-//! Démo autonome : dérive une adresse Solana (ed25519, SLIP-0010) depuis une entropie
-//! maître fraîche (SANS Shamir/PGP) et effectue un vrai virement sur le devnet Solana
-//! (voir wallet_flow::run_sol_transfer, aussi utilisé après restauration Shamir+PGP
-//! dans main.rs).
+//! Standalone demo: derives a Solana address (ed25519, SLIP-0010) from fresh master
+//! entropy (WITHOUT Shamir or PGP) and makes a real transfer on Solana devnet (see
+//! wallet_flow::run_sol_transfer, also used after a Shamir + PGP restore in the
+//! shamir_pgp_cli example).
 //!
-//! ATTENTION : comme les autres démos, la clé privée n'est protégée par rien.
-//! Devnet uniquement, jamais de vrais fonds.
+//! WARNING: as in the other demos, the private key is not protected at all. Devnet
+//! only, never real funds.
 
 use anyhow::Result;
 use openpgp_wallet_core::{entropy, memory_guard, wallet_flow};

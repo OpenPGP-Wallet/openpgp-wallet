@@ -1,13 +1,13 @@
-//! Transport vers le relais WalletConnect : une connexion WebSocket (TLS),
-//! tenue par un fil dédié, qui exécute les `Action`s du moteur et lui remet
-//! les messages reçus. Méthodes JSON-RPC du relais reprises du SDK officiel
-//! (`relay-api/src/jsonrpc.ts`, protocole "irn") : `irn_subscribe`,
-//! `irn_unsubscribe`, `irn_publish`, `irn_batchFetchMessages`, et les messages
-//! entrants `irn_subscription`, à acquitter par `true`.
+//! Transport to the WalletConnect relay: a WebSocket connection (TLS) held by a
+//! dedicated thread, which runs the engine's `Action`s and hands it the received
+//! messages. The relay's JSON-RPC methods come from the official SDK
+//! (`relay-api/src/jsonrpc.ts`, "irn" protocol): `irn_subscribe`,
+//! `irn_unsubscribe`, `irn_publish`, `irn_batchFetchMessages`, and incoming
+//! `irn_subscription` messages, to be acknowledged with `true`.
 //!
-//! Connexion ouverte seulement quand il y a un canal à écouter (lien collé ou
-//! session active), refermée sinon ; reconnexion avec délai croissant et
-//! réabonnement à tous les canaux connus.
+//! The connection is only open when there is a channel to listen to (a pasted link
+//! or an active session) and closed otherwise; it reconnects with a growing delay
+//! and resubscribes to every known channel.
 
 use super::engine::{payload_id, Action, WcEvent};
 use super::{auth, Inner};
@@ -25,8 +25,8 @@ pub const RELAY_URL: &str = "wss://relay.walletconnect.org";
 const RELAY_HOST: &str = "relay.walletconnect.org";
 const HEARTBEAT: Duration = Duration::from_secs(30);
 const MAX_BACKOFF_SECS: u64 = 60;
-/// Au-delà, les actions en attente pendant une coupure sont abandonnées (les
-/// messages du protocole expirent de toute façon en quelques minutes).
+/// Beyond this, actions queued during an outage are dropped (protocol messages
+/// expire within minutes anyway).
 const MAX_QUEUED: usize = 200;
 
 type Socket = WebSocket<MaybeTlsStream<TcpStream>>;
@@ -55,7 +55,7 @@ fn connect(project_id: &str, client_seed: &[u8; 32]) -> Result<Socket> {
         }
         other => anyhow!("connexion au relais WalletConnect impossible : {other}"),
     })?;
-    // Lecture courte : le même fil doit aussi envoyer les actions en attente.
+    // Short read: the same thread also has to send the queued actions.
     match socket.get_mut() {
         MaybeTlsStream::NativeTls(tls) => tls.get_ref().set_read_timeout(Some(Duration::from_millis(200)))?,
         MaybeTlsStream::Plain(tcp) => tcp.set_read_timeout(Some(Duration::from_millis(200)))?,
@@ -64,8 +64,8 @@ fn connect(project_id: &str, client_seed: &[u8; 32]) -> Result<Socket> {
     Ok(socket)
 }
 
-/// État propre à UNE connexion : abonnements confirmés (canal -> identifiant
-/// d'abonnement, nécessaire pour se désabonner) et requêtes en vol.
+/// State specific to ONE connection: confirmed subscriptions (channel ->
+/// subscription ID, needed to unsubscribe) and in-flight requests.
 #[derive(Default)]
 struct Connection {
     subscriptions: HashMap<String, String>,
@@ -99,9 +99,9 @@ impl Connection {
     }
 }
 
-/// Texte reçu du relais : message d'un canal (acquitté puis remis au moteur),
-/// messages en attente récupérés, ou réponse à une de nos requêtes. Renvoie les
-/// actions réseau produites par le moteur, à envoyer ensuite.
+/// Text received from the relay: a channel message (acknowledged, then handed to
+/// the engine), fetched pending messages, or the answer to one of our requests.
+/// Returns the network actions the engine produced, to send next.
 fn on_text(inner: &Inner, conn: &mut Connection, socket: &mut Socket, text: &str) -> Vec<Action> {
     let Ok(payload) = serde_json::from_str::<Value>(text) else { return Vec::new() };
     let mut deliveries: Vec<(String, String)> = Vec::new();
@@ -147,9 +147,9 @@ fn on_text(inner: &Inner, conn: &mut Connection, socket: &mut Socket, text: &str
 
 #[cfg(test)]
 mod tests {
-    /// Vrai relais, sans Project ID valide : la connexion TLS et la poignée de
-    /// main WebSocket (JWT compris) doivent aboutir jusqu'au refus HTTP du
-    /// Project ID — et ce refus doit être traduit en message clair.
+    /// Real relay without a valid Project ID: the TLS connection and the WebSocket
+    /// handshake (JWT included) must get as far as the HTTP refusal of the Project ID,
+    /// and that refusal must be turned into a clear message.
     /// `cargo test -- --ignored relay_refuses_a_missing_project_id --nocapture`
     #[test]
     #[ignore]
@@ -166,7 +166,7 @@ pub(super) fn run(inner: Arc<Inner>, commands: Receiver<Action>) {
     let mut queue: VecDeque<Action> = VecDeque::new();
     let mut backoff = 1u64;
     loop {
-        // Rien à écouter : pas de connexion, on attend une commande.
+        // Nothing to listen to: no connection, wait for a command.
         if inner.engine().topics().is_empty() && queue.is_empty() {
             match commands.recv_timeout(Duration::from_secs(5)) {
                 Ok(action) => queue.push_back(action),
@@ -208,8 +208,8 @@ pub(super) fn run(inner: Arc<Inner>, commands: Receiver<Action>) {
             let engine = inner.engine();
             (engine.topics(), engine.state.pairings.iter().map(|p| p.topic.clone()).collect::<Vec<_>>())
         };
-        // Réabonnement à tout ce qui est connu (les abonnements ne survivent
-        // pas à la connexion) ; messages en attente des appairages récupérés.
+        // Resubscribe to everything known (subscriptions do not survive the connection);
+        // fetch the pending messages of pairings.
         let mut outgoing: VecDeque<Action> = topics.into_iter().map(Action::Subscribe).collect();
         outgoing.extend(pairings.into_iter().map(Action::FetchMessages));
         outgoing.append(&mut queue);
@@ -244,7 +244,7 @@ pub(super) fn run(inner: Arc<Inner>, commands: Receiver<Action>) {
                 outgoing.extend(inner.apply_local(actions));
                 last_cleanup = Instant::now();
             }
-            // Plus rien à écouter : on referme proprement.
+            // Nothing left to listen to: close cleanly.
             if outgoing.is_empty() && inner.engine().topics().is_empty() {
                 let _ = socket.close(None);
                 break;

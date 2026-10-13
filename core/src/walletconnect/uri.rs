@@ -1,7 +1,7 @@
-//! Lien d'appairage WalletConnect v2, collé par l'utilisateur depuis la dApp :
-//! `wc:{topic}@2?relay-protocol=irn&symKey={clé}&expiryTimestamp={unix}` (format
-//! de `formatUri`/`parseUri` dans `packages/utils/src/uri.ts` du SDK officiel).
-//! Validation stricte : un lien mal formé est refusé avant tout accès réseau.
+//! WalletConnect v2 pairing link, pasted by the user from the dApp:
+//! `wc:{topic}@2?relay-protocol=irn&symKey={key}&expiryTimestamp={unix}` (the
+//! format of `formatUri`/`parseUri` in `packages/utils/src/uri.ts` of the official
+//! SDK). Strict validation: a malformed link is rejected before any network access.
 
 use anyhow::{anyhow, Context, Result};
 use zeroize::Zeroizing;
@@ -9,7 +9,7 @@ use zeroize::Zeroizing;
 pub struct PairingUri {
     pub topic: String,
     pub sym_key: Zeroizing<[u8; 32]>,
-    /// Horodatage Unix d'expiration annoncé par la dApp, s'il y en a un.
+    /// Unix expiry timestamp announced by the dApp, if any.
     pub expiry: Option<u64>,
 }
 
@@ -62,13 +62,13 @@ mod tests {
 
     #[test]
     fn parses_the_official_uri_format() {
-        // Forme produite par `formatUri` (paramètres triés).
+        // The shape produced by `formatUri` (sorted parameters).
         let uri = format!("wc:{TOPIC}@2?expiryTimestamp=1705667684&relay-protocol=irn&symKey={KEY}");
         let parsed = parse(&uri).unwrap();
         assert_eq!(parsed.topic, TOPIC);
         assert_eq!(hex::encode(*parsed.sym_key), KEY);
         assert_eq!(parsed.expiry, Some(1_705_667_684));
-        // Variante "wc://" (Android) et paramètre "methods" ignoré.
+        // "wc://" variant (Android), and the "methods" parameter is ignored.
         let uri = format!("wc://{TOPIC}@2?relay-protocol=irn&symKey={KEY}&methods=%5Bwc_sessionPropose%5D");
         assert!(parse(&uri).unwrap().expiry.is_none());
     }
@@ -78,7 +78,7 @@ mod tests {
         for bad in [
             String::new(),
             format!("https://{TOPIC}@2?symKey={KEY}"),
-            format!("wc:{TOPIC}@1?bridge=https%3A%2F%2Fx&key={KEY}"), // WalletConnect v1, abandonné
+            format!("wc:{TOPIC}@1?bridge=https%3A%2F%2Fx&key={KEY}"), // WalletConnect v1, discontinued
             format!("wc:{TOPIC}@2?relay-protocol=irn"),
             format!("wc:{TOPIC}@2?relay-protocol=waku&symKey={KEY}"),
             format!("wc:abc@2?relay-protocol=irn&symKey={KEY}"),

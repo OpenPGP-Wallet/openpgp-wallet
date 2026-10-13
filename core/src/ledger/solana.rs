@@ -1,10 +1,10 @@
-//! Application Solana du Ledger (`app-solana`, spécification `doc/api.md`,
-//! découpage repris de `hw-app-solana`) : clé publique et signature de
-//! transaction. L'appareil signe le MESSAGE de la transaction (ce que couvre
-//! la signature ed25519 de Solana) après en avoir affiché le contenu.
+//! Ledger's Solana app (`app-solana`, `doc/api.md` specification, chunking taken
+//! from `hw-app-solana`): public key and transaction signing. The device signs the
+//! transaction MESSAGE (what Solana's ed25519 signature covers) after showing its
+//! content.
 //!
-//! Toute signature renvoyée est vérifiée ici contre la clé publique du compte
-//! avant usage.
+//! Every returned signature is checked here against the account's public key before
+//! use.
 
 use super::{encode_path, send_raw, Transport};
 use anyhow::{anyhow, Result};
@@ -19,7 +19,7 @@ const P2_EXTEND: u8 = 0x01;
 const P2_MORE: u8 = 0x02;
 const MAX_PAYLOAD: usize = 255;
 
-/// Mots d'état propres à l'application Solana, puis sens génériques.
+/// Status words specific to the Solana app, then the generic meanings.
 fn check(sw: u16) -> Result<()> {
     match sw {
         0x9000 => Ok(()),
@@ -31,8 +31,8 @@ fn check(sw: u16) -> Result<()> {
     }
 }
 
-/// Envoi découpé en blocs de 255 octets (`hw-app-solana` `sendToDevice`) :
-/// drapeau MORE sur chaque bloc sauf le dernier, EXTEND à partir du deuxième.
+/// Data sent in 255-byte chunks (`hw-app-solana` `sendToDevice`): MORE flag on
+/// every chunk except the last, EXTEND from the second one on.
 fn send_chunked(transport: &mut dyn Transport, ins: u8, p1: u8, payload: &[u8]) -> Result<Vec<u8>> {
     let chunks: Vec<&[u8]> = payload.chunks(MAX_PAYLOAD).collect();
     let mut p2 = 0u8;
@@ -48,17 +48,17 @@ fn send_chunked(transport: &mut dyn Transport, ins: u8, p1: u8, payload: &[u8]) 
     Err(anyhow!("commande Solana vide"))
 }
 
-/// Clé publique (adresse) du compte `path`. `confirm` : affichée sur
-/// l'appareil pour vérification visuelle.
+/// Public key (address) of the `path` account. `confirm`: shown on the device for
+/// visual verification.
 pub fn get_pubkey(transport: &mut dyn Transport, path: &[u32], confirm: bool) -> Result<[u8; 32]> {
     let response = send_chunked(transport, INS_GET_PUBKEY, if confirm { P1_CONFIRM } else { P1_NON_CONFIRM }, &encode_path(path)?)?;
     response.try_into().map_err(|_| anyhow!("clé publique Solana du Ledger mal formée"))
 }
 
-/// Signe le message d'une transaction (`message` = partie signée, sans les
-/// signatures) ; la signature doit vérifier contre `expected`.
+/// Signs a transaction message (`message` = the signed part, without signatures);
+/// the signature must verify against `expected`.
 pub fn sign_transaction_message(transport: &mut dyn Transport, path: &[u32], message: &[u8], expected: &[u8; 32]) -> Result<[u8; 64]> {
-    let mut payload = vec![1u8]; // un seul signataire
+    let mut payload = vec![1u8]; // single signer
     payload.extend_from_slice(&encode_path(path)?);
     payload.extend_from_slice(message);
     let response = send_chunked(transport, INS_SIGN, P1_CONFIRM, &payload)?;
@@ -82,8 +82,8 @@ mod tests {
         }
     }
 
-    /// Même découpage que `hw-app-solana` : 600 octets -> 255 (MORE), 255
-    /// (EXTEND|MORE), 90 (EXTEND) ; un bloc unique -> P2 = 0.
+    /// Same chunking as `hw-app-solana`: 600 bytes -> 255 (MORE), 255 (EXTEND|MORE), 90
+    /// (EXTEND); a single chunk -> P2 = 0.
     #[test]
     fn chunking_flags_match_hw_app_solana() {
         let mut t = Recorder(Vec::new());
@@ -94,12 +94,10 @@ mod tests {
         assert_eq!(t.0, vec![(0x00, 0x00, 13)]);
     }
 
-    /// Application Solana OFFICIELLE dans Speculos (graine de test publique) :
-    /// clés publiques identiques à NOS dérivations (chemin Phantom
-    /// m/44'/501'/0'/0' et chemin Ledger Live m/44'/501'/0'), puis un vrai
-    /// virement construit par NOTRE code, signé après revue à l'écran (montant et
-    /// destinataire affichés), signature vérifiée ; refus -> erreur claire.
-    /// Speculos doit tourner avec `solana-nanosp.elf`.
+    /// The OFFICIAL Solana app in Speculos (public test seed): public keys identical to OUR derivations (Phantom
+    /// path m/44'/501'/0'/0' and Ledger Live path m/44'/501'/0'), then a real transfer built by OUR code, signed
+    /// after on-screen review (amount and recipient shown), signature checked; a rejection gives a clear error.
+    /// Speculos must run `solana-nanosp.elf`.
     /// `cargo test -- --ignored ledger_solana_against_the_official_app_in_speculos --nocapture --test-threads=1`
     #[test]
     #[ignore]
@@ -116,7 +114,7 @@ mod tests {
         assert_eq!(device_ll, crate::derivation::derive_ed25519_path(&seed, &[44, 501, 0]).verifying_key().to_bytes());
         println!("clés Ledger = dérivations : {} / {}", bs58::encode(device).into_string(), bs58::encode(device_ll).into_string());
 
-        // Virement de 0,0123 SOL construit par notre code (message legacy).
+        // A 0.0123 SOL transfer built by our code (legacy message).
         let to = [0x44u8; 32];
         let dummy = ed25519_dalek::SigningKey::from_bytes(&[9u8; 32]);
         let tx = crate::sol_tx::build_and_sign_transaction(&dummy, &device_ll, &[crate::sol_tx::transfer_instruction(&device_ll, &to, 12_300_000)], &[7u8; 32]);

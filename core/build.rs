@@ -1,7 +1,6 @@
-//! Clés de partenaires (SwapKit, MoonPay Trade, NodeReal, Taostats, Blockscout, Alchemy) lues À LA COMPILATION dans
-//! `partner-keys.env`, à la racine du dépôt (ignoré par git), ou à défaut dans
-//! l'environnement : jamais dans le code ni dans l'historique. Clé absente :
-//! le fournisseur correspondant n'est simplement pas proposé.
+//! Partner API keys (SwapKit, MoonPay Trade, NodeReal, Taostats, Blockscout, Alchemy) are read AT BUILD TIME from
+//! `partner-keys.env` at the repository root (ignored by git), or else from the environment: never in the code,
+//! never in history. When a key is missing, the matching provider is simply not offered.
 
 const KEYS: &[&str] = &["SWAPKIT_API_KEY", "MOONPAY_TRADE_API_KEY", "NODEREAL_API_KEY", "TAOSTATS_API_KEY", "BLOCKSCOUT_API_KEY", "ALCHEMY_API_KEY"];
 
@@ -19,8 +18,7 @@ fn main() {
             .filter_map(|line| line.split_once('='))
             .find(|(name, _)| name.trim() == *key)
             .map(|(_, value)| value.trim().trim_matches('"').to_string());
-        // Une clé d'API : caractères visibles seulement (rien qui casse une
-        // en-tête HTTP).
+        // An API key: visible characters only (nothing that could break an HTTP header).
         let value = from_file.or_else(|| std::env::var(key).ok()).filter(|v| !v.is_empty() && v.chars().all(|c| c.is_ascii_graphic()));
         if let Some(value) = value {
             println!("cargo:rustc-env={key}={value}");

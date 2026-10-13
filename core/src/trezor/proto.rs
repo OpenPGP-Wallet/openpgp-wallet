@@ -1,11 +1,11 @@
-//! Encodage protobuf minimal, limité à ce qu'utilisent les messages Trezor de
-//! ce module : entiers (varint) et champs de longueur (octets, texte, messages
-//! imbriqués). Numéros de messages et de champs repris des définitions
-//! officielles (`common/protob/*.proto` du firmware, via trezorlib).
+//! Minimal protobuf encoding, limited to what this module's Trezor messages use:
+//! integers (varint) and length-delimited fields (bytes, text, nested messages).
+//! Message and field numbers come from the official definitions
+//! (`common/protob/*.proto` in the firmware, via trezorlib).
 
 use anyhow::{anyhow, bail, Result};
 
-/// Construit un message champ par champ, dans l'ordre des appels.
+/// Builds a message field by field, in call order.
 #[derive(Default)]
 pub struct Writer(Vec<u8>);
 
@@ -36,8 +36,8 @@ impl Writer {
         self.uint(field, value as u64)
     }
 
-    /// Champ répété d'entiers (un champ par valeur, forme non compactée
-    /// qu'acceptent les décodeurs protobuf).
+    /// Repeated integer field (one field per value, the non-packed form that protobuf
+    /// decoders accept).
     pub fn uints(self, field: u32, values: &[u32]) -> Self {
         values.iter().fold(self, |w, v| w.uint(field, u64::from(*v)))
     }
@@ -67,8 +67,7 @@ pub enum Value<'a> {
     Bytes(&'a [u8]),
 }
 
-/// Champs d'un message décodé, dans l'ordre (un champ répété apparaît
-/// plusieurs fois).
+/// Fields of a decoded message, in order (a repeated field appears several times).
 pub struct Message<'a>(Vec<(u32, Value<'a>)>);
 
 fn read_varint(data: &[u8], pos: &mut usize) -> Result<u64> {
@@ -99,7 +98,7 @@ impl<'a> Message<'a> {
                     fields.push((field, Value::Bytes(&data[pos..end])));
                     pos = end;
                 }
-                // Champs de taille fixe (absents des messages utilisés) : ignorés.
+                // Fixed-size fields (not present in the messages used here): skipped.
                 1 => pos = pos.checked_add(8).filter(|p| *p <= data.len()).ok_or_else(|| anyhow!("message Trezor tronqué"))?,
                 5 => pos = pos.checked_add(4).filter(|p| *p <= data.len()).ok_or_else(|| anyhow!("message Trezor tronqué"))?,
                 other => bail!("type de champ protobuf non pris en charge ({other})"),
@@ -145,8 +144,8 @@ impl<'a> Message<'a> {
 mod tests {
     use super::*;
 
-    /// Encodages de référence produits par trezorlib (protobuf.dump_message) :
-    /// GetAddress m/84'/1'/0'/0/0 « Testnet », script SPENDWITNESS.
+    /// Reference encodings produced by trezorlib (protobuf.dump_message): GetAddress
+    /// m/84'/1'/0'/0/0 "Testnet", SPENDWITNESS script.
     #[test]
     fn encoding_matches_trezorlib() {
         let encoded = Writer::new()

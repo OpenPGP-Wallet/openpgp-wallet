@@ -1,14 +1,13 @@
-//! Démo autonome : dérive une adresse EVM depuis une entropie maître fraîche
-//! (SANS passer par Shamir/PGP) et effectue un vrai virement sur le testnet
-//! Sepolia. Sert uniquement à valider la brique "wallet" (dérivation BIP32,
-//! signature ECDSA, RLP, JSON-RPC) indépendamment de la brique "sauvegarde
-//! chiffrée" du reste du projet (voir wallet_flow::run_evm_transfer, aussi
-//! utilisé après restauration Shamir+PGP dans main.rs).
+//! Standalone demo: derives an EVM address from fresh master entropy (WITHOUT going
+//! through Shamir or PGP) and makes a real transfer on the Sepolia testnet. Its
+//! only purpose is to validate the "wallet" building block (BIP32 derivation, ECDSA
+//! signing, RLP, JSON-RPC) independently of the project's "encrypted backup" block
+//! (see wallet_flow::run_evm_transfer, also used after a Shamir + PGP restore in
+//! the shamir_pgp_cli example).
 //!
-//! ATTENTION : la clé privée générée ici n'est protégée par rien (pas de
-//! Shamir, pas de PGP). Elle n'existe que le temps de l'exécution et n'est
-//! utilisable que sur testnet. Ne jamais réutiliser cette approche pour de
-//! vrais fonds.
+//! WARNING: the private key generated here is not protected at all (no Shamir, no
+//! PGP). It only lives for the duration of the run and is only usable on testnet.
+//! Never reuse this approach for real funds.
 
 use anyhow::{Context, Result};
 use openpgp_wallet_core::{entropy, memory_guard, wallet_flow, wallet_flow::SEPOLIA};
@@ -17,10 +16,9 @@ use zeroize::Zeroizing;
 fn main() -> Result<()> {
     println!("=== Démo wallet EVM (sans Shamir/PGP) — testnet Sepolia uniquement ===\n");
 
-    // Entropie fraîche. Par défaut ce projet ne passe jamais par une phrase de
-    // récupération : l'entropie sert directement de seed BIP32.
-    // On propose ici, uniquement pour cette démo, de la voir sous forme BIP39
-    // (12 mots) à but pédagogique/comparatif.
+    // Fresh entropy. This project never goes through a recovery phrase: the entropy is
+    // used directly as the BIP32 seed. For this demo only, it can be shown in BIP39
+    // form (12 words), for teaching and comparison.
     let entropy_buf = Zeroizing::new(entropy::generate_master_entropy());
     let _entropy_lock = memory_guard::lock(&entropy_buf);
 

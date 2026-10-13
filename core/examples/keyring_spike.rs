@@ -1,29 +1,26 @@
-//! Spike manuel — PAS un test automatisé : `cargo test` utilise volontairement
-//! un faux coffre en mémoire pour `secure_storage` (voir
-//! `api.rs::active_key_store`, même motif que `tpm_hello_spike.rs` pour
-//! Windows Hello), donc rien ne vérifie jamais le VRAI coffre OS
-//! automatiquement. À lancer soi-même pour valider empiriquement que le
-//! Gestionnaire d'identification Windows (ou Trousseau/Secret Service sur
-//! macOS/Linux) fonctionne réellement sur cette machine, avant de faire
-//! confiance à `secure_storage::OsKeyStore` en production.
+//! Manual spike, NOT an automated test: `cargo test` deliberately uses a fake
+//! in-memory vault for `secure_storage` (see `api.rs::active_key_store`, same
+//! pattern as `tpm_hello_spike.rs` for Windows Hello), so nothing ever checks the
+//! REAL OS vault automatically. Run it yourself to confirm empirically that the
+//! Windows Credential Manager (or Keychain / Secret Service on macOS / Linux)
+//! really works on this machine before trusting `secure_storage::OsKeyStore` in
+//! production.
 //!
-//! Usage (`cargo run --bin keyring_spike -- <commande>`, depuis `core/`) :
-//!   write      : écrit un secret de test dans le coffre OS sous un nom fixe
-//!                de spike (jamais le nom utilisé par un vrai wallet).
-//!   read       : relit ce secret depuis un autre lancement du processus —
-//!                doit renvoyer exactement la même valeur.
-//!   cleanup    : supprime l'entrée de test du coffre OS.
-//!   full-cycle : exerce le VRAI chemin de production (`api::create_wallet`
-//!                -> `unlock_wallet` -> `reset_wallet`) dans un `data_dir`
-//!                temporaire jetable, et vérifie à chaque étape que la clé
-//!                privée vit bien dans le coffre OS (jamais dans un fichier),
-//!                que le déverrouillage la relit correctement, et que la
-//!                réinitialisation supprime bien l'entrée du coffre OS.
-//!                Seul ce mode touche vraiment `api.rs` ; les 3 précédents ne
-//!                testent que `secure_storage` isolément.
-//!   legacy-fallback : vérifie qu'un wallet dont la clé privée est encore un
-//!                simple fichier (créé avant ce changement) reste bien
-//!                déverrouillable via le repli fichier.
+//! Usage (`cargo run --example keyring_spike -- <command>`, from `core/`):
+//! - `write`: writes a test secret to the OS vault under a fixed spike name (never
+//!   the name a real wallet uses).
+//! - `read`: reads that secret back from another run of the process; it must return
+//!   exactly the same value.
+//! - `cleanup`: deletes the test entry from the OS vault.
+//! - `full-cycle`: exercises the REAL production path (`api::create_wallet` ->
+//!   `unlock_wallet` -> `reset_wallet`) in a throwaway temporary `data_dir`, and
+//!   checks at each step that the private key really lives in the OS vault (never
+//!   in a file), that unlocking reads it back correctly, and that the reset really
+//!   deletes the vault entry. Only this mode actually touches `api.rs`; the 3
+//!   previous ones only test `secure_storage` on its own.
+//! - `legacy-fallback`: checks that a wallet whose private key is still a plain
+//!   file (created before this change) can still be unlocked through the file
+//!   fallback.
 
 use anyhow::{Context, Result};
 use openpgp_wallet_core::secure_storage::{entry_username, KeyStore, OsKeyStore};
@@ -67,7 +64,7 @@ fn main() -> Result<()> {
             println!("1. create_wallet...");
             openpgp_wallet_core::api::create_wallet(&data_dir, "un mot de passe de test bien assez long").context("create_wallet")?;
             let privkey_file_exists = data_dir.join("device_privkey.asc").exists();
-            // `Ok(None)` = absent : `.is_ok()` seul répondrait "présent" à tort.
+            // `Ok(None)` means absent: `.is_ok()` alone would wrongly answer "present".
             let in_os_store = matches!(store.read(&username), Ok(Some(_)));
             println!(
                 "   fichier device_privkey.asc présent : {privkey_file_exists} (attendu : false)\n   \
@@ -96,10 +93,9 @@ fn main() -> Result<()> {
             println!("\nTerminé.");
         }
         "legacy-fallback" => {
-            // Simule un wallet créé AVANT ce changement (clé privée en simple
-            // fichier, jamais dans le coffre OS) : vérifie que le repli lecture
-            // fonctionne toujours, condition indispensable pour ne jamais
-            // verrouiller un wallet existant hors de ses fonds.
+            // Simulates a wallet created BEFORE this change (private key in a plain file,
+            // never in the OS vault): checks that the read fallback still works, which is
+            // essential so an existing wallet is never locked out of its funds.
             let data_dir = std::env::temp_dir().join(format!("keyring_spike_legacy_{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&data_dir);
             let username = entry_username(&data_dir);

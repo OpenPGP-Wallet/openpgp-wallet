@@ -1,50 +1,48 @@
-//! État local lié à la graine (base Zcash protégée, état Monero, destinataires
-//! payés) : coordination entre les synchronisations de fond et son effacement
-//! (réinitialisation, restauration).
+//! Local state tied to the seed (shielded Zcash database, Monero state, paid
+//! recipients): coordination between background syncs and erasing that state
+//! (reset, restore).
 //!
-//! Constaté le 07/10/2026 sur l'app de test : la synchronisation Zcash protégée
-//! garde sa base SQLite ouverte pendant toute une passe, Windows refuse alors de
-//! l'effacer, et l'échec était ignoré — la base de l'ancien portefeuille
-//! survivait à la réinitialisation. Une passe Monero en cours, elle, aurait
-//! réécrit son état (clés de l'ancien portefeuille) après l'effacement.
+//! Observed on 2026-10-07 in the test app: the shielded Zcash sync keeps its SQLite
+//! database open for a whole pass, Windows then refuses to delete it, and the
+//! failure was ignored, so the previous wallet's database survived the reset. A
+//! Monero pass in progress would, for its part, have rewritten its state (with the
+//! previous wallet's keys) after the erase.
 //!
-//! Une passe tient `pass` pendant qu'elle lit ou écrit cet état et interroge
-//! `cancelled` entre deux étapes ; `wipe` demande l'arrêt des passes, attend
-//! leur fin, puis efface. La génération écarte une passe dont les clés ont été
-//! lues avant un effacement.
+//! A pass holds `pass` while it reads or writes this state and checks `cancelled`
+//! between steps; `wipe` asks the passes to stop, waits for them to finish, then
+//! erases. The generation rules out a pass whose keys were read before an erase.
 
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{RwLock, RwLockReadGuard};
 
 static LOCK: RwLock<()> = RwLock::new(());
-/// Effacements demandés et pas encore terminés : un compteur, pas un
-/// drapeau — le premier de deux effacements simultanés qui se termine ne
-/// doit pas lever la demande d'arrêt de l'autre (vu le 07/10/2026 : la passe
-/// en cours ne s'arrêtait plus, le second effacement l'attendait jusqu'au
-/// bout).
+/// Erases requested and not yet finished: a counter, not a flag. The first of two
+/// simultaneous erases to finish must not lift the other's stop request (seen on
+/// 2026-10-07: the running pass no longer stopped, and the second erase waited for
+/// it until the end).
 static WIPING: AtomicUsize = AtomicUsize::new(0);
 static GENERATION: AtomicU64 = AtomicU64::new(0);
 
-/// Génération de l'état : à lire AVANT les clés d'une passe.
+/// State generation: read it BEFORE a pass's keys.
 pub fn generation() -> u64 {
     GENERATION.load(Ordering::SeqCst)
 }
 
-/// Autorisation de passe ; `None` : effacement en cours, ou survenu depuis
-/// `generation` (clés de l'ancien portefeuille).
+/// Permission to run a pass; `None`: an erase is in progress, or happened since
+/// `generation` (keys of the previous wallet).
 pub fn pass(generation: u64) -> Option<RwLockReadGuard<'static, ()>> {
     let guard = LOCK.read().unwrap_or_else(|p| p.into_inner());
     (!cancelled() && GENERATION.load(Ordering::SeqCst) == generation).then_some(guard)
 }
 
-/// Effacement demandé : la passe en cours s'arrête au plus tôt.
+/// Erase requested: the running pass stops as soon as possible.
 pub fn cancelled() -> bool {
     WIPING.load(Ordering::SeqCst) > 0
 }
 
-/// Arrête les passes, attend leur fin, puis exécute `erase`.
+/// Stops the passes, waits for them to finish, then runs `erase`.
 pub fn wipe<T>(erase: impl FnOnce() -> T) -> T {
-    // Demande levée à la fin, même si `erase` panique.
+    // Request lifted at the end, even if `erase` panics.
     struct Request;
     impl Drop for Request {
         fn drop(&mut self) {
@@ -63,12 +61,12 @@ mod tests {
     use super::*;
     use std::time::{Duration, Instant};
 
-    /// L'effacement attend la passe en cours, qui voit la demande d'arrêt ;
-    /// une passe dont les clés datent d'avant est ensuite refusée.
+    /// The erase waits for the running pass, which sees the stop request; a pass whose
+    /// keys predate it is then refused.
     #[test]
     fn wipe_waits_for_the_running_pass() {
-        // D'autres tests réinitialisent en parallèle : la passe prend la
-        // génération du moment, essais répétés.
+        // Other tests reset in parallel: the pass takes the current generation, with
+        // retries.
         let (ready, started_pass) = std::sync::mpsc::channel();
         let worker = std::thread::spawn(move || {
             let (used, pass_guard) = loop {
@@ -85,8 +83,7 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(10));
             }
             std::thread::sleep(Duration::from_millis(100));
-            // Heure notée AVANT de rendre le verrou : l'effacement peut
-            // commencer aussitôt après.
+            // Time noted BEFORE releasing the lock: the erase can start right after.
             let ended = Instant::now();
             drop(pass_guard);
             ended

@@ -1,7 +1,7 @@
-//! Ethereum sur Trezor : adresse (vérifiée sur l'écran de l'appareil) et
-//! signature de transaction legacy EIP-155 — l'appareil affiche destinataire,
-//! montant, frais et réseau avant de signer. Toute signature est revérifiée
-//! ici : elle doit se recouvrer en l'adresse du compte.
+//! Ethereum on Trezor: address (checked on the device screen) and signing of legacy
+//! EIP-155 transactions. The device shows recipient, amount, fee and network before
+//! signing. Every signature is checked again here: it must recover to the account's
+//! address.
 
 use super::proto::{Message, Writer};
 use super::{msg, Trezor};
@@ -10,7 +10,7 @@ use crate::evm_sign::keccak;
 use crate::ledger::eth::{normalized, recover_address};
 use anyhow::{anyhow, ensure, Result};
 
-/// Taille du premier morceau de données envoyé avec la demande de signature.
+/// Size of the first data chunk sent with the signing request.
 const INITIAL_CHUNK: usize = 1024;
 
 pub fn get_address(trezor: &mut Trezor, path: &[u32], show: bool) -> Result<String> {
@@ -24,15 +24,14 @@ pub fn get_address(trezor: &mut Trezor, path: &[u32], show: bool) -> Result<Stri
     Ok(crate::derivation::format_address(&bytes))
 }
 
-/// Entier en gros-boutiste sans zéros de tête (0 -> vide), format des champs
-/// numériques de `EthereumSignTx`.
+/// Big-endian integer without leading zeros (0 -> empty), the format of
+/// `EthereumSignTx` numeric fields.
 fn be_minimal(value: u128) -> Vec<u8> {
     let bytes = value.to_be_bytes();
     bytes[bytes.iter().position(|&b| b != 0).unwrap_or(bytes.len())..].to_vec()
 }
 
-/// Demande de signature, champs dans l'ordre de déclaration du message
-/// (celui de trezorlib).
+/// Signing request, with fields in the message's declaration order (trezorlib's).
 fn sign_request(path: &[u32], tx: &EthTx) -> Vec<u8> {
     Writer::new()
         .uints(1, path)
@@ -47,12 +46,12 @@ fn sign_request(path: &[u32], tx: &EthTx) -> Vec<u8> {
         .finish()
 }
 
-/// Signe `tx` sur l'appareil et renvoie la transaction signée, prête à
-/// diffuser — après avoir vérifié qu'elle se recouvre en `expected`.
+/// Signs `tx` on the device and returns the signed transaction, ready to broadcast,
+/// after checking that it recovers to `expected`.
 pub fn sign_transaction(trezor: &mut Trezor, path: &[u32], tx: &EthTx, expected: &[u8; 20]) -> Result<Vec<u8>> {
     let mut response = trezor.call_expect(msg::ETHEREUM_SIGN_TX, &sign_request(path, tx), msg::ETHEREUM_TX_REQUEST)?;
     let mut offset = tx.data.len().min(INITIAL_CHUNK);
-    // L'appareil demande la suite des données morceau par morceau.
+    // The device asks for the rest of the data chunk by chunk.
     loop {
         let requested = Message::parse(&response)?.uint(1).unwrap_or(0) as usize;
         if requested == 0 {
@@ -67,7 +66,7 @@ pub fn sign_transaction(trezor: &mut Trezor, path: &[u32], tx: &EthTx, expected:
     let v = signature.uint(2).ok_or_else(|| anyhow!("signature Ethereum du Trezor absente"))?;
     let (r, s) = (signature.bytes(3).unwrap_or_default(), signature.bytes(4).unwrap_or_default());
     ensure!(r.len() == 32 && s.len() == 32, "signature Ethereum du Trezor mal formée");
-    // v = 35 + 2 × chain_id + parité (EIP-155), ou 27/28.
+    // v = 35 + 2 × chain_id + parity (EIP-155), or 27/28.
     let parity = v
         .checked_sub(35 + 2 * tx.chain_id)
         .or_else(|| v.checked_sub(27))
@@ -91,8 +90,8 @@ mod tests {
         EthTx { nonce: 7, gas_price: 20_000_000_000, gas_limit: 21_000, to: [0x44; 20], value: 10_000_000_000_000_000, chain_id: 11_155_111, data: Vec::new() }
     }
 
-    /// Même encodage, octet pour octet, que trezorlib (`EthereumSignTx`,
-    /// virement de 0,01 ETH sur Sepolia).
+    /// Same encoding, byte for byte, as trezorlib (`EthereumSignTx`, a 0.01 ETH
+    /// transfer on Sepolia).
     #[test]
     fn sign_request_matches_trezorlib() {
         assert_eq!(
@@ -103,10 +102,9 @@ mod tests {
         assert_eq!(be_minimal(0x0100), vec![1, 0]);
     }
 
-    /// Firmware officiel dans l'émulateur (graine de test publique) : adresse
-    /// = notre dérivation ; affichée à l'écran ; virement signé après revue
-    /// (destinataire, montant) et revérifié ; refus -> erreur claire.
-    /// Émulateur et relais lancés au préalable.
+    /// Official firmware in the emulator (public test seed): address = our derivation, shown on screen;
+    /// transfer signed after review (recipient, amount) and checked again; a rejection gives a clear error.
+    /// Start the emulator and the bridge first.
     /// `cargo test -- --ignored trezor_ethereum_against_the_official_firmware --nocapture --test-threads=1`
     #[test]
     #[ignore]

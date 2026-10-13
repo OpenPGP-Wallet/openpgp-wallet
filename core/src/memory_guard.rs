@@ -1,27 +1,26 @@
 use zeroize::Zeroize;
 
-/// Efface explicitement un buffer sensible en mémoire (écrase avec des zéros
-/// de façon à ce que le compilateur n'optimise pas l'opération).
+/// Explicitly wipes a sensitive buffer in memory (overwrites it with zeros in a way
+/// the compiler cannot optimize away).
 pub fn wipe(buf: &mut [u8]) {
     buf.zeroize();
 }
 
-/// Verrouille les pages mémoire d'un buffer sensible contre le swap disque
-/// (`mlock` sur Unix, `VirtualLock` sur Windows, via la crate `region`).
-/// Retourne un guard qui déverrouille automatiquement à sa destruction — à
-/// garder en vie (ne pas `drop` ni laisser sortir de portée) tant que le
-/// buffer contient un secret, puis appeler [`wipe`] avant ou pendant qu'il
-/// se libère.
+/// Locks the memory pages of a sensitive buffer against swapping to disk (`mlock`
+/// on Unix, `VirtualLock` on Windows, through the `region` crate). Returns a guard
+/// that unlocks automatically when dropped: keep it alive (do not `drop` it or let
+/// it go out of scope) as long as the buffer holds a secret, then call [`wipe`]
+/// before or while the buffer is freed.
 ///
-/// ATTENTION : le buffer verrouillé ne doit plus être réalloué (`resize`,
-/// `push` au-delà de sa capacité, `clone`...) tant que le guard est actif :
-/// l'adresse verrouillée deviendrait obsolète et le nouveau buffer ne serait
-/// plus protégé. Utiliser sur un buffer déjà à sa taille finale.
+/// WARNING: the locked buffer must not be reallocated (`resize`, `push` beyond its
+/// capacity, `clone`...) while the guard is active: the locked address would become
+/// stale and the new buffer would no longer be protected. Use it on a buffer that
+/// already has its final size.
 ///
-/// Best-effort : si le verrouillage échoue (limite système, permissions —
-/// possible en conteneur ou avec `ulimit -l` bas), un avertissement est
-/// affiché mais l'appelant continue sans bloquer. `zeroize` reste la garantie
-/// principale d'effacement ; `lock` n'est qu'une couche défensive en plus.
+/// Best effort: if locking fails (system limit, permissions, which can happen in a
+/// container or with a low `ulimit -l`), a warning is printed and the caller
+/// carries on. `zeroize` remains the main wiping guarantee; `lock` is only an extra
+/// defensive layer.
 #[must_use = "le verrouillage se termine dès que le guard est abandonné"]
 pub fn lock(buf: &[u8]) -> Option<region::LockGuard> {
     if buf.is_empty() {

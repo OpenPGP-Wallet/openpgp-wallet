@@ -1,11 +1,10 @@
-//! Démo interactive : découpe l'entropie maître en parts (Shamir, seuil 2-sur-3)
-//! et vérifie la reconstruction — SANS PGP. Le chiffrement de chaque part sera
-//! ajouté par-dessus dans une étape séparée (voir pgp_engine::encrypt_share,
-//! déjà écrit, et decrypt_share, pas encore fait).
+//! Interactive demo: splits the master entropy into shares (Shamir, 2-of-3
+//! threshold) and checks the reconstruction, WITHOUT PGP. Encrypting each share is
+//! a separate layer on top (see pgp_engine::encrypt_share and decrypt_share).
 //!
-//! ATTENTION : ceci affiche l'entropie et les parts en clair, uniquement à but
-//! pédagogique pour valider le mécanisme. Le produit final ne doit jamais afficher
-//! ni logger ces valeurs.
+//! WARNING: this prints the entropy and the shares in the clear, for teaching
+//! purposes only, to check the mechanism. The product itself must never display or
+//! log these values.
 
 use anyhow::{anyhow, Context, Result};
 use openpgp_wallet_core::{entropy, shamir};

@@ -1,11 +1,11 @@
-//! État des fournisseurs d'échange, lu à l'ouverture de « Convertir » : un
-//! service qui ne répond pas est signalé AVANT le devis (message rouge dans la
-//! fenêtre), au lieu d'un échec plus loin. Les suspensions d'une crypto par
-//! THORChain ou Maya viennent de `thorchain_rpc::halted_assets` (commande
-//! `swap_halts`) ; la lenteur, des échanges en cours suivis par l'interface.
+//! Status of the swap providers, read when "Convert" opens: a service that does not
+//! answer is flagged BEFORE the quote (red message in the window) instead of
+//! failing further down. Assets halted by THORChain or Maya come from
+//! `thorchain_rpc::halted_assets` (the `swap_halts` command); slowness comes from
+//! the in-progress swaps the interface tracks.
 //!
-//! Requêtes légères et sans clé (sauf SwapKit, avec la clé de l'app), en
-//! parallèle, 6 s au plus chacune ; aucune donnée de l'utilisateur envoyée.
+//! Lightweight requests without a key (except SwapKit, with the app's key), in
+//! parallel, 6 s at most each; no user data is sent.
 
 use crate::swap_routes::Protocol;
 use crate::thorchain_rpc::{MAYA, THORCHAIN};
@@ -15,34 +15,34 @@ use std::time::Duration;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
-    /// Échange possible mais dégradé (orange).
+    /// Swap possible but degraded (orange).
     Warning,
-    /// Échange impossible par ce fournisseur pour l'instant (rouge).
+    /// Swap currently impossible with this provider (red).
     Error,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Issue {
     pub protocol: Protocol,
-    /// Nom affiché : celui du service réel (« NEAR Intents » pour SwapKit…).
+    /// Display name: the actual service ("NEAR Intents" for SwapKit...).
     pub provider: &'static str,
     pub severity: Severity,
-    /// « unreachable » : le service ne répond pas.
+    /// "unreachable": the service does not answer.
     pub kind: &'static str,
 }
 
-/// Une vérification : adresse, en-tête éventuel, contenu attendu.
+/// One check: URL, optional header, expected content.
 struct Probe {
     protocol: Protocol,
     provider: &'static str,
     url: &'static str,
     api_key: Option<&'static str>,
-    /// Fragment attendu dans la réponse (vide : code 200 suffit).
+    /// Fragment expected in the response (empty: a 200 status is enough).
     expect: &'static str,
 }
 
 const PROBES: [Probe; 7] = [
-    // Petit devis SOL → USDC : la cotation elle-même répond.
+    // Small SOL → USDC quote: the quoting itself answers.
     Probe {
         protocol: Protocol::Jupiter,
         provider: "Jupiter",
@@ -70,13 +70,13 @@ fn responds(probe: &Probe) -> bool {
     }
 }
 
-/// Fournisseurs qui ne répondent pas en ce moment.
+/// Providers that are not answering right now.
 pub fn check() -> Vec<Issue> {
     let unreachable = |protocol, provider| Issue { protocol, provider, severity: Severity::Error, kind: "unreachable" };
     std::thread::scope(|scope| {
         let probes: Vec<_> = PROBES
             .iter()
-            // SwapKit sans clé : non proposé, rien à vérifier.
+            // SwapKit without a key: not offered, nothing to check.
             .filter(|p| p.protocol != Protocol::Swapkit || crate::swapkit::enabled())
             .filter(|p| p.protocol != Protocol::Moonpay || crate::moonpay_trade::enabled())
             .map(|probe| (probe, scope.spawn(move || responds(probe))))
@@ -99,7 +99,7 @@ pub fn check() -> Vec<Issue> {
 mod tests {
     use super::*;
 
-    /// Réel : tous les fournisseurs répondent (sinon, lequel).
+    /// Real network: every provider answers (otherwise, which one does not).
     /// `cargo test -- --ignored real_swap_health --nocapture`
     #[test]
     #[ignore]
@@ -111,7 +111,7 @@ mod tests {
         assert!(start.elapsed() < Duration::from_secs(8), "vérifications en parallèle");
     }
 
-    /// Un fournisseur injoignable est signalé (adresse qui ne répond pas).
+    /// An unreachable provider is flagged (an address that does not answer).
     #[test]
     fn an_unreachable_service_is_reported() {
         let probe = Probe { protocol: Protocol::Cow, provider: "CoW", url: "http://127.0.0.1:9/", api_key: None, expect: "" };
