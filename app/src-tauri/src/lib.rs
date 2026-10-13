@@ -1,8 +1,7 @@
-//! Commandes Tauri : la seule porte d'entrée entre le frontend web (non fiable,
-//! ne doit jamais voir de secret) et le worker crypto (`openpgp_wallet_core::api`).
-//! Aucune donnée sensible (entropie, clé privée, passphrase) ne doit jamais être
-//! journalisée ici ni renvoyée au frontend — seules des adresses publiques et des
-//! confirmations/erreurs le sont.
+//! Tauri commands: the only gateway between the web frontend (untrusted, must never
+//! see a secret) and the crypto worker (`openpgp_wallet_core::api`). No sensitive
+//! data (entropy, private key, passphrase) is ever logged here or returned to the
+//! frontend; only public addresses and confirmations/errors are.
 
 use base64::Engine;
 use openpgp_wallet_core::{address_book, api, cow, dapp_requests, external_wallets, hardware, history, messaging, price_history, price_rpc, sent_recipients, wallet_flow};
@@ -14,38 +13,39 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_opener::OpenerExt;
 use zeroize::Zeroizing;
 
-// --- Traduction des messages d'erreur ---------------------------------------
-// `core/` ignore volontairement tout concept d'interface graphique (voir sa doc :
-// pensé pour être réutilisable tel quel par une future cible CLI/mobile) — la
-// langue affichée à l'utilisateur est donc une préoccupation d'exposition, traitée
-// ici, au point unique où une erreur `anyhow::Result` produite par `core/` devient
-// la `String` envoyée au frontend. Pas de dépendance `regex` ajoutée pour ça : les
-// quelques messages avec une valeur interpolée (index, nom, montant...) sont
-// recomposés par découpage de chaîne plutôt que par expression régulière.
+// --- Error message translation ---------------------------------------------
+//
+// `core/` deliberately knows nothing about graphical interfaces (see its docs:
+// designed to be reusable as is by a future CLI/mobile target), so the language
+// shown to the user is a presentation concern, handled here, at the single point
+// where an `anyhow::Result` error produced by `core/` becomes the `String` sent to
+// the frontend. No `regex` dependency added for this: the few messages with an
+// interpolated value (index, name, amount...) are rebuilt by splitting the string
+// rather than with a regular expression.
 static UI_LANG_IS_ENGLISH: AtomicBool = AtomicBool::new(false);
 
-/// Le profil principal déverrouillé est-il le portefeuille du développeur
-/// (adresse THOR = adresse d'affiliation de l'app) ? Seul lui voit et peut
-/// utiliser l'inscription du nom d'affiliation.
+/// Is the unlocked main profile the developer's wallet (THOR address = the app's
+/// affiliate address)? Only that wallet sees and can use the affiliate name
+/// registration.
 static IS_AFFILIATE_WALLET: AtomicBool = AtomicBool::new(false);
 
-/// Appelée par le frontend à chaque changement de langue (bouton FR/EN) et au
-/// démarrage. Un simple booléen process-wide suffit : ce n'est qu'une préférence
-/// d'affichage, jamais une donnée de sécurité.
+/// Called by the frontend whenever the language changes (FR/EN button) and at
+/// startup. A simple process-wide boolean is enough: it is only a display
+/// preference, never security data.
 #[tauri::command]
 fn set_ui_language(lang: String) {
     UI_LANG_IS_ENGLISH.store(lang == "en", Ordering::Relaxed);
 }
 
-/// Messages sans valeur interpolée : correspondance exacte avec le texte français
-/// tel qu'écrit dans `core/` et dans ce fichier.
+/// Messages with no interpolated value: an exact match on the French text as
+/// written in `core/` and in this file.
 const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     // Solana (core/src/sol_rpc.rs)
     (
         openpgp_wallet_core::sol_rpc::BLOCKHASH_EXPIRED_ERROR,
         "the transaction expired before being sent (Solana validity window exceeded) — nothing was sent or debited, try again",
     ),
-    // Réseaux EVM (core/src/api.rs, history.rs)
+    // EVM networks (core/src/api.rs, history.rs)
     ("adresse d'envoi inconnue : déverrouillez le portefeuille", "sending address unknown: unlock the wallet"),
     ("historique pas encore disponible sur ce réseau", "history not available on this network yet"),
     ("historique des jetons pas encore disponible sur ce réseau", "token history not available on this network yet"),
@@ -64,7 +64,7 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("réponse de l'oracle de frais inattendue", "unexpected answer from the fee oracle"),
     ("frais de publication annoncés anormalement élevés", "abnormally high posting fee announced"),
     ("frais de gas dépassant la capacité représentable", "gas fee beyond the representable range"),
-    // core/src/usb_backup.rs, sauvegarde sur clé USB
+    // core/src/usb_backup.rs, USB drive backup
     ("clé USB introuvable : branchez-la puis réessayez", "USB drive not found: plug it in and try again"),
     ("écriture sur la clé USB impossible", "cannot write to the USB drive"),
     ("relecture de la clé USB impossible", "cannot read back the USB drive"),
@@ -81,7 +81,7 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     // core/src/alchemy.rs, core/src/nodereal.rs
     ("historique de ce réseau indisponible dans cette version de l'app", "this network's history is unavailable in this version of the app"),
     ("le service d'historique a renvoyé un autre jeton que celui demandé", "the history service returned a different token than the one requested"),
-    // core/src/api.rs, actions tokenisées xStocks
+    // core/src/api.rs, xStocks tokenized shares
     ("transferts de ce jeton suspendus par son émetteur : réessayez plus tard", "transfers of this token are paused by its issuer: try again later"),
     ("l'émetteur de ce jeton a ajouté une règle de transfert que l'app ne gère pas encore : envoi refusé, rien n'a été dépensé", "this token's issuer added a transfer rule the app doesn't support yet: transfer refused, nothing was spent"),
     ("le coefficient de ce jeton change en ce moment (dividende ou division d'action) : réessayez dans quelques minutes", "this token's multiplier is changing right now (dividend or stock split): try again in a few minutes"),
@@ -89,7 +89,7 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("coefficient d'affichage absent du mint", "display multiplier missing from the token"),
     ("coefficient d'affichage illisible", "unreadable display multiplier"),
     ("mint du jeton inattendu sur le réseau", "unexpected token on the network"),
-    // core/src/api.rs, parts de sauvegarde qui ne vont pas ensemble
+    // core/src/api.rs, backup shares that do not belong together
     ("ces deux parts viennent de deux kits de sauvegarde différents : utilisez deux parts d'un même kit", "these two shares come from two different backup kits: use two shares of the same kit"),
     ("ces deux parts ne redonnent pas le portefeuille de leur kit : essayez avec une autre part de ce kit", "these two shares do not give back their kit's wallet: try another share of this kit"),
     ("espace insuffisant sur la clé USB", "not enough space on the USB drive"),
@@ -115,7 +115,7 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("montant + frais dépasse la capacité représentable", "amount + fee exceeds the representable range"),
     ("adresse Solana invalide (base58 attendu)", "invalid Solana address (base58 expected)"),
     ("une adresse Solana fait 32 octets", "a Solana address is 32 bytes"),
-    // core/src/api.rs — audit "failles connues des hot wallets"
+    // core/src/api.rs: "known hot wallet weaknesses" audit
     (
         "cette adresse est un compte de jetons (ou un mint), pas un portefeuille : les fonds y seraient perdus. Demandez l'adresse du PORTEFEUILLE du destinataire.",
         "this address is a token account (or a mint), not a wallet: funds sent there would be lost. Ask for the recipient's WALLET address.",
@@ -164,7 +164,7 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
         "un compte de jetons créé pour vous aurait déjà un délégué ou une autorité de fermeture — refus de signer",
         "a token account created for you would already have a delegate or close authority — refusing to sign",
     ),
-    // core/src/api.rs + app/src-tauri/src/lib.rs — 22ᵉ passage d'auto-revue
+    // core/src/api.rs + app/src-tauri/src/lib.rs: self-review round 22
     (
         "la transaction livrerait vos jetons sur un compte non standard, invisible dans l'app — refus de signer",
         "the transaction would deliver your tokens to a non-standard account, invisible in the app — refusing to sign",
@@ -442,7 +442,7 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("Chainflip injoignable", "Chainflip unreachable"),
     ("réponse Chainflip illisible", "unreadable Chainflip response"),
     ("canal Chainflip introuvable auprès de Chainflip — échange refusé", "Chainflip channel not found at Chainflip — swap refused"),
-    // Délai d'annulation et bouton « Max »
+    // Cancellation delay and "Max" button
     ("Virement annulé pendant le délai d'annulation.", "Transfer cancelled during the cancellation delay."),
     ("Échange annulé pendant le délai d'annulation.", "Swap cancelled during the cancellation delay."),
     ("ZEC insuffisants pour couvrir les frais du réseau", "not enough ZEC to cover the network fee"),
@@ -567,7 +567,7 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ),
     (openpgp_wallet_core::derivation::BTC_ADDRESS_MISCOPIED, "Bitcoin address not recognized: a character seems miscopied"),
     (openpgp_wallet_core::derivation::BTC_ADDRESS_OTHER_NETWORK, "address from another network than Bitcoin"),
-    // Réseaux ajoutés par l'utilisateur (core/src/custom_networks.rs)
+    // Networks added by the user (core/src/custom_networks.rs)
     ("nom du réseau : 1 à 30 caractères (lettres, chiffres, espaces, - _ . ( ))", "network name: 1 to 30 characters (letters, digits, spaces, - _ . ( ))"),
     ("symbole : 1 à 10 lettres ou chiffres (ex. ETH)", "symbol: 1 to 10 letters or digits (e.g. ETH)"),
     ("identifiant de chaîne invalide", "invalid chain ID"),
@@ -578,7 +578,7 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
         "adresse Bitcoin mal formée (version SegWit, encodage ou longueur incohérents)",
         "malformed Bitcoin address (inconsistent SegWit version, encoding or length)",
     ),
-    // Échanges depuis Bitcoin (LI.FI, core/src/lifi.rs) et Zcash (Maya, core/src/api.rs)
+    // Swaps from Bitcoin (LI.FI, core/src/lifi.rs) and Zcash (Maya, core/src/api.rs)
     ("dépôt LI.FI vers votre propre adresse — refusé", "LI.FI deposit to your own address — refused"),
     ("transaction Bitcoin LI.FI d'une version inattendue", "LI.FI Bitcoin transaction with an unexpected version"),
     ("transaction Bitcoin LI.FI avec un verrou temporel — refusé", "LI.FI Bitcoin transaction with a time lock — refused"),
@@ -612,7 +612,7 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ),
     ("adresse de dépôt Maya égale à votre propre adresse — échange refusé", "Maya deposit address equal to your own address — swap refused"),
     ("adresse de dépôt Maya invalide", "invalid Maya deposit address"),
-    // Nom d'affiliation (core/src/api.rs, core/src/native_deposit.rs)
+    // Affiliate name (core/src/api.rs, core/src/native_deposit.rs)
     (
         "ce portefeuille n'est pas celui qui reçoit les frais d'affiliation de l'app — inscription réservée à ce dernier",
         "this wallet is not the one receiving the app's affiliate fees — registration is reserved for it",
@@ -621,7 +621,7 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("adresse d'affiliation jamais approvisionnée sur ce réseau", "affiliate address never funded on this network"),
     ("Inscription annulée (confirmation refusée).", "Registration cancelled (confirmation declined)."),
     ("aucun nom d'affiliation prévu sur ce réseau", "no affiliate name planned on this network"),
-    // Zcash protégé (core/src/zcash_shielded.rs)
+    // Shielded Zcash (core/src/zcash_shielded.rs)
     ("Protection annulée (confirmation refusée).", "Shielding cancelled (confirmation declined)."),
     ("fonds protégés pas encore prêts (synchronisation en cours)", "shielded funds not ready yet (sync in progress)"),
     ("adresse Zcash Sapling seule (zs…) pas prise en charge — demandez une adresse u1… ou t1…", "Sapling-only Zcash address (zs…) not supported — ask for a u1… or t1… address"),
@@ -654,7 +654,7 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("clé de visualisation Monero invalide", "invalid Monero view key"),
     ("démarrage du client Monero impossible", "could not start the Monero client"),
     ("envoi Monero non préparé", "Monero transfer not prepared"),
-    // Historique BNB Chain (core/src/nodereal.rs)
+    // BNB Chain history (core/src/nodereal.rs)
     (openpgp_wallet_core::nodereal::KEY_MISSING, "BNB Chain history unavailable in this version of the app"),
     (openpgp_wallet_core::nodereal::LIMITED, "BNB Chain history temporarily unavailable (service limit reached) — try again later"),
     (
@@ -675,7 +675,7 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
         "échec de la reconstruction (parts insuffisantes ou corrompues)",
         "reconstruction failed (insufficient or corrupted shares)",
     ),
-    // core/src/wallet_flow.rs (fonctions de parsing réutilisées par la GUI)
+    // core/src/wallet_flow.rs (parsing functions reused by the GUI)
     (wallet_flow::EVM_ADDRESS_NOT_RECOGNIZED, "address not recognized: on this network, an address is 0x followed by 40 characters"),
     (wallet_flow::EVM_ADDRESS_WRONG_LENGTH, "address incomplete or too long: on this network, an address is 0x followed by 40 characters"),
     (wallet_flow::EVM_ADDRESS_MISCOPIED, "address miscopied: a character doesn't match (upper and lower case matter) — copy it again"),
@@ -692,7 +692,7 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
         "no confirmed UTXO available (check the balance first)",
     ),
     ("impossible de contacter le nœud RPC", "unable to reach the RPC node"),
-    // core/src/eth_rpc.rs / sol_rpc.rs (messages sans valeur interpolée)
+    // core/src/eth_rpc.rs / sol_rpc.rs (messages with no interpolated value)
     ("réponse getBalance inattendue", "unexpected getBalance response"),
     ("réponse eth_gasPrice non textuelle", "non-textual eth_gasPrice response"),
     ("réponse eth_getBalance non textuelle", "non-textual eth_getBalance response"),
@@ -750,14 +750,14 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("Activation annulée (confirmation refusée).", "Activation cancelled (confirmation refused)."),
     ("Désactivation annulée (confirmation refusée).", "Deactivation cancelled (confirmation refused)."),
     ("USDC n'est disponible que sur Solana mainnet.", "USDC is only available on Solana mainnet."),
-    // core/src/windows_hello.rs (contexte fixe de `to_anyhow`, sans le suffixe
-    // dynamique ": {err} (code ...)", géré par translate_dynamic_error)
+    // core/src/windows_hello.rs (the fixed context of `to_anyhow`, without the dynamic
+    // suffix ": {err} (code ...)", handled by translate_dynamic_error)
     ("clé TPM déjà absente, rien à supprimer", "TPM key already absent, nothing to remove"),
-    // core/src/sol_rpc.rs (nouvelles méthodes SPL)
+    // core/src/sol_rpc.rs (new SPL methods)
     ("réponse getTokenAccountBalance inattendue", "unexpected getTokenAccountBalance response"),
     ("montant getTokenAccountBalance illisible", "unreadable getTokenAccountBalance amount"),
     ("réponse getMinimumBalanceForRentExemption inattendue", "unexpected getMinimumBalanceForRentExemption response"),
-    // core/src/api.rs (biométrie + USDC)
+    // core/src/api.rs (biometrics + USDC)
     (
         "le déverrouillage biométrique n'est disponible que sous Windows",
         "biometric unlock is only available on Windows",
@@ -845,8 +845,8 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("le Ledger a renvoyé une adresse qui ne correspond pas à sa clé publique", "the Ledger returned an address that does not match its public key"),
 ];
 
-/// Messages Ledger suivis d'une valeur (mot d'état, nom d'application...) :
-/// préfixe français -> préfixe anglais, la suite étant conservée.
+/// Ledger messages followed by a value (status word, app name...): French prefix ->
+/// English prefix, the rest kept as is.
 const LEDGER_PREFIX_TRANSLATIONS: &[(&str, &str)] = &[
     ("opération refusée sur le Ledger", "operation refused on the Ledger"),
     ("Ledger verrouillé : saisissez votre code PIN sur l'appareil", "Ledger locked: enter your PIN on the device"),
@@ -875,10 +875,7 @@ const LEDGER_PREFIX_TRANSLATIONS: &[(&str, &str)] = &[
     ("lecture USB depuis le Trezor impossible : ", "USB read from the Trezor failed: "),
 ];
 
-/// Messages avec une valeur interpolée (index, méthode RPC, montant...) : la
-/// correspondance exacte ne peut pas fonctionner, donc reconstruction par
-/// découpage autour de la partie fixe du message.
-/// Refus d'ajout d'un réseau (core/src/custom_networks.rs) avec une valeur.
+/// Refusal to add a network (core/src/custom_networks.rs) that carries a value.
 fn translate_custom_network_error(msg: &str) -> Option<String> {
     let chain = |s: &str| s.replace("identifiant de chaîne", "chain ID").replace(" au lieu de ", " instead of ");
     let url_reason = |reason: &str| match reason {
@@ -911,6 +908,8 @@ fn translate_custom_network_error(msg: &str) -> Option<String> {
     msg.strip_prefix("RPC injoignable ou invalide : ").map(|rest| format!("RPC unreachable or invalid: {rest}"))
 }
 
+/// Messages with an interpolated value (index, RPC method, amount...): an exact match
+/// cannot work, so they are rebuilt by splitting around the fixed part of the message.
 fn translate_dynamic_error(msg: &str) -> Option<String> {
     if let Some(amount) = msg.strip_prefix("ADA insuffisants : il faut au moins ").and_then(|r| r.strip_suffix(" ADA (dépôt et frais du réseau compris)")) {
         return Some(format!("not enough ADA: at least {amount} ADA needed (deposit and network fee included)"));
@@ -982,7 +981,8 @@ fn translate_dynamic_error(msg: &str) -> Option<String> {
     if let Some(rest) = msg.strip_prefix("ZEC insuffisants : ") {
         return Some(format!("insufficient ZEC: {rest}"));
     }
-    // « NEAR Intents ne confirme pas votre adresse d'arrivée — échange refusé »
+    // "NEAR Intents ne confirme pas votre adresse d'arrivée — échange refusé" (NEAR
+    // Intents does not confirm your destination address: swap refused)
     for provider in ["NEAR Intents", "Chainflip"] {
         if let Some(what) = msg.strip_prefix(&format!("{provider} ne confirme pas ")).and_then(|rest| rest.strip_suffix(" — échange refusé")) {
             let what = match what {
@@ -1500,10 +1500,10 @@ fn translate_dynamic_error(msg: &str) -> Option<String> {
     if let Some(rest) = msg.strip_prefix("entrée du carnet d'adresses introuvable (id ") {
         return Some(format!("address book entry not found (id {rest}"));
     }
-    // core/src/windows_hello.rs : `to_anyhow` construit "{contexte} : {err} (code
-    // ...)" — seul le contexte fixe (en français) est traduisible, le message
-    // d'erreur Windows lui-même (`{err}`) est déjà dans la langue du système
-    // d'exploitation, hors de notre contrôle.
+    // core/src/windows_hello.rs: `to_anyhow` builds "{context} : {err} (code ...)".
+    // Only the fixed context (in French) can be translated; the Windows error message
+    // itself (`{err}`) is already in the operating system's language, outside our
+    // control.
     const WINDOWS_HELLO_CONTEXTS: &[(&str, &str)] = &[
         ("ouverture du fournisseur TPM (Microsoft Platform Crypto Provider)", "opening the TPM provider (Microsoft Platform Crypto Provider)"),
         ("création de la clé TPM persistée", "creating the persisted TPM key"),
@@ -1537,17 +1537,16 @@ fn translate_error(msg: &str) -> String {
     if let Some(en) = translate_dynamic_error(msg) {
         return en;
     }
-    // Message inconnu de la table (probablement une erreur brute d'une bibliothèque
-    // tierce, déjà en anglais/technique — reqwest, serde_json, io::Error...) :
-    // laissé tel quel plutôt que de risquer une traduction incorrecte.
+    // A message not in the table (most likely a raw error from a third-party library,
+    // already in English/technical: reqwest, serde_json, io::Error...): left as is
+    // rather than risking a wrong translation.
     msg.to_string()
 }
 
-/// Choisit le texte français ou anglais selon la langue d'interface courante —
-/// utilisé pour le texte des boîtes de dialogue natives (`app.dialog()...`),
-/// qui ne passent jamais par `translate_error`/`.t_err()` puisqu'elles ne sont
-/// pas des erreurs mais des messages de confirmation construits directement
-/// ici, jamais renvoyés par `core/`.
+/// Picks the French or English text according to the current UI language. Used for
+/// the text of native dialogs (`app.dialog()...`), which never go through
+/// `translate_error`/`.t_err()` since they are not errors but confirmation messages
+/// built directly here, never returned by `core/`.
 fn lang<'a>(fr: &'a str, en: &'a str) -> &'a str {
     if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
         en
@@ -1556,8 +1555,8 @@ fn lang<'a>(fr: &'a str, en: &'a str) -> &'a str {
     }
 }
 
-/// Remplace `.t_err()` : convertit une erreur en `String`
-/// traduite selon la langue d'interface courante, au lieu d'un `.to_string()` brut.
+/// Replaces `.t_err()`: converts an error into a `String` translated into the
+/// current UI language, instead of a raw `.to_string()`.
 trait TranslatedResult<T> {
     fn t_err(self) -> Result<T, String>;
 }
@@ -1568,14 +1567,13 @@ impl<T, E: std::fmt::Display> TranslatedResult<T> for Result<T, E> {
     }
 }
 
-// Sans ce hook, un panic imprévu (bug non détecté, dépendance tierce) ne laissait
-// absolument aucune trace : la fenêtre disparaissait instantanément et silencieusement
-// (pas de console en release, voir `windows_subsystem = "windows"` dans main.rs). On
-// journalise l'emplacement et le message du panic — jamais de secret : nos propres
-// `.expect()`/`panic!` n'embarquent que des messages statiques, jamais une valeur
-// secrète (mot de passe, clé, entropie), et un panic venant d'une dépendance tierce ne
-// peut porter que des données déjà publiques (adresse, réponse RPC), jamais un secret
-// qui ne transite jamais par un message de panic dans ce projet.
+// Without this hook, an unexpected panic (undetected bug, third-party dependency) left
+// no trace at all: the window vanished instantly and silently (no console in release
+// builds, see `windows_subsystem = "windows"` in main.rs). We log the panic's location
+// and message, never a secret: our own `.expect()`/`panic!` only carry static
+// messages, never a secret value (password, key, entropy), and a panic from a
+// third-party dependency can only carry data that is already public (address, RPC
+// response), since in this project a secret never travels through a panic message.
 fn install_panic_hook(log_dir: PathBuf) {
     let log_path = log_dir.join("crash.log");
     std::panic::set_hook(Box::new(move |info| {
@@ -1594,8 +1592,8 @@ fn install_panic_hook(log_dir: PathBuf) {
             .or_else(|| info.payload().downcast_ref::<String>().cloned())
             .unwrap_or_else(|| "message indisponible".to_string());
         let line = format!("[{timestamp}] panic à {location} : {message}\n");
-        // Best-effort : si l'écriture du log échoue, on ne doit surtout pas déclencher
-        // un second panic depuis le hook lui-même.
+        // Best-effort: if writing the log fails, we must not trigger a second panic from
+        // inside the hook itself.
         if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&log_path) {
             use std::io::Write;
             let _ = file.write_all(line.as_bytes());
@@ -1657,9 +1655,9 @@ impl From<api::Addresses> for AddressesDto {
 struct ProfileDto {
     index: u32,
     label: String,
-    /// `null` côté JS quand le profil a été créé sans mot de passe : l'adresse
-    /// n'a pas encore été dérivée (voir `api::create_profile`), elle apparaîtra
-    /// au prochain déverrouillage complet.
+    /// `null` on the JS side when the profile was created without a password: the
+    /// address has not been derived yet (see `api::create_profile`), and it will appear
+    /// at the next full unlock.
     addresses: Option<AddressesDto>,
 }
 
@@ -1673,8 +1671,8 @@ impl From<api::ProfileAddresses> for ProfileDto {
     }
 }
 
-/// Label+index seuls, sans adresse : utilisé pour la liste des profils archivés,
-/// où on n'a jamais besoin de la seed (voir `api::list_archived_profiles`).
+/// Label + index only, no address: used for the list of archived profiles, which
+/// never needs the seed (see `api::list_archived_profiles`).
 #[derive(Serialize)]
 struct ProfileLabelDto {
     index: u32,
@@ -1691,17 +1689,17 @@ impl From<api::Profile> for ProfileLabelDto {
 struct BackupShareDto {
     label: String,
     passphrase: String,
-    /// PGP binaire, encodé en base64 pour le transport JSON.
+    /// Binary PGP, base64-encoded for JSON transport.
     encrypted_share_b64: String,
-    /// PGP déjà en ASCII-armor, mais base64 pour rester cohérent côté frontend.
+    /// PGP already ASCII-armored, but base64 too for consistency on the frontend side.
     privkey_armored_b64: String,
-    /// Identifiant du kit (commun aux 3 parts, voir `api::backup_kit_id`) et
-    /// numéro de la part : pour la sauvegarde sur clé USB.
+    /// Kit identifier (shared by the 3 shares, see `api::backup_kit_id`) and share
+    /// number: for the USB drive backup.
     kit_id: String,
     part: u8,
 }
 
-/// Parts d'un kit, avec leur identifiant de kit commun et leur numéro.
+/// The shares of a kit, with their shared kit identifier and their number.
 fn backup_dtos(backups: Vec<api::BackupShare>) -> Vec<BackupShareDto> {
     let kit_id = api::backup_kit_id(&backups);
     backups
@@ -1724,14 +1722,13 @@ struct CreateWalletDto {
     backups: Vec<BackupShareDto>,
 }
 
-/// Écrit un contenu (fourni en base64 par le frontend) dans un fichier — le chemin
-/// est choisi ICI, côté Rust, via la boîte de dialogue native "Enregistrer sous"
-/// (pas transmis par le frontend). Une version antérieure acceptait un `path: String`
-/// venant du JS : un frontend compromis aurait alors pu écrire n'importe quel
-/// contenu à n'importe quel emplacement du disque (ex: dossier de démarrage
-/// Windows) sans aucune interaction utilisateur. Avec ce design, l'utilisateur doit
-/// obligatoirement passer par la boîte de dialogue native pour choisir où écrire —
-/// impossible à scripter/contourner depuis la webview.
+/// Writes content (supplied in base64 by the frontend) to a file. The path is chosen
+/// HERE, on the Rust side, through the native "Save as" dialog (not passed by the
+/// frontend). An earlier version accepted a `path: String` from JS: a compromised
+/// frontend could then have written any content anywhere on disk (e.g. the Windows
+/// startup folder) without any user interaction. With this design, the user has to go
+/// through the native dialog to choose where to write, which cannot be scripted or
+/// bypassed from the webview.
 #[tauri::command]
 fn save_bytes_with_dialog(suggested_name: String, content_b64: String, app: tauri::AppHandle) -> Result<bool, String> {
     let bytes = base64::engine::general_purpose::STANDARD
@@ -1746,16 +1743,16 @@ fn save_bytes_with_dialog(suggested_name: String, content_b64: String, app: taur
             std::fs::write(path, bytes).map_err(|e| translate_error(&format!("écriture du fichier impossible : {e}")))?;
             Ok(true)
         }
-        None => Ok(false), // l'utilisateur a annulé la boîte de dialogue
+        None => Ok(false), // the user cancelled the dialog
     }
 }
 
-/// Liste blanche des domaines d'explorateurs de blocs réellement utilisés par l'app
-/// (voir `explorer_tx_prefix` dans `wallet_flow.rs` et `ESPLORA_*_BASE` dans
-/// `btc_rpc.rs`) : plus restrictif qu'un simple contrôle de schéma `https://`, qui
-/// aurait laissé un frontend compromis ouvrir n'importe quelle page — un vecteur
-/// de phishing simple, ouvert sans aucun bénéfice fonctionnel puisqu'aucun appel
-/// légitime de cette commande ne cible jamais autre chose que ces domaines.
+/// Allowlist of the block explorer domains the app actually uses (see
+/// `explorer_tx_prefix` in `wallet_flow.rs` and `ESPLORA_*_BASE` in `btc_rpc.rs`).
+/// Stricter than a plain `https://` scheme check, which would have let a
+/// compromised frontend open any page: a simple phishing vector, opened for no
+/// functional benefit since no legitimate call to this command ever targets
+/// anything other than these domains.
 const ALLOWED_EXTERNAL_LINK_PREFIXES: [&str; 15] = [
     "https://explorer.solana.com/",
     "https://blockstream.info/",
@@ -1774,10 +1771,10 @@ const ALLOWED_EXTERNAL_LINK_PREFIXES: [&str; 15] = [
     "https://taostats.io/account/",
 ];
 
-/// Lien vers un explorateur connu de l'app : Solana, Bitcoin, ou l'explorateur
-/// d'un réseau EVM (origine de `explorer_tx_prefix` : Etherscan, Arbiscan,
-/// BscScan…). Avant, seuls etherscan.io et sepolia.etherscan.io étaient
-/// admis : les liens des historiques Arbitrum, Base et Polygon étaient refusés.
+/// A link to an explorer the app knows: Solana, Bitcoin, or an EVM network's
+/// explorer (the origin of `explorer_tx_prefix`: Etherscan, Arbiscan, BscScan…).
+/// Previously only etherscan.io and sepolia.etherscan.io were allowed, so the
+/// Arbitrum, Base and Polygon history links were refused.
 fn external_link_allowed(url: &str) -> bool {
     let evm_origins = wallet_flow::EVM_NETWORKS.iter().filter_map(|n| {
         let rest = n.explorer_tx_prefix.strip_prefix("https://")?;
@@ -1793,12 +1790,12 @@ fn external_link_allowed(url: &str) -> bool {
     ALLOWED_EXTERNAL_LINK_PREFIXES.into_iter().chain(evm_origins).chain(custom_origins).any(|prefix| url.starts_with(prefix))
 }
 
-/// Ouvre un lien externe (explorateur de blocs) dans le navigateur système : un
-/// `<a target="_blank">` classique ne s'ouvre pas de façon fiable dans la webview
-/// Tauri (navigation interceptée pour raisons de sécurité), même limite déjà
-/// rencontrée pour les téléchargements (voir `save_bytes_with_dialog`). `url` vient
-/// du frontend (non fiable, voir en-tête de ce fichier) : restreint à la liste
-/// blanche ci-dessus, pas seulement au schéma https://.
+/// Opens an external link (block explorer) in the system browser: a regular `<a
+/// target="_blank">` does not open reliably in the Tauri webview (navigation
+/// intercepted for security reasons), the same limit already hit for downloads (see
+/// `save_bytes_with_dialog`). `url` comes from the frontend (untrusted, see this
+/// file's header): restricted to the allowlist above, not just to the https://
+/// scheme.
 #[tauri::command]
 fn open_external_link(url: String, app: tauri::AppHandle) -> Result<(), String> {
     if !external_link_allowed(&url) {
@@ -1809,8 +1806,8 @@ fn open_external_link(url: String, app: tauri::AppHandle) -> Result<(), String> 
     app.opener().open_url(url, None::<&str>).t_err()
 }
 
-/// Génère un QR code (SVG) pour une adresse publique — aucune donnée sensible,
-/// juste un confort d'affichage pour recevoir des fonds.
+/// Generates a QR code (SVG) for a public address: no sensitive data, just a
+/// display convenience for receiving funds.
 #[tauri::command]
 fn generate_qr_svg(text: String) -> Result<String, String> {
     let code = qrcode::QrCode::new(text.as_bytes()).t_err()?;
@@ -1826,38 +1823,38 @@ fn wallet_exists(app: tauri::AppHandle) -> Result<bool, String> {
     Ok(api::device_vault_exists(&dir))
 }
 
-// --- Fenêtre de confirmation sécurisée -------------------------------------------
-// Actions sensibles qui ne sont pas des transactions (réinitialisation, kit de
-// sauvegarde, restauration, Windows Hello, kit entier sur une clé) : fenêtre au
-// design de l'app, ouverte ICI. La page principale ne peut ni la créer (aucune
-// permission de fenêtre : capabilities/default.json n'accorde que core:default),
-// ni l'atteindre (autre webview), ni répondre à sa place : la réponse n'est
-// acceptée que de CETTE fenêtre, reconnue par son étiquette, que Tauri tire de
-// la webview qui appelle — jamais du message. Même garantie que la boîte de
-// l'OS qu'elle remplace (07/10/2026, à la demande de l'utilisateur : plus
-// lisible), et en plus : « Annuler » par défaut, confirmation refusée pendant
-// la première seconde (une touche Entrée tapée dans l'app à son apparition ne
-// la valide pas), phrase à recopier pour la réinitialisation. Les transactions
-// (adresse, montant) gardent la boîte de l'OS.
+// --- Secure confirmation window
+// ---------------------------------------------------
+//
+// Sensitive actions that are not transactions (reset, backup kit, restore, Windows
+// Hello, whole kit on one drive): a window styled like the app, opened HERE. The
+// main page can neither create it (no window permission: capabilities/default.json
+// only grants core:default), nor reach it (a different webview), nor answer in its
+// place: the answer is only accepted from THIS window, identified by its label,
+// which Tauri takes from the calling webview, never from the message. The same
+// guarantee as the OS dialog it replaces (2026-10-07, at the user's request: easier
+// to read), plus: "Cancel" by default, confirmation refused during the first second
+// (an Enter key pressed in the app as it appears does not confirm it), and a phrase
+// to type for the reset. Transactions (address, amount) keep the OS dialog.
 
-/// Délai avant qu'une confirmation soit acceptée (anti-« Entrée » involontaire).
+/// Delay before a confirmation is accepted (guards against an accidental "Enter").
 const SECURE_CONFIRM_DELAY: std::time::Duration = std::time::Duration::from_millis(900);
 
-/// Contenu d'une fenêtre de confirmation (textes construits ici, dans la
-/// langue de l'interface ; affichés par `textContent`, jamais comme HTML).
+/// Content of a confirmation window (texts built here, in the UI language;
+/// displayed through `textContent`, never as HTML).
 #[derive(Clone, Serialize)]
 struct SecureConfirmDetails {
     lang: &'static str,
-    /// Pictogramme : « trash », « key », « swap », « usb », « fingerprint ».
+    /// Icon: "trash", "key", "swap", "usb", "fingerprint".
     icon: &'static str,
     title: String,
     paragraphs: Vec<String>,
     note: String,
     confirm_label: String,
     cancel_label: String,
-    /// Bouton rouge : action destructrice.
+    /// Red button: destructive action.
     danger: bool,
-    /// Phrase à recopier pour confirmer, et sa consigne.
+    /// Phrase to type to confirm, and its instruction.
     phrase: Option<String>,
     phrase_prompt: Option<String>,
 }
@@ -1879,27 +1876,27 @@ impl SecureConfirmDetails {
     }
 }
 
-/// Paragraphe dans la langue de l'interface.
+/// Paragraph in the UI language.
 fn text(fr: &str, en: &str) -> String {
     lang(fr, en).to_string()
 }
 
 struct PendingConfirm {
     details: SecureConfirmDetails,
-    /// Contenu affiché (fenêtre montrée) : point de départ du délai.
+    /// Content displayed (window shown): the starting point of the delay.
     shown_at: Option<std::time::Instant>,
     answer: std::sync::mpsc::Sender<bool>,
 }
 
-/// Fenêtres de confirmation ouvertes, par étiquette.
+/// Open confirmation windows, by label.
 #[derive(Default)]
 struct SecureConfirmState(std::sync::Mutex<std::collections::HashMap<String, PendingConfirm>>);
 
 static NEXT_CONFIRM: AtomicU64 = AtomicU64::new(1);
 static OPEN_CONFIRMS: AtomicU64 = AtomicU64::new(0);
 
-/// Fenêtre principale inactive tant qu'une confirmation est ouverte (comme
-/// sous une boîte de l'OS), réactivée et remise au premier plan ensuite.
+/// The main window is disabled while a confirmation is open (as under an OS
+/// dialog), then re-enabled and brought back to the front.
 struct MainWindowDisabled(Option<tauri::WebviewWindow>);
 
 impl MainWindowDisabled {
@@ -1931,10 +1928,10 @@ fn finish_confirm(app: &tauri::AppHandle, label: &str, accepted: bool) {
     }
 }
 
-/// Ouvre la fenêtre et attend la réponse : `true` seulement si l'utilisateur a
-/// confirmé DANS cette fenêtre. Toujours appelée hors du fil principal (une
-/// commande synchrone s'y bloquerait : la fenêtre a besoin de ce fil).
-/// Fermée par sa croix, ou impossible à ouvrir : refus.
+/// Opens the window and waits for the answer: `true` only if the user confirmed IN
+/// this window. Always called off the main thread (a synchronous command would
+/// block there, and the window needs that thread). Closed with its X button, or
+/// impossible to open: refusal.
 fn secure_confirm(app: &tauri::AppHandle, details: SecureConfirmDetails) -> bool {
     let label = format!("confirm-{}", NEXT_CONFIRM.fetch_add(1, Ordering::SeqCst));
     let title = details.title.clone();
@@ -1978,8 +1975,7 @@ fn secure_confirm(app: &tauri::AppHandle, details: SecureConfirmDetails) -> bool
             }
         });
     }
-    // Page jamais prête (erreur de chargement) : montrée quand même, pour
-    // pouvoir la fermer.
+    // Page never ready (loading error): shown anyway, so it can be closed.
     {
         let window = window.clone();
         std::thread::spawn(move || {
@@ -1991,31 +1987,30 @@ fn secure_confirm(app: &tauri::AppHandle, details: SecureConfirmDetails) -> bool
         });
     }
     let accepted = receiver.recv().unwrap_or(false);
-    // Fenêtre principale réactivée AVANT la fermeture : sinon Windows donne
-    // le premier plan à une autre application.
+    // Main window re-enabled BEFORE closing: otherwise Windows brings another
+    // application to the front.
     drop(disabled);
     let _ = window.destroy();
     accepted
 }
 
-/// Comparaison de la phrase recopiée : casse et espaces multiples ignorés.
+/// Comparison of the typed phrase: case and repeated spaces ignored.
 fn normalize_phrase(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ").to_uppercase()
 }
 
-/// Contenu de la fenêtre de confirmation QUI APPELLE (et d'aucune autre).
+/// Content of the CALLING confirmation window (and of no other).
 #[tauri::command]
 fn secure_confirm_details(webview: tauri::Webview, state: tauri::State<SecureConfirmState>) -> Result<SecureConfirmDetails, String> {
     state.0.lock().unwrap_or_else(|p| p.into_inner()).get(webview.label()).map(|p| p.details.clone()).ok_or_else(|| translate_error("fenêtre de confirmation inconnue"))
 }
 
-/// Contenu affiché : fenêtre ajustée à sa hauteur, assortie au thème, montrée.
+/// Content displayed: window sized to its height, matched to the theme, shown.
 #[tauri::command]
 fn secure_confirm_ready(webview: tauri::Webview, theme: String, height: f64, state: tauri::State<SecureConfirmState>, app: tauri::AppHandle) -> Result<(), String> {
     let label = webview.label().to_string();
-    // Fenêtre de confirmation en attente d'abord : aucune autre fenêtre (la
-    // principale) ne peut se faire redimensionner ou montrer par cet appel
-    // (32ᵉ passage).
+    // A pending confirmation window first: no other window (the main one) can be
+    // resized or shown through this call (audit round 32).
     if !state.0.lock().unwrap_or_else(|p| p.into_inner()).contains_key(&label) {
         return Err(translate_error("fenêtre de confirmation inconnue"));
     }
@@ -2031,8 +2026,8 @@ fn secure_confirm_ready(webview: tauri::Webview, theme: String, height: f64, sta
     Ok(())
 }
 
-/// Réponse de la fenêtre de confirmation QUI APPELLE : confirmation acceptée
-/// seulement après le délai, et avec la phrase exacte si elle est demandée.
+/// Answer from the CALLING confirmation window: a confirmation is only accepted
+/// after the delay, and with the exact phrase if one is required.
 #[tauri::command]
 fn secure_confirm_answer(webview: tauri::Webview, accepted: bool, typed: Option<String>, state: tauri::State<SecureConfirmState>) -> Result<(), String> {
     let mut pending = state.0.lock().unwrap_or_else(|p| p.into_inner());
@@ -2053,8 +2048,8 @@ fn secure_confirm_answer(webview: tauri::Webview, accepted: bool, typed: Option<
     Ok(())
 }
 
-/// Travail à faire sur le fil principal (Windows Hello : comme avant le
-/// passage de sa confirmation à la fenêtre sécurisée), depuis un autre fil.
+/// Work to run on the main thread (Windows Hello: as it was before its confirmation
+/// moved to the secure window), from another thread.
 fn on_main_thread<T: Send + 'static>(app: &tauri::AppHandle, work: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
     let (sender, receiver) = std::sync::mpsc::channel();
     app.run_on_main_thread(move || {
@@ -2064,18 +2059,17 @@ fn on_main_thread<T: Send + 'static>(app: &tauri::AppHandle, work: impl FnOnce()
     receiver.recv().map_err(|_| translate_error("opération interrompue"))?
 }
 
-/// Trouvé lors du 22ᵉ passage : la seule action IRRÉVERSIBLE de l'app sans
-/// confirmation native. Restaurer, régénérer le kit, activer/désactiver
-/// Windows Hello passent tous par une boîte de l'OS (un frontend compromis
-/// ne peut ni la simuler ni la contourner) ; supprimer le coffre ne passait
-/// que par un `confirm()` JavaScript, que ce même frontend peut sauter — un
-/// script aurait pu effacer le portefeuille sans mot de passe ni clic, et
-/// sans kit de sauvegarde les fonds étaient perdus pour toujours. Pas de mot
-/// de passe exigé (réinitialiser reste le recours en cas d'oubli), mais une
-/// boîte native, comme pour les autres actions de ce niveau.
+/// Found in round 22: the app's only IRREVERSIBLE action without a native
+/// confirmation. Restoring, regenerating the kit, enabling/disabling Windows Hello
+/// all go through an OS dialog (which a compromised frontend can neither fake nor
+/// bypass); deleting the vault only went through a JavaScript `confirm()`, which
+/// that same frontend can skip. A script could have erased the wallet without a
+/// password or a click, and without a backup kit the funds were lost forever. No
+/// password required (resetting remains the way out if it is forgotten), but a
+/// native dialog, as for the other actions at this level.
 ///
-/// Depuis le 07/10/2026 : fenêtre sécurisée (voir `secure_confirm`), phrase
-/// à recopier.
+/// Since 2026-10-07: the secure window (see `secure_confirm`), with a phrase to
+/// type.
 fn confirm_reset_window(app: &tauri::AppHandle) -> bool {
     let mut details = SecureConfirmDetails::new(
         "trash",
@@ -2095,14 +2089,14 @@ fn confirm_reset_window(app: &tauri::AppHandle) -> bool {
     secure_confirm(app, details)
 }
 
-/// Supprime le coffre local (voir `api::reset_wallet`) : permet de revenir à
-/// l'onboarding sans avoir à retrouver/effacer manuellement le répertoire de
-/// données de l'app. Le wallet reste récupérable via les 3 parts de sauvegarde
-/// exportées à la création, si elles ont été conservées.
+/// Deletes the local vault (see `api::reset_wallet`): lets the user go back to
+/// onboarding without having to find/delete the app's data directory by hand. The
+/// wallet can still be recovered through the 3 backup shares exported at creation,
+/// if they were kept.
 ///
-/// Clés oubliées d'abord (plus aucune synchronisation ne repart avec elles),
-/// puis effacement — qui attend l'arrêt des synchronisations en cours, d'où
-/// une commande asynchrone (voir `seed_state`).
+/// Keys are forgotten first (no sync can start again with them), then the data is
+/// erased, which waits for running syncs to stop, hence an asynchronous command
+/// (see `seed_state`).
 #[tauri::command]
 async fn reset_wallet(app: tauri::AppHandle) -> Result<(), String> {
     run_blocking(move || {
@@ -2133,18 +2127,16 @@ fn create_wallet(password: String, app: tauri::AppHandle) -> Result<CreateWallet
     })
 }
 
-/// Sans cette confirmation, régénérer un kit serait la façon la plus discrète
-/// d'exfiltrer le contrôle total du wallet : contrairement à un envoi de fonds
-/// (visible on-chain, ponctuel), obtenir un kit Shamir valide donne un accès
-/// SILENCIEUX et PERSISTANT — un ancien kit reste valable même après un
-/// changement de mot de passe de l'appareil (voir `generate_backup_kit`), donc
-/// voler ce kit une fois suffit pour toujours pouvoir reconstruire la clé
-/// maîtresse plus tard, sans jamais retoucher au coffre ni déclencher la moindre
-/// transaction détectable. Un script ayant déjà volé le mot de passe (ex: capture
-/// du champ de saisie) pourrait sinon appeler cette commande sans que
-/// l'utilisateur s'en aperçoive jamais. La fenêtre de confirmation sécurisée
-/// (voir `secure_confirm`) rend cette tentative visible et impossible à
-/// valider sans l'utilisateur.
+/// Without this confirmation, regenerating a kit would be the stealthiest way to
+/// exfiltrate full control of the wallet. Unlike a send of funds (visible on-chain,
+/// one-off), getting a valid Shamir kit gives SILENT and PERSISTENT access: an old
+/// kit stays valid even after the device password changes (see
+/// `generate_backup_kit`), so stealing the kit once is enough to rebuild the master
+/// key forever after, without touching the vault again or triggering any detectable
+/// transaction. A script that had already stolen the password (e.g. by capturing
+/// the input field) could otherwise call this command without the user ever
+/// noticing. The secure confirmation window (see `secure_confirm`) makes such an
+/// attempt visible and impossible to approve without the user.
 fn confirm_regenerate_backup_window(app: &tauri::AppHandle) -> bool {
     secure_confirm(
         app,
@@ -2163,11 +2155,11 @@ fn confirm_regenerate_backup_window(app: &tauri::AppHandle) -> bool {
     )
 }
 
-/// Régénère un kit de sauvegarde Shamir 2-sur-3 tout neuf (voir
-/// `api::regenerate_backup_kit`) sans toucher au coffre local ni changer les
-/// adresses — utile si l'utilisateur a perdu un ou plusieurs de ses fichiers de
-/// sauvegarde d'origine. Redemande le mot de passe : régénérer suppose de
-/// redéchiffrer la seed, jamais mise en cache.
+/// Regenerates a brand-new 2-of-3 Shamir backup kit (see
+/// `api::regenerate_backup_kit`) without touching the local vault or changing the
+/// addresses; useful if the user lost one or more of their original backup files.
+/// Asks for the password again: regenerating means decrypting the seed again, which
+/// is never cached.
 #[tauri::command]
 async fn regenerate_backup_kit(password: String, app: tauri::AppHandle) -> Result<Vec<BackupShareDto>, String> {
     run_blocking(move || {
@@ -2181,11 +2173,10 @@ async fn regenerate_backup_kit(password: String, app: tauri::AppHandle) -> Resul
     .await
 }
 
-/// Adresse THORChain (RUNE) dérivée de la même entropie maître (voir
-/// `api::get_thor_fee_address`) : purement informatif, sert uniquement à
-/// recevoir les frais d'affiliation des swaps. Pas de confirmation native
-/// ici (lecture seule, aucun fonds ne bouge) — le mot de passe suffit,
-/// exactement comme pour afficher les autres adresses du portefeuille.
+/// THORChain (RUNE) address derived from the same master entropy (see
+/// `api::get_thor_fee_address`): purely informational, used to receive swap
+/// affiliate fees. No native confirmation here (read-only, no funds move): the
+/// password is enough, exactly as for showing the wallet's other addresses.
 #[tauri::command]
 fn get_thor_fee_address(password: String, app: tauri::AppHandle) -> Result<String, String> {
     let password = Zeroizing::new(password);
@@ -2193,15 +2184,15 @@ fn get_thor_fee_address(password: String, app: tauri::AppHandle) -> Result<Strin
     api::get_thor_fee_address(&dir, &password).t_err()
 }
 
-// --- Nom d'affiliation (portefeuille du développeur seulement) -----------------
+// --- Affiliate name (developer's wallet only) ---------------------------------
 
 #[derive(Serialize)]
 struct AffiliateNameDto {
-    /// « thorchain » ou « maya ».
+    /// "thorchain" or "maya".
     chain: &'static str,
     protocol: &'static str,
     name: &'static str,
-    /// « free », « ours », « taken ».
+    /// "free", "ours", "taken".
     state: &'static str,
     years_left: Option<f64>,
     address: &'static str,
@@ -2215,8 +2206,8 @@ fn native_amount(units: u128, decimals: u32) -> String {
     openpgp_wallet_core::tokens::format_amount(units, decimals as u8)
 }
 
-/// État du nom d'affiliation sur THORChain et Maya (données publiques) ;
-/// `None` si le profil principal n'est pas le portefeuille du développeur.
+/// State of the affiliate name on THORChain and Maya (public data); `None` if the
+/// main profile is not the developer's wallet.
 #[tauri::command]
 async fn affiliate_names_status() -> Result<Option<Vec<AffiliateNameDto>>, String> {
     if !IS_AFFILIATE_WALLET.load(Ordering::Relaxed) {
@@ -2253,8 +2244,8 @@ async fn affiliate_names_status() -> Result<Option<Vec<AffiliateNameDto>>, Strin
     .await
 }
 
-/// Inscrit (ou prolonge d'un an) le nom d'affiliation sur `chain`, après une
-/// boîte de confirmation native construite à partir de l'état relu ICI.
+/// Registers (or extends by a year) the affiliate name on `chain`, after a native
+/// confirmation dialog built from the state read HERE.
 #[tauri::command]
 async fn register_affiliate_name(password: String, chain: String, app: tauri::AppHandle) -> Result<String, String> {
     if !IS_AFFILIATE_WALLET.load(Ordering::Relaxed) {
@@ -2293,7 +2284,7 @@ async fn register_affiliate_name(password: String, chain: String, app: tauri::Ap
         if !confirmed {
             return Err(translate_error("Inscription annulée (confirmation refusée)."));
         }
-        // Délai d'annulation, comme pour tout mouvement de fonds (33ᵉ passage).
+        // Cancellation delay, as for any movement of funds (audit round 33).
         send_grace_period(&app, GraceRecap::new(network.to_string(), deposit.clone(), address.to_string()))?;
         api::register_affiliate_name(&dir, &password, &chain, status.deposit).t_err()
     })
@@ -2317,10 +2308,9 @@ fn remember_profiles(app: &tauri::AppHandle, profiles: &[api::ProfileAddresses])
     }
 }
 
-/// Heuristique d'affichage uniquement (ne fait pas partie de la barrière de
-/// sécurité) : indique si Windows Hello semble configuré sur cette machine,
-/// pour ne proposer le bouton d'activation que quand ça a une chance de
-/// fonctionner. `false` sur toute plateforme autre que Windows.
+/// Display heuristic only (not part of the security barrier): tells whether Windows
+/// Hello seems to be set up on this machine, so the enable button is only offered
+/// when it has a chance of working. `false` on any platform other than Windows.
 #[tauri::command]
 fn biometric_unlock_available() -> bool {
     #[cfg(windows)]
@@ -2339,10 +2329,10 @@ fn biometric_unlock_enrolled(app: tauri::AppHandle) -> Result<bool, String> {
     Ok(api::biometric_unlock_enrolled(&dir))
 }
 
-/// Même raison que `confirm_regenerate_backup_window` : activer un second moyen
-/// de déverrouiller le coffre est une action de sécurité, rendue visible et
-/// impossible à déclencher silencieusement par un frontend compromis grâce à
-/// la fenêtre de confirmation sécurisée.
+/// Same reason as `confirm_regenerate_backup_window`: enabling a second way to
+/// unlock the vault is a security action, made visible and impossible for a
+/// compromised frontend to trigger silently thanks to the secure confirmation
+/// window.
 fn confirm_enroll_biometric_window(app: &tauri::AppHandle) -> bool {
     secure_confirm(
         app,
@@ -2374,8 +2364,8 @@ async fn enroll_biometric_unlock(password: String, app: tauri::AppHandle) -> Res
     .await
 }
 
-/// Déverrouille le coffre via Windows Hello plutôt que le mot de passe — voir
-/// `api::unlock_wallet_biometric`. Renvoie les mêmes `ProfileDto` que
+/// Unlocks the vault through Windows Hello rather than the password; see
+/// `api::unlock_wallet_biometric`. Returns the same `ProfileDto`s as
 /// `unlock_wallet`.
 #[tauri::command]
 fn unlock_wallet_biometric(app: tauri::AppHandle) -> Result<Vec<ProfileDto>, String> {
@@ -2410,9 +2400,9 @@ async fn disable_biometric_unlock(password: String, app: tauri::AppHandle) -> Re
     .await
 }
 
-/// Ajoute un profil (nouvelle adresse par réseau, dérivée de la même seed — voir
-/// `api::create_profile`) : redemande le mot de passe puisque dériver une adresse
-/// suppose de redéchiffrer la seed, jamais mise en cache entre deux appels.
+/// Adds a profile (a new address per network, derived from the same seed; see
+/// `api::create_profile`): asks for the password again, since deriving an address
+/// means decrypting the seed again, which is never cached between calls.
 #[tauri::command]
 fn create_profile(password: Option<String>, label: String, app: tauri::AppHandle) -> Result<ProfileDto, String> {
     let password = password.map(Zeroizing::new);
@@ -2422,18 +2412,17 @@ fn create_profile(password: Option<String>, label: String, app: tauri::AppHandle
     Ok(profile.into())
 }
 
-/// Retire un profil de la liste (voir `api::delete_profile`) : redemande le mot de
-/// passe, pas parce que la suppression touche à la seed, mais parce que cette
-/// application n'offre aucun moyen de recréer un profil à un index précis —
-/// concrètement, supprimer un profil qui a déjà reçu des fonds revient à en perdre
-/// l'accès depuis cette interface. Ce n'est pas une simple opération de confort sur
-/// une liste de labels, d'où une confirmation à la hauteur (comme pour un envoi de
-/// fonds), au lieu d'un simple `confirm()` JS.
+/// Removes a profile from the list (see `api::delete_profile`): asks for the
+/// password again, not because the removal touches the seed, but because this app
+/// offers no way to recreate a profile at a specific index. In practice, removing a
+/// profile that has already received funds means losing access to them from this
+/// interface. It is not a mere convenience operation on a list of labels, hence a
+/// confirmation to match (as for a send of funds), instead of a plain JS
+/// `confirm()`.
 ///
-/// Confirmée dans la fenêtre sécurisée (nom du profil lu ici, pas fourni par
-/// la page) : avec le seul mot de passe, un script de la page qui l'aurait
-/// capté pouvait supprimer un profil approvisionné sans rien montrer
-/// (33ᵉ passage).
+/// Confirmed in the secure window (profile name read here, not supplied by the
+/// page): with the password alone, a page script that had captured it could remove
+/// a funded profile without showing anything (audit round 33).
 #[tauri::command]
 async fn delete_profile(password: String, index: u32, app: tauri::AppHandle) -> Result<(), String> {
     run_blocking(move || {
@@ -2467,9 +2456,9 @@ fn confirm_delete_profile_window(app: &tauri::AppHandle, label: &str) -> bool {
     secure_confirm(app, details)
 }
 
-/// Suppression "légère" et réversible (voir `api::archive_profile`) : pas de mot de
-/// passe requis, rien n'est irréversible — le profil peut être restauré à tout
-/// moment via `unarchive_profile`.
+/// "Soft", reversible removal (see `api::archive_profile`): no password required,
+/// nothing is irreversible, and the profile can be restored at any time through
+/// `unarchive_profile`.
 #[tauri::command]
 fn archive_profile(index: u32, app: tauri::AppHandle) -> Result<(), String> {
     let dir = data_dir(&app)?;
@@ -2488,21 +2477,19 @@ fn list_archived_profiles(app: tauri::AppHandle) -> Result<Vec<ProfileLabelDto>,
     Ok(api::list_archived_profiles(&dir).into_iter().map(Into::into).collect())
 }
 
-/// Confirmation (fenêtre sécurisée) avertissant qu'une restauration va remplacer le coffre
-/// actuel de cet appareil. Sans elle, un script capable d'invoquer directement la
-/// commande Tauri `restore_wallet` (devtools, dépendance compromise) pourrait
-/// substituer silencieusement un tout autre wallet — par exemple un wallet dont
-/// l'attaquant possède lui-même les parts de sauvegarde — sans que l'utilisateur
-/// clique jamais sur "envoyer". Les adresses affichées ensuite dans le tableau de
-/// bord seraient alors celles de l'attaquant : un dépôt fait de bonne foi via l'écran
-/// "recevoir" irait droit vers lui. Même logique de défense que
-/// `confirm_transaction_native` : confirmation hors de la page principale (voir
-/// `secure_confirm`), donc impossible à falsifier ou à contourner depuis un
-/// frontend compromis.
-/// Confirmation d'une restauration, après le contrôle des deux parts
-/// (`api::check_restore`) : elle montre les adresses que la restauration
-/// redonnera, et dit si les parts ont été prouvées du même kit (kits marqués)
-/// ou s'il faut reconnaître ces adresses (kits d'avant les marques).
+/// Confirmation of a restore (secure window), after both shares have been checked
+/// (`api::check_restore`): it shows the addresses the restore will give back, and says
+/// whether the shares were proven to come from the same kit (marked kits) or whether the
+/// user should recognize these addresses (kits from before marks existed).
+///
+/// A restore replaces this device's current vault. Without this confirmation, a script
+/// able to invoke the `restore_wallet` Tauri command directly (devtools, compromised
+/// dependency) could silently swap in an entirely different wallet (for instance one whose
+/// backup shares the attacker holds) without the user ever clicking "send". The addresses
+/// then shown on the dashboard would be the attacker's, and a deposit made in good faith
+/// through the "receive" screen would go straight to them. The same defense as
+/// `confirm_transaction_native`: a confirmation outside the main page (see
+/// `secure_confirm`), so it cannot be faked or bypassed from a compromised frontend.
 fn confirm_restore_window(app: &tauri::AppHandle, check: &api::RestoreCheck) -> bool {
     let short = |address: &str| {
         let chars: Vec<char> = address.chars().collect();
@@ -2545,17 +2532,17 @@ fn confirm_restore_window(app: &tauri::AppHandle, check: &api::RestoreCheck) -> 
 
 #[derive(Serialize)]
 struct BackupDriveDto {
-    /// Racine (`E:\`), à renvoyer telle quelle aux commandes suivantes.
+    /// Root (`E:\`), to pass back as is to the following commands.
     root: String,
     label: String,
     free_bytes: u64,
-    /// Parts déjà présentes (kit, numéro).
+    /// Shares already present (kit, number).
     shares: Vec<openpgp_wallet_core::usb_backup::ShareInfo>,
 }
 
-/// Clés USB branchées, et la part de sauvegarde que chacune contient (aucun
-/// secret : kit et numéro de part seulement). Appelée à intervalles réguliers
-/// par l'interface pour détecter une clé dès qu'elle est branchée.
+/// Plugged-in USB drives, and the backup share each one holds (no secret: kit and
+/// share number only). Called at regular intervals by the UI to detect a drive as
+/// soon as it is plugged in.
 #[tauri::command]
 async fn list_backup_drives() -> Result<Vec<BackupDriveDto>, String> {
     run_blocking(|| {
@@ -2567,11 +2554,11 @@ async fn list_backup_drives() -> Result<Vec<BackupDriveDto>, String> {
     .await
 }
 
-/// Écrit une part COMPLÈTE du kit (fichier de part, clé privée, mot de passe)
-/// sur la clé USB `root` — seule une clé USB détectée est acceptée, jamais un
-/// chemin quelconque — puis la relit et vérifie qu'elle se déchiffre. Voir
-/// `core/src/usb_backup.rs` (une part par clé ; `name` : nom de la sauvegarde,
-/// gardé s'il est déjà sur la clé).
+/// Writes a COMPLETE share of the kit (share file, private key, password) to the
+/// USB drive `root` (only a detected USB drive is accepted, never an arbitrary
+/// path), then rereads it and checks that it decrypts. See `core/src/usb_backup.rs`
+/// (one share per drive; `name`: the backup's name, kept if it is already on the
+/// drive).
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 async fn save_backup_to_usb(
@@ -2609,8 +2596,8 @@ struct KitShareDto {
     passphrase: String,
 }
 
-/// Confirmation (fenêtre sécurisée) avant d'écrire TOUT le kit sur une seule clé : cette clé
-/// suffira à elle seule à tout récupérer, sans mot de passe.
+/// Confirmation (secure window) before writing the WHOLE kit to a single drive: that drive
+/// alone will be enough to recover everything, with no password.
 fn confirm_kit_on_one_drive_window(app: &tauri::AppHandle, drive: &str, name: &str) -> bool {
     let drive = dialog_label(drive);
     let name = dialog_label(name);
@@ -2634,9 +2621,9 @@ fn confirm_kit_on_one_drive_window(app: &tauri::AppHandle, drive: &str, name: &s
     secure_confirm(app, details)
 }
 
-/// Écrit TOUT le kit (les 3 parts complètes) sur la clé USB `root`, après la
-/// confirmation qui en dit la conséquence, puis vérifie chaque part relue.
-/// Renvoie le nom de la clé ; `None` si l'utilisateur a refusé dans la boîte.
+/// Writes the WHOLE kit (the 3 complete shares) to the USB drive `root`, after the
+/// confirmation that states the consequence, then checks every reread share.
+/// Returns the drive's name; `None` if the user declined in the dialog.
 #[tauri::command]
 async fn save_kit_to_usb(root: String, kit_id: String, name: String, shares: Vec<KitShareDto>, app: tauri::AppHandle) -> Result<Option<String>, String> {
     run_blocking(move || {
@@ -2669,14 +2656,13 @@ async fn save_kit_to_usb(root: String, kit_id: String, name: String, shares: Vec
     .await
 }
 
-/// Parts lues sur des clés USB pour une restauration (gardées ici, jamais
-/// envoyées à l'interface) : les clés peuvent être branchées l'une après l'autre.
+/// Shares read from USB drives for a restore (kept here, never sent to the UI): the
+/// drives can be plugged in one after the other.
 #[derive(Default)]
 struct UsbRestoreState(std::sync::Mutex<Vec<(openpgp_wallet_core::usb_backup::ShareInfo, openpgp_wallet_core::usb_backup::ShareFiles)>>);
 
-/// Lit toutes les parts de la clé USB `root` (de tous les portefeuilles
-/// qu'elle porte) pour une restauration à venir ; renvoie celles lues (kit,
-/// numéro, nom — aucun secret).
+/// Reads every share on the USB drive `root` (from every wallet it holds) for an
+/// upcoming restore; returns the ones read (kit, number, name; no secret).
 #[tauri::command]
 async fn usb_restore_load(root: String, app: tauri::AppHandle) -> Result<Vec<openpgp_wallet_core::usb_backup::ShareInfo>, String> {
     run_blocking(move || {
@@ -2702,9 +2688,9 @@ async fn usb_restore_load(root: String, app: tauri::AppHandle) -> Result<Vec<ope
     .await
 }
 
-/// « Vérifier mes clés de sauvegarde » : relit et déchiffre chaque part de
-/// la clé USB `root` (clé détectée seulement), sans rien écrire ni restaurer ;
-/// renvoie l'état de chacune (kit, numéro, nom, problème — aucun secret).
+/// "Check my backup drives": rereads and decrypts each share on the USB drive
+/// `root` (detected drive only), without writing or restoring anything; returns the
+/// state of each (kit, number, name, problem; no secret).
 #[tauri::command]
 async fn check_usb_backup(root: String, app: tauri::AppHandle) -> Result<Vec<openpgp_wallet_core::usb_backup::ShareCheck>, String> {
     run_blocking(move || {
@@ -2717,21 +2703,21 @@ async fn check_usb_backup(root: String, app: tauri::AppHandle) -> Result<Vec<ope
     .await
 }
 
-/// Oublie les parts lues (restauration abandonnée).
+/// Forgets the shares read (restore abandoned).
 #[tauri::command]
 fn usb_restore_clear(app: tauri::AppHandle) {
     app.state::<UsbRestoreState>().0.lock().unwrap_or_else(|p| p.into_inner()).clear();
 }
 
-/// Restauration à partir de deux parts d'un même kit lues sur des clés USB
-/// (`usb_restore_load`) — même chemin que `restore_wallet` ensuite. `kit` :
-/// la sauvegarde choisie, nécessaire quand plusieurs sont complètes.
+/// Restore from two shares of the same kit read from USB drives
+/// (`usb_restore_load`), then the same path as `restore_wallet`. `kit`: the backup
+/// chosen, needed when several are complete.
 #[tauri::command]
 async fn restore_wallet_from_usb(new_password: String, kit: Option<String>, app: tauri::AppHandle) -> Result<AddressesDto, String> {
     run_blocking(move || restore_wallet_from_usb_blocking(new_password, kit, &app)).await
 }
 
-/// Kits dont au moins deux parts différentes ont été lues, dans l'ordre de lecture.
+/// Kits for which at least two different shares have been read, in reading order.
 fn complete_kits(loaded: &[(openpgp_wallet_core::usb_backup::ShareInfo, openpgp_wallet_core::usb_backup::ShareFiles)]) -> Vec<String> {
     let mut kits: Vec<String> = Vec::new();
     for (a, _) in loaded {
@@ -2765,12 +2751,12 @@ fn restore_wallet_from_usb_blocking(new_password: String, kit: Option<String>, a
         };
         (copy(i), copy(j))
     };
-    // Parts qui ne vont pas ensemble : refusées ici, avant la confirmation.
+    // Shares that do not belong together: refused here, before the confirmation.
     let check = api::check_restore(&dir, (&first.0, &first.1, &first.2), (&second.0, &second.1, &second.2)).t_err()?;
     if !confirm_restore_window(&app, &check) {
         return Err(translate_error("Restauration annulée (confirmation refusée)."));
     }
-    // Clés de l'ancien portefeuille oubliées avant d'effacer son état.
+    // The old wallet's keys are forgotten before its state is erased.
     forget_session(&app);
     let addresses = api::restore_wallet(
         &dir,
@@ -2803,7 +2789,7 @@ async fn restore_wallet(
     .await
 }
 
-/// `part` : [part chiffrée (base64), clé privée (base64), mot de passe].
+/// `part`: [encrypted share (base64), private key (base64), password].
 fn restore_wallet_blocking(new_password: String, part1: [String; 3], part2: [String; 3], app: &tauri::AppHandle) -> Result<AddressesDto, String> {
     let app = app.clone();
     let [backup1_b64, privkey1_armored_b64, passphrase1] = part1;
@@ -2820,17 +2806,17 @@ fn restore_wallet_blocking(new_password: String, part1: [String; 3], part2: [Str
     let share2 = decode(&backup2_b64)?;
     let priv2 = decode(&privkey2_armored_b64)?;
 
-    // Parts qui ne vont pas ensemble (deux kits différents) : refusées ici,
-    // avant la confirmation ; sinon, la confirmation montre les adresses.
+    // Shares that do not belong together (two different kits): refused here, before
+    // the confirmation; otherwise, the confirmation shows the addresses.
     let check = api::check_restore(&dir, (&share1, &priv1, &passphrase1), (&share2, &priv2, &passphrase2)).t_err()?;
     if !confirm_restore_window(&app, &check) {
         return Err(translate_error("Restauration annulée (confirmation refusée)."));
     }
 
-    // Une restauration ne recrée toujours qu'un seul profil par défaut (voir
-    // `api::restore_wallet`) : les éventuelles étiquettes de profils supplémentaires
-    // créées sur l'ancien appareil ne font pas partie de la sauvegarde Shamir.
-    // Clés de l'ancien portefeuille oubliées avant d'effacer son état.
+    // A restore still only recreates a single default profile (see
+    // `api::restore_wallet`): any extra profile labels created on the old device are
+    // not part of the Shamir backup. The old wallet's keys are forgotten before its
+    // state is erased.
     forget_session(&app);
     let addresses = api::restore_wallet(
         &dir,
@@ -2839,14 +2825,14 @@ fn restore_wallet_blocking(new_password: String, part1: [String; 3], part2: [Str
         (&share2, &priv2, &passphrase2),
     )
     .t_err()?;
-    // Nouveau portefeuille : les connexions et adresses de l'ancien ne valent plus.
+    // New wallet: the old one's connections and addresses no longer apply.
     forget_wallet_connections(&app);
     remember_addresses(&app, 0, &addresses);
     Ok(addresses.into())
 }
 
-/// Réinitialisation/restauration : les dApps connectées l'étaient à l'ANCIEN
-/// portefeuille — déconnectées, et adresses mémorisées oubliées.
+/// Reset/restore: the connected dApps were connected to the OLD wallet, so they are
+/// disconnected and the remembered addresses forgotten.
 fn forget_wallet_connections(app: &tauri::AppHandle) {
     if let Ok(client) = wc_client(app) {
         client.disconnect_all();
@@ -2854,18 +2840,17 @@ fn forget_wallet_connections(app: &tauri::AppHandle) {
     forget_session(app);
 }
 
-/// Verrouillage (bouton, ou inactivité) : clés de visualisation Zcash protégé
-/// et Monero, adresses mémorisées et demandes de dApps préparées oubliées
-/// jusqu'au prochain déverrouillage — la synchronisation de fond s'arrête
-/// faute de clés, et aucune commande ne répond plus pour un profil. Les
-/// connexions WalletConnect restent (reprises au déverrouillage).
+/// Locking (button, or inactivity): shielded Zcash and Monero view keys, remembered
+/// addresses and prepared dApp requests are forgotten until the next unlock.
+/// Background sync stops for lack of keys, and no command answers for a profile any
+/// more. WalletConnect connections stay (resumed on unlock).
 #[tauri::command]
 fn lock_session(app: tauri::AppHandle) {
     forget_session(&app);
 }
 
 fn forget_session(app: &tauri::AppHandle) {
-    // Envois encore dans leur délai d'annulation : annulés.
+    // Sends still within their cancellation delay: cancelled.
     for sender in app.state::<SendGrace>().0.lock().unwrap_or_else(|p| p.into_inner()).values() {
         let _ = sender.send(false);
     }
@@ -2891,8 +2876,8 @@ fn evm_network(network: &str) -> Result<&'static wallet_flow::EvmNetwork, String
     wallet_flow::evm_network(network).ok_or_else(|| translate_error(&format!("réseau EVM inconnu : {network}")))
 }
 
-/// Réseau EVM (Ethereum, ses L2, BNB Chain, Avalanche, Polygon…) : même
-/// adresse, même code d'envoi, voir `wallet_flow::EVM_NETWORKS`.
+/// EVM network (Ethereum, its L2s, BNB Chain, Avalanche, Polygon…): same address,
+/// same send code, see `wallet_flow::EVM_NETWORKS`.
 fn is_evm(network: &str) -> bool {
     wallet_flow::evm_network(network).is_some()
 }
@@ -2924,8 +2909,8 @@ async fn get_balance(network: String, address: String, app: tauri::AppHandle) ->
             }
             "btc_testnet" | "btc_mainnet" => {
                 let net = btc_network(&network)?;
-                // Confirmé moins les envois en attente ; les réceptions non
-                // confirmées sont montrées à part (`get_btc_pending_incoming`).
+                // Confirmed minus pending sends; unconfirmed receipts are shown separately
+                // (`get_btc_pending_incoming`).
                 let sat = api::get_btc_balance_view(&address, net).t_err()?.settled_sat;
                 Ok(format!("{:.8}", sat as f64 / 1e8))
             }
@@ -2943,12 +2928,12 @@ async fn get_balance(network: String, address: String, app: tauri::AppHandle) ->
             "ada_mainnet" => Ok(openpgp_wallet_core::cardano::format_ada(api::get_ada_balance(&address).t_err()?)),
             "stx_mainnet" => Ok(openpgp_wallet_core::stacks::format_stx(api::get_stx_balance(&address).t_err()?)),
             "tao_mainnet" => Ok(openpgp_wallet_core::bittensor::format_tao(api::get_tao_balance(&address).t_err()?)),
-            // Base locale (synchronisation de fond) : dépensable + en attente.
+            // Local database (background sync): spendable + pending.
             "zec_shielded" => {
                 let balance = api::zec_shielded_balance(&data_dir(&app)?, shielded_profile(&app, &address)?).t_err()?;
                 Ok(openpgp_wallet_core::zcash::format_zec(balance.spendable.saturating_add(balance.pending)))
             }
-            // État local (synchronisation de fond) : dépensable + bloqué.
+            // Local state (background sync): spendable + locked.
             "xmr_mainnet" => {
                 let balance = api::xmr_balance(&data_dir(&app)?, monero_profile(&app, &address)?).t_err()?;
                 Ok(openpgp_wallet_core::monero::format_xmr(balance.unlocked.saturating_add(balance.locked)))
@@ -2959,10 +2944,9 @@ async fn get_balance(network: String, address: String, app: tauri::AppHandle) ->
     .await
 }
 
-/// Réceptions Bitcoin non confirmées de `address` (montant BTC), `None` s'il n'y
-/// en a pas : affichées à part sur la carte, jamais comptées dans le solde —
-/// elles peuvent encore être annulées par leur émetteur (voir
-/// `api::BtcBalanceView`).
+/// Unconfirmed Bitcoin receipts of `address` (BTC amount), `None` if there are
+/// none: shown separately on the card, never counted in the balance, since their
+/// sender can still cancel them (see `api::BtcBalanceView`).
 #[tauri::command]
 async fn get_btc_pending_incoming(network: String, address: String) -> Result<Option<String>, String> {
     run_blocking(move || {
@@ -2973,8 +2957,8 @@ async fn get_btc_pending_incoming(network: String, address: String) -> Result<Op
     .await
 }
 
-/// Solde USDC — mainnet uniquement (voir sol_spl.rs : pas de mint devnet
-/// vérifié avec confiance, et aucun intérêt pratique à en tester un).
+/// USDC balance, mainnet only (see sol_spl.rs: no devnet mint we could verify with
+/// confidence, and no practical value in testing one).
 #[tauri::command]
 async fn get_usdc_balance(network: String, address: String) -> Result<String, String> {
     run_blocking(move || {
@@ -2990,27 +2974,26 @@ async fn get_usdc_balance(network: String, address: String) -> Result<String, St
 
 #[derive(serde::Deserialize)]
 struct WatchTargetDto {
-    /// Carte à relire ("evm", "btc", "sol", "usdc"), rendue telle quelle.
+    /// Card to reread ("evm", "btc", "sol", "usdc"), passed back as is.
     id: String,
     network: String,
     address: String,
-    /// Jeton du registre ; absent : la monnaie du réseau.
+    /// Registry token; absent: the network's native coin.
     #[serde(default)]
     token: Option<String>,
 }
 
-/// Surveillance en direct des soldes des cartes affichées.
+/// Live monitoring of the balances of the cards on screen.
 #[derive(Default)]
 struct BalanceWatchState(std::sync::Mutex<Option<openpgp_wallet_core::balance_watch::BalanceWatch>>);
 
-/// Remplace la surveillance en direct des soldes (voir
-/// `core/src/balance_watch.rs`) : à chaque changement, l'événement
-/// "balance-changed" donne l'id de la carte à relire. Liste vide : arrêt
-/// (verrouillage). Adresses publiques seulement.
+/// Replaces the live balance monitoring (see `core/src/balance_watch.rs`): on every
+/// change, the "balance-changed" event gives the id of the card to reread. Empty
+/// list: stop (lock). Public addresses only.
 #[tauri::command]
 fn watch_balances(targets: Vec<WatchTargetDto>, app: tauri::AppHandle, state: tauri::State<BalanceWatchState>) -> Result<(), String> {
     let mut current = state.0.lock().unwrap_or_else(|p| p.into_inner());
-    *current = None; // arrête la surveillance précédente
+    *current = None; // stops the previous monitoring
     if targets.is_empty() {
         return Ok(());
     }
@@ -3032,9 +3015,9 @@ struct BtcFeeEstimateDto {
     slow_sat: u64,
 }
 
-/// Frais rapide/moyen/lent (en sats) pour un virement Bitcoin depuis `address` —
-/// uniquement Bitcoin : EVM/Solana calculent déjà leurs frais automatiquement
-/// (gas price / frais de base réseau), pas de choix à proposer à l'utilisateur.
+/// Fast/medium/slow fees (in sats) for a Bitcoin transfer from `address`. Bitcoin
+/// only: EVM/Solana already compute their fees automatically (gas price / network
+/// base fee), so there is no choice to offer the user.
 #[tauri::command]
 async fn estimate_btc_fees(network: String, address: String) -> Result<BtcFeeEstimateDto, String> {
     run_blocking(move || {
@@ -3049,11 +3032,10 @@ async fn estimate_btc_fees(network: String, address: String) -> Result<BtcFeeEst
     .await
 }
 
-/// `false` pour EVM plutôt qu'une erreur : aucun nœud public n'expose les
-/// transactions en attente pour Ethereum (voir `api::has_pending_btc`/`has_pending_sol`),
-/// donc l'indicateur "transaction en attente" ne peut structurellement jamais
-/// s'allumer pour ETH — un no-op silencieux, pas un échec, pour ne pas faire
-/// planter le rafraîchissement automatique du solde sur ce réseau.
+/// `false` for EVM rather than an error: no public node exposes pending transactions for
+/// Ethereum (see `api::has_pending_btc`/`has_pending_sol`), so the "pending transaction"
+/// indicator can structurally never light up for ETH. A silent no-op, not a failure, so
+/// the automatic balance refresh does not break on this network.
 #[tauri::command]
 async fn has_pending_tx(network: String, address: String, app: tauri::AppHandle) -> Result<bool, String> {
     run_blocking(move || {
@@ -3067,17 +3049,16 @@ async fn has_pending_tx(network: String, address: String, app: tauri::AppHandle)
                 let net = sol_network(&network)?;
                 api::has_pending_sol(&address, net).t_err()
             }
-            // Pas de lecture de la réserve de transactions : un envoi apparaît
-            // à sa confirmation (~75 s).
+            // No mempool reading: a send shows up when it is confirmed (~75 s).
             "zec_mainnet" | "zec_shielded" => Ok(false),
             "doge_mainnet" => api::has_pending_doge(&address).t_err(),
-            // Un bloc toutes les 3 s : un envoi est confirmé avant la relecture.
+            // One block every 3 s: a send is confirmed before the next reread.
             "tron_mainnet" => Ok(false),
-            // Registre validé toutes les 3 à 5 s : idem.
+            // Ledger validated every 3 to 5 s: same.
             "xrp_mainnet" | "xlm_mainnet" | "near_mainnet" => Ok(false),
-            // Un bloc toutes les 20 s ; l'envoi apparaît à sa confirmation.
+            // One block every 20 s; the send shows up when it is confirmed.
             "ada_mainnet" | "stx_mainnet" => Ok(false),
-            // Un bloc toutes les 12 s ; l'envoi apparaît à son inclusion.
+            // One block every 12 s; the send shows up when it is included.
             "tao_mainnet" => Ok(false),
             "xmr_mainnet" => api::has_pending_xmr(&data_dir(&app)?, monero_profile(&app, &address)?).t_err(),
             other => Err(translate_error(&format!("réseau inconnu : {other}"))),
@@ -3093,21 +3074,21 @@ struct TxEntryDto {
     id: String,
     timestamp_unix: Option<i64>,
     status: String,
-    /// Chaîne décimale signée dans l'unité principale du réseau (ex: "+0.001234",
-    /// "-0.05") ; `None` quand le montant n'a pas pu être déterminé.
+    /// Signed decimal string in the network's main unit (e.g. "+0.001234", "-0.05");
+    /// `None` when the amount could not be determined.
     amount: Option<String>,
-    /// "received", "sent", "swap" ou "other" (voir `history::TxKind`).
+    /// "received", "sent", "swap" or "other" (see `history::TxKind`).
     kind: &'static str,
-    /// Valeur absolue du montant en dollars AU MOMENT de la transaction (voir
-    /// `price_history`) ; `None` sur un réseau de test, pour une transaction
-    /// trop ancienne, ou si le service de prix est injoignable.
+    /// Absolute dollar value of the amount AT THE TIME of the transaction (see
+    /// `price_history`); `None` on a test network, for a transaction that is too old,
+    /// or if the price service is unreachable.
     usd_value: Option<f64>,
     explorer_url: String,
 }
 
-/// Montant exact, chiffre par chiffre : un passage par `f64` (≈ 16 chiffres
-/// significatifs) inventait les derniers chiffres d'un montant à 18 décimales
-/// (« +0.245947228364191028 » pour 245947228364191044 wei).
+/// Exact amount, digit by digit: going through `f64` (≈ 16 significant digits)
+/// invented the last digits of an 18-decimal amount ("+0.245947228364191028" for
+/// 245947228364191044 wei).
 fn format_signed_amount(net_amount_minor: Option<i128>, decimals: i32) -> Option<String> {
     net_amount_minor.map(|v| {
         let sign = if v < 0 { '-' } else { '+' };
@@ -3143,10 +3124,10 @@ fn kind_str(kind: &history::TxKind) -> &'static str {
     }
 }
 
-/// Entrées d'historique prêtes à afficher. `asset` : actif valorisé en
-/// dollars au moment de chaque transaction (`None` sur un réseau de test :
-/// fonds sans valeur). Historique et séries de prix lus en parallèle ; sans
-/// prix (service injoignable), l'historique s'affiche quand même, sans valeur.
+/// History entries ready to display. `asset`: the asset valued in dollars at the
+/// time of each transaction (`None` on a test network: worthless funds). History
+/// and price series are read in parallel; without prices (service unreachable), the
+/// history still shows, without values.
 fn history_dtos<E: std::fmt::Display>(
     fetch: impl FnOnce() -> Result<Vec<history::TxEntry>, E>,
     asset: Option<price_history::Asset>,
@@ -3162,7 +3143,7 @@ fn history_dtos<E: std::fmt::Display>(
         .t_err()?
         .into_iter()
         .map(|tx| TxEntryDto {
-            // Pas de « ≈ 0,00 $ » pour une transaction qui ne déplace rien.
+            // No "≈ $0.00" for a transaction that moves nothing.
             usd_value: prices
                 .as_deref()
                 .zip(tx.net_amount_minor.filter(|net| *net != 0))
@@ -3177,16 +3158,15 @@ fn history_dtos<E: std::fmt::Display>(
         .collect())
 }
 
-/// Historique d'une crypto sur un réseau.
+/// History of a crypto on a network.
 #[derive(Serialize)]
 struct HistoryDto {
     entries: Vec<TxEntryDto>,
-    /// Réseau sans source d'historique utilisable : page de l'adresse sur
-    /// l'explorateur du réseau, à ouvrir à la place (`entries` vide).
+    /// Network with no usable history source: the address's page on the network's
+    /// explorer, to open instead (`entries` empty).
     explorer_url: Option<String>,
-    /// Pourquoi, s'il est connu : « limited » (limite de l'offre gratuite
-    /// atteinte : NodeReal pour BNB Chain, Alchemy pour Base et Polygon, API
-    /// officielle de Blockscout pour Arbitrum).
+    /// Why, if known: "limited" (free-tier limit reached: NodeReal for BNB Chain,
+    /// Alchemy for Base and Polygon, Blockscout's official API for Arbitrum).
     reason: Option<&'static str>,
 }
 
@@ -3195,9 +3175,9 @@ impl HistoryDto {
         Ok(Self { entries: entries?, explorer_url: None, reason: None })
     }
 
-    /// Historique EVM : sans source utilisable (BNB Chain sans clé NodeReal
-    /// dans cette version), ou limite de l'offre gratuite atteinte, la page
-    /// de l'explorateur, avec le motif.
+    /// EVM history: with no usable source (BNB Chain without a NodeReal key in this
+    /// build), or once the free-tier limit is reached, the explorer's page, with the
+    /// reason.
     fn evm(net: &wallet_flow::EvmNetwork, explorer_url: String, read: impl FnOnce() -> Result<Vec<TxEntryDto>, String>) -> Result<Self, String> {
         if !history::evm_history_available(net) {
             return Ok(Self { entries: Vec::new(), explorer_url: Some(explorer_url), reason: None });
@@ -3206,7 +3186,7 @@ impl HistoryDto {
             Err(e) if e == translate_error(openpgp_wallet_core::nodereal::LIMITED) || e == translate_error(openpgp_wallet_core::blockscout::BLOCKSCOUT_LIMITED) => {
                 Ok(Self { entries: Vec::new(), explorer_url: Some(explorer_url), reason: Some("limited") })
             }
-            // Explorateur bloqué sans clé utilisable : sa page, sans erreur.
+            // Explorer blocked with no usable key: its page, without an error.
             Err(e) if e == translate_error(openpgp_wallet_core::blockscout::BLOCKSCOUT_BLOCKED) => Ok(Self { entries: Vec::new(), explorer_url: Some(explorer_url), reason: None }),
             entries => Self::read(entries),
         }
@@ -3222,8 +3202,8 @@ async fn get_tx_history(network: String, address: String, app: tauri::AppHandle)
             if net.custom && net.explorer_tx_prefix.is_empty() {
                 return Err(translate_error("historique indisponible : aucun explorateur indiqué pour ce réseau ajouté"));
             }
-            // Valeur en dollars : la monnaie du réseau (fonds réels seulement ;
-            // jamais pour un réseau ajouté, dont le symbole ne dit rien de la valeur).
+            // Dollar value: the network's native coin (real funds only; never for a network
+            // added by the user, whose symbol says nothing about its value).
             let asset = if net.mainnet && !net.custom { price_history::price_asset(net.native_symbol) } else { None };
             HistoryDto::evm(net, net.explorer_address_url(&address, None), || {
                 history_dtos(
@@ -3338,10 +3318,10 @@ async fn get_tx_history(network: String, address: String, app: tauri::AppHandle)
     .await
 }
 
-/// Historique d'un jeton du registre (`core/src/tokens.rs`) : ERC-20 via
-/// l'indexeur du réseau, SPL via le compte de jetons associé. Seuls l'id du
-/// jeton et le réseau viennent du frontend : contrat et mint sont ceux du
-/// registre, jamais une adresse fournie par l'interface.
+/// History of a registry token (`core/src/tokens.rs`): ERC-20 through the network's
+/// indexer, SPL through the associated token account. Only the token id and the
+/// network come from the frontend: contract and mint are the registry's, never an
+/// address supplied by the UI.
 #[tauri::command]
 async fn get_token_tx_history(token: String, network: String, address: String) -> Result<HistoryDto, String> {
     run_blocking(move || {
@@ -3371,7 +3351,7 @@ async fn get_token_tx_history(token: String, network: String, address: String) -
                 decimals,
                 |id| format!("https://tronscan.org/#/transaction/{id}"),
             )),
-            // xStocks compris : compte associé Token-2022, montants en unités affichées.
+            // xStocks included: Token-2022 associated account, amounts in displayed units.
             openpgp_wallet_core::tokens::TokenKind::Spl { .. } | openpgp_wallet_core::tokens::TokenKind::Spl2022 { .. } => {
                 let net = sol_network(&network)?;
                 HistoryDto::read(history_dtos(
@@ -3390,14 +3370,13 @@ fn chart_range(range: &str) -> Result<price_history::ChartRange, String> {
     price_history::ChartRange::parse(range).ok_or_else(|| translate_error(&format!("période inconnue : {range}")))
 }
 
-/// Courbe de prix (instant, prix en dollars) d'une crypto ou d'une action
-/// tokenisée sur la période ("1d", "7d", "30d", "1y", "all") ; `symbol` :
-/// "BTC", "ETH"…, ou le symbole en majuscules d'une action (« TSLAX »).
+/// Price chart (time, price in dollars) of a crypto or a tokenized share over the
+/// period ("1d", "7d", "30d", "1y", "all"); `symbol`: "BTC", "ETH"…, or a share's
+/// uppercase symbol ("TSLAX").
 #[tauri::command]
 async fn get_price_chart(symbol: String, range: String) -> Result<Vec<(i64, f64)>, String> {
     run_blocking(move || {
-        // Liste blanche des paires Binance ("EUR" : dollars pour 1 euro, pour
-        // l'affichage en euros).
+        // Allowlist of Binance pairs ("EUR": dollars per euro, for display in euros).
         let upper = symbol.to_ascii_uppercase();
         let asset = price_history::price_asset(&upper).ok_or_else(|| translate_error(&format!("crypto inconnue : {upper}")))?;
         price_history::chart(asset, chart_range(&range)?).map(|points| points.as_ref().clone()).t_err()
@@ -3409,7 +3388,7 @@ async fn get_price_chart(symbol: String, range: String) -> Result<Vec<(i64, f64)
 struct HoldingDto {
     network: String,
     address: String,
-    /// Jeton du registre ; absent : monnaie du réseau.
+    /// Registry token; absent: the network's native coin.
     #[serde(default)]
     token: Option<String>,
 }
@@ -3425,8 +3404,8 @@ struct PortfolioHistoryDto {
     unavailable: Vec<String>,
 }
 
-/// Valeur en dollars d'un ensemble d'adresses publiques au fil de la période
-/// (voir `core/src/portfolio.rs`) : profil du portefeuille ou wallets externes.
+/// Dollar value of a set of public addresses over the period (see
+/// `core/src/portfolio.rs`): the wallet profile or external wallets.
 #[tauri::command]
 async fn get_portfolio_history(holdings: Vec<HoldingDto>, range: String) -> Result<PortfolioHistoryDto, String> {
     run_blocking(move || {
@@ -3455,8 +3434,8 @@ struct PricesDto {
     sol_usd: f64,
 }
 
-/// Prix indicatifs en USD (voir `core/src/price_rpc.rs`) : purement informatif,
-/// aucune donnée sur l'utilisateur ou ses adresses n'est envoyée à ce service.
+/// Indicative USD prices (see `core/src/price_rpc.rs`): purely informational, no
+/// data about the user or their addresses is sent to this service.
 #[tauri::command]
 async fn get_crypto_prices() -> Result<PricesDto, String> {
     run_blocking(move || {
@@ -3470,20 +3449,20 @@ async fn get_crypto_prices() -> Result<PricesDto, String> {
 
 #[derive(Serialize)]
 struct MarketCoinDto {
-    /// Identifiant CoinGecko : l'interface retrouve la crypto par lui.
+    /// CoinGecko identifier: the UI finds the crypto by it.
     id: String,
     symbol: String,
     name: String,
     price_usd: f64,
     market_cap_usd: f64,
-    /// `null` côté JS si CoinGecko n'a pas de variation 24h calculable pour cet
-    /// actif (trop récent/illiquide) — voir `price_rpc::MarketCoin`.
+    /// `null` on the JS side if CoinGecko has no computable 24h change for this asset
+    /// (too new/illiquid); see `price_rpc::MarketCoin`.
     change_24h_percent: Option<f64>,
 }
 
-/// Section "Marchés" du tableau de bord : déjà triée par capitalisation
-/// décroissante côté Rust (voir `price_rpc::get_market_data`), le frontend n'a
-/// qu'à afficher l'ordre reçu.
+/// The dashboard's "Markets" section: already sorted by descending market cap on
+/// the Rust side (see `price_rpc::get_market_data`), so the frontend only has to
+/// show the order received.
 #[tauri::command]
 async fn get_market_prices() -> Result<Vec<MarketCoinDto>, String> {
     run_blocking(move || {
@@ -3507,22 +3486,21 @@ async fn get_market_prices() -> Result<Vec<MarketCoinDto>, String> {
     .await
 }
 
-// --- Texte des boîtes de dialogue natives -------------------------------------
-// Trouvé lors du 22ᵉ passage, et reproduit pour de vrai (même bibliothèque,
-// même TaskDialog Windows) : ces boîtes affichaient TELS QUELS des textes
-// venus du frontend ou saisis librement — libellé de profil, libellé d'un
-// contact du carnet, adresse, montant. Un libellé contenant des retours à la
-// ligne y injectait un faux "Destinataire / Montant" en tête, et repoussait
-// les vraies valeurs (et les boutons) hors de l'écran — la touche Entrée
-// confirmait quand même. Or cette boîte est précisément la dernière barrière
-// contre un frontend compromis : rien de ce qu'il contrôle ne doit pouvoir y
-// imiter autre chose que ce qu'il est.
+// --- Text of native dialogs -------------------------------------------------
+//
+// Found in round 22, and reproduced for real (same library, same Windows
+// TaskDialog): these dialogs displayed text coming from the frontend or typed
+// freely AS IS: profile label, address book contact label, address, amount. A
+// label containing line breaks injected a fake "Recipient / Amount" at the top and
+// pushed the real values (and the buttons) off the screen, while the Enter key
+// still confirmed. Yet this dialog is precisely the last barrier against a
+// compromised frontend: nothing it controls must be able to pass for anything
+// other than what it is.
 
-/// Caractère qui ne doit jamais atteindre une boîte native depuis une donnée
-/// non fiable : contrôles (retours à la ligne, tabulations, NEL…), espaces
-/// autres que l'espace ordinaire (séparateurs de ligne/paragraphe Unicode…),
-/// et caractères invisibles ou de contrôle de direction du texte (qui peuvent
-/// réordonner visuellement une adresse).
+/// A character that must never reach a native dialog from untrusted data: control
+/// characters (line breaks, tabs, NEL…), spaces other than the ordinary space
+/// (Unicode line/paragraph separators…), and invisible or text-direction control
+/// characters (which can visually reorder an address).
 fn is_dialog_hazard(c: char) -> bool {
     c.is_control()
         || (c.is_whitespace() && c != ' ')
@@ -3533,8 +3511,8 @@ fn is_dialog_hazard(c: char) -> bool {
         )
 }
 
-/// Libellé libre (profil, contact) prêt pour une boîte native : une seule
-/// ligne, sans caractère invisible, longueur bornée.
+/// A free-form label (profile, contact) made ready for a native dialog: a single
+/// line, no invisible characters, bounded length.
 fn dialog_label(label: &str) -> String {
     const MAX_CHARS: usize = 40;
     let cleaned: String = label.chars().map(|c| if is_dialog_hazard(c) { ' ' } else { c }).collect();
@@ -3546,11 +3524,11 @@ fn dialog_label(label: &str) -> String {
     }
 }
 
-/// Adresse Ethereum venue d'une dApp (contrat, bénéficiaire d'une autorisation
-/// de dépense) : montrée EN ENTIER, sous sa forme EIP-55. `dialog_label` la
-/// tronquait à 40 caractères sur 42 — les derniers, justement ceux où une
-/// adresse sosie diffère (vu lors du premier test réel avec une dApp). Autre
-/// chose qu'une adresse : traité comme un libellé.
+/// An Ethereum address coming from a dApp (contract, spender of an approval): shown
+/// IN FULL, in its EIP-55 form. `dialog_label` truncated it to 40 characters out of
+/// 42, cutting off the last ones, which are exactly where a lookalike address
+/// differs (seen during the first real test with a dApp). Anything other than an
+/// address is treated as a label.
 fn dialog_address(value: &str) -> String {
     let value = value.trim();
     let hex_part = value.strip_prefix("0x").or_else(|| value.strip_prefix("0X")).unwrap_or("");
@@ -3559,15 +3537,15 @@ fn dialog_address(value: &str) -> String {
     }
     let mut bytes = [0u8; 20];
     for (i, byte) in bytes.iter_mut().enumerate() {
-        // 40 chiffres hexadécimaux ASCII vérifiés : découpage et lecture sûrs.
+        // 40 ASCII hex digits, checked: slicing and reading are safe.
         *byte = u8::from_str_radix(&hex_part[2 * i..2 * i + 2], 16).unwrap_or_default();
     }
     openpgp_wallet_core::derivation::format_address(&bytes)
 }
 
-/// Adresse saisie : espaces de bord retirés, puis REFUS de tout caractère
-/// invisible ou espace restant — aucune adresse valide n'en contient. La
-/// valeur renvoyée est celle affichée ET transmise à la signature.
+/// Address entered: surrounding spaces removed, then any remaining invisible
+/// character or space is REFUSED, since no valid address contains one. The value
+/// returned is the one shown AND passed to signing.
 fn canonical_address_input(value: &str) -> Result<String, String> {
     let trimmed = value.trim();
     if trimmed.is_empty() || trimmed.chars().any(|c| c == ' ' || is_dialog_hazard(c)) {
@@ -3576,7 +3554,7 @@ fn canonical_address_input(value: &str) -> Result<String, String> {
     Ok(trimmed.to_string())
 }
 
-/// Libellé humain du réseau pour la boîte de dialogue de confirmation.
+/// Human-readable network label for the confirmation dialog.
 fn network_label(network: &str) -> String {
     match network {
         "evm_sepolia" => lang("Ethereum Sepolia (réseau de test)", "Ethereum Sepolia (test network)").to_string(),
@@ -3605,8 +3583,8 @@ fn network_label(network: &str) -> String {
     }
 }
 
-/// Unité du montant d'un virement natif sur `network` (affichée à côté du
-/// montant dans la boîte de confirmation).
+/// Unit of a native transfer's amount on `network` (shown next to the amount in the
+/// confirmation dialog).
 fn network_unit(network: &str) -> &'static str {
     match network {
         "btc_testnet" | "btc_mainnet" => "BTC",
@@ -3625,14 +3603,14 @@ fn network_unit(network: &str) -> &'static str {
     }
 }
 
-/// Boîte de dialogue native de confirmation, affichée par l'OS et non par la
-/// webview : contrairement à une modale HTML, un frontend compromis ne peut ni
-/// la falsifier ni la court-circuiter silencieusement. Montre exactement ce que
-/// le backend Rust a compris (réseau, destinataire, montant, ET profil source
-/// depuis l'ajout des profils multiples — sans lui, cette boîte ne montrerait plus
-/// "exactement" ce qui va être signé : le profil source détermine maintenant
-/// l'adresse d'où partent les fonds, tout autant que le réseau/destinataire/montant)
-/// juste avant de signer — protection spécifique contre un détournement discret.
+/// Native confirmation dialog, shown by the OS and not by the webview: unlike an
+/// HTML modal, a compromised frontend can neither fake it nor silently bypass it. It
+/// shows exactly what the Rust backend understood (network, recipient, amount, AND
+/// the source profile since multiple profiles were added; without it, the dialog
+/// would no longer show "exactly" what will be signed, since the source profile now
+/// determines the address the funds leave from, just as much as the
+/// network/recipient/amount) right before signing: a specific protection against a
+/// discreet diversion.
 #[allow(clippy::too_many_arguments)]
 fn confirm_transaction_native(
     app: &tauri::AppHandle,
@@ -3652,8 +3630,8 @@ fn confirm_transaction_native(
         .blocking_show()
 }
 
-/// Texte de `confirm_transaction_native`, séparé pour être testable sans
-/// ouvrir de fenêtre (voir `dialog_text_cannot_be_spoofed_by_untrusted_strings`).
+/// Text of `confirm_transaction_native`, kept separate so it can be tested without
+/// opening a window (see `dialog_text_cannot_be_spoofed_by_untrusted_strings`).
 fn transaction_confirmation_text(
     network: &str,
     to: &str,
@@ -3664,9 +3642,9 @@ fn transaction_confirmation_text(
     token_line: Option<&str>,
 ) -> String {
     let fee_line = fee_line.map(|f| format!("\n{f}")).unwrap_or_default();
-    // Jeton (virement de jetons) : nom et contrat, venus du registre Rust.
+    // Token (token transfer): name and contract, from the Rust registry.
     let token_line = token_line.map(|l| format!("\n{l}")).unwrap_or_default();
-    // En TÊTE du message : c'est la première chose lue, avant l'adresse.
+    // At the TOP of the message: it is the first thing read, before the address.
     let warning = warning.map(|w| format!("{w}\n\n")).unwrap_or_default();
     let from_label = dialog_label(from_label);
     if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
@@ -3682,9 +3660,9 @@ fn transaction_confirmation_text(
     }
 }
 
-/// Avertissement "empoisonnement d'adresse" (voir
-/// `address_book::lookalike_entry`) : l'adresse saisie imite début et fin
-/// d'un contact du carnet sans être la sienne.
+/// "Address poisoning" warning (see `address_book::lookalike_entry`): the address
+/// entered mimics the start and end of an address book contact without being
+/// theirs.
 fn lookalike_warning(dir: &std::path::Path, to: &str) -> Option<String> {
     let entries = address_book::list_entries(dir);
     let entry = address_book::lookalike_entry(&entries, to)?;
@@ -3702,14 +3680,13 @@ fn lookalike_warning(dir: &std::path::Path, to: &str) -> Option<String> {
     })
 }
 
-/// Avertissements "adresse destinataire" en tête de la boîte de confirmation,
-/// demandés par l'utilisateur : (1) aucun envoi vers cette adresse n'est
-/// enregistré dans ce portefeuille (voir `sent_recipients`) ; (2) sur la
-/// blockchain, l'adresse n'a jamais servi, ou est vide ; `activity` à `None`
-/// si cette lecture a échoué — dit explicitement plutôt qu'un silence qui
-/// passerait pour rassurant. `coin` : "evm", "btc", "sol", "usdc", "zec",
-/// "xmr" ou "zecs" (nomme l'actif absent, une adresse "vide" de SOL pouvant
-/// détenir autre chose).
+/// "Recipient address" warnings at the top of the confirmation dialog, requested by
+/// the user: (1) no send to this address is recorded in this wallet (see
+/// `sent_recipients`); (2) on the blockchain, the address has never been used, or
+/// is empty. `activity` is `None` if that read failed, which is said explicitly
+/// rather than a silence that would pass for reassurance. `coin`: "evm", "btc",
+/// "sol", "usdc", "zec", "xmr" or "zecs" (names the missing asset, since an address
+/// "empty" of SOL may hold something else).
 fn recipient_warning_lines(first_send: bool, coin: &str, activity: Option<api::RecipientActivity>) -> Vec<String> {
     let mut lines = Vec::new();
     if first_send {
@@ -3723,8 +3700,8 @@ fn recipient_warning_lines(first_send: bool, coin: &str, activity: Option<api::R
             .to_string(),
         );
     }
-    // Monero, Zcash protégé : adresses et montants invisibles sur la chaîne —
-    // rien à vérifier, et pas une panne de réseau à signaler.
+    // Monero, shielded Zcash: addresses and amounts are invisible on-chain, so there
+    // is nothing to check, and no network failure to report.
     if matches!(coin, "xmr" | "zecs") {
         return lines;
     }
@@ -3776,30 +3753,29 @@ fn recipient_warning_lines(first_send: bool, coin: &str, activity: Option<api::R
     lines
 }
 
-/// Tous les avertissements d'un envoi, dans l'ordre de gravité : sosie d'un
-/// contact du carnet, puis nouvelle adresse, puis état on-chain. Adresse d'un
-/// profil de ce portefeuille : le profil est nommé à la place des deux
-/// derniers (ni « nouvelle adresse » ni « jamais servi » à craindre).
+/// All the warnings for a send, in order of severity: lookalike of an address book
+/// contact, then new address, then on-chain state. For the address of a profile of
+/// this wallet, the profile is named instead of the last two (neither "new address"
+/// nor "never used" to worry about).
 fn send_warnings(app: &tauri::AppHandle, dir: &std::path::Path, network: &str, coin: &str, to: &str, activity: Option<api::RecipientActivity>) -> Option<String> {
     let lines: Vec<String> = recipient_warning_list(app, dir, network, coin, to, activity).into_iter().map(|w| w.text).collect();
     (!lines.is_empty()).then(|| lines.join("\n\n"))
 }
 
-/// Un avertissement sur le destinataire et sa gravité : « danger » (adresse
-/// presque identique à une connue, sosie d'un contact), « warning »
-/// (nouvelle adresse, jamais servi, vide), « ok » (un de vos profils),
-/// « info » (état impossible à vérifier).
+/// A warning about the recipient and its severity: "danger" (address almost
+/// identical to a known one, lookalike of a contact), "warning" (new address, never
+/// used, empty), "ok" (one of your profiles), "info" (state could not be checked).
 #[derive(Serialize)]
 struct RecipientWarning {
     level: &'static str,
     text: String,
 }
 
-/// Tous les avertissements d'un envoi, du plus grave au moins grave — mêmes
-/// lignes dans la boîte native et dans l'aperçu de l'interface.
+/// All the warnings for a send, most to least severe: the same lines in the native
+/// dialog and in the UI preview.
 fn recipient_warning_list(app: &tauri::AppHandle, dir: &std::path::Path, network: &str, coin: &str, to: &str, activity: Option<api::RecipientActivity>) -> Vec<RecipientWarning> {
     let mut list = Vec::new();
-    // Réseau ajouté par l'utilisateur : son RPC choisit ce qu'il annonce.
+    // Network added by the user: its RPC decides what it announces.
     let custom = wallet_flow::evm_network(network).is_some_and(|n| n.custom);
     if custom {
         list.push(RecipientWarning {
@@ -3811,8 +3787,8 @@ fn recipient_warning_list(app: &tauri::AppHandle, dir: &std::path::Path, network
             .to_string(),
         });
     }
-    // Presque identique à une adresse connue : plus précis que le sosie du
-    // carnet (début et fin seulement), qui n'est alors pas répété.
+    // Almost identical to a known address: more precise than the address book
+    // lookalike check (start and end only), which is then not repeated.
     if let Some(text) = near_miss_warning(app, dir, to).or_else(|| lookalike_warning(dir, to)) {
         list.push(RecipientWarning { level: "danger", text });
     }
@@ -3821,7 +3797,7 @@ fn recipient_warning_list(app: &tauri::AppHandle, dir: &std::path::Path, network
         None => {
             let first_send = !sent_recipients::has_sent_to(dir, network, to);
             let unverified = activity.is_none();
-            // Réseau ajouté : « aucun fonds », pas « aucun ETH ».
+            // Added network: "no funds", not "no ETH".
             let coin = if custom { "custom" } else { coin };
             for (i, text) in recipient_warning_lines(first_send, coin, activity).into_iter().enumerate() {
                 let level = if unverified && !(first_send && i == 0) { "info" } else { "warning" };
@@ -3832,8 +3808,8 @@ fn recipient_warning_list(app: &tauri::AppHandle, dir: &std::path::Path, network
     list
 }
 
-/// Adresses connues, avec qui elles désignent : profils de ce portefeuille
-/// (caches Rust), contacts du carnet, destinataires déjà payés.
+/// Known addresses, with who they belong to: profiles of this wallet (Rust caches),
+/// address book contacts, recipients already paid.
 fn known_recipients(app: &tauri::AppHandle, dir: &std::path::Path) -> Vec<(String, String)> {
     let english = UI_LANG_IS_ENGLISH.load(Ordering::Relaxed);
     let labels: std::collections::HashMap<u32, String> = api::list_profiles(dir).into_iter().map(|p| (p.index, p.label)).collect();
@@ -3880,8 +3856,8 @@ fn known_recipients(app: &tauri::AppHandle, dir: &std::path::Path) -> Vec<(Strin
     known
 }
 
-/// `to` presque identique à une adresse connue (voir
-/// `openpgp_wallet_core::recipient_check`) : laquelle, et la différence exacte.
+/// `to` almost identical to a known address (see
+/// `openpgp_wallet_core::recipient_check`): which one, and the exact difference.
 fn near_miss_warning(app: &tauri::AppHandle, dir: &std::path::Path, to: &str) -> Option<String> {
     let known = known_recipients(app, dir);
     let (address, difference) = openpgp_wallet_core::recipient_check::near_miss(known.iter().map(|(_, a)| a.as_str()), to)?;
@@ -3898,7 +3874,7 @@ fn near_miss_line(who: &str, known: &str, difference: &openpgp_wallet_core::reci
     } else {
         chars.iter().collect()
     };
-    // Caractère tapé (adresse saisie) : jamais un caractère de mise en page.
+    // Typed character (address entered): never a layout character.
     let shown = |c: char| if is_dialog_hazard(c) { '?' } else { c };
     let place = |position: usize| match (position, english) {
         (0, false) => "au début".to_string(),
@@ -3927,12 +3903,11 @@ fn near_miss_line(who: &str, known: &str, difference: &openpgp_wallet_core::reci
     }
 }
 
-/// Avertissements sur le destinataire pour l'APERÇU de l'interface (mêmes
-/// lignes que la boîte native, qui reste la seule vraie protection) :
-/// adresse presque identique à une connue, sosie d'un contact, nouvelle
-/// adresse, état sur la blockchain. `token` : jeton du registre, ou
-/// « usdc » pour l'USDC Solana (chemin dédié). Adresse invalide : aucun
-/// avertissement (l'envoi la refusera avec son propre message).
+/// Recipient warnings for the UI PREVIEW (the same lines as the native dialog,
+/// which remains the only real protection): address almost identical to a known
+/// one, lookalike of a contact, new address, blockchain state. `token`: a registry
+/// token, or "usdc" for Solana USDC (dedicated path). Invalid address: no warning
+/// (the send will refuse it with its own message).
 #[tauri::command]
 async fn recipient_warnings(app: tauri::AppHandle, network: String, token: Option<String>, to: String) -> Result<Vec<RecipientWarning>, String> {
     run_blocking(move || {
@@ -3971,16 +3946,16 @@ fn own_profile_line(label: &str) -> String {
     }
 }
 
-/// Profil de ce portefeuille dont `to` est l'adresse sur `network`, d'après
-/// les adresses dérivées de la seed au déverrouillage (caches Rust) — jamais
-/// d'après l'interface. Nom nettoyé pour la boîte native.
+/// Profile of this wallet whose address on `network` is `to`, based on the
+/// addresses derived from the seed at unlock (Rust caches), never on the UI. Name
+/// cleaned up for the native dialog.
 fn own_profile_label(app: &tauri::AppHandle, dir: &std::path::Path, network: &str, to: &str) -> Option<String> {
     let to = to.trim();
     let in_cache = |cache: &std::sync::Mutex<std::collections::HashMap<u32, String>>, same: fn(&str, &str) -> bool| {
         cache.lock().unwrap_or_else(|p| p.into_inner()).iter().find(|(_, address)| same(address, to)).map(|(index, _)| *index)
     };
     let exact = |a: &str, b: &str| a == b;
-    // Hexadécimal (EVM) et bech32 (Bitcoin, u1) : insensibles à la casse.
+    // Hex (EVM) and bech32 (Bitcoin, u1): case-insensitive.
     let any_case = |a: &str, b: &str| a.eq_ignore_ascii_case(b);
     let index = match network {
         n if is_evm(n) => {
@@ -4002,7 +3977,7 @@ fn own_profile_label(app: &tauri::AppHandle, dir: &std::path::Path, network: &st
         "xmr_mainnet" => {
             app.state::<MoneroKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).iter().find(|(_, (address, _))| address == to).map(|(index, _)| *index)
         }
-        // Depuis les fonds protégés : vers une adresse u1, ou t1, d'un profil.
+        // From shielded funds: to a profile's u1 or t1 address.
         "zec_shielded" => app
             .state::<ShieldedKeysCache>()
             .0
@@ -4018,9 +3993,9 @@ fn own_profile_label(app: &tauri::AppHandle, dir: &std::path::Path, network: &st
     Some(dialog_label(&label))
 }
 
-/// Ligne de frais d'un envoi EVM, dans la monnaie de frais du réseau (`symbol`) :
-/// maximum = gas × prix, plus les frais de publication sur Ethereum (réseaux
-/// OP Stack, estimés) le cas échéant.
+/// Fee line for an EVM send, in the network's fee currency (`symbol`): maximum =
+/// gas × price, plus Ethereum posting fees (OP Stack networks, estimated) where
+/// applicable.
 fn evm_fee_line_for(fee: api::EvmFee, symbol: &str) -> String {
     let gas_fee = fee.gas_price.saturating_mul(u128::from(fee.gas_limit)) as f64 / 1e18;
     let max_fee = gas_fee + fee.l1_fee as f64 / 1e18;
@@ -4039,17 +4014,17 @@ fn evm_fee_line_for(fee: api::EvmFee, symbol: &str) -> String {
     line
 }
 
-/// Barre de titre et contour de la fenêtre aux couleurs du thème de l'app.
+/// Window title bar and border in the app's theme colors.
 #[tauri::command]
 fn set_window_frame(theme: String, window: tauri::WebviewWindow) {
     apply_window_frame(&window, &theme);
 }
 
-/// Mode sombre de Windows (barre de titre et boutons Fermer, Agrandir…) pour
-/// les thèmes sombres ; sur Windows 11, barre de titre et contour exactement
-/// de la couleur du fond de l'app (sans effet, et sans erreur, sur Windows 10).
+/// Windows dark mode (title bar and the Close, Maximize… buttons) for dark themes;
+/// on Windows 11, title bar and border exactly the color of the app's background
+/// (no effect, and no error, on Windows 10).
 fn apply_window_frame(window: &tauri::WebviewWindow, theme: &str) {
-    // Fond de chaque thème (styles.css, `--bg`), en 0xRRGGBB.
+    // Background of each theme (styles.css, `--bg`), as 0xRRGGBB.
     let (dark, background) = match theme {
         "light" => (false, 0xf5f6f8u32),
         "purple" => (true, 0x0a090e),
@@ -4065,14 +4040,14 @@ fn apply_window_frame(window: &tauri::WebviewWindow, theme: &str) {
     if let Ok(hwnd) = window.hwnd() {
         use windows::Win32::Foundation::{COLORREF, HWND};
         use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR};
-        // COLORREF : 0x00BBGGRR.
+        // COLORREF: 0x00BBGGRR.
         let colorref = |rgb: u32| COLORREF(((rgb & 0xff) << 16) | (rgb & 0xff00) | ((rgb >> 16) & 0xff));
         let hwnd = HWND(hwnd.0 as _);
         let text = if dark { 0xf4f5f7 } else { 0x111111 };
         for (attribute, rgb) in [(DWMWA_CAPTION_COLOR, background), (DWMWA_BORDER_COLOR, background), (DWMWA_TEXT_COLOR, text)] {
             let color = colorref(rgb);
-            // SAFETY : fenêtre vivante (tenue par `window`), pointeur vers un
-            // COLORREF local de la taille annoncée.
+            // SAFETY: a live window (held by `window`), and a pointer to a local COLORREF of
+            // the announced size.
             let _ = unsafe { DwmSetWindowAttribute(hwnd, attribute, std::ptr::from_ref(&color).cast(), std::mem::size_of::<COLORREF>() as u32) };
         }
     }
@@ -4108,8 +4083,8 @@ async fn send_transaction(
             .find(|p| p.index == profile_index)
             .map(|p| p.label)
             .unwrap_or_else(|| format!("profil #{profile_index}"));
-        // Adresse EVM du profil (mémorisée au déverrouillage) : estimation du
-        // gas là où elle est nécessaire (Arbitrum).
+        // The profile's EVM address (remembered at unlock): gas estimate where it is
+        // needed (Arbitrum).
         let from_evm = app
             .state::<ProfileAddressCache>()
             .0
@@ -4149,7 +4124,7 @@ async fn send_transaction(
             bittensor: from_bittensor.as_deref(),
         };
         let mut send = confirm_send(&app, &dir, &network, &to, &amount, fee_sat, &from_label, None, from, max.unwrap_or(false), note)?;
-        // Tag / mémo : toujours rappelé sur ces réseaux (« aucun » compris).
+        // Tag / memo: always repeated on these networks ("none" included).
         let note = match (&send.note, network.as_str()) {
             (Some(note), _) => Some(note.recap()),
             (None, "xrp_mainnet") => Some((lang("Tag de destination", "Destination tag").to_string(), lang("aucun", "none").to_string())),
@@ -4210,11 +4185,11 @@ async fn send_transaction(
                 let shown_fee = send.tao_fee.ok_or_else(|| translate_error("frais Bittensor manquants"))?;
                 api::send_tao(&dir, &password, &send.to, &send.amount, shown_fee, profile_index).t_err()
             }
-            // Exactement l'envoi préparé et affiché (sorties, leurres, frais).
+            // Exactly the send prepared and shown (outputs, decoys, fee).
             "xmr_mainnet" => match send.xmr_plan.take() {
                 Some(plan) => {
                     let sent = api::send_xmr(&dir, &password, plan).t_err();
-                    // Envoi marqué en attente dans l'état : solde relu aussitôt.
+                    // Send marked as pending in the state: balance reread straight away.
                     XMR_SYNC_KICK.store(true, Ordering::SeqCst);
                     sent
                 }
@@ -4222,9 +4197,9 @@ async fn send_transaction(
             },
             other => Err(translate_error(&format!("réseau inconnu : {other}"))),
         };
-        // Destinataire mémorisé SEULEMENT après une diffusion réussie (voir
-        // `sent_recipients`). Un échec d'écriture du journal ne doit pas faire
-        // croire à l'échec d'un envoi déjà parti.
+        // Recipient remembered ONLY after a successful broadcast (see `sent_recipients`).
+        // Failing to write the log must not make a send that already went out look like it
+        // failed.
         if result.is_ok() {
             let _ = sent_recipients::record_sent(&dir, &network, &send.to);
         }
@@ -4233,15 +4208,14 @@ async fn send_transaction(
     .await
 }
 
-/// Délai laissé, APRÈS la boîte de confirmation native et AVANT la signature,
-/// pour annuler un envoi : l'interface affiche un compte à rebours avec
-/// « Envoyer maintenant » et « Annuler ». Sans réponse, l'envoi part au bout
-/// du délai. Imposé ici : l'interface ne peut que l'écourter ou annuler,
-/// jamais l'éviter ; la seed n'est déverrouillée qu'après.
+/// Delay left, AFTER the native confirmation dialog and BEFORE signing, to cancel a
+/// send: the UI shows a countdown with "Send now" and "Cancel". Without an answer,
+/// the send goes out when the delay ends. Enforced here: the UI can only shorten it
+/// or cancel, never skip it; the seed is only unlocked afterwards.
 const SEND_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 
-/// Envois en attente de leur délai : identifiant → canal de la décision
-/// (`true` : envoyer maintenant, `false` : annuler).
+/// Sends waiting for their delay: identifier → decision channel (`true`: send now,
+/// `false`: cancel).
 #[derive(Default)]
 struct SendGrace(std::sync::Mutex<std::collections::HashMap<u64, std::sync::mpsc::Sender<bool>>>);
 
@@ -4252,45 +4226,45 @@ struct SendCountdownDto {
     recap: GraceRecap,
 }
 
-/// Rappel affiché pendant le délai d'annulation : réseau, montant et adresse,
-/// mêmes valeurs que la boîte native qui vient d'être validée (calculées ici,
-/// jamais relues depuis l'interface).
+/// Reminder shown during the cancellation delay: network, amount and address, the
+/// same values as the native dialog just approved (computed here, never reread from
+/// the UI).
 #[derive(Clone, Serialize)]
 struct GraceRecap {
-    /// Identifiant du réseau (« xrp_mainnet »…) : logo affiché par l'interface.
+    /// Network identifier ("xrp_mainnet"…): the logo shown by the UI.
     network_id: String,
     network: String,
     amount: String,
     to_label: String,
     to: String,
-    /// Tag de destination ou mémo (XRP, Stellar, Stacks) : (libellé, valeur).
+    /// Destination tag or memo (XRP, Stellar, Stacks): (label, value).
     note: Option<(String, String)>,
 }
 
 impl GraceRecap {
-    /// Envoi : destinataire.
+    /// Send: recipient.
     fn new(network: impl Into<String>, amount: impl Into<String>, to: impl Into<String>) -> Self {
         Self { network_id: String::new(), network: network.into(), amount: amount.into(), to_label: lang("Destinataire", "Recipient").to_string(), to: to.into(), note: None }
     }
 
-    /// Échange : adresse où arrivent les fonds.
+    /// Swap: the address where the funds arrive.
     fn swap(route: impl Into<String>, amount: impl Into<String>, arrival: impl Into<String>) -> Self {
         Self { network_id: String::new(), network: route.into(), amount: amount.into(), to_label: lang("Adresse d'arrivée", "Arrival address").to_string(), to: arrival.into(), note: None }
     }
 
-    /// Réseau de départ des fonds (son logo est affiché).
+    /// Network the funds leave from (its logo is shown).
     fn on(self, network_id: &str) -> Self {
         Self { network_id: network_id.to_string(), ..self }
     }
 }
 
-/// Attend la fin du délai d'annulation (ou la décision de l'utilisateur).
-/// `Err` si l'envoi est annulé.
+/// Waits for the end of the cancellation delay (or the user's decision). `Err` if
+/// the send is cancelled.
 fn send_grace_period(app: &tauri::AppHandle, recap: GraceRecap) -> Result<(), String> {
     grace_period(app, "Virement annulé pendant le délai d'annulation.", recap)
 }
 
-/// Même délai pour un échange, après sa boîte de confirmation.
+/// The same delay for a swap, after its confirmation dialog.
 fn swap_grace_period(app: &tauri::AppHandle, recap: GraceRecap) -> Result<(), String> {
     grace_period(app, "Échange annulé pendant le délai d'annulation.", recap)
 }
@@ -4306,14 +4280,14 @@ fn grace_period(app: &tauri::AppHandle, cancelled: &str, recap: GraceRecap) -> R
     let _ = app.emit("send-countdown-end", id);
     match decision {
         Ok(false) => Err(translate_error(cancelled)),
-        // Délai écoulé, ou « Envoyer maintenant ».
+        // Delay over, or "Send now".
         _ => Ok(()),
     }
 }
 
-/// Montant maximal envoyable (bouton « Max ») depuis le profil, frais du
-/// moment déduits ; `token` : un jeton du registre (USDC compris), tout son
-/// solde. Aperçu seulement : il est recalculé à la confirmation.
+/// Maximum amount that can be sent ("Max" button) from the profile, current fees
+/// deducted; `token`: a registry token (USDC included), its whole balance. A
+/// preview only: it is recomputed at confirmation.
 #[tauri::command]
 async fn max_send_amount(network: String, token: Option<String>, profile_index: u32, fee_sat: Option<u64>, app: tauri::AppHandle) -> Result<String, String> {
     run_blocking(move || {
@@ -4364,7 +4338,7 @@ async fn max_send_amount(network: String, token: Option<String>, profile_index: 
     .await
 }
 
-/// Décision de l'utilisateur pendant le délai d'annulation d'un envoi.
+/// The user's decision during a send's cancellation delay.
 #[tauri::command]
 fn resolve_send_countdown(id: u64, send: bool, state: tauri::State<SendGrace>) {
     if let Some(sender) = state.0.lock().unwrap_or_else(|p| p.into_inner()).get(&id) {
@@ -4372,8 +4346,8 @@ fn resolve_send_countdown(id: u64, send: bool, state: tauri::State<SendGrace>) {
     }
 }
 
-/// Ligne de frais suivie, après une ligne vide, de la consigne de l'appareil
-/// (la ligne de frais est déjà précédée d'un retour à la ligne dans la boîte).
+/// Fee line followed, after a blank line, by the device's instruction (the fee line
+/// is already preceded by a line break in the dialog).
 fn fee_and_device_note(fee_line: Option<String>, device_note: Option<&str>) -> Option<String> {
     match (fee_line, device_note) {
         (Some(fee), Some(note)) => Some(format!("{fee}\n\n{note}")),
@@ -4382,50 +4356,49 @@ fn fee_and_device_note(fee_line: Option<String>, device_note: Option<&str>) -> O
     }
 }
 
-/// Ce qu'un envoi a validé et fait confirmer : exactement ce qui sera signé.
+/// What a send validated and had confirmed: exactly what will be signed.
 struct ConfirmedSend {
     to: String,
     amount: String,
     evm_fee: Option<api::EvmFee>,
     fee_sat: Option<u64>,
-    /// Frais Zcash affichés (plafond à l'envoi).
+    /// Zcash fee shown (cap at send time).
     zec_fee: Option<u64>,
-    /// Envoi Monero préparé (sorties, leurres, frais) : signé tel qu'affiché.
+    /// Prepared Monero send (outputs, decoys, fee): signed as shown.
     xmr_plan: Option<openpgp_wallet_core::monero::SendPlan>,
-    /// Frais Dogecoin affichés (plafond à l'envoi).
+    /// Dogecoin fee shown (cap at send time).
     doge_fee: Option<u64>,
-    /// Frais Tron maximum affichés (plafond à l'envoi).
+    /// Maximum Tron fee shown (cap at send time).
     trx_fee: Option<u64>,
-    /// Frais XRP affichés (plafond à l'envoi).
+    /// XRP fee shown (cap at send time).
     xrp_fee: Option<u64>,
-    /// Frais Stellar (offre) affichés (plafond à l'envoi).
+    /// Stellar fee (bid) shown (cap at send time).
     xlm_fee: Option<u32>,
-    /// Frais NEAR maximum (retenue) affichés (plafond à l'envoi).
+    /// Maximum NEAR fee (hold) shown (cap at send time).
     near_fee: Option<u128>,
-    /// Frais Cardano affichés (plafond à l'envoi).
+    /// Cardano fee shown (cap at send time).
     ada_fee: Option<u64>,
-    /// Frais Stacks affichés (plafond à l'envoi).
+    /// Stacks fee shown (cap at send time).
     stx_fee: Option<u64>,
-    /// Frais Bittensor affichés (plafond à l'envoi, à 10 % près).
+    /// Bittensor fee shown (cap at send time, within 10%).
     tao_fee: Option<u64>,
-    /// Tag (XRP) ou mémo (Stellar) affiché dans la boîte, signé tel quel.
+    /// Tag (XRP) or memo (Stellar) shown in the dialog, signed as is.
     note: Option<DestinationNote>,
 }
 
-/// Complément du destinataire exigé par les plateformes d'échange : tag de
-/// destination (XRP) ou mémo (Stellar).
+/// Recipient detail required by exchanges: destination tag (XRP) or memo (Stellar).
 #[derive(Clone, Debug)]
 enum DestinationNote {
     XrpTag(u32),
     StellarMemo(StellarMemo),
-    /// Mémo Stacks (ASCII, 34 octets au plus).
+    /// Stacks memo (ASCII, at most 34 bytes).
     StacksMemo(String),
 }
 
 use openpgp_wallet_core::stellar::Memo as StellarMemo;
 
 impl DestinationNote {
-    /// (libellé, valeur) du rappel pendant le délai d'annulation.
+    /// (label, value) of the reminder during the cancellation delay.
     fn recap(&self) -> (String, String) {
         let (label, value) = match self {
             DestinationNote::XrpTag(tag) => (lang("Tag de destination", "Destination tag"), tag.to_string()),
@@ -4461,8 +4434,8 @@ impl ConfirmedSend {
     }
 }
 
-/// Adresses (et clés de visualisation Monero) du compte qui envoie, connues
-/// sans mot de passe : préparation de l'envoi AVANT la boîte de confirmation.
+/// Addresses (and Monero view keys) of the sending account, known without the
+/// password: preparing the send BEFORE the confirmation dialog.
 #[derive(Default)]
 struct SendFrom<'a> {
     evm: Option<&'a str>,
@@ -4480,10 +4453,10 @@ struct SendFrom<'a> {
     bittensor: Option<&'a str>,
 }
 
-/// État de `to` sur la blockchain, pour les avertissements (`None` : lecture
-/// impossible). Adresse refusée ici si elle est mal formée (EVM/BTC :
-/// jusqu'ici seulement au moment de signer) ou, pour Solana, si ce n'est pas
-/// un portefeuille (voir `api::check_solana_recipient`).
+/// State of `to` on the blockchain, for the warnings (`None`: could not be read).
+/// The address is refused here if it is malformed (EVM/BTC: until now only at
+/// signing time) or, for Solana, if it is not a wallet (see
+/// `api::check_solana_recipient`).
 fn recipient_activity(coin: &str, network: &str, to: &str) -> Result<Option<api::RecipientActivity>, String> {
     Ok(match coin {
         "evm" => {
@@ -4495,8 +4468,8 @@ fn recipient_activity(coin: &str, network: &str, to: &str) -> Result<Option<api:
             api::validate_btc_recipient(to, net).t_err()?;
             api::btc_recipient_activity(to, net).ok()
         }
-        // Adresse déjà vérifiée (préparation de l'envoi, ou format vérifié
-        // par `recipient_warnings` pour l'aperçu).
+        // Address already checked (send preparation, or format checked by
+        // `recipient_warnings` for the preview).
         "zec" => api::zec_recipient_activity(to).ok(),
         "doge" => api::doge_recipient_activity(to).ok(),
         "trx" => api::trx_recipient_activity(to).ok(),
@@ -4506,8 +4479,8 @@ fn recipient_activity(coin: &str, network: &str, to: &str) -> Result<Option<api:
         "ada" => api::ada_recipient_activity(to).ok(),
         "stx" => api::stx_recipient_activity(to).ok(),
         "tao" => api::tao_recipient_activity(to).ok(),
-        // Adresse vérifiée par la préparation ; aucune activité lisible
-        // (adresses et montants invisibles sur la chaîne Monero).
+        // Address checked by the preparation; no readable activity (addresses and amounts
+        // are invisible on the Monero chain).
         "xmr" => None,
         _ => {
             let net = sol_network(network)?;
@@ -4517,7 +4490,7 @@ fn recipient_activity(coin: &str, network: &str, to: &str) -> Result<Option<api:
     })
 }
 
-/// Monnaie d'un envoi selon son réseau (`Err` : réseau inconnu).
+/// Currency of a send according to its network (`Err`: unknown network).
 fn send_coin(network: &str) -> Result<&'static str, String> {
     Ok(match network {
         n if is_evm(n) => "evm",
@@ -4537,9 +4510,9 @@ fn send_coin(network: &str) -> Result<&'static str, String> {
     })
 }
 
-/// Validation, avertissements et boîte de confirmation native, communs aux
-/// envois du portefeuille et des comptes matériels (`device_note` : consigne
-/// ajoutée à la boîte pour la confirmation sur l'appareil). `Err` si refusé.
+/// Validation, warnings and native confirmation dialog, shared by wallet sends and
+/// hardware account sends (`device_note`: an instruction added to the dialog for
+/// confirming on the device). `Err` if refused.
 #[allow(clippy::too_many_arguments)]
 fn confirm_send(
     app: &tauri::AppHandle,
@@ -4554,10 +4527,10 @@ fn confirm_send(
     max: bool,
     note: Option<DestinationNote>,
 ) -> Result<ConfirmedSend, String> {
-    // Réseau validé AVANT la boîte de confirmation (22ᵉ passage) : un réseau
-    // inconnu était jusqu'ici affiché tel quel (texte libre du frontend) dans
-    // la boîte, l'erreur n'arrivant qu'après. Adresse et montant remplacés par
-    // leur forme canonique, utilisée pour l'affichage ET la signature (voir
+    // Network validated BEFORE the confirmation dialog (round 22): an unknown network
+    // used to be shown as is (free text from the frontend) in the dialog, with the
+    // error only coming afterwards. Address and amount are replaced by their canonical
+    // form, used for display AND signing (see
     // `canonical_address_input`/`api::canonical_amount`).
     let coin = send_coin(network)?;
     match (&note, coin) {
@@ -4576,8 +4549,8 @@ fn confirm_send(
     };
     let to = canonical_address_input(to)?;
     let unknown_profile = || translate_error("adresse du profil inconnue — déverrouillez le portefeuille");
-    // « Max » : montant recalculé MAINTENANT (solde moins les frais du moment,
-    // mêmes règles que l'envoi), affiché dans la boîte puis signé tel quel.
+    // "Max": the amount recomputed NOW (balance minus current fees, same rules as the
+    // send), shown in the dialog and then signed as is.
     let mut evm_fee = None;
     let mut xmr_plan = None;
     let amount = if max {
@@ -4626,31 +4599,29 @@ fn confirm_send(
         _ => api::canonical_amount(coin, &amount).t_err()?,
     };
 
-    // Frais affichés dans la boîte de dialogue native (voir sa doc : "montre
-    // exactement ce que le backend a compris") : choisis par l'utilisateur pour
-    // Bitcoin ; pour EVM, prix du gas lu MAINTENANT et utilisé tel quel pour
-    // signer — avant, il était lu auprès du nœud APRÈS la confirmation, jamais
-    // affiché (voir `api::evm_gas_price_for_confirmation`).
-    // Frais EVM complets (prix, limite de gas — estimée là où elle n'est pas
-    // fixe —, frais de publication OP Stack), affichés puis signés tels quels.
+    // Fees shown in the native dialog (see its docs: "shows exactly what the backend
+    // understood"): chosen by the user for Bitcoin; for EVM, the full fees (price, gas
+    // limit (estimated where it is not fixed), OP Stack posting fees) read NOW, shown,
+    // then signed as is. They used to be read from the node AFTER confirmation and
+    // never shown (see `api::evm_gas_price_for_confirmation`).
     let evm_fee = match (coin, evm_fee) {
         ("evm", None) => Some(api::evm_transfer_fee_for_confirmation(evm_network(network)?, from.evm, &to, &amount).t_err()?),
         (_, fee) => fee,
     };
-    // Solde suffisant (montant + frais) vérifié AVANT la boîte : jamais
-    // confirmer un envoi refusé juste après.
+    // Enough balance (amount + fees) checked BEFORE the dialog: never confirm a send
+    // that is refused right after.
     match (coin, evm_fee, from.evm, from.sol) {
         ("evm", Some(fee), Some(from), _) => api::ensure_evm_transfer_funds(evm_network(network)?, from, &amount, fee).t_err()?,
         ("sol", _, _, Some(from)) => api::ensure_sol_transfer_funds(sol_network(network)?, from, &amount).t_err()?,
         _ => {}
     }
-    // Bitcoin (portefeuille) : toutes les sorties couvrent montant et frais
-    // choisis. Comptes matériels : leurs adresses sont relues par l'appareil.
+    // Bitcoin (wallet): all the outputs cover the amount and the chosen fee. Hardware
+    // accounts: their addresses are reread by the device.
     if let ("btc", Some(from), Some(fee)) = (coin, from.btc, fee_sat) {
         api::ensure_btc_transfer_funds(btc_network(network)?, from, &amount, fee).t_err()?;
     }
-    // Zcash : destinataire vérifié, sorties choisies et frais ZIP-317
-    // calculés MAINTENANT, affichés, puis jamais dépassés à l'envoi.
+    // Zcash: recipient checked, outputs chosen and ZIP-317 fee computed NOW, shown,
+    // then never exceeded at send time.
     let zec_plan = match coin {
         "zec" => {
             let from = from.zec.ok_or_else(|| translate_error("adresse du profil inconnue — déverrouillez le portefeuille"))?;
@@ -4658,9 +4629,9 @@ fn confirm_send(
         }
         _ => None,
     };
-    // Dogecoin : destinataire vérifié, sorties choisies et vérifiées sur leurs
-    // transactions d'origine (montants), frais calculés MAINTENANT, affichés,
-    // puis jamais dépassés à l'envoi.
+    // Dogecoin: recipient checked, outputs chosen and verified against their source
+    // transactions (amounts), fee computed NOW, shown, then never exceeded at send
+    // time.
     let doge_plan = match coin {
         "doge" => {
             let from = from.doge.ok_or_else(|| translate_error("adresse du profil inconnue — déverrouillez le portefeuille"))?;
@@ -4668,52 +4639,50 @@ fn confirm_send(
         }
         _ => None,
     };
-    // Tron : destinataire vérifié, frais maximum (bande passante, activation
-    // d'un compte inexistant) et solde vérifiés MAINTENANT, affichés, puis
-    // jamais dépassés à l'envoi.
+    // Tron: recipient checked, maximum fee (bandwidth, activating an account that does
+    // not exist) and balance checked NOW, shown, then never exceeded at send time.
     let trx_plan = match coin {
         "trx" => Some(api::trx_send_plan(from.tron.ok_or_else(unknown_profile)?, &to, &amount).t_err()?),
         _ => None,
     };
-    // XRP : réserve du réseau, activation d'un destinataire neuf, tag exigé
-    // par le destinataire et frais vérifiés MAINTENANT, affichés, puis jamais
-    // dépassés à l'envoi.
+    // XRP: network reserve, activation of a new recipient, tag required by the
+    // recipient and fee checked NOW, shown, then never exceeded at send time.
     let xrp_plan = match coin {
         "xrp" => Some(api::xrp_send_plan(from.xrp.ok_or_else(unknown_profile)?, &to, &amount, destination_tag).t_err()?),
         _ => None,
     };
-    // Stellar : réserve du réseau, création d'un destinataire neuf, mémo
-    // exigé par le destinataire (SEP-29) et frais vérifiés MAINTENANT.
+    // Stellar: network reserve, creation of a new recipient, memo required by the
+    // recipient (SEP-29) and fee checked NOW.
     let xlm_plan = match coin {
         "xlm" => Some(api::xlm_send_plan(from.stellar.ok_or_else(unknown_profile)?, &to, &amount, &memo).t_err()?),
         _ => None,
     };
-    // NEAR : stockage du compte, création d'un compte implicite neuf, compte
-    // nommé existant et frais (retenue maximale) vérifiés MAINTENANT.
+    // NEAR: account storage, creation of a new implicit account, existing named
+    // account and fee (maximum hold) checked NOW.
     let near_plan = match coin {
         "near" => Some(api::near_send_plan(from.near.ok_or_else(unknown_profile)?, &to, &amount).t_err()?),
         _ => None,
     };
-    // Cardano : sorties choisies (ADA seul), frais exacts, monnaie rendue et
-    // minimum d'une sortie calculés MAINTENANT, affichés, jamais dépassés.
+    // Cardano: outputs chosen (ADA only), exact fee, change returned and output
+    // minimum computed NOW, shown, never exceeded.
     let ada_plan = match coin {
         "ada" => Some(api::ada_send_plan(from.cardano.ok_or_else(unknown_profile)?, &to, &amount).t_err()?),
         _ => None,
     };
-    // Stacks : solde disponible (hors stacking) et frais vérifiés MAINTENANT.
+    // Stacks: available balance (excluding stacking) and fee checked NOW.
     let stx_plan = match coin {
         "stx" => Some(api::stx_send_plan(from.stacks.ok_or_else(unknown_profile)?, &to, &amount).t_err()?),
         _ => None,
     };
-    // Bittensor : frais, réserve minimale de l'envoyeur et compte destinataire
-    // vide vérifiés MAINTENANT (refus que la validation du nœud ne voit pas).
+    // Bittensor: fee, the sender's minimum balance and an empty recipient account
+    // checked NOW (refusals the node's validation does not see).
     let tao_plan = match coin {
         "tao" => Some(api::tao_send_plan(from.bittensor.ok_or_else(unknown_profile)?, &to, &amount).t_err()?),
         _ => None,
     };
-    // Monero : destinataire vérifié, sorties choisies, leurres tirés et frais
-    // calculés MAINTENANT (clés de visualisation, sans la seed) ; c'est cet
-    // envoi-là, inchangé, qui sera signé.
+    // Monero: recipient checked, outputs chosen, decoys drawn and fee computed NOW
+    // (view keys, without the seed); that exact send, unchanged, is what will be
+    // signed.
     let xmr_plan = match (coin, xmr_plan) {
         ("xmr", None) => {
             let keys = from.xmr.ok_or_else(unknown_profile)?;
@@ -4722,10 +4691,10 @@ fn confirm_send(
         (_, plan) => plan,
     };
     let activity = recipient_activity(coin, network, &to)?;
-    // Ligne de frais choisie d'après le RÉSEAU, jamais d'après la simple
-    // présence de `fee_sat` (22ᵉ passage) : un `fee_sat` envoyé pour un
-    // virement ETH remplaçait jusqu'ici l'affichage des vrais frais de gas par
-    // un "Frais : 1 sat" sans rapport avec ce qui serait payé.
+    // Fee line chosen according to the NETWORK, never according to the mere presence
+    // of `fee_sat` (round 22): a `fee_sat` sent for an ETH transfer used to replace
+    // the real gas fee display with a "Fee: 1 sat" that had nothing to do with what
+    // would be paid.
     let fee_line = match coin {
         "btc" => {
             let fee_sat = fee_sat.ok_or_else(|| lang("frais Bitcoin manquants : choisissez une vitesse d'envoi", "Bitcoin fee missing: choose a sending speed").to_string())?;
@@ -4826,19 +4795,19 @@ Change returned to your address: {change} XMR (spendable after 10 confirmations,
     if max {
         amount_line.push_str(lang(" (maximum, frais déduits)", " (maximum, fees deducted)"));
     }
-    // XRP : tag de destination TOUJOURS montré (« aucun » compris), sous le
-    // destinataire — un tag oublié pour une plateforme d'échange se voit.
+    // XRP: destination tag ALWAYS shown ("none" included), under the recipient, so a
+    // tag forgotten for an exchange is noticed.
     let to_line = match (coin, destination_tag) {
         ("xrp", Some(tag)) => format!("{to}\n{} {tag}", lang("Tag de destination :", "Destination tag:")),
         ("xrp", None) => format!("{to}\n{}", lang("Tag de destination : aucun", "Destination tag: none")),
-        // Stellar : mémo TOUJOURS montré, avec son type (ASCII imprimable
-        // seulement, voir `stellar::parse_memo`).
+        // Stellar: memo ALWAYS shown, with its type (printable ASCII only, see
+        // `stellar::parse_memo`).
         ("xlm", _) => match &memo {
             StellarMemo::None => format!("{to}\n{}", lang("Mémo : aucun", "Memo: none")),
             StellarMemo::Id(id) => format!("{to}\n{} {id}", lang("Mémo (identifiant) :", "Memo (ID):")),
             StellarMemo::Text(text) => format!("{to}\n{} \"{text}\"", lang("Mémo (texte) :", "Memo (text):")),
         },
-        // Stacks : mémo TOUJOURS montré (ASCII imprimable seulement).
+        // Stacks: memo ALWAYS shown (printable ASCII only).
         ("stx", _) => match &note {
             Some(DestinationNote::StacksMemo(text)) => format!("{to}\n{} \"{text}\"", lang("Mémo :", "Memo:")),
             _ => format!("{to}\n{}", lang("Mémo : aucun", "Memo: none")),
@@ -4867,18 +4836,19 @@ Change returned to your address: {change} XMR (spendable after 10 confirmations,
     })
 }
 
-// --- Comptes Ledger / Trezor (core/src/hardware.rs) ----------------------------
-// Commandes qui parlent à l'appareil ou au réseau exécutées via `run_blocking` :
-// l'appareil attend la confirmation physique de l'utilisateur, parfois
-// longtemps, et la fenêtre ne doit pas se figer pendant ce temps.
+// --- Ledger / Trezor accounts (core/src/hardware.rs) ---------------------------
+//
+// Commands that talk to the device or the network run through `run_blocking`: the
+// device waits for the user's physical confirmation, sometimes for a long time,
+// and the window must not freeze meanwhile.
 
-/// Compte matériel tel qu'affiché : l'empreinte et la clé publique étendue
-/// Bitcoin restent côté Rust (inutiles à l'affichage).
+/// Hardware account as displayed: the fingerprint and the Bitcoin extended public
+/// key stay on the Rust side (not needed for display).
 #[derive(Serialize)]
 struct HardwareAccountDto {
     id: u32,
     label: String,
-    /// "ledger" ou "trezor".
+    /// "ledger" or "trezor".
     device: String,
     network: String,
     address: String,
@@ -4900,12 +4870,12 @@ fn hardware_accounts(app: tauri::AppHandle) -> Result<Vec<HardwareAccountDto>, S
     Ok(hardware::list_accounts(&data_dir(&app)?).into_iter().map(Into::into).collect())
 }
 
-/// Exécute `work` sur un fil réservé aux opérations bloquantes (attente de la
-/// confirmation sur l'appareil, appels réseau `reqwest::blocking`, boîte de
-/// dialogue native) : ni sur le fil principal (fenêtre figée), ni directement
-/// dans une tâche asynchrone — ce que fait `#[tauri::command(async)]` sur une
-/// fonction synchrone, où `reqwest::blocking` panique et la commande reste
-/// alors sans réponse (constaté en réel sur le solde d'un compte Ledger).
+/// Runs `work` on a thread reserved for blocking operations (waiting for
+/// confirmation on the device, `reqwest::blocking` network calls, native dialog):
+/// neither on the main thread (frozen window), nor directly in an async task, which
+/// is what `#[tauri::command(async)]` does with a synchronous function, where
+/// `reqwest::blocking` panics and the command never answers (seen for real on a
+/// Ledger account's balance).
 async fn run_blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
     tauri::async_runtime::spawn_blocking(work).await.map_err(|e| format!("opération interrompue : {e}"))?
 }
@@ -4925,7 +4895,7 @@ async fn hardware_verify_address(id: u32, app: tauri::AppHandle) -> Result<(), S
     run_blocking(move || hardware::verify_address_on_device(&data_dir(&app)?, id).t_err()).await
 }
 
-/// Même format que `get_balance` (Bitcoin : réception + monnaie).
+/// Same format as `get_balance` (Bitcoin: receive + change).
 #[tauri::command]
 async fn hardware_balance(id: u32, app: tauri::AppHandle) -> Result<String, String> {
     run_blocking(move || {
@@ -4950,9 +4920,9 @@ async fn hardware_estimate_btc_fees(id: u32, app: tauri::AppHandle) -> Result<Bt
     .await
 }
 
-/// Envoi depuis un compte matériel : mêmes validations, avertissements et boîte
-/// native qu'un envoi du portefeuille (aucun mot de passe : rien à
-/// déverrouiller ici), puis revue et confirmation sur l'écran de l'appareil.
+/// Send from a hardware account: the same validations, warnings and native dialog
+/// as a wallet send (no password: nothing to unlock here), then review and
+/// confirmation on the device's screen.
 #[tauri::command]
 async fn hardware_send(id: u32, to: String, amount: String, fee_sat: Option<u64>, app: tauri::AppHandle) -> Result<String, String> {
     run_blocking(move || {
@@ -4988,14 +4958,13 @@ async fn hardware_send(id: u32, to: String, amount: String, fee_sat: Option<u64>
     .await
 }
 
-/// Indique si l'envoi USDC vers `to` va facturer un rent supplémentaire (le
-/// destinataire n'a pas encore de compte USDC) — lecture seule, appelée AVANT
-/// la confirmation pour ne jamais présenter un coût caché après coup. `None`
-/// si l'ATA du destinataire existe déjà (aucun coût supplémentaire), ou si
-/// `to` n'est pas une adresse Solana valide ou que la lecture réseau échoue
-/// (l'erreur sera de toute façon remontée normalement par `send_usdc` juste
-/// après ; ici on préfère ne rien afficher plutôt que de bloquer sur un
-/// problème réseau avant même la confirmation).
+/// Tells whether a USDC send to `to` will charge extra rent (the recipient has no
+/// USDC account yet). Read-only, called BEFORE confirmation so a hidden cost is
+/// never revealed after the fact. `None` if the recipient's ATA already exists (no
+/// extra cost), or if `to` is not a valid Solana address or the network read fails
+/// (the error will be reported normally by `send_usdc` right after anyway; here we
+/// would rather show nothing than block on a network problem before the
+/// confirmation even starts).
 fn describe_possible_ata_rent(net: &wallet_flow::SolNetwork, to: &str) -> Option<String> {
     let rent_lamports = api::usdc_ata_rent_lamports_if_missing(to, net).ok()??;
     let sol = rent_lamports as f64 / 1e9;
@@ -5011,20 +4980,17 @@ fn describe_possible_ata_rent(net: &wallet_flow::SolNetwork, to: &str) -> Option
 }
 
 // --- Swap (THORChain) --------------------------------------------------------
-// Un swap réel entre BTC/ETH/SOL n'a aucun mécanisme on-chain natif : passe
-// nécessairement par un protocole externe (voir core/src/thorchain_rpc.rs).
-// v1 : source Solana uniquement (le moins de nouveau code, voir le plan) ;
-// obtenir un devis reste possible pour n'importe quelle paire connue
-// (lecture seule, aucun risque), seul l'ENVOI est restreint à "sol" pour
-// l'instant.
+//
+// A real swap between different chains has no native on-chain mechanism: it
+// necessarily goes through an external protocol (see core/src/thorchain_rpc.rs).
 
 #[derive(Serialize)]
 struct SwapQuoteDto {
     inbound_address: String,
     memo: String,
-    /// Déjà à l'échelle 1e8 utilisée par THORChain pour TOUS les actifs —
-    /// donc affichable tel quel (divisé par 1e8), sans jamais repasser par les
-    /// décimales natives de l'actif de destination.
+    /// Already on the 1e8 scale THORChain uses for ALL assets, so it can be displayed
+    /// as is (divided by 1e8), without ever going back through the destination asset's
+    /// native decimals.
     expected_amount_out: String,
     total_fees: Option<String>,
 }
@@ -5062,8 +5028,8 @@ type CrossChainPair = (
     &'static openpgp_wallet_core::thorchain_rpc::ThorAsset,
 );
 
-/// Le fournisseur choisi dans l'interface relie-t-il directement ces deux
-/// cryptos (voir `swap_routes::direct_all`) ?
+/// Does the provider chosen in the UI directly connect these two cryptos (see
+/// `swap_routes::direct_all`)?
 fn provider_links(protocol: openpgp_wallet_core::swap_routes::Protocol, from_coin: &str, from_network: &str, to_coin: &str, to_network: &str) -> bool {
     use openpgp_wallet_core::swap_routes;
     swap_routes::find(from_coin, from_network)
@@ -5071,8 +5037,8 @@ fn provider_links(protocol: openpgp_wallet_core::swap_routes::Protocol, from_coi
         .is_some_and(|(f, t)| swap_routes::direct_all(f, t).contains(&protocol))
 }
 
-/// Paire d'échange entre réseaux désignée par l'interface, avec le
-/// fournisseur choisi (THORChain ou Maya) : refusée s'il ne la relie pas.
+/// Cross-chain swap pair designated by the UI, with the chosen provider (THORChain
+/// or Maya): refused if that provider does not connect it.
 fn cross_chain_pair(
     from_coin: &str,
     from_network: &str,
@@ -5091,8 +5057,8 @@ fn cross_chain_pair(
     ))
 }
 
-/// Frais réseau maximum d'un échange depuis un réseau EVM : dépôt, plus les
-/// autorisations préalables, plus les frais de publication sur Ethereum (Base).
+/// Maximum network fee for a swap from an EVM network: the deposit, plus the prior
+/// approvals, plus the Ethereum posting fees (Base).
 fn evm_swap_fee_line(fees: &api::EvmSwapFees, symbol: &str) -> Result<String, String> {
     let total = fees.max_total().t_err()? as f64 / 1e18;
     let l1 = (fees.deposit.l1_fee + fees.approve.l1_fee * fees.approvals as u128) as f64 / 1e18;
@@ -5110,19 +5076,15 @@ fn evm_swap_fee_line(fees: &api::EvmSwapFees, symbol: &str) -> Result<String, St
     Ok(line)
 }
 
-/// Actifs (`coin@network`) que THORChain et Maya n'échangent pas en ce moment
-/// (réseau suspendu : incident, maintenance).
+/// Assets (`coin@network`) that THORChain and Maya are not swapping right now
+/// (network halted: incident, maintenance).
 #[derive(Serialize)]
 struct SwapHaltsDto {
     thorchain: Vec<String>,
     maya: Vec<String>,
 }
 
-/// Lu à l'ouverture de la fenêtre « Convertir » : un fournisseur suspendu
-/// pour l'échange choisi n'y est plus proposé par défaut. Lecture en échec :
-/// rien de marqué (le devis dira alors la suspension en clair).
-/// Adresse du profil `profile_index` sur `network` (caches Rust remplis au
-/// déverrouillage).
+/// Address of profile `profile_index` on `network` (Rust caches filled at unlock).
 fn profile_address(app: &tauri::AppHandle, network: &str, profile_index: u32) -> Result<String, String> {
     let unknown = || translate_error("adresse du profil inconnue — déverrouillez le portefeuille");
     let cached = |cache: &std::sync::Mutex<std::collections::HashMap<u32, String>>| cache.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).cloned().ok_or_else(unknown);
@@ -5145,8 +5107,8 @@ fn profile_address(app: &tauri::AppHandle, network: &str, profile_index: u32) ->
     }
 }
 
-/// « Max » de la fenêtre « Convertir » : montant maximal pour cet échange,
-/// frais de l'échange déduits (voir `api::swap_max`).
+/// "Max" in the "Convert" window: the maximum amount for this swap, the swap's fees
+/// deducted (see `api::swap_max`).
 #[tauri::command]
 async fn swap_max_amount(app: tauri::AppHandle, protocol: String, from_coin: String, from_network: String, to_coin: String, profile_index: u32) -> Result<String, String> {
     run_blocking(move || {
@@ -5156,7 +5118,7 @@ async fn swap_max_amount(app: tauri::AppHandle, protocol: String, from_coin: Str
     .await
 }
 
-/// Mise en jeu Cardano du profil : inscription, pool délégué, récompenses.
+/// The profile's Cardano staking: registration, delegated pool, rewards.
 #[derive(Serialize)]
 struct AdaStakeStatusDto {
     reward_address: String,
@@ -5197,7 +5159,7 @@ struct AdaPoolDto {
     active_stake_ada: u64,
 }
 
-/// Pools Cardano proposés (voir `cardano::pools`).
+/// Cardano pools offered (see `cardano::pools`).
 #[tauri::command]
 async fn cardano_pools() -> Result<Vec<AdaPoolDto>, String> {
     run_blocking(|| {
@@ -5210,7 +5172,7 @@ async fn cardano_pools() -> Result<Vec<AdaPoolDto>, String> {
     .await
 }
 
-/// Boîte native d'une opération de mise en jeu Cardano.
+/// Native dialog for a Cardano staking operation.
 fn confirm_ada_stake_native(app: &tauri::AppHandle, from_label: &str, action: api::AdaStakeAction, plan: &openpgp_wallet_core::cardano::StakePlan, pool: Option<(&str, Option<&str>)>) -> bool {
     use openpgp_wallet_core::cardano::format_ada;
     let from_label = dialog_label(from_label);
@@ -5328,8 +5290,8 @@ Confirm?", format_ada(plan.withdrawal), format_ada(plan.refund)),
     app.dialog().message(body).title(title).kind(MessageDialogKind::Warning).buttons(MessageDialogButtons::OkCancel).blocking_show()
 }
 
-/// Opération de mise en jeu Cardano : préparée, confirmée (boîte native),
-/// délai d'annulation, puis signée et diffusée.
+/// Cardano staking operation: prepared, confirmed (native dialog), cancellation
+/// delay, then signed and broadcast.
 #[tauri::command]
 async fn cardano_stake(app: tauri::AppHandle, password: String, action: String, pool: Option<String>, profile_index: u32) -> Result<String, String> {
     run_blocking(move || {
@@ -5366,7 +5328,7 @@ async fn cardano_stake(app: tauri::AppHandle, password: String, action: String, 
     .await
 }
 
-/// Staking natif Solana du profil : comptes de mise, époque, minimum.
+/// The profile's native Solana staking: stake accounts, epoch, minimum.
 #[derive(Serialize)]
 struct SolStakeAccountDto {
     address: String,
@@ -5383,7 +5345,7 @@ struct SolStakeAccountDto {
 #[derive(Serialize)]
 struct SolStakeStatusDto {
     accounts: Vec<SolStakeAccountDto>,
-    /// Total de SOL sur les comptes de mise (réserves comprises).
+    /// Total SOL in the stake accounts (reserves included).
     total: String,
     total_lamports: u64,
     epoch_ends_in: String,
@@ -5424,8 +5386,8 @@ async fn sol_stake_status(app: tauri::AppHandle, profile_index: u32) -> Result<S
     .await
 }
 
-/// SOL stakés en natif par le profil (lamports), pour la carte SOL : une
-/// seule lecture, sans l'état détaillé de `sol_stake_status`.
+/// SOL natively staked by the profile (lamports), for the SOL card: a single read,
+/// without the detailed state of `sol_stake_status`.
 #[tauri::command]
 async fn sol_staked_total(app: tauri::AppHandle, profile_index: u32) -> Result<u64, String> {
     run_blocking(move || {
@@ -5435,13 +5397,13 @@ async fn sol_staked_total(app: tauri::AppHandle, profile_index: u32) -> Result<u
     .await
 }
 
-/// Validateurs Solana proposés (voir `sol_stake::validators`).
+/// Solana validators offered (see `sol_stake::validators`).
 #[tauri::command]
 async fn sol_validators() -> Result<Vec<openpgp_wallet_core::sol_stake::Validator>, String> {
     run_blocking(|| api::sol_validators().t_err()).await
 }
 
-/// « Max » de la fenêtre de staking natif.
+/// "Max" of the native staking window.
 #[tauri::command]
 async fn sol_stake_max(app: tauri::AppHandle, profile_index: u32) -> Result<String, String> {
     run_blocking(move || {
@@ -5451,7 +5413,7 @@ async fn sol_stake_max(app: tauri::AppHandle, profile_index: u32) -> Result<Stri
     .await
 }
 
-/// Boîte native d'une opération de staking natif Solana.
+/// Native dialog for a native Solana staking operation.
 fn confirm_sol_stake_native(app: &tauri::AppHandle, from_label: &str, plan: &openpgp_wallet_core::sol_stake::Plan, validator_name: Option<&str>, epoch_ends_in: &str) -> bool {
     use openpgp_wallet_core::sol_rpc::format_lamports;
     use openpgp_wallet_core::sol_stake::Action;
@@ -5573,8 +5535,8 @@ Confirm?"
     app.dialog().message(body).title(title).kind(MessageDialogKind::Warning).buttons(MessageDialogButtons::OkCancel).blocking_show()
 }
 
-/// Opération de staking natif Solana : préparée et simulée, confirmée (boîte
-/// native), délai d'annulation, puis signée et diffusée.
+/// Native Solana staking operation: prepared and simulated, confirmed (native
+/// dialog), cancellation delay, then signed and broadcast.
 #[tauri::command]
 async fn sol_stake(app: tauri::AppHandle, password: String, action: String, amount: Option<String>, target: String, profile_index: u32) -> Result<String, String> {
     use openpgp_wallet_core::sol_stake::Action;
@@ -5590,7 +5552,7 @@ async fn sol_stake(app: tauri::AppHandle, password: String, action: String, amou
         let amount = if action == Action::Delegate { amount } else { None };
         let owner = own_address_on(&app, "sol_mainnet", profile_index)?;
         let plan = api::sol_stake_plan(&owner, action, amount.as_deref(), &target).t_err()?;
-        // Nom du validateur et fin d'époque : affichage seulement.
+        // Validator name and end of epoch: display only.
         let view = if action == Action::Delegate { None } else { api::sol_stake_overview(&owner).ok() };
         let validator_name = match action {
             Action::Delegate => plan.validator.as_deref().and_then(openpgp_wallet_core::sol_stake::validator_name),
@@ -5613,20 +5575,23 @@ async fn sol_stake(app: tauri::AppHandle, password: String, action: String, amou
     .await
 }
 
-/// Rendements annuels du staking liquide (JitoSOL, stETH), pour la note de
-/// « Convertir » (voir `core/src/staking.rs`).
+/// Annual yields of liquid staking (JitoSOL, stETH), for the note in "Convert" (see
+/// `core/src/staking.rs`).
 #[tauri::command]
 async fn staking_aprs() -> Result<openpgp_wallet_core::staking::Aprs, String> {
     run_blocking(|| Ok(openpgp_wallet_core::staking::aprs())).await
 }
 
-/// Fournisseurs d'échange qui ne répondent pas en ce moment (messages rouges
-/// de la fenêtre « Convertir », voir `swap_health`).
+/// Swap providers that are not responding right now (the red messages in the
+/// "Convert" window, see `swap_health`).
 #[tauri::command]
 async fn swap_health() -> Result<Vec<openpgp_wallet_core::swap_health::Issue>, String> {
     run_blocking(|| Ok(openpgp_wallet_core::swap_health::check())).await
 }
 
+/// Read when the "Convert" window opens: a provider that is halted for the chosen swap
+/// is no longer offered by default. If the read fails, nothing is flagged (the quote
+/// will then state the halt in plain words).
 #[tauri::command]
 async fn swap_halts() -> Result<SwapHaltsDto, String> {
     use openpgp_wallet_core::thorchain_rpc::{CrossChain, MAYA, THORCHAIN};
@@ -5656,25 +5621,24 @@ struct SwapPairDto {
     from_network: &'static str,
     to_coin: &'static str,
     to_network: &'static str,
-    /// Protocole de la (première) étape.
+    /// Protocol of the (first) step.
     protocol: openpgp_wallet_core::swap_routes::Protocol,
-    /// Paire directe : tous les fournisseurs possibles, le préféré d'abord
-    /// (vide pour un échange en deux étapes).
+    /// Direct pair: every possible provider, the preferred one first (empty for a
+    /// two-step swap).
     protocols: Vec<openpgp_wallet_core::swap_routes::Protocol>,
-    /// Frais d'affiliation de l'app pour chacun de `protocols` (points de
-    /// base) : 0 depuis Bitcoin ou Zcash via THORChain ou Maya sans nom court.
+    /// The app's affiliate fee for each of `protocols` (basis points): 0 from Bitcoin
+    /// or Zcash through THORChain or Maya without a short name.
     fees_bps: Vec<u32>,
-    /// Échange en deux étapes : crypto intermédiaire et protocole de la
-    /// seconde étape (`None` pour un échange direct).
+    /// Two-step swap: intermediate crypto and the second step's protocol (`None` for a
+    /// direct swap).
     via: Option<openpgp_wallet_core::swap_routes::SwapAsset>,
     then_protocol: Option<openpgp_wallet_core::swap_routes::Protocol>,
 }
 
-/// Paires d'échange possibles, directes ou en deux étapes (voir
-/// `core/src/swap_routes.rs`) : ce que la fenêtre « Convertir » propose. Les
-/// commandes d'échange n'acceptent qu'une paire directe : une étape à la fois.
-/// Asynchrone : les frais affichés dépendent du nom d'affiliation, relu sur
-/// THORChain et Maya (voir `thorchain_rpc::CrossChain::affiliate_for`).
+/// Possible swap pairs, direct or in two steps (see `core/src/swap_routes.rs`):
+/// what the "Convert" window offers. The swap commands only accept a direct pair:
+/// one step at a time. Asynchronous: the fees shown depend on the affiliate name,
+/// read from THORChain and Maya (see `thorchain_rpc::CrossChain::affiliate_for`).
 #[tauri::command]
 async fn swap_pairs() -> Vec<SwapPairDto> {
     run_blocking(|| Ok::<_, String>(swap_pair_dtos())).await.unwrap_or_default()
@@ -5700,32 +5664,30 @@ fn swap_pair_dtos() -> Vec<SwapPairDto> {
         .collect()
 }
 
-/// Confirmation native spécifique au swap : contrairement à un envoi normal,
-/// mentionne explicitement qu'il s'agit d'un protocole EXTERNE (THORChain),
-/// avec ses propres frais + les 0,80% d'affiliation, et que l'app elle-même
-/// ne peut garantir le bon déroulement au-delà de l'envoi de cette
-/// transaction (voir core/src/thorchain_rpc.rs pour le contexte complet).
+/// Native confirmation specific to swaps: unlike a normal send, it states
+/// explicitly that an EXTERNAL protocol (THORChain) is involved, with its own fees
+/// + the 0.80% affiliate fee, and that the app itself cannot guarantee how things
+/// go beyond sending this transaction (see core/src/thorchain_rpc.rs for the full
+/// context).
 ///
-/// Montre aussi l'adresse de vault réelle (`inbound_address`, et le contrat
-/// routeur pour un swap EVM) — trouvé lors de l'audit de cette
-/// fonctionnalité : contrairement à `confirm_transaction_native` (envoi
-/// normal), qui montre TOUJOURS le destinataire réel pour se protéger
-/// justement de la "signature aveugle" (voir ETAPES.md, 15ᵉ passage), cette
-/// boîte ne montrait jusqu'ici que le montant/l'actif, jamais l'adresse
-/// réellement payée. Cette adresse vient d'un tiers (la passerelle THORChain
-/// interrogée pour le devis, jamais un nœud opéré par ce projet) : l'afficher
-/// ne le rend pas plus fiable en soi, mais restaure le même principe "on
-/// signe ce qu'on voit" que le reste de l'app, et donne à un utilisateur
-/// attentif une chance de repérer une adresse manifestement incohérente.
+/// It also shows the real vault address (`inbound_address`, and the router contract
+/// for an EVM swap). Found during this feature's audit: unlike
+/// `confirm_transaction_native` (normal send), which ALWAYS shows the real
+/// recipient precisely to guard against "blind signing" (audit round 15), this
+/// dialog only showed the amount/asset, never the address actually paid. That
+/// address comes from a third party (the THORChain gateway queried for the quote,
+/// never a node run by this project): showing it does not make it more trustworthy
+/// in itself, but it restores the same "sign what you see" principle as the rest of
+/// the app, and gives an attentive user a chance to spot an obviously inconsistent
+/// address.
 ///
-/// Montre aussi `final_destination` (l'adresse sur la chaîne d'ARRIVÉE, celle
-/// que THORChain paiera une fois le swap exécuté) — trouvé dans le même audit :
-/// contrairement au vault (opaque, l'utilisateur ne peut pas juger s'il est
-/// légitime), cette adresse est normalement LA SIENNE (pré-remplie par le
-/// frontend, mais reste modifiable) — exactement le genre de valeur qu'un
-/// détournement d'adresse (presse-papier, frontend compromis) chercherait à
-/// altérer, et que l'utilisateur PEUT vérifier lui-même contre l'adresse déjà
-/// affichée ailleurs dans l'app pour ce réseau.
+/// It also shows `final_destination` (the address on the DESTINATION chain, the one
+/// THORChain will pay once the swap executes). Found in the same audit: unlike the
+/// vault (opaque, the user cannot judge whether it is legitimate), this address is
+/// normally THEIR OWN (pre-filled by the frontend, but still editable), exactly the
+/// kind of value an address hijack (clipboard, compromised frontend) would try to
+/// alter, and one the user CAN check against the address already shown elsewhere in
+/// the app for that network.
 #[allow(clippy::too_many_arguments)]
 fn confirm_swap_native(
     app: &tauri::AppHandle,
@@ -5743,7 +5705,7 @@ fn confirm_swap_native(
     own_destination: Option<&str>,
 ) -> bool {
     let network_fee_line = network_fee_line.map(|f| format!("{f}\n")).unwrap_or_default();
-    // Depuis Bitcoin ou Zcash sans nom court : aucun frais pour l'app (voir
+    // From Bitcoin or Zcash without a short name: no fee for the app (see
     // `thorchain_rpc::CrossChain::charges_affiliate`).
     let affiliate_en = if affiliate { ", plus a 0.80% affiliate fee" } else { ", with no affiliate fee for this app on this swap" };
     let affiliate_fr = if affiliate { ", plus 0,80% de frais d'affiliation" } else { ", sans frais d'affiliation pour cette app sur cet échange" };
@@ -5756,8 +5718,8 @@ fn confirm_swap_native(
         (None, true) => format!("Actual destination: {pay_to}\n"),
         (None, false) => format!("Destination réelle : {pay_to}\n"),
     };
-    // Adresse d'un profil de ce portefeuille (adresses dérivées côté Rust) :
-    // nommé, à la place de « vérifiez qu'il s'agit bien de votre adresse ».
+    // Address of a profile of this wallet (addresses derived on the Rust side): named,
+    // instead of "check that this really is your address".
     let arrival_line = if final_destination.is_empty() {
         String::new()
     } else if let Some(label) = own_destination {
@@ -5807,8 +5769,8 @@ async fn swap_transaction(
         let dir = data_dir(&app)?;
         let (protocol, from, to) = cross_chain_pair(&from_coin, &from_network, &to_coin, &to_network, protocol)?;
 
-        // Formes canoniques, affichées ET utilisées pour le devis et la signature
-        // (voir `send_transaction`).
+        // Canonical forms, shown AND used for the quote and the signature (see
+        // `send_transaction`).
         let amount = api::canonical_swap_amount(from, &amount).t_err()?;
         let destination = canonical_address_input(&destination)?;
 
@@ -5818,15 +5780,14 @@ async fn swap_transaction(
             .map(|p| p.label)
             .unwrap_or_else(|| format!("profil #{profile_index}"));
 
-        // Devis obtenu ICI, juste avant la confirmation, jamais mis en cache
-        // (adresse de vault THORChain vivante, voir thorchain_rpc::SwapQuote).
+        // Quote obtained HERE, just before the confirmation, never cached (a live
+        // THORChain vault address, see thorchain_rpc::SwapQuote).
         let quote = api::get_swap_quote(protocol, from, to, &amount, &destination).t_err()?;
         let amount_line = format!("{amount} {}", from.symbol);
 
-        // Frais réseau affichés AVANT confirmation (et, pour un réseau EVM, prix
-        // du gas réutilisé tel quel pour signer — voir
-        // `api::evm_gas_price_for_confirmation`). Réseaux principaux seulement :
-        // les pools THORChain n'existent pas sur les réseaux de test.
+        // Network fees shown BEFORE confirmation (and, for an EVM network, the gas price
+        // reused as is for signing; see `api::evm_gas_price_for_confirmation`). Mainnets
+        // only: THORChain pools do not exist on test networks.
         let evm_net = wallet_flow::evm_network(from.network);
         let evm_gas_price = match evm_net {
             Some(net) => Some(api::evm_gas_price_for_confirmation(net).t_err()?),
@@ -5900,10 +5861,9 @@ async fn swap_transaction(
             .on(from.network),
         )?;
 
-        // Devis RE-lu après la confirmation (la boîte native bloque un temps
-        // arbitraire, pendant lequel le vault peut tourner), mais refusé s'il ne
-        // correspond plus à ce qui a été AFFICHÉ — voir
-        // `api::refresh_swap_quote_matching`.
+        // Quote reread after the confirmation (the native dialog blocks for an arbitrary
+        // time, during which the vault may rotate), but refused if it no longer matches
+        // what was SHOWN; see `api::refresh_swap_quote_matching`.
         let quote = api::refresh_swap_quote_matching(protocol, from, to, &amount, &destination, &quote).t_err()?;
 
         match (from.network, evm_net, evm_gas_price) {
@@ -5923,11 +5883,13 @@ async fn swap_transaction(
     .await
 }
 
-// --- Échange via SwapKit (NEAR Intents, Chainflip) ------------------------------
-// Voir core/src/swapkit.rs : SwapKit ouvre un dépôt, que le fournisseur
-// lui-même confirme (adresse, cryptos, montant, arrivée et remboursement chez
-// l'utilisateur, minimum, échéance) avant la boîte native ; le dépôt est un
-// virement ordinaire construit et signé ici.
+// --- Swap through SwapKit (NEAR Intents, Chainflip)
+// ------------------------------
+//
+// See core/src/swapkit.rs: SwapKit opens a deposit, which the provider itself
+// confirms (address, cryptos, amount, delivery and refund to the user, minimum,
+// deadline) before the native dialog; the deposit is an ordinary transfer built
+// and signed here.
 
 fn swapkit_pair(
     from_coin: &str,
@@ -5942,8 +5904,8 @@ fn swapkit_pair(
     swapkit::find(from_coin, from_network).zip(swapkit::find(to_coin, to_network)).ok_or_else(|| translate_error("échange non disponible entre ces deux cryptos"))
 }
 
-/// Adresse du profil sur le réseau de départ (remboursement d'un échange
-/// manqué), d'après les adresses dérivées au déverrouillage.
+/// The profile's address on the source network (refund of a failed swap), based on
+/// the addresses derived at unlock.
 fn own_address_on(app: &tauri::AppHandle, network: &str, profile_index: u32) -> Result<String, String> {
     let unknown = || translate_error("adresse du profil inconnue — déverrouillez le portefeuille");
     let from_cache = |cache: &std::sync::Mutex<std::collections::HashMap<u32, String>>| cache.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).cloned().ok_or_else(unknown);
@@ -5970,8 +5932,8 @@ struct SwapkitQuoteDto {
     fee_bps: u32,
 }
 
-/// Aperçu : meilleur devis de NEAR Intents et Chainflip via SwapKit (le dépôt
-/// n'est ouvert, puis vérifié, qu'à la confirmation).
+/// Preview: the best quote from NEAR Intents and Chainflip through SwapKit (the
+/// deposit is only opened, then checked, at confirmation).
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 async fn get_swapkit_quote(
@@ -5993,8 +5955,8 @@ async fn get_swapkit_quote(
         let best = &routes[0];
         Ok(SwapkitQuoteDto {
             provider: best.provider.name(),
-            // 8 décimales au plus, TRONQUÉES : le minimum affiché ne dépasse
-            // jamais le minimum garanti (NEAR : 24 décimales sur la chaîne).
+            // At most 8 decimals, TRUNCATED: the minimum shown never exceeds the guaranteed
+            // minimum (NEAR: 24 decimals on-chain).
             expected_out: openpgp_wallet_core::tokens::format_balance(best.expected_out, to.decimals, 8),
             min_out: openpgp_wallet_core::tokens::format_balance(best.min_out, to.decimals, 8),
             duration_secs: best.total_secs,
@@ -6004,8 +5966,8 @@ async fn get_swapkit_quote(
     .await
 }
 
-/// Dépôt d'un échange (SwapKit, MoonPay Trade) : virement ordinaire préparé
-/// AVANT la boîte — frais affichés puis jamais dépassés, solde vérifié.
+/// Deposit for a swap (SwapKit, MoonPay Trade): an ordinary transfer prepared
+/// BEFORE the dialog, with the fee shown and then never exceeded, balance checked.
 enum DepositSend {
     Evm(api::EvmFee),
     Erc20(api::EvmFee),
@@ -6020,7 +5982,7 @@ enum DepositSend {
     Ada(u64),
 }
 
-/// `xrp_tag` : tag de destination d'un dépôt XRP (MoonPay Trade).
+/// `xrp_tag`: destination tag of an XRP deposit (MoonPay Trade).
 fn prepare_deposit(coin: &str, network: &str, source: &str, deposit: &str, amount: &str, xrp_tag: Option<u32>) -> Result<(DepositSend, String), String> {
     let native = openpgp_wallet_core::tokens::find(coin, network).is_none();
     match network {
@@ -6082,20 +6044,20 @@ fn prepare_deposit(coin: &str, network: &str, source: &str, deposit: &str, amoun
             let fee = openpgp_wallet_core::tron::format_trx(plan.fee_max);
             Ok((DepositSend::Trx(plan.fee_max), lang(&format!("Frais réseau : jusqu'à {fee} TRX"), &format!("Network fee: up to {fee} TRX")).to_string()))
         }
-        // Adresse de dépôt r…, avec le tag du fournisseur s'il en donne un ;
-        // sans tag, un dépôt qui en exigerait un est refusé par la préparation
-        // (drapeau du compte relu).
+        // r… deposit address, with the provider's tag if it gives one; without a tag, a
+        // deposit that would require one is refused by the preparation (account flag
+        // reread).
         "xrp_mainnet" => {
             let plan = api::xrp_send_plan(source, deposit, amount, xrp_tag).t_err()?;
             let fee = openpgp_wallet_core::xrp::format_xrp(plan.fee);
             Ok((DepositSend::Xrp(plan.fee), lang(&format!("Frais réseau : {fee} XRP"), &format!("Network fee: {fee} XRP")).to_string()))
         }
-        // Adresse de dépôt à clé de paiement (un contrat serait refusé).
+        // Deposit address with a payment key (a contract would be refused).
         "ada_mainnet" => {
             let plan = api::ada_send_plan(source, deposit, amount).t_err()?;
             Ok((DepositSend::Ada(plan.fee), format!("{} : {} ADA", lang("Frais réseau", "Network fee"), openpgp_wallet_core::cardano::format_ada(plan.fee))))
         }
-        // Simple virement vers le compte implicite de dépôt.
+        // A plain transfer to the deposit's implicit account.
         "near_mainnet" => {
             let plan = api::near_send_plan(source, deposit, amount).t_err()?;
             let (actual, held) = (openpgp_wallet_core::near::format_near_exact(plan.fee_actual), openpgp_wallet_core::near::format_near_exact(plan.fee));
@@ -6108,7 +6070,7 @@ fn prepare_deposit(coin: &str, network: &str, source: &str, deposit: &str, amoun
     }
 }
 
-/// Envoi du dépôt préparé par `prepare_deposit` (frais affichés).
+/// Sends the deposit prepared by `prepare_deposit` (fee shown).
 #[allow(clippy::too_many_arguments)]
 fn send_deposit(
     prepared: DepositSend,
@@ -6179,7 +6141,7 @@ fn confirm_swapkit_native(
         .blocking_show()
 }
 
-/// Dépôt envoyé : de quoi suivre l'échange auprès du fournisseur.
+/// Deposit sent: what is needed to track the swap with the provider.
 #[derive(Serialize)]
 struct SwapkitSentDto {
     tx_hash: String,
@@ -6189,16 +6151,15 @@ struct SwapkitSentDto {
     deposit_address: String,
 }
 
-/// Étape d'un échange SwapKit (« awaiting_deposit », « processing »,
-/// « completed », « refunded », « failed », « unknown »), suivie par
-/// l'interface après le dépôt.
+/// Stage of a SwapKit swap ("awaiting_deposit", "processing", "completed",
+/// "refunded", "failed", "unknown"), tracked by the UI after the deposit.
 #[tauri::command]
 async fn swapkit_status(provider: openpgp_wallet_core::swapkit::Provider, channel_id: String, deposit_address: String) -> Result<openpgp_wallet_core::swapkit::SwapState, String> {
     run_blocking(move || openpgp_wallet_core::swapkit::status(provider, &channel_id, &deposit_address).t_err()).await
 }
 
-/// Échange via SwapKit : devis, dépôt ouvert puis CONFIRMÉ par le fournisseur,
-/// boîte native, délai d'annulation, puis virement vers l'adresse de dépôt.
+/// Swap through SwapKit: quote, deposit opened then CONFIRMED by the provider,
+/// native dialog, cancellation delay, then the transfer to the deposit address.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 async fn swapkit_swap_transaction(
@@ -6269,13 +6230,14 @@ async fn swapkit_swap_transaction(
     .await
 }
 
-// --- Échange MoonPay Trade (core/src/moonpay_trade.rs) ------------------------------
-// Même réseau EVM : routeur simulé avant la boîte, puis juste avant la
-// signature (les achats arrivent sur l'adresse du profil). Ailleurs, en
-// dernier recours : virement de dépôt ordinaire ; la livraison sur l'autre
-// réseau est gérée par MoonPay Trade, ce que dit la boîte de confirmation.
+// --- MoonPay Trade swap (core/src/moonpay_trade.rs) ------------------------------
+//
+// Same EVM network: router simulated before the dialog, then again just before signing
+// (purchases arrive at the profile's address). Elsewhere, as a last resort: an
+// ordinary deposit transfer; delivery on the other network is handled by MoonPay
+// Trade, which the confirmation dialog states.
 
-/// Âge maximum d'un devis de dépôt MoonPay Trade au moment d'envoyer.
+/// Maximum age of a MoonPay Trade deposit quote at send time.
 const MOONPAY_DEPOSIT_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
 fn moonpay_pair(
@@ -6290,8 +6252,8 @@ fn moonpay_pair(
     api::moonpay_assets(from_coin, from_network, to_coin, to_network).t_err()
 }
 
-/// Destinataire d'un échange MoonPay Trade : l'adresse du profil sur un même
-/// réseau EVM (même portefeuille), sinon celle saisie.
+/// Recipient of a MoonPay Trade swap: the profile's address on the same EVM network
+/// (same wallet), otherwise the one entered.
 fn moonpay_destination(from: &openpgp_wallet_core::moonpay_trade::Asset, to: &openpgp_wallet_core::moonpay_trade::Asset, source: &str, destination: &str) -> Result<String, String> {
     if openpgp_wallet_core::moonpay_trade::verifiable((from.coin, from.network), (to.coin, to.network)) {
         Ok(source.to_string())
@@ -6300,11 +6262,10 @@ fn moonpay_destination(from: &openpgp_wallet_core::moonpay_trade::Asset, to: &op
     }
 }
 
-/// Lien de l'explorateur d'une transaction tout juste envoyée (bouton
-/// « Suivre la transaction ») : mêmes adresses que l'historique, toutes dans
-/// la liste blanche des liens externes. `None` : identifiant inattendu, ou
-/// réseau dont l'explorateur demande autre chose que l'empreinte (TAO :
-/// numéro de bloc et d'extrinsèque, connus seulement après inclusion).
+/// Explorer link for a transaction just sent ("Track the transaction" button): the
+/// same addresses as the history, all on the external link allowlist. `None`: an
+/// unexpected identifier, or a network whose explorer needs something other than
+/// the hash (TAO: block and extrinsic numbers, only known after inclusion).
 fn sent_tx_explorer_url(network: &str, tx: &str) -> Option<String> {
     let id = tx.trim();
     if id.is_empty() || id.len() > 130 || !id.bytes().all(|b| b.is_ascii_alphanumeric()) {
@@ -6343,16 +6304,16 @@ fn tx_explorer_url(network: String, tx: String) -> Option<String> {
 
 #[derive(Serialize)]
 struct FeeEstimateDto {
-    /// Montant dans la monnaie du réseau (texte décimal).
+    /// Amount in the network's native coin (decimal text).
     amount: String,
     symbol: &'static str,
-    /// Carte de la monnaie du réseau : cours lu par l'interface.
+    /// Card of the network's native coin: the price read by the UI.
     coin: &'static str,
-    /// Plafond plutôt qu'estimation (Tron : énergie et bande passante).
+    /// A cap rather than an estimate (Tron: energy and bandwidth).
     up_to: bool,
 }
 
-/// Carte de l'interface de la monnaie d'un réseau EVM.
+/// UI card for an EVM network's native coin.
 fn evm_native_coin(network: &wallet_flow::EvmNetwork) -> &'static str {
     if network.custom {
         return network.id;
@@ -6365,12 +6326,11 @@ fn evm_native_coin(network: &wallet_flow::EvmNetwork) -> &'static str {
     }
 }
 
-/// Frais réseau ESTIMÉS d'un envoi, pour l'aperçu de l'interface (plainte
-/// n°1 des utilisateurs : les frais découverts au dernier moment). Mêmes
-/// préparations que l'envoi réel, en LECTURE seule : rien n'est signé ; la
-/// boîte de confirmation native reste la référence. `None` : pas
-/// d'estimation (Bitcoin, dont la vitesse est déjà affichée ; Monero ;
-/// réseaux de test).
+/// ESTIMATED network fee for a send, for the UI preview (users' number one
+/// complaint: fees discovered at the last moment). The same preparations as the
+/// real send, READ-only: nothing is signed, and the native confirmation dialog
+/// remains the reference. `None`: no estimate (Bitcoin, whose speed is already
+/// shown; Monero; test networks).
 #[tauri::command]
 async fn estimate_send_fee(network: String, token: Option<String>, to: String, amount: String, profile_index: u32, app: tauri::AppHandle) -> Result<Option<FeeEstimateDto>, String> {
     use openpgp_wallet_core::tokens::format_amount;
@@ -6385,8 +6345,8 @@ async fn estimate_send_fee(network: String, token: Option<String>, to: String, a
             }
             let from = profile_address(&app, &network, profile_index)?;
             let fee = match token {
-                // Solde du jeton d'abord, comme l'envoi : sans lui, l'estimation
-                // du gas échoue sur une erreur brute du contrat.
+                // Token balance first, like the send: without it, the gas estimate fails with a
+                // raw contract error.
                 Some(token) => api::ensure_token_funds(token, &network, &from, &amount).and_then(|()| api::erc20_fee_for_confirmation(token, &network, &from, &to, &amount)),
                 None => api::evm_transfer_fee_for_confirmation(net, Some(&from), &to, &amount),
             }
@@ -6396,11 +6356,12 @@ async fn estimate_send_fee(network: String, token: Option<String>, to: String, a
         let from = || profile_address(&app, &network, profile_index);
         Ok(match (network.as_str(), token) {
             ("sol_mainnet", None) => estimate(5_000, 9, "SOL", "sol", false),
-            // Jeton : création du compte de jetons du destinataire comprise
-            // s'il n'en a pas encore.
+            // Token: includes creating the recipient's token account if they do not have one
+            // yet.
             ("sol_mainnet", Some(token)) => {
                 let net = sol_network("sol_mainnet")?;
-                // Compte du bon programme et de la bonne taille (xStocks : Token-2022, 179 octets).
+                // Account under the right program and of the right size (xStocks: Token-2022, 179
+                // bytes).
                 let rent = api::token_account_rent_if_missing(token, &to, net).ok().flatten().unwrap_or(0);
                 estimate(u128::from(rent.saturating_add(5_000)), 9, "SOL", "sol", false)
             }
@@ -6414,9 +6375,8 @@ async fn estimate_send_fee(network: String, token: Option<String>, to: String, a
             ("ada_mainnet", None) => estimate(u128::from(api::ada_send_plan(&from()?, &to, &amount).t_err()?.fee), 6, "ADA", "ada", false),
             ("stx_mainnet", None) => estimate(u128::from(api::stx_send_plan(&from()?, &to, &amount).t_err()?.fee), 6, "STX", "stx", false),
             ("tao_mainnet", None) => estimate(u128::from(api::tao_send_plan(&from()?, &to, &amount).t_err()?.fee), 9, "TAO", "tao", false),
-            // Sans estimation (Bitcoin : vitesse choisie dans la fenêtre ;
-            // Monero), mais adresse vérifiée dès l'aperçu, comme ailleurs :
-            // mêmes parseurs que l'envoi.
+            // No estimate (Bitcoin: speed chosen in the window; Monero), but the address is
+            // checked from the preview onwards, as elsewhere: the same parsers as the send.
             ("btc_mainnet", None) => {
                 api::check_btc_recipient(btc_network(&network)?, &to, &amount).t_err()?;
                 None
@@ -6437,12 +6397,11 @@ struct MoonpayQuoteDto {
     min_out: String,
     duration_secs: u64,
     fee_bps: u32,
-    /// Destinataire vérifié par l'app (routeur simulé, même réseau EVM).
+    /// Recipient verified by the app (simulated router, same EVM network).
     verified: bool,
 }
 
-/// Aperçu : devis MoonPay Trade (sa transaction est vérifiée à la
-/// confirmation).
+/// Preview: MoonPay Trade quote (its transaction is verified at confirmation).
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 async fn get_moonpay_quote(
@@ -6462,8 +6421,8 @@ async fn get_moonpay_quote(
         let destination = moonpay_destination(&from, &to, &source, &destination)?;
         let quote = api::moonpay_quote(&from, &to, &amount, &source, &destination).t_err()?;
         Ok(MoonpayQuoteDto {
-            // 8 décimales au plus, TRONQUÉES : le minimum affiché ne dépasse
-            // jamais le minimum garanti.
+            // At most 8 decimals, TRUNCATED: the minimum shown never exceeds the guaranteed
+            // minimum.
             expected_out: tokens::format_balance(quote.expected_out, to.decimals, 8),
             min_out: tokens::format_balance(quote.min_out, to.decimals, 8),
             duration_secs: quote.duration_secs,
@@ -6474,8 +6433,8 @@ async fn get_moonpay_quote(
     .await
 }
 
-/// Boîte native d'un échange MoonPay Trade. `deposit` : adresse de dépôt et
-/// tag (route au destinataire non vérifiable) ; `None` : routeur simulé.
+/// Native dialog for a MoonPay Trade swap. `deposit`: deposit address and tag (a
+/// route whose recipient cannot be verified); `None`: simulated router.
 #[allow(clippy::too_many_arguments)]
 fn confirm_moonpay_native(
     app: &tauri::AppHandle,
@@ -6535,15 +6494,15 @@ fn confirm_moonpay_native(
 #[derive(Serialize)]
 struct MoonpaySentDto {
     tx_hash: String,
-    /// Dépôt déclaré à MoonPay Trade (suivi), quand le devis le demandait.
+    /// Deposit registered with MoonPay Trade (tracking), when the quote asked for it.
     registered: bool,
     duration_secs: u64,
-    /// Dépôt (livraison gérée par MoonPay Trade), ou échange par le routeur.
+    /// Deposit (delivery handled by MoonPay Trade), or a swap through the router.
     deposit: bool,
 }
 
-/// Échange via MoonPay Trade : devis, vérification (simulation du routeur,
-/// ou préparation du dépôt), boîte native, délai d'annulation, envoi.
+/// Swap through MoonPay Trade: quote, verification (router simulation, or deposit
+/// preparation), native dialog, cancellation delay, send.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 async fn moonpay_swap_transaction(
@@ -6579,8 +6538,8 @@ async fn moonpay_swap_transaction(
                 let net = evm_network(from.network)?;
                 let gas_price = api::evm_gas_price_for_confirmation(net).t_err()?;
                 let (call, approve, approvals) = api::moonpay_router_fees(&from, &quote, &source, gas_price).t_err()?;
-                // Solde vérifié d'abord (message clair), puis l'échange simulé
-                // AVANT la boîte (et de nouveau avant la signature).
+                // Balance checked first (clear message), then the swap simulated BEFORE the dialog
+                // (and again before signing).
                 if from.native {
                     api::ensure_evm_transfer_funds(net, &source, &amount, call).t_err()?;
                 } else {
@@ -6619,16 +6578,15 @@ async fn moonpay_swap_transaction(
                     return Err(translate_error("Échange annulé (confirmation refusée)."));
                 }
                 swap_grace_period(&app, recap())?;
-                // Durée de vie de l'adresse de dépôt inconnue (aucune échéance
-                // dans le devis) : après 10 min de confirmation, nouveau devis
-                // exigé plutôt qu'un dépôt vers une adresse peut-être plus
-                // surveillée (32ᵉ passage).
+                // Unknown lifetime of the deposit address (no deadline in the quote): after 10
+                // minutes in the confirmation, a new quote is required rather than depositing to
+                // an address that may no longer be watched (audit round 32).
                 if quoted_at.elapsed() > MOONPAY_DEPOSIT_MAX_AGE {
                     return Err(translate_error("le devis MoonPay Trade a expiré pendant la confirmation — rien n'a été envoyé, relancez l'échange"));
                 }
                 let tx_hash = send_deposit(prepared, from.coin, from.network, &dir, &password, address, &amount, xrp_tag, profile_index)?;
-                // Déclaration du dépôt (suivi chez MoonPay Trade) : quelques
-                // essais ; un échec n'annule rien (le dépôt est parti).
+                // Registering the deposit (tracking at MoonPay Trade): a few attempts; a failure
+                // cancels nothing (the deposit has gone out).
                 let registered = !quote.register
                     || (0..3).any(|attempt| {
                         if attempt > 0 {
@@ -6644,15 +6602,15 @@ async fn moonpay_swap_transaction(
 }
 
 // --- Swap (Jupiter) ----------------------------------------------------------
-// Même chaîne uniquement (SOL <-> USDC), contrairement au swap cross-chain
-// THORChain ci-dessus — voir core/src/jupiter_rpc.rs pour le contexte
-// complet, notamment pourquoi la transaction elle-même n'est pas
-// reconstruite à la main ici (seulement vérifiée puis signée).
+//
+// Within Solana only, unlike the THORChain cross-chain swap above; see
+// core/src/jupiter_rpc.rs for the full context, notably why the transaction itself
+// is not rebuilt by hand here (only verified, then signed).
 
-const JUPITER_DEFAULT_SLIPPAGE_BPS: u32 = 50; // 0,50 %
+const JUPITER_DEFAULT_SLIPPAGE_BPS: u32 = 50; // 0.50%
 
-/// Paire Jupiter désignée par l'interface (réseau Solana) : refusée si Jupiter
-/// ne la relie pas (voir `swap_routes::direct_all`).
+/// Jupiter pair designated by the UI (Solana network): refused if Jupiter does not
+/// connect it (see `swap_routes::direct_all`).
 fn jupiter_pair(from_coin: &str, to_coin: &str) -> Result<(), String> {
     if provider_links(openpgp_wallet_core::swap_routes::Protocol::Jupiter, from_coin, "sol_mainnet", to_coin, "sol_mainnet") {
         Ok(())
@@ -6675,18 +6633,17 @@ async fn get_jupiter_quote(from_coin: String, to_coin: String, amount: String) -
     .await
 }
 
-/// Confirmation native spécifique à Jupiter : contrairement à THORChain, ce
-/// n'est pas un protocole cross-chain, mais reste un protocole EXTERNE non
-/// audité par cette app, et la transaction elle-même est construite par
-/// Jupiter (voir core/src/jupiter_rpc.rs), pas par cette app — simulée et
-/// vérifiée (effets sur les comptes de l'utilisateur, voir
-/// `api::check_swap_effects`) AVANT d'être signée, jamais reconstruite. Le
-/// texte disait encore "vérifiée (payeur de frais)", resté de l'avant-21ᵉ
-/// passage : il sous-décrivait la protection réelle.
+/// Native confirmation specific to Jupiter: unlike THORChain, this is not a
+/// cross-chain protocol, but it is still an EXTERNAL protocol not audited by this
+/// app, and the transaction itself is built by Jupiter (see
+/// core/src/jupiter_rpc.rs), not by this app. It is simulated and verified (effects
+/// on the user's accounts, see `api::check_swap_effects`) BEFORE being signed,
+/// never rebuilt. The text still said "verified (fee payer)", left over from before
+/// round 21: it understated the real protection.
 fn confirm_jupiter_swap_native(app: &tauri::AppHandle, from_label: &str, amount: &str, expected_out: &str, to_symbol: &str, fee_bps: Option<u32>) -> bool {
     let from_label = dialog_label(from_label);
-    // Sans compte de frais existant pour ces jetons, l'échange se fait sans
-    // frais d'affiliation (voir `api::jupiter_fee_mint`) : la boîte le dit.
+    // Without an existing fee account for these tokens, the swap goes ahead without an
+    // affiliate fee (see `api::jupiter_fee_mint`): the dialog says so.
     let fee_line = match (fee_bps.filter(|bps| *bps > 0), UI_LANG_IS_ENGLISH.load(Ordering::Relaxed)) {
         (Some(bps), true) => format!("Includes a {}% affiliate fee", percent_text(bps)),
         (Some(bps), false) => format!("Inclut {} % de frais d'affiliation", percent_text(bps)),
@@ -6722,9 +6679,9 @@ async fn jupiter_swap_transaction(
     run_blocking(move || {
         let password = Zeroizing::new(password);
         let dir = data_dir(&app)?;
-        let network = sol_network("sol_mainnet")?; // Jupiter mainnet uniquement (pas de liquidité fiable en devnet)
+        let network = sol_network("sol_mainnet")?; // Jupiter on mainnet only (no reliable liquidity on devnet)
         jupiter_pair(&from_coin, &to_coin)?;
-        // Forme canonique, affichée ET signée (voir `send_transaction`).
+        // Canonical form, shown AND signed (see `send_transaction`).
         let amount = api::canonical_jupiter_amount(&from_coin, &amount).t_err()?;
 
         let from_label = api::list_profiles(&dir)
@@ -6733,14 +6690,14 @@ async fn jupiter_swap_transaction(
             .map(|p| p.label)
             .unwrap_or_else(|| format!("profil #{profile_index}"));
 
-        // Devis relu ICI, juste avant la confirmation — jamais celui affiché dans
-        // l'aperçu du frontend, potentiellement déjà légèrement périmé.
+        // Quote reread HERE, just before the confirmation, never the one shown in the
+        // frontend's preview, which may already be slightly stale.
         let quote = api::get_jupiter_quote(&from_coin, &to_coin, &amount, JUPITER_DEFAULT_SLIPPAGE_BPS).t_err()?;
         let out_amount = quote.out_amount;
         let expected_out = format_native_amount(out_amount, u32::from(api::jupiter_decimals(&to_coin).t_err()?));
         let amount_line = format!("{amount} {}", api::jupiter_symbol(&from_coin).t_err()?);
         let own_solana = app.state::<ProfileAddressCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).map(|(_, sol)| sol.clone()).unwrap_or_default();
-        // Sans fonds : refus AVANT la boîte de confirmation, comme pour un envoi.
+        // Without funds: refused BEFORE the confirmation dialog, as for a send.
         if !own_solana.is_empty() {
             api::ensure_jupiter_funds(&from_coin, &own_solana, &amount).t_err()?;
         }
@@ -6753,8 +6710,8 @@ async fn jupiter_swap_transaction(
             GraceRecap::swap(lang("Solana — échange via Jupiter", "Solana — swap via Jupiter"), format!("{amount_line} → ~{expected_out} {}", api::jupiter_symbol(&to_coin).t_err()?), own_solana).on("sol_mainnet"),
         )?;
 
-        // `out_amount` = la sortie AFFICHÉE ci-dessus : la transaction réellement
-        // signée devra la livrer (au glissement près), vérifié par simulation.
+        // `out_amount` = the output SHOWN above: the transaction actually signed must
+        // deliver it (give or take slippage), checked by simulation.
         api::send_jupiter_swap(&dir, &password, network, &from_coin, &to_coin, &amount, JUPITER_DEFAULT_SLIPPAGE_BPS, out_amount, quote.fee_mint, profile_index)
             .t_err()
     })
@@ -6762,11 +6719,12 @@ async fn jupiter_swap_transaction(
 }
 
 // --- Swap (CoW Protocol) -----------------------------------------------------
-// Même réseau EVM : ordre signé (EIP-712) construit et vérifié côté Rust (voir
-// core/src/cow.rs), exécuté ensuite par CoW. Aucune transaction d'échange :
-// seule une éventuelle autorisation du jeton vendu part sur le réseau.
+//
+// Same EVM network: a signed order (EIP-712) built and verified on the Rust side
+// (see core/src/cow.rs), then executed by CoW. No swap transaction: only an
+// approval of the token sold, if needed, goes out on the network.
 
-/// Paire CoW désignée par l'interface : refusée si CoW ne la relie pas (voir
+/// CoW pair designated by the UI: refused if CoW does not connect it (see
 /// `swap_routes::direct_all`).
 fn cow_pair(network: &str, from_coin: &str, to_coin: &str) -> Result<(cow::CowToken, cow::CowToken), String> {
     if !provider_links(openpgp_wallet_core::swap_routes::Protocol::Cow, from_coin, network, to_coin, network) {
@@ -6775,9 +6733,9 @@ fn cow_pair(network: &str, from_coin: &str, to_coin: &str) -> Result<(cow::CowTo
     api::cow_tokens(network, from_coin, to_coin).t_err()
 }
 
-/// Adresse EVM publique du profil (mémorisée au déverrouillage) : vendeur ET
-/// destinataire d'un ordre CoW. L'envoi revérifie qu'elle est bien celle de
-/// la clé qui signe (`api::send_cow_swap`).
+/// The profile's public EVM address (remembered at unlock): seller AND recipient of
+/// a CoW order. The send checks again that it belongs to the signing key
+/// (`api::send_cow_swap`).
 fn profile_evm_address(app: &tauri::AppHandle, profile_index: u32) -> Result<String, String> {
     app.state::<ProfileAddressCache>()
         .0
@@ -6788,8 +6746,8 @@ fn profile_evm_address(app: &tauri::AppHandle, profile_index: u32) -> Result<Str
         .ok_or_else(|| translate_error("adresse du profil inconnue — déverrouillez le portefeuille"))
 }
 
-/// Montant affiché : 8 décimales au plus, TRONQUÉ (un minimum garanti n'est
-/// jamais affiché au-dessus de sa vraie valeur).
+/// Amount shown: at most 8 decimals, TRUNCATED (a guaranteed minimum is never shown
+/// above its real value).
 fn cow_amount(units: u128, token: &cow::CowToken) -> String {
     let cut = 10u128.pow(u32::from(token.decimals.saturating_sub(8)));
     format!("{} {}", openpgp_wallet_core::tokens::format_amount(units / cut * cut, token.decimals), token.symbol)
@@ -6819,19 +6777,19 @@ async fn get_cow_quote(network: String, from_coin: String, to_coin: String, amou
     .await
 }
 
-/// Confirmation native d'un ordre CoW : tout ce qui sera signé (vente,
-/// minimum reçu, destinataire, validité, frais) et la transaction qui
-/// l'accompagne s'il y en a une (autorisation du jeton, ou dépôt EthFlow pour
-/// la monnaie du réseau) — texte construit uniquement à partir de l'ordre
-/// préparé côté Rust.
+/// Native confirmation of a CoW order: everything that will be signed (sale,
+/// minimum received, recipient, validity, fees) and the accompanying transaction if
+/// there is one (token approval, or EthFlow deposit for the native coin), with text
+/// built solely from the order prepared on the Rust side.
 #[allow(clippy::too_many_arguments)]
-/// Frais partenaire CoW de la paire : staking liquide plus bas (voir
-/// `swap_routes::staking_fee_bps`), sinon `cow::PARTNER_FEE_BPS`.
+/// CoW partner fee for the pair: lower for liquid staking (see
+/// `swap_routes::staking_fee_bps`), otherwise `cow::PARTNER_FEE_BPS`.
 fn cow_fee_bps(network: &str, from_coin: &str, to_coin: &str) -> u32 {
     openpgp_wallet_core::swap_routes::staking_fee_bps((from_coin, network), (to_coin, network)).unwrap_or(openpgp_wallet_core::cow::PARTNER_FEE_BPS)
 }
 
-/// Taux en pour cent, sans zéros inutiles (« 1 », « 0,3 » ; « 0.3 » en anglais).
+/// Rate as a percentage, without needless zeros ("1", "0,3" in French; "0.3" in
+/// English).
 fn percent_text(bps: u32) -> String {
     let text = format!("{:.2}", f64::from(bps) / 100.0);
     let text = text.trim_end_matches('0').trim_end_matches('.').to_string();
@@ -6888,9 +6846,9 @@ fn confirm_cow_swap_native(
         .blocking_show()
 }
 
-/// Lignes de la boîte native pour la transaction qui accompagne l'ordre :
-/// dépôt EthFlow (monnaie du réseau) ou autorisation préalable du jeton au
-/// VaultRelayer de CoW (aucune si celle déjà accordée suffit).
+/// Native dialog lines for the transaction that accompanies the order: EthFlow
+/// deposit (native coin) or a prior approval of the token for CoW's VaultRelayer
+/// (none if the one already granted is enough).
 fn cow_transaction_lines(net: &wallet_flow::EvmNetwork, sell: &cow::CowToken, order: &cow::CowOrder, gas_price: u128, sell_line: &str) -> Result<Option<String>, String> {
     let symbol = net.native_symbol;
     if sell.native {
@@ -6939,7 +6897,7 @@ async fn cow_swap_transaction(
         let dir = data_dir(&app)?;
         let (sell, buy) = cow_pair(&network, &from_coin, &to_coin)?;
         let net = evm_network(&network)?;
-        // Forme canonique, affichée ET signée (voir `send_transaction`).
+        // Canonical form, shown AND signed (see `send_transaction`).
         let amount = api::canonical_cow_amount(&sell, &amount).t_err()?;
         let owner = profile_evm_address(&app, profile_index)?;
         let from_label = api::list_profiles(&dir)
@@ -6948,8 +6906,8 @@ async fn cow_swap_transaction(
             .map(|p| p.label)
             .unwrap_or_else(|| format!("profil #{profile_index}"));
 
-        // Devis obtenu ICI, juste avant la confirmation : l'ordre affiché est
-        // exactement celui qui sera signé (aucun nouveau devis ensuite).
+        // Quote obtained HERE, just before the confirmation: the order shown is exactly
+        // the one that will be signed (no new quote afterwards).
         let order = api::get_cow_quote(net, &sell, &buy, &amount, &owner, cow_fee_bps(&network, &from_coin, &to_coin)).t_err()?;
         let gas_price = api::evm_gas_price_for_confirmation(net).t_err()?;
         let sell_line = cow_amount(order.sell_amount, &sell);
@@ -6978,7 +6936,7 @@ async fn cow_swap_transaction(
             GraceRecap::swap(format!("{} — {}", network_label(&network), lang("échange via CoW", "swap via CoW")), format!("{sell_line} → ~{}", cow_amount(order.expected_buy, &buy)), order.receiver.clone()).on(&network),
         )?;
 
-        // Monnaie du réseau : transaction EthFlow ; jeton : ordre signé.
+        // Native coin: EthFlow transaction; token: signed order.
         let uid = if sell.native {
             api::send_cow_eth_flow(&dir, &password, net, &order, gas_price, profile_index).t_err()?.1
         } else {
@@ -6990,14 +6948,15 @@ async fn cow_swap_transaction(
 }
 
 // --- Swap (LI.FI) ------------------------------------------------------------
-// Entre deux écosystèmes : transaction construite par LI.FI, vérifiée avant
-// signature (voir core/src/lifi.rs et api::lifi_verified_quote).
+//
+// Between two ecosystems: a transaction built by LI.FI, verified before signing
+// (see core/src/lifi.rs and api::lifi_verified_quote).
 
 type LifiPair = (&'static str, &'static str, openpgp_wallet_core::lifi::LifiToken, openpgp_wallet_core::lifi::LifiToken);
 
-/// Paire LI.FI désignée par l'interface : refusée si LI.FI ne la relie pas
-/// (voir `swap_routes::direct_all`). Renvoie les réseaux (identifiants
-/// statiques) et les jetons LI.FI.
+/// LI.FI pair designated by the UI: refused if LI.FI does not connect it (see
+/// `swap_routes::direct_all`). Returns the networks (static identifiers) and the
+/// LI.FI tokens.
 fn lifi_pair(from_coin: &str, from_network: &str, to_coin: &str, to_network: &str) -> Result<LifiPair, String> {
     use openpgp_wallet_core::swap_routes;
     let (from, to) = swap_routes::find(from_coin, from_network)
@@ -7008,8 +6967,8 @@ fn lifi_pair(from_coin: &str, from_network: &str, to_coin: &str, to_network: &st
     Ok((from.network, to.network, from_token, to_token))
 }
 
-/// Adresse publique du profil sur le réseau de départ (mémorisée au
-/// déverrouillage) : l'envoi revérifie qu'elle est celle de la clé qui signe.
+/// The profile's public address on the source network (remembered at unlock): the
+/// send checks again that it belongs to the signing key.
 fn profile_address_on(app: &tauri::AppHandle, profile_index: u32, network: &str) -> Result<String, String> {
     if network == "btc_mainnet" {
         let cache = app.state::<ProfileBtcCache>();
@@ -7026,7 +6985,7 @@ fn profile_address_on(app: &tauri::AppHandle, profile_index: u32, network: &str)
     }
 }
 
-/// Montant affiché : 8 décimales au plus, TRONQUÉ.
+/// Amount shown: at most 8 decimals, TRUNCATED.
 fn lifi_amount(units: u128, token: &openpgp_wallet_core::lifi::LifiToken) -> String {
     let cut = 10u128.pow(u32::from(token.decimals.saturating_sub(8)));
     format!("{} {}", openpgp_wallet_core::tokens::format_amount(units / cut * cut, token.decimals), token.symbol)
@@ -7072,10 +7031,10 @@ fn lifi_duration(secs: u64) -> String {
     lang(&format!("≈ {minutes} min"), &format!("≈ {minutes} min")).to_string()
 }
 
-/// Confirmation native d'un échange LI.FI : pont, montants, adresse d'arrivée
-/// et niveau de vérification de cette adresse (vérifiée dans la simulation,
-/// ou gérée hors chaîne par le pont depuis Solana), frais, transactions —
-/// texte construit uniquement à partir du devis vérifié côté Rust.
+/// Native confirmation of a LI.FI swap: bridge, amounts, destination address and
+/// how well that address was verified (checked in the simulation, or handled
+/// off-chain by the bridge from Solana), fees, transactions; text built solely from
+/// the quote verified on the Rust side.
 #[allow(clippy::too_many_arguments)]
 fn confirm_lifi_swap_native(
     app: &tauri::AppHandle,
@@ -7144,7 +7103,7 @@ async fn lifi_swap_transaction(
         let password = Zeroizing::new(password);
         let dir = data_dir(&app)?;
         let (from_net, to_net, from, to) = lifi_pair(&from_coin, &from_network, &to_coin, &to_network)?;
-        // Formes canoniques, affichées ET signées (voir `send_transaction`).
+        // Canonical forms, shown AND signed (see `send_transaction`).
         let amount = api::canonical_lifi_amount(&from, &amount).t_err()?;
         let destination = canonical_address_input(&destination)?;
         let from_address = profile_address_on(&app, profile_index, from_net)?;
@@ -7154,7 +7113,7 @@ async fn lifi_swap_transaction(
             .map(|p| p.label)
             .unwrap_or_else(|| format!("profil #{profile_index}"));
 
-        // Devis obtenu ICI et sa transaction vérifiée AVANT la confirmation.
+        // Quote obtained HERE and its transaction verified BEFORE the confirmation.
         let (quote, receiver_verified) = api::lifi_verified_quote(from_net, &from, to_net, &to, &amount, &from_address, &destination).t_err()?;
         let sell_line = lifi_amount(quote.from_amount, &from);
         let evm_net = wallet_flow::evm_network(from_net);
@@ -7162,8 +7121,8 @@ async fn lifi_swap_transaction(
             Some(net) => Some(api::evm_gas_price_for_confirmation(net).t_err()?),
             None => None,
         };
-        // Bitcoin : frais réseau fixés par la PSBT de LI.FI, montrés et bornés
-        // (au plus 1,5 fois ceux affichés après le nouveau devis).
+        // Bitcoin: network fee set by LI.FI's PSBT, shown and bounded (at most 1.5 times
+        // the one shown after the new quote).
         let mut btc_max_network_fee = None;
         let fee_lines = match (evm_net, gas_price) {
             _ if from_net == "btc_mainnet" => {
@@ -7224,8 +7183,8 @@ async fn lifi_swap_transaction(
         }
         swap_grace_period(&app, GraceRecap::swap(format!("{route} ({})", quote.tool_name), format!("{sell_line} → ~{}", lifi_amount(quote.to_amount, &to)), quote.to_address.clone()).on(from_net))?;
 
-        // Nouveau devis sur le même pont (la transaction d'un pont expire
-        // vite), refusé s'il ne correspond plus à ce qui a été affiché.
+        // New quote on the same bridge (a bridge's transaction expires quickly), refused
+        // if it no longer matches what was shown.
         let fresh = api::refresh_lifi_quote_matching(&quote, receiver_verified).t_err()?;
         let tx_hash = match (evm_net, gas_price) {
             _ if from_net == "btc_mainnet" => {
@@ -7246,14 +7205,14 @@ async fn lifi_swap_transaction(
     .await
 }
 
-/// État d'un transfert LI.FI, suivi par l'interface après l'envoi.
+/// State of a LI.FI transfer, tracked by the UI after sending.
 #[tauri::command]
 async fn lifi_status(tx_hash: String, from_chain: u64, to_chain: u64) -> Result<String, String> {
     run_blocking(move || openpgp_wallet_core::lifi::status(&tx_hash, from_chain, to_chain).t_err()).await
 }
 
-/// État d'un ordre CoW (« open », « fulfilled », « expired »…), suivi par
-/// l'interface après l'envoi.
+/// State of a CoW order ("open", "fulfilled", "expired"…), tracked by the UI after
+/// sending.
 #[tauri::command]
 async fn cow_order_status(network: String, uid: String) -> Result<String, String> {
     run_blocking(move || cow::order_status(&network, &uid).t_err()).await
@@ -7264,12 +7223,12 @@ async fn send_usdc_transaction(password: String, to: String, amount: String, pro
     run_blocking(move || {
         let password = Zeroizing::new(password);
         let dir = data_dir(&app)?;
-        let network = "sol_mainnet"; // USDC v1 : mainnet uniquement (voir sol_spl.rs)
+        let network = "sol_mainnet"; // USDC: mainnet only (see sol_spl.rs)
         let net = sol_network(network)?;
-        // Formes canoniques, affichées ET signées (voir `send_transaction`).
+        // Canonical forms, shown AND signed (see `send_transaction`).
         let to = canonical_address_input(&to)?;
         let from_sol = app.state::<ProfileAddressCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).map(|(_, sol)| sol.clone());
-        // « Max » : tout le solde USDC (les frais sont payés en SOL).
+        // "Max": the whole USDC balance (fees are paid in SOL).
         let amount = match (max.unwrap_or(false), &from_sol) {
             (true, Some(from)) => api::token_max("usdc", network, from).t_err()?,
             (true, None) => return Err(translate_error("adresse du profil inconnue — déverrouillez le portefeuille")),
@@ -7283,19 +7242,19 @@ async fn send_usdc_transaction(password: String, to: String, amount: String, pro
             .map(|p| p.label)
             .unwrap_or_else(|| format!("profil #{profile_index}"));
 
-        // Refus AVANT la boîte de confirmation si le destinataire n'est pas un
-        // portefeuille (voir `api::check_solana_recipient`) — le cas type étant
-        // l'adresse d'un compte de jetons copiée depuis un explorateur.
+        // Refused BEFORE the confirmation dialog if the recipient is not a wallet (see
+        // `api::check_solana_recipient`), the typical case being a token account address
+        // copied from an explorer.
         api::check_solana_recipient(&to, net).t_err()?;
-        // Solde suffisant vérifié AVANT la boîte de confirmation.
+        // Enough balance checked BEFORE the confirmation dialog.
         if let Some(from) = app.state::<ProfileAddressCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).map(|(_, sol)| sol.clone()) {
             api::ensure_token_funds("usdc", network, &from, &amount).t_err()?;
         }
 
         let rent_line = describe_possible_ata_rent(net, &to);
         let amount_line = format!("{amount} USDC");
-        // Même journal que les envois SOL (même réseau, même portefeuille
-        // destinataire) : avoir déjà payé cette adresse en SOL compte.
+        // The same log as SOL sends (same network, same recipient wallet): having already
+        // paid this address in SOL counts.
         let warning = send_warnings(&app, &dir, network, "usdc", &to, api::usdc_recipient_activity(&to, net).ok());
         if !confirm_transaction_native(&app, network, &to, &amount_line, &from_label, rent_line.as_deref(), warning.as_deref(), None) {
             return Err(translate_error("Virement annulé (confirmation refusée)."));
@@ -7311,8 +7270,8 @@ async fn send_usdc_transaction(password: String, to: String, amount: String, pro
     .await
 }
 
-/// Solde d'un jeton du registre (`core/src/tokens.rs`) sur `network`, au
-/// plus 6 décimales affichées (tronqué, jamais arrondi au supérieur).
+/// Balance of a registry token (`core/src/tokens.rs`) on `network`, at most 6
+/// decimals shown (truncated, never rounded up).
 #[tauri::command]
 async fn get_token_balance(token: String, network: String, address: String) -> Result<String, String> {
     run_blocking(move || {
@@ -7322,9 +7281,9 @@ async fn get_token_balance(token: String, network: String, address: String) -> R
     .await
 }
 
-/// Soldes des actions tokenisées xStocks de `address` (Solana) en une seule
-/// requête : `[(identifiant, solde affiché)]`, au format de `get_token_balance`
-/// (jetons sans solde absents).
+/// Balances of the xStocks tokenized shares of `address` (Solana) in a single
+/// request: `[(identifier, displayed balance)]`, in the format of
+/// `get_token_balance` (tokens with no balance absent).
 #[tauri::command]
 async fn get_stock_balances(address: String) -> Result<Vec<(String, String)>, String> {
     run_blocking(move || {
@@ -7339,14 +7298,14 @@ async fn get_stock_balances(address: String) -> Result<Vec<(String, String)>, St
 
 #[derive(Serialize)]
 struct StockPriceDto {
-    /// Identifiant du jeton (`tslax`…).
+    /// Token identifier (`tslax`…).
     id: String,
     price_usd: f64,
     change_24h_percent: Option<f64>,
     market_cap_usd: Option<f64>,
 }
 
-/// Cours des actions tokenisées xStocks (prix par unité affichée, Jupiter).
+/// Prices of the xStocks tokenized shares (price per displayed unit, Jupiter).
 #[tauri::command]
 async fn get_stock_prices() -> Result<Vec<StockPriceDto>, String> {
     run_blocking(move || {
@@ -7368,9 +7327,9 @@ async fn get_stock_prices() -> Result<Vec<StockPriceDto>, String> {
     .await
 }
 
-/// Virement d'un jeton du registre : l'interface ne donne que l'identifiant du
-/// jeton et le réseau — contrat/mint et décimales viennent du registre Rust,
-/// et la boîte native les affiche (nom, contrat, montant, frais).
+/// Transfer of a registry token: the UI only provides the token identifier and the
+/// network; contract/mint and decimals come from the Rust registry, and the native
+/// dialog shows them (name, contract, amount, fee).
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 async fn send_token_transaction(
@@ -7388,8 +7347,7 @@ async fn send_token_transaction(
         let dir = data_dir(&app)?;
         let (info, deployment) = openpgp_wallet_core::tokens::find(&token, &network).ok_or_else(|| translate_error("jeton non pris en charge sur ce réseau"))?;
         let to = canonical_address_input(&to)?;
-        // « Max » : tout le solde du jeton (les frais sont payés dans la
-        // monnaie du réseau).
+        // "Max": the whole token balance (fees are paid in the network's native coin).
         let amount = if max.unwrap_or(false) {
             let owner = if network == "tron_mainnet" {
                 app.state::<ProfileTronCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).cloned()
@@ -7421,7 +7379,7 @@ async fn send_token_transaction(
                     .map(|(evm, _)| evm.clone())
                     .ok_or_else(|| translate_error("adresse d'envoi inconnue : déverrouillez le portefeuille"))?;
                 let fee = api::erc20_fee_for_confirmation(&token, &network, &from_evm, &to, &amount).t_err()?;
-                // Jeton ET gas suffisants, vérifiés AVANT la boîte de confirmation.
+                // Enough token AND gas, checked BEFORE the confirmation dialog.
                 api::ensure_token_funds(&token, &network, &from_evm, &amount).t_err()?;
                 api::ensure_evm_gas_funds(net, &from_evm, fee).t_err()?;
                 let token_line = lang(
@@ -7446,8 +7404,8 @@ async fn send_token_transaction(
                     .get(&profile_index)
                     .cloned()
                     .ok_or_else(|| translate_error("adresse du profil inconnue — déverrouillez le portefeuille"))?;
-                // Jeton ET TRX des frais vérifiés, transfert simulé (il doit
-                // émettre exactement ce transfert) AVANT la boîte.
+                // Token AND TRX for fees checked, transfer simulated (it must emit exactly this
+                // transfer) BEFORE the dialog.
                 let (plan, _) = api::trc20_send_plan(&token, &from_tron, &to, &amount).t_err()?;
                 let token_line = lang(
                     &format!("Jeton : {} ({}) — contrat {contract}", info.name, info.symbol),
@@ -7479,7 +7437,7 @@ async fn send_token_transaction(
                 )
                 .to_string();
                 let warning = send_warnings(&app, &dir, &network, "sol", &to, api::sol_recipient_activity(&to, net).ok());
-                // Compte de jetons du destinataire à créer : coût annoncé avant.
+                // Recipient's token account to create: the cost is announced beforehand.
                 let rent_line = api::token_account_rent_if_missing(&token, &to, net)
                     .ok()
                     .flatten()
@@ -7510,20 +7468,17 @@ async fn send_token_transaction(
 struct RecipientDto {
     label: String,
     pubkey_armored: String,
-    /// Empreinte PGP du destinataire, affichée dans le carnet pour permettre à
-    /// l'utilisateur de la comparer à une source hors-ligne (message vocal,
-    /// rencontre en personne, etc.) : `recipients.json` est un fichier local
-    /// ordinaire, modifiable par tout code tournant avec les droits de
-    /// l'utilisateur — sans un moyen de vérification visible, un remplacement
-    /// silencieux de la clé stockée passerait inaperçu (chiffrement futur pour
-    /// le mauvais destinataire). Recalculée à la volée depuis pubkey_armored,
-    /// jamais lue depuis le fichier : une empreinte falsifiée ne correspondrait
-    /// plus à la clé réellement utilisée pour chiffrer.
+    /// PGP fingerprint of the recipient, shown in the address book so the user can
+    /// compare it with an offline source (voice message, meeting in person, etc.):
+    /// `recipients.json` is an ordinary local file that any code running with the
+    /// user's rights can modify, so without a visible way to verify it, a silent swap
+    /// of the stored key would go unnoticed (future encryption for the wrong
+    /// recipient). Recomputed on the fly from pubkey_armored, never read from the file:
+    /// a forged fingerprint would no longer match the key actually used for encryption.
     fingerprint: String,
-    /// Identifiant de clé et identité PGP (nom/e-mail embarqués dans le
-    /// certificat) — ajoutés pour la consultation détaillée d'un destinataire
-    /// (modale "Consulter la clé"), même trio d'informations que l'onglet
-    /// Certificat pour la propre identité de l'appareil.
+    /// Key ID and PGP identity (name/email embedded in the certificate), added for
+    /// viewing a recipient in detail (the "View key" modal): the same three pieces of
+    /// information as the Certificate tab shows for the device's own identity.
     key_id: String,
     user_id: String,
 }
@@ -7560,8 +7515,8 @@ impl From<messaging::CertInfo> for CertInfoDto {
     }
 }
 
-/// Certificat (clé publique) de CET appareil — à partager pour que d'autres
-/// puissent t'ajouter comme destinataire et t'envoyer des messages chiffrés.
+/// Certificate (public key) of THIS device: to share so that others can add you as
+/// a recipient and send you encrypted messages.
 #[tauri::command]
 fn get_own_certificate(app: tauri::AppHandle) -> Result<CertInfoDto, String> {
     let dir = data_dir(&app)?;
@@ -7584,11 +7539,11 @@ fn add_recipient(label: String, pubkey_armored: String, app: tauri::AppHandle) -
     if let Some((old_fingerprint, new_fingerprint)) =
         messaging::recipient_key_change(&dir, &label, &pubkey_armored).t_err()?
     {
-        // Boîte de dialogue native, même mécanisme que pour un envoi de fonds : un
-        // remplacement de clé pour un contact déjà enregistré n'est pas anodin (voir
-        // la doc de `recipient_key_change`), donc pas question de le laisser passer
-        // silencieusement comme le ferait `messaging::add_recipient` seule.
-        // Libellé nettoyé pour l'affichage uniquement (voir `dialog_label`).
+        // Native dialog, the same mechanism as for a send of funds: replacing the key of a
+        // contact who is already saved is not trivial (see the docs of
+        // `recipient_key_change`), so it must not go through silently as
+        // `messaging::add_recipient` alone would allow. Label cleaned up for display only
+        // (see `dialog_label`).
         let label = dialog_label(&label);
         let message = if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
             format!(
@@ -7633,8 +7588,8 @@ fn encrypt_message(pubkeys_armored: Vec<String>, message: String) -> Result<Stri
     messaging::encrypt_message(&pubkeys_armored, &message).t_err()
 }
 
-/// Déchiffre un message reçu par cet appareil (nécessite le mot de passe pour
-/// déverrouiller la clé privée locale, comme pour un envoi de fonds).
+/// Decrypts a message received by this device (requires the password to unlock the
+/// local private key, as for a send of funds).
 #[tauri::command]
 async fn decrypt_message(password: String, ciphertext: String, app: tauri::AppHandle) -> Result<String, String> {
     run_blocking(move || {
@@ -7645,11 +7600,12 @@ async fn decrypt_message(password: String, ciphertext: String, app: tauri::AppHa
     .await
 }
 
-// --- Wallets externes --------------------------------------------------------
-// Suivi en lecture seule d'adresses qui n'appartiennent pas à ce portefeuille
-// (voir core/src/external_wallets.rs) : aucun secret impliqué, le solde de
-// chacune passe par la commande `get_balance` déjà existante, exactement comme
-// pour les propres profils du wallet.
+// --- External wallets --------------------------------------------------------
+//
+// Read-only tracking of addresses that do not belong to this wallet (see
+// core/src/external_wallets.rs): no secrets involved, and each one's balance goes
+// through the existing `get_balance` command, exactly as for the wallet's own
+// profiles.
 
 #[tauri::command]
 fn list_external_wallets(app: tauri::AppHandle) -> Result<Vec<external_wallets::ExternalWallet>, String> {
@@ -7705,10 +7661,11 @@ fn delete_external_wallet_group(id: u32, app: tauri::AppHandle) -> Result<(), St
     external_wallets::delete_group(&dir, id).t_err()
 }
 
-// --- Carnet d'adresses -------------------------------------------------------
-// Associer un label à une adresse pour la retrouver au moment d'envoyer des
-// fonds (voir core/src/address_book.rs) — distinct des wallets externes
-// (aucun solde interrogé ici, jamais).
+// --- Address book -------------------------------------------------------------
+//
+// Attach a label to an address to find it again when sending funds (see
+// core/src/address_book.rs); separate from external wallets (no balance is ever
+// queried here).
 
 #[tauri::command]
 fn list_address_book(app: tauri::AppHandle) -> Result<Vec<address_book::AddressBookEntry>, String> {
@@ -7716,8 +7673,8 @@ fn list_address_book(app: tauri::AppHandle) -> Result<Vec<address_book::AddressB
     Ok(address_book::list_entries(&dir))
 }
 
-/// Réseaux où une adresse est valide (carnet d'adresses, wallets externes) :
-/// le menu « Réseau » de l'interface ne propose que ceux-là.
+/// Networks on which an address is valid (address book, external wallets): the UI's
+/// "Network" menu only offers those.
 #[tauri::command]
 fn address_networks(address: String) -> Vec<&'static str> {
     address_book::networks_for(&address)
@@ -7741,72 +7698,73 @@ fn remove_address_book_entry(id: u32, app: tauri::AppHandle) -> Result<(), Strin
 }
 
 // --- WalletConnect (dApps) -----------------------------------------------------
-// Voir core/src/walletconnect/ (protocole) et core/src/dapp_requests.rs
-// (préparation des demandes). Ici : état de l'app, commandes, et les boîtes de
-// confirmation NATIVES — dont le texte est construit uniquement à partir de la
-// demande préparée côté Rust, jamais d'une donnée renvoyée par le frontend.
+//
+// See core/src/walletconnect/ (protocol) and core/src/dapp_requests.rs (request
+// preparation). Here: app state, commands, and the NATIVE confirmation dialogs,
+// whose text is built solely from the request prepared on the Rust side, never
+// from data returned by the frontend.
 
-/// Adresses PUBLIQUES des profils, mémorisées au déverrouillage : connecter une
-/// dApp ne demande pas le mot de passe (aucune signature), seulement de savoir
-/// quelles adresses lui présenter. Vidé à la réinitialisation.
+/// PUBLIC addresses of the profiles, remembered at unlock: connecting a dApp does
+/// not ask for the password (no signature), only for knowing which addresses to
+/// present to it. Cleared on reset.
 #[derive(Default)]
 struct ProfileAddressCache(std::sync::Mutex<std::collections::HashMap<u32, (String, String)>>);
 
-/// Adresse Zcash transparente de chaque profil, mémorisée au même moment :
-/// préparer un envoi ZEC (sorties à dépenser, frais) demande l'adresse de
-/// départ AVANT la boîte de confirmation, donc avant tout mot de passe.
+/// Transparent Zcash address of each profile, remembered at the same time:
+/// preparing a ZEC send (outputs to spend, fees) needs the source address BEFORE
+/// the confirmation dialog, so before any password.
 #[derive(Default)]
 struct ProfileZcashCache(std::sync::Mutex<std::collections::HashMap<u32, String>>);
 
-/// Adresse Tron de chaque profil (préparation d'un envoi avant la boîte).
+/// Tron address of each profile (preparing a send before the dialog).
 #[derive(Default)]
 struct ProfileTronCache(std::sync::Mutex<std::collections::HashMap<u32, String>>);
 
-/// Adresse XRP de chaque profil (préparation d'un envoi avant la boîte).
+/// XRP address of each profile (preparing a send before the dialog).
 #[derive(Default)]
 struct ProfileXrpCache(std::sync::Mutex<std::collections::HashMap<u32, String>>);
 
-/// Adresse Stellar de chaque profil (préparation d'un envoi avant la boîte).
+/// Stellar address of each profile (preparing a send before the dialog).
 #[derive(Default)]
 struct ProfileStellarCache(std::sync::Mutex<std::collections::HashMap<u32, String>>);
 
-/// Compte NEAR implicite de chaque profil (préparation d'un envoi avant la boîte).
+/// NEAR implicit account of each profile (preparing a send before the dialog).
 #[derive(Default)]
 struct ProfileNearCache(std::sync::Mutex<std::collections::HashMap<u32, String>>);
 
-/// Adresse Cardano de chaque profil (préparation d'un envoi avant la boîte).
+/// Cardano address of each profile (preparing a send before the dialog).
 #[derive(Default)]
 struct ProfileCardanoCache(std::sync::Mutex<std::collections::HashMap<u32, String>>);
 
-/// Adresse Stacks de chaque profil (préparation d'un envoi avant la boîte).
+/// Stacks address of each profile (preparing a send before the dialog).
 #[derive(Default)]
 struct ProfileStacksCache(std::sync::Mutex<std::collections::HashMap<u32, String>>);
 
-/// Adresse Bittensor de chaque profil (préparation d'un envoi avant la boîte).
+/// Bittensor address of each profile (preparing a send before the dialog).
 #[derive(Default)]
 struct ProfileBittensorCache(std::sync::Mutex<std::collections::HashMap<u32, String>>);
 
-/// Adresse Bitcoin testnet de chaque profil (bouton « Max » d'un envoi testnet).
+/// Bitcoin testnet address of each profile ("Max" button of a testnet send).
 #[derive(Default)]
 struct ProfileBtcTestnetCache(std::sync::Mutex<std::collections::HashMap<u32, String>>);
 
-/// Adresse Dogecoin de chaque profil, mémorisée au même moment : préparer un
-/// envoi DOGE (sorties vérifiées, frais) demande l'adresse de départ AVANT la
-/// boîte de confirmation.
+/// Dogecoin address of each profile, remembered at the same time: preparing a DOGE
+/// send (verified outputs, fees) needs the source address BEFORE the confirmation
+/// dialog.
 #[derive(Default)]
 struct ProfileDogeCache(std::sync::Mutex<std::collections::HashMap<u32, String>>);
 
-/// Adresse Bitcoin (réseau principal) de chaque profil, mémorisée au même
-/// moment : un échange LI.FI depuis Bitcoin demande un devis (PSBT construite
-/// sur ses sorties) AVANT la boîte de confirmation.
+/// Bitcoin (mainnet) address of each profile, remembered at the same time: a LI.FI
+/// swap from Bitcoin needs a quote (a PSBT built on its outputs) BEFORE the
+/// confirmation dialog.
 #[derive(Default)]
 struct ProfileBtcCache(std::sync::Mutex<std::collections::HashMap<u32, String>>);
 
 #[derive(Default)]
 struct WcState {
     client: std::sync::OnceLock<std::sync::Arc<openpgp_wallet_core::walletconnect::WalletConnect>>,
-    /// Demandes préparées (ce qui sera signé ET affiché), par identifiant,
-    /// avec la connexion (topic) dont elles viennent.
+    /// Prepared requests (what will be signed AND shown), by identifier, with the
+    /// connection (topic) they came from.
     prepared: std::sync::Mutex<std::collections::HashMap<u64, (String, dapp_requests::Prepared)>>,
 }
 
@@ -7860,14 +7818,13 @@ fn remember_addresses(app: &tauri::AppHandle, index: u32, addresses: &api::Addre
     start_monero_sync(app);
 }
 
-/// Adresse et clés de visualisation Monero de chaque profil, mémorisées au
-/// déverrouillage (jamais envoyées à l'interface) : synchronisation de fond
-/// et préparation des envois avant la boîte de confirmation.
+/// Monero address and view keys of each profile, remembered at unlock (never sent
+/// to the UI): background sync and send preparation before the confirmation dialog.
 #[derive(Default)]
 struct MoneroKeysCache(std::sync::Mutex<std::collections::HashMap<u32, (String, openpgp_wallet_core::monero::ViewKeys)>>);
 
-/// Profil de l'adresse Monero `address` (les commandes génériques de la carte
-/// reçoivent une adresse).
+/// Profile of the Monero address `address` (the card's generic commands receive an
+/// address).
 fn monero_profile(app: &tauri::AppHandle, address: &str) -> Result<u32, String> {
     app.state::<MoneroKeysCache>()
         .0
@@ -7879,18 +7836,17 @@ fn monero_profile(app: &tauri::AppHandle, address: &str) -> Result<u32, String> 
         .ok_or_else(|| translate_error("adresse du profil inconnue — déverrouillez le portefeuille"))
 }
 
-/// Carte Monero affichée (`set_xmr_sync`) : sans elle, et sans fonds déjà
-/// reçus, aucun bloc n'est téléchargé (~15 Mo par jour de chaîne).
+/// Monero card shown (`set_xmr_sync`): without it, and without funds already
+/// received, no blocks are downloaded (~15 MB per day of chain).
 static XMR_SYNC_WANTED: AtomicBool = AtomicBool::new(false);
-/// Passage demandé tout de suite (carte activée, envoi diffusé).
+/// A pass requested right away (card enabled, send broadcast).
 static XMR_SYNC_KICK: AtomicBool = AtomicBool::new(false);
 
-/// Synchronisation Monero en arrière-plan, une seule à la fois : blocs
-/// analysés jusqu'au bout de la chaîne, puis toutes les 30 s (un bloc toutes
-/// les 2 minutes en moyenne : une réception apparaît peu après son bloc ; un
-/// passage sans nouveau bloc ne coûte qu'une lecture de hauteur). L'interface
-/// est prévenue après chaque passage (`xmr-synced`) ; un échec réseau est
-/// retenté au passage suivant.
+/// Background Monero sync, one at a time: blocks scanned up to the tip of the
+/// chain, then every 30 s (one block every 2 minutes on average: a receipt shows up
+/// shortly after its block; a pass with no new block only costs a height read). The
+/// UI is notified after each pass (`xmr-synced`); a network failure is retried at
+/// the next pass.
 fn start_monero_sync(app: &tauri::AppHandle) {
     static RUNNING: AtomicBool = AtomicBool::new(false);
     if RUNNING.swap(true, Ordering::SeqCst) {
@@ -7898,7 +7854,7 @@ fn start_monero_sync(app: &tauri::AppHandle) {
     }
     let app = app.clone();
     std::thread::spawn(move || loop {
-        // Génération lue AVANT les clés (voir `seed_state`).
+        // Generation read BEFORE the keys (see `seed_state`).
         let generation = openpgp_wallet_core::seed_state::generation();
         let keys: Vec<_> = app.state::<MoneroKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).values().map(|(_, keys)| keys.clone()).collect();
         let wanted = XMR_SYNC_WANTED.load(Ordering::Relaxed) || data_dir(&app).is_ok_and(|dir| api::xmr_has_received(&dir));
@@ -7922,8 +7878,8 @@ fn start_monero_sync(app: &tauri::AppHandle) {
     });
 }
 
-/// Carte Monero affichée ou non (choix de l'utilisateur) : la synchronisation
-/// de fond ne tourne que pour elle (ou si des fonds ont déjà été reçus).
+/// Monero card shown or not (the user's choice): background sync only runs for it
+/// (or if funds have already been received).
 #[tauri::command]
 fn set_xmr_sync(enabled: bool) {
     let was = XMR_SYNC_WANTED.swap(enabled, Ordering::SeqCst);
@@ -7936,12 +7892,12 @@ fn set_xmr_sync(enabled: bool) {
 struct MoneroStatusDto {
     unlocked: String,
     locked: String,
-    /// Chaîne entièrement analysée (le solde est à jour).
+    /// Chain fully scanned (the balance is up to date).
     synced: bool,
 }
 
-/// Solde Monero détaillé du profil (état local, aucun appel réseau) : la
-/// carte montre la part encore bloquée et l'état de la synchronisation.
+/// The profile's detailed Monero balance (local state, no network call): the card
+/// shows the part still locked and the sync state.
 #[tauri::command]
 async fn xmr_status(profile_index: u32, app: tauri::AppHandle) -> Result<MoneroStatusDto, String> {
     run_blocking(move || {
@@ -7955,8 +7911,8 @@ async fn xmr_status(profile_index: u32, app: tauri::AppHandle) -> Result<MoneroS
     .await
 }
 
-/// Réseau compatible Ethereum ajouté par l'utilisateur (Paramètres, « RPC
-/// personnalisé »), tel que l'interface l'affiche : une carte par réseau.
+/// Ethereum-compatible network added by the user (Settings, "Custom RPC"), as the
+/// UI shows it: one card per network.
 #[derive(Serialize)]
 struct CustomNetworkDto {
     id: String,
@@ -7978,8 +7934,8 @@ fn list_custom_networks(app: tauri::AppHandle) -> Result<Vec<CustomNetworkDto>, 
     Ok(openpgp_wallet_core::custom_networks::list(&data_dir(&app)?).into_iter().map(Into::into).collect())
 }
 
-/// Ajoute un réseau : contrôles, puis identifiant de chaîne vérifié auprès du
-/// RPC (appel réseau, hors du fil principal).
+/// Adds a network: checks, then the chain ID verified with the RPC (network call,
+/// off the main thread).
 #[tauri::command]
 async fn add_custom_network(chain_id: u64, name: String, rpc: String, symbol: String, explorer: Option<String>, app: tauri::AppHandle) -> Result<CustomNetworkDto, String> {
     run_blocking(move || {
@@ -7989,22 +7945,22 @@ async fn add_custom_network(chain_id: u64, name: String, rpc: String, symbol: St
     .await
 }
 
-/// Retire un réseau ajouté : sa carte disparaît, les fonds restent sur la
-/// chaîne (le réajouter les fait revenir).
+/// Removes an added network: its card disappears, the funds stay on-chain (adding
+/// it again brings them back).
 #[tauri::command]
 fn remove_custom_network(chain_id: u64, app: tauri::AppHandle) -> Result<(), String> {
     openpgp_wallet_core::custom_networks::remove(&data_dir(&app)?, chain_id).t_err()
 }
 
-/// Nœud Monero choisi dans Paramètres (`None` : nœuds publics par défaut).
+/// Monero node chosen in Settings (`None`: the default public nodes).
 #[tauri::command]
 fn xmr_node(app: tauri::AppHandle) -> Result<Option<String>, String> {
     Ok(api::xmr_node(&data_dir(&app)?))
 }
 
-/// « Réanalyser depuis le début » (Paramètres) : Monero et Zcash protégé
-/// relus depuis la naissance fixe de l'app (fonds plus anciens que la création
-/// du portefeuille sur cet appareil).
+/// "Rescan from the beginning" (Settings): Monero and shielded Zcash reread from
+/// the app's fixed birthday (funds older than the wallet's creation on this
+/// device).
 #[tauri::command]
 fn rescan_private_funds(app: tauri::AppHandle) -> Result<(), String> {
     api::rescan_private_funds(&data_dir(&app)?).t_err()?;
@@ -8012,8 +7968,8 @@ fn rescan_private_funds(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// Enregistre le nœud Monero (vide : retour aux nœuds publics), utilisé dès
-/// la synchronisation suivante.
+/// Saves the Monero node (empty: back to the public nodes), used from the next sync
+/// onwards.
 #[tauri::command]
 fn set_xmr_node(url: String, app: tauri::AppHandle) -> Result<Option<String>, String> {
     let node = api::set_xmr_node(&data_dir(&app)?, &url).t_err()?;
@@ -8021,9 +7977,9 @@ fn set_xmr_node(url: String, app: tauri::AppHandle) -> Result<Option<String>, St
     Ok(node)
 }
 
-/// Passage de synchronisation de fond protégé contre une panique d'une
-/// bibliothèque (donnée inattendue d'un nœud) : sans cela le fil s'arrêterait
-/// pour de bon, sans le dire, jusqu'au redémarrage de l'app.
+/// A background sync pass protected against a library panic (unexpected data from a
+/// node): otherwise the thread would stop for good, silently, until the app is
+/// restarted.
 fn catch_sync_panic<E: std::fmt::Display>(sync: impl FnOnce() -> Result<(), E>) -> Result<(), String> {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(sync)) {
         Ok(result) => result.map_err(|e| format!("{e:#}")),
@@ -8031,12 +7987,12 @@ fn catch_sync_panic<E: std::fmt::Display>(sync: impl FnOnce() -> Result<(), E>) 
     }
 }
 
-/// Clés de visualisation des comptes Zcash protégés, mémorisées au
-/// déverrouillage (jamais envoyées à l'interface).
+/// Viewing keys of the shielded Zcash accounts, remembered at unlock (never sent to
+/// the UI).
 #[derive(Default)]
 struct ShieldedKeysCache(std::sync::Mutex<std::collections::HashMap<u32, (String, openpgp_wallet_core::zcash_shielded::ProfileKeys)>>);
 
-/// Profil de l'adresse Zcash protégée `address` (carte « Zcash protégé »).
+/// Profile of the shielded Zcash address `address` ("Shielded Zcash" card).
 fn shielded_profile(app: &tauri::AppHandle, address: &str) -> Result<u32, String> {
     app.state::<ShieldedKeysCache>()
         .0
@@ -8048,14 +8004,12 @@ fn shielded_profile(app: &tauri::AppHandle, address: &str) -> Result<u32, String
         .ok_or_else(|| translate_error("adresse du profil inconnue — déverrouillez le portefeuille"))
 }
 
-/// Passage de synchronisation Zcash protégée demandé tout de suite (envoi ou
-/// protection diffusés).
+/// A shielded Zcash sync pass requested right away (send or shielding broadcast).
 static ZECS_SYNC_KICK: AtomicBool = AtomicBool::new(false);
 
-/// Synchronisation Zcash protégée en arrière-plan, une seule à la fois :
-/// comptes manquants créés, chaîne analysée, puis toutes les 30 s (un bloc
-/// toutes les 75 s) tant que l'app est ouverte. L'interface est prévenue après chaque passage
-/// (`zec-shielded-synced`) ; un échec réseau est retenté au passage suivant.
+/// Background shielded Zcash sync, one at a time: missing accounts created, chain scanned,
+/// then every 30 s (one block every 75 s) while the app is open. The UI is notified after
+/// each pass (`zec-shielded-synced`); a network failure is retried at the next pass.
 fn start_shielded_sync(app: &tauri::AppHandle) {
     static RUNNING: AtomicBool = AtomicBool::new(false);
     if RUNNING.swap(true, Ordering::SeqCst) {
@@ -8089,7 +8043,7 @@ fn start_shielded_sync(app: &tauri::AppHandle) {
 struct ShieldedBalanceDto {
     spendable: String,
     pending: String,
-    /// Chaîne entièrement analysée (le solde est à jour).
+    /// Chain fully scanned (the balance is up to date).
     synced: bool,
 }
 
@@ -8097,8 +8051,8 @@ fn shielded_dialog(app: &tauri::AppHandle, title: (&str, &str), message: String)
     app.dialog().message(message).title(lang(title.0, title.1)).kind(MessageDialogKind::Warning).buttons(MessageDialogButtons::OkCancel).blocking_show()
 }
 
-/// Protège les ZEC transparents du profil (t1 → adresse Orchard du même
-/// profil) après une boîte de confirmation native (montant, frais ZIP-317).
+/// Shields the profile's transparent ZEC (t1 → the same profile's shielded address)
+/// after a native confirmation dialog (amount, ZIP-317 fee).
 #[tauri::command]
 async fn zec_shield(password: String, profile_index: u32, app: tauri::AppHandle) -> Result<String, String> {
     run_blocking(move || {
@@ -8120,14 +8074,14 @@ async fn zec_shield(password: String, profile_index: u32, app: tauri::AppHandle)
             } else {
                 format!("Protéger vos ZEC transparents\n\nDepuis : {t1}\nVers votre adresse protégée : {to}\nMontant protégé : {amount} ZEC\nFrais réseau : {fee} ZEC\n\nUne fois protégés, montants et adresses ne sont plus visibles sur la blockchain.\n\nConfirmer ?")
             };
-            // Puis le délai d'annulation, avant la signature (33ᵉ passage : il
-            // manquait ici, comme partout ailleurs depuis le 29ᵉ).
+            // Then the cancellation delay, before signing (audit round 33: it was missing
+            // here, as it had been everywhere else until round 29).
             shielded_dialog(&app, ("Confirmer la protection", "Confirm shielding"), message)
                 && send_grace_period(&app, GraceRecap::new(network_label("zec_shielded"), format!("{amount} ZEC"), to.to_string()).on("zec_mainnet")).is_ok()
         };
         match api::shield_zec(&dir, &password, profile_index, &t1, confirm).t_err()? {
             Some(txid) => {
-                // Note en attente dans la base : soldes relus aussitôt.
+                // Pending note in the database: balances reread straight away.
                 ZECS_SYNC_KICK.store(true, Ordering::SeqCst);
                 Ok(txid)
             }
@@ -8137,8 +8091,8 @@ async fn zec_shield(password: String, profile_index: u32, app: tauri::AppHandle)
     .await
 }
 
-/// Envoie depuis les fonds Zcash protégés du profil, après une boîte de
-/// confirmation native (destinataire, montant, frais).
+/// Sends from the profile's shielded Zcash funds, after a native confirmation
+/// dialog (recipient, amount, fee).
 #[tauri::command]
 async fn zec_send_shielded(password: String, profile_index: u32, to: String, amount: String, max: Option<bool>, app: tauri::AppHandle) -> Result<String, String> {
     run_blocking(move || {
@@ -8146,13 +8100,13 @@ async fn zec_send_shielded(password: String, profile_index: u32, to: String, amo
         let dir = data_dir(&app)?;
         let to = canonical_address_input(&to)?;
         let max = max.unwrap_or(false);
-        // « Max » : montant fixé par la proposition « tout envoyer », affiché
-        // dans la boîte (`SpendSummary`).
+        // "Max": the amount set by the "send everything" proposal, shown in the dialog
+        // (`SpendSummary`).
         let amount = if max { String::new() } else { api::canonical_zec_amount(&amount).t_err()? };
         let from_label = api::list_profiles(&dir).into_iter().find(|p| p.index == profile_index).map(|p| p.label).unwrap_or_else(|| format!("profil #{profile_index}"));
         let from_label = dialog_label(&from_label);
-        // Comme les autres envois : adresse ressemblante, jamais payée, et —
-        // vers une adresse transparente — état sur la chaîne.
+        // Like the other sends: lookalike address, never paid, and (to a transparent
+        // address) on-chain state.
         let warning = if to.starts_with('t') {
             send_warnings(&app, &dir, "zec_shielded", "zec", &to, api::zec_recipient_activity(&to).ok())
         } else {
@@ -8168,7 +8122,7 @@ async fn zec_send_shielded(password: String, profile_index: u32, to: String, amo
             } else {
                 format!("{warning}Envoi depuis vos ZEC protégés\n\nDepuis le profil : {from_label}\nVers : {to}\nMontant : {amount} ZEC{max_note}\nFrais réseau : {fee} ZEC\n\nC'est irréversible.\n\nConfirmer cet envoi ?")
             };
-            // Puis le délai d'annulation, avant la signature.
+            // Then the cancellation delay, before signing.
             shielded_dialog(&app, ("Confirmer l'envoi", "Confirm the transfer"), message)
                 && send_grace_period(&app, GraceRecap::new(network_label("zec_shielded"), format!("{amount} ZEC{max_note}"), to.to_string()).on("zec_shielded")).is_ok()
         };
@@ -8179,7 +8133,7 @@ async fn zec_send_shielded(password: String, profile_index: u32, to: String, amo
         };
         match sent.t_err()? {
             Some(txid) => {
-                // Destinataire mémorisé après une diffusion réussie seulement.
+                // Recipient remembered only after a successful broadcast.
                 let _ = sent_recipients::record_sent(&dir, "zec_shielded", &to);
                 ZECS_SYNC_KICK.store(true, Ordering::SeqCst);
                 Ok(txid)
@@ -8190,7 +8144,8 @@ async fn zec_send_shielded(password: String, profile_index: u32, to: String, amo
     .await
 }
 
-/// Solde Zcash protégé du profil (lu dans la base locale, aucun appel réseau).
+/// The profile's shielded Zcash balance (read from the local database, no network
+/// call).
 #[tauri::command]
 async fn zec_shielded_balance(profile_index: u32, app: tauri::AppHandle) -> Result<ShieldedBalanceDto, String> {
     run_blocking(move || {
@@ -8226,7 +8181,7 @@ fn caip2_label(chain: &str) -> String {
     }
 }
 
-/// Montant entier (plus petite unité) mis en forme avec `decimals` décimales.
+/// Integer amount (smallest unit) formatted with `decimals` decimals.
 fn format_units(integer: &str, decimals: Option<u8>) -> String {
     let Some(decimals) = decimals.map(usize::from) else {
         return format!("{integer} {}", lang("(unités brutes, décimales inconnues)", "(raw units, unknown decimals)"));
@@ -8239,11 +8194,11 @@ fn format_units(integer: &str, decimals: Option<u8>) -> String {
     if frac.is_empty() { format!("{sign}{whole}") } else { format!("{sign}{whole}.{frac}") }
 }
 
-/// Texte libre venu d'une dApp (message à signer, champs EIP-712) montré dans
-/// une boîte native : chaque ligne nettoyée (voir `dialog_label`, sans
-/// troncature à 40), préfixée d'une barre verticale qui la distingue des
-/// lignes de l'app — impossible d'y imiter "Réseau :" ou "Montant :" — et
-/// nombre de lignes borné pour que les boutons restent visibles.
+/// Free text from a dApp (message to sign, EIP-712 fields) shown in a native
+/// dialog: each line cleaned up (see `dialog_label`, without the 40-character
+/// truncation), prefixed with a vertical bar that sets it apart from the app's own
+/// lines (so it cannot imitate "Network:" or "Amount:"), and the number of lines
+/// bounded so the buttons stay visible.
 fn quoted_block(lines: impl IntoIterator<Item = String>, max_lines: usize) -> String {
     const MAX_CHARS: usize = 90;
     let all: Vec<String> = lines
@@ -8264,9 +8219,9 @@ fn host_of(url: &str) -> String {
     tauri::Url::parse(url).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default()
 }
 
-/// Texte de la demande préparée — le même dans la modale de l'app et dans la
-/// boîte native (seule cette dernière fait foi). `danger` : au moins un
-/// avertissement grave (autorisation illimitée, appel non décodé…).
+/// Text of the prepared request: the same in the app's modal and in the native
+/// dialog (only the latter counts). `danger`: at least one serious warning
+/// (unlimited approval, undecoded call…).
 fn describe_prepared(prepared: &dapp_requests::Prepared, peer: &openpgp_wallet_core::walletconnect::engine::PeerMetadata, from_label: &str, account: &str) -> (String, bool) {
     use dapp_requests::{Prepared, TypedRisk};
     use openpgp_wallet_core::evm_sign::CallKind;
@@ -8488,8 +8443,8 @@ fn wc_disconnect(topic: String, app: tauri::AppHandle) -> Result<(), String> {
     wc_client(&app)?.disconnect(&topic).t_err()
 }
 
-/// Connexion d'une dApp : aucune signature, mais la dApp verra les adresses du
-/// profil et pourra ensuite DEMANDER des signatures — d'où une boîte native.
+/// Connecting a dApp: no signature, but the dApp will see the profile's addresses
+/// and can then REQUEST signatures, hence a native dialog.
 #[tauri::command]
 async fn wc_approve_session(proposal_id: u64, profile_index: u32, app: tauri::AppHandle) -> Result<bool, String> {
     run_blocking(move || {
@@ -8543,9 +8498,9 @@ struct PreparedRequestDto {
     danger: bool,
 }
 
-/// Analyse une demande reçue (exécution à blanc, simulation, décodage) et
-/// renvoie son texte pour la modale de l'app. Une demande invalide ou
-/// dangereuse par construction est refusée ici et la dApp en est informée.
+/// Analyzes a received request (dry run, simulation, decoding) and returns its text
+/// for the app's modal. A request that is invalid or dangerous by construction is
+/// refused here and the dApp is told.
 #[tauri::command]
 async fn wc_prepare_request(request_id: u64, app: tauri::AppHandle) -> Result<PreparedRequestDto, String> {
     run_blocking(move || {
@@ -8570,9 +8525,9 @@ async fn wc_prepare_request(request_id: u64, app: tauri::AppHandle) -> Result<Pr
     .await
 }
 
-/// Signe une demande préparée, après mot de passe ET boîte native. Refus dans
-/// la boîte = refus transmis à la dApp. Échec de signature (mauvais mot de
-/// passe…) : la demande reste en attente, l'utilisateur peut réessayer.
+/// Signs a prepared request, after the password AND the native dialog. Declining in
+/// the dialog = refusal sent to the dApp. A signing failure (wrong password…): the
+/// request stays pending and the user can try again.
 #[tauri::command]
 async fn wc_approve_request(request_id: u64, password: String, app: tauri::AppHandle) -> Result<bool, String> {
     run_blocking(move || {
@@ -8586,9 +8541,9 @@ async fn wc_approve_request(request_id: u64, password: String, app: tauri::AppHa
             .remove(&request_id)
             .ok_or_else(|| translate_error("demande introuvable ou expirée"))?;
         let request = client.pending_request(request_id).ok_or_else(|| translate_error("demande introuvable ou expirée"))?;
-        // La réponse part vers la connexion de la demande EN ATTENTE : elle doit
-        // être celle de la demande préparée et affichée (défense en profondeur,
-        // voir le refus des identifiants en double dans `engine`).
+        // The answer goes to the connection of the PENDING request: it must be the request
+        // that was prepared and shown (defense in depth, see the refusal of duplicate
+        // identifiers in `engine`).
         if request.topic != prepared_topic {
             return Err(translate_error("la demande a changé depuis son affichage — refusée"));
         }
@@ -8601,8 +8556,8 @@ async fn wc_approve_request(request_id: u64, password: String, app: tauri::AppHa
             let _ = client.respond(request_id, Err((5000, "User rejected.".to_string())));
             return Ok(false);
         }
-        // Transaction (fonds qui partent) : même délai d'annulation qu'un envoi ;
-        // annulée, elle est refusée à la dApp.
+        // Transaction (funds leaving): the same cancellation delay as a send; if
+        // cancelled, it is refused to the dApp.
         let moves_funds = matches!(prepared, dapp_requests::Prepared::EvmTransaction { .. } | dapp_requests::Prepared::SolanaTransaction { .. });
         if moves_funds {
             let recap = match &prepared {
@@ -8638,21 +8593,21 @@ fn wc_reject_request(request_id: u64, app: tauri::AppHandle) -> Result<(), Strin
     wc_client(&app)?.respond(request_id, Err((5000, "User rejected.".to_string()))).t_err()
 }
 
-/// `true` uniquement pour les pages de l'app elle-même : `tauri://localhost`
-/// (macOS/Linux) ou `http(s)://tauri.localhost` (Windows/WebView2). Trouvé lors
-/// de l'audit "failles connues des hot wallets" : rien n'empêchait la fenêtre
-/// de l'app de naviguer vers un site externe (lien injecté via un message
-/// d'erreur d'un serveur tiers, par exemple) — ce site se serait alors affiché
-/// DANS la fenêtre du wallet, sans barre d'adresse, libre d'imiter l'app pour
-/// demander le mot de passe. Les liens externes légitimes passent déjà par
-/// `open_external_link` (navigateur système + liste blanche de domaines).
+/// `true` only for the app's own pages: `tauri://localhost` (macOS/Linux) or
+/// `http(s)://tauri.localhost` (Windows/WebView2). Found during the "known hot
+/// wallet weaknesses" audit: nothing stopped the app window from navigating to an
+/// external site (a link injected through a third-party server's error message, for
+/// example). That site would then have been displayed INSIDE the wallet window,
+/// with no address bar, free to imitate the app and ask for the password.
+/// Legitimate external links already go through `open_external_link` (system
+/// browser + domain allowlist).
 ///
-/// `dev_url` : serveur de développement de `tauri dev` (`http://127.0.0.1:1430/`
-/// ici), à ne passer QU'EN MODE DÉVELOPPEMENT (voir `run`) — seule son origine
-/// EXACTE (schéma, hôte, port) est alors autorisée. Oubli du 21ᵉ passage,
-/// signalé par l'utilisateur : le garde n'avait été vérifié que sur un build
-/// de production (`http://tauri.localhost/`) ; en `tauri dev`, il bloquait la
-/// page de l'app elle-même au chargement — fenêtre vide.
+/// `dev_url`: the `tauri dev` development server (`http://127.0.0.1:1430/` here),
+/// to be passed ONLY IN DEVELOPMENT MODE (see `run`); only its EXACT origin
+/// (scheme, host, port) is then allowed. A miss from round 21, reported by the
+/// user: the guard had only been checked on a production build
+/// (`http://tauri.localhost/`); under `tauri dev`, it blocked the app's own page
+/// while loading, leaving an empty window.
 fn is_app_origin(url: &tauri::Url, dev_url: Option<&tauri::Url>) -> bool {
     if dev_url.is_some_and(|dev| url.origin() == dev.origin()) {
         return true;
@@ -8671,9 +8626,8 @@ pub fn run() {
         .plugin(
             tauri::plugin::Builder::<tauri::Wry>::new("navigation-guard")
                 .on_navigation(|webview, url| {
-                    // `tauri::is_dev()` est faux dans tout build produit par
-                    // `tauri build` (fonctionnalité `custom-protocol`) : le
-                    // serveur de développement n'y est jamais autorisé.
+                    // `tauri::is_dev()` is false in every build produced by `tauri build` (the
+                    // `custom-protocol` feature): the development server is never allowed there.
                     let dev_url = if tauri::is_dev() { webview.config().build.dev_url.clone() } else { None };
                     let allowed = is_app_origin(url, dev_url.as_ref());
                     if !allowed {
@@ -8705,26 +8659,26 @@ pub fn run() {
         .manage(BalanceWatchState::default())
         .manage(UsbRestoreState::default())
         .setup(|app| {
-            // Cadre sombre dès l'ouverture (thème par défaut) ; l'interface
-            // applique ensuite le thème choisi (`set_window_frame`).
+            // Dark frame from the start (default theme); the UI then applies the chosen theme
+            // (`set_window_frame`).
             if let Some(window) = app.get_webview_window("main") {
                 apply_window_frame(&window, "default");
             }
             if let Ok(dir) = app.path().app_data_dir() {
                 let _ = std::fs::create_dir_all(&dir);
                 install_panic_hook(dir.clone());
-                // Réseaux compatibles Ethereum ajoutés par l'utilisateur.
+                // Ethereum-compatible networks added by the user.
                 openpgp_wallet_core::custom_networks::load(&dir);
-                // Détails des transactions Solana finalisées déjà lus (données publiques) :
-                // le nœud public n'en accorde qu'environ un par seconde.
+                // Details of finalized Solana transactions already read (public data): the public
+                // node only grants about one per second.
                 openpgp_wallet_core::sol_rpc::use_details_cache_file(dir.join("solana_tx_cache.jsonl"));
-                // Ancienne clé Etherscan de l'utilisateur (historiques HyperEVM et
-                // BNB Chain, retirés le 07/10/2026 : HyperEVM supprimé, BNB Chain
-                // lu chez NodeReal) : plus rien ne s'en sert, effacée.
+                // The user's former Etherscan key (HyperEVM and BNB Chain history, removed on
+                // 2026-10-07: HyperEVM dropped, BNB Chain read from NodeReal): nothing uses it any
+                // more, so it is deleted.
                 let _ = std::fs::remove_file(dir.join("etherscan_key.txt"));
-                // Événements WalletConnect (proposition, demande, état du relais)
-                // relayés au frontend ; le contenu des demandes, lui, n'est
-                // jamais relu depuis le frontend (voir `wc_prepare_request`).
+                // WalletConnect events (proposal, request, relay state) relayed to the frontend;
+                // the content of requests is never read back from the frontend (see
+                // `wc_prepare_request`).
                 let handle = app.handle().clone();
                 let sink: openpgp_wallet_core::walletconnect::EventSink = std::sync::Arc::new(move |event| {
                     let _ = handle.emit("wc-event", &event);
@@ -8882,8 +8836,8 @@ mod tests {
         tauri::Url::parse(s).expect("URL de test valide")
     }
 
-    /// Montants d'historique exacts, même à 18 décimales (valeur relevée sur
-    /// un vrai historique Avalanche).
+    /// Exact history amounts, even with 18 decimals (value taken from a real Avalanche
+    /// history).
     #[test]
     fn history_amounts_are_exact() {
         assert_eq!(format_signed_amount(Some(245_947_228_364_191_044), 18).as_deref(), Some("+0.245947228364191044"));
@@ -8893,9 +8847,9 @@ mod tests {
         assert_eq!(format_signed_amount(None, 9), None);
     }
 
-    /// Liens ouverts dans le navigateur : explorateurs de chaque réseau EVM
-    /// (transactions, adresses, jetons), Solana, Bitcoin ; rien d'autre, même
-    /// déguisé (sous-domaine trompeur, http, explorateur cité en paramètre).
+    /// Links opened in the browser: the explorers of each EVM network (transactions,
+    /// addresses, tokens), Solana, Bitcoin; nothing else, even disguised (misleading
+    /// subdomain, http, explorer quoted as a parameter).
     #[test]
     fn external_links_are_limited_to_known_explorers() {
         for allowed in [
@@ -8921,10 +8875,10 @@ mod tests {
         }
     }
 
-    /// 22ᵉ passage : reproduit l'attaque vérifiée en réel sur la boîte native
-    /// (libellé de profil contenant de faux "Destinataire/Montant" suivis de
-    /// dizaines de retours à la ligne) — le texte final ne doit contenir
-    /// qu'UNE ligne "Destinataire", la vraie, et garder un nombre de lignes fixe.
+    /// Round 22: reproduces the attack verified for real on the native dialog (a
+    /// profile label containing a fake "Recipient/Amount" followed by dozens of line
+    /// breaks). The final text must contain only ONE "Recipient" line, the real one,
+    /// and keep a fixed number of lines.
     #[test]
     fn dialog_text_cannot_be_spoofed_by_untrusted_strings() {
         let injected_label = format!(
@@ -8933,23 +8887,23 @@ mod tests {
         );
         let real_to = canonical_address_input(&format!("{}bc1qattacker", "\n".repeat(80))).unwrap();
         let text = transaction_confirmation_text("btc_mainnet", &real_to, "2.5 BTC", &injected_label, Some("Frais : 1200 sat"), None, None);
-        // Le mot peut subsister DANS le libellé (aplati sur la ligne "Depuis le
-        // profil", tronqué avant toute adresse complète) : ce qui compte est
-        // qu'aucune AUTRE ligne ne se présente comme destinataire ou montant.
+        // The word may remain INSIDE the label (flattened onto the "From profile" line,
+        // truncated before any full address): what matters is that no OTHER line presents
+        // itself as a recipient or amount.
         assert_eq!(text.lines().filter(|l| l.starts_with("Destinataire")).count(), 1, "{text}");
         assert_eq!(text.lines().filter(|l| l.starts_with("Montant")).count(), 1, "{text}");
         assert!(text.contains("Destinataire : bc1qattacker\nMontant : 2.5 BTC\n"), "{text}");
         let clean = transaction_confirmation_text("btc_mainnet", "bc1qx", "1 BTC", "Principal", Some("Frais : 1 sat"), None, None);
         assert_eq!(text.lines().count(), clean.lines().count(), "le libellé ne doit ajouter aucune ligne");
 
-        // Chaque caractère dangereux, isolément.
+        // Each dangerous character, on its own.
         for hazard in ['\n', '\r', '\t', '\u{0085}', '\u{2028}', '\u{2029}', '\u{202E}', '\u{2066}', '\u{200B}', '\u{FEFF}', '\u{00AD}'] {
             assert!(!dialog_label(&format!("a{hazard}b")).contains(hazard), "{:?}", hazard);
             assert!(canonical_address_input(&format!("bc1q{hazard}abc")).is_err(), "{:?}", hazard);
         }
         assert_eq!(dialog_label("  Épargne   perso "), "Épargne perso");
         assert_eq!(dialog_label(&"x".repeat(100)).chars().count(), 41, "tronqué à 40 + « … »");
-        // Adresse de dApp : jamais tronquée, forme EIP-55 ; sinon, libellé.
+        // dApp address: never truncated, EIP-55 form; otherwise, a label.
         let spender = "0x5555555555555555555555555555555555555abc";
         assert_eq!(dialog_address(spender).len(), 42);
         assert_eq!(dialog_address(spender).to_lowercase(), spender);
@@ -8961,8 +8915,8 @@ mod tests {
         assert!(canonical_address_input("  ").is_err());
     }
 
-    /// Le cas réel du 05/10/2026 (premier caractère oublié) : la ligne dit
-    /// exactement quoi et où.
+    /// The real case from 2026-10-05 (first character forgotten): the line says exactly
+    /// what and where.
     #[test]
     fn near_miss_line_names_the_exact_slip() {
         use openpgp_wallet_core::recipient_check::Difference;
@@ -8983,38 +8937,38 @@ mod tests {
     #[test]
     fn recipient_warnings_cover_new_unused_empty_and_unknown_addresses() {
         use api::RecipientActivity::*;
-        // Adresse jamais payée ET jamais utilisée on-chain : les deux avertissements.
+        // Address never paid AND never used on-chain: both warnings.
         let lines = recipient_warning_lines(true, "evm", Some(Unused));
         assert_eq!(lines.len(), 2, "{lines:?}");
         assert!(lines[0].contains("NOUVELLE ADRESSE"), "{lines:?}");
         assert!(lines[1].contains("JAMAIS servi") && lines[1].contains("aucun ETH"), "{lines:?}");
 
-        // Destinataire habituel qui détient des fonds : rien à signaler.
+        // A usual recipient holding funds: nothing to report.
         assert!(recipient_warning_lines(false, "btc", Some(Funded)).is_empty());
 
-        // Vide : l'actif absent est nommé (un portefeuille sans SOL peut détenir de l'USDC).
+        // Empty: the missing asset is named (a wallet without SOL may hold USDC).
         let lines = recipient_warning_lines(false, "usdc", Some(Empty));
         assert_eq!(lines.len(), 1);
         assert!(lines[0].contains("VIDE") && lines[0].contains("ni SOL ni USDC"), "{lines:?}");
         assert!(recipient_warning_lines(false, "sol", Some(Empty))[0].contains("aucun SOL"));
 
-        // Lecture réseau en échec : dit explicitement, jamais un silence rassurant.
+        // Network read failed: said explicitly, never a reassuring silence.
         let lines = recipient_warning_lines(false, "sol", None);
         assert!(lines.len() == 1 && lines[0].contains("impossible à vérifier"), "{lines:?}");
 
-        // Zcash transparent : l'actif absent est ZEC (pas SOL).
+        // Transparent Zcash: the missing asset is ZEC (not SOL).
         assert!(recipient_warning_lines(false, "zec", Some(Empty))[0].contains("aucun ZEC"));
         assert!(recipient_warning_lines(false, "doge", Some(Empty))[0].contains("aucun DOGE"));
 
-        // Monero, Zcash protégé : rien n'est lisible sur la chaîne — seule
-        // l'alerte « nouvelle adresse », jamais une fausse panne réseau.
+        // Monero, shielded Zcash: nothing is readable on-chain, so only the "new address"
+        // warning, never a fake network failure.
         for coin in ["xmr", "zecs"] {
             assert!(recipient_warning_lines(false, coin, None).is_empty(), "{coin}");
             let lines = recipient_warning_lines(true, coin, None);
             assert!(lines.len() == 1 && lines[0].contains("NOUVELLE ADRESSE"), "{coin} : {lines:?}");
         }
 
-        // Chaque avertissement tient sur un seul paragraphe (mise en page de la boîte).
+        // Each warning fits in a single paragraph (dialog layout).
         for coin in ["evm", "btc", "sol", "usdc", "zec", "doge", "trx", "xrp", "xlm", "near", "ada", "stx", "tao", "xmr", "zecs"] {
             for activity in [Some(Unused), Some(Empty), None] {
                 assert!(recipient_warning_lines(true, coin, activity).iter().all(|l| !l.contains('\n')));
@@ -9030,7 +8984,7 @@ mod tests {
         assert!(is_app_origin(&url("about:blank"), None));
 
         assert!(!is_app_origin(&url("https://evil.example/fake-wallet"), None));
-        // Sosies du nom d'hôte de l'app : le contrôle doit porter sur l'hôte EXACT.
+        // Lookalikes of the app's hostname: the check must be on the EXACT host.
         assert!(!is_app_origin(&url("https://tauri.localhost.evil.example/"), None));
         assert!(!is_app_origin(&url("https://eviltauri.localhost/"), None));
         assert!(!is_app_origin(&url("https://tauri.localhost@evil.example/"), None));
@@ -9038,10 +8992,9 @@ mod tests {
         assert!(!is_app_origin(&url("javascript:alert(1)"), None));
     }
 
-    /// Régression du 21ᵉ passage signalée par l'utilisateur : en `tauri dev`,
-    /// la page de l'app (servie par le serveur de développement) était
-    /// bloquée. Autorisée désormais — mais seulement l'origine EXACTE du
-    /// serveur, et jamais hors mode développement (`dev_url` = `None`).
+    /// Regression from round 21 reported by the user: under `tauri dev`, the app's page
+    /// (served by the development server) was blocked. Now allowed, but only the
+    /// server's EXACT origin, and never outside development mode (`dev_url` = `None`).
     #[test]
     fn navigation_guard_allows_the_dev_server_only_in_dev_mode() {
         let dev = url("http://127.0.0.1:1430/");
@@ -9055,8 +9008,8 @@ mod tests {
         assert!(!is_app_origin(&url("https://evil.example/"), Some(&dev)));
     }
 
-    /// Messages Ledger suivis d'un mot d'état ou d'un nom : traduits en
-    /// conservant la valeur ; nom de compte repris tel quel.
+    /// Ledger messages followed by a status word or a name: translated while keeping
+    /// the value; account name reused as is.
     #[test]
     fn ledger_errors_are_translated_with_their_values() {
         assert_eq!(translate_dynamic_error("opération refusée sur le Ledger (0x6985)").unwrap(), "operation refused on the Ledger (0x6985)");
@@ -9078,9 +9031,8 @@ mod tests {
         assert!(EXACT_ERROR_TRANSLATIONS.iter().any(|(fr, _)| *fr == "compte matériel introuvable"));
     }
 
-    /// Échange suspendu chez THORChain/Maya, solde SOL sous la réserve
-    /// minimale : messages produits par le code de `core` lui-même (un texte
-    /// renommé là-bas ferait échouer ce test).
+    /// Swap halted on THORChain/Maya, SOL balance below the minimum reserve: messages
+    /// produced by `core`'s own code (a text renamed there would make this test fail).
     #[test]
     fn swap_halt_and_rent_errors_are_translated() {
         use openpgp_wallet_core::{sol_rpc, thorchain_rpc};
@@ -9090,15 +9042,15 @@ mod tests {
         );
         assert!(translate_dynamic_error(&thorchain_rpc::halted_message("Maya", &["Bitcoin", "Zcash"])).unwrap().starts_with("Maya has paused swaps on Bitcoin and Zcash for now"));
         assert!(translate_dynamic_error(&thorchain_rpc::halted_message("Maya", &[])).unwrap().starts_with("Maya has paused swaps for now"));
-        // Nœud injoignable : réserve par défaut (0,00065024 SOL).
+        // Node unreachable: default reserve (0.00065024 SOL).
         let rpc = sol_rpc::SolRpc::new("http://127.0.0.1:1");
         let rent = |index: u64| rpc.explain_simulation_failure(&serde_json::json!({"InsufficientFundsForRent": {"account_index": index}}), "").unwrap().to_string();
         assert!(translate_dynamic_error(&rent(0)).unwrap().starts_with("SOL balance too tight: at least 0.00065024 SOL must remain"));
         assert!(translate_dynamic_error(&rent(2)).unwrap().starts_with("another account touched by the operation would end up below Solana's minimum reserve (0.00065024 SOL)"));
     }
 
-    /// Échanges depuis Bitcoin et Zcash : messages dynamiques de `core`
-    /// traduits (formes produites par le code de `core`).
+    /// Swaps from Bitcoin and Zcash: `core`'s dynamic messages translated (forms
+    /// produced by `core`'s code).
     #[test]
     fn bitcoin_and_zcash_swap_errors_are_translated() {
         assert_eq!(
@@ -9115,8 +9067,8 @@ mod tests {
             "Zcash fees increased since the confirmation (0.00025000 instead of 0.00020000 ZEC) — start again"
         );
         assert_eq!(translate_dynamic_error("devis Maya refusé : amount less than dust threshold").unwrap(), "Maya quote refused: amount less than dust threshold");
-        // Destinataire Bitcoin : poussière (message réel de `api::btc_recipient`),
-        // refus d'adresse.
+        // Bitcoin recipient: dust (real message from `api::btc_recipient`), address
+        // refusal.
         let dust = api::btc_recipient(&wallet_flow::BTC_MAINNET, "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa", 545).unwrap_err().to_string();
         assert_eq!(translate_dynamic_error(&dust).unwrap(), "amount too small for the Bitcoin network: at least 0.00000546 BTC to this address");
         for refused in ["bc1zw508d6qejxtdg4y5r3zarvaryvaxxpcs", "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t5", "DH5yaieqoZN36fDVciNyRueRGvGLR3mr7L"] {
@@ -9128,10 +9080,10 @@ mod tests {
         }
     }
 
-    /// Réseau ajouté par l'utilisateur : refus traduits (messages réels du
-    /// module), libellé « réseau ajouté par vous » dans la boîte, carte de
-    /// sa monnaie à lui (jamais celle de l'ETH, donc pas de cours), lien
-    /// « Suivre la transaction » seulement avec un explorateur.
+    /// Network added by the user: translated refusals (the module's real messages), the
+    /// "network added by you" label in the dialog, the card of its own native coin
+    /// (never ETH's, so no price), and a "Track the transaction" link only when there
+    /// is an explorer.
     #[test]
     fn custom_networks_are_labelled_and_their_errors_translated() {
         use openpgp_wallet_core::custom_networks::validate;
@@ -9179,7 +9131,7 @@ mod tests {
         assert!(!external_link_allowed("https://scan.b.example.com/tx/0xabc"), "réseau retiré : lien refusé");
     }
 
-    /// Messages d'erreur Tron et SwapKit : présents dans le code, traduits.
+    /// Tron and SwapKit error messages: present in the code, translated.
     #[test]
     fn tron_and_swapkit_error_messages_have_a_translation() {
         let sources = [include_str!("../../../core/src/tron.rs"), include_str!("../../../core/src/swapkit.rs"), include_str!("../../../core/src/api.rs")];
@@ -9213,7 +9165,7 @@ mod tests {
         assert_eq!(translate_dynamic_error("transaction Tron refusée : CONTRACT_VALIDATE_ERROR x").unwrap(), "Tron transaction refused: CONTRACT_VALIDATE_ERROR x");
     }
 
-    /// Messages d'erreur XRP : présents dans le code, traduits (fixes et variables).
+    /// XRP error messages: present in the code, translated (fixed and variable).
     #[test]
     fn xrp_error_messages_have_a_translation() {
         let sources = [include_str!("../../../core/src/xrp.rs"), include_str!("../../../core/src/api.rs"), include_str!("lib.rs")];
@@ -9264,7 +9216,7 @@ mod tests {
         assert_eq!(translate_dynamic_error("frais du réseau XRP anormalement élevés (0.002000 XRP) — réessayez plus tard").unwrap(), "abnormally high XRP network fee (0.002000 XRP) — try again later");
     }
 
-    /// Messages d'erreur Stellar : présents dans le code, traduits (fixes et variables).
+    /// Stellar error messages: present in the code, translated (fixed and variable).
     #[test]
     fn stellar_error_messages_have_a_translation() {
         let sources = [include_str!("../../../core/src/stellar.rs"), include_str!("../../../core/src/api.rs"), include_str!("lib.rs")];
@@ -9315,7 +9267,7 @@ mod tests {
         );
     }
 
-    /// Messages d'erreur NEAR : présents dans le code, traduits (fixes et variables).
+    /// NEAR error messages: present in the code, translated (fixed and variable).
     #[test]
     fn near_error_messages_have_a_translation() {
         let sources = [include_str!("../../../core/src/near.rs"), include_str!("../../../core/src/api.rs"), include_str!("lib.rs")];
@@ -9357,7 +9309,7 @@ mod tests {
         );
     }
 
-    /// Messages d'erreur Cardano : présents dans le code, traduits (fixes et variables).
+    /// Cardano error messages: present in the code, translated (fixed and variable).
     #[test]
     fn cardano_error_messages_have_a_translation() {
         let sources = [include_str!("../../../core/src/cardano.rs"), include_str!("../../../core/src/api.rs"), include_str!("lib.rs")];
@@ -9398,8 +9350,8 @@ mod tests {
         );
     }
 
-    /// Délai d'annulation : le rappel (réseau, montant, adresse, tag / mémo)
-    /// part tel quel vers l'interface, au format qu'elle lit.
+    /// Cancellation delay: the reminder (network, amount, address, tag / memo) goes as
+    /// is to the UI, in the format it reads.
     #[test]
     fn countdown_event_carries_the_recap() {
         let recap = GraceRecap { note: Some(DestinationNote::XrpTag(104_857).recap()), ..GraceRecap::new("XRP Ledger MAINNET — fonds réels", "2 XRP", "rMQ98K56yXJbDGv49ZSmW51sLn94Xe1mu1").on("xrp_mainnet") };
@@ -9415,8 +9367,8 @@ mod tests {
         assert_eq!(DestinationNote::StellarMemo(StellarMemo::Text("abc".into())).recap(), ("Mémo (texte)".to_string(), "\"abc\"".to_string()));
     }
 
-    /// « Suivre la transaction » : chaque lien reste dans la liste blanche des
-    /// liens externes ; un identifiant inattendu ne donne aucun lien.
+    /// "Track the transaction": every link stays on the external link allowlist; an
+    /// unexpected identifier gives no link.
     #[test]
     fn sent_transaction_links_stay_on_known_explorers() {
         let networks = [
@@ -9433,7 +9385,7 @@ mod tests {
         }
     }
 
-    /// Messages d'erreur MoonPay Trade : présents dans le code, traduits (fixes et variables).
+    /// MoonPay Trade error messages: present in the code, translated (fixed and variable).
     #[test]
     fn moonpay_error_messages_have_a_translation() {
         let sources = [include_str!("../../../core/src/moonpay_trade.rs"), include_str!("../../../core/src/api.rs"), include_str!("lib.rs")];
@@ -9502,7 +9454,7 @@ mod tests {
         }
     }
 
-    /// Messages d'erreur Bittensor : présents dans le code, traduits (fixes et variables).
+    /// Bittensor error messages: present in the code, translated (fixed and variable).
     #[test]
     fn bittensor_error_messages_have_a_translation() {
         let sources = [include_str!("../../../core/src/bittensor.rs"), include_str!("../../../core/src/api.rs"), include_str!("lib.rs")];
@@ -9556,7 +9508,7 @@ mod tests {
         }
     }
 
-    /// Messages d'erreur Stacks : présents dans le code, traduits (fixes et variables).
+    /// Stacks error messages: present in the code, translated (fixed and variable).
     #[test]
     fn stacks_error_messages_have_a_translation() {
         let sources = [include_str!("../../../core/src/stacks.rs"), include_str!("../../../core/src/api.rs"), include_str!("lib.rs")];
@@ -9590,8 +9542,8 @@ mod tests {
         );
     }
 
-    /// Messages d'erreur Dogecoin : présents dans le code (fixes), tous traduits
-    /// (fixes et variables).
+    /// Dogecoin error messages: present in the code (fixed), all translated (fixed and
+    /// variable).
     #[test]
     fn dogecoin_error_messages_all_have_a_translation() {
         let sources = [include_str!("../../../core/src/doge.rs"), include_str!("../../../core/src/api.rs")];
@@ -9633,9 +9585,9 @@ mod tests {
         }
     }
 
-    /// Chaque message d'erreur des modules matériels a sa traduction : les
-    /// textes exacts du code sont relus ici, pour qu'un message renommé côté
-    /// Rust ne perde pas silencieusement sa version anglaise.
+    /// Every error message from the hardware modules has its translation: the exact
+    /// texts from the code are reread here, so a message renamed on the Rust side does
+    /// not silently lose its English version.
     #[test]
     fn hardware_error_messages_all_have_a_translation() {
         let sources = [
@@ -9661,10 +9613,10 @@ mod tests {
         }
     }
 
-    /// Contrats et mints des jetons écrits dans l'interface (demandes de
-    /// paiement seulement : un envoi ne passe que l'identifiant du jeton)
-    /// identiques au registre Rust, dans les deux sens, réseaux compris — un QR
-    /// ne peut pas désigner un autre contrat que celui des envois.
+    /// Token contracts and mints written in the UI (payment requests only: a send only
+    /// passes the token identifier) identical to the Rust registry, both ways, networks
+    /// included, so a QR code cannot designate a different contract from the one sends
+    /// use.
     #[test]
     fn frontend_token_contracts_match_the_registry() {
         use openpgp_wallet_core::tokens::{TokenKind, TOKENS};
@@ -9698,9 +9650,9 @@ mod tests {
         }
     }
 
-    /// Chaque message de la sauvegarde sur clé USB existe dans le code et a sa
-    /// traduction anglaise (messages à numéro de part ou nom de fichier :
-    /// traduits par `translate_dynamic_error`).
+    /// Every USB backup message exists in the code and has its English translation
+    /// (messages with a share number or file name: translated by
+    /// `translate_dynamic_error`).
     #[test]
     fn usb_backup_messages_all_have_a_translation() {
         let sources = [include_str!("../../../core/src/usb_backup.rs"), include_str!("../../../core/src/api.rs"), include_str!("lib.rs")];
@@ -9738,9 +9690,8 @@ mod tests {
         }
     }
 
-    /// Restauration USB : une sauvegarde n'est complète qu'avec deux parts
-    /// DIFFÉRENTES du même kit ; plusieurs complètes → toutes proposées, dans
-    /// l'ordre de lecture.
+    /// USB restore: a backup is only complete with two DIFFERENT shares of the same
+    /// kit; several complete ones → all offered, in reading order.
     #[test]
     fn complete_usb_kits_need_two_different_shares() {
         use openpgp_wallet_core::usb_backup::{ShareFiles, ShareInfo};
@@ -9753,8 +9704,8 @@ mod tests {
         assert_eq!(complete_kits(&[share("bb", 1), share("aa", 1), share("aa", 2), share("bb", 3)]), vec!["bb", "aa"]);
     }
 
-    /// Consigne Ledger toujours séparée du montant ou des frais par une ligne
-    /// vide (constaté sans ligne vide pour Solana, qui n'a pas de ligne de frais).
+    /// The Ledger instruction is always separated from the amount or the fee line by a
+    /// blank line (seen without a blank line for Solana, which has no fee line).
     #[test]
     fn device_note_is_set_apart_in_the_confirmation() {
         let text = |fee: Option<&str>| transaction_confirmation_text("sol_devnet", "Dest", "0.01 SOL", "Ledger — A", fee_and_device_note(fee.map(str::to_string), Some("NOTE")).as_deref(), None, None);
