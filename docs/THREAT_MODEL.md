@@ -1,211 +1,213 @@
-# Modèle de menace — OpenPGP Wallet (application Windows)
+# Threat model: OpenPGP Wallet (Windows application)
 
-Document de travail, à jour au 04/10/2026 (v2.9.0 et commits suivants). Il structure le modèle informel de
-`ETAPES.md` (« Modèle de menace : malware actif vs vol de fichier hors ligne ») en vue d'un audit professionnel :
-ce que l'on protège, contre qui, par quels moyens, et ce qui reste à risque. Chaque contre-mesure renvoie au code
-qui la met en œuvre. **Aucune de ces protections n'a encore été vérifiée par un auditeur indépendant.**
+Working document, last reviewed on 2026-10-04 (v2.9.0 and later commits); the list of networks was brought up to
+date on 2026-10-13 (Bittensor added, HyperEVM removed). It gives structure to the project's informal threat
+model ("active malware vs. offline file theft") with a professional audit in mind: what is protected, against
+whom, by what means, and what remains at risk. Each countermeasure points to the code that implements it.
+**None of these protections has been verified by an independent auditor yet.**
 
-## 1. Périmètre
+## 1. Scope
 
-- Application de bureau Tauri v2 pour Windows : cœur Rust (`core/`), pont de commandes (`app/src-tauri`),
-  interface web locale (`app/src`).
-- Portefeuille non dépositaire multi-réseaux : Bitcoin, réseaux EVM (Ethereum, L2, BNB Chain, Avalanche,
-  Polygon, HyperEVM), Solana, Zcash (transparent et protégé Orchard), Monero, Dogecoin, Tron (TRX et USDT
-  TRC-20), XRP Ledger, Stellar, NEAR, Cardano, Stacks, jetons du registre (`tokens.rs`).
-- Hors périmètre : la version iOS (non démarrée), les services tiers eux-mêmes (nœuds, agrégateurs d'échange),
-  le système d'exploitation et le matériel.
+- Tauri v2 desktop application for Windows: Rust core (`core/`), command bridge (`app/src-tauri`), local web
+  interface (`app/src`).
+- Non-custodial multi-network wallet: Bitcoin, EVM networks (Ethereum, L2s, BNB Chain, Avalanche, Polygon),
+  Solana, Zcash (transparent and shielded), Monero, Dogecoin, Tron (TRX and TRC-20 USDT), XRP Ledger, Stellar,
+  NEAR, Cardano, Stacks, Bittensor, and the tokens in the registry (`tokens.rs`).
+- Out of scope: the iOS version (not started), the third-party services themselves (nodes, swap aggregators),
+  the operating system and the hardware.
 
-## 2. Actifs
+## 2. Assets
 
-| Actif | Où il vit | Conséquence d'une fuite |
+| Asset | Where it lives | Consequence of a leak |
 |---|---|---|
-| Entropie maîtresse (seed HD) | Coffre local chiffré `device_vault.asc` ; en clair seulement le temps d'une opération, en mémoire verrouillée | Perte totale des fonds de tous les réseaux et profils |
-| Clé privée PGP de l'appareil | Coffre Windows (Credential Manager), repli fichier chiffré | Avec le mot de passe : accès au coffre local |
-| Mot de passe de l'appareil | Tête de l'utilisateur ; jamais stocké | Avec la clé de l'appareil : accès au coffre |
-| Kit de sauvegarde Shamir (3 parts, 2 suffisent) | Fichiers ou clés USB de l'utilisateur, chaque part chiffrée PGP par sa propre phrase de passe | 2 parts + leurs phrases : perte totale |
-| Clés dérivées (signature) | Dérivées à la volée de la seed, effacées après usage | Perte des fonds du réseau concerné |
-| Clés de visualisation Zcash (UFVK) et Monero (clé privée de vue) | Mémoire du processus après déverrouillage ; UFVK aussi dans `zcash_shielded.sqlite` | Confidentialité : historique et soldes protégés visibles, aucun fonds perdu |
-| État local des cryptos privées | `zcash_shielded.sqlite`, `monero_wallet.json` | Confidentialité seulement |
-| Données de confort | Profils, carnet d'adresses, destinataires déjà payés, clé Etherscan, nœud Monero | Confidentialité (adresses, habitudes) |
-| Intégrité de ce qui est signé | Chaîne de construction des transactions | Fonds envoyés ailleurs que voulu |
+| Master entropy (HD seed) | Encrypted local vault `device_vault.asc`; in the clear only for the duration of an operation, in locked memory | Total loss of funds on every network and profile |
+| Device PGP private key | Windows vault (Credential Manager), encrypted file as a fallback | With the password: access to the local vault |
+| Device password | The user's head; never stored | With the device key: access to the vault |
+| Shamir backup kit (3 shares, any 2 are enough) | The user's files or USB drives, each share PGP-encrypted with its own passphrase | 2 shares + their passphrases: total loss |
+| Derived (signing) keys | Derived on the fly from the seed, wiped after use | Loss of funds on the network concerned |
+| Zcash (UFVK) and Monero (private view key) viewing keys | Process memory after unlock; the UFVK is also in `zcash_shielded.sqlite` | Privacy: shielded history and balances visible, no funds lost |
+| Local state of the private cryptos | `zcash_shielded.sqlite`, `monero_wallet.json` | Privacy only |
+| Convenience data | Profiles, address book, recipients already paid, Monero node | Privacy (addresses, habits) |
+| Integrity of what is signed | The transaction building pipeline | Funds sent somewhere other than intended |
 
-## 3. Frontières de confiance
+## 3. Trust boundaries
 
-1. **Interface web ↔ cœur Rust** : l'interface est traitée comme non fiable. Elle ne reçoit que des données
-   publiques (adresses, soldes, identifiants de transaction) ; tout ce qui est signé est recalculé et confirmé
-   côté Rust (`app/src-tauri/src/lib.rs`).
-2. **Processus ↔ système d'exploitation** : coffre Windows, Windows Hello, boîtes de dialogue natives.
-3. **Application ↔ réseau** : nœuds publics, indexeurs, agrégateurs d'échange, WalletConnect.
-4. **Application ↔ appareils matériels** : Ledger, Trezor (USB).
-5. **Application ↔ utilisateur** : ce qu'il voit et confirme (boîte native), ce qu'il saisit.
+1. **Web interface ↔ Rust core**: the interface is treated as untrusted. It only receives public data
+   (addresses, balances, transaction identifiers); everything that gets signed is recomputed and confirmed on
+   the Rust side (`app/src-tauri/src/lib.rs`).
+2. **Process ↔ operating system**: Windows vault, Windows Hello, native dialogs.
+3. **Application ↔ network**: public nodes, indexers, swap aggregators, WalletConnect.
+4. **Application ↔ hardware devices**: Ledger, Trezor (USB).
+5. **Application ↔ user**: what they see and confirm (native dialog), what they type.
 
-## 4. Attaquants
+## 4. Attackers
 
-| Code | Attaquant | Capacités supposées |
+| Code | Attacker | Assumed capabilities |
 |---|---|---|
-| A1 | Voleur hors ligne | Copie du disque ou du dossier de données, sans session ouverte |
-| A2 | Logiciel malveillant dans la session | Lit l'écran, le presse-papiers, les frappes ; peut lire la mémoire du processus |
-| A3 | Service réseau malveillant ou compromis | Nœud, indexeur, agrégateur d'échange, relais : réponses fausses, transactions piégées |
-| A4 | Application tierce malveillante (dApp) | Demandes de signature via WalletConnect |
-| A5 | Attaquant réseau (MITM) | Intercepte ou modifie le trafic non chiffré |
-| A6 | Chaîne d'approvisionnement | Dépendance compromise, binaire falsifié en téléchargement |
-| A7 | Ingénierie sociale | Faux support, fausse mise à jour, demande des fichiers de sauvegarde |
-| A8 | Contenu injecté dans l'interface | Texte malveillant dans une réponse réseau affichée (XSS) |
+| A1 | Offline thief | Copy of the disk or the data folder, without an open session |
+| A2 | Malware in the session | Reads the screen, the clipboard, keystrokes; may read the process's memory |
+| A3 | Malicious or compromised network service | Node, indexer, swap aggregator, relay: false answers, booby-trapped transactions |
+| A4 | Malicious third-party application (dApp) | Signing requests through WalletConnect |
+| A5 | Network attacker (MITM) | Intercepts or modifies unencrypted traffic |
+| A6 | Supply chain | Compromised dependency, binary tampered with on download |
+| A7 | Social engineering | Fake support, fake update, asking for the backup files |
+| A8 | Content injected into the interface | Malicious text in a network response that gets displayed (XSS) |
 
-## 5. Menaces et contre-mesures
+## 5. Threats and countermeasures
 
-### 5.1 Vol hors ligne (A1)
-- **Coffre chiffré** par l'identité PGP de l'appareil (sequoia-openpgp, backend `crypto-cng`) ; la clé privée
-  de l'appareil est chiffrée par le mot de passe (S2K) et rangée dans le coffre Windows
-  (`core/src/secure_storage.rs`). Un disque copié ne contient pas de seed en clair.
-- **Mot de passe fort** exigé à la création (12 caractères minimum, indicateur de force).
-- **Limitation des essais** de déverrouillage : 5 essais libres, puis attente croissante de 5 s à 300 s, état
-  persistant (`api::enforce_unlock_lockout`).
-- **Changement de portefeuille sur l'appareil** (réinitialisation, restauration) : l'état propre à l'ancienne
-  seed (base Zcash protégée, état Monero, destinataires déjà payés) est supprimé, et au déverrouillage les
-  comptes Zcash d'une autre empreinte de seed et l'état Monero d'une autre clé sont écartés avant tout affichage.
-- **Kit Shamir 2-sur-3** : une part seule ne révèle rien ; chaque part a sa propre phrase de passe ; deux parts
-  refusées sur une même clé USB (`usb_backup.rs`).
-- *Risque résiduel* : un mot de passe faible reste attaquable par force brute hors ligne si la clé privée de
-  l'appareil est extraite du coffre Windows (même session utilisateur) ; confidentialité des fichiers d'état
-  (Zcash protégé, Monero, carnet d'adresses), qui ne sont pas chiffrés.
+### 5.1 Offline theft (A1)
+- **Encrypted vault** with the device's PGP identity (sequoia-openpgp, `crypto-cng` backend); the device's
+  private key is encrypted with the password (S2K) and stored in the Windows vault
+  (`core/src/secure_storage.rs`). A copied disk holds no seed in the clear.
+- **Strong password** required at creation (12 characters minimum, strength indicator).
+- **Unlock attempt limiting**: 5 free attempts, then a growing wait from 5 s to 300 s, persisted
+  (`api::enforce_unlock_lockout`).
+- **Changing the wallet on the device** (reset, restore): state tied to the old seed (shielded Zcash database,
+  Monero state, recipients already paid) is deleted, and at unlock, Zcash accounts with another seed
+  fingerprint and Monero state for another key are set aside before anything is displayed.
+- **2-of-3 Shamir kit**: a single share reveals nothing; each share has its own passphrase; two shares are
+  refused on the same USB drive (`usb_backup.rs`).
+- *Residual risk*: a weak password remains open to offline brute force if the device's private key is
+  extracted from the Windows vault (same user session); privacy of the state files (shielded Zcash, Monero,
+  address book), which are not encrypted.
 
-### 5.2 Logiciel malveillant dans la session (A2)
-- **Seed jamais gardée** : redéchiffrée pour chaque opération sensible (envoi, inscription, régénération du kit),
-  puis effacée (`zeroize`) ; mémoire verrouillée contre l'écriture sur disque (`memory_guard::lock`,
+### 5.2 Malware in the session (A2)
+- **Seed never kept**: decrypted again for each sensitive operation (send, name registration, kit
+  regeneration), then wiped (`zeroize`); memory locked against being written to disk (`memory_guard::lock`,
   `VirtualLock`).
-- **Verrouillage automatique** après 10 minutes d'inactivité (interface) ; les clés de visualisation et les
-  caches d'adresses sont vidés au verrouillage.
-- **Boîte de confirmation native** (OS, pas HTML) affichant le destinataire, le montant et les frais exacts qui
-  seront signés ; avertissements d'adresse jamais payée, d'adresse ressemblante à une adresse déjà utilisée
-  (`lookalike_warning`) et d'adresse jamais utilisée sur la chaîne.
-- **Windows Hello** possible à la place du mot de passe pour le déverrouillage (pas de frappe à capturer).
-- **Portefeuilles matériels** (Ledger, Trezor) : la clé ne quitte jamais l'appareil, revue à l'écran.
-- **Solde vérifié avant la boîte de confirmation** pour tous les envois du portefeuille (Bitcoin compris depuis
-  la v2.10) : un envoi impossible n'est jamais présenté à la confirmation.
-- **Délai d'annulation de 5 s** après la boîte native, avant toute signature, imposé côté Rust
-  (`send_grace_period`) : l'interface peut seulement l'écourter ou annuler ; la seed n'est déverrouillée
-  qu'après ; un verrouillage annule les envois en attente.
-- **Destinataire reconnu** : quand l'adresse est celle d'un autre profil du portefeuille (adresses dérivées au
-  déverrouillage, jamais fournies par l'interface), la boîte native nomme ce profil.
-- **« Max »** recalculé côté Rust au moment de la boîte (solde moins les frais du moment), affiché « maximum,
-  frais déduits » puis signé tel quel : un drapeau falsifié par l'interface ne change que le montant montré.
-- *Risque résiduel* : un malware capable de lire la mémoire au moment d'une signature, ou de capturer le mot de
-  passe, obtient la seed ; un remplacement d'adresse dans le presse-papiers n'est détecté que s'il ressemble à
-  une adresse déjà payée. Aucun portefeuille logiciel ne protège totalement contre A2 (raison d'être des
-  portefeuilles matériels).
+- **Automatic lock** after 10 minutes of inactivity (interface); viewing keys and address caches are cleared
+  on lock.
+- **Native confirmation dialog** (OS, not HTML) showing the exact recipient, amount and fees that will be
+  signed; warnings for an address never paid, an address that looks like one already used
+  (`lookalike_warning`) and an address never used on-chain.
+- **Windows Hello** can replace the password for unlocking (no keystrokes to capture).
+- **Hardware wallets** (Ledger, Trezor): the key never leaves the device, with on-screen review.
+- **Balance checked before the confirmation dialog** for every wallet send (Bitcoin included since v2.10): an
+  impossible send is never presented for confirmation.
+- **5 s cancellation delay** after the native dialog, before any signing, enforced on the Rust side
+  (`send_grace_period`): the interface can only shorten it or cancel; the seed is only unlocked afterwards; a
+  lock cancels pending sends.
+- **Recognized recipient**: when the address belongs to another profile of the wallet (addresses derived at
+  unlock, never supplied by the interface), the native dialog names that profile.
+- **"Max"** recomputed on the Rust side when the dialog opens (balance minus current fees), shown as "maximum,
+  fees deducted" and then signed as is: a flag forged by the interface only changes the amount shown.
+- *Residual risk*: malware able to read memory at signing time, or to capture the password, gets the seed; a
+  clipboard address swap is only detected if it looks like an address already paid. No software wallet fully
+  protects against A2 (which is why hardware wallets exist).
 
-### 5.3 Services réseau malveillants (A3) et attaquant réseau (A5)
-- **Tout en HTTPS** (nœuds, indexeurs, agrégateurs) ; nœud Monero en `http://` accepté seulement sur la machine
-  ou le réseau local (`monero::normalize_node`).
-- **Transactions construites et signées localement** à partir de champs vérifiés : identifiant de chaîne EVM fixé
-  par l'app, nonce `pending`, prix du gas affiché puis signé tel quel, plafonds de frais (Monero : 400 000
-  piconeros par unité de poids ; Zcash : frais ZIP-317 jamais supérieurs à ceux affichés).
-- **Garde de version du réseau** : Zcash (branche de consensus comparée au serveur), Monero (mise à niveau 16
-  attendue) ; envoi refusé si le réseau a évolué au-delà de ce que la bibliothèque connaît.
-- **Échanges** :
-  - THORChain/Maya : memo relu et vérifié (actif, adresse de destination à soi, minimum de sortie, nom
-    d'affiliation seulement s'il est vérifié sur le réseau) avant signature (`thorchain_rpc::verify_memo`) ;
-  - LI.FI : seules les routes dont le destinataire est vérifiable sont gardées ; transaction Bitcoin préparée
-    par LI.FI vérifiée sortie par sortie (fonds de l'utilisateur seulement, un seul dépôt, monnaie rendue à
-    soi, frais bornés — `lifi.rs`) ;
-  - CoW, Jupiter : ordre et transaction relus avant signature (`cow.rs`, `jupiter_rpc.rs`) ;
-  - SwapKit (NEAR Intents, Chainflip) : le dépôt ouvert par SwapKit est confirmé par l'API officielle du
-    fournisseur, indépendante de SwapKit (adresse de dépôt, cryptos, montant, arrivée et remboursement sur les
-    adresses de l'utilisateur, minimum, échéance, commissions bornées) ; le dépôt est un virement construit et
-    signé par l'app (`swapkit.rs`). Risque résiduel : compromission simultanée de SwapKit et du fournisseur ;
-    une fois déposés, les fonds dépendent de l'exécution par le fournisseur (remboursement prévu sinon).
-- **Monero** : blocs analysés localement (le nœud ne sait pas quelles sorties sont à soi) ; la sélection des
-  leurres refuse un nœud qui ment sur la sortie dépensée ; réorganisations détectées.
-- **Zcash protégé** : blocs compacts déchiffrés localement (lightwalletd ne voit que des demandes de blocs).
-- **Dogecoin** : la signature historique (sans SegWit) n'engage pas le montant des entrées — un service qui
-  mentirait sur la valeur d'une sortie ferait partir la différence en frais. Chaque entrée est relue dans sa
-  transaction d'origine brute, dont le hash recalculé doit égaler l'identifiant : montant et script vérifiés
-  avant signature (`doge::verify_inputs`) ; frais bornés (0,01 à 5 DOGE/ko), affichés puis jamais dépassés.
-- **Tron** : transactions encodées et signées localement (encodage comparé octet pour octet à celui d'un nœud
-  java-tron) ; un transfert de jeton TRC-20 est d'abord SIMULÉ depuis le compte de l'utilisateur et doit émettre
-  exactement le transfert voulu (émetteur, destinataire, montant) ; frais maximum affichés, `fee_limit` signé et
-  plafonné (100 TRX).
-- **XRP Ledger** : paiements sérialisés et signés localement (format binaire canonique vérifié contre les
-  bibliothèques officielles de Ripple ; signature acceptée par un nœud réel, version altérée refusée). Règles
-  du réseau appliquées AVANT la boîte : réserve (1 XRP + 0,2 par objet) jamais envoyable, destinataire neuf
-  activé seulement avec au moins la réserve de base, destinataire exigeant un tag de destination (plateformes
-  d'échange) refusé sans tag, destinataire « paiements autorisés seulement » refusé s'il n'a pas autorisé
-  l'expéditeur ; adresses « X » refusées. Le tag est toujours affiché dans la boîte native (« aucun » compris) ;
-  frais plafonnés (0,001 XRP), validité limitée à ~1 min (`LastLedgerSequence`).
-- **Stellar** : transactions XDR encodées et signées localement (octets identiques à la bibliothèque officielle
-  de la SDF ; création de compte et paiement avec mémo acceptés de bout en bout sur le réseau de test,
-  signature altérée refusée `tx_bad_auth`). Avant la boîte : réserve jamais envoyable, destinataire neuf CRÉÉ
-  avec au moins 1 XLM, destinataire exigeant un mémo (SEP-29) refusé sans mémo ; adresses muxées (M…)
-  refusées, clé secrète (S…) collée par erreur signalée. Mémo toujours affiché avec son type dans la boîte
-  native ; mémo texte limité à l'ASCII imprimable (aucun caractère invisible ou de retournement). Offre de
-  frais plafonnée (0,1 XLM), validité de 3 min calée sur l'heure du dernier registre (pas l'horloge locale).
-- **NEAR** : virements sérialisés (Borsh) et signés localement (octets identiques à la bibliothèque
-  officielle ; création d'un compte implicite et renvoi exécutés de bout en bout sur le réseau de test, frais
-  réels exacts au yoctoNEAR, signature altérée refusée `InvalidSignature`). Avant la boîte : stockage du compte
-  jamais envoyable, compte implicite neuf créé avec au moins son stockage, compte nommé inexistant refusé,
-  adresse Ethereum (0x…) refusée avec consigne. Frais : la retenue du réseau (gaz d'exécution au prix d'achat
-  minimal, + 20 %) est le maximum affiché et vérifié ; les frais réels, bien plus bas, sont affichés à côté.
-  Délai dépassé du nœud : « envoyée mais pas encore confirmée », jamais « refusée ».
-- **Cardano** : clés BIP32-Ed25519 (CIP-3 Icarus depuis l'entropie maîtresse, chemins CIP-1852) et
-  transactions CBOR construites et signées localement (octets identiques à cardano-serialization-lib ; un nœud
-  réel vérifie la signature : seule la signature MANQUANTE du propriétaire d'une entrée tierce est réclamée,
-  la version altérée est refusée `InvalidWitnessesUTXOW`). Avant la boîte : sorties à jetons ou à donnée jamais
-  dépensées, minimum d'ADA par sortie, frais exacts, monnaie rendue affichée ; adresses de contrat (script),
-  de mise en jeu, de test ou Byron refusées. Le service public (Koios) pourrait mentir sur les sorties : au
-  pire la transaction est refusée par le réseau (montants engagés par la signature, pas de perte possible).
-- **Stacks** : virements sérialisés et signés localement (octets identiques à @stacks/transactions ; envoi
-  avec mémo exécuté de bout en bout sur le réseau de test, signature altérée refusée `SignatureValidation`).
-  Avant la boîte : STX bloqués par le stacking jamais dépensés, frais plafonnés (0,1 STX), adresses de contrat
-  (SP….nom) et d'autres réseaux refusées ; mémo (34 octets, ASCII imprimable) toujours affiché dans la boîte
-  native. Nonce lu transactions en attente comprises.
-- *Risques résiduels* : un nœud malveillant peut afficher de faux soldes ou un faux historique (portefeuille
-  léger) ; un nœud Monero ou Zcash malveillant peut affaiblir la confidentialité d'un envoi ; les nœuds publics
-  voient l'adresse IP et les adresses interrogées ; un agrégateur peut proposer un mauvais cours (le minimum de
-  sortie affiché borne la perte, sans garantir le meilleur prix).
+### 5.3 Malicious network services (A3) and network attacker (A5)
+- **Everything over HTTPS** (nodes, indexers, aggregators); a Monero node over `http://` is only accepted on
+  the machine itself or the local network (`monero::normalize_node`).
+- **Transactions built and signed locally** from checked fields: EVM chain ID set by the app, `pending` nonce,
+  gas price shown and then signed as is, fee caps (Monero: 400,000 piconeros per unit of weight; Zcash: ZIP-317
+  fees never higher than those shown).
+- **Network version guard**: Zcash (consensus branch compared with the server), Monero (hard fork 16
+  expected); a send is refused if the network has moved beyond what the library knows.
+- **Swaps**:
+  - THORChain/Maya: memo reread and checked (asset, destination address is the user's own, minimum output,
+    affiliate name only if verified on the network) before signing (`thorchain_rpc::verify_memo`);
+  - LI.FI: only routes whose recipient can be verified are kept; a Bitcoin transaction prepared by LI.FI is
+    checked output by output (the user's funds only, a single deposit, change returned to the user, bounded
+    fees; `lifi.rs`);
+  - CoW, Jupiter: order and transaction reread before signing (`cow.rs`, `jupiter_rpc.rs`);
+  - SwapKit (NEAR Intents, Chainflip): the deposit opened by SwapKit is confirmed by the provider's official
+    API, independent of SwapKit (deposit address, cryptos, amount, delivery and refund to the user's
+    addresses, minimum, deadline, bounded commissions); the deposit is a transfer built and signed by the app
+    (`swapkit.rs`). Residual risk: SwapKit and the provider compromised at the same time; once deposited, the
+    funds depend on the provider executing the swap (a refund is planned otherwise).
+- **Monero**: blocks scanned locally (the node does not learn which outputs are the user's); decoy selection
+  refuses a node that lies about the output being spent; reorganizations are detected.
+- **Shielded Zcash**: compact blocks decrypted locally (lightwalletd only sees block requests).
+- **Dogecoin**: the legacy signature scheme (no SegWit) does not commit to the input amounts, so a service
+  lying about an output's value would turn the difference into fees. Each input is reread from its raw source
+  transaction, whose recomputed hash must equal the identifier: amount and script are checked before signing
+  (`doge::verify_inputs`); fees are bounded (0.01 to 5 DOGE/kB), shown and then never exceeded.
+- **Tron**: transactions encoded and signed locally (encoding compared byte for byte with a java-tron
+  node's); a TRC-20 token transfer is first SIMULATED from the user's account and must emit exactly the
+  intended transfer (sender, recipient, amount); maximum fees shown, `fee_limit` signed and capped (100 TRX).
+- **XRP Ledger**: payments serialized and signed locally (canonical binary format checked against Ripple's
+  official libraries; signature accepted by a real node, tampered version refused). Network rules applied
+  BEFORE the dialog: the reserve (1 XRP + 0.2 per object) can never be sent, a new recipient is only activated
+  with at least the base reserve, a recipient that requires a destination tag (exchanges) is refused without
+  one, a "deposit authorization" recipient is refused if it has not authorized the sender; "X" addresses are
+  refused. The tag is always shown in the native dialog ("none" included); fees capped (0.001 XRP), validity
+  limited to ~1 min (`LastLedgerSequence`).
+- **Stellar**: XDR transactions encoded and signed locally (bytes identical to the SDF's official library;
+  account creation and payment with a memo accepted end to end on testnet, tampered signature refused
+  `tx_bad_auth`). Before the dialog: the reserve can never be sent, a new recipient is CREATED with at least
+  1 XLM, a recipient that requires a memo (SEP-29) is refused without one; muxed addresses (M…) refused, a
+  secret key (S…) pasted by mistake is flagged. The memo is always shown with its type in the native dialog;
+  text memos are limited to printable ASCII (no invisible or direction-flipping characters). Fee bid capped
+  (0.1 XLM), 3-minute validity based on the latest ledger's time (not the local clock).
+- **NEAR**: transfers serialized (Borsh) and signed locally (bytes identical to the official library;
+  creation of an implicit account and a transfer back executed end to end on testnet, actual fees exact to the
+  yoctoNEAR, tampered signature refused `InvalidSignature`). Before the dialog: account storage can never be
+  sent, a new implicit account is created with at least its storage, a named account that does not exist is
+  refused, an Ethereum address (0x…) is refused with guidance. Fees: the network's hold (execution gas at the
+  minimum purchase price, + 20%) is the maximum shown and checked; the actual fees, much lower, are shown next
+  to it. Node timeout: "sent but not confirmed yet", never "refused".
+- **Cardano**: BIP32-Ed25519 keys (CIP-3 Icarus from the master entropy, CIP-1852 paths) and CBOR transactions
+  built and signed locally (bytes identical to cardano-serialization-lib; a real node verifies the signature:
+  only the MISSING signature of a third-party input's owner is requested, and the tampered version is refused
+  `InvalidWitnessesUTXOW`). Before the dialog: outputs with tokens or datums are never spent, minimum ADA per
+  output, exact fees, change shown; contract (script), staking, testnet and Byron addresses refused. The public
+  service (Koios) could lie about outputs: at worst the network refuses the transaction (amounts are committed
+  to by the signature, no possible loss).
+- **Stacks**: transfers serialized and signed locally (bytes identical to @stacks/transactions; a send with a
+  memo executed end to end on testnet, tampered signature refused `SignatureValidation`). Before the dialog:
+  STX locked by stacking are never spent, fees capped (0.1 STX), contract (SP….name) and other-network
+  addresses refused; the memo (34 bytes, printable ASCII) is always shown in the native dialog. Nonce read with
+  pending transactions included.
+- **Bittensor**: transfers encoded (SCALE) and signed locally (sr25519). On every send, the runtime's metadata
+  is reread and must match exactly what the app knows how to encode, with the pallet and call indexes frozen
+  (a node announcing other indexes is refused); the node validates the transaction before it is broadcast
+  (`validate_transaction`), and fees above a cap are refused (`bittensor.rs`).
+- *Residual risks*: a malicious node can show false balances or a false history (light wallet); a malicious
+  Monero or Zcash node can weaken a send's privacy; public nodes see the IP address and the addresses queried;
+  an aggregator can offer a bad rate (the minimum output shown bounds the loss, without guaranteeing the best
+  price).
 
-### 5.4 Applications tierces via WalletConnect (A4)
-- Demandes préparées côté Rust (`dapp_requests::prepare`) : méthodes et réseaux pris en charge seulement,
-  transaction décodée et affichée dans la boîte native avant toute signature ; l'interface ne fait que relayer.
-- *Risque résiduel* : la signature de messages arbitraires (connexion à une dApp) reste possible après
-  confirmation — l'utilisateur doit comprendre ce qu'il signe ; signature de transactions via WalletConnect non
-  testée en conditions réelles.
+### 5.4 Third-party applications through WalletConnect (A4)
+- Requests prepared on the Rust side (`dapp_requests::prepare`): supported methods and networks only, the
+  transaction decoded and shown in the native dialog before any signature; the interface only relays.
+- *Residual risk*: signing arbitrary messages (logging in to a dApp) remains possible after confirmation, so
+  the user must understand what they sign; transaction signing through WalletConnect has not been tested in
+  real conditions.
 
-### 5.5 Chaîne d'approvisionnement (A6)
-- `cargo audit` et `npm audit` à chaque version (0 vulnérabilité à la v2.9.0 ; avertissements « non maintenu »
-  sur des dépendances transitives) ; bibliothèques reconnues pour la cryptographie (sequoia-openpgp,
-  librustzcash, monero-oxide, k256, ed25519-dalek).
-- Empreintes SHA-256 des binaires publiées avec chaque version.
-- *Risques résiduels* : **binaire non signé** (Authenticode) — rien ne prouve son origine, et SmartScreen
-  l'avertit ; compilation non reproductible ; pas de mise à jour automatique vérifiée (téléchargement manuel).
+### 5.5 Supply chain (A6)
+- `cargo audit` and `npm audit` at each release (0 vulnerabilities at v2.9.0; "unmaintained" warnings on
+  transitive dependencies); well-known libraries for the cryptography (sequoia-openpgp, librustzcash,
+  monero-oxide, k256, ed25519-dalek).
+- SHA-256 hashes of the binaries published with each release.
+- *Residual risks*: **unsigned binary** (Authenticode), so nothing proves its origin and SmartScreen warns
+  about it; non-reproducible build; no verified automatic update (manual download).
 
-### 5.6 Ingénierie sociale (A7)
-- L'utilisateur ne voit jamais de phrase de récupération ; les phrases de passe du kit sont affichées une fois,
-  pour être rangées hors ligne.
-- Rappel affiché avec le kit : personne ne demandera jamais les parts ni leurs phrases de passe.
-- *Risque résiduel* : un utilisateur qui remet malgré tout deux parts et leurs phrases à un faux support perd
-  ses fonds.
+### 5.6 Social engineering (A7)
+- The user never sees a recovery phrase; the kit's passphrases are shown once, to be stored offline.
+- A reminder shown with the kit: nobody will ever ask for the shares or their passphrases.
+- *Residual risk*: a user who nevertheless hands two shares and their passphrases to fake support loses their
+  funds.
 
-### 5.7 Contenu injecté dans l'interface (A8)
-- **CSP stricte** (`tauri.conf.json`) et permissions Tauri minimales (`core:default` seul) : pas d'accès fichiers
-  ni shell depuis l'interface.
-- Textes venant du réseau insérés en `textContent`, jamais en `innerHTML` (messages d'erreur, historiques).
-- Liens externes limités à une liste blanche ouverte côté Rust (`open_external_link`).
-- *Risque résiduel* : une faille dans WebView2 ou dans Tauri contournerait ces protections ; même alors,
-  l'interface n'a accès à aucun secret ni à aucune signature sans la boîte native.
+### 5.7 Content injected into the interface (A8)
+- **Strict CSP** (`tauri.conf.json`) and minimal Tauri permissions (`core:default` only): no file or shell
+  access from the interface.
+- Text coming from the network inserted with `textContent`, never `innerHTML` (error messages, histories).
+- External links limited to an allowlist enforced on the Rust side (`open_external_link`).
+- *Residual risk*: a flaw in WebView2 or in Tauri would bypass these protections; even then, the interface has
+  no access to any secret or any signature without the native dialog.
 
-## 6. Hypothèses
-- Le système d'exploitation n'est pas compromis au niveau noyau ; le coffre Windows et Windows Hello font ce
-  qu'ils annoncent.
-- Les bibliothèques cryptographiques utilisées sont correctes.
-- L'utilisateur lit la boîte de confirmation native avant de valider.
-- Les parts du kit de sauvegarde sont rangées dans des endroits distincts.
+## 6. Assumptions
+- The operating system is not compromised at the kernel level; the Windows vault and Windows Hello do what
+  they claim.
+- The cryptographic libraries used are correct.
+- The user reads the native confirmation dialog before approving.
+- The shares of the backup kit are stored in separate places.
 
-## 7. Points ouverts (avant toute confiance publique)
-1. Signature de code Authenticode du binaire (achat d'un certificat par le porteur du projet).
-2. Audit de sécurité par un prestataire indépendant.
-3. Chiffrement des fichiers d'état locaux (Zcash protégé, Monero, carnet d'adresses) par une clé dérivée du
-   coffre, pour la confidentialité face à A1.
-4. Tests en conditions réelles : dépenses Monero et Zcash protégé, échanges depuis BTC/ZEC, restauration depuis
-   clé USB, Ledger/Trezor sur de vrais appareils, signatures WalletConnect.
-5. Compilation reproductible et vérification des mises à jour.
+## 7. Open items (before any public trust)
+1. Authenticode code signing of the binary (certificate to be bought by the project owner).
+2. Security audit by an independent firm.
+3. Encryption of the local state files (shielded Zcash, Monero, address book) with a key derived from the
+   vault, for privacy against A1.
+4. Real-world tests: Monero and shielded Zcash spends, swaps from BTC/ZEC, restore from a USB drive,
+   Ledger/Trezor on real devices, WalletConnect signatures.
+5. Reproducible build and verification of updates.
