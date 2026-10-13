@@ -1,15 +1,15 @@
-//! Primitives cryptographiques du protocole WalletConnect v2, reproduites
-//! d'après le code de référence du SDK officiel (`packages/utils/src/crypto.ts`
-//! du monorepo WalletConnect, lu directement) :
-//! - échange X25519, puis clé symétrique = HKDF-SHA256(secret partagé, sans
-//!   sel, sans info, 32 octets) ;
-//! - "topic" (canal du relais) = SHA-256 de la clé symétrique, en hexadécimal ;
-//! - enveloppe = base64 (avec remplissage) de `type (1 octet) | [clé publique
-//!   de l'émetteur (32), type 1 seulement] | nonce (12) | ChaCha20-Poly1305(message)`,
-//!   sans données authentifiées additionnelles.
+//! Cryptographic primitives of the WalletConnect v2 protocol, reproduced from the
+//! official SDK's reference code (`packages/utils/src/crypto.ts` in the WalletConnect
+//! monorepo, read directly):
+//! - X25519 exchange, then symmetric key = HKDF-SHA256(shared secret, no salt, no
+//!   info, 32 bytes);
+//! - "topic" (relay channel) = SHA-256 of the symmetric key, in hex;
+//! - envelope = base64 (with padding) of `type (1 byte) | [sender public key (32),
+//!   type 1 only] | nonce (12) | ChaCha20-Poly1305(message)`, with no additional
+//!   authenticated data.
 //!
-//! Chaque fonction est vérifiée octet par octet contre des vecteurs produits par
-//! les bibliothèques mêmes du SDK officiel (voir les tests).
+//! Each function is checked byte for byte against vectors produced by the official
+//! SDK's own libraries (see the tests).
 
 use anyhow::{anyhow, Context, Result};
 use base64::Engine;
@@ -24,10 +24,10 @@ const TYPE_0: u8 = 0;
 const TYPE_1: u8 = 1;
 const IV_LENGTH: usize = 12;
 const KEY_LENGTH: usize = 32;
-/// Étiquette d'authentification Poly1305.
+/// Poly1305 authentication tag.
 const TAG_LENGTH: usize = 16;
 
-/// Paire de clés X25519 (clé privée effacée de la mémoire à la destruction).
+/// X25519 key pair (the private key is wiped from memory when dropped).
 pub struct KeyPair {
     pub private: Zeroizing<[u8; 32]>,
     pub public: [u8; 32],
@@ -44,17 +44,17 @@ impl KeyPair {
         Ok(Self::from_private(random_bytes::<32>()?))
     }
 
-    /// Clampage RFC 7748 appliqué par `mul_base_clamped` — identique à
-    /// `x25519.getPublicKey` de la bibliothèque de référence.
+    /// RFC 7748 clamping applied by `mul_base_clamped`, identical to the reference
+    /// library's `x25519.getPublicKey`.
     pub fn from_private(private: [u8; 32]) -> Self {
         let public = MontgomeryPoint::mul_base_clamped(private).to_bytes();
         Self { private: Zeroizing::new(private), public }
     }
 }
 
-/// Clé symétrique d'une session, dérivée de notre clé privée et de la clé
-/// publique du pair. Refuse un secret partagé nul : clé publique du pair de
-/// petit ordre (point dégénéré), qui donnerait une clé connue de tous.
+/// Symmetric key of a session, derived from our private key and the peer's public
+/// key. Refuses an all-zero shared secret: a small-order peer public key
+/// (degenerate point) would give a key everyone knows.
 pub fn derive_sym_key(own_private: &[u8; 32], peer_public: &[u8; 32]) -> Result<Zeroizing<[u8; 32]>> {
     let shared = Zeroizing::new(MontgomeryPoint(*peer_public).mul_clamped(*own_private).to_bytes());
     anyhow::ensure!(shared.iter().any(|&b| b != 0), "clé publique du pair invalide (point de petit ordre)");
@@ -65,7 +65,7 @@ pub fn derive_sym_key(own_private: &[u8; 32], peer_public: &[u8; 32]) -> Result<
     Ok(sym_key)
 }
 
-/// Topic (canal de publication du relais) associé à une clé, en hexadécimal.
+/// Topic (relay publishing channel) tied to a key, in hex.
 pub fn topic_for_key(key: &[u8; 32]) -> String {
     hex::encode(Sha256::digest(key))
 }
@@ -80,8 +80,8 @@ fn seal(sym_key: &[u8; 32], iv: &[u8; IV_LENGTH], plaintext: &str) -> Result<Vec
         .map_err(|_| anyhow!("chiffrement ChaCha20-Poly1305 impossible"))
 }
 
-/// Enveloppe de type 0 (le cas général : clé symétrique déjà partagée), nonce
-/// aléatoire. `encrypt_type0_with_iv` n'existe que pour les vecteurs de test.
+/// Type 0 envelope (the general case: symmetric key already shared), random nonce.
+/// `encrypt_type0_with_iv` only exists for the test vectors.
 pub fn encrypt_type0(sym_key: &[u8; 32], plaintext: &str) -> Result<String> {
     encrypt_type0_with_iv(sym_key, &random_bytes::<IV_LENGTH>()?, plaintext)
 }
@@ -93,18 +93,17 @@ fn encrypt_type0_with_iv(sym_key: &[u8; 32], iv: &[u8; IV_LENGTH], plaintext: &s
     Ok(base64::engine::general_purpose::STANDARD.encode(out))
 }
 
-/// Enveloppe déchiffrée : texte clair, et clé publique de l'émetteur pour une
-/// enveloppe de type 1 (utilisée par le protocole quand la clé symétrique
-/// n'est pas encore connue du destinataire).
+/// Decrypted envelope: plaintext, and the sender's public key for a type 1 envelope
+/// (which the protocol uses when the recipient does not know the symmetric key
+/// yet).
 pub struct Opened {
     pub plaintext: String,
     pub sender_public: Option<[u8; 32]>,
 }
 
-/// Déchiffre une enveloppe de type 0 ou 1 avec `sym_key`. Toute enveloppe
-/// tronquée, d'un autre type, altérée (étiquette Poly1305 fausse) ou dont le
-/// contenu n'est pas de l'UTF-8 est refusée — jamais de panique sur une donnée
-/// venue du réseau.
+/// Decrypts a type 0 or type 1 envelope with `sym_key`. Any envelope that is
+/// truncated, of another type, tampered with (wrong Poly1305 tag) or whose content
+/// is not UTF-8 is rejected: never a panic on data coming from the network.
 pub fn decrypt(sym_key: &[u8; 32], encoded: &str) -> Result<Opened> {
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(encoded.trim())
@@ -139,9 +138,9 @@ mod tests {
         hex::decode(s).unwrap().try_into().unwrap()
     }
 
-    /// Vecteurs produits par les bibliothèques du SDK officiel (@noble/curves,
-    /// @noble/hashes, @noble/ciphers), avec le code exact de
-    /// `utils/src/crypto.ts` (`deriveSymKey`, `hashKey`, `serialize`).
+    /// Vectors produced by the official SDK's libraries (@noble/curves, @noble/hashes,
+    /// @noble/ciphers), with the exact code of `utils/src/crypto.ts` (`deriveSymKey`,
+    /// `hashKey`, `serialize`).
     #[test]
     fn key_agreement_and_topic_match_the_official_sdk() {
         let a = KeyPair::from_private([0xaa; 32]);
@@ -165,13 +164,13 @@ mod tests {
         assert_eq!(opened.plaintext, msg);
         assert!(opened.sender_public.is_none());
 
-        // Type 1 : produit par le SDK (clé publique de l'émetteur en clair).
+        // Type 1: produced by the SDK (sender public key in the clear).
         let type1 = "ARTKnk04e8zzV0bgQH2qrMayik+ERe9aUViJTbmD4kBwIiIiIiIiIiIiIiIi/le8eh+qnFv/CIKTlXC6DAXHY6p14vDaXDBKld37znVwC9Ubi98utvX3ujC4dWuQB+wlshOmI7MX2cvaDHuIRWqXKGUUKeuhU+WKqXdc";
         let opened = decrypt(&key, type1).unwrap();
         assert_eq!(opened.plaintext, msg);
         assert_eq!(opened.sender_public, Some(h32("14ca9e4d387bccf35746e0407daaacc6b28a4f8445ef5a5158894db983e24070")));
 
-        // Nonce aléatoire : deux chiffrements du même message diffèrent, et se déchiffrent.
+        // Random nonce: two encryptions of the same message differ, and both decrypt.
         let (x, y) = (encrypt_type0(&key, msg).unwrap(), encrypt_type0(&key, msg).unwrap());
         assert_ne!(x, y);
         assert_eq!(decrypt(&key, &x).unwrap().plaintext, msg);
@@ -192,8 +191,8 @@ mod tests {
         }
     }
 
-    /// Clé publique de petit ordre (ici le point nul) : le secret partagé serait
-    /// nul, donc connu de tous — refusé.
+    /// Small-order public key (here the identity point): the shared secret would be
+    /// zero, so known to everyone. Rejected.
     #[test]
     fn low_order_peer_keys_are_refused() {
         let a = KeyPair::from_private([0xaa; 32]);

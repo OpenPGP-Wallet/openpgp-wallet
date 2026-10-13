@@ -1,15 +1,14 @@
-//! Stacks (STX) : adresse SP… (clé secp256k1 m/44'/5757'/0'/0/p, comme
-//! Leather et Xverse), solde, envoi de STX avec mémo, historique.
+//! Stacks (STX): SP... address (secp256k1 key m/44'/5757'/0'/0/p, as in Leather and
+//! Xverse), balance, sending STX with a memo, history.
 //!
-//! Transactions sérialisées et signées ici (format de Stacks : condensé
-//! SHA-512/256 de la transaction « vidée », puis de son pré-signataire),
-//! identiques octet pour octet à @stacks/transactions (bibliothèque
-//! officielle de Hiro) dans les tests, et vérifiées de bout en bout sur le
-//! réseau de test (fonds gratuits du robinet de Hiro, test réel).
+//! Transactions are serialized and signed here (Stacks format: SHA-512/256 digest
+//! of the "cleared" transaction, then of its pre-signer), identical byte for byte
+//! to @stacks/transactions (Hiro's official library) in the tests, and checked end
+//! to end on the testnet (free funds from Hiro's faucet, a real test).
 //!
-//! Avant la boîte de confirmation : solde disponible (hors STX bloqués par le
-//! « stacking »), frais, adresse de contrat (SP….nom) refusée ; le mémo
-//! (exigé par les plateformes d'échange) est toujours affiché.
+//! Before the confirmation dialog: available balance (excluding STX locked by
+//! "stacking"), fee, and contract addresses (SP....name) rejected; the memo
+//! (required by exchanges) is always shown.
 
 use crate::{btc_tx, history};
 use anyhow::{anyhow, bail, ensure, Context, Result};
@@ -18,12 +17,12 @@ use serde_json::Value;
 use sha2::{Digest, Sha512_256};
 use std::sync::OnceLock;
 
-/// Réseau Stacks : API Hiro, octets de version des transactions et des adresses.
+/// Stacks network: Hiro API, version bytes for transactions and addresses.
 pub struct Network {
     pub api: &'static str,
     tx_version: u8,
     chain_id: u32,
-    /// Versions d'adresse acceptées : (signature unique, multisignature).
+    /// Accepted address versions: (single signature, multisignature).
     address_versions: (u8, u8),
 }
 
@@ -32,7 +31,7 @@ pub const MAINNET: Network = Network { api: "https://api.hiro.so", tx_version: 0
 const TESTNET: Network = Network { api: "https://api.testnet.hiro.so", tx_version: 0x80, chain_id: 0x8000_0000, address_versions: (26, 21) };
 
 pub const DECIMALS: u8 = 6;
-/// Frais : au moins 0,003 STX, au plus 0,1 STX.
+/// Fee: at least 0.003 STX, at most 0.1 STX.
 const MIN_FEE: u64 = 3_000;
 const MAX_FEE: u64 = 100_000;
 const MEMO_LEN: usize = 34;
@@ -59,7 +58,7 @@ fn micro(value: &Value) -> Result<u64> {
     value.as_str().and_then(|v| v.parse().ok()).or(value.as_u64()).context("montant Stacks illisible")
 }
 
-/// Montant en STX, 6 décimales (« 12.500000 »).
+/// Amount in STX, 6 decimals ("12.500000").
 pub fn format_stx(micro: u64) -> String {
     format!("{}.{:06}", micro / 1_000_000, micro % 1_000_000)
 }
@@ -77,14 +76,14 @@ fn sha512_256(parts: &[&[u8]]) -> [u8; 32] {
     hasher.finalize().into()
 }
 
-// --- Adresses (c32check) -------------------------------------------------------------
+// --- Addresses (c32check) --------------------------------------------------------
 
 const C32: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
-/// Encodage c32 : nombre en base 32 (sans zéros de tête), puis un « 0 » par
-/// octet nul de tête.
+/// c32 encoding: the number in base 32 (without leading zeros), then one "0" per
+/// leading zero byte.
 fn c32_encode(data: &[u8]) -> String {
-    let mut digits: Vec<u8> = Vec::new(); // base 32, poids faible d'abord
+    let mut digits: Vec<u8> = Vec::new(); // base 32, least significant first
     for &byte in data {
         let mut carry = u32::from(byte);
         for d in digits.iter_mut() {
@@ -104,7 +103,7 @@ fn c32_encode(data: &[u8]) -> String {
 }
 
 fn c32_decode(text: &str) -> Option<Vec<u8>> {
-    let mut bytes: Vec<u8> = Vec::new(); // poids faible d'abord
+    let mut bytes: Vec<u8> = Vec::new(); // least significant first
     for c in text.bytes() {
         let mut carry = C32.iter().position(|&x| x == c)? as u32;
         for b in bytes.iter_mut() {
@@ -129,12 +128,12 @@ pub fn encode_address(version: u8, hash160: &[u8; 20]) -> String {
     format!("S{}{}", C32[version as usize] as char, c32_encode(&body))
 }
 
-/// Adresse standard (SP…/SM…) du réseau : (version, hash160). Les adresses
-/// de contrat (SP….nom) sont refusées.
+/// Standard address (SP.../SM...) of the network: (version, hash160). Contract
+/// addresses (SP....name) are rejected.
 pub fn parse_address(net: &Network, text: &str) -> Result<(u8, [u8; 20])> {
     let text = text.trim();
     ensure!(!text.contains('.'), "adresse de contrat Stacks : envoi refusé (adresse de portefeuille SP… attendue)");
-    // Normalisation c32 (Crockford) : majuscules, O → 0, I et L → 1.
+    // c32 (Crockford) normalization: upper case, O → 0, I and L → 1.
     let normalized: String = text.to_ascii_uppercase().chars().map(|c| match c {
         'O' => '0',
         'I' | 'L' => '1',
@@ -155,9 +154,9 @@ pub fn address_of(net: &Network, key: &SigningKey) -> String {
     encode_address(net.address_versions.0, &hash160(key.verifying_key().to_encoded_point(true).as_bytes()))
 }
 
-// --- Mémo ----------------------------------------------------------------------------
+// --- Memo -----------------------------------------------------------------------
 
-/// Mémo (34 octets, ASCII imprimable) ; vide = aucun.
+/// Memo (34 bytes, printable ASCII); empty = none.
 pub fn parse_memo(text: Option<&str>) -> Result<String> {
     let text = text.map(str::trim).unwrap_or("");
     ensure!(text.len() <= MEMO_LEN, "mémo Stacks trop long (34 caractères au plus)");
@@ -165,7 +164,7 @@ pub fn parse_memo(text: Option<&str>) -> Result<String> {
     Ok(text.to_string())
 }
 
-// --- Transaction -----------------------------------------------------------------------
+// --- Transaction ----------------------------------------------------------------
 
 pub struct Transfer {
     pub signer: [u8; 20],
@@ -180,16 +179,16 @@ impl Transfer {
     fn serialize(&self, net: &Network, signature: &[u8; 65], nonce: u64, fee: u64) -> Vec<u8> {
         let mut out = vec![net.tx_version];
         out.extend_from_slice(&net.chain_id.to_be_bytes());
-        // Autorisation standard, signature unique (P2PKH), clé compressée.
+        // Standard authorization, single signature (P2PKH), compressed key.
         out.extend_from_slice(&[0x04, 0x00]);
         out.extend_from_slice(&self.signer);
         out.extend_from_slice(&nonce.to_be_bytes());
         out.extend_from_slice(&fee.to_be_bytes());
         out.push(0x00);
         out.extend_from_slice(signature);
-        // Ancrage indifférent, post-conditions : refus, aucune.
+        // Any anchor mode, post-conditions: deny, none.
         out.extend_from_slice(&[0x03, 0x02, 0, 0, 0, 0]);
-        // Virement de STX vers un principal standard.
+        // STX transfer to a standard principal.
         out.extend_from_slice(&[0x00, 0x05, self.recipient.0]);
         out.extend_from_slice(&self.recipient.1);
         out.extend_from_slice(&self.amount.to_be_bytes());
@@ -199,8 +198,8 @@ impl Transfer {
         out
     }
 
-    /// Condensé signé : SHA-512/256(identifiant de la transaction vidée ‖
-    /// type d'autorisation ‖ frais ‖ nonce).
+    /// Signed digest: SHA-512/256(ID of the cleared transaction ‖ authorization type ‖
+    /// fee ‖ nonce).
     fn presign_hash(&self, net: &Network) -> [u8; 32] {
         let initial = sha512_256(&[&self.serialize(net, &[0; 65], 0, 0)]);
         sha512_256(&[&initial, &[0x04], &self.fee.to_be_bytes(), &self.nonce.to_be_bytes()])
@@ -214,7 +213,7 @@ pub struct Signed {
 
 pub fn sign(tx: &Transfer, key: &SigningKey, net: &Network) -> Result<Signed> {
     let (signature, recovery) = key.sign_prehash_recoverable(&tx.presign_hash(net)).map_err(|e| anyhow!("signature Stacks impossible ({e})"))?;
-    // S bas (exigé par le réseau) : la parité de récupération suit.
+    // Low S (required by the network): the recovery parity follows.
     let (signature, recovery) = match signature.normalize_s() {
         Some(low) => (low, k256::ecdsa::RecoveryId::from_byte(recovery.to_byte() ^ 1).context("signature Stacks impossible")?),
         None => (signature, recovery),
@@ -227,9 +226,9 @@ pub fn sign(tx: &Transfer, key: &SigningKey, net: &Network) -> Result<Signed> {
     Ok(Signed { bytes, txid })
 }
 
-// --- Compte et réseau ----------------------------------------------------------------------
+// --- Account and network --------------------------------------------------------
 
-/// (solde disponible hors STX bloqués, solde total).
+/// (available balance excluding locked STX, total balance).
 fn balances(net: &Network, address: &str) -> Result<(u64, u64)> {
     let value = get(net, &format!("/extended/v1/address/{}/stx", address.trim()))?;
     let total = micro(&value["balance"])?;
@@ -242,7 +241,7 @@ pub fn balance(net: &Network, address: &str) -> Result<u64> {
     Ok(balances(net, address)?.1)
 }
 
-/// Activité d'une adresse destinataire : (détient des STX, a déjà servi).
+/// Activity of a recipient address: (holds STX, has been used before).
 pub fn address_activity(net: &Network, address: &str) -> Result<(bool, bool)> {
     parse_address(net, address)?;
     let txs = get(net, &format!("/extended/v2/addresses/{}/transactions?limit=1", address.trim()))?;
@@ -257,14 +256,14 @@ fn fee(net: &Network, size: usize) -> Result<u64> {
     Ok(fee)
 }
 
-/// Envoi préparé pour la boîte de confirmation.
+/// Send prepared for the confirmation dialog.
 #[derive(Clone, Copy, Debug)]
 pub struct StxPlan {
     pub amount: u64,
     pub fee: u64,
 }
 
-/// Taille d'un virement signé (fixe : le mémo est complété à 34 octets).
+/// Size of a signed transfer (fixed: the memo is padded to 34 bytes).
 const TRANSFER_SIZE: usize = 180;
 
 pub fn plan(net: &Network, from: &str, to: &str, amount: u64) -> Result<StxPlan> {
@@ -283,17 +282,17 @@ pub fn plan(net: &Network, from: &str, to: &str, amount: u64) -> Result<StxPlan>
     Ok(StxPlan { amount, fee })
 }
 
-/// Plus grand montant envoyable : solde disponible moins les frais.
+/// Largest amount that can be sent: available balance minus the fee.
 pub fn max_amount(net: &Network, from: &str) -> Result<u64> {
     parse_address(net, from)?;
     let fee = fee(net, TRANSFER_SIZE)?;
     balances(net, from)?.0.checked_sub(fee).filter(|m| *m > 0).context("STX insuffisants pour couvrir les frais du réseau")
 }
 
-/// Construit, signe et diffuse l'envoi préparé ; renvoie son identifiant.
+/// Builds, signs and broadcasts the prepared send; returns its ID.
 pub fn send(net: &Network, key: &SigningKey, to: &str, plan: &StxPlan, memo: &str) -> Result<String> {
     let from = address_of(net, key);
-    // Prochain nonce, transactions en attente comprises.
+    // Next nonce, pending transactions included.
     let nonce = get(net, &format!("/extended/v1/address/{from}/nonces"))?["possible_next_nonce"].as_u64().context("nonce Stacks illisible")?;
     let tx = Transfer { signer: hash160(key.verifying_key().to_encoded_point(true).as_bytes()), nonce, fee: plan.fee, recipient: parse_address(net, to)?, amount: plan.amount, memo: parse_memo(Some(memo))? };
     submit(net, &sign(&tx, key, net)?)
@@ -308,15 +307,14 @@ pub fn submit(net: &Network, signed: &Signed) -> Result<String> {
         .map_err(|e| crate::wallet_flow::broadcast_failure(e, "service Stacks injoignable", &signed.txid))?;
     let status = response.status();
     let text = response.text().unwrap_or_default();
-    // Erreur de passerelle : peut-être partie (voir `wallet_flow::maybe_sent`).
+    // Gateway error: maybe sent (see `wallet_flow::maybe_sent`).
     if crate::wallet_flow::server_error_may_have_sent(status) {
         return Err(crate::wallet_flow::maybe_sent(&signed.txid));
     }
     if status.is_success() {
         let returned = text.trim().trim_matches('"').trim_start_matches("0x").to_ascii_lowercase();
-        // Transaction acceptée : un autre identifiant que le nôtre ne doit pas
-        // la faire passer pour refusée — un nouvel envoi la paierait deux fois
-        // (32ᵉ passage).
+        // Transaction accepted: an ID other than ours must not make it look refused, since
+        // sending again would pay twice (32nd review round).
         if returned != signed.txid {
             return Err(crate::wallet_flow::maybe_sent(&signed.txid));
         }
@@ -327,10 +325,9 @@ pub fn submit(net: &Network, signed: &Signed) -> Result<String> {
     bail!("transaction Stacks refusée : {reason}")
 }
 
-// --- Historique ----------------------------------------------------------------------------
+// --- History --------------------------------------------------------------------
 
-/// Mouvements de STX de l'adresse (reçus − envoyés, frais compris), les plus
-/// récents d'abord.
+/// STX movements of the address (received − sent, fee included), newest first.
 pub fn history(net: &Network, address: &str, limit: usize) -> Result<Vec<history::TxEntry>> {
     parse_address(net, address)?;
     let list = get(net, &format!("/extended/v2/addresses/{}/transactions?limit={}", address.trim(), limit.clamp(1, 50)))?;
@@ -369,7 +366,7 @@ mod tests {
         crate::derivation::derive_stacks_key(&hex::decode(SEED).unwrap(), index).unwrap()
     }
 
-    /// Vecteurs de @stacks/transactions + bip32, indépendants de ce code.
+    /// Vectors from @stacks/transactions + bip32, independent of this code.
     #[test]
     fn addresses_match_the_official_library() {
         for (index, main, test) in [(0, "SPC5KHM41H6WHAST7MWWDD807YSPRQKJ69FSH54J", "STC5KHM41H6WHAST7MWWDD807YSPRQKJ68T330BQ"), (1, "SP3XHES5990FYDV5BHBZCJRFYFD2Z4X3FMD2N3MGH", "ST3XHES5990FYDV5BHBZCJRFYFD2Z4X3FMEXRWMFR"), (7, "SP23HR2AW1CHQY48VVN0JE2NEC5MG87NMW53N328M", "ST23HR2AW1CHQY48VVN0JE2NEC5MG87NMW7JRDAE8")] {
@@ -378,12 +375,12 @@ mod tests {
             assert_eq!(parse_address(&MAINNET, main).unwrap().0, 22);
             assert!(parse_address(&MAINNET, test).unwrap_err().to_string().contains("autre réseau"));
         }
-        // Minuscules et confusions Crockford acceptées (normalisation c32).
+        // Lower case and Crockford look-alikes accepted (c32 normalization).
         assert!(parse_address(&MAINNET, "sp3xhes5990fydv5bhbzcjrfyfd2z4x3fmd2n3mgh").is_ok());
         assert!(parse_address(&MAINNET, "SP3XHES5990FYDV5BHBZCJRFYFD2Z4X3FMD2N3MGJ").unwrap_err().to_string().contains("somme de contrôle"));
         assert!(parse_address(&MAINNET, "SP3XHES5990FYDV5BHBZCJRFYFD2Z4X3FMD2N3MGH.my-contract").unwrap_err().to_string().contains("contrat"));
         assert!(parse_address(&MAINNET, "1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2").is_err());
-        // Octets nuls de tête : « 0 » de tête en c32, aller-retour exact.
+        // Leading zero bytes: leading "0" in c32, exact round trip.
         assert_eq!(c32_decode(&c32_encode(&[0, 0, 1, 2, 255])).unwrap(), vec![0, 0, 1, 2, 255]);
     }
 
@@ -395,8 +392,8 @@ mod tests {
         assert!(parse_memo(Some("abc\u{202e}")).is_err());
     }
 
-    /// Virements identiques octet pour octet à @stacks/transactions (avec et
-    /// sans mémo, réseau principal et réseau de test).
+    /// Transfers identical byte for byte to @stacks/transactions (with and without a
+    /// memo, mainnet and testnet).
     #[test]
     fn transfers_match_the_official_library() {
         let signer = hash160(key(0).verifying_key().to_encoded_point(true).as_bytes());
@@ -413,9 +410,9 @@ mod tests {
         }
     }
 
-    /// Réel, réseau de test (robinet gratuit de Hiro) : virement signé ici
-    /// avec mémo, accepté et exécuté ; signature altérée refusée. Lectures du
-    /// réseau principal. `cargo test -- --ignored real_stacks --nocapture`
+    /// Real network, testnet (Hiro's free faucet): a transfer signed here with a memo,
+    /// accepted and executed; a tampered signature rejected. Mainnet reads.
+    /// `cargo test -- --ignored real_stacks --nocapture`
     #[test]
     #[ignore]
     fn real_stacks_testnet_end_to_end() {
@@ -448,13 +445,13 @@ mod tests {
         let tx = get(&TESTNET, &format!("/extended/v1/tx/0x{txid}")).unwrap();
         assert_eq!(tx["token_transfer"]["memo"].as_str().map(|m| m.starts_with("0x68656c6c6f00")), Some(true), "{}", tx["token_transfer"]);
         assert_eq!(tx["tx_status"].as_str(), Some("success"));
-        // Signature altérée : refusée.
+        // Tampered signature: rejected.
         let mut signed = sign(&Transfer { signer: hash160(alice.verifying_key().to_encoded_point(true).as_bytes()), nonce: 1, fee: plan.fee, recipient: parse_address(&TESTNET, &bob_address).unwrap(), amount: 1, memo: String::new() }, &alice, &TESTNET).unwrap();
         signed.bytes[60] ^= 1;
         let error = submit(&TESTNET, &signed).unwrap_err().to_string();
         println!("{error}");
         assert!(error.to_lowercase().contains("signature") || error.contains("SignatureValidation"), "{error}");
-        // Historique et réseau principal.
+        // History and mainnet.
         assert!(history(&TESTNET, &bob_address, 10).unwrap().iter().any(|e| e.net_amount_minor == Some(1_500_000)));
         println!("principal : frais {} STX", format_stx(fee(&MAINNET, TRANSFER_SIZE).unwrap()));
     }

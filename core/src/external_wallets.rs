@@ -1,11 +1,10 @@
-//! Wallets externes en lecture seule : suivre le solde d'adresses qui
-//! n'appartiennent PAS à ce portefeuille (celles d'amis, d'autres comptes...) en
-//! collant juste leur adresse publique. Aucune clé privée, aucun secret n'est
-//! jamais impliqué ici — seulement des adresses publiques et des labels, au même
-//! niveau de sensibilité que `messaging::Recipient` (carnet de destinataires).
-//! Le solde lui-même est récupéré via la commande Tauri `get_balance` déjà
-//! existante (mêmes appels RPC en lecture seule que pour les profils du wallet),
-//! rien de nouveau à construire côté réseau.
+//! Read-only external wallets: track the balance of addresses that do NOT belong to
+//! this wallet (friends', other accounts...) by simply pasting their public
+//! address. No private key and no secret is ever involved here, only public
+//! addresses and labels, the same sensitivity as `messaging::Recipient` (the
+//! recipient book). The balance itself comes from the existing `get_balance` Tauri
+//! command (the same read-only RPC calls as for the wallet's profiles): nothing new
+//! to build on the network side.
 
 use crate::{derivation, wallet_flow};
 use anyhow::{Context, Result};
@@ -18,11 +17,11 @@ const EXTERNAL_WALLETS_FILE: &str = "external_wallets.json";
 pub struct ExternalWallet {
     pub id: u32,
     pub label: String,
-    /// Un des identifiants réseau déjà utilisés ailleurs dans l'app :
+    /// One of the network identifiers already used elsewhere in the app:
     /// "evm_mainnet"/"evm_sepolia"/"btc_mainnet"/"btc_testnet"/"sol_mainnet"/"sol_devnet".
     pub network: String,
     pub address: String,
-    /// `None` : wallet non groupé, affiché à part.
+    /// `None`: ungrouped wallet, shown separately.
     pub group_id: Option<u32>,
 }
 
@@ -54,80 +53,77 @@ fn save(data_dir: &Path, data: &ExternalWalletsData) -> Result<()> {
     std::fs::write(path(data_dir), content).context("écriture des wallets externes")
 }
 
-/// Valide le format de l'adresse pour le réseau donné avant de l'enregistrer —
-/// mieux vaut échouer tout de suite avec un message clair que de découvrir une
-/// adresse invalide plus tard via l'échec générique d'un appel RPC. Réutilise
-/// exactement les mêmes parseurs que le reste de l'app (aucune nouvelle logique
-/// de validation d'adresse).
+/// Validates the address format for the given network before saving it: better to
+/// fail right away with a clear message than to discover an invalid address later
+/// through the generic failure of an RPC call. Reuses exactly the same parsers as
+/// the rest of the app (no new address validation logic).
 pub(crate) fn validate_address(network: &str, address: &str) -> Result<()> {
     match network {
-        // Tous les réseaux EVM (Ethereum, L2, BNB Chain…) : même format d'adresse.
+        // Every EVM network (Ethereum, L2s, BNB Chain...): same address format.
         n if wallet_flow::evm_network(n).is_some() => {
             wallet_flow::parse_evm_address(address)?;
         }
-        // Tout type d'adresse standard (1…, 3…, bc1q…, bc1p…) : celles que
-        // l'app sait payer.
+        // Any standard address type (1..., 3..., bc1q..., bc1p...): the ones the app can
+        // pay.
         "btc_mainnet" => {
             derivation::btc_mainnet_recipient_script(address)?;
         }
         "btc_testnet" => {
             derivation::btc_testnet_recipient_script(address)?;
         }
-        // "usdc_solana" : même format d'adresse que "sol_*" (l'adresse est
-        // toujours celle du propriétaire — le compte de jetons USDC qui la
-        // détient réellement est un détail invisible, dérivé côté Rust, voir
-        // sol_spl.rs). Mainnet uniquement, comme pour le wallet propre à cette
-        // app (pas de mint USDC devnet vérifié avec confiance).
+        // "usdc_solana": same address format as "sol_*" (the address is always the
+        // owner's; the USDC token account that actually holds the funds is an invisible
+        // detail derived on the Rust side, see sol_spl.rs). Mainnet only, as for this
+        // app's own wallet (no devnet USDC mint verified with confidence).
         "sol_mainnet" | "sol_devnet" | "usdc_solana" => {
             let bytes = bs58::decode(address.trim())
                 .into_vec()
                 .context("adresse Solana invalide (base58 attendu)")?;
             anyhow::ensure!(bytes.len() == 32, "une adresse Solana fait 32 octets");
         }
-        // Zcash transparent (t1, t3, tex1) ; adresses protégées refusées. Sans
-        // cette branche, la courbe du portefeuille (qui valide chaque avoir)
-        // échouait dès que la carte Zcash était affichée.
+        // Transparent Zcash (t1, t3, tex1); shielded addresses rejected. Without this
+        // branch, the portfolio chart (which validates every holding) failed as soon as
+        // the Zcash card was shown.
         "zec_mainnet" => {
             crate::zcash::parse_recipient(address)?;
         }
-        // Monero (adresse du réseau principal) : même raison, pour la carte
-        // Monero.
+        // Monero (mainnet address): same reason, for the Monero card.
         "xmr_mainnet" => {
             crate::monero::parse_recipient(address)?;
         }
-        // Dogecoin (D…, ou P2SH).
+        // Dogecoin (D..., or P2SH).
         "doge_mainnet" => {
             crate::doge::parse_recipient(address)?;
         }
-        // Tron (T…).
+        // Tron (T...).
         "tron_mainnet" => {
             crate::tron::parse_address(address)?;
         }
-        // XRP Ledger (r…).
+        // XRP Ledger (r...).
         "xrp_mainnet" => {
             crate::xrp::parse_address(address)?;
         }
-        // Stellar (G…).
+        // Stellar (G...).
         "xlm_mainnet" => {
             crate::stellar::parse_address(address)?;
         }
-        // NEAR (compte implicite ou nommé).
+        // NEAR (implicit or named account).
         "near_mainnet" => {
             crate::near::parse_account(address)?;
         }
-        // Cardano (addr1…).
+        // Cardano (addr1...).
         "ada_mainnet" => {
             crate::cardano::parse_address(address)?;
         }
-        // Stacks (SP…).
+        // Stacks (SP...).
         "stx_mainnet" => {
             crate::stacks::parse_address(&crate::stacks::MAINNET, address)?;
         }
-        // Bittensor (5…, SS58 format 42).
+        // Bittensor (5..., SS58 format 42).
         "tao_mainnet" => {
             crate::bittensor::parse_address(address)?;
         }
-        // Zcash protégé (adresse u1 de la carte « Zcash protégé »).
+        // Shielded Zcash (the u1 address of the "Shielded Zcash" card).
         "zec_shielded" => {
             crate::zcash_shielded::parse_shielded_address(address)?;
         }
@@ -136,8 +132,8 @@ pub(crate) fn validate_address(network: &str, address: &str) -> Result<()> {
     Ok(())
 }
 
-/// Wallets suivis sur les réseaux de l'app ; ceux d'un réseau retiré
-/// (HyperEVM, le 07/10/2026) restent dans le fichier sans être affichés.
+/// Wallets tracked on the app's networks; those of a removed network (HyperEVM, on
+/// 2026-10-07) stay in the file without being shown.
 pub fn list_wallets(data_dir: &Path) -> Vec<ExternalWallet> {
     load(data_dir).wallets.into_iter().filter(|w| validate_address(&w.network, &w.address).is_ok()).collect()
 }
@@ -179,8 +175,8 @@ pub fn remove_wallet(data_dir: &Path, id: u32) -> Result<()> {
     save(data_dir, &data)
 }
 
-/// Déplace un wallet vers un autre groupe (ou le sort de tout groupe avec
-/// `group_id: None`) — n'affecte que le classement, jamais l'adresse ni le label.
+/// Moves a wallet to another group (or out of any group with `group_id: None`).
+/// Only affects the grouping, never the address or the label.
 pub fn set_wallet_group(data_dir: &Path, id: u32, group_id: Option<u32>) -> Result<()> {
     let mut data = load(data_dir);
     if let Some(gid) = group_id {
@@ -215,10 +211,9 @@ pub fn rename_group(data_dir: &Path, id: u32, name: &str) -> Result<()> {
     save(data_dir, &data)
 }
 
-/// Supprime le groupe ; ses wallets ne sont PAS supprimés, ils redeviennent
-/// simplement non groupés — cohérent avec le reste de l'app, qui préfère
-/// toujours un état réversible/sans perte de données à une suppression en
-/// cascade (voir l'archivage de profil).
+/// Deletes the group; its wallets are NOT deleted, they simply become ungrouped.
+/// Consistent with the rest of the app, which always prefers a reversible state
+/// with no data loss over a cascading deletion (see profile archiving).
 pub fn delete_group(data_dir: &Path, id: u32) -> Result<()> {
     let mut data = load(data_dir);
     let before = data.groups.len();
@@ -246,8 +241,8 @@ mod tests {
     const VALID_EVM_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
     const VALID_SOL_ADDRESS: &str = "11111111111111111111111111111111";
 
-    /// Adresse Zcash transparente (celle de la carte Zcash) acceptée, adresse
-    /// d'un autre réseau refusée.
+    /// Transparent Zcash address (the Zcash card's) accepted, an address from another
+    /// network rejected.
     #[test]
     fn validates_zcash_transparent_addresses() {
         let t1 = crate::zcash::p2pkh_address(&[7u8; 20]);

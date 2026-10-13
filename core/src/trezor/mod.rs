@@ -1,17 +1,16 @@
-//! Portefeuilles matériels Trezor (modèle T, Safe 3, Safe 5 : firmware
-//! « core ») : la clé privée ne quitte jamais l'appareil, qui affiche lui-même
-//! ce qu'il signe et exige une confirmation physique. Cette app construit les
-//! transactions, les transmet, revérifie chaque signature, puis diffuse.
+//! Trezor hardware wallets (Model T, Safe 3, Safe 5: "core" firmware): the private
+//! key never leaves the device, which itself shows what it signs and requires a
+//! physical confirmation. This app builds the transactions, sends them over, checks
+//! every signature again, then broadcasts.
 //!
-//! Protocole : messages protobuf (définitions officielles du firmware) dans
-//! des paquets de 64 octets (« protocole v1 » : `?##` + type + longueur dans le
-//! premier paquet, `?` en tête des suivants), sur USB (interface WebUSB) pour
-//! un vrai appareil, ou vers l'émulateur officiel pour les tests. Vérifié
-//! contre la bibliothèque officielle trezorlib et contre le firmware officiel
-//! exécuté dans son émulateur.
+//! Protocol: protobuf messages (official firmware definitions) in 64-byte packets
+//! ("protocol v1": `?##` + type + length in the first packet, `?` at the start of
+//! the following ones), over USB (WebUSB interface) for a real device, or to the
+//! official emulator for tests. Checked against the official trezorlib library and
+//! against the official firmware running in its emulator.
 //!
-//! Non pris en charge : le Trezor Model One (saisie du PIN depuis l'ordinateur)
-//! et le Safe 7 (nouveau protocole chiffré « THP »).
+//! Not supported: the Trezor Model One (PIN entered on the computer) and the Safe 7
+//! (new "THP" encrypted protocol).
 
 pub mod bitcoin;
 pub mod ethereum;
@@ -22,7 +21,7 @@ use anyhow::{anyhow, bail, ensure, Context, Result};
 use proto::{Message, Writer};
 use std::time::Duration;
 
-/// Numéros de messages (énumération `MessageType` des définitions officielles).
+/// Message numbers (the `MessageType` enum of the official definitions).
 pub(crate) mod msg {
     pub const INITIALIZE: u16 = 0;
     pub const FAILURE: u16 = 3;
@@ -53,14 +52,14 @@ pub(crate) mod msg {
 
 const PACKET: usize = 64;
 
-/// Canal vers un appareil : paquets de 64 octets dans les deux sens.
+/// Channel to a device: 64-byte packets in both directions.
 pub trait Link {
     fn write_packet(&mut self, packet: &[u8; PACKET]) -> Result<()>;
     fn read_packet(&mut self) -> Result<[u8; PACKET]>;
 }
 
-/// Découpe un message en paquets : `?##` + type (2 octets) + longueur
-/// (4 octets) + début des données, puis `?` + suite ; bourrage à zéro.
+/// Splits a message into packets: `?##` + type (2 bytes) + length (4 bytes) + start
+/// of the data, then `?` + the rest; zero padding.
 pub fn encode_packets(msg_type: u16, payload: &[u8]) -> Vec<[u8; PACKET]> {
     let mut data = b"##".to_vec();
     data.extend(msg_type.to_be_bytes());
@@ -76,10 +75,10 @@ pub fn encode_packets(msg_type: u16, payload: &[u8]) -> Vec<[u8; PACKET]> {
         .collect()
 }
 
-/// Taille maximale d'une réponse acceptée (aucun message utilisé n'approche).
+/// Largest response accepted (no message used here comes close).
 const MAX_MESSAGE: usize = 1 << 20;
 
-/// Réassemble une réponse ; tout paquet mal formé est une erreur.
+/// Reassembles a response; any malformed packet is an error.
 pub fn read_message(link: &mut dyn Link) -> Result<(u16, Vec<u8>)> {
     let first = link.read_packet()?;
     ensure!(&first[..3] == b"?##", "paquet Trezor inattendu");
@@ -96,8 +95,8 @@ pub fn read_message(link: &mut dyn Link) -> Result<(u16, Vec<u8>)> {
     Ok((msg_type, payload))
 }
 
-/// Trezor branché en USB (interface WebUSB : identifiants 1209:53c1,
-/// terminaison 0x01 en sortie, 0x81 en entrée).
+/// Trezor connected over USB (WebUSB interface: IDs 1209:53c1, endpoint 0x01 out,
+/// 0x81 in).
 pub struct UsbLink {
     handle: rusb::DeviceHandle<rusb::GlobalContext>,
 }
@@ -140,8 +139,8 @@ impl Link for UsbLink {
 
     fn read_packet(&mut self) -> Result<[u8; PACKET]> {
         let mut packet = [0u8; PACKET];
-        // Pas de délai maximal global : l'appareil attend la confirmation
-        // physique de l'utilisateur, qui peut prendre le temps qu'il faut.
+        // No global timeout: the device waits for the user's physical confirmation, which
+        // can take as long as it takes.
         loop {
             match self.handle.read_interrupt(0x81, &mut packet, Duration::from_secs(1)) {
                 Ok(n) if n == PACKET => return Ok(packet),
@@ -153,9 +152,9 @@ impl Link for UsbLink {
     }
 }
 
-/// Relais TCP vers l'émulateur officiel (tests et version de développement
-/// seulement : l'émulateur tourne sous WSL, qui ne transmet que le TCP à
-/// Windows ; un relais y renvoie chaque paquet de 64 octets en UDP).
+/// TCP bridge to the official emulator (tests and development builds only: the
+/// emulator runs under WSL, which only forwards TCP to Windows; a bridge there
+/// relays each 64-byte packet over UDP).
 #[cfg(any(debug_assertions, test))]
 pub struct RelayLink {
     stream: std::net::TcpStream,
@@ -186,7 +185,7 @@ impl Link for RelayLink {
     }
 }
 
-/// Erreur `Failure` de l'appareil, traduite.
+/// Device `Failure` error, translated.
 fn failure_error(payload: &[u8]) -> anyhow::Error {
     let message = Message::parse(payload).ok();
     let code = message.as_ref().and_then(|m| m.uint(1)).unwrap_or(0);
@@ -201,7 +200,7 @@ fn failure_error(payload: &[u8]) -> anyhow::Error {
     }
 }
 
-/// Informations de l'appareil (réponse à `Initialize`).
+/// Device information (answer to `Initialize`).
 #[derive(Debug)]
 pub struct Features {
     pub model: String,
@@ -209,7 +208,7 @@ pub struct Features {
     pub initialized: bool,
 }
 
-/// Session avec un appareil.
+/// Session with a device.
 pub struct Trezor {
     link: Box<dyn Link>,
 }
@@ -226,10 +225,9 @@ impl Trezor {
         Ok(())
     }
 
-    /// Envoie un message et renvoie la réponse utile, en répondant aux
-    /// demandes intermédiaires : confirmation à l'écran (`ButtonRequest`),
-    /// phrase secrète (saisie sur l'appareil lui-même, jamais sur
-    /// l'ordinateur). `Failure` devient une erreur explicite.
+    /// Sends a message and returns the useful answer, handling the intermediate
+    /// requests: on-screen confirmation (`ButtonRequest`), passphrase (entered on the
+    /// device itself, never on the computer). `Failure` becomes an explicit error.
     pub fn call(&mut self, msg_type: u16, payload: &[u8]) -> Result<(u16, Vec<u8>)> {
         self.send(msg_type, payload)?;
         loop {
@@ -248,14 +246,14 @@ impl Trezor {
         }
     }
 
-    /// `call` avec un type de réponse attendu.
+    /// `call` with an expected answer type.
     pub fn call_expect(&mut self, msg_type: u16, payload: &[u8], expected: u16) -> Result<Vec<u8>> {
         let (response_type, response) = self.call(msg_type, payload)?;
         ensure!(response_type == expected, "réponse inattendue du Trezor (message {response_type})");
         Ok(response)
     }
 
-    /// Ouvre une session et lit les informations de l'appareil.
+    /// Opens a session and reads the device information.
     pub fn initialize(&mut self) -> Result<Features> {
         let payload = self.call_expect(msg::INITIALIZE, &[], msg::FEATURES)?;
         let features = Message::parse(&payload)?;
@@ -270,9 +268,8 @@ impl Trezor {
     }
 }
 
-/// Pilotage de l'émulateur officiel pendant les tests : son lien de test
-/// (« debuglink ») lit l'écran et appuie sur les boutons à la place de
-/// l'utilisateur.
+/// Driving the official emulator during tests: its test link ("debuglink") reads
+/// the screen and presses the buttons on the user's behalf.
 #[cfg(test)]
 pub(crate) mod emulator {
     use super::*;
@@ -294,7 +291,7 @@ pub(crate) mod emulator {
         pub fn connect() -> Self {
             let mut link = Self(RelayLink::connect(DEBUG_ADDRESS).unwrap());
             link.send(DEBUG_WATCH_LAYOUT, &Writer::new().boolean(1, true).finish());
-            // Réponse (Success) à la surveillance de l'écran.
+            // Answer (Success) to the screen watch.
             let _ = read_message(&mut link.0);
             link
         }
@@ -305,7 +302,7 @@ pub(crate) mod emulator {
             }
         }
 
-        /// Texte de l'écran courant.
+        /// Text of the current screen.
         pub fn screen(&mut self) -> String {
             self.send(DEBUG_GET_STATE, &[]);
             let (msg_type, payload) = read_message(&mut self.0).unwrap();
@@ -314,7 +311,7 @@ pub(crate) mod emulator {
             state.all_bytes(13).iter().map(|t| String::from_utf8_lossy(t)).collect::<Vec<_>>().join("")
         }
 
-        /// Bouton « oui » (valide aussi un écran « maintenir pour confirmer »).
+        /// "Yes" button (also confirms a "hold to confirm" screen).
         pub fn press_yes(&mut self) {
             self.send(DEBUG_DECISION, &Writer::new().uint(1, 1).finish());
         }
@@ -323,10 +320,9 @@ pub(crate) mod emulator {
             self.send(DEBUG_DECISION, &Writer::new().uint(1, 0).finish());
         }
 
-        /// Confirme chaque écran qui apparaît pendant `seconds`, en notant son
-        /// texte (pour vérifier ce que l'appareil a MONTRÉ, pas seulement
-        /// qu'il a signé) ; `refuse_on` : refuse à la place sur l'écran qui
-        /// contient ce texte.
+        /// Confirms every screen that appears for `seconds`, noting its text (to check what
+        /// the device SHOWED, not just that it signed); `refuse_on`: refuses instead on the
+        /// screen containing that text.
         pub fn review(&mut self, seconds: u64, refuse_on: Option<&str>) -> Vec<String> {
             let mut seen: Vec<String> = Vec::new();
             let deadline = std::time::Instant::now() + Duration::from_secs(seconds);
@@ -336,9 +332,9 @@ pub(crate) mod emulator {
                 if std::env::var("TREZOR_DEBUG_SCREENS").is_ok() {
                     eprintln!("[écran] {}", &text[..text.len().min(160)]);
                 }
-                // Jamais d'appui sur l'écran d'accueil : l'émulateur garderait
-                // la décision en attente et l'appliquerait à l'écran suivant
-                // (constaté : l'écran du destinataire était validé sans être vu).
+                // Never press on the home screen: the emulator would keep the decision pending and
+                // apply it to the next screen (observed: the recipient screen was confirmed
+                // without being seen).
                 if text.is_empty() || text.contains("\"Homescreen\"") || seen.last() == Some(&text) {
                     continue;
                 }
@@ -358,8 +354,8 @@ pub(crate) mod emulator {
 mod tests {
     use super::*;
 
-    /// Paquets du protocole v1 : message de 262 octets (réponse `Features`
-    /// réelle de l'émulateur) sur 5 paquets ; réassemblage exact.
+    /// Protocol v1 packets: a 262-byte message (a real `Features` answer from the
+    /// emulator) over 5 packets; exact reassembly.
     #[test]
     fn packets_follow_the_v1_protocol() {
         let payload: Vec<u8> = (0..262u32).map(|i| i as u8).collect();
@@ -393,8 +389,8 @@ mod tests {
         assert!(failure_error(&failure(3, "Invalid path")).to_string().contains("Invalid path"));
     }
 
-    /// Émulateur officiel (firmware core 2.7.0, modèle T) via le relais :
-    /// session ouverte, modèle et version lus.
+    /// Official emulator (core firmware 2.7.0, Model T) through the bridge: session
+    /// opened, model and version read.
     /// `cargo test -- --ignored trezor_emulator_answers --nocapture`
     #[test]
     #[ignore]

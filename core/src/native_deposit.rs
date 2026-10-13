@@ -1,13 +1,13 @@
-//! Transactions natives THORChain et Maya (Cosmos SDK) : dépôt `MsgDeposit`,
-//! seul usage dans l'app — inscrire ou prolonger le nom d'affiliation du
-//! développeur (THORName / MAYAName, voir `thorchain_rpc::AFFILIATE_NAME`),
-//! payé en RUNE ou en CACAO depuis son adresse d'affiliation.
+//! Native THORChain and Maya transactions (Cosmos SDK): the `MsgDeposit` deposit,
+//! whose only use in the app is to register or extend the developer's affiliate
+//! name (THORName / MAYAName, see `thorchain_rpc::AFFILIATE_NAME`), paid in RUNE or
+//! CACAO from the affiliate address.
 //!
-//! Encodage protobuf écrit ici (quelques champs seulement), reproduit octet
-//! pour octet sur de vraies inscriptions relevées sur chaque réseau (tests :
-//! corps et informations de signature reconstruits identiques, signature
-//! d'origine vérifiée sur le document de signature calculé ici). Signature
-//! « DIRECT » : SHA-256 du document de signature, ECDSA secp256k1, S bas.
+//! The protobuf encoding is written here (only a few fields), reproduced byte for
+//! byte against real registrations captured on each network (tests: body and signer
+//! info rebuilt identically, original signature verified over the sign document
+//! computed here). "DIRECT" signing: SHA-256 of the sign document, ECDSA secp256k1,
+//! low S.
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use base64::Engine;
@@ -16,27 +16,27 @@ use k256::ecdsa::{Signature, SigningKey};
 use serde_json::Value;
 use std::sync::OnceLock;
 
-/// Réseau natif : paramètres relevés sur de vraies transactions.
+/// Native network: parameters taken from real transactions.
 pub struct NativeChain {
     pub name: &'static str,
     node_base: &'static str,
     pub chain_id: &'static str,
-    /// Préfixe bech32 des adresses (« thor », « maya »).
+    /// Bech32 address prefix ("thor", "maya").
     pub hrp: &'static str,
-    /// Monnaie du réseau dans un dépôt : chaîne, symbole, ticker.
+    /// The network's coin in a deposit: chain, symbol, ticker.
     asset: (&'static str, &'static str, &'static str),
-    /// Dénomination de la monnaie dans le module bank (« rune », « cacao »).
+    /// Denomination of the coin in the bank module ("rune", "cacao").
     pub denom: &'static str,
-    /// Décimales de la monnaie.
+    /// Decimals of the coin.
     pub decimals: u32,
-    /// Champ `decimals` du jeton dans le message (Maya le renseigne,
-    /// THORChain non).
+    /// The token's `decimals` field in the message (Maya fills it in, THORChain does
+    /// not).
     coin_decimals_field: bool,
-    /// Frais déclarés dans la transaction (THORChain : 0,02 RUNE ; Maya :
-    /// aucun, prélevés par le protocole).
+    /// Fee declared in the transaction (THORChain: 0.02 RUNE; Maya: none, taken by the
+    /// protocol).
     declared_fee: Option<u64>,
     gas_limit: u64,
-    /// Memo recopié dans le corps de la transaction (Maya).
+    /// Memo copied into the transaction body (Maya).
     body_memo: bool,
 }
 
@@ -68,7 +68,7 @@ pub const MAYA: NativeChain = NativeChain {
     body_memo: true,
 };
 
-// --- Encodage protobuf (le strict nécessaire) ---------------------------------
+// --- Protobuf encoding (the bare minimum) ---------------------------------------
 
 fn varint(out: &mut Vec<u8>, mut v: u64) {
     while v >= 0x80 {
@@ -78,8 +78,8 @@ fn varint(out: &mut Vec<u8>, mut v: u64) {
     out.push(v as u8);
 }
 
-/// Champ de longueur variable (texte, octets, message) ; omis s'il est vide,
-/// comme le fait protobuf 3.
+/// Length-delimited field (text, bytes, message); omitted when empty, as protobuf 3
+/// does.
 fn field_bytes(out: &mut Vec<u8>, number: u64, bytes: &[u8]) {
     if bytes.is_empty() {
         return;
@@ -89,7 +89,7 @@ fn field_bytes(out: &mut Vec<u8>, number: u64, bytes: &[u8]) {
     out.extend_from_slice(bytes);
 }
 
-/// Champ entier ; omis s'il vaut 0.
+/// Integer field; omitted when 0.
 fn field_varint(out: &mut Vec<u8>, number: u64, value: u64) {
     if value == 0 {
         return;
@@ -167,8 +167,8 @@ fn sign_doc(body: &[u8], auth: &[u8], chain_id: &str, account_number: u64) -> Ve
     doc
 }
 
-/// Frais réseau d'un dépôt, en plus du montant déposé (THORChain : ceux
-/// déclarés ; Maya : prélevés par le protocole, lus dans ses constantes).
+/// Network fee of a deposit, on top of the deposited amount (THORChain: the
+/// declared one; Maya: taken by the protocol, read from its constants).
 pub fn network_fee(chain: &NativeChain) -> Result<u128> {
     match chain.declared_fee {
         Some(fee) => Ok(u128::from(fee)),
@@ -176,8 +176,8 @@ pub fn network_fee(chain: &NativeChain) -> Result<u128> {
     }
 }
 
-/// Dépôt signé (octets `TxRaw`) de `amount` (plus petite unité) avec `memo`,
-/// au nom de la clé `key`, pour le compte (`account_number`, `sequence`).
+/// Signed deposit (`TxRaw` bytes) of `amount` (smallest unit) with `memo`, on
+/// behalf of key `key`, for the account (`account_number`, `sequence`).
 pub fn signed_deposit(chain: &NativeChain, key: &SigningKey, amount: u128, memo: &str, account_number: u64, sequence: u64) -> Result<Vec<u8>> {
     ensure!(amount > 0, "dépôt nul");
     let pubkey: [u8; 33] = key.verifying_key().to_encoded_point(true).as_bytes().try_into().context("clé publique invalide")?;
@@ -199,7 +199,7 @@ fn hash160(data: &[u8]) -> [u8; 20] {
     Ripemd160::digest(Sha256::digest(data)).into()
 }
 
-// --- Réseau ---------------------------------------------------------------------
+// --- Network --------------------------------------------------------------------
 
 fn shared_client() -> &'static reqwest::blocking::Client {
     static CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
@@ -220,14 +220,14 @@ fn get_json(chain: &NativeChain, path: &str) -> Result<Value> {
         .with_context(|| format!("réponse du nœud {} illisible", chain.name))
 }
 
-/// Constante du protocole (`/{module}/constants`, valeur entière).
+/// Protocol constant (`/{module}/constants`, integer value).
 pub fn constant(chain: &NativeChain, name: &str) -> Result<u64> {
     let module = if chain.hrp == "maya" { "mayachain" } else { "thorchain" };
     let constants = get_json(chain, &format!("/{module}/constants"))?;
     constants["int_64_values"][name].as_i64().and_then(|v| u64::try_from(v).ok()).ok_or_else(|| anyhow!("constante {name} absente chez {}", chain.name))
 }
 
-/// Solde de la monnaie du réseau (plus petite unité).
+/// Balance of the network's coin (smallest unit).
 pub fn balance(chain: &NativeChain, address: &str) -> Result<u128> {
     let body = get_json(chain, &format!("/cosmos/bank/v1beta1/balances/{address}"))?;
     let balances = body["balances"].as_array().ok_or_else(|| anyhow!("solde {} illisible", chain.name))?;
@@ -239,7 +239,7 @@ pub fn balance(chain: &NativeChain, address: &str) -> Result<u128> {
         .unwrap_or(0))
 }
 
-/// Numéro de compte et séquence ; `None` pour une adresse jamais approvisionnée.
+/// Account number and sequence; `None` for an address that was never funded.
 pub fn account(chain: &NativeChain, address: &str) -> Result<Option<(u64, u64)>> {
     let body = get_json(chain, &format!("/cosmos/auth/v1beta1/accounts/{address}"))?;
     if body.get("account").is_none() {
@@ -252,8 +252,8 @@ pub fn account(chain: &NativeChain, address: &str) -> Result<Option<(u64, u64)>>
     }
 }
 
-/// Diffuse une transaction signée ; renvoie son identifiant. Refus du nœud
-/// (signature, solde, memo…) : erreur avec son message.
+/// Broadcasts a signed transaction and returns its ID. A refusal by the node
+/// (signature, balance, memo...) becomes an error carrying its message.
 pub fn broadcast(chain: &NativeChain, tx: &[u8]) -> Result<String> {
     let request = serde_json::json!({
         "tx_bytes": base64::engine::general_purpose::STANDARD.encode(tx),
@@ -278,7 +278,7 @@ mod tests {
     use k256::ecdsa::signature::Verifier;
     use k256::ecdsa::VerifyingKey;
 
-    /// Champs de premier niveau d'un message protobuf (numéro → octets).
+    /// Top-level fields of a protobuf message (number → bytes).
     fn top_fields(buf: &[u8]) -> Vec<(u64, Vec<u8>)> {
         let mut out = Vec::new();
         let mut o = 0;
@@ -310,9 +310,8 @@ mod tests {
         Vec::<u8>::from_base32(&data).unwrap().try_into().unwrap()
     }
 
-    /// Reconstruit une vraie inscription (corps et informations de signature
-    /// identiques à l'octet) et vérifie sa signature d'origine sur le document
-    /// de signature calculé ici.
+    /// Rebuilds a real registration (body and signer info identical to the byte) and
+    /// verifies its original signature over the sign document computed here.
     #[allow(clippy::too_many_arguments)]
     fn check_real(chain: &NativeChain, raw_hex: &str, amount: u128, memo: &str, signer: &str, pubkey_hex: &str, sequence: u64, account_number: u64) {
         let raw = hex::decode(raw_hex.trim()).unwrap();
@@ -328,9 +327,9 @@ mod tests {
         assert!(key.verify(&sign_doc(body, auth, chain.chain_id, account_number + 1), &signature).is_err(), "autre compte : invalide");
     }
 
-    /// Inscription réelle du THORName « zafu » (bloc 28 067 419, compte
-    /// 156 733, séquence 3) et du MAYAName « frog » (bloc 18 652 051, compte
-    /// 9 713, séquence 37).
+    /// Real registration of the THORName "zafu" (block 28,067,419, account 156,733,
+    /// sequence 3) and of the MAYAName "frog" (block 18,652,051, account 9,713,
+    /// sequence 37).
     #[test]
     fn real_registrations_are_reproduced_byte_for_byte() {
         let thor = "thor1qnulc66wrfycz6takz9xqdvdmpk9kgd5rzy80k";
@@ -357,7 +356,7 @@ mod tests {
         );
     }
 
-    /// Transaction signée ici : relue, même corps, signature valide et S bas.
+    /// Transaction signed here: read back, same body, valid signature with low S.
     #[test]
     fn signed_deposits_verify() {
         let key = SigningKey::from_slice(&[7u8; 32]).unwrap();

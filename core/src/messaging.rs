@@ -1,9 +1,8 @@
-//! Chiffrement de messages texte OpenPGP classique — un clin d'œil à l'origine
-//! du projet : PGP a d'abord été conçu pour chiffrer des messages entre personnes,
-//! avant d'être détourné ici pour protéger une seed. Aucun secret du wallet n'est
-//! impliqué : on chiffre pour une clé publique quelconque (pas forcément une
-//! identité liée au wallet), à sens unique, sans jamais toucher à l'entropie
-//! maître ni aux clés privées de dérivation.
+//! Classic OpenPGP text message encryption, a nod to the project's origins: PGP was
+//! first designed to encrypt messages between people, before being put to work here
+//! protecting a seed. No wallet secret is involved: messages are encrypted to any
+//! public key (not necessarily an identity tied to the wallet), one way, without
+//! ever touching the master entropy or the derivation private keys.
 
 use anyhow::{Context, Result};
 use openpgp::armor;
@@ -39,8 +38,8 @@ fn save_recipients(data_dir: &Path, recipients: &[Recipient]) -> Result<()> {
     std::fs::write(path, content).context("écriture du carnet de destinataires")
 }
 
-/// Valide que le texte fourni est bien une clé publique PGP exploitable avant de
-/// l'ajouter au carnet (remplace l'entrée existante si le label est déjà pris).
+/// Checks that the given text really is a usable PGP public key before adding it to
+/// the book (replaces the existing entry if the label is already taken).
 pub fn add_recipient(data_dir: &Path, label: &str, pubkey_armored: &str) -> Result<()> {
     Cert::from_bytes(pubkey_armored.as_bytes()).context("clé publique PGP invalide")?;
 
@@ -57,16 +56,15 @@ pub fn list_recipients(data_dir: &Path) -> Result<Vec<Recipient>> {
     load_recipients(data_dir)
 }
 
-/// `Some((ancienne_empreinte, nouvelle_empreinte))` si `label` correspond déjà à un
-/// destinataire enregistré dont la clé publique diffère de `new_pubkey_armored` —
-/// sert à avertir l'utilisateur avant qu'`add_recipient` ne remplace silencieusement
-/// une clé déjà en carnet (voir sa doc : "remplace l'entrée existante si le label
-/// est déjà pris"). Sans cet avertissement, quelqu'un capable de convaincre
-/// l'utilisateur de "réajouter" un contact avec une clé différente (ingénierie
-/// sociale, ou un carnet localement altéré puis "réparé" via l'UI) substituerait la
-/// clé de confiance sans qu'aucun signe ne l'indique — exactement ce que
-/// l'empreinte affichée dans le carnet est censée permettre de détecter.
-/// `None` si c'est un nouveau contact, ou si la clé est strictement identique.
+/// `Some((old_fingerprint, new_fingerprint))` if `label` already matches a saved
+/// recipient whose public key differs from `new_pubkey_armored`. Used to warn the
+/// user before `add_recipient` silently replaces a key already in the book (see its
+/// doc: "replaces the existing entry if the label is already taken"). Without this
+/// warning, someone able to convince the user to "re-add" a contact with a different
+/// key (social engineering, or a book tampered with locally and then "repaired"
+/// through the UI) would swap the trusted key with no sign of it, which is exactly
+/// what the fingerprint shown in the book is meant to catch. `None` for a new
+/// contact, or when the key is strictly identical.
 pub fn recipient_key_change(data_dir: &Path, label: &str, new_pubkey_armored: &str) -> Result<Option<(String, String)>> {
     let recipients = load_recipients(data_dir)?;
     let Some(existing) = recipients.iter().find(|r| r.label == label) else {
@@ -86,11 +84,11 @@ pub fn remove_recipient(data_dir: &Path, label: &str) -> Result<()> {
     save_recipients(data_dir, &recipients)
 }
 
-/// Chiffre un message texte pour une ou plusieurs clés publiques PGP ; résultat en
-/// ASCII-armor, prêt à copier/coller ou envoyer par n'importe quel canal. Chaque
-/// destinataire listé peut déchiffrer indépendamment le même message (PGP chiffre
-/// la clé de session une fois par destinataire), sans qu'aucun ne voie les autres
-/// clés privées ni ne puisse déchiffrer pour le compte d'un autre.
+/// Encrypts a text message to one or more PGP public keys; the result is
+/// ASCII-armored, ready to copy, paste or send over any channel. Each listed
+/// recipient can decrypt the same message independently (PGP encrypts the session
+/// key once per recipient), without any of them seeing the others' private keys or
+/// being able to decrypt on someone else's behalf.
 pub fn encrypt_message(pubkeys_armored: &[String], message: &str) -> Result<String> {
     if pubkeys_armored.is_empty() {
         return Err(anyhow::anyhow!("au moins un destinataire est requis"));
@@ -102,12 +100,11 @@ pub fn encrypt_message(pubkeys_armored: &[String], message: &str) -> Result<Stri
         .map(|k| Cert::from_bytes(k.as_bytes()).context("clé publique PGP invalide"))
         .collect::<Result<Vec<_>>>()?;
 
-    // Un `flat_map` naïf ici contribuerait silencieusement 0 destinataire pour un
-    // certificat sans sous-clé de chiffrement valide (expirée, révoquée) : le
-    // message partirait quand même, chiffré pour les autres, sans qu'aucun signe
-    // n'indique qu'un destinataire prévu a été exclu. On vérifie donc chaque
-    // certificat individuellement et on échoue pour tout le monde plutôt que
-    // d'envoyer silencieusement à moins de destinataires que demandé.
+    // A naive `flat_map` here would silently contribute 0 recipients for a certificate
+    // without a valid encryption subkey (expired, revoked): the message would still go
+    // out, encrypted for the others, with no sign that an intended recipient was left
+    // out. So each certificate is checked individually, and the whole operation fails
+    // rather than silently sending to fewer recipients than requested.
     let mut recipients = Vec::new();
     for (cert, pubkey_armored) in certs.iter().zip(pubkeys_armored) {
         let cert_recipients: Vec<_> = cert
@@ -156,8 +153,8 @@ pub struct CertInfo {
     pub pubkey_armored: String,
 }
 
-/// Infos lisibles sur un certificat OpenPGP (terme officiel pour "clé publique
-/// + identités + signatures") — aucune donnée privée, adapté à l'affichage.
+/// Readable information about an OpenPGP certificate (the official term for "public
+/// key + identities + signatures"): no private data, fit for display.
 pub fn cert_info(pubkey_armored: &str) -> Result<CertInfo> {
     let cert = Cert::from_bytes(pubkey_armored.as_bytes()).context("certificat invalide")?;
 
@@ -221,10 +218,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Garde-fou contre la régression trouvée lors d'un audit : `add_recipient`
-    /// remplace silencieusement la clé d'un contact déjà enregistré si on lui
-    /// soumet un nouveau label identique — exactement le genre de substitution que
-    /// l'empreinte affichée dans le carnet est censée permettre de détecter.
+    /// Guard against the regression found during an audit: `add_recipient` silently
+    /// replaces the key of an already saved contact when given an identical label,
+    /// which is exactly the kind of swap the fingerprint shown in the book is meant to
+    /// catch.
     #[test]
     fn recipient_key_change_detects_a_different_key_for_the_same_label() {
         let dir = std::env::temp_dir().join(format!("pgp_wallet_recipient_change_diff_{}", std::process::id()));
@@ -243,9 +240,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Certificat sans sous-clé de chiffrement (seulement une clé de signature) —
-    /// simule un contact dont la clé n'a jamais eu, ou n'a plus, de sous-clé
-    /// utilisable pour du chiffrement (expirée/révoquée en pratique).
+    /// Certificate without an encryption subkey (only a signing key): simulates a
+    /// contact whose key never had, or no longer has, a subkey usable for encryption
+    /// (expired or revoked, in practice).
     fn test_pubkey_armored_without_encryption_subkey(userid: &str) -> String {
         let (cert, _revocation) = CertBuilder::new()
             .add_userid(userid)
@@ -274,12 +271,11 @@ mod tests {
         assert!(armored.contains("BEGIN PGP MESSAGE"));
     }
 
-    /// Garde-fou contre une régression trouvée lors d'un audit : avant ce correctif,
-    /// un destinataire sans sous-clé de chiffrement valide était silencieusement
-    /// exclu (0 destinataire ajouté pour son certificat), le message partait quand
-    /// même pour les autres sans aucune erreur — l'utilisateur croyait avoir chiffré
-    /// pour tout le monde alors qu'un des destinataires prévus n'avait en réalité
-    /// jamais pu déchiffrer le message.
+    /// Guard against a regression found during an audit: before this fix, a recipient
+    /// without a valid encryption subkey was silently excluded (0 recipients added for
+    /// their certificate), and the message still went out to the others without any
+    /// error. The user believed they had encrypted for everyone, while one of the
+    /// intended recipients could never actually decrypt the message.
     #[test]
     fn encrypt_message_fails_closed_when_one_recipient_has_no_usable_encryption_subkey() {
         let alice = test_pubkey_armored("Alice <alice@example.invalid>");

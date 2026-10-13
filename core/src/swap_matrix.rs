@@ -1,11 +1,10 @@
-//! Banc d'essai RÉEL de tous les échanges (lecture seule, ignoré par défaut) :
-//! aucun réseau de test n'a de pools pour THORChain, Maya, Jupiter ou LI.FI,
-//! donc chaque paire est essayée avec de vrais devis, par les MÊMES fonctions
-//! que l'app (vérification du memo, de la transaction LI.FI, de l'ordre
-//! CoW…), puis la valeur reçue est comparée à la valeur envoyée en dollars —
-//! une erreur de décimales donnerait un écart de 10^k. Un second essai va
-//! jusqu'à la simulation, avec des adresses publiques approvisionnées
-//! (plateformes d'échange), sans jamais rien signer.
+//! REAL test bench for every swap (read-only, ignored by default): no test network
+//! has pools for THORChain, Maya, Jupiter or LI.FI, so each pair is tried with real
+//! quotes, through the SAME functions as the app (memo check, LI.FI transaction
+//! check, CoW order check...), then the value received is compared with the value
+//! sent in dollars: a decimals mistake would show up as a 10^k gap. A second run
+//! goes as far as simulation, with funded public addresses (exchanges), without
+//! ever signing anything.
 //!
 //! `cargo test --lib swap_matrix -- --ignored --nocapture --test-threads=1`
 
@@ -14,31 +13,31 @@ use crate::swap_routes::{self, Protocol, SwapAsset};
 use std::collections::HashMap;
 use std::time::Duration;
 
-/// Valeur envoyée par essai (variable SWAP_MATRIX_USD, 50 $ par défaut :
-/// au-dessus des minimums des protocoles, glissement négligeable).
+/// Value sent per trial (SWAP_MATRIX_USD variable, $50 by default: above the
+/// protocols' minimums, negligible slippage).
 fn trade_usd() -> f64 {
     std::env::var("SWAP_MATRIX_USD").ok().and_then(|v| v.parse().ok()).unwrap_or(50.0)
 }
 
-/// Devis LI.FI au plus (variable SWAP_MATRIX_LIFI, 40 par défaut ; LI.FI en
-/// accorde 75 par 2 heures et par adresse IP sans clé).
+/// Maximum number of LI.FI quotes (SWAP_MATRIX_LIFI variable, 40 by default; LI.FI
+/// allows 75 per 2 hours per IP address without a key).
 fn lifi_budget() -> usize {
     std::env::var("SWAP_MATRIX_LIFI").ok().and_then(|v| v.parse().ok()).unwrap_or(40)
 }
 
 const EVM_DEST: &str = "0x59D78c44ac60F09369b544778358704B7b18E6ba";
 const BTC_DEST: &str = "bc1qp0jus87dalh7xku22tx3uhyhlf8cjuc0vvkhjz";
-/// Adresses publiques approvisionnées (plateformes d'échange), comme
-/// expéditeur des devis qui l'exigent et pour les simulations.
+/// Funded public addresses (exchanges), used as the sender of the quotes that
+/// require one and for simulations.
 const EVM_FUNDED: &str = "0x28C6c06298d514Db089934071355E5743bf21d60";
 const SOL_FUNDED: &str = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
-/// Bitcoin : adresse de plateforme pour les devis (LI.FI y lit les sorties) ;
-/// pour la vérification de la PSBT, une adresse ordinaire (`btc_funded`) —
-/// Esplora refuse de lister les sorties d'une adresse à l'historique énorme.
+/// Bitcoin: an exchange address for quotes (LI.FI reads its outputs); for the PSBT
+/// check, an ordinary address (`btc_funded`), since Esplora refuses to list the
+/// outputs of an address with a huge history.
 const BTC_FUNDED: &str = "bc1qm34lsc65zpw79lxes69zkqmk6ee3ewf0j77s3h";
 
-/// Adresse P2WPKH ordinaire approvisionnée (1 à 4 sorties confirmées),
-/// trouvée dans le dernier bloc.
+/// An ordinary funded P2WPKH address (1 to 4 confirmed outputs), found in the
+/// latest block.
 fn btc_funded() -> String {
     let get = |url: String| -> serde_json::Value { reqwest::blocking::get(url).unwrap().json().unwrap() };
     let tip = reqwest::blocking::get("https://mempool.space/api/blocks/tip/hash").unwrap().text().unwrap();
@@ -114,7 +113,7 @@ fn prices(assets: &[SwapAsset]) -> HashMap<&'static str, f64> {
     ids.sort();
     ids.dedup();
     let url = format!("https://api.coingecko.com/api/v3/simple/price?ids={}&vs_currencies=usd", ids.join(","));
-    // User-Agent explicite, comme `price_rpc` (sans lui, CoinGecko refuse).
+    // Explicit User-Agent, as in `price_rpc` (CoinGecko refuses without one).
     let client = reqwest::blocking::Client::builder().user_agent("openpgp-wallet (+https://github.com/KHADEVS/openpgp-wallet)").build().unwrap();
     let body: serde_json::Value = client.get(url).send().unwrap().json().unwrap();
     assert!(body.get("bitcoin").is_some(), "prix CoinGecko illisibles : {body}");
@@ -135,7 +134,7 @@ fn decimals(asset: SwapAsset) -> u8 {
     }
 }
 
-/// Montant valant ~`trade_usd()`, 8 décimales au plus.
+/// Amount worth about `trade_usd()`, 8 decimals at most.
 fn amount_for(asset: SwapAsset, price: f64) -> String {
     let shown = decimals(asset).min(8) as usize;
     format!("{:.*}", shown, trade_usd() / price)
@@ -145,19 +144,19 @@ fn units(asset: SwapAsset, amount: &str) -> u128 {
     tokens::parse_amount(amount, decimals(asset)).unwrap()
 }
 
-/// Valeur reçue (unités → dollars).
+/// Value received (units → dollars).
 fn usd(out_units: u128, out_decimals: u8, price: f64) -> f64 {
     out_units as f64 / 10f64.powi(i32::from(out_decimals)) * price
 }
 
-/// Une ligne du rapport : paire, protocole, (valeur envoyée, valeur reçue) en dollars ou refus.
+/// One report line: pair, protocol, (value sent, value received) in dollars, or a refusal.
 type Row = (String, Protocol, std::result::Result<(f64, f64), String>);
 
 fn pause() {
     std::thread::sleep(Duration::from_millis(350));
 }
 
-/// Un devis réel : sortie en unités du jeton reçu, et ses décimales.
+/// A real quote: output in units of the received token, and its decimals.
 fn quote(protocol: Protocol, from: SwapAsset, to: SwapAsset, amount: &str) -> Result<(u128, u8)> {
     match protocol {
         Protocol::Thorchain | Protocol::Maya => {
@@ -198,14 +197,14 @@ fn quote(protocol: Protocol, from: SwapAsset, to: SwapAsset, amount: &str) -> Re
             let routes = crate::swapkit::quote(f, t, units(from, amount), &sender, &destination(to.network))?;
             Ok((routes[0].expected_out, t.decimals))
         }
-        // Jamais proposé dans les tests (clé de l'app absente) : ses devis
-        // réels sont testés dans `moonpay_trade` avec la clé de démo.
+        // Never offered in tests (the app's key is missing): its real quotes are tested in
+        // `moonpay_trade` with the demo key.
         Protocol::Moonpay => anyhow::bail!("MoonPay Trade : devis testés dans moonpay_trade"),
     }
 }
 
-/// LI.FI : une paire par couple (réseau de départ, famille d'arrivée), monnaie
-/// du réseau d'abord, dans la limite du quota.
+/// LI.FI: one pair per (source network, destination family), the network's native
+/// coin first, within the quota.
 fn lifi_sample(pairs: &[(SwapAsset, SwapAsset)]) -> Vec<(SwapAsset, SwapAsset)> {
     let family = |n: &str| match n {
         "btc_mainnet" => "btc",
@@ -291,7 +290,7 @@ fn run(protocol: Protocol, from: SwapAsset, to: SwapAsset, price: &HashMap<&'sta
     (label, protocol, result)
 }
 
-/// Jusqu'à la simulation, avec des adresses publiques approvisionnées.
+/// Up to simulation, with funded public addresses.
 #[test]
 #[ignore]
 fn swap_simulations_real() {
@@ -299,7 +298,7 @@ fn swap_simulations_real() {
     let a = |coin: &'static str, network: &'static str| SwapAsset { coin, network };
     let mut report = Vec::new();
 
-    // Jupiter : transaction construite pour l'adresse publique, effets vérifiés.
+    // Jupiter: transaction built for the public address, effects checked.
     let rpc = sol_rpc::SolRpc::new(wallet_flow::SOLANA_MAINNET.rpc);
     let owner: [u8; 32] = bs58::decode(SOL_FUNDED).into_vec().unwrap().try_into().unwrap();
     for (from, to) in [("sol", "usdc"), ("usdc", "sol"), ("sol", "usdt"), ("usdt", "usdc"), ("sol", "render")] {
@@ -318,7 +317,7 @@ fn swap_simulations_real() {
         pause();
     }
 
-    // LI.FI : vérification complète (simulation EVM / Solana, PSBT Bitcoin).
+    // LI.FI: full check (EVM / Solana simulation, Bitcoin PSBT).
     let btc_sender = btc_funded();
     for (from, to, sender) in [
         (a("evm", "evm_mainnet"), a("btc", "btc_mainnet"), EVM_FUNDED),
@@ -344,8 +343,8 @@ fn swap_simulations_real() {
         pause();
     }
 
-    // THORChain depuis Ethereum : devis vérifié puis gas estimé pour le dépôt
-    // via le routeur, au nom de l'adresse publique.
+    // THORChain from Ethereum: quote checked, then gas estimated for the deposit
+    // through the router, on behalf of the public address.
     for (from, to) in [(a("evm", "evm_mainnet"), a("btc", "btc_mainnet")), (a("usdc", "evm_mainnet"), a("btc", "btc_mainnet"))] {
         let amount = amount_for(from, price[from.coin]);
         let result = (|| -> Result<String> {

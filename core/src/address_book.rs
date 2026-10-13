@@ -1,10 +1,9 @@
-//! Carnet d'adresses : associer un label à une adresse pour la retrouver
-//! facilement au moment d'envoyer des fonds, sans avoir à la recoller à la
-//! main à chaque fois. Distinct de `external_wallets` (qui sert à suivre un
-//! solde en lecture seule) : ici aucun solde n'est jamais interrogé, il ne
-//! s'agit que d'un label + réseau + adresse, réutilise cependant la même
-//! validation d'adresse par réseau (`external_wallets::validate_address`)
-//! pour ne pas dupliquer cette logique.
+//! Address book: attach a label to an address so it is easy to find when sending
+//! funds, without pasting it by hand every time. Separate from `external_wallets`
+//! (which tracks a balance, read-only): no balance is ever queried here, it is just
+//! a label + network + address, though it reuses the same per-network address
+//! validation (`external_wallets::validate_address`) rather than duplicating that
+//! logic.
 
 use crate::external_wallets::validate_address;
 use anyhow::{Context, Result};
@@ -17,7 +16,7 @@ const ADDRESS_BOOK_FILE: &str = "address_book.json";
 pub struct AddressBookEntry {
     pub id: u32,
     pub label: String,
-    /// Même jeu d'identifiants réseau que `external_wallets::ExternalWallet`.
+    /// Same set of network identifiers as `external_wallets::ExternalWallet`.
     pub network: String,
     pub address: String,
 }
@@ -43,15 +42,15 @@ fn save(data_dir: &Path, data: &AddressBookData) -> Result<()> {
     std::fs::write(path(data_dir), content).context("écriture du carnet d'adresses")
 }
 
-/// Contacts des réseaux de l'app ; ceux d'un réseau retiré (HyperEVM, le
-/// 07/10/2026) restent dans le fichier mais ne sont plus proposés : une
-/// adresse de dépôt valable sur un réseau ne l'est pas forcément sur un autre.
+/// Contacts on the app's networks; those on a removed network (HyperEVM, on
+/// 2026-10-07) stay in the file but are no longer offered: a deposit address valid
+/// on one network is not necessarily valid on another.
 pub fn list_entries(data_dir: &Path) -> Vec<AddressBookEntry> {
     load(data_dir).entries.into_iter().filter(|e| NETWORKS.contains(&e.network.as_str())).collect()
 }
 
-/// Réseaux proposables pour une adresse (carnet, wallets externes), dans
-/// l'ordre de proposition : réseaux principaux d'abord, de test à la fin.
+/// Networks that can be offered for an address (address book, external wallets), in
+/// the order they are offered: mainnets first, testnets last.
 const NETWORKS: [&str; 23] = [
     "evm_mainnet",
     "base_mainnet",
@@ -78,13 +77,13 @@ const NETWORKS: [&str; 23] = [
     "sol_devnet",
 ];
 
-/// Réseaux où `address` est valide (mêmes parseurs que l'envoi) : le menu
-/// « Réseau » ne propose que ceux-là, et l'ajout refuse les autres. NEAR à
-/// part : sa syntaxe de compte nommé (minuscules, chiffres, « . », « - »,
-/// « _ ») accepte presque n'importe quel mot — une adresse Bitcoin bech32,
-/// ou mal recopiée (« bc1qpasuneadresse », constaté). Proposé seulement pour
-/// une forme propre à NEAR (compte implicite, ou nom à point comme
-/// « alice.near »), et si aucun autre réseau ne la reconnaît.
+/// Networks on which `address` is valid (the same parsers as sending): the
+/// "Network" menu only offers those, and adding refuses the others. NEAR is the
+/// exception: its named-account syntax (lower case, digits, ".", "-", "_") accepts
+/// almost any word, including a bech32 Bitcoin address, or a miscopied one
+/// ("bc1qpasuneadresse", seen in practice). It is only offered for a NEAR-specific
+/// shape (implicit account, or a dotted name such as "alice.near"), and when no
+/// other network recognizes the address.
 pub fn networks_for(address: &str) -> Vec<&'static str> {
     let address = address.trim();
     if address.is_empty() {
@@ -122,9 +121,9 @@ pub fn remove_entry(data_dir: &Path, id: u32) -> Result<()> {
     save(data_dir, &data)
 }
 
-/// Partie "visible" d'une adresse, sans le préfixe fixe commun à TOUTES les
-/// adresses de son format (sinon toutes les adresses Bitcoin, qui commencent
-/// par `bc1q`, se "ressembleraient"), en minuscules pour la comparaison.
+/// "Visible" part of an address, without the fixed prefix shared by ALL addresses
+/// of its format (otherwise every Bitcoin address, starting with `bc1q`, would
+/// "look alike"), lower-cased for comparison.
 fn distinctive_part(address: &str) -> String {
     let lower = address.trim().to_ascii_lowercase();
     for prefix in ["0x", "bc1q", "bc1p", "tb1q", "tb1p"] {
@@ -137,7 +136,7 @@ fn distinctive_part(address: &str) -> String {
 
 fn same_address(a: &str, b: &str) -> bool {
     let (a, b) = (a.trim(), b.trim());
-    // Hex EVM et bech32 : insensibles à la casse ; base58 (Solana) : sensible.
+    // EVM hex and bech32: case-insensitive; base58 (Solana): case-sensitive.
     if a.starts_with("0x") || a.starts_with("bc1") || a.starts_with("tb1") {
         a.eq_ignore_ascii_case(b)
     } else {
@@ -145,21 +144,18 @@ fn same_address(a: &str, b: &str) -> bool {
     }
 }
 
-/// Entrée du carnet dont l'adresse RESSEMBLE à `address` sans lui être
-/// identique : mêmes 4 premiers ET 4 derniers caractères distinctifs, milieu
-/// différent — trouvé lors de l'audit "failles connues des hot wallets"
-/// (empoisonnement d'adresse, "address poisoning" : un attaquant génère une
-/// adresse qui imite début et fin de celle d'un contact habituel, pour qu'elle
-/// soit copiée par erreur ; c'est précisément ce que l'œil vérifie d'une
-/// adresse). `None` si l'adresse est exactement celle d'un contact, ou ne
-/// ressemble à aucun.
+/// Address book entry whose address LOOKS LIKE `address` without being identical:
+/// same first 4 AND last 4 distinctive characters, a different middle. Found during
+/// the "known hot wallet flaws" audit (address poisoning: an attacker generates an
+/// address that mimics the start and end of a usual contact's, so that it gets
+/// copied by mistake; those are exactly the parts the eye checks). `None` if the
+/// address is exactly a contact's, or looks like none of them.
 pub fn lookalike_entry<'a>(entries: &'a [AddressBookEntry], address: &str) -> Option<&'a AddressBookEntry> {
     const EDGE: usize = 4;
-    // `.get()` plutôt qu'un découpage direct : l'adresse est saisie par
-    // l'utilisateur, un caractère non-ASCII (é, emoji collé par erreur) ferait
-    // tomber un découpage direct au milieu d'un caractère — panique, donc
-    // arrêt de l'app (`panic = "abort"`). Une telle saisie n'est de toute façon
-    // pas une adresse valide : aucun avertissement de ressemblance à émettre.
+    // `.get()` rather than direct slicing: the address is typed by the user, and a
+    // non-ASCII character (é, an emoji pasted by mistake) would make direct slicing
+    // land in the middle of a character and panic. Such input is not a valid address
+    // anyway: no look-alike warning to raise.
     let edges = |s: &str| -> Option<(String, String)> {
         let s = distinctive_part(s);
         if s.len() < 2 * EDGE {
@@ -178,9 +174,8 @@ pub fn lookalike_entry<'a>(entries: &'a [AddressBookEntry], address: &str) -> Op
 mod tests {
     use super::*;
 
-    /// Le réseau suit l'adresse : une adresse Solana ne peut pas être
-    /// enregistrée comme adresse Ethereum, ni une adresse Bitcoin comme
-    /// compte NEAR.
+    /// The network follows the address: a Solana address cannot be saved as an Ethereum
+    /// address, nor a Bitcoin address as a NEAR account.
     #[test]
     fn networks_follow_the_address() {
         let evm = networks_for("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045");
@@ -193,7 +188,7 @@ mod tests {
         assert_eq!(networks_for("alice.near"), vec!["near_mainnet"]);
         assert_eq!(networks_for(&"ab".repeat(32)), vec!["near_mainnet"]);
         assert!(networks_for("pas une adresse !").is_empty());
-        // Adresse Bitcoin mal recopiée : pas un « compte NEAR » pour autant.
+        // A miscopied Bitcoin address is not a "NEAR account" either.
         assert!(networks_for("bc1qpasuneadresse").is_empty());
         assert!(networks_for("  ").is_empty());
 
@@ -217,19 +212,19 @@ mod tests {
             entry("Alice", "0x7a2F5c1e8B9d0e3f4A6b7C8d9E0f1A2b3C4d9e1F"),
             entry("Bob BTC", "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh"),
         ];
-        // Même début (7a2f) et même fin (9e1f), milieu différent : empoisonnée.
+        // Same start (7a2f) and same end (9e1f), different middle: poisoned.
         let poisoned = "0x7A2F000000000000000000000000000000009E1F";
         assert_eq!(lookalike_entry(&book, poisoned).map(|e| e.label.as_str()), Some("Alice"));
-        // La vraie adresse (casse différente, hex insensible à la casse) : aucun avertissement.
+        // The real address (different case, hex is case-insensitive): no warning.
         assert!(lookalike_entry(&book, "0x7a2f5c1e8b9d0e3f4a6b7c8d9e0f1a2b3c4d9e1f").is_none());
-        // Adresse Bitcoin sans rapport : le préfixe commun "bc1q" ne doit pas suffire.
+        // Unrelated Bitcoin address: the shared "bc1q" prefix must not be enough.
         assert!(lookalike_entry(&book, "bc1qp0jus87dalh7xku22tx3uhyhlf8cjuc0vvkhjz").is_none());
-        // Adresse Bitcoin imitant début et fin de celle de Bob : signalée.
+        // Bitcoin address mimicking the start and end of Bob's: flagged.
         assert_eq!(
             lookalike_entry(&book, "bc1qxy2k000000000000000000000000000000x0wlh").map(|e| e.label.as_str()),
             Some("Bob BTC")
         );
-        // Saisie non-ASCII : jamais de panique (arrêt de l'app), simplement aucun avertissement.
+        // Non-ASCII input: never a panic, simply no warning.
         assert!(lookalike_entry(&book, "0x7a2é00000000000000000000000000000009e1f").is_none());
         assert!(lookalike_entry(&book, "🔥🔥🔥🔥🔥🔥🔥🔥🔥").is_none());
     }

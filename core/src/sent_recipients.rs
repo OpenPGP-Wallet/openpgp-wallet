@@ -1,32 +1,29 @@
-//! Journal local des adresses auxquelles CE portefeuille a déjà envoyé des
-//! fonds — sert à prévenir, dans la boîte de confirmation native, qu'un envoi
-//! part vers une adresse jamais payée auparavant (le moment où une adresse
-//! mal recopiée, empoisonnée ou substituée coûte le plus cher). Demandé
-//! explicitement par l'utilisateur.
+//! Local log of the addresses THIS wallet has already sent funds to. It is used to
+//! warn, in the native confirmation dialog, that a send is going to an address
+//! never paid before (the moment when a miscopied, poisoned or swapped address
+//! costs the most). Explicitly requested by the user.
 //!
-//! Local plutôt que reconstruit depuis la blockchain : l'historique on-chain
-//! d'une adresse Solana demande une requête par transaction, et aucun nœud
-//! EVM public n'expose les transactions d'une adresse (voir
-//! `history::evm_history`). Conséquence assumée : le journal ne connaît que les
-//! envois faits depuis la version qui l'a introduit — le premier envoi vers un
-//! destinataire habituel après la mise à jour est signalé comme nouveau, une
-//! seule fois (sens sûr : jamais l'inverse).
+//! Local rather than rebuilt from the blockchain: the on-chain history of a Solana
+//! address takes one request per transaction, and no public EVM node exposes an
+//! address's transactions (see `history::evm_history`). Accepted consequence: the
+//! log only knows the sends made since the version that introduced it, so the first
+//! send to a usual recipient after the update is flagged as new, once (the safe
+//! direction: never the other way round).
 //!
-//! Écrit UNIQUEMENT par le backend Rust, après une diffusion réussie (voir
-//! `app/src-tauri`) : un frontend compromis ne peut pas faire passer une
-//! adresse pour "déjà payée" sans réellement lui envoyer des fonds, ce qui
-//! exige la boîte de confirmation native et le mot de passe. Aucun secret
-//! ici, seulement des adresses publiques (même niveau de sensibilité que le
-//! carnet d'adresses).
+//! Written ONLY by the Rust backend, after a successful broadcast (see
+//! `app/src-tauri`): a compromised frontend cannot make an address look "already
+//! paid" without actually sending it funds, which takes the native confirmation
+//! dialog and the password. No secret here, only public addresses (same sensitivity
+//! as the address book).
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::Mutex;
 
-/// Lecture-modification-écriture du journal : deux envois simultanés (commandes
-/// exécutées en parallèle, envoi matériel pendant un envoi logiciel) auraient
-/// chacun réécrit le journal sans l'entrée de l'autre.
+/// Read-modify-write of the log: two simultaneous sends (commands running in
+/// parallel, a hardware send during a software send) would each have rewritten the
+/// log without the other's entry.
 static JOURNAL_MUTEX: Mutex<()> = Mutex::new(());
 
 const SENT_RECIPIENTS_FILE: &str = "sent_recipients.json";
@@ -38,9 +35,8 @@ struct Journal {
 
 #[derive(Serialize, Deserialize, PartialEq)]
 struct Entry {
-    /// Identifiant réseau de l'app ("evm_mainnet", "btc_mainnet", "sol_mainnet"...)
-    /// — une même adresse EVM sur Sepolia et sur mainnet reste deux destinataires
-    /// distincts.
+    /// The app's network identifier ("evm_mainnet", "btc_mainnet", "sol_mainnet"...):
+    /// the same EVM address on Sepolia and on mainnet stays two distinct recipients.
     network: String,
     address: String,
 }
@@ -49,8 +45,8 @@ fn path(data_dir: &Path) -> std::path::PathBuf {
     data_dir.join(SENT_RECIPIENTS_FILE)
 }
 
-/// Fichier absent ou illisible = journal vide : toutes les adresses sont alors
-/// signalées comme nouvelles, jamais l'inverse.
+/// Missing or unreadable file = empty log: every address is then flagged as new,
+/// never the other way round.
 fn load(data_dir: &Path) -> Journal {
     std::fs::read_to_string(path(data_dir))
         .ok()
@@ -58,8 +54,8 @@ fn load(data_dir: &Path) -> Journal {
         .unwrap_or_default()
 }
 
-/// Forme de comparaison : hex EVM et bech32 Bitcoin sont insensibles à la
-/// casse (même adresse), base58 Solana y est SENSIBLE (autre adresse).
+/// Comparison form: EVM hex and Bitcoin bech32 are case-insensitive (same address),
+/// Solana base58 IS case-sensitive (a different address).
 fn normalize(address: &str) -> String {
     let trimmed = address.trim();
     let lower = trimmed.to_ascii_lowercase();
@@ -70,9 +66,9 @@ fn normalize(address: &str) -> String {
     }
 }
 
-/// `true` si ce portefeuille a déjà envoyé des fonds à `address` sur `network`.
-/// Toutes les adresses déjà payées, tous réseaux confondus (sans doublon) —
-/// pour reconnaître une adresse presque identique (`recipient_check`).
+/// `true` if this wallet has already sent funds to `address` on `network`. All the
+/// addresses already paid, across every network (no duplicates), to spot an almost
+/// identical address (`recipient_check`).
 pub fn addresses(data_dir: &Path) -> Vec<String> {
     let mut list: Vec<String> = load(data_dir).entries.into_iter().map(|e| e.address).collect();
     list.sort();
@@ -85,8 +81,8 @@ pub fn has_sent_to(data_dir: &Path, network: &str, address: &str) -> bool {
     load(data_dir).entries.iter().any(|e| e.network == network && e.address == address)
 }
 
-/// À appeler après une diffusion RÉUSSIE uniquement. Sans effet si l'adresse
-/// est déjà connue.
+/// Call this after a SUCCESSFUL broadcast only. No effect if the address is already
+/// known.
 pub fn record_sent(data_dir: &Path, network: &str, address: &str) -> Result<()> {
     let _serialize = JOURNAL_MUTEX.lock().unwrap_or_else(|p| p.into_inner());
     let entry = Entry { network: network.to_string(), address: normalize(address) };
@@ -96,8 +92,8 @@ pub fn record_sent(data_dir: &Path, network: &str, address: &str) -> Result<()> 
     }
     journal.entries.push(entry);
     let content = serde_json::to_string_pretty(&journal).context("sérialisation du journal des destinataires")?;
-    // Fichier temporaire puis renommage : une coupure pendant l'écriture ne laisse
-    // pas un journal tronqué.
+    // Temporary file, then rename: a power cut during the write does not leave a
+    // truncated log.
     let tmp = path(data_dir).with_extension("json.tmp");
     std::fs::write(&tmp, content).context("écriture du journal des destinataires")?;
     std::fs::rename(&tmp, path(data_dir)).context("écriture du journal des destinataires")
@@ -135,7 +131,7 @@ mod tests {
         record_sent(&dir, "btc_mainnet", &btc.to_uppercase()).unwrap();
         assert!(has_sent_to(&dir, "btc_mainnet", btc), "bech32 : insensible à la casse");
 
-        // Idempotent : pas de doublon.
+        // Idempotent: no duplicate.
         record_sent(&dir, "evm_mainnet", evm).unwrap();
         assert_eq!(load(&dir).entries.len(), 3);
         let _ = std::fs::remove_dir_all(&dir);

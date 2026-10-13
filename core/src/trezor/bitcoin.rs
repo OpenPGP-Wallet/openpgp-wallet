@@ -1,13 +1,13 @@
-//! Bitcoin sur Trezor (natif SegWit, BIP 84 : m/84'/c'/n'/{0,1}/i) : clé
-//! publique étendue du compte, adresse vérifiée sur l'écran, et signature par
-//! le dialogue `SignTx` : l'appareil demande une à une chaque entrée, chaque
-//! sortie, puis les transactions précédentes (métadonnées, entrées, sorties)
-//! pour vérifier lui-même les montants dépensés ; il affiche destinataires,
-//! montants et frais, la monnaie (sortie sur 1/i) étant reconnue et masquée.
+//! Bitcoin on Trezor (native SegWit, BIP 84: m/84'/c'/n'/{0,1}/i): the account's
+//! extended public key, an address checked on the screen, and signing through the
+//! `SignTx` dialog. The device asks for each input and each output one by one, then
+//! for the previous transactions (metadata, inputs, outputs) so it can check the
+//! amounts spent itself; it shows recipients, amounts and fee, and recognizes and
+//! hides the change (output on 1/i).
 //!
-//! Comme pour le Ledger, la transaction finale est assemblée ICI à partir des
-//! signatures, chacune vérifiée contre notre condensat BIP 143 : rien de ce
-//! que renvoie l'appareil n'est diffusé sans avoir été revérifié.
+//! As with the Ledger, the final transaction is assembled HERE from the signatures,
+//! each one checked against our BIP 143 digest: nothing the device returns is
+//! broadcast without being checked again.
 
 use super::proto::{Message, Writer};
 use super::{msg, Trezor};
@@ -19,8 +19,8 @@ use k256::ecdsa::signature::hazmat::PrehashVerifier;
 use k256::ecdsa::{Signature, VerifyingKey};
 use std::collections::HashMap;
 
-/// Version, verrouillage et séquence de la transaction — identiques à ceux du
-/// Ledger, et repris tels quels pour le condensat local.
+/// Transaction version, lock time and sequence: identical to the Ledger's, and
+/// reused as is for the local digest.
 const TX_VERSION: u32 = 2;
 const SEQUENCE: u32 = 0xffff_ffff;
 const SPENDWITNESS: u64 = 3;
@@ -45,7 +45,7 @@ fn address_path(account: &Account, change: u32, index: u32) -> Vec<u32> {
     path
 }
 
-/// Empreinte maîtresse et clé publique étendue du compte m/84'/c'/`account`'.
+/// Master fingerprint and extended public key of the m/84'/c'/`account`' account.
 pub fn load_account(trezor: &mut Trezor, testnet: bool, account: u32) -> Result<Account> {
     ensure!(account < HARDENED, "numéro de compte invalide");
     let payload = Writer::new().uints(1, &account_path(testnet, account)).string(4, coin_name(testnet)).finish();
@@ -54,13 +54,13 @@ pub fn load_account(trezor: &mut Trezor, testnet: bool, account: u32) -> Result<
     let xpub = key.string(2).ok_or_else(|| anyhow!("clé publique étendue du Trezor absente"))?;
     let fingerprint = key.uint(3).ok_or_else(|| anyhow!("empreinte maîtresse du Trezor absente (firmware trop ancien ?)"))?;
     let loaded = Account { testnet, account, fingerprint: (fingerprint as u32).to_be_bytes(), xpub };
-    // Préfixe, réseau et niveau de dérivation contrôlés comme pour le Ledger.
+    // Prefix, network and derivation depth checked as for the Ledger.
     loaded.address(0, 0)?;
     Ok(loaded)
 }
 
-/// Adresse calculée PAR L'APPAREIL (`show` : affichée pour vérification),
-/// comparée à celle dérivée localement de la clé étendue.
+/// Address computed BY THE DEVICE (`show`: displayed for verification), compared
+/// with the one derived locally from the extended key.
 pub fn get_address(trezor: &mut Trezor, account: &Account, change: u32, index: u32, show: bool) -> Result<String> {
     let expected = account.address(change, index)?;
     let payload = Writer::new()
@@ -75,14 +75,14 @@ pub fn get_address(trezor: &mut Trezor, account: &Account, change: u32, index: u
     Ok(address)
 }
 
-/// Adresse d'une sortie de destination (P2PKH, P2SH, P2WPKH, P2WSH ou
-/// Taproot) : le Trezor la reçoit sous cette forme et l'affiche.
+/// Address of a destination output (P2PKH, P2SH, P2WPKH, P2WSH or Taproot): the
+/// Trezor receives it in this form and displays it.
 fn output_address(account: &Account, script: &[u8]) -> Result<String> {
     crate::derivation::btc_script_address(script, account.testnet)
 }
 
-/// Réponse `TxAck` portant une transaction (ou un fragment) : champs 2
-/// entrées, 3 sorties brutes, 5 sorties, ou métadonnées.
+/// `TxAck` answer carrying a transaction (or a fragment of one): fields 2 inputs, 3
+/// raw outputs, 5 outputs, or metadata.
 fn tx_ack(transaction: Writer) -> Vec<u8> {
     Writer::new().message(1, transaction).finish()
 }
@@ -103,7 +103,7 @@ fn our_input(account: &Account, input: &Input) -> Vec<u8> {
 
 fn our_output(account: &Account, output: &Output) -> Result<Vec<u8>> {
     let fields = match output.change_index {
-        // Monnaie : désignée par son chemin, l'appareil la vérifie et la masque.
+        // Change: identified by its path, the device checks it and hides it.
         Some(index) => Writer::new().uints(2, &address_path(account, 1, index)).uint(3, output.value_sat).uint(4, PAYTOWITNESS),
         None => Writer::new().string(1, &output_address(account, &output.script_pubkey)?).uint(3, output.value_sat).uint(4, PAYTOADDRESS),
     };
@@ -136,13 +136,13 @@ fn prev_output(prev: &PrevTx, index: usize) -> Result<Vec<u8>> {
     Ok(tx_ack(Writer::new().message(3, Writer::new().uint(1, *value).bytes(2, script))))
 }
 
-/// Fait signer la transaction par l'appareil, vérifie chaque signature contre
-/// le condensat BIP 143 calculé ici, et renvoie la transaction finale.
+/// Has the device sign the transaction, checks each signature against the BIP 143
+/// digest computed here, and returns the final transaction.
 pub fn sign_transaction(trezor: &mut Trezor, account: &Account, inputs: &[Input], outputs: &[Output]) -> Result<Vec<u8>> {
     ensure!(!inputs.is_empty() && !outputs.is_empty(), "transaction vide");
-    // Vérifications locales identiques à celles du Ledger : chaque UTXO doit
-    // exister dans sa transaction précédente avec le montant et l'adresse
-    // attendus ; chaque monnaie doit être une adresse du compte.
+    // Same local checks as for the Ledger: each UTXO must exist in its previous
+    // transaction with the expected amount and address; each change output must be an
+    // address of the account.
     let mut previous: HashMap<[u8; 32], PrevTx> = HashMap::new();
     let mut keys = Vec::with_capacity(inputs.len());
     for input in inputs {
@@ -174,7 +174,7 @@ pub fn sign_transaction(trezor: &mut Trezor, account: &Account, inputs: &[Input]
         .finish();
     let mut response = trezor.call_expect(msg::SIGN_TX, &sign_tx, msg::TX_REQUEST)?;
     let mut signatures: Vec<Option<Vec<u8>>> = vec![None; inputs.len()];
-    // Borne : un dialogue normal compte quelques dizaines d'échanges.
+    // Bound: a normal dialog takes a few dozen exchanges.
     for _ in 0..10_000 {
         let request = Message::parse(&response)?;
         if let Some(serialized) = request.message(3)? {
@@ -248,8 +248,8 @@ mod tests {
         }
     }
 
-    /// Réponses `TxAck` identiques, octet pour octet, à celles de trezorlib
-    /// (TxAckInput, TxAckPrevMeta, TxAckPrevOutput, TxAckOutput de monnaie).
+    /// `TxAck` answers identical, byte for byte, to trezorlib's (TxAckInput,
+    /// TxAckPrevMeta, TxAckPrevOutput, change TxAckOutput).
     #[test]
     fn tx_acks_match_trezorlib() {
         let account = test_account();
@@ -268,11 +268,9 @@ mod tests {
         assert!(prev_output(&prev, 5).is_err());
     }
 
-    /// Firmware officiel dans l'émulateur (graine de test publique) : compte
-    /// et adresses = notre dérivation (et celles de l'app Ledger), adresse
-    /// affichée, vraie transaction à 2 entrées (0/0 et 1/3) signée après
-    /// revue (montant, destinataire, frais ; monnaie masquée), signatures
-    /// vérifiées ; refus -> erreur claire.
+    /// Official firmware in the emulator (public test seed): account and addresses = our derivation (and
+    /// the Ledger app's), address shown, a real 2-input transaction (0/0 and 1/3) signed after review
+    /// (amount, recipient, fee; change hidden), signatures checked; a rejection gives a clear error.
     /// `cargo test -- --ignored trezor_bitcoin_against_the_official_firmware --nocapture --test-threads=1`
     #[test]
     #[ignore]
@@ -323,9 +321,9 @@ mod tests {
         assert!(compact.contains("0.00002"), "frais affichés");
         assert_eq!(parse_transaction(&signed).unwrap().outputs.len(), 2);
 
-        // Destinataire de chaque autre type standard (P2PKH m…, P2SH 2…,
-        // P2WSH, Taproot tb1p…) : transmis au Trezor sous forme d'adresse,
-        // affiché, et la transaction signée porte le script attendu.
+        // A recipient of each other standard type (P2PKH m..., P2SH 2..., P2WSH, Taproot
+        // tb1p...): passed to the Trezor as an address and displayed, and the signed
+        // transaction carries the expected script.
         for to_script in [
             "76a91462e907b15cbf27d5425399ebf6f0fb50ebb88f1888ac",
             "a914b472a266d0bd89c13706a4132ccfb16f7c3b9fcb87",

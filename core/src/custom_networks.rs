@@ -1,20 +1,19 @@
-//! Réseaux compatibles Ethereum ajoutés par l'utilisateur (« RPC
-//! personnalisé ») : une chaîne EVM absente de l'app (Optimism, Linea…),
-//! désignée par son RPC, son identifiant de chaîne et le symbole de sa
-//! monnaie. Même adresse que les ETH (même clé), même signature (EIP-155,
-//! l'identifiant de chaîne est signé : une transaction ne peut pas être
-//! rejouée sur un autre réseau).
+//! Ethereum-compatible networks added by the user ("custom RPC"): an EVM chain the
+//! app does not include (Optimism, Linea...), identified by its RPC, its chain ID
+//! and the symbol of its coin. Same address as ETH (same key), same signing
+//! (EIP-155: the chain ID is signed, so a transaction cannot be replayed on another
+//! network).
 //!
-//! L'app ne peut rien vérifier d'autre de ce réseau : son RPC choisit les
-//! soldes et les frais qu'il annonce. D'où :
-//! - identifiant de chaîne vérifié auprès du RPC à l'ajout ;
-//! - identifiants des réseaux de l'app refusés (pas de « faux Ethereum ») ;
-//! - jamais de cours en dollars (le symbole ne dit rien de la valeur) ;
-//! - boîte de confirmation : « réseau ajouté par vous ».
+//! The app cannot check anything else about such a network: its RPC decides which
+//! balances and fees it reports. Hence:
+//! - the chain ID is checked with the RPC when the network is added;
+//! - the IDs of the app's own networks are refused (no "fake Ethereum");
+//! - never a dollar price (the symbol says nothing about value);
+//! - the confirmation dialog says "network added by you".
 //!
-//! Fichier `custom_networks.json` de l'appareil (rien de secret), chargé au
-//! démarrage dans un registre que `wallet_flow::evm_network` consulte après
-//! les réseaux de l'app.
+//! Stored in the device's `custom_networks.json` file (nothing secret), loaded at
+//! startup into a registry that `wallet_flow::evm_network` consults after the app's
+//! own networks.
 
 use crate::wallet_flow::{EvmNetwork, EVM_NETWORKS};
 use anyhow::{anyhow, bail, ensure, Context, Result};
@@ -23,9 +22,9 @@ use std::path::Path;
 use std::sync::RwLock;
 
 const FILE: &str = "custom_networks.json";
-/// Au plus 20 réseaux ajoutés.
+/// At most 20 added networks.
 const MAX_NETWORKS: usize = 20;
-/// Identifiant de chaîne le plus grand (entier exact côté interface).
+/// Largest chain ID (an exact integer on the interface side).
 const MAX_CHAIN_ID: u64 = (1 << 53) - 1;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -34,13 +33,13 @@ pub struct CustomNetwork {
     pub name: String,
     pub rpc: String,
     pub symbol: String,
-    /// Explorateur (racine, sans « / » final) : liens `/tx/…` et `/address/…`.
+    /// Explorer (root, without a trailing "/"): `/tx/...` and `/address/...` links.
     pub explorer: Option<String>,
 }
 
 impl CustomNetwork {
-    /// Identifiant dans l'app (cartes, commandes) : `custom_<chaîne>_mainnet`,
-    /// traité partout comme des fonds réels.
+    /// Identifier in the app (cards, commands): `custom_<chain>_mainnet`, treated
+    /// everywhere as real funds.
     pub fn id(&self) -> String {
         id(self.chain_id)
     }
@@ -64,9 +63,8 @@ fn save_file(data_dir: &Path, data: &Data) -> Result<()> {
     std::fs::write(data_dir.join(FILE), content).context("enregistrement des réseaux ajoutés")
 }
 
-/// Réseaux ajoutés, valides (un fichier modifié à la main ne fait entrer
-/// rien qui n'aurait pas été accepté à l'ajout, sauf la vérification en
-/// ligne).
+/// Added networks, valid ones only (a file edited by hand cannot bring in anything
+/// that would not have been accepted when adding, apart from the online check).
 pub fn list(data_dir: &Path) -> Vec<CustomNetwork> {
     let mut seen = std::collections::HashSet::new();
     load_file(data_dir)
@@ -78,7 +76,7 @@ pub fn list(data_dir: &Path) -> Vec<CustomNetwork> {
         .collect()
 }
 
-/// Contrôle et mise en forme d'un réseau saisi, sans appel réseau.
+/// Checks and normalizes an entered network, without any network call.
 pub fn validate(chain_id: u64, name: &str, rpc: &str, symbol: &str, explorer: Option<&str>) -> Result<CustomNetwork> {
     let name = name.trim();
     ensure!(
@@ -102,10 +100,10 @@ pub fn validate(chain_id: u64, name: &str, rpc: &str, symbol: &str, explorer: Op
     Ok(CustomNetwork { chain_id, name: name.to_string(), rpc, symbol: symbol.to_string(), explorer })
 }
 
-/// `https://` (ou `http://` pour un nœud local ou du réseau local seulement :
-/// en clair sur Internet, un intermédiaire pourrait montrer de faux soldes) ;
-/// ni identifiants ni fragment. Le chemin est gardé pour un RPC (souvent
-/// `…/v2/<clé>`) ; un explorateur : racine sans requête ni « / » final.
+/// `https://` (or `http://` for a local or LAN node only: in the clear over the
+/// Internet, a middleman could show fake balances); no credentials and no fragment.
+/// The path is kept for an RPC (often `.../v2/<key>`); for an explorer: the root,
+/// without a query or a trailing "/".
 fn normalize_url(url: &str, rpc: bool) -> Result<String> {
     let url = url.trim();
     ensure!(!url.is_empty() && url.len() <= 300 && !url.chars().any(|c| c.is_whitespace() || c.is_control()), "https://… attendu");
@@ -138,8 +136,8 @@ fn is_local_host(host: &str) -> bool {
     }
 }
 
-/// Ajoute un réseau : contrôles, puis identifiant de chaîne demandé au RPC
-/// (il doit répondre, et pour cette chaîne-là).
+/// Adds a network: checks, then the chain ID is requested from the RPC (it has to
+/// answer, and for that very chain).
 pub fn add(data_dir: &Path, chain_id: u64, name: &str, rpc: &str, symbol: &str, explorer: Option<&str>) -> Result<CustomNetwork> {
     let network = validate(chain_id, name, rpc, symbol, explorer)?;
     let mut data = Data { networks: list(data_dir) };
@@ -163,13 +161,11 @@ pub fn remove(data_dir: &Path, chain_id: u64) -> Result<()> {
     Ok(())
 }
 
-/// Réseaux ajoutés tels que le reste de l'app les utilise (`EvmNetwork`,
-/// durée de vie statique : un réseau retiré reste valide pour une opération
-/// déjà commencée).
+/// Added networks in the form the rest of the app uses them (`EvmNetwork`, static
+/// lifetime: a removed network stays valid for an operation already under way).
 static REGISTRY: RwLock<Vec<&'static EvmNetwork>> = RwLock::new(Vec::new());
 
-/// (Re)charge le registre depuis le fichier de l'appareil (démarrage, ajout,
-/// retrait).
+/// (Re)loads the registry from the device's file (startup, add, remove).
 pub fn load(data_dir: &Path) {
     let networks = list(data_dir);
     let mut registry = REGISTRY.write().unwrap_or_else(|p| p.into_inner());
@@ -184,7 +180,7 @@ pub fn find(id: &str) -> Option<&'static EvmNetwork> {
     REGISTRY.read().unwrap_or_else(|p| p.into_inner()).iter().copied().find(|n| n.id == id)
 }
 
-/// Explorateurs des réseaux ajoutés (liens autorisés à s'ouvrir).
+/// Explorers of the added networks (links allowed to open).
 pub fn explorer_origins() -> Vec<&'static str> {
     REGISTRY.read().unwrap_or_else(|p| p.into_inner()).iter().filter(|n| !n.explorer_tx_prefix.is_empty()).map(|n| n.explorer_tx_prefix).collect()
 }
@@ -210,14 +206,13 @@ fn to_evm_network(n: &CustomNetwork) -> EvmNetwork {
         label: leak(format!("{} (réseau ajouté)", n.name)),
         explorer_tx_prefix: leak(explorer_tx_prefix(n)),
         native_symbol: leak(n.symbol.clone()),
-        // Traité comme des fonds réels (avertissements, confirmations).
+        // Treated as real funds (warnings, confirmations).
         mainnet: true,
-        // Prix usuels de la chaîne inconnus : pas de plafond ; les frais
-        // exacts sont dans la boîte de confirmation.
+        // Usual prices on the chain are unknown: no cap; the exact fee is in the
+        // confirmation dialog.
         max_gas_price_wei: None,
-        // Limite de gas estimée par le nœud (+20 %, plafonnée) : juste sur
-        // toute chaîne compatible, y compris celles qui comptent la
-        // publication sur une autre chaîne en gas.
+        // Gas limit estimated by the node (+20%, capped): correct on any compatible chain,
+        // including those that count publishing to another chain as gas.
         transfer_gas: None,
         op_stack_l1_fee: false,
         history: None,
@@ -243,9 +238,9 @@ mod tests {
         assert_eq!(n.rpc, "https://mainnet.optimism.io/");
         assert_eq!(n.explorer.as_deref(), Some("https://optimistic.etherscan.io"));
         assert_eq!(n.id(), "custom_10_mainnet");
-        // Chemin (clé d'API d'un fournisseur) gardé pour un RPC.
+        // Path (a provider's API key) kept for an RPC.
         assert_eq!(validate(59144, "Linea", "https://linea-mainnet.infura.io/v3/abc123", "ETH", None).unwrap().rpc, "https://linea-mainnet.infura.io/v3/abc123");
-        // Nœud local en http.
+        // Local node over http.
         assert!(validate(31337, "Local", "http://127.0.0.1:8545", "ETH", None).is_ok());
         assert!(validate(31337, "Local", "http://192.168.1.20:8545", "ETH", None).is_ok());
         for (rpc, why) in [
@@ -268,8 +263,8 @@ mod tests {
         assert!(validate(1 << 53, "OP", "https://rpc.example.com", "ETH", None).is_err(), "chaîne trop grande");
     }
 
-    /// Les réseaux de l'app ne peuvent pas être « ajoutés » une seconde fois
-    /// avec un autre RPC (faux Ethereum, fausse BNB Chain…).
+    /// The app's networks cannot be "added" a second time with another RPC (fake
+    /// Ethereum, fake BNB Chain...).
     #[test]
     fn app_networks_cannot_be_added_again() {
         for net in EVM_NETWORKS {
@@ -278,10 +273,9 @@ mod tests {
         }
     }
 
-    /// Registre : un réseau du fichier est trouvé par son identifiant, avec
-    /// les réglages prudents (fonds réels, sans plafond ni limite fixe, sans
-    /// cours), puis disparaît une fois retiré ; un fichier altéré ne fait
-    /// entrer que des réseaux valides, sans doublon.
+    /// Registry: a network from the file is found by its ID, with the cautious settings
+    /// (real funds, no cap or fixed limit, no price), then disappears once removed; a
+    /// tampered file only brings in valid networks, without duplicates.
     #[test]
     fn registry_follows_the_file() {
         let dir = temp_dir("registry");
@@ -300,7 +294,7 @@ mod tests {
         assert_eq!(net.explorer_address_url("0xabc", None), "https://scan.example.com/address/0xabc");
         assert!(explorer_origins().contains(&"https://scan.example.com/tx/"));
         assert!(find("custom_777002_mainnet").is_none(), "RPC distant en http refusé");
-        // Rechargement identique : même réseau (pas de nouvelle copie).
+        // Identical reload: the same network (no new copy).
         load(&dir);
         assert!(std::ptr::eq(net, crate::wallet_flow::evm_network("custom_777001_mainnet").unwrap()));
         remove(&dir, 777_001).unwrap();
@@ -310,8 +304,8 @@ mod tests {
         assert!(list(&dir).is_empty());
     }
 
-    /// Réel (réseau) : ajout d'OP Mainnet par son RPC public (identifiant de
-    /// chaîne vérifié), refus d'un RPC qui répond pour une autre chaîne.
+    /// Real network: adding OP Mainnet through its public RPC (chain ID checked), and
+    /// refusing an RPC that answers for another chain.
     /// `cargo test -p openpgp-wallet-core --lib -- --ignored real_custom_network`
     #[test]
     #[ignore]

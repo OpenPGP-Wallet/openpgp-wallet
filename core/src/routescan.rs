@@ -1,15 +1,13 @@
-//! Client de l'API compatible Etherscan de Routescan (`api.routescan.io`),
-//! sans clé : historique des transactions et des jetons ERC-20 d'une adresse
-//! sur les réseaux qu'aucune instance Blockscout publique ne couvre
-//! (Avalanche C-Chain). Même rôle et mêmes garanties que `blockscout` :
-//! lecture seule, purement informatif, aucune donnée de l'utilisateur au-delà
-//! de l'adresse.
+//! Client for Routescan's Etherscan-compatible API (`api.routescan.io`), without a
+//! key: history of an address's transactions and ERC-20 tokens on the networks that
+//! no public Blockscout instance covers (Avalanche C-Chain). Same role and same
+//! guarantees as `blockscout`: read-only, purely informative, no user data beyond
+//! the address.
 //!
-//! Les instances Blockscout offrent la même API (`/api`), plus rapide que leur
-//! API v2 pour les virements de jetons, mais limitée sans clé à 10 requêtes
-//! par longue période (constaté : quota épuisé, remis à zéro 47 minutes plus
-//! tard, sur toutes les instances à la fois) — inutilisable ; l'API v2 en
-//! accorde 180 (voir `blockscout`).
+//! Blockscout instances offer the same API (`/api`), faster than their v2 API for
+//! token transfers, but limited without a key to 10 requests per long period
+//! (observed: quota used up, reset 47 minutes later, on every instance at once),
+//! which makes it unusable; the v2 API allows 180 (see `blockscout`).
 
 use crate::blockscout::{is_swap_method, EvmTx, TokenMove};
 use anyhow::{anyhow, bail, Context, Result};
@@ -17,9 +15,9 @@ use serde::Deserialize;
 use std::sync::OnceLock;
 
 const ROUTESCAN_URL: &str = "https://api.routescan.io/v2/network/mainnet/evm";
-/// Transactions par page.
+/// Transactions per page.
 pub const PAGE_SIZE: u32 = 50;
-/// Ces API refusent au-delà de 10 000 résultats (page × taille).
+/// These APIs refuse beyond 10,000 results (page × size).
 const MAX_RESULTS: u32 = 10_000;
 
 fn shared_client() -> &'static reqwest::blocking::Client {
@@ -39,8 +37,8 @@ struct Response {
     result: serde_json::Value,
 }
 
-/// Liste `result` d'une réponse ; adresse sans résultat : liste vide (statut
-/// "1", ou "0" selon l'action) ; autre refus : erreur.
+/// `result` list of a response; an address with no result gives an empty list
+/// (status "1", or "0" depending on the action); any other refusal is an error.
 fn result_list<T: serde::de::DeserializeOwned>(body: &str) -> Result<Vec<T>> {
     let response: Response = serde_json::from_str(body).context("réponse Routescan illisible")?;
     if response.status != "1" {
@@ -53,7 +51,7 @@ fn result_list<T: serde::de::DeserializeOwned>(body: &str) -> Result<Vec<T>> {
     serde_json::from_value(response.result).context("réponse Routescan illisible")
 }
 
-/// Appel au service.
+/// Call to the service.
 fn get(chain_id: u64, query: &[(&str, &str)]) -> Result<String> {
     shared_client()
         .get(format!("{ROUTESCAN_URL}/{chain_id}/etherscan/api"))
@@ -63,8 +61,7 @@ fn get(chain_id: u64, query: &[(&str, &str)]) -> Result<String> {
         .map_err(|e| anyhow!("appel Routescan impossible : {}", e.without_url()))
 }
 
-/// Numéro de la page suivante, `None` après la dernière (page incomplète ou
-/// limite de l'API).
+/// Next page number, `None` after the last one (incomplete page or API limit).
 fn next_page(page: u32, len: usize) -> Option<u32> {
     (len == PAGE_SIZE as usize && (page + 1) * PAGE_SIZE <= MAX_RESULTS).then_some(page + 1)
 }
@@ -73,8 +70,8 @@ fn number(s: &str, what: &str) -> Result<i128> {
     s.parse::<i128>().map_err(|_| anyhow!("{what} invalide dans la réponse de Routescan"))
 }
 
-/// Nom de fonction décodé (« swapExactETHForTokens(uint256 amountOutMin, …) ») :
-/// la partie avant la parenthèse.
+/// Decoded function name ("swapExactETHForTokens(uint256 amountOutMin, ...)"): the
+/// part before the parenthesis.
 fn method_name(function_name: &str) -> &str {
     function_name.split('(').next().unwrap_or_default()
 }
@@ -95,8 +92,8 @@ struct TxJson {
     function_name: String,
 }
 
-/// Page `page` (à partir de 1) de l'historique de `address`, de la plus
-/// récente à la plus ancienne, et le numéro de la suivante.
+/// Page `page` (starting at 1) of `address`'s history, newest to oldest, and the
+/// next page number.
 pub fn tx_history_page(chain_id: u64, address: &str, page: u32) -> Result<(Vec<EvmTx>, Option<u32>)> {
     let page_text = page.to_string();
     let size = PAGE_SIZE.to_string();
@@ -109,8 +106,8 @@ pub fn tx_history_page(chain_id: u64, address: &str, page: u32) -> Result<(Vec<E
     Ok((txs, next))
 }
 
-/// Réponse `txlist` : montant net et frais du point de vue de `address`
-/// (mêmes règles que `BlockscoutClient::tx_history_page`).
+/// `txlist` response: net amount and fee from `address`'s point of view (same rules
+/// as `BlockscoutClient::tx_history_page`).
 fn parse_tx_list(body: &str, address: &str) -> Result<Vec<EvmTx>> {
     let address = address.to_lowercase();
     result_list::<TxJson>(body)?
@@ -151,10 +148,10 @@ struct TokenTxJson {
     function_name: String,
 }
 
-/// Page `page` des virements du jeton ERC-20 `contract` pour `address` (50
-/// virements, du plus récent au plus ancien), regroupés par transaction, et
-/// le numéro de la suivante. Filtré par contrat côté serveur ET revérifié
-/// ici : un faux jeton au même symbole n'y entre jamais.
+/// Page `page` of the transfers of ERC-20 token `contract` for `address` (50
+/// transfers, newest to oldest), grouped by transaction, and the next page number.
+/// Filtered by contract on the server side AND checked again here: a fake token
+/// with the same symbol never gets in.
 pub fn token_history_page(chain_id: u64, address: &str, contract: &str, page: u32) -> Result<(Vec<TokenMove>, Option<u32>)> {
     let page_text = page.to_string();
     let size = PAGE_SIZE.to_string();
@@ -175,8 +172,8 @@ pub fn token_history_page(chain_id: u64, address: &str, contract: &str, page: u3
     Ok((token_moves(transfers, address, contract)?, next))
 }
 
-/// Virements d'une page regroupés par transaction (une transaction peut en
-/// contenir plusieurs, un échange par exemple), dans l'ordre de la page.
+/// Transfers of a page grouped by transaction (one transaction can contain several,
+/// a swap for example), in page order.
 fn token_moves(transfers: Vec<TokenTxJson>, address: &str, contract: &str) -> Result<Vec<TokenMove>> {
     let address = address.to_lowercase();
     let mut moves: Vec<TokenMove> = Vec::new();
@@ -206,9 +203,9 @@ mod tests {
 
     const ME: &str = "0x5d0b3cb43a0bfb7fafde0e3ccba8d6c0c5ec1e3f";
 
-    /// Format réel de `txlist` (champs relevés sur Routescan, réduits) : reçu,
-    /// envoyé (frais = gas utilisé × prix), échoué (frais seuls), vers
-    /// soi-même ; adresse sans transaction ; refus du service.
+    /// Real `txlist` format (fields captured from Routescan, trimmed): received, sent
+    /// (fee = gas used × price), failed (fee only), to self; an address with no
+    /// transaction; a refusal from the service.
     #[test]
     fn tx_list_is_read_from_the_address_point_of_view() {
         let body = format!(
@@ -241,10 +238,9 @@ mod tests {
         )
     }
 
-    /// Format réel de `tokentx` (champs relevés sur Routescan et Blockscout) :
-    /// reçu, envoyé, échange à deux virements regroupés en un mouvement, vers
-    /// soi-même ; « aucun virement » de Blockscout ; un autre jeton dans la
-    /// réponse est refusé.
+    /// Real `tokentx` format (fields captured from Routescan and Blockscout): received,
+    /// sent, a two-transfer swap grouped into one movement, to self; Blockscout's "no
+    /// transfers"; another token in the response is rejected.
     #[test]
     fn token_transfers_are_grouped_by_transaction() {
         let other = "0xa916b82ff122591cc88aac0d64ce30a8e3e16081";
@@ -273,10 +269,10 @@ mod tests {
         assert_eq!(next_page(200, 50), None, "10 000 résultats au plus");
     }
 
-    /// Service réel : historique Avalanche d'une adresse publique, puis
-    /// virements USDC de vitalik.eth (Routescan sert aussi Ethereum : format
-    /// `tokentx` vérifié sur une adresse très active), tous du bon contrat,
-    /// pages successives sans doublon.
+    /// Real service: Avalanche history of a public address, then vitalik.eth's USDC
+    /// transfers (Routescan serves Ethereum too: `tokentx` format checked on a very
+    /// active address), all from the right contract, successive pages without
+    /// duplicates.
     /// `cargo test -- --ignored real_routescan --nocapture`
     #[test]
     #[ignore]

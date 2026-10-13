@@ -1,17 +1,15 @@
-//! Abstraction sur le stockage de la clé privée PGP de l'appareil : privilégie
-//! le coffre natif de l'OS (Windows Credential Manager / macOS Keychain /
-//! Linux Secret Service, crate `keyring`) à un simple fichier `.asc` — un vrai
-//! contrôle d'accès du système d'exploitation (lié à la session utilisateur),
-//! pas seulement un chemin de fichier à deviner. Voir `api.rs` pour
-//! l'orchestration (repli sur fichier si le coffre OS est indisponible,
-//! jamais de blocage de la création/du déverrouillage du wallet à cause de
-//! ça, et compatibilité avec les coffres créés avant ce changement).
+//! Abstraction over storing the device's PGP private key: prefers the OS's native
+//! vault (Windows Credential Manager / macOS Keychain / Linux Secret Service,
+//! `keyring` crate) to a plain `.asc` file, which means real access control by the
+//! operating system (tied to the user session) rather than just a file path to
+//! guess. See `api.rs` for the orchestration (file fallback if the OS vault is
+//! unavailable, never blocking wallet creation or unlocking because of it, and
+//! compatibility with vaults created before this change).
 //!
-//! L'entrée du coffre OS est identifiée par un hash du chemin absolu de
-//! `data_dir`, jamais un nom fixe : plusieurs wallets sur la même machine
-//! (un vrai + des données de test, par exemple) doivent avoir des entrées de
-//! coffre OS complètement isolées, exactement comme ils ont déjà des
-//! fichiers séparés aujourd'hui.
+//! The OS vault entry is identified by a hash of the absolute path of `data_dir`,
+//! never a fixed name: several wallets on the same machine (a real one plus test
+//! data, for example) must have completely isolated vault entries, exactly as they
+//! already have separate files.
 
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
@@ -22,56 +20,50 @@ use zeroize::Zeroizing;
 /// the OS credential store. Renaming it would lock their owners out.
 const SERVICE: &str = "pgp-wallet-poc";
 
-/// Identifiant stable et unique par `data_dir`, jamais le chemin en clair
-/// (inutile de l'exposer tel quel dans le coffre OS, et certains chemins
-/// contiendraient des caractères que certains backends n'aiment pas). `pub`
-/// (pas `pub(crate)`) pour la même raison que `OsKeyStore` : utilisable
-/// depuis `src/bin/keyring_spike.rs`.
+/// Stable, unique identifier per `data_dir`, never the path in the clear (no need
+/// to expose it as is in the OS vault, and some paths contain characters that some
+/// backends dislike). `pub` (not `pub(crate)`) for the same reason as `OsKeyStore`:
+/// usable from `examples/keyring_spike.rs`.
 pub fn entry_username(data_dir: &Path) -> String {
     let hash = Sha256::digest(data_dir.to_string_lossy().as_bytes());
     format!("device_privkey_{}", hex::encode(&hash[..16]))
 }
 
-/// Abstraction injectable pour les tests — même motif que `SecretSealer`/
-/// `WindowsHelloSealer` déjà en place pour le déverrouillage biométrique
-/// (voir `api.rs`) : les tests utilisent un coffre en mémoire plutôt que le
-/// vrai coffre OS, pour ne jamais polluer le Gestionnaire d'identification/
-/// Trousseau réel de la machine qui exécute `cargo test`, et pour ne pas
-/// dépendre d'un coffre OS réellement configuré sur une machine de CI.
+/// Injectable abstraction for tests, the same pattern as
+/// `SecretSealer`/`WindowsHelloSealer` for biometric unlock (see `api.rs`): tests
+/// use an in-memory vault instead of the real OS vault, so they never pollute the
+/// real Credential Manager or Keychain of the machine running `cargo test`, and
+/// never depend on an OS vault actually being set up on a CI machine.
 pub trait KeyStore: Sync {
     fn write(&self, username: &str, secret: &str) -> Result<()>;
-    /// `Ok(None)` = aucune entrée (cas normal d'un wallet dont la clé vit
-    /// encore en fichier) ; `Err` = VRAIE panne du coffre OS. Les deux cas
-    /// étaient confondus dans la version précédente (tout échec traité comme
-    /// "absent"), ce qui masquait la cause réelle d'un problème — trouvé lors
-    /// du 20ᵉ passage d'auto-revue.
+    /// `Ok(None)` = no entry (the normal case for a wallet whose key still lives in a
+    /// file); `Err` = a REAL failure of the OS vault. The previous version mixed the
+    /// two (every failure treated as "absent"), which hid the real cause of a problem;
+    /// found in the 20th self-review round.
     ///
-    /// `Zeroizing<String>` (jamais un `String` nu) : le contenu est une clé
-    /// privée PGP en clair, voir le 2ᵉ passage d'auto-revue dans ETAPES.md.
+    /// `Zeroizing<String>` (never a bare `String`): the content is a PGP private key in
+    /// the clear (2nd self-review round).
     fn read(&self, username: &str) -> Result<Option<Zeroizing<String>>>;
     fn remove(&self, username: &str) -> Result<()>;
 }
 
-/// `pub` (pas `pub(crate)`) uniquement pour rester utilisable depuis
-/// `src/bin/keyring_spike.rs`, un binaire séparé qui dépend de cette crate
-/// comme une dépendance externe — même raison que `windows_hello::enroll`/
-/// `unlock`/`remove` sont `pub` pour `tpm_hello_spike.rs`.
+/// `pub` (not `pub(crate)`) only so it stays usable from
+/// `examples/keyring_spike.rs`, a separate program that depends on this crate like
+/// an external dependency; same reason `windows_hello::enroll`/`unlock`/`remove`
+/// are `pub` for `tpm_hello_spike.rs`.
 pub struct OsKeyStore;
 
 impl KeyStore for OsKeyStore {
-    // `set_secret`/`get_secret` (octets bruts), jamais `set_password`/
-    // `get_password` (texte) : trouvé empiriquement (`keyring_spike --
-    // full-cycle`) que le backend Windows de `keyring` convertit un mot de
-    // passe en UTF-16 AVANT de l'écrire (pour l'interopérabilité avec les
-    // API Windows natives, qui attendent des mots de passe en UTF-16) — ce
-    // qui DOUBLE la taille en octets d'un texte ASCII comme notre clé PGP
-    // armorée. Une clé de 1337 octets (mesurée sur un coffre réel de ce
-    // projet) dépassait ainsi la limite réelle de Windows Credential Manager
-    // (2560 octets) une fois convertie (2674 octets), alors que 1337 octets
-    // BRUTS tiennent confortablement dans cette même limite. `set_secret`
-    // écrit les octets tels quels sur toutes les plateformes (Windows ET la
-    // valeur par défaut du trait utilisée par macOS/Linux), donc plus
-    // cohérent ET plus compact.
+    // `set_secret`/`get_secret` (raw bytes), never `set_password`/`get_password`
+    // (text): found empirically (`keyring_spike full-cycle`) that `keyring`'s Windows
+    // backend converts a password to UTF-16 BEFORE writing it (for interoperability
+    // with the native Windows APIs, which expect UTF-16 passwords), which DOUBLES the
+    // byte size of ASCII text such as our armored PGP key. A 1,337-byte key (measured
+    // on a real vault of this project) thus went over Windows Credential Manager's
+    // real limit (2,560 bytes) once converted (2,674 bytes), while 1,337 RAW bytes fit
+    // comfortably within that same limit. `set_secret` writes the bytes as they are on
+    // every platform (Windows AND the trait's default used by macOS/Linux): more
+    // consistent AND more compact.
     fn write(&self, username: &str, secret: &str) -> Result<()> {
         keyring::Entry::new(SERVICE, username)
             .and_then(|e| e.set_secret(secret.as_bytes()))
@@ -81,9 +73,9 @@ impl KeyStore for OsKeyStore {
     fn read(&self, username: &str) -> Result<Option<Zeroizing<String>>> {
         let entry = keyring::Entry::new(SERVICE, username).context("ouverture de l'entrée du coffre natif de l'OS")?;
         match entry.get_secret() {
-            // `secret` (octets bruts) directement consommé par `from_utf8`,
-            // jamais cloné : un seul buffer existe à tout moment, celui qui
-            // finit enveloppé dans le `Zeroizing` renvoyé.
+            // `secret` (raw bytes) consumed directly by `from_utf8`, never cloned: only one
+            // buffer exists at any time, the one that ends up wrapped in the returned
+            // `Zeroizing`.
             Ok(secret) => String::from_utf8(secret)
                 .map(|s| Some(Zeroizing::new(s)))
                 .context("contenu du coffre OS non-UTF8 (corruption ?)"),
@@ -99,8 +91,7 @@ impl KeyStore for OsKeyStore {
     }
 }
 
-/// Faux coffre en mémoire pour les tests (voir la doc du trait) — jamais
-/// utilisé en production.
+/// Fake in-memory vault for tests (see the trait's doc): never used in production.
 #[cfg(test)]
 #[derive(Default)]
 pub(crate) struct InMemoryKeyStore(std::sync::Mutex<std::collections::HashMap<String, String>>);

@@ -2,7 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
 use std::sync::OnceLock;
 
-/// Appel à simuler par `EthRpc::simulate_v1`.
+/// Call to simulate with `EthRpc::simulate_v1`.
 pub struct SimCallRequest<'a> {
     pub from: &'a str,
     pub to: &'a str,
@@ -10,15 +10,15 @@ pub struct SimCallRequest<'a> {
     pub data: &'a [u8],
 }
 
-/// Résultat d'un appel simulé : succès et événements émis.
+/// Result of a simulated call: success, and emitted events.
 #[derive(Clone)]
 pub struct SimulatedCall {
     pub success: bool,
     pub logs: Vec<SimulatedLog>,
 }
 
-/// Émetteur des mouvements de monnaie native tracés par `eth_simulateV1`
-/// (`traceTransfers`, spécification execution-apis).
+/// Emitter of the native coin movements traced by `eth_simulateV1`
+/// (`traceTransfers`, execution-apis specification).
 pub const NATIVE_TRANSFER_EMITTER: [u8; 20] = [0xee; 20];
 
 #[derive(Clone)]
@@ -28,24 +28,24 @@ pub struct SimulatedLog {
     pub data: Vec<u8>,
 }
 
-/// Client JSON-RPC minimal pour parler à un nœud Ethereum (ici : Sepolia testnet).
+/// Minimal JSON-RPC client to talk to an Ethereum node (here: the Sepolia testnet).
 pub struct EthRpc {
     endpoint: String,
     client: reqwest::blocking::Client,
 }
 
-// Un `reqwest::Client` maintient un pool de connexions keep-alive : le reconstruire
-// à chaque appel de commande Tauri (chaque `EthRpc::new`, donc chaque clic qui
-// touche le réseau) jetait ce pool et repayait une poignée de main TCP+TLS complète
-// à chaque fois, ajoutant une latence réseau perceptible à chaque clic. `Client` est
-// conçu pour être partagé/cloné (`Arc` en interne, clonage bon marché) : un seul
-// client construit une fois par processus, réutilisé partout.
+// A `reqwest::Client` keeps a pool of keep-alive connections. Rebuilding it on every
+// Tauri command (every `EthRpc::new`, so every click that touches the network) threw
+// that pool away and paid for a full TCP + TLS handshake each time, adding
+// noticeable network latency to every click. `Client` is designed to be shared and
+// cloned (an internal `Arc`, cheap to clone): a single client built once per
+// process, reused everywhere.
 fn shared_client() -> &'static reqwest::blocking::Client {
     static CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
         reqwest::blocking::Client::builder()
-            // Sans timeout explicite, reqwest attend indéfiniment un nœud qui ne
-            // répond jamais, bloquant l'app entière sur cet appel.
+            // Without an explicit timeout, reqwest waits forever for a node that never
+            // answers, blocking the whole app on that call.
             .timeout(std::time::Duration::from_secs(30))
             .build()
             .expect("configuration du client HTTP valide")
@@ -102,10 +102,10 @@ impl EthRpc {
         self.call_hex_u64("eth_getTransactionCount", json!([address, "pending"]))
     }
 
-    /// Gas réellement consommé par l'exécution d'un appel (`eth_estimateGas`,
-    /// simulation par le nœud) — indispensable pour un appel de CONTRAT : le
-    /// gas intrinsèque (`eth_tx::intrinsic_gas`) n'est que le minimum pour
-    /// SOUMETTRE une transaction, pas pour l'exécuter.
+    /// Gas actually consumed by running a call (`eth_estimateGas`, simulated by the
+    /// node). Essential for a CONTRACT call: the intrinsic gas
+    /// (`eth_tx::intrinsic_gas`) is only the minimum needed to SUBMIT a transaction,
+    /// not to run it.
     pub fn estimate_gas(&self, from: &str, to: &str, value_wei: u128, data: &[u8]) -> Result<u64> {
         self.call_hex_u64(
             "eth_estimateGas",
@@ -118,10 +118,10 @@ impl EthRpc {
         )
     }
 
-    /// Exécute un appel SANS rien diffuser (`eth_call`, état "latest") et
-    /// renvoie les octets rendus — sert à lire un contrat (décimales/symbole
-    /// d'un jeton) et à détecter AVANT signature une transaction de dApp qui
-    /// échouerait (le nœud renvoie alors une erreur "execution reverted").
+    /// Runs a call WITHOUT broadcasting anything (`eth_call`, "latest" state) and
+    /// returns the bytes it produced. Used to read a contract (a token's decimals or
+    /// symbol) and to detect, BEFORE signing, a dApp transaction that would fail (the
+    /// node then returns an "execution reverted" error).
     pub fn call_contract(&self, from: &str, to: &str, value_wei: u128, data: &[u8]) -> Result<Vec<u8>> {
         let result = self.call(
             "eth_call",
@@ -136,21 +136,19 @@ impl EthRpc {
         hex::decode(hex_str.trim_start_matches("0x")).with_context(|| format!("réponse eth_call non hexadécimale : {hex_str}"))
     }
 
-    /// Simule des appels À LA SUITE dans un même bloc (`eth_simulateV1`, état
-    /// "latest", sans vérification de nonce ni de frais) et renvoie, pour
-    /// chacun, son succès et les événements émis. Rien n'est diffusé. Sert à
-    /// lire ce qu'une transaction construite par un tiers ferait réellement
-    /// (destinataire émis par le contrat, jetons qui quittent l'utilisateur)
-    /// avant de la signer — autorisation préalable comprise, simulée juste
-    /// avant dans le même bloc.
+    /// Simulates calls ONE AFTER ANOTHER in the same block (`eth_simulateV1`, "latest"
+    /// state, no nonce or fee check) and returns, for each one, its success and the
+    /// events it emitted. Nothing is broadcast. Used to read what a transaction built
+    /// by a third party would really do (recipient emitted by the contract, tokens
+    /// leaving the user) before signing it, including a prior approval simulated just
+    /// before in the same block.
     pub fn simulate_v1(&self, calls: &[SimCallRequest]) -> Result<Vec<SimulatedCall>> {
         self.simulate(calls, false)
     }
 
-    /// Comme `simulate_v1`, avec en plus chaque mouvement de la monnaie du
-    /// réseau sous forme d'événement `Transfer` émis par l'adresse
-    /// `NATIVE_TRANSFER_EMITTER` (`traceTransfers`) : ce qu'un contrat envoie
-    /// en ETH, BNB… n'émet sinon aucun événement.
+    /// Like `simulate_v1`, plus every movement of the network's coin as a `Transfer`
+    /// event emitted by the `NATIVE_TRANSFER_EMITTER` address (`traceTransfers`):
+    /// otherwise, what a contract sends in ETH, BNB... emits no event at all.
     pub fn simulate_v1_with_native_transfers(&self, calls: &[SimCallRequest]) -> Result<Vec<SimulatedCall>> {
         self.simulate(calls, true)
     }
@@ -208,7 +206,7 @@ impl EthRpc {
             .collect()
     }
 
-    /// Code déployé à `address` (vide pour une adresse ordinaire, sans contrat).
+    /// Code deployed at `address` (empty for an ordinary address with no contract).
     pub fn code(&self, address: &str) -> Result<Vec<u8>> {
         let result = self.call("eth_getCode", json!([address, "latest"]))?;
         let hex_str = result.as_str().ok_or_else(|| anyhow!("réponse eth_getCode non textuelle"))?;
@@ -224,7 +222,7 @@ impl EthRpc {
             .with_context(|| format!("réponse eth_gasPrice non hexadécimale : {hex_str}"))
     }
 
-    /// Solde en wei.
+    /// Balance in wei.
     pub fn balance(&self, address: &str) -> Result<u128> {
         let result = self.call("eth_getBalance", json!([address, "latest"]))?;
         let hex_str = result
@@ -234,8 +232,8 @@ impl EthRpc {
             .with_context(|| format!("réponse eth_getBalance non hexadécimale : {hex_str}"))
     }
 
-    /// Statut d'une transaction : `Some(true)` minée et réussie, `Some(false)`
-    /// minée mais annulée (revert), `None` pas encore minée.
+    /// Transaction status: `Some(true)` mined and successful, `Some(false)` mined but
+    /// reverted, `None` not mined yet.
     pub fn receipt_status(&self, tx_hash: &str) -> Result<Option<bool>> {
         let result = self.call("eth_getTransactionReceipt", json!([tx_hash]))?;
         if result.is_null() {
@@ -245,10 +243,10 @@ impl EthRpc {
         Ok(Some(status == "0x1"))
     }
 
-    /// Diffuse une transaction déjà signée (RLP brute) et renvoie son hash
-    /// (Keccak-256 de la transaction signée, calculé ici). Sans réponse nette,
-    /// « peut-être partie » (voir `wallet_flow::maybe_sent`) ; déjà connue du
-    /// nœud : c'est la même, partie.
+    /// Broadcasts an already signed transaction (raw RLP) and returns its hash
+    /// (Keccak-256 of the signed transaction, computed here). Without a clear answer,
+    /// it is "maybe sent" (see `wallet_flow::maybe_sent`); if the node already knows
+    /// it, it is the same transaction, already sent.
     pub fn send_raw_transaction(&self, raw_tx: &[u8]) -> Result<String> {
         use sha3::{Digest, Keccak256};
         let hash = format!("0x{}", hex::encode(Keccak256::digest(raw_tx)));
