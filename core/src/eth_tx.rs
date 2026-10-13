@@ -4,8 +4,8 @@ use k256::ecdsa::signature::hazmat::PrehashSigner;
 use rlp::RlpStream;
 use sha3::{Digest, Keccak256};
 
-/// Transaction Ethereum "legacy" (pas EIP-1559) toute simple : un transfert d'ETH
-/// sans données ni contrat. Suffisant pour le test "premier virement" du PoC.
+/// A plain "legacy" (non-EIP-1559) Ethereum transaction: an ETH transfer, or a
+/// contract call when `data` is set.
 pub struct EthTx {
     pub nonce: u64,
     pub gas_price: u128,
@@ -13,18 +13,16 @@ pub struct EthTx {
     pub to: [u8; 20],
     pub value: u128,
     pub chain_id: u64,
-    /// Calldata d'appel de contrat. Vide pour un simple transfert (comportement
-    /// strictement identique à avant cet ajout). Non-vide pour un swap
-    /// THORChain (`thorchain_deposit_calldata`) — `gas_limit` doit alors venir
-    /// d'une estimation réelle de l'exécution (`EthRpc::estimate_gas`), jamais
-    /// de `intrinsic_gas` seul : ce dernier n'est que le minimum pour SOUMETTRE
-    /// la transaction (mesuré : 23 844 contre 45 632 réellement consommés par
-    /// un dépôt sur le routeur THORChain).
+    /// Contract call data. Empty for a plain transfer. Non-empty for a THORChain swap
+    /// (`thorchain_deposit_calldata`): `gas_limit` must then come from a real estimate
+    /// of the execution (`EthRpc::estimate_gas`), never from `intrinsic_gas` alone,
+    /// which is only the minimum needed to SUBMIT the transaction (measured: 23,844
+    /// versus 45,632 actually consumed by a deposit on the THORChain router).
     pub data: Vec<u8>,
 }
 
-/// Encode un entier en RLP "big-endian minimal" (zéros de tête retirés, 0 -> chaîne vide),
-/// comme l'exigent les champs entiers d'une transaction Ethereum.
+/// Encodes an integer as "minimal big-endian" RLP (leading zeros removed, 0 -> empty
+/// string), as Ethereum transaction integer fields require.
 fn trim_be(bytes: &[u8]) -> Vec<u8> {
     let first_nonzero = bytes.iter().position(|&b| b != 0);
     match first_nonzero {
@@ -46,7 +44,7 @@ impl EthTx {
 
         match v {
             None => {
-                // Tuple EIP-155 sur la tx non signée : (chain_id, 0, 0)
+                // EIP-155 tuple on the unsigned tx: (chain_id, 0, 0)
                 s.append(&trim_be(&self.chain_id.to_be_bytes()));
                 s.append(&Vec::<u8>::new());
                 s.append(&Vec::<u8>::new());
@@ -60,14 +58,14 @@ impl EthTx {
         s.out().to_vec()
     }
 
-    /// Encodage RLP NON signé (tuple EIP-155 `chain_id, 0, 0` en fin) : ce que
-    /// signe un portefeuille matériel (voir `ledger::eth`).
+    /// UNSIGNED RLP encoding (EIP-155 tuple `chain_id, 0, 0` at the end): what a
+    /// hardware wallet signs (see `ledger::eth`).
     pub fn unsigned_rlp(&self) -> Vec<u8> {
         self.encode(None)
     }
 
-    /// Transaction finale à partir d'une signature produite ailleurs (appareil
-    /// matériel) : `v` EIP-155 complet, `r`/`s` sur 32 octets.
+    /// Final transaction from a signature produced elsewhere (hardware device): full
+    /// EIP-155 `v`, `r`/`s` on 32 bytes.
     pub fn encode_with_signature(&self, v: u64, r: &[u8; 32], s: &[u8; 32]) -> Vec<u8> {
         self.encode(Some((v, trim_be(r).as_slice(), trim_be(s).as_slice())))
     }
@@ -80,8 +78,8 @@ impl EthTx {
         out
     }
 
-    /// Signe la transaction avec la clé privée dérivée et renvoie la transaction
-    /// RLP-encodée, prête à être envoyée via `eth_sendRawTransaction`.
+    /// Signs the transaction with the derived private key and returns the RLP-encoded
+    /// transaction, ready to send with `eth_sendRawTransaction`.
     pub fn sign(&self, key: &SigningKey) -> Result<Vec<u8>> {
         let hash = self.hash_unsigned();
 
@@ -97,12 +95,11 @@ impl EthTx {
     }
 }
 
-/// Gas intrinsèque réel d'une transaction (règle post-EIP-2028, en vigueur
-/// depuis Istanbul) : 21 000 de base + 16 par octet non-nul de calldata + 4 par
-/// octet nul. Un simple transfert (`data` vide) redonne exactement 21 000,
-/// donc aucune régression sur le chemin d'envoi existant. Ce n'est qu'un
-/// PLANCHER (le minimum pour soumettre la transaction) : pour un appel de
-/// contrat, l'exécution consomme bien davantage — voir `EthTx::data`.
+/// Actual intrinsic gas of a transaction (the post-EIP-2028 rule, in force since
+/// Istanbul): 21,000 base + 16 per non-zero calldata byte + 4 per zero byte. A
+/// plain transfer (empty `data`) gives exactly 21,000. This is only a FLOOR (the
+/// minimum to submit the transaction): for a contract call, execution consumes much
+/// more; see `EthTx::data`.
 pub fn intrinsic_gas(data: &[u8]) -> u64 {
     const BASE: u64 = 21_000;
     let (zero, nonzero) = data.iter().fold((0u64, 0u64), |(zero, nonzero), &b| {
@@ -117,18 +114,18 @@ fn pad_left_32(bytes: &[u8]) -> [u8; 32] {
     buf
 }
 
-/// Encode l'appel `depositWithExpiry(address vault, address asset, uint256
-/// amount, string memo, uint256 expiration)` du contrat "THORChain Router",
-/// tel qu'exigé pour un swap THORChain depuis une chaîne EVM (voir
-/// `thorchain_rpc` pour le contexte : `vault` = `SwapQuote::inbound_address`,
-/// et l'appel doit cibler `SwapQuote::router`, jamais `inbound_address`
-/// directement). Sélecteur (`0x44bc937b`) vérifié en direct contre la base
-/// publique 4byte.directory, jamais recalculé "à l'oeil". Suit l'encodage ABI
-/// Solidity standard : les 3 premiers paramètres statiques sont encodés en
-/// place, `memo` (seul type dynamique) est remplacé dans la tête par un
-/// décalage vers la queue, `expiration` reste statique après ce décalage —
-/// voir le test `thorchain_deposit_calldata_matches_a_hand_computed_reference`
-/// pour une vérification octet par octet contre la spec.
+/// Encodes the `depositWithExpiry(address vault, address asset, uint256 amount,
+/// string memo, uint256 expiration)` call of the "THORChain Router" contract, as a
+/// THORChain swap from an EVM chain requires (see `thorchain_rpc` for context:
+/// `vault` = `SwapQuote::inbound_address`, and the call must target
+/// `SwapQuote::router`, never `inbound_address` directly). The selector
+/// (`0x44bc937b`) was checked live against the public 4byte.directory database,
+/// never worked out by eye. Follows the standard Solidity ABI encoding: the first 3
+/// static parameters are encoded in place, `memo` (the only dynamic type) is
+/// replaced in the head by an offset to the tail, and `expiration` stays static
+/// after that offset. See the test
+/// `thorchain_deposit_calldata_matches_a_hand_computed_reference` for a
+/// byte-for-byte check against the spec.
 pub fn thorchain_deposit_calldata(vault: &[u8; 20], asset: &[u8; 20], amount: u128, memo: &str, expiration: u64) -> Vec<u8> {
     const SELECTOR: [u8; 4] = [0x44, 0xbc, 0x93, 0x7b];
     const HEAD_SLOTS: u128 = 5; // vault, asset, amount, offset(memo), expiration
@@ -140,7 +137,7 @@ pub fn thorchain_deposit_calldata(vault: &[u8; 20], asset: &[u8; 20], amount: u1
     data.extend_from_slice(&pad_left_32(vault));
     data.extend_from_slice(&pad_left_32(asset));
     data.extend_from_slice(&pad_left_32(&amount.to_be_bytes()));
-    data.extend_from_slice(&pad_left_32(&(HEAD_SLOTS * 32).to_be_bytes())); // offset du memo
+    data.extend_from_slice(&pad_left_32(&(HEAD_SLOTS * 32).to_be_bytes())); // memo offset
     data.extend_from_slice(&pad_left_32(&(expiration as u128).to_be_bytes()));
 
     data.extend_from_slice(&pad_left_32(&(memo_bytes.len() as u128).to_be_bytes()));
@@ -165,14 +162,13 @@ mod tests {
         assert_eq!(trim_be(&[1]), vec![1]);
     }
 
-    /// Ethereum exige une signature "low-S" depuis Homestead (EIP-2) : une
-    /// signature "high-S" est rejetée par le réseau ET permet une seconde
-    /// signature valide pour le même message (malléabilité, `s' = n - s`).
-    /// `sign()` n'appelle jamais `normalize_s()` explicitement (contrairement à
-    /// `btc_tx.rs::sign()`, qui le fait) — ce test vérifie empiriquement que
-    /// `k256::ecdsa::SigningKey::sign_prehash` produit déjà toujours une
-    /// signature normalisée par elle-même, sur un grand nombre de hachages
-    /// distincts, plutôt que de le supposer sans le vérifier.
+    /// Ethereum requires a "low-S" signature since Homestead (EIP-2): a "high-S"
+    /// signature is rejected by the network AND allows a second valid signature for the
+    /// same message (malleability, `s' = n - s`). `sign()` never calls `normalize_s()`
+    /// explicitly (unlike `btc_tx.rs::sign()`, which does), so this test checks
+    /// empirically, over a large number of distinct hashes, that
+    /// `k256::ecdsa::SigningKey::sign_prehash` always produces a normalized signature
+    /// on its own, rather than assuming it.
     #[test]
     fn signatures_are_always_low_s_without_explicit_normalization() {
         let key = SigningKey::from_slice(&[3u8; 32]).expect("clé de test valide");
@@ -187,10 +183,10 @@ mod tests {
         }
     }
 
-    /// Test de non-régression : signe une transaction, la redécode en RLP et
-    /// vérifie que la signature (r, s) correspond bien au hash non-signé recalculé
-    /// avec la clé publique correspondante. Aurait détecté le type de bug déjà
-    /// rencontré côté Bitcoin (hashOutputs mal construit) s'il existait ici.
+    /// Regression test: signs a transaction, decodes it again from RLP and checks that
+    /// the signature (r, s) matches the recomputed unsigned hash with the corresponding
+    /// public key. It would have caught the kind of bug already met on the Bitcoin side
+    /// (a badly built hashOutputs) had it existed here.
     #[test]
     fn signed_tx_round_trips_and_signature_verifies() {
         let key = SigningKey::from_slice(&[7u8; 32]).expect("clé de test valide");
@@ -219,7 +215,7 @@ mod tests {
         let sig_r: Vec<u8> = rlp.val_at(7).unwrap();
         let sig_s: Vec<u8> = rlp.val_at(8).unwrap();
 
-        // v = chain_id*2 + 35 + recid ; recid ne peut être que 0 ou 1.
+        // v = chain_id*2 + 35 + recid; recid can only be 0 or 1.
         let expected_base = tx.chain_id * 2 + 35;
         assert!(sig_v == expected_base || sig_v == expected_base + 1);
 
@@ -238,25 +234,23 @@ mod tests {
 
     #[test]
     fn intrinsic_gas_matches_the_base_cost_for_an_empty_payload() {
-        // Un simple transfert (data vide) doit redonner exactement 21 000 :
-        // aucune régression sur le chemin d'envoi existant, qui codait cette
-        // valeur en dur avant cet ajout.
+        // A plain transfer (empty data) must give exactly 21,000: no regression on the
+        // existing send path, which hard-coded that value before this addition.
         assert_eq!(intrinsic_gas(&[]), 21_000);
     }
 
     #[test]
     fn intrinsic_gas_counts_zero_and_nonzero_bytes_at_their_real_eip2028_cost() {
-        let data = [0x00, 0x00, 0xFF, 0x01]; // 2 octets nuls, 2 non-nuls
+        let data = [0x00, 0x00, 0xFF, 0x01]; // 2 zero bytes, 2 non-zero
         assert_eq!(intrinsic_gas(&data), 21_000 + 2 * 4 + 2 * 16);
     }
 
-    /// Vérifie l'encodage `thorchain_deposit_calldata` octet par octet contre
-    /// la spec ABI Solidity, recalculée à la main ici (pas seulement "ça
-    /// compile") : sélecteur, 3 champs statiques en place, décalage vers le
-    /// memo (seul type dynamique), puis longueur + contenu + padding du memo
-    /// dans la queue. Le sélecteur `0x44bc937b` a été vérifié en direct contre
-    /// 4byte.directory avant d'être inscrit dans le code (jamais recalculé
-    /// "à l'oeil").
+    /// Checks the `thorchain_deposit_calldata` encoding byte for byte against the
+    /// Solidity ABI spec, worked out by hand here (not just "it compiles"): selector, 3
+    /// static fields in place, offset to the memo (the only dynamic type), then the
+    /// memo's length + content + padding in the tail. The `0x44bc937b` selector was
+    /// checked live against 4byte.directory before going into the code (never worked
+    /// out by eye).
     #[test]
     fn thorchain_deposit_calldata_matches_a_hand_computed_reference() {
         let vault = [0x11u8; 20];
@@ -267,32 +261,32 @@ mod tests {
 
         let calldata = thorchain_deposit_calldata(&vault, &asset, amount, memo, expiration);
 
-        // 4 (sélecteur) + 5*32 (tête) + 32 (longueur memo) + 32 (memo paddé à 32) = 228.
+        // 4 (selector) + 5*32 (head) + 32 (memo length) + 32 (memo padded to 32) = 228.
         assert_eq!(calldata.len(), 228);
 
         assert_eq!(&calldata[0..4], &[0x44, 0xbc, 0x93, 0x7b]);
 
-        // vault : 12 octets nuls puis l'adresse (20 octets), alignée à droite.
+        // vault: 12 zero bytes, then the address (20 bytes), right-aligned.
         assert_eq!(&calldata[4..16], &[0u8; 12]);
         assert_eq!(&calldata[16..36], &vault);
 
-        // asset : même schéma.
+        // asset: same layout.
         assert_eq!(&calldata[36..48], &[0u8; 12]);
         assert_eq!(&calldata[48..68], &asset);
 
-        // amount : uint256 big-endian, valeur 1000 dans les derniers octets.
+        // amount: big-endian uint256, value 1000 in the last bytes.
         assert_eq!(&calldata[68..98], &[0u8; 30]);
         assert_eq!(&calldata[98..100], &[0x03, 0xe8]); // 1000
 
-        // offset du memo : 5 slots de tête * 32 = 160 = 0xa0.
+        // memo offset: 5 head slots * 32 = 160 = 0xa0.
         assert_eq!(&calldata[100..131], &[0u8; 31]);
         assert_eq!(calldata[131], 0xa0);
 
-        // expiration : uint256 big-endian, valeur 5.
+        // expiration: big-endian uint256, value 5.
         assert_eq!(&calldata[132..163], &[0u8; 31]);
         assert_eq!(calldata[163], 5);
 
-        // longueur du memo ("AB" = 2 octets) puis contenu et padding.
+        // memo length ("AB" = 2 bytes), then content and padding.
         assert_eq!(&calldata[164..195], &[0u8; 31]);
         assert_eq!(calldata[195], 2);
         assert_eq!(&calldata[196..198], b"AB");

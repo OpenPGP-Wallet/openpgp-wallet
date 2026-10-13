@@ -1,10 +1,10 @@
-//! Historique de transactions unifié pour les 3 réseaux : chaque source a un
-//! format et des garanties différentes (Esplora pour Bitcoin donne déjà les
-//! montants dans la même réponse, `getSignaturesForAddress` pour Solana ne donne
-//! que des signatures, Blockscout pour Ethereum est le seul indexeur disponible
-//! faute de méthode RPC standard) ; ce module les ramène à une seule représentation
-//! pour l'UI. Purement informatif : ne joue aucun rôle dans la construction ou la
-//! signature d'une transaction, et ne lit ni ne dérive jamais de clé privée.
+//! Unified transaction history across networks. Each source has a different format
+//! and different guarantees (Esplora for Bitcoin already gives the amounts in the
+//! same response, Solana's `getSignaturesForAddress` only gives signatures,
+//! Blockscout for Ethereum is the only indexer available since there is no standard
+//! RPC method); this module brings them down to a single representation for the UI.
+//! Purely informative: plays no part in building or signing a transaction, and
+//! never reads or derives a private key.
 
 use crate::blockscout::{BlockscoutClient, EvmTx, PageParams};
 use crate::sol_rpc::{SolRpc, SolTx};
@@ -18,51 +18,51 @@ pub enum TxStatus {
     Failed,
 }
 
-/// Nature d'une transaction pour l'adresse interrogée.
+/// Kind of a transaction for the queried address.
 #[derive(Debug, PartialEq, Eq)]
 pub enum TxKind {
     Received,
     Sent,
-    /// Échange (Jupiter, THORChain…), dans un sens ou dans l'autre : le signe
-    /// du montant dit si l'actif est parti ou arrivé.
+    /// Swap (Jupiter, THORChain...), in either direction: the sign of the amount says
+    /// whether the asset left or arrived.
     Swap,
-    /// Staking natif Solana (mise, arrêt, retrait) : le signe du montant dit
-    /// si les SOL sont partis vers un compte de mise ou en sont revenus.
+    /// Native Solana staking (stake, deactivate, withdraw): the sign of the amount says
+    /// whether the SOL went to a stake account or came back from one.
     Stake,
-    /// Aucun montant de l'actif du réseau déplacé (autorisation ou virement de
-    /// jeton, appel de contrat, opération payée par un tiers…), ou montant
-    /// inconnu — ni envoi ni réception de cet actif.
+    /// No amount of the network's asset moved (token approval or transfer, contract
+    /// call, an operation paid by someone else...), or an unknown amount: neither a
+    /// send nor a receipt of that asset.
     Other,
 }
 
 pub struct TxEntry {
-    /// Identifiant à afficher et à utiliser dans le lien vers l'explorateur (txid
-    /// Bitcoin, signature Solana, hash Ethereum).
+    /// Identifier to display and to use in the explorer link (Bitcoin txid, Solana
+    /// signature, Ethereum hash).
     pub id: String,
     pub timestamp_unix: Option<i64>,
     pub status: TxStatus,
-    /// Signé, dans l'unité mineure du réseau (satoshis / lamports / wei) :
-    /// positif si l'adresse interrogée a reçu net, négatif si elle a envoyé net.
-    /// `None` quand le montant n'a pas pu être déterminé (voir
-    /// `sol_rpc::SolTx::net_lamports`) — l'entrée reste affichable sans montant.
+    /// Signed, in the network's minor unit (satoshis / lamports / wei): positive if the
+    /// queried address received net, negative if it sent net. `None` when the amount
+    /// could not be determined (see `sol_rpc::SolTx::net_lamports`): the entry can
+    /// still be shown without an amount.
     pub net_amount_minor: Option<i128>,
-    /// Frais payés en plus de `net_amount_minor` (Ethereum : le montant net ne
-    /// les inclut pas) ; 0 quand ils y sont déjà (Bitcoin, Solana).
+    /// Fee paid on top of `net_amount_minor` (Ethereum: the net amount does not include
+    /// it); 0 when it is already included (Bitcoin, Solana).
     pub fee_minor: i128,
     pub kind: TxKind,
 }
 
 impl TxEntry {
-    /// Variation réelle du solde (montant net moins frais), si connue.
+    /// Actual balance change (net amount minus fee), if known.
     pub fn balance_change(&self) -> Option<i128> {
         self.net_amount_minor.map(|net| net - self.fee_minor)
     }
 }
 
-/// Envoi ou réception d'après le signe du montant, sauf swap détecté.
-/// Montant nul : « Autre » — constaté sur de vrais historiques (autorisation
-/// ERC-20, virement de jeton, opération Solana payée par un tiers), qu'un
-/// libellé « Envoyé » aurait présentés à tort comme des envois.
+/// Send or receipt from the sign of the amount, unless a swap was detected. A zero
+/// amount is "Other": seen in real histories (ERC-20 approval, token transfer, a
+/// Solana operation paid by someone else), which a "Sent" label would have wrongly
+/// presented as sends.
 fn classify(net_amount_minor: Option<i128>, swap: bool) -> TxKind {
     match (swap, net_amount_minor) {
         (true, _) => TxKind::Swap,
@@ -72,16 +72,16 @@ fn classify(net_amount_minor: Option<i128>, swap: bool) -> TxKind {
     }
 }
 
-/// Memo d'un swap THORChain (ou Maya, même format) : `SWAP:`, ses alias `=:`
-/// et `s:`, et côté réception le paiement `OUT:` ou le remboursement
-/// `REFUND:` d'un swap. Formats vérifiés sur de vraies transactions.
+/// THORChain (or Maya, same format) swap memo: `SWAP:`, its aliases `=:` and `s:`,
+/// and on the receiving side a swap's `OUT:` payment or `REFUND:`. Formats checked
+/// on real transactions.
 pub(crate) fn is_swap_memo(memo: &str) -> bool {
     let memo = memo.trim_start();
     let prefix = memo.split_once(':').map(|(p, _)| p.to_ascii_lowercase());
     matches!(prefix.as_deref(), Some("=" | "s" | "swap" | "out" | "refund"))
 }
 
-/// Historique Zcash transparent (voir `zcash::history`).
+/// Transparent Zcash history (see `zcash::history`).
 pub fn zec_history(address: &str) -> Result<Vec<TxEntry>> {
     let crate::zcash::Recipient::P2pkh(hash160) = crate::zcash::parse_recipient(address)? else {
         anyhow::bail!("adresse Zcash du portefeuille attendue (t1…)")
@@ -103,8 +103,8 @@ pub fn btc_history(network: &wallet_flow::BtcNetwork, address: &str) -> Result<V
     btc_history_after(network, address, None)
 }
 
-/// Page d'historique Bitcoin : sans `after`, mempool puis 25 transactions
-/// confirmées ; avec, les 25 confirmées plus anciennes que le txid `after`.
+/// Page of Bitcoin history: without `after`, the mempool then 25 confirmed
+/// transactions; with it, the 25 confirmed transactions older than txid `after`.
 pub fn btc_history_after(network: &wallet_flow::BtcNetwork, address: &str, after: Option<&str>) -> Result<Vec<TxEntry>> {
     let txs = EsploraClient::new(network.esplora_base).address_history_after(address, after)?;
     Ok(txs
@@ -143,39 +143,38 @@ pub fn sol_history(rpc_url: &str, pubkey_b58: &str, limit: u32) -> Result<Vec<Tx
     sol_history_before(rpc_url, pubkey_b58, limit, None)
 }
 
-/// Page d'historique Solana : `limit` signatures plus anciennes que `before`.
+/// Page of Solana history: `limit` signatures older than `before`.
 pub fn sol_history_before(rpc_url: &str, pubkey_b58: &str, limit: u32, before: Option<&str>) -> Result<Vec<TxEntry>> {
     Ok(sol_entries(SolRpc::new(rpc_url).signature_history_before(pubkey_b58, limit, before)?))
 }
 
-/// Historique d'un jeton SPL : `ata_b58` est le compte de jetons associé (ATA)
-/// du propriétaire pour ce jeton, pas son adresse Solana "propriétaire" — voir
-/// `sol_spl::find_associated_token_address` côté appelant (api.rs) pour le
-/// dériver. `net_amount_minor` est alors en plus petite unité du jeton, pas
-/// en lamports.
+/// History of an SPL token: `ata_b58` is the owner's associated token account (ATA)
+/// for that token, not their "owner" Solana address; see
+/// `sol_spl::find_associated_token_address` on the caller's side (api.rs) to derive
+/// it. `net_amount_minor` is then in the token's smallest unit, not in lamports.
 pub fn spl_history(rpc_url: &str, ata_b58: &str, limit: u32) -> Result<Vec<TxEntry>> {
     spl_history_before(rpc_url, ata_b58, limit, None)
 }
 
-/// Page d'historique d'un jeton SPL : `limit` signatures plus anciennes que `before`.
+/// Page of an SPL token's history: `limit` signatures older than `before`.
 pub fn spl_history_before(rpc_url: &str, ata_b58: &str, limit: u32, before: Option<&str>) -> Result<Vec<TxEntry>> {
     Ok(sol_entries(SolRpc::new(rpc_url).token_signature_history_before(ata_b58, limit, before)?))
 }
 
-/// Suite d'un historique EVM, propre à la source du réseau.
+/// Continuation of an EVM history, specific to the network's source.
 #[derive(Clone, Debug)]
 pub enum EvmCursor {
     Blockscout(PageParams),
-    /// Numéro de la page suivante (Routescan).
+    /// Next page number (Routescan).
     Page(u32),
-    /// Suite NodeReal (BNB Chain) : les deux sens et ce qui reste à rendre.
+    /// NodeReal continuation (BNB Chain): both directions, and what is left to return.
     NodeReal(nodereal::Cursor),
-    /// Suite Alchemy (Base, Polygon), même forme que celle de NodeReal.
+    /// Alchemy continuation (Base, Polygon), same shape as NodeReal's.
     Alchemy(nodereal::Cursor),
 }
 
-/// Historique lisible sur `net` : une source existe, et pour NodeReal la
-/// clé est intégrée à cette version de l'app.
+/// History readable on `net`: a source exists, and for NodeReal the key is built
+/// into this version of the app.
 pub fn evm_history_available(net: &wallet_flow::EvmNetwork) -> bool {
     match net.history {
         None => false,
@@ -185,7 +184,7 @@ pub fn evm_history_available(net: &wallet_flow::EvmNetwork) -> bool {
     }
 }
 
-/// Source d'historique du réseau EVM `chain_id` (voir `EvmNetwork::history`).
+/// History source of EVM network `chain_id` (see `EvmNetwork::history`).
 fn evm_source(chain_id: u64) -> Result<EvmHistory> {
     wallet_flow::EVM_NETWORKS
         .iter()
@@ -194,16 +193,16 @@ fn evm_source(chain_id: u64) -> Result<EvmHistory> {
         .ok_or_else(|| anyhow!("historique pas encore disponible sur ce réseau"))
 }
 
-/// `chain_id` : identifiant du réseau EVM (voir `wallet_flow::EVM_NETWORKS`),
-/// qui détermine la source interrogée.
+/// `chain_id`: EVM network identifier (see `wallet_flow::EVM_NETWORKS`), which
+/// decides the source queried.
 pub fn evm_history(chain_id: u64, address: &str, limit: usize) -> Result<Vec<TxEntry>> {
     let (mut entries, _) = evm_history_page(chain_id, address, None)?;
     entries.truncate(limit);
     Ok(entries)
 }
 
-/// Page d'historique EVM (50 transactions) et curseur de la suivante, `None`
-/// après la dernière.
+/// Page of EVM history (50 transactions) and the cursor of the next one, `None`
+/// after the last.
 pub fn evm_history_page(chain_id: u64, address: &str, cursor: Option<&EvmCursor>) -> Result<(Vec<TxEntry>, Option<EvmCursor>)> {
     let (txs, next) = match evm_source(chain_id)? {
         EvmHistory::Blockscout(base_url) => {
@@ -241,9 +240,9 @@ fn evm_entry(tx: EvmTx) -> TxEntry {
     }
 }
 
-/// Page d'historique du jeton ERC-20 `contract` pour `address` sur le réseau
-/// `chain_id` (montants en plus petite unité du jeton, aucun frais : ils
-/// sont payés dans la monnaie du réseau), via la source du réseau.
+/// Page of the history of ERC-20 token `contract` for `address` on network
+/// `chain_id` (amounts in the token's smallest unit, no fee: it is paid in the
+/// network's coin), through the network's source.
 pub fn erc20_history_page(chain_id: u64, address: &str, contract: &str, cursor: Option<&EvmCursor>) -> Result<(Vec<TxEntry>, Option<EvmCursor>)> {
     let (moves, next) = match evm_source(chain_id)? {
         EvmHistory::Blockscout(base_url) => {
@@ -273,7 +272,7 @@ pub fn erc20_history_page(chain_id: u64, address: &str, contract: &str, cursor: 
             kind: classify(Some(m.net), m.swap),
             id: m.hash,
             timestamp_unix: m.timestamp_unix,
-            // Un virement de jeton n'existe que dans une transaction réussie.
+            // A token transfer only exists in a successful transaction.
             status: TxStatus::Confirmed,
             net_amount_minor: Some(m.net),
             fee_minor: 0,
@@ -282,7 +281,7 @@ pub fn erc20_history_page(chain_id: u64, address: &str, contract: &str, cursor: 
     Ok((entries, next))
 }
 
-/// Suite Alchemy demandée par `cursor` (la première page sans).
+/// Alchemy continuation requested by `cursor` (the first page without one).
 fn alchemy_cursor(cursor: Option<&EvmCursor>) -> Option<&nodereal::Cursor> {
     match cursor {
         Some(EvmCursor::Alchemy(next)) => Some(next),
@@ -290,7 +289,7 @@ fn alchemy_cursor(cursor: Option<&EvmCursor>) -> Option<&nodereal::Cursor> {
     }
 }
 
-/// Suite NodeReal demandée par `cursor` (la première page sans).
+/// NodeReal continuation requested by `cursor` (the first page without one).
 fn nodereal_cursor(cursor: Option<&EvmCursor>) -> Option<&nodereal::Cursor> {
     match cursor {
         Some(EvmCursor::NodeReal(next)) => Some(next),
@@ -298,7 +297,7 @@ fn nodereal_cursor(cursor: Option<&EvmCursor>) -> Option<&nodereal::Cursor> {
     }
 }
 
-/// Page demandée par `cursor` (la première sans curseur).
+/// Page requested by `cursor` (the first one without a cursor).
 fn page_number(cursor: Option<&EvmCursor>) -> u32 {
     match cursor {
         Some(EvmCursor::Page(page)) => *page,
@@ -310,8 +309,8 @@ fn page_number(cursor: Option<&EvmCursor>) -> u32 {
 mod tests {
     use super::*;
 
-    /// Memos de vraies transactions THORChain (Bitcoin, Solana) : dépôts de
-    /// swap et paiements ; d'autres memos ne sont pas des swaps.
+    /// Memos from real THORChain transactions (Bitcoin, Solana): swap deposits and
+    /// payments; other memos are not swaps.
     #[test]
     fn thorchain_swap_memos_are_recognised() {
         for memo in [
@@ -330,9 +329,9 @@ mod tests {
         }
     }
 
-    /// Historiques RÉELS d'adresses repérées dans l'index public de THORChain
-    /// (Midgard) : chaque transaction connue comme swap doit être classée
-    /// « Swap » (dépôt ou paiement), sur les trois réseaux.
+    /// REAL histories of addresses found in THORChain's public index (Midgard): every
+    /// transaction known to be a swap must be classified "Swap" (deposit or payment), on
+    /// all three networks.
     /// `cargo test -- --ignored real_histories_classify_known_thorchain_swaps --nocapture`
     #[test]
     #[ignore]
@@ -347,8 +346,8 @@ mod tests {
             entries.iter().find(|e| e.id.eq_ignore_ascii_case(id)).map(|e| &e.kind)
         }
 
-        // L'adresse reçoit encore : la transaction connue recule de page en
-        // page (constaté le 07/10/2026), quelques pages sont parcourues.
+        // The address is still receiving: the known transaction moves back page after page
+        // (observed on 2026-10-07), so a few pages are walked through.
         let mut btc = btc_history(&wallet_flow::BTC_MAINNET, "bc1qwqap30shafhtfd0k5hda4xep6xypgm6fyvphnw").unwrap();
         for _ in 0..6 {
             if find(&btc, "909686b5b485c49ab270ea0b86d6c981129b6b67ac4ce5c333a722fa2fb6796c").is_some() {

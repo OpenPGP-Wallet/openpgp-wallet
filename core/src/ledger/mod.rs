@@ -1,15 +1,14 @@
-//! Portefeuilles matériels Ledger : la clé privée ne quitte JAMAIS l'appareil,
-//! qui affiche lui-même ce qu'il signe (destinataire, montant) et exige une
-//! confirmation physique. Cette app ne fait que construire les transactions,
-//! les transmettre à l'appareil et diffuser le résultat signé.
+//! Ledger hardware wallets: the private key NEVER leaves the device, which itself
+//! shows what it signs (recipient, amount) and requires a physical confirmation.
+//! This app only builds the transactions, sends them to the device and broadcasts
+//! the signed result.
 //!
-//! Protocole : commandes APDU (ISO 7816) propres à chaque application Ledger
-//! (Ethereum, Solana, Bitcoin), transportées en USB HID (appareil réel) ou en
-//! TCP (émulateur officiel Speculos, pour les tests). Détails repris du code
-//! officiel de Ledger (ledgerjs `hid-framing`, `hw-app-eth`, spécifications
-//! `doc/apdu.md` des applications, `speculos/mcu/apdu.py`), lus directement ;
-//! vérifiés contre des vecteurs produits par ce code officiel et contre les
-//! vraies applications Ledger exécutées dans l'émulateur.
+//! Protocol: APDU commands (ISO 7816) specific to each Ledger app (Ethereum,
+//! Solana, Bitcoin), carried over USB HID (real device) or TCP (the official
+//! Speculos emulator, for tests). Details taken from Ledger's official code
+//! (ledgerjs `hid-framing`, `hw-app-eth`, the apps' `doc/apdu.md` specifications,
+//! `speculos/mcu/apdu.py`), read directly; checked against vectors produced by that
+//! official code and against the real Ledger apps running in the emulator.
 
 pub mod btc;
 pub mod eth;
@@ -20,24 +19,23 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::Duration;
 
-/// Identifiant USB des appareils Ledger.
+/// USB vendor ID of Ledger devices.
 pub const LEDGER_VENDOR_ID: u16 = 0x2c97;
-/// Page d'usage HID de l'interface APDU (les autres interfaces servent à U2F/FIDO).
+/// HID usage page of the APDU interface (the other interfaces are for U2F/FIDO).
 const LEDGER_USAGE_PAGE: u16 = 0xffa0;
 const HID_PACKET_SIZE: usize = 64;
 const HID_TAG: u8 = 0x05;
 
-/// Canal de transport vers un appareil (réel ou émulé) : envoie une APDU
-/// complète, renvoie la réponse complète (données + mot d'état sur 2 octets).
+/// Transport channel to a device (real or emulated): sends a complete APDU and
+/// returns the complete answer (data + 2-byte status word).
 pub trait Transport {
     fn exchange(&mut self, apdu: &[u8]) -> Result<Vec<u8>>;
 }
 
-// --- Cadrage USB HID (ledgerjs `hid-framing`) ---------------------------------
+// --- USB HID framing (ledgerjs `hid-framing`) -----------------------------------
 
-/// Découpe une APDU en paquets HID de 64 octets : en-tête canal (2) | 0x05 |
-/// numéro de séquence (2), longueur totale (2) dans le premier paquet seulement,
-/// bourrage à zéro.
+/// Splits an APDU into 64-byte HID packets: channel header (2) | 0x05 | sequence
+/// number (2), total length (2) in the first packet only, zero padding.
 pub fn hid_frames(channel: u16, apdu: &[u8]) -> Vec<[u8; HID_PACKET_SIZE]> {
     let mut data = (apdu.len() as u16).to_be_bytes().to_vec();
     data.extend_from_slice(apdu);
@@ -55,9 +53,9 @@ pub fn hid_frames(channel: u16, apdu: &[u8]) -> Vec<[u8; HID_PACKET_SIZE]> {
         .collect()
 }
 
-/// Réassemble une réponse à partir des paquets reçus, en vérifiant canal,
-/// étiquette et ordre des séquences (tout écart = erreur, jamais de données
-/// mélangées avec celles d'un autre échange).
+/// Reassembles an answer from the received packets, checking channel, tag and
+/// sequence order (any mismatch is an error: data is never mixed with another
+/// exchange's).
 pub struct HidReassembler {
     channel: u16,
     expected: Option<usize>,
@@ -70,7 +68,7 @@ impl HidReassembler {
         Self { channel, expected: None, sequence: 0, data: Vec::new() }
     }
 
-    /// Ajoute un paquet ; renvoie la réponse quand elle est complète.
+    /// Adds a packet; returns the answer once it is complete.
     pub fn push(&mut self, frame: &[u8]) -> Result<Option<Vec<u8>>> {
         anyhow::ensure!(frame.len() >= 7, "paquet USB Ledger trop court");
         anyhow::ensure!(u16::from_be_bytes([frame[0], frame[1]]) == self.channel, "paquet USB Ledger d'un autre canal");
@@ -93,14 +91,14 @@ impl HidReassembler {
     }
 }
 
-/// Appareil Ledger réel branché en USB.
+/// Real Ledger device connected over USB.
 pub struct HidTransport {
     device: hidapi::HidDevice,
     channel: u16,
 }
 
 impl HidTransport {
-    /// Premier appareil Ledger trouvé (interface APDU).
+    /// First Ledger device found (APDU interface).
     pub fn open_first() -> Result<Self> {
         let api = hidapi::HidApi::new().context("accès USB (HID) impossible")?;
         let info = api
@@ -117,7 +115,7 @@ impl HidTransport {
 impl Transport for HidTransport {
     fn exchange(&mut self, apdu: &[u8]) -> Result<Vec<u8>> {
         for frame in hid_frames(self.channel, apdu) {
-            // Octet d'identifiant de rapport (0) exigé devant chaque écriture HID.
+            // Report ID byte (0) required in front of each HID write.
             let mut report = vec![0u8];
             report.extend_from_slice(&frame);
             self.device.write(&report).context("écriture USB vers le Ledger impossible")?;
@@ -125,8 +123,8 @@ impl Transport for HidTransport {
         let mut reassembler = HidReassembler::new(self.channel);
         loop {
             let mut frame = [0u8; HID_PACKET_SIZE];
-            // Pas de délai maximal : l'appareil attend la confirmation physique
-            // de l'utilisateur, qui peut prendre le temps qu'il faut.
+            // No timeout: the device waits for the user's physical confirmation, which can
+            // take as long as it takes.
             let n = self.device.read(&mut frame).context("lecture USB depuis le Ledger impossible")?;
             if let Some(response) = reassembler.push(&frame[..n])? {
                 return Ok(response);
@@ -135,9 +133,9 @@ impl Transport for HidTransport {
     }
 }
 
-/// Émulateur officiel Speculos (tests) : APDU préfixée de sa longueur sur 4
-/// octets ; réponse = longueur des données sur 4 octets, données, puis mot
-/// d'état sur 2 octets (`speculos/mcu/apdu.py`).
+/// Official Speculos emulator (tests): the APDU is prefixed with its 4-byte length;
+/// the answer is the data length on 4 bytes, the data, then a 2-byte status word
+/// (`speculos/mcu/apdu.py`).
 pub struct TcpTransport {
     stream: TcpStream,
 }
@@ -163,9 +161,9 @@ impl Transport for TcpTransport {
     }
 }
 
-// --- APDU ---------------------------------------------------------------------
+// --- APDU -----------------------------------------------------------------------
 
-/// Mots d'état Ledger, traduits en messages compréhensibles.
+/// Ledger status words, translated into understandable messages.
 pub(crate) fn status_error(sw: u16) -> anyhow::Error {
     let message = match sw {
         0x6985 | 0x5501 => "opération refusée sur le Ledger",
@@ -180,9 +178,9 @@ pub(crate) fn status_error(sw: u16) -> anyhow::Error {
     anyhow!("{message} (0x{sw:04x})")
 }
 
-/// Envoie une commande ; renvoie les données et le mot d'état, sans
-/// interprétation (certaines applications donnent un sens propre à un mot
-/// d'état : 0x6982 = refus de l'utilisateur pour Solana, par exemple).
+/// Sends a command and returns the data and status word without interpreting them
+/// (some apps give a status word their own meaning: 0x6982 means the user refused,
+/// for Solana, for example).
 pub fn send_raw(transport: &mut dyn Transport, cla: u8, ins: u8, p1: u8, p2: u8, data: &[u8]) -> Result<(Vec<u8>, u16)> {
     anyhow::ensure!(data.len() <= 255, "commande Ledger trop longue ({} octets)", data.len());
     let mut apdu = vec![cla, ins, p1, p2, data.len() as u8];
@@ -194,8 +192,8 @@ pub fn send_raw(transport: &mut dyn Transport, cla: u8, ins: u8, p1: u8, p2: u8,
     Ok((response, sw))
 }
 
-/// Envoie une commande et renvoie les données de réponse (mot d'état 0x9000
-/// exigé, tout autre mot d'état devient une erreur explicite).
+/// Sends a command and returns the response data (status word 0x9000 required; any
+/// other status word becomes an explicit error).
 pub fn send(transport: &mut dyn Transport, cla: u8, ins: u8, p1: u8, p2: u8, data: &[u8]) -> Result<Vec<u8>> {
     let (response, sw) = send_raw(transport, cla, ins, p1, p2, data)?;
     if sw != 0x9000 {
@@ -204,9 +202,8 @@ pub fn send(transport: &mut dyn Transport, cla: u8, ins: u8, p1: u8, p2: u8, dat
     Ok(response)
 }
 
-/// Chemin de dérivation BIP32 au format des applications Ledger : nombre
-/// d'indices (1 octet) puis chaque indice sur 4 octets gros-boutistes (bit de
-/// poids fort = indice durci).
+/// BIP32 derivation path in the Ledger apps' format: number of indices (1 byte),
+/// then each index on 4 big-endian bytes (most significant bit = hardened index).
 pub fn encode_path(path: &[u32]) -> Result<Vec<u8>> {
     anyhow::ensure!(!path.is_empty() && path.len() <= 10, "chemin de dérivation invalide (1 à 10 niveaux)");
     let mut out = vec![path.len() as u8];
@@ -236,13 +233,13 @@ pub fn parse_path(path: &str) -> Result<Vec<u32>> {
         .collect()
 }
 
-/// Pilotage de l'émulateur Speculos pendant les tests (API REST : écran,
-/// boutons) — l'équivalent automatisé des pressions de bouton de l'utilisateur.
+/// Driving the Speculos emulator during tests (REST API: screen, buttons), the
+/// automated equivalent of the user pressing buttons.
 #[cfg(test)]
 pub(crate) mod speculos {
     pub const APDU: &str = "127.0.0.1:9999";
     const API: &str = "http://127.0.0.1:5000";
-    /// Graine de test PUBLIQUE, par défaut dans Speculos (`speculos/main.py`).
+    /// PUBLIC test seed, Speculos's default (`speculos/main.py`).
     pub const TEST_MNEMONIC: &str = "glory promote mansion idle axis finger extra february uncover one trip resource lawn turtle enact monster seven myth punch hobby comfort wild raise skin";
 
     pub fn screen() -> Vec<String> {
@@ -259,8 +256,8 @@ pub(crate) mod speculos {
         std::thread::sleep(std::time::Duration::from_millis(250));
     }
 
-    /// Revient à l'écran d'accueil de l'application (ferme un avertissement
-    /// affiché après un refus, comme "Blind signing must be enabled").
+    /// Goes back to the app's home screen (closes a warning shown after a refusal, such
+    /// as "Blind signing must be enabled").
     pub fn back_to_home() {
         for _ in 0..10 {
             let joined = screen().join(" ");
@@ -272,8 +269,8 @@ pub(crate) mod speculos {
         panic!("écran d'accueil introuvable : {:?}", screen());
     }
 
-    /// Règle l'option "Blind signing" de l'application Ethereum (menu App
-    /// settings, première entrée), comme le ferait l'utilisateur à la main.
+    /// Sets the Ethereum app's "Blind signing" option (App settings menu, first entry),
+    /// as the user would by hand.
     pub fn set_blind_signing(enabled: bool) {
         back_to_home();
         press("right");
@@ -301,10 +298,10 @@ pub(crate) mod speculos {
         panic!("retour à l'accueil impossible : {:?}", screen());
     }
 
-    /// Fait défiler les écrans (bouton droit) en les notant, jusqu'à l'écran
-    /// de validation (`accept`), puis valide (deux boutons). Renvoie tout ce
-    /// qui a été affiché — pour vérifier que l'appareil a MONTRÉ les bonnes
-    /// valeurs, pas seulement qu'il a signé.
+    /// Scrolls through the screens (right button), noting them, up to the approval
+    /// screen (`accept`), then approves (both buttons). Returns everything that was
+    /// shown, to check that the device SHOWED the right values and not just that it
+    /// signed.
     pub fn review_and_accept(accept: &[&str]) -> Vec<String> {
         let mut seen = Vec::new();
         for _ in 0..40 {
@@ -316,8 +313,8 @@ pub(crate) mod speculos {
                 press("both");
                 return seen;
             }
-            // Avertissement "Blind signing ahead — press both buttons" : il faut
-            // l'accepter pour voir le contenu (ce que ferait l'utilisateur).
+            // "Blind signing ahead — press both buttons" warning: it has to be accepted to see
+            // the content (as the user would).
             if joined.contains("press") && joined.contains("both buttons") {
                 press("both");
                 continue;
@@ -332,9 +329,9 @@ pub(crate) mod speculos {
 mod tests {
     use super::*;
 
-    /// Vecteurs produits par le code officiel de ledgerjs (`hid-framing.js`,
-    /// canal 0x0101, paquets de 64 octets) : une APDU de 205 octets sur 4
-    /// paquets, puis une réponse de 70 octets sur 2 paquets.
+    /// Vectors produced by ledgerjs's official code (`hid-framing.js`, channel 0x0101,
+    /// 64-byte packets): a 205-byte APDU over 4 packets, then a 70-byte answer over 2
+    /// packets.
     #[test]
     fn hid_framing_matches_ledgerjs() {
         let mut apdu = vec![0xe0, 0x04, 0x00, 0x00, 0xc8];
@@ -376,7 +373,7 @@ mod tests {
         assert!(HidReassembler::new(0x0101).push(&[1, 1, 5]).is_err(), "trop court");
     }
 
-    /// Même encodage que `splitPath` + tampon de chemin de hw-app-eth.
+    /// Same encoding as hw-app-eth's `splitPath` + path buffer.
     #[test]
     fn path_encoding_matches_ledgerjs() {
         let path = parse_path("44'/60'/0'/0/0").unwrap();

@@ -1,21 +1,19 @@
-//! Stellar (XLM) : adresse G… (SEP-0005, m/44'/148'/p', clé ed25519), solde,
-//! envoi de XLM, historique.
+//! Stellar (XLM): G... address (SEP-0005, m/44'/148'/p', ed25519 key), balance,
+//! sending XLM, history.
 //!
-//! Transactions encodées (XDR) et signées ici, vérifiées contre la
-//! bibliothèque officielle de la Stellar Development Foundation
-//! (@stellar/stellar-base) dans les tests, et de bout en bout sur le réseau
-//! de test (test réel).
+//! Transactions are encoded (XDR) and signed here, checked against the Stellar
+//! Development Foundation's official library (@stellar/stellar-base) in the tests,
+//! and end to end on the testnet (a real test).
 //!
-//! Règles du réseau appliquées avant la boîte de confirmation :
-//! - solde minimum (réserve) : 2 × 0,5 XLM, + 0,5 par objet possédé, jamais
-//!   envoyable ;
-//! - un destinataire jamais activé est CRÉÉ (opération `create_account`),
-//!   avec au moins 1 XLM ;
-//! - un destinataire qui exige un mémo (SEP-29, plateformes d'échange) ne
-//!   reçoit rien sans mémo ;
-//! - adresses muxées (M…) refusées, clé secrète (S…) détectée ;
-//! - frais : offre plafonnée (0,1 XLM), seul le nécessaire est prélevé ;
-//!   validité limitée (3 min).
+//! Network rules applied before the confirmation dialog:
+//! - minimum balance (reserve): 2 × 0.5 XLM, + 0.5 per owned entry, never sendable;
+//! - a recipient that was never activated is CREATED (`create_account` operation),
+//!   with at least 1 XLM;
+//! - a recipient that requires a memo (SEP-29, exchanges) receives nothing without
+//!   one;
+//! - muxed addresses (M...) refused, a secret key (S...) detected;
+//! - fee: a capped bid (0.1 XLM), only what is needed is charged; limited validity
+//!   (3 min).
 
 use crate::history;
 use anyhow::{anyhow, bail, ensure, Context, Result};
@@ -25,7 +23,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::sync::OnceLock;
 
-/// Réseau Stellar : serveur Horizon et phrase du réseau (signée).
+/// Stellar network: Horizon server and network passphrase (signed).
 pub struct Network {
     pub horizon: &'static str,
     pub passphrase: &'static str,
@@ -36,10 +34,10 @@ pub const MAINNET: Network = Network { horizon: "https://horizon.stellar.org", p
 const TESTNET: Network = Network { horizon: "https://horizon-testnet.stellar.org", passphrase: "Test SDF Network ; September 2015" };
 
 pub const DECIMALS: u8 = 7;
-/// Plafond de l'offre de frais (0,1 XLM, quelques centimes ; 0,00001 au repos).
-/// Le réseau ne prélève que le nécessaire, jamais toute l'offre.
+/// Cap on the fee bid (0.1 XLM, a few cents; 0.00001 when the network is quiet).
+/// The network only charges what is needed, never the whole bid.
 const MAX_FEE_STROOPS: u32 = 1_000_000;
-/// Validité d'une transaction après la fermeture du dernier registre.
+/// How long a transaction stays valid after the last ledger closed.
 const VALIDITY_SECS: u64 = 180;
 
 fn client() -> &'static reqwest::blocking::Client {
@@ -53,7 +51,7 @@ fn client() -> &'static reqwest::blocking::Client {
     })
 }
 
-/// Lecture Horizon ; `None` pour une ressource inexistante (404).
+/// Horizon read; `None` for a resource that does not exist (404).
 fn get(net: &Network, path: &str) -> Result<Option<Value>> {
     let response = client().get(format!("{}{path}", net.horizon)).send().context("serveur Stellar injoignable")?;
     let status = response.status();
@@ -64,7 +62,7 @@ fn get(net: &Network, path: &str) -> Result<Option<Value>> {
     Ok(Some(response.json().context("réponse du serveur Stellar illisible")?))
 }
 
-/// « 12.3456789 » → stroops.
+/// "12.3456789" → stroops.
 fn stroops(text: &str) -> Result<i64> {
     let (whole, fraction) = text.split_once('.').unwrap_or((text, ""));
     ensure!(!whole.is_empty() && whole.bytes().all(|b| b.is_ascii_digit()) && fraction.len() <= 7 && fraction.bytes().all(|b| b.is_ascii_digit()), "montant Stellar illisible");
@@ -72,18 +70,18 @@ fn stroops(text: &str) -> Result<i64> {
     whole.parse::<i64>().ok().and_then(|w| w.checked_mul(10_000_000)).and_then(|w| w.checked_add(fraction.parse::<i64>().ok()?)).context("montant Stellar illisible")
 }
 
-/// Montant en XLM, 7 décimales (« 12.5000000 »).
+/// Amount in XLM, 7 decimals ("12.5000000").
 pub fn format_xlm(stroops: i64) -> String {
     let sign = if stroops < 0 { "-" } else { "" };
     let abs = stroops.unsigned_abs();
     format!("{sign}{}.{:07}", abs / 10_000_000, abs % 10_000_000)
 }
 
-// --- Adresses (StrKey) ---------------------------------------------------------------
+// --- Addresses (StrKey) ---------------------------------------------------------
 
-const VERSION_ACCOUNT: u8 = 6 << 3; // G…
-const VERSION_SECRET: u8 = 18 << 3; // S…
-const VERSION_MUXED: u8 = 12 << 3; // M…
+const VERSION_ACCOUNT: u8 = 6 << 3; // G...
+const VERSION_SECRET: u8 = 18 << 3; // S...
+const VERSION_MUXED: u8 = 12 << 3; // M...
 const BASE32: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
 fn crc16_xmodem(data: &[u8]) -> u16 {
@@ -136,46 +134,46 @@ pub fn encode_address(public_key: &[u8; 32]) -> String {
     base32_encode(&data)
 }
 
-/// Adresse G…, somme de contrôle et clé vérifiées. Adresses muxées (M…)
-/// refusées ; une clé SECRÈTE (S…) collée par erreur est signalée.
+/// G... address, with checksum and key checked. Muxed addresses (M...) refused; a
+/// SECRET key (S...) pasted by mistake is flagged.
 pub fn parse_address(text: &str) -> Result<[u8; 32]> {
     let text = text.trim();
     ensure!(strkey_version(text, 35) != Some(VERSION_SECRET), "ceci est une clé secrète Stellar (S…), pas une adresse : ne la communiquez jamais");
     ensure!(strkey_version(text, 43) != Some(VERSION_MUXED), "adresse Stellar « M… » (muxée) non prise en charge : demandez l'adresse G… et le mémo");
     ensure!(text.len() == 56 && text.starts_with('G'), "adresse Stellar invalide");
     let data = base32_decode(text).filter(|d| d.len() == 35).context("adresse Stellar invalide")?;
-    // Forme canonique seulement (bits de remplissage nuls).
+    // Canonical form only (zero padding bits).
     ensure!(base32_encode(&data) == text, "adresse Stellar invalide");
     let (body, check) = data.split_at(33);
     ensure!(crc16_xmodem(body).to_le_bytes() == *check, "adresse Stellar invalide (somme de contrôle)");
     ensure!(body[0] == VERSION_ACCOUNT, "adresse Stellar invalide");
     let key: [u8; 32] = body[1..].try_into().map_err(|_| anyhow!("adresse Stellar invalide"))?;
-    // Une clé hors de la courbe ne serait contrôlée par personne.
+    // A key off the curve would be controlled by nobody.
     ensure!(ed25519_dalek::VerifyingKey::from_bytes(&key).is_ok(), "adresse Stellar invalide");
     Ok(key)
 }
 
-/// Octet de version d'une clé StrKey valide (taille et somme de contrôle
-/// vérifiées), pour reconnaître une clé secrète ou une adresse muxée.
+/// Version byte of a valid StrKey (size and checksum checked), to recognize a
+/// secret key or a muxed address.
 fn strkey_version(text: &str, len: usize) -> Option<u8> {
     let data = base32_decode(text).filter(|d| d.len() == len && base32_encode(d) == text)?;
     let (body, check) = data.split_at(len - 2);
     (crc16_xmodem(body).to_le_bytes() == *check).then_some(body[0])
 }
 
-// --- Mémo ---------------------------------------------------------------------------
+// --- Memo -----------------------------------------------------------------------
 
-/// Mémo d'un paiement (exigé par les plateformes d'échange).
+/// Memo of a payment (required by exchanges).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Memo {
     None,
-    /// Identifiant numérique (MEMO_ID).
+    /// Numeric identifier (MEMO_ID).
     Id(u64),
-    /// Texte (MEMO_TEXT), 28 octets au plus.
+    /// Text (MEMO_TEXT), 28 bytes at most.
     Text(String),
 }
 
-/// Mémo saisi : vide = aucun ; chiffres seulement = identifiant ; sinon texte.
+/// Entered memo: empty = none; digits only = identifier; otherwise text.
 pub fn parse_memo(text: Option<&str>) -> Result<Memo> {
     let Some(text) = text.map(str::trim).filter(|t| !t.is_empty()) else { return Ok(Memo::None) };
     if text.bytes().all(|b| b.is_ascii_digit()) {
@@ -184,8 +182,8 @@ pub fn parse_memo(text: Option<&str>) -> Result<Memo> {
         }
     }
     ensure!(text.len() <= 28, "mémo Stellar trop long (28 caractères au plus)");
-    // ASCII imprimable seulement : rien d'invisible ni de retourné dans la
-    // boîte de confirmation (les plateformes d'échange n'utilisent que ça).
+    // Printable ASCII only: nothing invisible or reversed in the confirmation dialog
+    // (exchanges only use that).
     ensure!(text.bytes().all(|b| (0x20..=0x7e).contains(&b)), "mémo Stellar invalide (lettres, chiffres et ponctuation ASCII seulement)");
     Ok(Memo::Text(text.to_string()))
 }
@@ -196,7 +194,7 @@ impl Memo {
     }
 }
 
-// --- Transaction (XDR) -------------------------------------------------------------------
+// --- Transaction (XDR) ----------------------------------------------------------
 
 #[derive(Default)]
 struct Xdr(Vec<u8>);
@@ -222,18 +220,18 @@ impl Xdr {
     fn var(&mut self, bytes: &[u8]) -> &mut Self {
         self.u32(bytes.len() as u32).fixed(bytes)
     }
-    /// Compte : clé ed25519 (type 0).
+    /// Account: ed25519 key (type 0).
     fn account(&mut self, key: &[u8; 32]) -> &mut Self {
         self.u32(0).fixed(key)
     }
 }
 
-/// Opération unique de la transaction.
+/// The transaction's single operation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Operation {
-    /// Destinataire jamais activé : compte créé avec ce solde de départ.
+    /// Recipient never activated: account created with this starting balance.
     CreateAccount { destination: [u8; 32], starting_balance: i64 },
-    /// Paiement de XLM (actif natif).
+    /// XLM payment (native asset).
     Payment { destination: [u8; 32], amount: i64 },
 }
 
@@ -252,14 +250,14 @@ impl Transaction {
     fn body(&self) -> Vec<u8> {
         let mut x = Xdr::default();
         x.account(&self.source).u32(self.fee).i64(self.sequence);
-        // Préconditions : bornes de temps (PRECOND_TIME).
+        // Preconditions: time bounds (PRECOND_TIME).
         x.u32(1).u64(0).u64(self.max_time);
         match &self.memo {
             Memo::None => x.u32(0),
             Memo::Text(text) => x.u32(1).var(text.as_bytes()),
             Memo::Id(id) => x.u32(2).u64(*id),
         };
-        // Une opération, sans compte source propre.
+        // One operation, without its own source account.
         x.u32(1).u32(0);
         match self.operation {
             Operation::CreateAccount { destination, starting_balance } => x.u32(0).u32(0).fixed(&destination).i64(starting_balance),
@@ -269,7 +267,7 @@ impl Transaction {
         x.0
     }
 
-    /// Condensé signé : SHA-256(id du réseau ‖ ENVELOPE_TYPE_TX ‖ transaction).
+    /// Signed digest: SHA-256(network ID ‖ ENVELOPE_TYPE_TX ‖ transaction).
     fn hash(&self, net: &Network) -> [u8; 32] {
         let mut base = Sha256::digest(net.passphrase.as_bytes()).to_vec();
         base.extend_from_slice(&ENVELOPE_TYPE_TX.to_be_bytes());
@@ -289,17 +287,17 @@ pub fn sign(tx: &Transaction, key: &SigningKey, net: &Network) -> Signed {
     let public = key.verifying_key().to_bytes();
     let mut x = Xdr::default();
     x.u32(ENVELOPE_TYPE_TX).fixed(&tx.body());
-    // Une signature : indice (4 derniers octets de la clé publique) + 64 octets.
+    // A signature: hint (last 4 bytes of the public key) + 64 bytes.
     x.u32(1).fixed(&public[28..]).var(&signature.to_bytes());
     Signed { envelope: x.0, hash: hex::encode(hash) }
 }
 
-// --- Compte et réseau ----------------------------------------------------------------------
+// --- Account and network --------------------------------------------------------
 
 struct AccountState {
     balance: i64,
     sequence: i64,
-    /// Objets comptés dans la réserve (lignes de confiance, offres…).
+    /// Entries counted in the reserve (trust lines, offers...).
     reserve_entries: i64,
     selling_liabilities: i64,
     memo_required: bool,
@@ -315,7 +313,7 @@ fn account_state(net: &Network, address: &str) -> Result<Option<AccountState>> {
         sequence: value["sequence"].as_str().and_then(|s| s.parse().ok()).context("séquence Stellar illisible")?,
         reserve_entries: 2 + count("subentry_count") + count("num_sponsoring") - count("num_sponsored"),
         selling_liabilities: native["selling_liabilities"].as_str().map(stroops).transpose()?.unwrap_or(0),
-        // SEP-29 : donnée « config.memo_required » = « 1 ».
+        // SEP-29: data entry "config.memo_required" = "1".
         memo_required: value["data"]["config.memo_required"].as_str() == Some("MQ=="),
     }))
 }
@@ -336,9 +334,8 @@ fn latest_ledger(net: &Network) -> Result<Ledger> {
     })
 }
 
-/// Offre de frais : deux fois le 90ᵉ centile des frais payés récemment (au
-/// moins les frais de base), plafonnée. Le réseau ne prélève que le
-/// nécessaire, jamais plus que l'offre.
+/// Fee bid: twice the 90th percentile of recently paid fees (at least the base
+/// fee), capped. The network only charges what is needed, never more than the bid.
 fn fee_bid(net: &Network, base_fee: u32) -> Result<u32> {
     let stats = get(net, "/fee_stats")?.context("frais Stellar illisibles")?;
     let p90 = stats["fee_charged"]["p90"].as_str().and_then(|f| f.parse::<u32>().ok()).context("frais Stellar illisibles")?;
@@ -347,12 +344,13 @@ fn fee_bid(net: &Network, base_fee: u32) -> Result<u32> {
     Ok(bid)
 }
 
-/// Solde total (stroops), réserve comprise ; 0 pour un compte non activé.
+/// Total balance (stroops), reserve included; 0 for an account that is not
+/// activated.
 pub fn balance(net: &Network, address: &str) -> Result<i64> {
     Ok(account_state(net, address)?.map_or(0, |a| a.balance))
 }
 
-/// Activité d'une adresse destinataire : (détient des XLM, existe).
+/// Activity of a recipient address: (holds XLM, exists).
 pub fn address_activity(net: &Network, address: &str) -> Result<(bool, bool)> {
     Ok(match account_state(net, address)? {
         Some(a) => (a.balance > 0, true),
@@ -360,21 +358,21 @@ pub fn address_activity(net: &Network, address: &str) -> Result<(bool, bool)> {
     })
 }
 
-/// Envoi préparé pour la boîte de confirmation.
+/// Send prepared for the confirmation dialog.
 #[derive(Clone, Copy, Debug)]
 pub struct XlmPlan {
     pub amount: i64,
-    /// Offre de frais (prélevés au plus).
+    /// Fee bid (the most that can be charged).
     pub fee: u32,
-    /// XLM bloqués par la réserve sur le compte de départ.
+    /// XLM locked by the reserve on the source account.
     pub reserve: i64,
-    /// Destinataire jamais activé : le paiement le crée.
+    /// Recipient never activated: the payment creates it.
     pub creates: bool,
 }
 
 const NOT_ACTIVATED: &str = "compte Stellar pas encore activé : il doit d'abord recevoir au moins 1 XLM";
 
-/// Contrôles du réseau (réserve, création, mémo exigé) et frais.
+/// Network checks (reserve, creation, required memo) and fee.
 pub fn plan(net: &Network, from: &str, to: &str, amount: i64, memo: &Memo) -> Result<XlmPlan> {
     ensure!(amount > 0, "montant nul");
     ensure!(parse_address(from)? != parse_address(to)?, "envoi vers votre propre adresse Stellar");
@@ -402,7 +400,7 @@ pub fn plan(net: &Network, from: &str, to: &str, amount: i64, memo: &Memo) -> Re
     Ok(XlmPlan { amount, fee, reserve, creates: destination.is_none() })
 }
 
-/// Plus grand montant envoyable : solde moins la réserve et les frais.
+/// Largest amount that can be sent: balance minus reserve and fee.
 pub fn max_amount(net: &Network, from: &str) -> Result<i64> {
     let ledger = latest_ledger(net)?;
     let sender = account_state(net, from)?.context(NOT_ACTIVATED)?;
@@ -411,7 +409,7 @@ pub fn max_amount(net: &Network, from: &str) -> Result<i64> {
     Ok(spendable)
 }
 
-/// Construit, signe et diffuse l'envoi préparé ; renvoie son identifiant.
+/// Builds, signs and broadcasts the prepared send; returns its ID.
 pub fn send(net: &Network, key: &SigningKey, to: &[u8; 32], plan: &XlmPlan, memo: Memo) -> Result<String> {
     ensure!(plan.fee <= MAX_FEE_STROOPS, "frais du réseau Stellar anormalement élevés — envoi refusé");
     let source = key.verifying_key().to_bytes();
@@ -434,22 +432,21 @@ pub fn submit(net: &Network, signed: &Signed) -> Result<String> {
         .send()
         .map_err(|e| crate::wallet_flow::broadcast_failure(e, "serveur Stellar injoignable", &signed.hash))?;
     let status = response.status();
-    // Délai dépassé côté Horizon : la transaction peut encore entrer dans le
-    // registre — surtout pas présentée comme refusée.
+    // Horizon timed out: the transaction can still make it into the ledger, so it must
+    // never be shown as refused.
     if status == reqwest::StatusCode::GATEWAY_TIMEOUT {
         bail!("réseau Stellar lent : transaction {} envoyée mais pas encore confirmée — vérifiez l'historique avant de renvoyer", signed.hash);
     }
-    // Réponse illisible après acceptation, ou erreur de passerelle : peut-être
-    // partie (voir `wallet_flow::maybe_sent`).
+    // Unreadable answer after acceptance, or a gateway error: maybe sent (see
+    // `wallet_flow::maybe_sent`).
     let value: Value = match response.json() {
         Ok(value) => value,
         Err(_) if status.is_success() || crate::wallet_flow::server_error_may_have_sent(status) => return Err(crate::wallet_flow::maybe_sent(&signed.hash)),
         Err(_) => bail!("serveur Stellar : réponse {status}"),
     };
     if status.is_success() {
-        // Transaction acceptée : un autre identifiant que le nôtre ne doit pas
-        // la faire passer pour refusée — un nouvel envoi la paierait deux fois
-        // (32ᵉ passage).
+        // Transaction accepted: an ID other than ours must not make it look refused, since
+        // sending again would pay twice (32nd review round).
         if value["hash"].as_str() != Some(signed.hash.as_str()) {
             return Err(crate::wallet_flow::maybe_sent(&signed.hash));
         }
@@ -465,9 +462,9 @@ pub fn submit(net: &Network, signed: &Signed) -> Result<String> {
     bail!("transaction Stellar refusée : {}", detail.join(" "))
 }
 
-// --- Historique ----------------------------------------------------------------------------
+// --- History --------------------------------------------------------------------
 
-/// Paiements en XLM de l'adresse, les plus récents d'abord.
+/// XLM payments of the address, newest first.
 pub fn history(net: &Network, address: &str, limit: usize) -> Result<Vec<history::TxEntry>> {
     parse_address(address)?;
     let address = address.trim();
@@ -486,7 +483,7 @@ pub fn history(net: &Network, address: &str, limit: usize) -> Result<Vec<history
         if !outgoing && to != Some(address) {
             continue;
         }
-        // Frais payés par le compte source de la transaction.
+        // Fee paid by the transaction's source account.
         let fee = if record["transaction"]["source_account"].as_str() == Some(address) {
             record["transaction"]["fee_charged"].as_str().and_then(|f| f.parse::<i64>().ok()).unwrap_or(0)
         } else {
@@ -515,8 +512,8 @@ mod tests {
         crate::derivation::derive_stellar_key(&hex::decode(SEED).unwrap(), index)
     }
 
-    /// Vecteur officiel de SEP-0005 (« illness spike … », compte 0) puis
-    /// vecteurs de @stellar/stellar-base + ed25519-hd-key.
+    /// Official SEP-0005 vector ("illness spike ...", account 0), then vectors from
+    /// @stellar/stellar-base + ed25519-hd-key.
     #[test]
     fn addresses_match_sep5_and_the_official_library() {
         use bip39::Mnemonic;
@@ -534,7 +531,7 @@ mod tests {
         assert!(parse_address("MDVSYYTUAJ3ACHTPQNSTQBDQ4LDHQCMNY4FCEQH5TJUMSSLWQSTG4AAAAAAAAAAAAU7YE").unwrap_err().to_string().contains("muxée"));
         assert!(parse_address("SBGWSG6BTNCKCOB3DIFBGCVMUPQFYPA2G4O34RMTB343OYPXU5DJDVMN").unwrap_err().to_string().contains("clé secrète"));
         assert!(parse_address("gb3jdwcqjcwmj3iilwigdtqjjc5567pgvevxscvpeqotdn64vjbdqbyx").is_err());
-        // Commence par S ou M sans en être une : simple adresse invalide.
+        // Starts with S or M without being one: just an invalid address.
         for other in ["So11111111111111111111111111111111111111112", "MDVSYYTUAJ3ACHTPQNSTQBDQ4LDHQCMNY4FCEQH5TJUMSSLWQSTG4AAAAAAAAAAAAU7YF", "SBGWSG6BTNCKCOB3DIFBGCVMUPQFYPA2G4O34RMTB343OYPXU5DJDVMM"] {
             assert_eq!(parse_address(other).unwrap_err().to_string(), "adresse Stellar invalide", "{other}");
         }
@@ -546,7 +543,7 @@ mod tests {
         assert_eq!(parse_memo(Some("  ")).unwrap(), Memo::None);
         assert_eq!(parse_memo(Some("12345")).unwrap(), Memo::Id(12345));
         assert_eq!(parse_memo(Some("hello")).unwrap(), Memo::Text("hello".into()));
-        // Au-delà de u64 : texte (s'il tient en 28 octets).
+        // Beyond u64: text (if it fits in 28 bytes).
         assert_eq!(parse_memo(Some("99999999999999999999")).unwrap(), Memo::Text("99999999999999999999".into()));
         assert!(parse_memo(Some("a".repeat(29).as_str())).is_err());
         assert!(parse_memo(Some("a\u{7}b")).is_err());
@@ -554,8 +551,8 @@ mod tests {
         assert!(parse_memo(Some("é")).is_err());
     }
 
-    /// Transactions identiques octet pour octet à @stellar/stellar-base
-    /// (corps, condensé, enveloppe signée).
+    /// Transactions identical byte for byte to @stellar/stellar-base (body, digest,
+    /// signed envelope).
     #[test]
     fn transactions_match_the_official_library() {
         let (source, destination) = (key(0).verifying_key().to_bytes(), key(1).verifying_key().to_bytes());
@@ -584,9 +581,9 @@ mod tests {
         assert_eq!(format_xlm(-5), "-0.0000005");
     }
 
-    /// Réel, réseau de test (fonds gratuits du friendbot) : création d'un
-    /// compte puis paiement avec mémo, signés ici et acceptés par le réseau ;
-    /// signature altérée refusée. Lectures du réseau principal.
+    /// Real network, testnet (free funds from friendbot): an account creation, then a
+    /// payment with a memo, signed here and accepted by the network; a tampered
+    /// signature refused. Mainnet reads.
     /// `cargo test -- --ignored real_stellar --nocapture`
     #[test]
     #[ignore]
@@ -597,7 +594,7 @@ mod tests {
             let funded = client().get(format!("https://friendbot.stellar.org/?addr={alice_address}")).send().unwrap();
             println!("friendbot : {}", funded.status());
         }
-        // Destinataire neuf à chaque passage : création, puis paiement.
+        // A new recipient on every run: creation, then payment.
         let mut seed = [0u8; 32];
         getrandom::getrandom(&mut seed).unwrap();
         let bob = SigningKey::from_bytes(&seed);
@@ -621,7 +618,7 @@ mod tests {
         assert_eq!(received.len(), 2, "historique du destinataire");
         assert!(received.iter().all(|e| e.kind == history::TxKind::Received));
         assert!(history(&TESTNET, &alice_address, 10).unwrap().iter().any(|e| e.id == paid && e.net_amount_minor.is_some_and(|n| n <= -2_500_000)));
-        // Signature altérée : refusée par le réseau.
+        // Tampered signature: refused by the network.
         let state = account_state(&TESTNET, &alice_address).unwrap().unwrap();
         let ledger = latest_ledger(&TESTNET).unwrap();
         let tx = Transaction { source: alice.verifying_key().to_bytes(), fee: 100, sequence: state.sequence + 1, max_time: ledger.closed_at + 180, memo: Memo::None, operation: Operation::Payment { destination: bob_key, amount: 1 } };
@@ -631,7 +628,7 @@ mod tests {
         let error = submit(&TESTNET, &signed).unwrap_err().to_string();
         println!("{error}");
         assert!(error.contains("tx_bad_auth"), "{error}");
-        // Réseau principal : lectures.
+        // Mainnet: reads.
         let fees = latest_ledger(&MAINNET).unwrap();
         println!("principal : réserve {} XLM, frais de base {} stroops, offre {} stroops", format_xlm(fees.base_reserve), fees.base_fee, fee_bid(&MAINNET, fees.base_fee).unwrap());
     }

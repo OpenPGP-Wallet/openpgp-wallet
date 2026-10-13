@@ -1,27 +1,26 @@
-//! Surveillance en direct des soldes affichés : dès qu'un envoi ou une
-//! réception change le montant d'une adresse, l'app est prévenue et relit le
-//! solde, sans attendre le rafraîchissement périodique.
+//! Live watch of the displayed balances: as soon as a send or a receipt changes an
+//! address's amount, the app is notified and reads the balance again, without
+//! waiting for the periodic refresh.
+//! - Solana (SOL, USDC): WebSocket `accountSubscribe` subscription with the same
+//!   public node as the reads, "confirmed" level (about 1 s after the transaction):
+//!   the node pushes every change to the account (the address, or its USDC token
+//!   account).
+//! - Ethereum: balance read again every 6 s (a block every 12 s; public nodes do
+//!   not expose an address's pending transactions).
+//! - Bitcoin: address statistics (confirmed + mempool) read again every 10 s, so a
+//!   broadcast transaction shows up before it confirms.
+//! - Registry tokens (`tokens.rs`): ERC-20 read again every 12 s (one Ethereum
+//!   block; several displayed tokens must not saturate the public nodes), Solana
+//!   tokens pushed like USDC (associated token account).
+//! - Dogecoin: address totals (confirmed + pending) read again every 10 s, so a
+//!   send or a receipt shows up before the next block (about 1 min).
+//! - Transparent Zcash: balance read again every 20 s (a block every 75 s;
+//!   lightwalletd only counts mined transactions).
+//! - Tron: balance read again every 10 s (a block every 3 s).
 //!
-//! - Solana (SOL, USDC) : abonnement WebSocket `accountSubscribe` auprès du
-//!   même nœud public que les lectures, niveau « confirmed » (~1 s après la
-//!   transaction) : le nœud pousse chaque changement du compte (l'adresse, ou
-//!   son compte de jetons USDC).
-//! - Ethereum : solde relu toutes les 6 s (un bloc toutes les 12 s ; les nœuds
-//!   publics n'exposent pas les transactions en attente d'une adresse).
-//! - Bitcoin : statistiques de l'adresse (confirmé + mempool) relues toutes
-//!   les 10 s — une transaction diffusée se voit avant sa confirmation.
-//! - Jetons du registre (`tokens.rs`) : ERC-20 relus toutes les 12 s (un
-//!   bloc Ethereum ; plusieurs jetons affichés ne doivent pas saturer les nœuds
-//!   publics), jetons Solana poussés comme l'USDC (compte de jetons associé).
-//! - Dogecoin : totaux de l'adresse (confirmé + en attente) relus toutes les
-//!   10 s — un envoi ou une réception se voit avant le bloc suivant (~1 min).
-//! - Zcash transparent : solde relu toutes les 20 s (un bloc toutes les 75 s ;
-//!   lightwalletd ne compte que les transactions minées).
-//! - Tron : solde relu toutes les 10 s (un bloc toutes les 3 s).
-//!
-//! Rien de nouveau n'est envoyé à personne : les mêmes adresses publiques, aux
-//! mêmes fournisseurs que les lectures de solde. La surveillance s'arrête quand
-//! le `BalanceWatch` est lâché (verrouillage, changement de profil ou de réseau).
+//! Nothing new is sent to anyone: the same public addresses, to the same providers
+//! as the balance reads. The watch stops when the `BalanceWatch` is dropped (lock,
+//! profile or network change).
 
 use crate::tokens::{self, TokenKind};
 use crate::{api, btc_rpc, external_wallets, wallet_flow};
@@ -35,23 +34,23 @@ use std::time::{Duration, Instant};
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Message, WebSocket};
 
-/// Une adresse à surveiller ; `id` est rendu tel quel à chaque changement.
+/// An address to watch; `id` is handed back as is on every change.
 pub struct Target {
     pub id: String,
-    /// "evm_mainnet", "evm_sepolia", "btc_mainnet", "btc_testnet",
-    /// "sol_mainnet", "sol_devnet" ou "usdc_solana".
+    /// "evm_mainnet", "evm_sepolia", "btc_mainnet", "btc_testnet", "sol_mainnet",
+    /// "sol_devnet" or "usdc_solana".
     pub network: String,
     pub address: String,
-    /// Jeton du registre (`tokens.rs`) détenu à `address` sur `network` ;
-    /// `None` : la monnaie du réseau.
+    /// Registry token (`tokens.rs`) held at `address` on `network`; `None`: the
+    /// network's coin.
     pub token: Option<String>,
 }
 
-/// Appelé avec l'`id` d'une adresse dont le solde a changé (ou a pu changer
-/// pendant une coupure de la connexion).
+/// Called with the `id` of an address whose balance changed (or may have changed
+/// during a connection outage).
 pub type Notify = Arc<dyn Fn(&str) + Send + Sync>;
 
-/// Surveillance en cours ; arrêtée quand il est lâché.
+/// Watch in progress; stopped when dropped.
 pub struct BalanceWatch {
     stop: Arc<AtomicBool>,
 }
@@ -74,7 +73,7 @@ const XLM_INTERVAL: Duration = Duration::from_secs(10);
 const NEAR_INTERVAL: Duration = Duration::from_secs(8);
 const ADA_INTERVAL: Duration = Duration::from_secs(20);
 const STX_INTERVAL: Duration = Duration::from_secs(12);
-/// Bittensor : un bloc toutes les 12 s.
+/// Bittensor: a block every 12 s.
 const TAO_INTERVAL: Duration = Duration::from_secs(12);
 const HEARTBEAT: Duration = Duration::from_secs(30);
 const MAX_BACKOFF_SECS: u64 = 60;
@@ -82,12 +81,12 @@ const MAX_BACKOFF_SECS: u64 = 60;
 enum Polled {
     Evm(&'static wallet_flow::EvmNetwork, String),
     Btc(&'static wallet_flow::BtcNetwork, String),
-    /// Jeton ERC-20 : réseau, contrat, détenteur.
+    /// ERC-20 token: network, contract, holder.
     Erc20(&'static wallet_flow::EvmNetwork, &'static str, String),
     Doge(String),
     Zec(String),
     Tron(String),
-    /// Jeton TRC-20 : contrat, détenteur.
+    /// TRC-20 token: contract, holder.
     Trc20(&'static str, String),
     Xrp(String),
     Xlm(String),
@@ -116,11 +115,11 @@ impl Polled {
     }
 }
 
-/// Démarre la surveillance de `targets` (adresses vérifiées d'abord).
+/// Starts watching `targets` (addresses checked first).
 pub fn start(targets: Vec<Target>, notify: Notify) -> Result<BalanceWatch> {
     ensure!(targets.len() <= MAX_TARGETS, "trop d'adresses à surveiller");
     let stop = Arc::new(AtomicBool::new(false));
-    // Comptes Solana par nœud (une connexion WebSocket chacun) : (id, compte).
+    // Solana accounts per node (one WebSocket connection each): (id, account).
     let mut solana: HashMap<&'static str, Vec<(String, String)>> = HashMap::new();
     let mut polled: Vec<(String, Polled)> = Vec::new();
     for target in targets {
@@ -136,7 +135,7 @@ pub fn start(targets: Vec<Target>, notify: Notify) -> Result<BalanceWatch> {
                 TokenKind::Trc20 { contract } => polled.push((target.id, Polled::Trc20(contract, address))),
                 TokenKind::Spl { .. } | TokenKind::Spl2022 { .. } => {
                     ensure!(target.network == "sol_mainnet", "jeton Solana hors du réseau principal : {token}");
-                    // Compte associé du bon programme (Token-2022 pour les xStocks).
+                    // Associated account of the right program (Token-2022 for xStocks).
                     let account = api::registered_token_account(&address, token)?;
                     solana.entry(wallet_flow::SOLANA_MAINNET.rpc).or_default().push((target.id, account));
                 }
@@ -162,7 +161,7 @@ pub fn start(targets: Vec<Target>, notify: Notify) -> Result<BalanceWatch> {
             "stx_mainnet" => polled.push((target.id, Polled::Stx(address))),
             "tao_mainnet" => polled.push((target.id, Polled::Tao(address))),
             other => match wallet_flow::evm_network(other) {
-                // Tous les réseaux EVM (Ethereum, L2, BNB Chain…) : solde relu.
+                // Every EVM network (Ethereum, L2s, BNB Chain...): balance read again.
                 Some(net) => polled.push((target.id, Polled::Evm(net, address))),
                 None => bail!("réseau inconnu : {other}"),
             },
@@ -179,7 +178,7 @@ pub fn start(targets: Vec<Target>, notify: Notify) -> Result<BalanceWatch> {
     Ok(BalanceWatch { stop })
 }
 
-/// Attend `duration`, par petites tranches pour s'arrêter vite. `false` si arrêté.
+/// Waits `duration` in small slices so it can stop quickly. `false` if stopped.
 fn pause(duration: Duration, stop: &AtomicBool) -> bool {
     let end = Instant::now() + duration;
     while Instant::now() < end {
@@ -191,7 +190,7 @@ fn pause(duration: Duration, stop: &AtomicBool) -> bool {
     !stop.load(Ordering::Relaxed)
 }
 
-/// Adresse WebSocket d'un nœud Solana (même hôte que son adresse HTTPS).
+/// WebSocket address of a Solana node (same host as its HTTPS address).
 fn ws_url(rpc: &str) -> Result<String> {
     rpc.strip_prefix("https://").map(|rest| format!("wss://{rest}")).ok_or_else(|| anyhow!("nœud Solana sans HTTPS : {rpc}"))
 }
@@ -204,7 +203,7 @@ fn connect(url: &str) -> Result<Socket> {
     let tcp = TcpStream::connect_timeout(&address, Duration::from_secs(10)).context("nœud injoignable")?;
     tcp.set_read_timeout(Some(Duration::from_secs(15)))?;
     let (mut socket, _) = tungstenite::client_tls(url, tcp).map_err(|e| anyhow!("connexion WebSocket impossible : {e}"))?;
-    // Lecture courte : le fil doit aussi voir l'arrêt et envoyer le battement.
+    // Short read: the thread also has to see the stop and send the heartbeat.
     match socket.get_mut() {
         MaybeTlsStream::NativeTls(tls) => tls.get_ref().set_read_timeout(Some(Duration::from_millis(500)))?,
         MaybeTlsStream::Plain(tcp) => tcp.set_read_timeout(Some(Duration::from_millis(500)))?,
@@ -213,14 +212,14 @@ fn connect(url: &str) -> Result<Socket> {
     Ok(socket)
 }
 
-/// Ce que dit un message du nœud Solana.
+/// What a message from the Solana node says.
 #[derive(Debug, PartialEq)]
 enum SolanaMessage {
-    /// Abonnement `request` confirmé sous le numéro `subscription`.
+    /// Subscription `request` confirmed under number `subscription`.
     Subscribed { request: u64, subscription: u64 },
-    /// Changement du compte suivi par l'abonnement `subscription`.
+    /// Change to the account followed by subscription `subscription`.
     Changed { subscription: u64 },
-    /// Requête refusée (limite du nœud, compte invalide…).
+    /// Request refused (node limit, invalid account...).
     Refused,
     Other,
 }
@@ -240,9 +239,9 @@ fn parse_solana_message(text: &str) -> SolanaMessage {
     }
 }
 
-/// Une connexion par nœud, un abonnement par compte ; reconnexion avec délai
-/// croissant. Après une coupure, un changement a pu être manqué : chaque
-/// adresse est signalée une fois pour être relue.
+/// One connection per node, one subscription per account; reconnects with a growing
+/// delay. After an outage a change may have been missed, so each address is flagged
+/// once to be read again.
 fn watch_solana(rpc: &str, accounts: &[(String, String)], stop: &AtomicBool, notify: &Notify) {
     let Ok(url) = ws_url(rpc) else { return };
     let mut backoff = 1;
@@ -312,8 +311,8 @@ fn watch_solana(rpc: &str, accounts: &[(String, String)], stop: &AtomicBool, not
     }
 }
 
-/// Lecture comparée d'une adresse relue périodiquement (EVM, Bitcoin, jetons
-/// ERC-20, Dogecoin, Zcash transparent).
+/// Compared read of an address that is read periodically (EVM, Bitcoin, ERC-20
+/// tokens, Dogecoin, transparent Zcash).
 fn read(polled: &Polled) -> Result<String> {
     Ok(match polled {
         Polled::Evm(network, address) => api::get_evm_balance(address, network)?.to_string(),
@@ -335,9 +334,9 @@ fn read(polled: &Polled) -> Result<String> {
     })
 }
 
-/// Relit chaque adresse à son rythme et signale tout changement par rapport à
-/// la lecture précédente (la première sert de référence). Une lecture en
-/// échec est simplement retentée au tour suivant.
+/// Reads each address at its own pace and reports any change from the previous read
+/// (the first one serves as the reference). A failed read is simply retried on the
+/// next round.
 fn poll(targets: &[(String, Polled)], stop: &AtomicBool, notify: &Notify) {
     let mut last: Vec<Option<String>> = vec![None; targets.len()];
     let mut due: Vec<Instant> = vec![Instant::now(); targets.len()];
@@ -387,7 +386,7 @@ mod tests {
         assert!(start(vec![target("dogecoin", "D123")], notify.clone()).is_err());
         assert!(start(vec![target("doge_mainnet", "D123")], notify.clone()).is_err(), "adresse Dogecoin invalide");
         assert!(start(vec![target("zec_mainnet", "0x34deb5AF3e37BD0495dDc1bb1C53c14d7CE064c3")], notify.clone()).is_err(), "adresse EVM sur Zcash");
-        // Jeton inconnu, ou absent de ce réseau : refusé avant tout démarrage.
+        // Unknown token, or not on this network: refused before anything starts.
         let token = |network: &str, address: &str, id: &str| Target { id: "x".into(), network: network.into(), address: address.into(), token: Some(id.into()) };
         let evm = "0x34deb5AF3e37BD0495dDc1bb1C53c14d7CE064c3";
         assert!(start(vec![token("evm_mainnet", evm, "pas-un-jeton")], notify.clone()).is_err());
@@ -397,12 +396,11 @@ mod tests {
         assert!(start(many, notify).is_err());
     }
 
-    /// Nœuds RÉELS, adresses très actives : chaque réseau doit signaler un
-    /// changement en moins de 5 minutes (Dogecoin : blocs parfois espacés de
-    /// plusieurs minutes, une adresse ne change pas à chaque bloc). Solana : le compte de l'horloge du
-    /// réseau (change à chaque slot, ~400 ms — jamais inactif, contrairement à
-    /// un portefeuille) ; avec `WATCH_SOL_ADDRESS` (un portefeuille actif), le
-    /// changement signalé doit aussi se voir dans son solde lu à part.
+    /// REAL nodes, very active addresses: each network must report a change within 5 minutes
+    /// (Dogecoin: blocks are sometimes several minutes apart, and an address does not change in every
+    /// block). Solana: the network clock's account (changes every slot, about 400 ms, so it is never
+    /// idle, unlike a wallet); with `WATCH_SOL_ADDRESS` (an active wallet), the reported change must
+    /// also show up in its separately read balance.
     /// `cargo test -- --ignored live_balance_changes_are_reported --nocapture`
     #[test]
     #[ignore]
@@ -421,10 +419,9 @@ mod tests {
                 target("sol", "sol_mainnet", sol),
                 target("eth", "evm_mainnet", "0x28C6c06298d514Db089934071355E5743bf21d60"),
                 target("btc", "btc_mainnet", "bc1qm34lsc65zpw79lxes69zkqmk6ee3ewf0j77s3h"),
-                // Jeton ERC-20 : USDT du même portefeuille d'échange.
+                // ERC-20 token: USDT of the same exchange wallet.
                 Target { token: Some("usdt".into()), ..target("usdt", "evm_mainnet", "0x28C6c06298d514Db089934071355E5743bf21d60") },
-                // Dogecoin : adresse la plus active de 4 blocs récents (relevée
-                // le 04/10/2026).
+                // Dogecoin: the most active address over 4 recent blocks (captured on 2026-10-04).
                 target("doge", "doge_mainnet", "D6Dz1pzn2AcwSfz1Sat6Re54pghrFxcRa8"),
             ],
             notify,

@@ -1,54 +1,53 @@
-//! Jetons que l'app sait afficher et envoyer : ERC-20 sur les réseaux EVM, SPL
-//! (programme SPL Token classique) sur Solana, TRC-20 sur Tron, et les actions
-//! tokenisées xStocks (programme Token-2022 sur Solana, voir `TokenKind::Spl2022`).
+//! Tokens the app can display and send: ERC-20 on EVM networks, SPL (the classic
+//! SPL Token program) on Solana, TRC-20 on Tron, and xStocks tokenized stocks (the
+//! Token-2022 program on Solana, see `TokenKind::Spl2022`).
 //!
-//! Registre FIXÉ ICI, côté Rust : l'interface ne désigne un jeton que par son
-//! identifiant et un réseau, jamais par une adresse de contrat — un frontend
-//! compromis ne peut pas faire envoyer un faux jeton sous le nom d'un vrai.
-//! Chaque contrat a été relevé sur CoinGecko (fiche du jeton, contrats par
-//! réseau) puis vérifié sur la blockchain : symbole et décimales du contrat
-//! (EVM), programme SPL Token et décimales du mint (Solana) — voir le test
-//! ignoré `token_contracts_match_the_real_networks`. Écartés à la
-//! vérification : Global Dollar sur Solana (programme Token-2022, pas géré),
-//! RENDER sur Ethereum (ancien contrat « RNDR », le jeton a migré sur Solana).
+//! The registry is FIXED HERE, on the Rust side: the interface only refers to a
+//! token by its ID and a network, never by a contract address, so a compromised
+//! frontend cannot get a fake token sent under a real one's name. Each contract was
+//! taken from CoinGecko (token page, contracts per network) and then checked on
+//! chain: the contract's symbol and decimals (EVM), the SPL Token program and the
+//! mint's decimals (Solana); see the ignored test
+//! `token_contracts_match_the_real_networks`. Ruled out during that check: Global
+//! Dollar on Solana (Token-2022 program, not handled), RENDER on Ethereum (the old
+//! "RNDR" contract; the token migrated to Solana).
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
 
-/// Où vit un jeton sur un réseau.
+/// Where a token lives on a network.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenKind {
-    /// Contrat ERC-20 (adresse en minuscules).
+    /// ERC-20 contract (lower-case address).
     Erc20 { contract: &'static str },
-    /// Mint SPL Token (base58).
+    /// SPL Token mint (base58).
     Spl { mint: &'static str },
-    /// Contrat TRC-20 sur Tron (adresse T…).
+    /// TRC-20 contract on Tron (T... address).
     Trc20 { contract: &'static str },
-    /// Mint du programme Token-2022 avec coefficient d'affichage (extension
-    /// « Scaled UI Amount ») : les actions tokenisées xStocks. Le solde
-    /// affiché est le solde brut multiplié par le coefficient en vigueur
-    /// (dividendes réinvestis, divisions d'actions) ; l'app compte et affiche
-    /// en unités AFFICHÉES et ne convertit en unités brutes qu'au moment de
-    /// signer (`api::send_registered_spl`, échanges Jupiter). Variante à part :
-    /// tout code écrit pour le programme classique (LI.FI, MoonPay…) les
-    /// ignore tant qu'il n'a pas été adapté.
+    /// Token-2022 program mint with a display multiplier ("Scaled UI Amount"
+    /// extension): the xStocks tokenized stocks. The displayed balance is the raw
+    /// balance times the current multiplier (reinvested dividends, stock splits); the
+    /// app counts and displays in DISPLAYED units and only converts to raw units when
+    /// signing (`api::send_registered_spl`, Jupiter swaps). A separate variant: any
+    /// code written for the classic program (LI.FI, MoonPay...) ignores these tokens
+    /// until it has been adapted.
     Spl2022 { mint: &'static str },
 }
 
-/// Autorité de mise à jour des métadonnées de tous les xStocks sur Solana
-/// (relue sur chaque mint le 09/10/2026, voir `xstocks_match_the_real_mints`) :
-/// avec l'adresse des métadonnées chez Backed, ce qui distingue un vrai xStock
-/// d'une copie au même nom.
+/// Metadata update authority of every xStock on Solana (read back from each mint on
+/// 2026-10-09, see `xstocks_match_the_real_mints`): together with the metadata
+/// address at Backed, this is what tells a real xStock from a copy with the same
+/// name.
 pub const XSTOCKS_UPDATE_AUTHORITY: &str = "5aMNNLQJwAEeoemTEMkv5NVjqKwvvefRYCQ5Z67HFvEq";
 
-/// Taille d'un compte de jetons xStocks (extensions immutableOwner,
-/// pausableAccount, transferHookAccount exigées par le mint) : 179 octets,
-/// relus sur de vrais comptes le 09/10/2026 — base du rent payé pour créer
-/// le compte d'un destinataire.
+/// Size of an xStocks token account (immutableOwner, pausableAccount and
+/// transferHookAccount extensions, required by the mint): 179 bytes, read from real
+/// accounts on 2026-10-09. The basis of the rent paid to create a recipient's
+/// account.
 pub const XSTOCK_ACCOUNT_SIZE: u64 = 179;
 
 #[derive(Debug)]
 pub struct Deployment {
-    /// Identifiant de réseau ("evm_mainnet", "arbitrum_mainnet", "sol_mainnet"…).
+    /// Network identifier ("evm_mainnet", "arbitrum_mainnet", "sol_mainnet"...).
     pub network: &'static str,
     pub kind: TokenKind,
     pub decimals: u8,
@@ -56,7 +55,7 @@ pub struct Deployment {
 
 #[derive(Debug)]
 pub struct Token {
-    /// Identifiant utilisé par l'interface ("usdt", "link"…).
+    /// Identifier used by the interface ("usdt", "link"...).
     pub id: &'static str,
     pub symbol: &'static str,
     pub name: &'static str,
@@ -75,7 +74,7 @@ const fn trc20(contract: &'static str, decimals: u8) -> Deployment {
     Deployment { network: "tron_mainnet", kind: TokenKind::Trc20 { contract }, decimals }
 }
 
-/// Action tokenisée xStocks sur Solana : mint Token-2022, 8 décimales.
+/// xStocks tokenized stock on Solana: Token-2022 mint, 8 decimals.
 const fn xstock(mint: &'static str) -> Deployment {
     Deployment { network: "sol_mainnet", kind: TokenKind::Spl2022 { mint }, decimals: 8 }
 }
@@ -85,7 +84,7 @@ pub const TOKENS: &[Token] = &[
         id: "usdt",
         symbol: "USDT",
         name: "Tether",
-        // USDT sur Tron : contrat officiel de Tether (CoinGecko, Tronscan).
+        // USDT on Tron: Tether's official contract (CoinGecko, Tronscan).
         deployments: &[
             erc20("evm_mainnet", "0xdac17f958d2ee523a2206206994597c13d831ec7", 6),
             spl("Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", 6),
@@ -135,7 +134,7 @@ pub const TOKENS: &[Token] = &[
     },
     Token { id: "xaut", symbol: "XAUt", name: "Tether Gold", deployments: &[erc20("evm_mainnet", "0x68749665ff8d2d112fa859aa293f07a622782f38", 6)] },
     Token { id: "ondo", symbol: "ONDO", name: "Ondo", deployments: &[erc20("evm_mainnet", "0xfaba6f8e4a5e8ab82f62fe7c39859fa577269be3", 18)] },
-    // Quant : contrat, symbole et 18 décimales relus sur Ethereum (07/10/2026).
+    // Quant: contract, symbol and 18 decimals read from Ethereum (2026-10-07).
     Token { id: "qnt", symbol: "QNT", name: "Quant", deployments: &[erc20("evm_mainnet", "0x4a220e6096b25eadb88358cb44068a3248254675", 18)] },
     Token { id: "fet", symbol: "FET", name: "Artificial Superintelligence Alliance", deployments: &[erc20("evm_mainnet", "0xaea46a60368a7bd060eec7df8cba43b7ef41ad85", 18)] },
     Token {
@@ -161,18 +160,17 @@ pub const TOKENS: &[Token] = &[
     Token { id: "aster", symbol: "ASTER", name: "Aster", deployments: &[erc20("bsc_mainnet", "0x000ae314e2a2172a039b26378814c252734f556a", 18)] },
     Token { id: "vvv", symbol: "VVV", name: "Venice Token", deployments: &[erc20("base_mainnet", "0xacfe6019ed1a7dc6f7b508c02d1b04ec88cc21bf", 18)] },
     Token { id: "render", symbol: "RENDER", name: "Render", deployments: &[spl("rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof", 8)] },
-    // Staking liquide (« Staker » sur les cartes SOL et ETH, voir staking.rs) :
-    // JitoSOL de Jito (mint lu sur la blockchain : programme SPL Token,
-    // 9 décimales) et stETH de Lido (18 décimales ; le solde augmente chaque
-    // jour avec les récompenses).
+    // Liquid staking ("Stake" on the SOL and ETH cards, see staking.rs): Jito's
+    // JitoSOL (mint read on chain: SPL Token program, 9 decimals) and Lido's stETH (18
+    // decimals; the balance grows every day with the rewards).
     Token { id: "jitosol", symbol: "JitoSOL", name: "Jito Staked SOL", deployments: &[spl("J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn", 9)] },
     Token { id: "steth", symbol: "stETH", name: "Lido Staked ETH", deployments: &[erc20("evm_mainnet", "0xae7ab96520de3a18e5e111b5eaab095312d7fe84", 18)] },
-    // Actions tokenisées xStocks (Backed Assets) sur Solana : liste vérifiée
-    // de Jupiter (étiquettes « verified » et « xstocks »), puis chaque mint relu
-    // sur le réseau le 09/10/2026 — programme Token-2022, 8 décimales, nom et
-    // symbole des métadonnées, autorité `XSTOCKS_UPDATE_AUTHORITY`, métadonnées
-    // chez Backed (voir `xstocks_match_the_real_mints`). Écartées : actions
-    // préférentielles (STRCx) et titres peu échangés.
+    // xStocks tokenized stocks (Backed Assets) on Solana: Jupiter's verified list
+    // ("verified" and "xstocks" tags), then each mint read from the network on
+    // 2026-10-09: Token-2022 program, 8 decimals, name and symbol from the metadata,
+    // `XSTOCKS_UPDATE_AUTHORITY` authority, metadata hosted at Backed (see
+    // `xstocks_match_the_real_mints`). Left out: preferred shares (STRCx) and thinly
+    // traded securities.
     Token { id: "tslax", symbol: "TSLAx", name: "Tesla xStock", deployments: &[xstock("XsDoVfqeBukxuZHWhdvWHBhgEHjGNst4MLodqsJHzoB")] },
     Token { id: "nvdax", symbol: "NVDAx", name: "NVIDIA xStock", deployments: &[xstock("Xsc9qvGR1efVDFGLrVsmkzv3qi45LTBjeUKSPmx9qEh")] },
     Token { id: "aaplx", symbol: "AAPLx", name: "Apple xStock", deployments: &[xstock("XsbEhLAtcf6HdfpFZ5xEMdqW8nfAvcsP5bdudRLJzJp")] },
@@ -194,20 +192,20 @@ pub const TOKENS: &[Token] = &[
     Token { id: "spcxx", symbol: "SPCXx", name: "SpaceX xStock", deployments: &[xstock("Xs3oZwbHvqis4NYcf4YKWmEia2eC84wSiVrcYcTqpH8")] },
 ];
 
-/// Jeton du registre géré par le programme Token-2022 (xStocks) ?
+/// Is this registry token handled by the Token-2022 program (xStocks)?
 pub fn is_spl2022(id: &str) -> bool {
     TOKENS.iter().any(|t| t.id == id && t.deployments.iter().any(|d| matches!(d.kind, TokenKind::Spl2022 { .. })))
 }
 
-/// Jeton `id` sur `network`, s'il est dans le registre.
+/// Token `id` on `network`, if it is in the registry.
 pub fn find(id: &str, network: &str) -> Option<(&'static Token, &'static Deployment)> {
     let token = TOKENS.iter().find(|t| t.id == id)?;
     let deployment = token.deployments.iter().find(|d| d.network == network)?;
     Some((token, deployment))
 }
 
-/// Tout contrat ERC-20 connu (tous jetons, tous réseaux) : un virement de
-/// jetons VERS un contrat de jeton est perdu à jamais.
+/// Every known ERC-20 contract (all tokens, all networks): tokens transferred TO a
+/// token contract are lost forever.
 pub fn is_known_contract(address: &str) -> bool {
     let address = address.trim().to_ascii_lowercase();
     TOKENS
@@ -216,9 +214,9 @@ pub fn is_known_contract(address: &str) -> bool {
         .any(|d| matches!(d.kind, TokenKind::Erc20 { contract } if contract == address))
 }
 
-/// Montant décimal (« 12.5 ») → unités entières du jeton (`decimals`
-/// décimales), exact : refuse plus de décimales que le jeton, un montant nul,
-/// un signe ou tout autre caractère.
+/// Decimal amount ("12.5") → whole token units (`decimals` decimals), exactly:
+/// refuses more decimals than the token has, a zero amount, a sign or any other
+/// character.
 pub fn parse_amount(input: &str, decimals: u8) -> Result<u128> {
     let input = input.trim();
     ensure!(!input.is_empty() && input.bytes().all(|b| b.is_ascii_digit() || b == b'.'), "montant invalide");
@@ -239,7 +237,7 @@ pub fn parse_amount(input: &str, decimals: u8) -> Result<u128> {
     Ok(units)
 }
 
-/// Unités → texte décimal complet, sans zéros inutiles (« 12.5 »).
+/// Units → full decimal text, without trailing zeros ("12.5").
 pub fn format_amount(units: u128, decimals: u8) -> String {
     let scale = 10u128.pow(u32::from(decimals));
     let (whole, fraction) = (units / scale, units % scale);
@@ -250,8 +248,8 @@ pub fn format_amount(units: u128, decimals: u8) -> String {
     format!("{whole}.{}", fraction.trim_end_matches('0'))
 }
 
-/// Solde à afficher : `shown` décimales au plus, TRONQUÉ (jamais arrondi au
-/// supérieur : le solde affiché ne dépasse jamais le solde réel).
+/// Balance to display: at most `shown` decimals, TRUNCATED (never rounded up: the
+/// displayed balance never exceeds the real balance).
 pub fn format_balance(units: u128, decimals: u8, shown: u8) -> String {
     let shown = shown.min(decimals);
     let cut = 10u128.pow(u32::from(decimals - shown));
@@ -267,9 +265,8 @@ pub fn format_balance(units: u128, decimals: u8, shown: u8) -> String {
 mod tests {
     use super::*;
 
-    /// Registre cohérent : identifiants uniques, réseaux connus, contrats en
-    /// minuscules au bon format, mints SPL décodables, jamais deux fois le
-    /// même réseau pour un jeton.
+    /// Consistent registry: unique IDs, known networks, lower-case contracts in the
+    /// right format, decodable SPL mints, never the same network twice for one token.
     #[test]
     fn registry_is_consistent() {
         for (i, token) in TOKENS.iter().enumerate() {
@@ -306,11 +303,10 @@ mod tests {
         assert!(!is_known_contract("0x000000000000000000000000000000000000dEaD"));
     }
 
-    /// Chaque xStock du registre, relu sur le réseau (lecture seule) : mint du
-    /// programme Token-2022, 8 décimales, nom et symbole des métadonnées
-    /// on-chain, autorité de mise à jour de Backed, métadonnées hébergées chez
-    /// Backed, coefficient d'affichage présent, aucun frais de transfert ni
-    /// crochet de transfert actif.
+    /// Each xStock in the registry, read from the network (read-only): Token-2022
+    /// program mint, 8 decimals, name and symbol from the on-chain metadata, Backed's
+    /// update authority, metadata hosted at Backed, display multiplier present, no
+    /// transfer fee and no active transfer hook.
     #[test]
     #[ignore]
     fn xstocks_match_the_real_mints() {

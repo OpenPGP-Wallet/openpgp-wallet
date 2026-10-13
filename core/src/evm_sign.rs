@@ -1,11 +1,11 @@
-//! Signatures EVM demandées par des dApps (via WalletConnect) : message
-//! personnel (EIP-191, `personal_sign`), données structurées (EIP-712,
-//! `eth_signTypedData_v4`), et décodage des appels de contrat pour affichage.
-//! Fonctions pures, sans réseau ni secret stocké : la clé est fournie par
-//! l'appelant (`api`), après mot de passe et boîte de confirmation native.
+//! EVM signatures requested by dApps (through WalletConnect): personal messages
+//! (EIP-191, `personal_sign`), structured data (EIP-712, `eth_signTypedData_v4`),
+//! and decoding of contract calls for display. Pure functions, with no network and
+//! no stored secret: the key is supplied by the caller (`api`), after the password
+//! and the native confirmation dialog.
 //!
-//! Vérifié octet par octet contre ethers.js v6 (vecteurs dans les tests), y
-//! compris l'exemple officiel de la spécification EIP-712.
+//! Checked byte for byte against ethers.js v6 (vectors in the tests), including the
+//! official example from the EIP-712 specification.
 
 use anyhow::{anyhow, bail, Context, Result};
 use k256::ecdsa::signature::hazmat::PrehashSigner;
@@ -18,16 +18,16 @@ pub fn keccak(data: &[u8]) -> [u8; 32] {
     Keccak256::digest(data).into()
 }
 
-/// Empreinte EIP-191 d'un message personnel :
-/// keccak256("\x19Ethereum Signed Message:\n" + longueur décimale + message).
+/// EIP-191 digest of a personal message: keccak256 of "\x19Ethereum Signed
+/// Message:\n", followed by the decimal length and the message.
 pub fn personal_message_hash(message: &[u8]) -> [u8; 32] {
     let mut data = format!("\x19Ethereum Signed Message:\n{}", message.len()).into_bytes();
     data.extend_from_slice(message);
     keccak(&data)
 }
 
-/// Signature recouvrable au format attendu par les dApps : r (32) ‖ s (32) ‖
-/// v (27 + identifiant de recouvrement), s normalisé "bas" (EIP-2).
+/// Recoverable signature in the format dApps expect: r (32) ‖ s (32) ‖ v (27 +
+/// recovery ID), with s normalized "low" (EIP-2).
 pub fn sign_digest(key: &SigningKey, digest: &[u8; 32]) -> Result<[u8; 65]> {
     let (signature, recid): (Signature, RecoveryId) =
         key.sign_prehash(digest).map_err(|e| anyhow!("échec de signature ECDSA : {e}"))?;
@@ -38,10 +38,10 @@ pub fn sign_digest(key: &SigningKey, digest: &[u8; 32]) -> Result<[u8; 65]> {
     Ok(out)
 }
 
-// --- Entiers 256 bits (juste ce qu'exige l'encodage EIP-712) -----------------
+// --- 256-bit integers (just what EIP-712 encoding needs) ------------------------
 
-/// Entier 256 bits non signé, gros-boutiste. Construit uniquement par
-/// `parse_uint256`, jamais par une arithmétique qui pourrait déborder en silence.
+/// Unsigned 256-bit integer, big-endian. Only built by `parse_uint256`, never by
+/// arithmetic that could silently overflow.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct U256(pub [u8; 32]);
 
@@ -53,7 +53,7 @@ impl U256 {
         }
     }
 
-    /// Représentation décimale (affichage).
+    /// Decimal representation (display).
     pub fn to_decimal(&self) -> String {
         let mut digits = Vec::new();
         let mut n = self.0;
@@ -73,9 +73,9 @@ impl U256 {
         }
     }
 
-    /// `true` à partir de 2^128 : plus que l'offre de n'importe quel jeton réel,
-    /// même à 18 décimales — valeur "illimitée" en pratique. Couvre 2^256-1
-    /// (approve classique) comme 2^160-1 (maximum de Permit2, en uint160).
+    /// `true` from 2^128 on: more than the supply of any real token, even with 18
+    /// decimals, so an "unlimited" value in practice. Covers 2^256-1 (classic approve)
+    /// as well as 2^160-1 (Permit2's maximum, as a uint160).
     pub fn is_practically_unlimited(&self) -> bool {
         self.bits() > 128
     }
@@ -97,10 +97,10 @@ impl U256 {
     }
 }
 
-/// Décimal ("123"), hexadécimal ("0x7b"), ou nombre JSON entier. Refuse un
-/// nombre JSON non entier ou au-delà de 2^53 : serde_json l'a déjà converti en
-/// flottant, la valeur exacte voulue par la dApp est donc perdue — signer une
-/// approximation serait signer autre chose que ce qui a été demandé.
+/// Decimal ("123"), hexadecimal ("0x7b"), or an integer JSON number. Refuses a
+/// non-integer JSON number or one beyond 2^53: serde_json has already converted it
+/// to a float, so the exact value the dApp meant is lost, and signing an
+/// approximation would mean signing something other than what was requested.
 fn parse_magnitude(text: &str) -> Result<U256> {
     let mut out = [0u8; 32];
     let add_digit = |out: &mut [u8; 32], base: u32, digit: u32| -> Result<()> {
@@ -125,7 +125,7 @@ fn parse_magnitude(text: &str) -> Result<U256> {
     Ok(U256(out))
 }
 
-/// Entier (signé ou non) d'une valeur JSON : (négatif ?, valeur absolue).
+/// Integer (signed or not) from a JSON value: (negative?, absolute value).
 fn parse_integer(value: &Value) -> Result<(bool, U256)> {
     match value {
         Value::Number(n) => {
@@ -165,7 +165,7 @@ pub fn parse_address(value: &Value) -> Result<[u8; 20]> {
     bytes.try_into().map_err(|_| anyhow!("une adresse EVM fait 20 octets"))
 }
 
-// --- EIP-712 -----------------------------------------------------------------
+// --- EIP-712 --------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
 pub struct TypedField {
@@ -173,7 +173,7 @@ pub struct TypedField {
     pub kind: String,
 }
 
-/// Données structurées EIP-712 (`eth_signTypedData_v4`).
+/// EIP-712 structured data (`eth_signTypedData_v4`).
 #[derive(Debug)]
 pub struct TypedData {
     pub types: HashMap<String, Vec<TypedField>>,
@@ -182,8 +182,8 @@ pub struct TypedData {
     pub message: Value,
 }
 
-/// Accepte l'objet JSON, ou une chaîne contenant ce JSON (les deux formes
-/// circulent selon les dApps pour `eth_signTypedData_v4`).
+/// Accepts the JSON object, or a string containing that JSON (dApps send both forms
+/// for `eth_signTypedData_v4`).
 pub fn parse_typed_data(value: &Value) -> Result<TypedData> {
     let owned;
     let obj = match value {
@@ -213,8 +213,8 @@ pub fn parse_typed_data(value: &Value) -> Result<TypedData> {
     let domain = obj.get("domain").cloned().ok_or_else(|| anyhow!("données structurées sans « domain »"))?;
     let message = obj.get("message").cloned().unwrap_or(Value::Null);
     let mut data = TypedData { types, primary_type, domain, message };
-    // Type du domaine absent (forme ethers.js) : déduit des champs présents,
-    // dans l'ordre canonique de la spécification — comme `hashDomain` d'ethers.
+    // Domain type missing (the ethers.js form): deduced from the fields present, in
+    // the specification's canonical order, like ethers' `hashDomain`.
     if !data.types.contains_key("EIP712Domain") {
         let canonical = [("name", "string"), ("version", "string"), ("chainId", "uint256"), ("verifyingContract", "address"), ("salt", "bytes32")];
         let fields = canonical
@@ -232,8 +232,8 @@ pub fn parse_typed_data(value: &Value) -> Result<TypedData> {
     Ok(data)
 }
 
-/// Type de base d'un tableau (`T[]`/`T[N]` -> (T, Some(N) ou None)), `None` si
-/// ce n'est pas un tableau.
+/// Base type of an array (`T[]`/`T[N]` -> (T, Some(N) or None)), `None` if it is
+/// not an array.
 fn array_parts(kind: &str) -> Option<(&str, Option<usize>)> {
     let inner = kind.strip_suffix(']')?;
     let open = inner.rfind('[')?;
@@ -254,7 +254,7 @@ impl TypedData {
         self.types.get(name).ok_or_else(|| anyhow!("type « {name} » non défini"))
     }
 
-    /// Types structurés dont dépend `name` (lui compris) ; les cycles sont gérés.
+    /// Struct types that `name` depends on (itself included); cycles are handled.
     fn dependencies(&self, name: &str, found: &mut BTreeSet<String>) {
         if found.contains(name) || !self.types.contains_key(name) {
             return;
@@ -265,8 +265,8 @@ impl TypedData {
         }
     }
 
-    /// `Nom(type1 champ1,…)` du type principal, suivi de ses dépendances triées
-    /// par ordre alphabétique (règle EIP-712).
+    /// `Name(type1 field1,...)` of the primary type, followed by its dependencies
+    /// sorted alphabetically (the EIP-712 rule).
     fn encode_type(&self, name: &str) -> Result<String> {
         let mut deps = BTreeSet::new();
         self.dependencies(name, &mut deps);
@@ -335,7 +335,7 @@ impl TypedData {
                     anyhow::ensure!(bits.is_multiple_of(8) && (8..=256).contains(&bits), "type inconnu « {kind} »");
                     let (negative, magnitude) = parse_integer(value)?;
                     if signed {
-                        // Plage [-2^(bits-1), 2^(bits-1) - 1], complément à deux sur 256 bits.
+                        // Range [-2^(bits-1), 2^(bits-1) - 1], two's complement on 256 bits.
                         let limit = bits - 1;
                         let fits = magnitude.bits() <= limit || (negative && magnitude == pow2(limit));
                         anyhow::ensure!(fits, "« {kind} » : valeur hors limites");
@@ -357,7 +357,7 @@ impl TypedData {
         self.hash_struct("EIP712Domain", &self.domain)
     }
 
-    /// Empreinte finale à signer : keccak256(0x19 0x01 ‖ domaine ‖ message).
+    /// Final digest to sign: keccak256(0x19 0x01 ‖ domain ‖ message).
     pub fn digest(&self) -> Result<[u8; 32]> {
         let mut data = vec![0x19, 0x01];
         data.extend_from_slice(&self.domain_separator()?);
@@ -367,7 +367,7 @@ impl TypedData {
         Ok(keccak(&data))
     }
 
-    /// `chainId` du domaine, s'il est présent et lisible.
+    /// The domain's `chainId`, if present and readable.
     pub fn domain_chain_id(&self) -> Option<u64> {
         let v = parse_uint256(self.domain.get("chainId")?).ok()?;
         (v.bits() <= 64).then(|| u64::from_be_bytes(v.0[24..].try_into().expect("8 octets")))
@@ -382,20 +382,20 @@ fn pow2(n: u32) -> U256 {
     U256(out)
 }
 
-// --- Décodage des appels de contrat (affichage) ------------------------------
+// --- Decoding contract calls (display) ------------------------------------------
 
-/// Ce qu'un appel de contrat fait, pour les formes reconnues — tout le reste
-/// est `Unknown` et doit être présenté comme une signature À L'AVEUGLE.
+/// What a contract call does, for the recognized shapes. Everything else is
+/// `Unknown` and must be presented as a BLIND signature.
 #[derive(Debug, PartialEq, Eq)]
 pub enum CallKind {
-    /// Aucune donnée : simple envoi d'ETH.
+    /// No data: a plain ETH send.
     PlainTransfer,
     TokenTransfer { to: [u8; 20], amount: U256 },
     TokenTransferFrom { from: [u8; 20], to: [u8; 20], amount: U256 },
-    /// Autorise `spender` à dépenser `amount` jetons de l'utilisateur, plus tard, sans lui.
+    /// Allows `spender` to spend `amount` of the user's tokens later, without them.
     TokenApprove { spender: [u8; 20], amount: U256 },
     IncreaseAllowance { spender: [u8; 20], amount: U256 },
-    /// Autorise `operator` à transférer TOUS les NFT de la collection.
+    /// Allows `operator` to transfer ALL the NFTs of the collection.
     SetApprovalForAll { operator: [u8; 20], approved: bool },
     Unknown { selector: [u8; 4] },
 }
@@ -406,7 +406,7 @@ fn word(args: &[u8], i: usize) -> Option<&[u8]> {
 
 fn word_address(args: &[u8], i: usize) -> Option<[u8; 20]> {
     let w = word(args, i)?;
-    // Une adresse ABI a ses 12 premiers octets à zéro : sinon l'appel est mal formé.
+    // An ABI address has its first 12 bytes at zero; otherwise the call is malformed.
     w[..12].iter().all(|&b| b == 0).then(|| w[12..].try_into().expect("20 octets"))
 }
 
@@ -464,7 +464,7 @@ mod tests {
         format!("0x{s}")
     }
 
-    /// Vecteurs ethers.js v6 (`hashMessage`, `Wallet.signMessage`).
+    /// ethers.js v6 vectors (`hashMessage`, `Wallet.signMessage`).
     #[test]
     fn personal_sign_matches_ethers() {
         let hash = personal_message_hash(b"Hello World");
@@ -501,8 +501,8 @@ mod tests {
         })
     }
 
-    /// Exemple officiel de la spécification EIP-712 (valeurs publiées dans la
-    /// spécification elle-même, et reproduites par ethers.js).
+    /// Official example from the EIP-712 specification (values published in the
+    /// specification itself, and reproduced by ethers.js).
     #[test]
     fn eip712_matches_the_specification_example() {
         let data = parse_typed_data(&mail()).unwrap();
@@ -518,14 +518,14 @@ mod tests {
             "0x19e4c5dcf77c10f4b30df3d4cb5822a99a69ec18e6f5d7b9a889a5a4815740732656ebdcc5a9c8eee63e684a5ed282d6b59ffe2914076b025a77df76559403111c"
         );
         assert_eq!(data.domain_chain_id(), Some(1));
-        // Même contenu transmis sous forme de CHAÎNE JSON (autre forme courante).
+        // Same content sent as a JSON STRING (the other common form).
         let as_string = Value::String(mail().to_string());
         assert_eq!(parse_typed_data(&as_string).unwrap().digest().unwrap(), digest);
     }
 
-    /// Cas v4 complexe (ethers.js) : tableaux de structures, tableau d'adresses
-    /// vide, bytes, bytes32, int256 négatif, bool, uint8, tableau fixe, entier
-    /// hexadécimal et entier > 2^128, texte non ASCII, sel de domaine.
+    /// Complex v4 case (ethers.js): arrays of structs, an empty address array, bytes,
+    /// bytes32, a negative int256, bool, uint8, a fixed array, a hexadecimal integer
+    /// and an integer > 2^128, non-ASCII text, a domain salt.
     #[test]
     fn eip712_v4_complex_structures_match_ethers() {
         let typed = json!({
@@ -567,8 +567,8 @@ mod tests {
         assert_eq!(data.domain_chain_id(), Some(11_155_111));
     }
 
-    /// Permit EIP-2612 illimité (forme ethers.js : `EIP712Domain` absent des
-    /// types, déduit des champs du domaine).
+    /// Unlimited EIP-2612 Permit (ethers.js form: `EIP712Domain` missing from the
+    /// types, deduced from the domain fields).
     #[test]
     fn eip712_permit_with_a_max_value_string_matches_ethers() {
         let typed = json!({
@@ -594,7 +594,7 @@ mod tests {
     #[test]
     fn eip712_refuses_ambiguous_or_malformed_values() {
         let mut typed = mail();
-        // Nombre JSON au-delà de 2^53 : déjà arrondi par le parseur JSON.
+        // JSON number beyond 2^53: already rounded by the JSON parser.
         typed["domain"]["chainId"] = serde_json::from_str("1e30").unwrap();
         assert!(parse_typed_data(&typed).unwrap().digest().is_err(), "nombre flottant ambigu");
         let mut typed = mail();
@@ -606,7 +606,7 @@ mod tests {
         let mut typed = mail();
         typed["types"]["Mail"][2]["type"] = json!("uint7");
         assert!(parse_typed_data(&typed).unwrap().digest().is_err(), "type inconnu");
-        // Types cycliques sans données finies : erreur propre, pas de débordement de pile.
+        // Cyclic types without finite data: a clean error, no stack overflow.
         let cyclic = json!({
             "types": {"A": [{"name": "b", "type": "B"}], "B": [{"name": "a", "type": "A"}]},
             "primaryType": "A", "domain": {"name": "x"}, "message": {"b": {"a": {"b": {}}}}
@@ -657,8 +657,8 @@ mod tests {
             decode_call(&call("a22cb465", &[addr_word(spender), format!("{:0>64}", "1")])),
             CallKind::SetApprovalForAll { operator: hex::decode(spender).unwrap().try_into().unwrap(), approved: true }
         );
-        // Adresse ABI aux octets hauts non nuls, argument manquant ou en trop,
-        // sélecteur inconnu : jamais présentés comme un appel reconnu.
+        // ABI address with non-zero high bytes, a missing or extra argument, an unknown
+        // selector: never presented as a recognized call.
         assert!(matches!(decode_call(&call("095ea7b3", &[format!("ff{}", &addr_word(spender)[2..]), max.clone()])), CallKind::Unknown { .. }));
         assert!(matches!(decode_call(&call("095ea7b3", &[addr_word(spender)])), CallKind::Unknown { .. }));
         assert!(matches!(decode_call(&call("095ea7b3", &[addr_word(spender), max.clone(), max])), CallKind::Unknown { .. }));
