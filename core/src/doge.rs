@@ -1,19 +1,17 @@
-//! Dogecoin : adresse D… (P2PKH, BIP44 m/44'/3'/0'/0/p), solde, envoi,
-//! historique.
+//! Dogecoin: D… address (P2PKH, BIP44 m/44'/3'/0'/0/p), balance, sending, history.
 //!
-//! Services publics sans clé :
-//! - Bitcore (BitPay) : solde, sorties dépensables, historique, estimation des
-//!   frais, diffusion ;
-//! - transactions d'origine BRUTES (Blockcypher, Blockchair en secours) au
-//!   moment d'un envoi : la signature historique de Dogecoin (pas de SegWit)
-//!   n'engage PAS le montant des entrées — un service qui mentirait sur la
-//!   valeur d'une sortie ferait partir la différence en frais. Chaque entrée
-//!   est relue dans sa transaction d'origine, dont le hash est recalculé
-//!   (= son identifiant) : montant et script vérifiés, rien n'est repris de
-//!   l'API pour ce qui est signé.
+//! Keyless public services:
+//! - Bitcore (BitPay): balance, spendable outputs, history, fee estimate,
+//!   broadcast;
+//! - RAW source transactions (Blockcypher, with Blockchair as a fallback) when
+//!   sending: Dogecoin's legacy signature scheme (no SegWit) does NOT commit to the
+//!   input amounts, so a service lying about an output's value would turn the
+//!   difference into fees. Each input is reread from its source transaction, whose
+//!   hash is recomputed (= its identifier): amount and script are verified, and
+//!   nothing that gets signed is taken from the API.
 //!
-//! Transactions construites et signées ici : condensé SIGHASH_ALL historique
-//! (vérifié contre les vecteurs de Bitcoin Core), signatures low-S.
+//! Transactions are built and signed here: legacy SIGHASH_ALL digest (checked
+//! against Bitcoin Core's vectors), low-S signatures.
 
 use crate::{btc_tx, history};
 use anyhow::{anyhow, bail, ensure, Context, Result};
@@ -27,18 +25,18 @@ const BITCORE: &str = "https://api.bitcore.io/api/DOGE/mainnet";
 const P2PKH_VERSION: u8 = 0x1e;
 const P2SH_VERSION: u8 = 0x16;
 pub const DECIMALS: u8 = 8;
-/// Plus petite sortie relayée (0,01 DOGE) : montant refusé en dessous,
-/// monnaie ajoutée aux frais en dessous.
+/// Smallest relayed output (0.01 DOGE): amounts below it are refused, change below
+/// it is added to the fee.
 const DUST: u64 = 1_000_000;
-/// Frais (koinus par ko) : estimation du service, bornée (0,01 à 5 DOGE/ko).
+/// Fee (koinus per kB): the service's estimate, clamped (0.01 to 5 DOGE/kB).
 const MIN_FEE_PER_KB: u64 = 1_000_000;
 const MAX_FEE_PER_KB: u64 = 500_000_000;
 const SIGHASH_ALL: u32 = 1;
-/// Entrées au plus par transaction : au-delà de ~100 ko, une transaction
-/// n'est plus relayée par les nœuds (148 octets par entrée P2PKH).
+/// Maximum inputs per transaction: beyond ~100 kB, nodes no longer relay a
+/// transaction (148 bytes per P2PKH input).
 const MAX_INPUTS: usize = 600;
 
-/// Montant en DOGE, 8 décimales (« 12.50000000 »).
+/// Amount in DOGE, 8 decimals ("12.50000000").
 pub fn format_doge(koinus: u64) -> String {
     format!("{}.{:08}", koinus / 100_000_000, koinus % 100_000_000)
 }
@@ -61,7 +59,7 @@ fn get_json<T: serde::de::DeserializeOwned>(url: &str) -> Result<T> {
     response.json().context("réponse du service Dogecoin illisible")
 }
 
-// --- Adresses ----------------------------------------------------------------------
+// --- Addresses ---------------------------------------------------------------------
 
 fn base58check(version: u8, payload: &[u8]) -> String {
     let mut data = vec![version];
@@ -94,8 +92,7 @@ fn p2pkh_script(hash160: &[u8; 20]) -> Vec<u8> {
     [&[0x76, 0xa9, 0x14][..], hash160, &[0x88, 0xac]].concat()
 }
 
-/// Adresse Dogecoin du réseau principal (D… ou 9…/A… pour P2SH), somme de
-/// contrôle vérifiée.
+/// Dogecoin mainnet address (D…, or 9…/A… for P2SH), checksum verified.
 pub fn parse_recipient(address: &str) -> Result<Recipient> {
     let data = bs58::decode(address.trim()).into_vec().map_err(|_| anyhow!("adresse Dogecoin invalide"))?;
     ensure!(data.len() == 25, "adresse Dogecoin invalide");
@@ -109,12 +106,12 @@ pub fn parse_recipient(address: &str) -> Result<Recipient> {
     }
 }
 
-// --- Transaction historique (non SegWit) -------------------------------------------
+// --- Legacy transaction (non-SegWit) -----------------------------------------------
 
 #[derive(Clone)]
 struct TxIn {
-    /// Identifiant de la transaction d'origine, dans l'ordre sérialisé
-    /// (inverse de l'affichage).
+    /// Identifier of the source transaction, in serialized order (the reverse of the
+    /// display order).
     prev: [u8; 32],
     vout: u32,
     script_sig: Vec<u8>,
@@ -151,9 +148,8 @@ impl LegacyTx {
         out
     }
 
-    /// Condensé historique de l'entrée `index` (SIGHASH_ALL : entrées et
-    /// sorties toutes engagées ; script de l'entrée signée à la place de son
-    /// scriptSig, les autres vides).
+    /// Legacy digest for input `index` (SIGHASH_ALL: every input and output committed;
+    /// the signed input's script replaces its scriptSig, the others are empty).
     fn sighash(&self, index: usize, script_code: &[u8], hash_type: u32) -> [u8; 32] {
         let mut copy = self.clone();
         for (i, input) in copy.inputs.iter_mut().enumerate() {
@@ -165,7 +161,7 @@ impl LegacyTx {
     }
 }
 
-/// Lecteur minimal d'une transaction historique sérialisée.
+/// Minimal reader for a serialized legacy transaction.
 struct Reader<'a> {
     data: &'a [u8],
     at: usize,
@@ -230,9 +226,9 @@ fn txid_hex(raw: &[u8]) -> String {
     hex::encode(hash)
 }
 
-// --- Envoi -------------------------------------------------------------------------
+// --- Sending -----------------------------------------------------------------------
 
-/// Sortie dépensable de l'adresse (identifiant dans l'ordre d'affichage).
+/// A spendable output of the address (identifier in display order).
 #[derive(Clone, Debug)]
 pub struct Utxo {
     pub txid: String,
@@ -245,7 +241,7 @@ pub struct SendPlan {
     pub inputs: Vec<Utxo>,
     pub amount: u64,
     pub fee: u64,
-    /// Rendu à sa propre adresse (0 : pas de sortie de monnaie).
+    /// Change back to our own address (0: no change output).
     pub change: u64,
 }
 
@@ -257,12 +253,12 @@ fn fee_for(size: u64, fee_per_kb: u64) -> u64 {
     size.saturating_mul(fee_per_kb).div_ceil(1000)
 }
 
-/// Choisit les sorties (les plus grosses d'abord) pour `amount` koinus, frais
-/// compris au taux `fee_per_kb` ; une monnaie sous la poussière va aux frais.
+/// Picks outputs (largest first) for `amount` koinus, including the fee at
+/// `fee_per_kb`; change below the dust limit goes to the fee.
 pub fn plan_send(mut utxos: Vec<Utxo>, amount: u64, fee_per_kb: u64) -> Result<SendPlan> {
     ensure!(amount >= DUST, "montant trop petit : 0,01 DOGE au moins");
     utxos.sort_by_key(|u| std::cmp::Reverse(u.value));
-    // Annoncé en cas de refus : le plus grand montant envoyable.
+    // Reported on refusal: the largest amount that can be sent.
     let sendable = max_amount(&utxos, fee_per_kb).unwrap_or(0);
     let mut inputs = Vec::new();
     let mut total = 0u64;
@@ -271,8 +267,8 @@ pub fn plan_send(mut utxos: Vec<Utxo>, amount: u64, fee_per_kb: u64) -> Result<S
         inputs.push(utxo);
         let with_change = fee_for(estimated_size(inputs.len(), 2), fee_per_kb);
         let without = fee_for(estimated_size(inputs.len(), 1), fee_per_kb);
-        // `checked_add` : un montant proche de u64::MAX ne doit jamais
-        // s'enrouler en un besoin minuscule.
+        // `checked_add`: an amount close to u64::MAX must never wrap around into a tiny
+        // requirement.
         if let Some(change) = amount.checked_add(with_change).and_then(|need| total.checked_sub(need)).filter(|c| *c >= DUST) {
             return Ok(SendPlan { inputs, amount, fee: with_change, change });
         }
@@ -283,9 +279,9 @@ pub fn plan_send(mut utxos: Vec<Utxo>, amount: u64, fee_per_kb: u64) -> Result<S
     bail!("DOGE insuffisants : {} DOGE demandés, {} DOGE envoyables au plus (frais déduits)", format_doge(amount), format_doge(sendable))
 }
 
-/// Plus grand montant envoyable en une sortie, sans monnaie, au taux
-/// `fee_per_kb` : meilleur choix des k plus grosses sorties (une sortie plus
-/// petite que ce qu'elle coûte en frais est laissée de côté).
+/// Largest amount that can be sent in one output, with no change, at `fee_per_kb`:
+/// the best choice among the k largest outputs (an output smaller than what it
+/// costs in fees is left out).
 pub fn max_amount(utxos: &[Utxo], fee_per_kb: u64) -> Result<u64> {
     let mut values: Vec<u64> = utxos.iter().map(|u| u.value).collect();
     values.sort_unstable_by(|a, b| b.cmp(a));
@@ -303,7 +299,7 @@ pub struct Signed {
     pub txid: String,
 }
 
-/// Transaction signée du plan : destinataire, puis monnaie à soi.
+/// Signed transaction for the plan: the recipient, then change back to ourselves.
 pub fn build_signed(plan: &SendPlan, key: &SigningKey, own_hash160: &[u8; 20], recipient: &Recipient) -> Result<Signed> {
     let own_script = p2pkh_script(own_hash160);
     let mut outputs = vec![(plan.amount, recipient.script())];
@@ -352,26 +348,26 @@ struct Coin {
     value: u64,
 }
 
-/// Hauteur de dépense Bitcore d'une sortie libre, et d'une sortie dont la
-/// dépense attend d'être minée.
+/// Bitcore spent height of a free output, and of an output whose spend is waiting
+/// to be mined.
 const UNSPENT: i64 = -2;
 const SPEND_PENDING: i64 = -1;
 
-/// Adresse vérifiée (base58 et somme de contrôle) avant d'entrer dans une URL :
-/// les commandes de la carte la reçoivent de l'interface.
+/// Address verified (base58 and checksum) before it goes into a URL: the card's
+/// commands receive it from the frontend.
 fn checked(address: &str) -> Result<&str> {
     parse_recipient(address)?;
     Ok(address.trim())
 }
 
-/// Identifiant de transaction tel qu'affiché : 64 caractères hexadécimaux
-/// minuscules (ceux du service, avant d'entrer dans une URL ou un lien).
+/// Transaction identifier as displayed: 64 lowercase hex characters (the service's,
+/// checked before going into a URL or a link).
 fn is_txid(txid: &str) -> bool {
     txid.len() == 64 && txid.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
-/// Sorties non dépensées de l'adresse (les 1 000 plus récentes), y compris
-/// celles en attente (reçues ou en cours de dépense).
+/// Unspent outputs of the address (the 1,000 most recent), including pending ones
+/// (being received or being spent).
 fn coins(address: &str) -> Result<Vec<Coin>> {
     get_json(&format!("{BITCORE}/address/{}/?unspent=true&limit=1000", checked(address)?))
 }
@@ -386,28 +382,28 @@ fn totals(address: &str) -> Result<Totals> {
     get_json(&format!("{BITCORE}/address/{}/balance", checked(address)?))
 }
 
-/// Solde (koinus) : total du service (réceptions en attente comprises), moins
-/// les sorties en cours de dépense, qu'il compte encore jusqu'au bloc suivant.
+/// Balance (koinus): the service's total (pending receipts included), minus the
+/// outputs being spent, which it still counts until the next block.
 pub fn balance(address: &str) -> Result<u64> {
     let totals = totals(address)?;
     let being_spent = coins(address)?.iter().filter(|c| c.spent_height == SPEND_PENDING).fold(0u64, |sum, c| sum.saturating_add(c.value));
     Ok(u64::try_from(totals.confirmed.saturating_add(totals.unconfirmed)).unwrap_or(0).saturating_sub(being_spent))
 }
 
-/// Lecture comparée par la surveillance en direct (`balance_watch`) : totaux
-/// confirmé et en attente — tout envoi ou réception les change dès sa
-/// diffusion, puis à son bloc.
+/// Reading compared by live monitoring (`balance_watch`): confirmed and pending
+/// totals. Any send or receipt changes them as soon as it is broadcast, then again
+/// at its block.
 pub fn watch_reading(address: &str) -> Result<String> {
     let totals = totals(address)?;
     Ok(format!("{}:{}", totals.confirmed, totals.unconfirmed))
 }
 
-/// Envoi ou réception pas encore miné (la carte se rafraîchit plus souvent).
+/// A send or receipt not yet mined (the card refreshes more often).
 pub fn has_pending(address: &str) -> Result<bool> {
     Ok(totals(address)?.unconfirmed != 0 || coins(address)?.iter().any(|c| c.mint_height <= 0 || c.spent_height == SPEND_PENDING))
 }
 
-/// Activité d'une adresse destinataire : (détient des fonds, a déjà servi).
+/// Activity of a recipient address: (holds funds, has been used before).
 pub fn address_activity(address: &str) -> Result<(bool, bool)> {
     if coins(address)?.iter().any(|c| c.spent_height == UNSPENT && c.value > 0) {
         return Ok((true, true));
@@ -416,7 +412,7 @@ pub fn address_activity(address: &str) -> Result<(bool, bool)> {
     Ok((false, !used.is_empty()))
 }
 
-/// Sorties CONFIRMÉES et libres (ni en attente de dépense).
+/// CONFIRMED, free outputs (none waiting to be spent).
 pub fn utxos(address: &str) -> Result<Vec<Utxo>> {
     coins(address)?
         .into_iter()
@@ -433,15 +429,15 @@ struct FeeEstimate {
     feerate: f64,
 }
 
-/// Taux de frais (koinus par ko) : estimation du service, bornée.
+/// Fee rate (koinus per kB): the service's estimate, clamped.
 pub fn fee_per_kb() -> Result<u64> {
     let estimate: FeeEstimate = get_json(&format!("{BITCORE}/fee/2"))?;
     let koinus = if estimate.feerate.is_finite() && estimate.feerate > 0.0 { (estimate.feerate * 1e8) as u64 } else { MIN_FEE_PER_KB };
     Ok(koinus.clamp(MIN_FEE_PER_KB, MAX_FEE_PER_KB))
 }
 
-/// Transaction brute d'origine, hash recalculé : Blockcypher, Blockchair en
-/// secours.
+/// Raw source transaction, hash recomputed: Blockcypher, with Blockchair as a
+/// fallback.
 fn raw_transaction(txid: &str) -> Result<Vec<u8>> {
     ensure!(is_txid(txid), "identifiant de transaction Dogecoin invalide");
     #[derive(Deserialize)]
@@ -462,9 +458,9 @@ fn raw_transaction(txid: &str) -> Result<Vec<u8>> {
     Ok(raw)
 }
 
-/// Sorties des transactions d'origine déjà relues et vérifiées (immuables :
-/// leur identifiant est leur hash) — la préparation puis l'envoi relisent les
-/// mêmes, les services sans clé limitent le nombre de requêtes.
+/// Outputs from source transactions already reread and verified (immutable: their
+/// identifier is their hash). Preparing and then sending reread the same ones, and
+/// keyless services limit the number of requests.
 type Outputs = Vec<(u64, Vec<u8>)>;
 static VERIFIED_OUTPUTS: Mutex<Option<HashMap<String, Outputs>>> = Mutex::new(None);
 
@@ -477,8 +473,8 @@ fn verified_outputs(txid: &str) -> Result<Outputs> {
     Ok(outputs)
 }
 
-/// Chaque entrée relue dans sa transaction d'origine : sortie à SA propre
-/// adresse, montant exact — la signature historique n'engage pas les montants.
+/// Each input is reread from its source transaction: an output to OUR OWN address,
+/// with the exact amount, since the legacy signature does not commit to amounts.
 fn verify_inputs(inputs: &[Utxo], own_hash160: &[u8; 20]) -> Result<()> {
     let own_script = p2pkh_script(own_hash160);
     for utxo in inputs {
@@ -490,23 +486,23 @@ fn verify_inputs(inputs: &[Utxo], own_hash160: &[u8; 20]) -> Result<()> {
     Ok(())
 }
 
-/// Plan d'envoi depuis `own_hash160` (adresse du profil) : sorties relues,
-/// vérifiées sur leur transaction d'origine, frais estimés.
+/// Send plan from `own_hash160` (the profile's address): outputs reread, verified
+/// against their source transaction, fee estimated.
 pub fn plan(own_hash160: &[u8; 20], amount: u64) -> Result<SendPlan> {
     let plan = plan_send(utxos(&p2pkh_address(own_hash160))?, amount, fee_per_kb()?)?;
     verify_inputs(&plan.inputs, own_hash160)?;
     Ok(plan)
 }
 
-/// Maximum envoyable depuis `own_hash160` : sorties confirmées, taux du
-/// moment.
+/// Maximum that can be sent from `own_hash160`: confirmed outputs, current fee
+/// rate.
 pub fn max_send(own_hash160: &[u8; 20]) -> Result<u64> {
     max_amount(&utxos(&p2pkh_address(own_hash160))?, fee_per_kb()?)
 }
 
-/// Diffuse la transaction ; renvoie son identifiant.
-/// Diffuse ; déjà connue du nœud : la même, partie. Sans réponse nette :
-/// « peut-être partie » (voir `wallet_flow::maybe_sent`).
+/// Broadcasts the transaction and returns its identifier. If the node already knows
+/// it: the same transaction, sent. Without a clear answer: "maybe sent" (see
+/// `wallet_flow::maybe_sent`).
 pub fn broadcast(signed: &Signed) -> Result<String> {
     let response = client()
         .post(format!("{BITCORE}/tx/send"))
@@ -515,8 +511,9 @@ pub fn broadcast(signed: &Signed) -> Result<String> {
         .map_err(|e| crate::wallet_flow::broadcast_failure(e, "service Dogecoin injoignable", &signed.txid))?;
     let status = response.status();
     let body = response.text().unwrap_or_default();
-    // Déjà reçue (« transaction already in block chain », « txn-already-in-mempool »,
-    // « txn-already-known ») ; pas « already spent », un vrai refus (33ᵉ passage).
+    // Already received ("transaction already in block chain",
+    // "txn-already-in-mempool", "txn-already-known"); not "already spent", which is a
+    // real refusal (audit round 33).
     if status.is_success() || ["already in", "already-in", "already-known"].iter().any(|k| body.contains(k)) {
         return Ok(signed.txid.clone());
     }
@@ -526,7 +523,7 @@ pub fn broadcast(signed: &Signed) -> Result<String> {
     bail!("transaction Dogecoin refusée : {}", body.chars().take(200).collect::<String>())
 }
 
-// --- Historique ----------------------------------------------------------------------
+// --- History -----------------------------------------------------------------------
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -534,7 +531,7 @@ struct TxInfo {
     block_time: Option<String>,
 }
 
-/// Heure du bloc d'une transaction confirmée (gardée : elle ne change plus).
+/// Block time of a confirmed transaction (cached: it never changes).
 fn block_time(txid: &str) -> Option<i64> {
     static TIMES: Mutex<Option<HashMap<String, i64>>> = Mutex::new(None);
     if let Some(time) = TIMES.lock().unwrap_or_else(|p| p.into_inner()).as_ref().and_then(|m| m.get(txid)) {
@@ -545,17 +542,17 @@ fn block_time(txid: &str) -> Option<i64> {
     Some(time)
 }
 
-/// Transactions de l'adresse, la plus récente d'abord : montant net (reçu
-/// moins dépensé, frais compris pour un envoi).
+/// Transactions of the address, newest first: net amount (received minus spent,
+/// including the fee for a send).
 pub fn history(address: &str, limit: usize) -> Result<Vec<history::TxEntry>> {
     let coins: Vec<Coin> = get_json(&format!("{BITCORE}/address/{}/txs?limit=200", checked(address)?))?;
-    // txid → (net, hauteur ; < 0 : en attente)
+    // txid → (net, height; < 0: pending)
     let mut txs: Vec<(String, i128, i64)> = Vec::new();
     let mut add = |txid: &str, delta: i128, height: i64| match txs.iter_mut().find(|(t, _, _)| t == txid) {
         Some(entry) => entry.1 += delta,
         None => txs.push((txid.to_string(), delta, height)),
     };
-    // Identifiants mal formés ignorés (liens d'explorateur, requêtes).
+    // Malformed identifiers are skipped (explorer links, requests).
     for coin in &coins {
         if is_txid(&coin.mint_txid) {
             add(&coin.mint_txid, i128::from(coin.value), coin.mint_height);
@@ -586,7 +583,7 @@ pub fn history(address: &str, limit: usize) -> Result<Vec<history::TxEntry>> {
         .collect())
 }
 
-/// « 2026-09-22T19:10:21.000Z » → secondes Unix (UTC), sans dépendance de date.
+/// "2026-09-22T19:10:21.000Z" → Unix seconds (UTC), without a date library.
 fn chrono_like_parse(text: &str) -> Option<i64> {
     let (date, time) = text.split_once('T')?;
     let mut d = date.split('-').map(|p| p.parse::<i64>().ok());
@@ -597,7 +594,7 @@ fn chrono_like_parse(text: &str) -> Option<i64> {
     if !(1970..=9999).contains(&y) || !(1..=12).contains(&m) || !(1..=31).contains(&day) || !(0..24).contains(&hh) || !(0..60).contains(&mm) || !(0..=60).contains(&ss) {
         return None;
     }
-    // Jours depuis 1970 (algorithme de Howard Hinnant).
+    // Days since 1970 (Howard Hinnant's algorithm).
     let (y, m) = if m <= 2 { (y - 1, m + 9) } else { (y, m - 3) };
     let era = y.div_euclid(400);
     let yoe = y - era * 400;
@@ -611,9 +608,9 @@ fn chrono_like_parse(text: &str) -> Option<i64> {
 mod tests {
     use super::*;
 
-    /// Vecteurs SIGHASH_ALL (sans OP_CODESEPARATOR) de
-    /// bitcoin/src/test/data/sighash.json : même algorithme historique que
-    /// Dogecoin. [transaction brute, script, entrée, type, condensé affiché].
+    /// SIGHASH_ALL vectors (without OP_CODESEPARATOR) from
+    /// bitcoin/src/test/data/sighash.json: the same legacy algorithm as Dogecoin. [raw
+    /// transaction, script, input, type, displayed digest].
     const SIGHASH_VECTORS: &[(&str, &str, usize, i64, &str)] = &[
         (
             "4504cb1904c7a4acf375ddae431a74de72d5436efc73312cf8e9921f431267ea6852f9714a01000000066a656a656553a2fbd587c098b3a1c5bd1d6480f730a0d6d9b537966e20efc0e352d971576d0f87df0d6d01000000016321aeec3c4dcc819f1290edb463a737118f39ab5765800547522708c425306ebfca3f396603000000055300ac656a1d09281d05bfac57b5eb17eb3fa81ffcedfbcd3a917f1be0985c944d473d2c34d245eb350300000007656a51525152ac263078d9032f470f0500000000066aac00000052e12da60200000000003488410200000000076365006300ab539981e432",
@@ -673,18 +670,18 @@ mod tests {
 
     #[test]
     fn addresses_round_trip_and_reject_other_networks() {
-        // Adresse réelle (Bitcore) et son script P2PKH.
+        // A real address (Bitcore) and its P2PKH script.
         let hash: [u8; 20] = hex::decode("830a7420e63d76244ff7cbd1c248e94c14463259").unwrap().try_into().unwrap();
         assert_eq!(p2pkh_address(&hash), "DH5yaieqoZN36fDVciNyRueRGvGLR3mr7L");
         assert_eq!(parse_recipient("DH5yaieqoZN36fDVciNyRueRGvGLR3mr7L").unwrap(), Recipient::P2pkh(hash));
         assert_eq!(Recipient::P2pkh(hash).script(), hex::decode("76a914830a7420e63d76244ff7cbd1c248e94c1446325988ac").unwrap());
         let p2sh = base58check(P2SH_VERSION, &hash);
         assert!(matches!(parse_recipient(&p2sh), Ok(Recipient::P2sh(_))));
-        // Adresse Bitcoin (version 0) : refusée ; somme de contrôle fausse aussi.
+        // Bitcoin address (version 0): refused; a wrong checksum too.
         assert!(parse_recipient(&base58check(0x00, &hash)).is_err());
         assert!(parse_recipient("DH5yaieqoZN36fDVciNyRueRGvGLR3mr7M").is_err());
         assert!(parse_recipient("pas une adresse").is_err());
-        // Ni adresse ni identifiant mal formé dans une URL.
+        // No malformed address or identifier in a URL.
         assert!(checked("DH5yaieqoZN36fDVciNyRueRGvGLR3mr7L/../../tx/send").is_err());
         assert!(is_txid("484c94145e97c0b2dd96912c1f056c9e05c8d358ab96ea429c51039d75d0d3c4"));
         for bad in ["484c94145e97c0b2dd96912c1f056c9e05c8d358ab96ea429c51039d75d0d3c", "484C94145E97C0B2DD96912C1F056C9E05C8D358AB96EA429C51039D75D0D3C4", "../../../../../../../../../../../../../../../../../../../../../../"] {
@@ -692,9 +689,9 @@ mod tests {
         }
     }
 
-    /// Adresses du chemin BIP44 m/44'/3'/0'/0/i pour la seed BIP39 de test
-    /// « abandon … about », calculées indépendamment (bitcoinjs-lib + bip32) :
-    /// mêmes adresses que Ledger, Trezor et les autres portefeuilles.
+    /// Addresses on the BIP44 path m/44'/3'/0'/0/i for the BIP39 test seed "abandon …
+    /// about", computed independently (bitcoinjs-lib + bip32): the same addresses as
+    /// Ledger, Trezor and other wallets.
     #[test]
     fn derivation_matches_an_independent_implementation() {
         let seed = hex::decode("5eb00bbddcf069084889a8ab9155568165f5c453ccb85e70811aaed6f6da5fc19a5ac40b389cd370d086206dec8aa6c43daea6690f20ad3d8d48b2d2ce9e38e4").unwrap();
@@ -710,19 +707,19 @@ mod tests {
 
     #[test]
     fn plans_cover_amount_fee_and_dust() {
-        let rate = 1_000_000; // 0,01 DOGE/ko
+        let rate = 1_000_000; // 0.01 DOGE/kB
         let plan = plan_send(vec![utxo(5 * 100_000_000), utxo(100_000_000)], 2 * 100_000_000, rate).unwrap();
         assert_eq!(plan.inputs.len(), 1, "la plus grosse sortie suffit");
         assert_eq!(plan.fee, fee_for(estimated_size(1, 2), rate));
         assert_eq!(plan.amount + plan.fee + plan.change, 5 * 100_000_000);
-        // Monnaie sous la poussière : ajoutée aux frais, pas de sortie.
+        // Change below the dust limit: added to the fee, no output.
         let exact = 100_000_000 + fee_for(estimated_size(1, 2), rate) + 10;
         let plan = plan_send(vec![utxo(exact)], 100_000_000, rate).unwrap();
         assert_eq!((plan.change, plan.amount + plan.fee), (0, exact));
         assert!(plan_send(vec![utxo(100)], 50, rate).unwrap_err().to_string().contains("trop petit"));
         assert!(plan_send(vec![utxo(1_000_000)], 2_000_000, rate).unwrap_err().to_string().contains("DOGE insuffisants"));
-        // Montant proche de u64::MAX, sorties énormes annoncées : refus, jamais
-        // un besoin enroulé ni un plan incohérent.
+        // An amount close to u64::MAX, huge outputs reported: refused, never a wrapped
+        // requirement or an inconsistent plan.
         assert!(plan_send(vec![utxo(u64::MAX / 2), utxo(u64::MAX / 2)], u64::MAX - 10, rate).is_err());
         let huge = plan_send(vec![utxo(u64::MAX), utxo(u64::MAX)], 100_000_000, rate).unwrap();
         assert_eq!((huge.inputs.len(), huge.amount + huge.fee + huge.change), (1, u64::MAX), "plan cohérent");
@@ -735,10 +732,10 @@ mod tests {
         let utxos = vec![utxo(300_000_000), utxo(200_000_000)];
         let max = max_amount(&utxos, rate).unwrap();
         assert_eq!(max, 500_000_000 - fee_for(estimated_size(2, 1), rate));
-        // Le plan de ce montant prend tout, sans monnaie, frais exacts.
+        // The plan for this amount takes everything, no change, exact fee.
         let plan = plan_send(utxos, max, rate).unwrap();
         assert_eq!((plan.inputs.len(), plan.change, plan.fee), (2, 0, fee_for(estimated_size(2, 1), rate)));
-        // Une sortie minuscule coûte plus qu'elle n'apporte : ignorée.
+        // A tiny output costs more than it brings: ignored.
         let with_dust = vec![utxo(300_000_000), utxo(1_000)];
         assert_eq!(max_amount(&with_dust, rate).unwrap(), 300_000_000 - fee_for(estimated_size(1, 1), rate));
         assert!(max_amount(&[utxo(100_000)], rate).is_err(), "rien d'envoyable");
@@ -785,8 +782,8 @@ mod tests {
         assert_eq!(chrono_like_parse("2026-13-01T00:00:00Z"), None);
     }
 
-    /// Réel (lecture seule) : solde, sorties, frais, historique d'une adresse
-    /// active, et vérification d'une sortie sur sa transaction d'origine.
+    /// Live (read-only): balance, outputs, fees and history of an active address, and
+    /// verification of an output against its source transaction.
     /// `cargo test -- --ignored real_bitcore --nocapture`
     #[test]
     #[ignore]
@@ -803,12 +800,12 @@ mod tests {
         let utxos = utxos(address).unwrap();
         println!("{} sorties, frais {} koinus/ko", utxos.len(), fee_per_kb().unwrap());
         verify_inputs(&utxos[..1], &hash).unwrap();
-        // Montant annoncé faux : refusé.
+        // Wrong reported amount: refused.
         let mut lie = utxos[0].clone();
         lie.value -= 1;
         assert!(verify_inputs(&[lie], &hash).unwrap_err().to_string().contains("annoncé faux"));
-        // Préparation réelle (1 DOGE) : sorties choisies puis vérifiées sur leur
-        // transaction d'origine.
+        // Real preparation (1 DOGE): outputs picked, then verified against their source
+        // transaction.
         let planned = plan(&hash, 100_000_000).unwrap();
         assert_eq!(planned.amount + planned.fee + planned.change, planned.inputs.iter().map(|u| u.value).sum::<u64>());
         println!("plan : {} entrée(s), frais {} DOGE, monnaie {} DOGE", planned.inputs.len(), format_doge(planned.fee), format_doge(planned.change));
@@ -816,10 +813,9 @@ mod tests {
         println!("{} transactions, première : {:?} {:?}", entries.len(), entries[0].net_amount_minor, entries[0].timestamp_unix);
     }
 
-    /// Réel : les signatures d'une vraie transaction Dogecoin (minée) se
-    /// vérifient avec NOTRE condensé, calculé sur le script de la sortie
-    /// dépensée relu dans sa transaction d'origine — même algorithme que le
-    /// consensus Dogecoin.
+    /// Live: the signatures of a real (mined) Dogecoin transaction verify with OUR
+    /// digest, computed over the spent output's script as reread from its source
+    /// transaction. Same algorithm as Dogecoin consensus.
     /// `cargo test -- --ignored real_mined_signatures --nocapture`
     #[test]
     #[ignore]
@@ -847,8 +843,8 @@ mod tests {
         }
     }
 
-    /// Réel : notre transaction signée, dépensant une sortie inexistante, est
-    /// DÉCODÉE par le nœud puis refusée seulement pour entrée manquante.
+    /// Live: our signed transaction, spending an output that does not exist, is DECODED
+    /// by the node and then refused only for the missing input.
     /// `cargo test -- --ignored real_broadcast_missing --nocapture`
     #[test]
     #[ignore]

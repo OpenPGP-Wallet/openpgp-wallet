@@ -8,9 +8,9 @@ use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-// Voir eth_rpc::shared_client : un `reqwest::Client` reconstruit à chaque appel de
-// commande jette son pool de connexions keep-alive et repaie une poignée de main
-// TCP+TLS complète à chaque clic. Un seul client partagé, construit une fois.
+// See eth_rpc::shared_client: a `reqwest::Client` rebuilt on every command call
+// throws away its pool of keep-alive connections and pays for a full TCP+TLS
+// handshake on every click. One shared client, built once.
 fn shared_client() -> &'static reqwest::blocking::Client {
     static CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
@@ -21,28 +21,28 @@ fn shared_client() -> &'static reqwest::blocking::Client {
     })
 }
 
-/// API Esplora publique de Blockstream : pas de clé requise, suffisant pour
-/// interroger les UTXOs et diffuser une transaction dans ce PoC. Mainnet et
-/// testnet sont deux déploiements distincts de la même API, d'où le paramètre
-/// `base_url` de `EsploraClient::new` plutôt qu'une constante unique.
+/// Blockstream's public Esplora API: no key required, and enough to query UTXOs and
+/// broadcast a transaction. Mainnet and testnet are two separate deployments of the
+/// same API, hence the `base_url` parameter of `EsploraClient::new` rather than a
+/// single constant.
 pub const ESPLORA_TESTNET_BASE: &str = "https://blockstream.info/testnet/api";
 pub const ESPLORA_MAINNET_BASE: &str = "https://blockstream.info/api";
 
-/// Serveurs essayés dans l'ordre : Blockstream, puis mempool.space (même API
-/// Esplora). Blockstream limite les requêtes par IP : réponses 429 constatées
-/// le 05/10/2026, solde Bitcoin et courbe du portefeuille alors en échec. Un
-/// serveur saturé (429), en panne (5xx) ou injoignable passe la main au
-/// suivant et reste en retrait `MIRROR_COOLDOWN`.
+/// Servers tried in order: Blockstream, then mempool.space (same Esplora API).
+/// Blockstream rate-limits requests per IP: 429 responses were seen on 2026-10-05,
+/// which broke the Bitcoin balance and the portfolio chart. A server that is
+/// overloaded (429), down (5xx) or unreachable hands over to the next one and stays
+/// on the bench for `MIRROR_COOLDOWN`.
 const MAINNET_MIRRORS: [&str; 2] = [ESPLORA_MAINNET_BASE, "https://mempool.space/api"];
 const TESTNET_MIRRORS: [&str; 2] = [ESPLORA_TESTNET_BASE, "https://mempool.space/testnet/api"];
 const MIRROR_COOLDOWN: Duration = Duration::from_secs(60);
 
-/// Tous les serveurs ont échoué (saturés, en panne ou injoignables).
+/// Every server failed (overloaded, down or unreachable).
 pub const BITCOIN_SERVERS_DOWN: &str = "serveurs Bitcoin indisponibles pour l'instant (trop de requêtes ou panne) — réessayez dans une minute";
-/// Requête refusée par le serveur (adresse invalide…).
+/// Request refused by the server (invalid address…).
 pub const BITCOIN_REQUEST_REFUSED: &str = "requête refusée par le serveur Bitcoin";
 
-/// Serveurs en retrait, jusqu'à quel instant.
+/// Benched servers, and until when.
 fn cooling() -> std::sync::MutexGuard<'static, HashMap<&'static str, Instant>> {
     static COOLING: OnceLock<Mutex<HashMap<&'static str, Instant>>> = OnceLock::new();
     COOLING.get_or_init(Default::default).lock().unwrap_or_else(|p| p.into_inner())
@@ -112,13 +112,13 @@ struct AddressStatsJson {
     mempool_stats: TxoStatsJson,
 }
 
-/// Voir `EsploraClient::address_stats`.
+/// See `EsploraClient::address_stats`.
 pub struct AddressStats {
-    /// Transactions confirmées + en mempool touchant l'adresse.
+    /// Confirmed + mempool transactions involving the address.
     pub tx_count: u64,
-    /// Solde confirmé + mempool, en satoshis.
+    /// Confirmed + mempool balance, in satoshis.
     pub balance_sat: i128,
-    /// Solde confirmé seul, en satoshis.
+    /// Confirmed balance only, in satoshis.
     pub confirmed_sat: i128,
 }
 
@@ -126,19 +126,18 @@ pub struct AddressTx {
     pub txid: String,
     pub confirmed: bool,
     pub block_time: Option<i64>,
-    /// Positif si `address` a reçu net, négatif si elle a envoyé net, en satoshis —
-    /// calculé à partir des vin/vout déjà fournis par Esplora (pas d'appel
-    /// supplémentaire nécessaire, contrairement à Solana où le détail par
-    /// transaction demande une requête séparée).
+    /// Positive if `address` received on net, negative if it sent on net, in satoshis.
+    /// Computed from the vin/vout Esplora already provides (no extra call needed,
+    /// unlike Solana where per-transaction details need a separate request).
     pub net_sat: i128,
-    /// Texte de la première sortie OP_RETURN (memo), s'il y en a une lisible
-    /// (ex : memo d'un swap THORChain, voir `history`).
+    /// Text of the first OP_RETURN output (memo), if there is a readable one (e.g. a
+    /// THORChain swap memo, see `history`).
     pub memo: Option<String>,
 }
 
-/// Données d'un script OP_RETURN, en texte : `OP_RETURN` suivi d'UNE poussée
-/// (directe jusqu'à 75 octets, `OP_PUSHDATA1` ou `OP_PUSHDATA2`) couvrant le
-/// reste du script. `None` pour tout autre script ou un texte non UTF-8.
+/// Data of an OP_RETURN script, as text: `OP_RETURN` followed by ONE push (direct
+/// up to 75 bytes, `OP_PUSHDATA1` or `OP_PUSHDATA2`) covering the rest of the
+/// script. `None` for any other script or for non-UTF-8 text.
 fn op_return_text(script_hex: &str) -> Option<String> {
     let script = hex::decode(script_hex).ok()?;
     let (&opcode, rest) = script.strip_prefix(&[0x6a])?.split_first()?;
@@ -152,9 +151,9 @@ fn op_return_text(script_hex: &str) -> Option<String> {
 }
 
 impl EsploraClient {
-    /// `base_url` : `ESPLORA_TESTNET_BASE` ou `ESPLORA_MAINNET_BASE` (voir
-    /// `api::has_pending_btc`/`get_btc_balance`/`send_btc` pour le choix selon le
-    /// réseau demandé par le frontend).
+    /// `base_url`: `ESPLORA_TESTNET_BASE` or `ESPLORA_MAINNET_BASE` (see
+    /// `api::has_pending_btc`/`get_btc_balance`/`send_btc` for how it is chosen from
+    /// the network the frontend asks for).
     pub fn new(base_url: &'static str) -> Self {
         let mirrors = match base_url {
             ESPLORA_MAINNET_BASE => MAINNET_MIRRORS.to_vec(),
@@ -168,8 +167,8 @@ impl EsploraClient {
         Self { client: shared_client().clone(), mirrors }
     }
 
-    /// Ordre d'essai : ceux en retrait en dernier (tri stable : sinon l'ordre
-    /// de préférence).
+    /// Order to try: benched servers last (stable sort, so the preference order holds
+    /// otherwise).
     fn ordered_mirrors(&self) -> Vec<&'static str> {
         let now = Instant::now();
         let cooling = cooling();
@@ -178,9 +177,9 @@ impl EsploraClient {
         mirrors
     }
 
-    /// Réponse du premier serveur qui répond vraiment : 429, 5xx ou serveur
-    /// injoignable, le suivant ; toute autre réponse (succès, 400 d'une
-    /// transaction refusée, 404…) est rendue telle quelle, sans autre essai.
+    /// Response from the first server that genuinely answers: on 429, 5xx or an
+    /// unreachable server, move to the next one. Any other response (success, 400 for a
+    /// refused transaction, 404…) is returned as is, without trying elsewhere.
     fn request(&self, path: &str, build: impl Fn(&str) -> RequestBuilder) -> Result<Response> {
         for mirror in self.ordered_mirrors() {
             match build(&format!("{mirror}{path}")).send() {
@@ -193,14 +192,14 @@ impl EsploraClient {
         Err(anyhow!(BITCOIN_SERVERS_DOWN))
     }
 
-    /// GET JSON ; `label` nomme l'appel dans l'erreur (sans l'adresse).
+    /// JSON GET; `label` names the call in the error (without the address).
     fn get_json<T: DeserializeOwned>(&self, path: &str, label: &str) -> Result<T> {
         let response = self.request(path, |url| self.client.get(url))?;
         anyhow::ensure!(response.status().is_success(), BITCOIN_REQUEST_REFUSED);
         response.json().with_context(|| format!("réponse esplora {label} illisible"))
     }
 
-    /// UTXOs confirmés disponibles pour `address`.
+    /// Confirmed UTXOs available for `address`.
     pub fn utxos(&self, address: &str) -> Result<Vec<Utxo>> {
         let raw: Vec<UtxoJson> = self.get_json(&format!("/address/{address}/utxo"), "/utxo")?;
 
@@ -220,26 +219,26 @@ impl EsploraClient {
             .collect()
     }
 
-    /// `true` si au moins une transaction non confirmée (mempool) touche `address` —
-    /// fonds entrants ou sortants pas encore minés. Utilise l'endpoint Esplora dédié
-    /// (`/txs/mempool`) plutôt que `address_history` filtré : plus léger, puisqu'il
-    /// n'a pas besoin de calculer les montants (vin/vout) de chaque transaction pour
-    /// répondre à une simple question oui/non, appelée à chaque rafraîchissement
-    /// automatique du solde (voir main.js::refreshBalance).
+    /// `true` if at least one unconfirmed (mempool) transaction involves `address`:
+    /// incoming or outgoing funds not mined yet. Uses the dedicated Esplora endpoint
+    /// (`/txs/mempool`) rather than a filtered `address_history`. It is lighter, since
+    /// it does not need to compute the amounts (vin/vout) of every transaction to
+    /// answer a simple yes/no question, and it is called on every automatic balance
+    /// refresh (see main.js::refreshBalance).
     pub fn has_mempool_tx(&self, address: &str) -> Result<bool> {
         let raw: Vec<serde_json::Value> = self.get_json(&format!("/address/{address}/txs/mempool"), "/txs/mempool")?;
         Ok(!raw.is_empty())
     }
 
-    /// Historique des transactions (confirmées ou non) touchant `address`, du plus
-    /// récent au plus ancien (ordre déjà garanti par Esplora).
+    /// History of the transactions (confirmed or not) involving `address`, newest first
+    /// (an order Esplora already guarantees).
     pub fn address_history(&self, address: &str) -> Result<Vec<AddressTx>> {
         self.address_history_after(address, None)
     }
 
-    /// Page d'historique : sans `after`, la première (mempool puis 25
-    /// transactions confirmées) ; avec, les 25 transactions confirmées
-    /// suivantes, plus anciennes que `after` (`/txs/chain/:dernier_txid_vu`).
+    /// A page of history: without `after`, the first one (mempool, then 25 confirmed
+    /// transactions); with it, the next 25 confirmed transactions older than `after`
+    /// (`/txs/chain/:last_seen_txid`).
     pub fn address_history_after(&self, address: &str, after: Option<&str>) -> Result<Vec<AddressTx>> {
         let path = match after {
             None => format!("/address/{address}/txs"),
@@ -248,7 +247,7 @@ impl EsploraClient {
         self.transactions_at(&path, address)
     }
 
-    /// Transactions non confirmées (mempool) touchant `address`.
+    /// Unconfirmed (mempool) transactions involving `address`.
     pub fn mempool_history(&self, address: &str) -> Result<Vec<AddressTx>> {
         self.transactions_at(&format!("/address/{address}/txs/mempool"), address)
     }
@@ -283,12 +282,12 @@ impl EsploraClient {
             .collect())
     }
 
-    /// Nombre total de transactions et solde (confirmé + mempool) de `address` —
-    /// un seul appel (`/address/{address}`), sans le détail des transactions.
-    /// Sert à prévenir avant un envoi vers une adresse jamais utilisée ou vide
-    /// (voir `api::btc_recipient_activity`). Solde calculé en signé : les
-    /// dépenses en mempool peuvent dépasser les réceptions en mempool (elles
-    /// consomment des sorties déjà confirmées) — constaté sur de vraies adresses.
+    /// Total number of transactions and balance (confirmed + mempool) of `address`, in
+    /// a single call (`/address/{address}`) without the transaction details. Used to
+    /// warn before sending to an address that has never been used or is empty (see
+    /// `api::btc_recipient_activity`). The balance is computed as signed: mempool
+    /// spends can exceed mempool receipts (they consume outputs that are already
+    /// confirmed), as seen on real addresses.
     pub fn address_stats(&self, address: &str) -> Result<AddressStats> {
         let raw: AddressStatsJson = self.get_json(&format!("/address/{address}"), "/address")?;
         let balance = |s: &TxoStatsJson| i128::from(s.funded_txo_sum) - i128::from(s.spent_txo_sum);
@@ -299,24 +298,24 @@ impl EsploraClient {
         })
     }
 
-    /// Transaction brute `txid` (ordre affiché). Aucune confiance accordée au
-    /// serveur : l'appelant recalcule le txid de ce qu'il reçoit (voir
-    /// `ledger::btc`, qui refuse toute transaction ne correspondant pas à l'UTXO).
+    /// Raw transaction `txid` (display order). The server is not trusted: the caller
+    /// recomputes the txid of what it receives (see `ledger::btc`, which refuses any
+    /// transaction that does not match the UTXO).
     pub fn raw_transaction(&self, txid: &[u8; 32]) -> Result<Vec<u8>> {
         let resp = self.request(&format!("/tx/{}/hex", hex::encode(txid)), |url| self.client.get(url))?;
         anyhow::ensure!(resp.status().is_success(), "transaction {} introuvable sur esplora", hex::encode(txid));
         hex::decode(resp.text().context("réponse esplora /tx/hex illisible")?.trim()).context("transaction brute esplora invalide")
     }
 
-    /// Diffuse une transaction brute (hex-encodée pour l'API) et renvoie son
-    /// txid. Serveur suivant seulement si le premier est saturé, en panne ou
-    /// injoignable (une même transaction diffusée deux fois reste une seule
-    /// dépense) ; une transaction refusée ne l'est pas ailleurs.
+    /// Broadcasts a raw transaction (hex-encoded for the API) and returns its txid.
+    /// Moves to the next server only if the first one is overloaded, down or
+    /// unreachable (the same transaction broadcast twice is still a single spend); a
+    /// transaction refused by one server is not retried elsewhere.
     ///
-    /// Identifiant calculé ici (`btc_tx::txid`). Déjà connue d'un serveur
-    /// (diffusée par le précédent, resté sans réponse) : c'est la même,
-    /// partie. Sans réponse nette d'aucun : « peut-être partie » (voir
-    /// `wallet_flow::maybe_sent`), jamais « serveurs indisponibles ».
+    /// The identifier is computed here (`btc_tx::txid`). If a server already knows it
+    /// (broadcast by the previous one, which never answered), it is the same
+    /// transaction, and it has been sent. If none gives a clear answer: "maybe sent"
+    /// (see `wallet_flow::maybe_sent`), never "servers unavailable".
     pub fn broadcast(&self, raw_tx: &[u8]) -> Result<String> {
         let txid = crate::btc_tx::txid(raw_tx).context("transaction Bitcoin illisible")?;
         let hex_tx = hex::encode(raw_tx);
@@ -341,15 +340,14 @@ impl EsploraClient {
         Err(if uncertain { crate::wallet_flow::maybe_sent(&txid) } else { anyhow!(BITCOIN_SERVERS_DOWN) })
     }
 
-    /// Tarifs de frais actuels (sat/vByte) par objectif de confirmation (en blocs),
-    /// triés par objectif croissant — ex: `[(2, 12.5), (6, 5.0), (144, 1.2)]`. Sert à
-    /// proposer un choix rapide/moyen/lent avant l'envoi (voir `api::estimate_btc_fees`).
-    /// Frais dictés par le marché sur mainnet (contrairement au testnet, où ils sont
-    /// dérisoires) : sans estimation dynamique, une transaction réelle sous-payée
-    /// resterait non confirmée indéfiniment. Jamais sous 1 sat/vByte :
-    /// mempool.space annonce des tarifs plus bas (0,28 le 05/10/2026), que
-    /// des nœuds encore réglés à 1 sat/vByte (peut-être le serveur de
-    /// diffusion, pas forcément celui de l'estimation) ne relaieraient pas.
+    /// Current fee rates (sat/vByte) per confirmation target (in blocks), sorted by
+    /// increasing target, e.g. `[(2, 12.5), (6, 5.0), (144, 1.2)]`. Used to offer a
+    /// fast/medium/slow choice before sending (see `api::estimate_btc_fees`). Fees on
+    /// mainnet are set by the market (unlike testnet, where they are negligible): without
+    /// a dynamic estimate, an underpaying real transaction could stay unconfirmed
+    /// forever. Never below 1 sat/vByte: mempool.space advertises lower rates (0.28 on
+    /// 2026-10-05), which nodes still configured at 1 sat/vByte (possibly the broadcast
+    /// server, not necessarily the one giving the estimate) would not relay.
     pub fn fee_estimates(&self) -> Result<Vec<(u32, f64)>> {
         let raw: HashMap<String, f64> = self.get_json("/fee-estimates", "/fee-estimates")?;
 
@@ -369,8 +367,8 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
-    /// Petit serveur HTTP local : répond `status` et `body` à chaque
-    /// requête ; compte les requêtes reçues.
+    /// Small local HTTP server: answers every request with `status` and `body`, and
+    /// counts the requests received.
     fn local_server(status: &'static str, body: &'static str) -> (&'static str, Arc<AtomicUsize>) {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let url: &'static str = Box::leak(format!("http://{}", listener.local_addr().unwrap()).into_boxed_str());
@@ -394,8 +392,8 @@ mod tests {
         (url, hits)
     }
 
-    /// Serveur saturé (429) : réponse du suivant, et le saturé passe en
-    /// dernier pour les appels suivants.
+    /// Overloaded server (429): the next one answers, and the overloaded one goes last
+    /// for later calls.
     #[test]
     fn a_rate_limited_server_hands_over_to_the_next_one() {
         let (busy, busy_hits) = local_server("429 Too Many Requests", "Too Many Requests");
@@ -407,8 +405,8 @@ mod tests {
         assert_eq!(spare_hits.load(Ordering::SeqCst), 2);
     }
 
-    /// Requête refusée (400) : pas d'autre essai ailleurs (une transaction
-    /// refusée par un nœud l'est par les autres).
+    /// Refused request (400): no retry elsewhere (a transaction refused by one node is
+    /// refused by the others).
     #[test]
     fn a_refusal_is_not_retried_elsewhere() {
         let (refusing, _) = local_server("400 Bad Request", "sendrawtransaction RPC error: bad-txns-inputs-missingorspent");
@@ -420,8 +418,8 @@ mod tests {
         assert_eq!(spare_hits.load(Ordering::SeqCst), 0);
     }
 
-    /// Transaction déjà connue d'un serveur (diffusée par un précédent resté
-    /// sans réponse) : la même, partie — jamais « échec ».
+    /// Transaction already known to a server (broadcast by a previous one that never
+    /// answered): the same transaction, sent, never "failed".
     #[test]
     fn an_already_known_transaction_counts_as_sent() {
         let (busy, _) = local_server("429 Too Many Requests", "");
@@ -431,7 +429,7 @@ mod tests {
         assert_eq!(client.broadcast(&raw).unwrap(), REAL_SEGWIT_TXID);
     }
 
-    /// Transaction segwit réelle (bloc du 05/10/2026) : txid recalculé ici.
+    /// A real segwit transaction (block from 2026-10-05): txid recomputed here.
     const REAL_SEGWIT_TX: &str = "02000000000101ad487afc8681dc27cf310967360e2d08cda3c36ac3ee1f5b6b6750b700fcf43a0100000000fdffffff022412f1050000000016001445e8767745422b4292d96eee4ce6fcb2a3dc81b80095ba0a00000000160014574583706299b84078391eed9e0efb20806c9bbe024730440220473bbb58550feedbbd591af5b4f73239be4df78a7fbe040d790087c11adb9d69022044b091f732aafdc612f528a7688d07e439ee1238ba729aca432f930e65fb4cdf0121039054a6a7a07ed2a76c055103d56dc987917b40d53cf7059cf8797145f6d50bc255cd0e00";
     const REAL_SEGWIT_TXID: &str = "bbf97468027dd29541cd04fa23dcda6fb8b21a618000e5d70f94195ca8fb8c2d";
 
@@ -441,7 +439,7 @@ mod tests {
         assert_eq!(crate::btc_tx::txid(&[0, 0, 0, 0, 0, 1, 5]), None, "sérialisation tronquée");
     }
 
-    /// Tous saturés ou injoignables : message clair, pas « illisible ».
+    /// All overloaded or unreachable: a clear message, not "unreadable".
     #[test]
     fn all_servers_down_gives_a_clear_message() {
         let (busy, _) = local_server("503 Service Unavailable", "");
@@ -449,8 +447,8 @@ mod tests {
         assert_eq!(client.utxos("bc1qtest").err().unwrap().to_string(), BITCOIN_SERVERS_DOWN);
     }
 
-    /// Réel : mempool.space seul lit les mêmes réponses que Blockstream
-    /// (solde, historique, UTXO, frais, transaction brute).
+    /// Live: mempool.space on its own returns the same answers as Blockstream (balance,
+    /// history, UTXOs, fees, raw transaction).
     /// `cargo test -- --ignored real_mempool_space_mirror --nocapture`
     #[test]
     #[ignore]
@@ -463,9 +461,9 @@ mod tests {
         assert!(!history.is_empty());
         let older = client.address_history_after(address, Some(&history.last().unwrap().txid)).unwrap();
         assert!(older.iter().all(|tx| tx.confirmed));
-        // UTXO d'une adresse ordinaire (premier destinataire d'une transaction
-        // du dernier bloc) : mempool.space refuse la liste au-delà de 500 UTXO
-        // (400 « Too many unspent transaction outputs »), cas de `address`.
+        // UTXOs of an ordinary address (first recipient of a transaction in the latest
+        // block): mempool.space refuses the list beyond 500 UTXOs (400 "Too many unspent
+        // transaction outputs"), which is the case for `address`.
         let tip = reqwest::blocking::get(format!("{}/blocks/tip/hash", MAINNET_MIRRORS[1])).unwrap().text().unwrap();
         let block: serde_json::Value = reqwest::blocking::get(format!("{}/block/{tip}/txs", MAINNET_MIRRORS[1])).unwrap().json().unwrap();
         let ordinary = block[1]["vout"][0]["scriptpubkey_address"].as_str().unwrap().to_string();
@@ -480,9 +478,9 @@ mod tests {
         println!("{} tx, {} dans la 1re page, {} plus anciennes, {} UTXO, frais {:?}", stats.tx_count, history.len(), older.len(), utxos.len(), &fees[..3.min(fees.len())]);
     }
 
-    /// Scripts OP_RETURN de vraies transactions THORChain du réseau principal
-    /// (lues sur Esplora) : poussée directe (e8bf29df…), `OP_PUSHDATA1`
-    /// (990fb6f4…), paiement sortant « OUT: » (909686b5…).
+    /// OP_RETURN scripts from real THORChain transactions on mainnet (read from
+    /// Esplora): direct push (e8bf29df…), `OP_PUSHDATA1` (990fb6f4…), outbound payment
+    /// "OUT:" (909686b5…).
     #[test]
     fn op_return_memos_of_real_transactions_are_read() {
         assert_eq!(
@@ -497,7 +495,7 @@ mod tests {
             op_return_text("6a444f55543a32363430324233373338463143463934423431454630423739343645463141423734464239354145463045374137443345423945443636433833443236313636").as_deref(),
             Some("OUT:26402B3738F1CF94B41EF0B7946EF1AB74FB95AEF0E7A7D3EB9ED66C83D26166")
         );
-        // Pas un OP_RETURN, longueur incohérente, texte non UTF-8, script vide.
+        // Not an OP_RETURN, inconsistent length, non-UTF-8 text, empty script.
         for bad in ["0014751e76e8199196d454941c45d1b3a323f1433bd6", "6a05616263", "6a02ffff", "", "zz"] {
             assert_eq!(op_return_text(bad), None, "{bad}");
         }

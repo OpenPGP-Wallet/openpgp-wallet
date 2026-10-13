@@ -1,10 +1,10 @@
-//! Application Ethereum du Ledger (`app-ethereum`, spécification `doc/apdu.md`) :
-//! adresse, signature de transaction (legacy EIP-155), de message personnel
-//! (EIP-191) et de données structurées EIP-712 (mode "empreintes", V0).
+//! Ledger Ethereum app (`app-ethereum`, `doc/apdu.md` specification): address,
+//! transaction signing (legacy EIP-155), personal message signing (EIP-191) and
+//! EIP-712 typed data signing ("hashes" mode, V0).
 //!
-//! Chaque signature renvoyée par l'appareil est vérifiée ICI avant usage : elle
-//! doit se recouvrer en l'adresse attendue. Un appareil (ou un émulateur, ou un
-//! câble) qui renverrait autre chose est refusé avant toute diffusion.
+//! Every signature returned by the device is verified HERE before it is used: it
+//! must recover to the expected address. A device (or emulator, or cable) that
+//! returned anything else is refused before any broadcast.
 
 use super::{encode_path, send, Transport};
 use crate::eth_tx::EthTx;
@@ -21,16 +21,16 @@ const P1_FIRST: u8 = 0x00;
 const P1_MORE: u8 = 0x80;
 const MAX_CHUNK: usize = 255;
 
-/// Adresse EVM (format EIP-55) d'une clé publique non compressée (65 octets).
+/// EVM address (EIP-55 format) of an uncompressed public key (65 bytes).
 fn address_of(public: &[u8]) -> Result<[u8; 20]> {
     anyhow::ensure!(public.len() == 65 && public[0] == 0x04, "clé publique Ledger mal formée");
     let hash = keccak(&public[1..]);
     Ok(hash[12..].try_into().expect("20 octets"))
 }
 
-/// Adresse du compte `path`. `confirm` : l'appareil l'AFFICHE et demande de la
-/// valider — le seul moyen pour l'utilisateur de vérifier qu'une adresse de
-/// réception n'a pas été substituée entre l'appareil et l'écran de l'ordinateur.
+/// Address of the `path` account. `confirm`: the device DISPLAYS it and asks for
+/// approval. That is the only way for the user to check that a receiving address
+/// was not swapped somewhere between the device and the computer screen.
 pub fn get_address(transport: &mut dyn Transport, path: &[u32], confirm: bool) -> Result<String> {
     let response = send(transport, CLA, INS_GET_ADDRESS, u8::from(confirm), 0x00, &encode_path(path)?)?;
     let key_len = *response.first().ok_or_else(|| anyhow!("réponse Ledger vide"))? as usize;
@@ -38,7 +38,7 @@ pub fn get_address(transport: &mut dyn Transport, path: &[u32], confirm: bool) -
     let addr_len = *response.get(1 + key_len).ok_or_else(|| anyhow!("réponse Ledger tronquée"))? as usize;
     let ascii = response.get(2 + key_len..2 + key_len + addr_len).ok_or_else(|| anyhow!("réponse Ledger tronquée"))?;
     let claimed = std::str::from_utf8(ascii).context("adresse Ledger illisible")?;
-    // L'adresse annoncée doit être celle de la clé publique renvoyée.
+    // The address announced must be the one of the public key returned.
     let derived = address_of(public)?;
     anyhow::ensure!(
         claimed.trim_start_matches("0x").eq_ignore_ascii_case(&hex::encode(derived)),
@@ -47,10 +47,10 @@ pub fn get_address(transport: &mut dyn Transport, path: &[u32], confirm: bool) -
     Ok(crate::derivation::format_address(&derived))
 }
 
-/// Découpage en blocs de 255 octets maximum (`hw-app-eth` `safeChunkTransaction`) :
-/// pour une transaction legacy, le dernier bloc ne doit jamais contenir QUE tout
-/// ou partie du tuple final (`chain_id, 0, 0`) — l'appareil pourrait sinon
-/// considérer la transaction comme complète trop tôt.
+/// Split into chunks of at most 255 bytes (`hw-app-eth` `safeChunkTransaction`):
+/// for a legacy transaction, the last chunk must never contain ONLY all or part of
+/// the final tuple (`chain_id, 0, 0`), otherwise the device could consider the
+/// transaction complete too early.
 fn safe_chunks(payload: &[u8], vrs_len: usize) -> Vec<&[u8]> {
     if payload.len() <= MAX_CHUNK {
         return vec![payload];
@@ -63,7 +63,7 @@ fn safe_chunks(payload: &[u8], vrs_len: usize) -> Vec<&[u8]> {
     payload.chunks(size).collect()
 }
 
-/// Longueur du tuple final (`chain_id, 0, 0`) sans l'en-tête de liste.
+/// Length of the final tuple (`chain_id, 0, 0`) without the list header.
 fn vrs_tail_len(chain_id: u64) -> usize {
     let bytes = chain_id.to_be_bytes();
     let trimmed = &bytes[bytes.iter().position(|&b| b != 0).unwrap_or(7)..];
@@ -71,9 +71,9 @@ fn vrs_tail_len(chain_id: u64) -> usize {
     chain_rlp + 2
 }
 
-/// Parité à partir du `v` sur UN octet renvoyé par l'appareil (`hw-app-eth`
-/// `getParity`) : l'appareil applique EIP-155 sur un chain_id tronqué à 4
-/// octets, avec débordement de l'octet.
+/// Parity from the ONE-byte `v` returned by the device (`hw-app-eth` `getParity`):
+/// the device applies EIP-155 to a chain_id truncated to 4 bytes, and the byte
+/// overflows.
 fn parity_from_device_v(v: u8, chain_id: u64) -> Result<u8> {
     let bytes = chain_id.to_be_bytes();
     let significant = &bytes[bytes.iter().position(|&b| b != 0).unwrap_or(7)..];
@@ -88,7 +88,7 @@ fn parity_from_device_v(v: u8, chain_id: u64) -> Result<u8> {
     }
 }
 
-/// r, s (s normalisé "bas", EIP-2) et parité effective.
+/// r, s (s normalized to "low", EIP-2) and the effective parity.
 pub(crate) fn normalized(r: &[u8], s: &[u8], parity: u8) -> Result<(Signature, u8)> {
     let signature = Signature::from_scalars(<[u8; 32]>::try_from(r)?, <[u8; 32]>::try_from(s)?)
         .map_err(|_| anyhow!("signature de l'appareil invalide"))?;
@@ -104,10 +104,10 @@ pub(crate) fn recover_address(digest: &[u8; 32], signature: &Signature, parity: 
     address_of(key.to_encoded_point(false).as_bytes())
 }
 
-/// Signe une transaction legacy EIP-155 sur l'appareil (qui AFFICHE
-/// destinataire, montant et frais) et renvoie la transaction signée, prête à
-/// diffuser — après avoir vérifié qu'elle se recouvre en `expected` (l'adresse
-/// du compte, lue sur l'appareil).
+/// Signs a legacy EIP-155 transaction on the device (which DISPLAYS the recipient,
+/// amount and fee) and returns the signed transaction, ready to broadcast, after
+/// checking that it recovers to `expected` (the account address, read from the
+/// device).
 pub fn sign_transaction(transport: &mut dyn Transport, path: &[u32], tx: &EthTx, expected: &[u8; 20]) -> Result<Vec<u8>> {
     let rlp = tx.unsigned_rlp();
     let mut payload = encode_path(path)?;
@@ -127,8 +127,8 @@ pub fn sign_transaction(transport: &mut dyn Transport, path: &[u32], tx: &EthTx,
     Ok(tx.encode_with_signature(tx.chain_id * 2 + 35 + u64::from(parity), &r.into(), &s.into()))
 }
 
-/// Signature (r ‖ s ‖ v, v = 27/28) d'une empreinte déjà signée par l'appareil
-/// (`digest` : ce que la signature doit couvrir), vérifiée contre `expected`.
+/// Signature (r ‖ s ‖ v, v = 27/28) over a digest the device has already signed
+/// (`digest`: what the signature must cover), verified against `expected`.
 fn finish_message_signature(response: &[u8], digest: &[u8; 32], expected: &[u8; 20]) -> Result<[u8; 65]> {
     anyhow::ensure!(response.len() == 65, "réponse de signature Ledger inattendue");
     let parity = response[0].checked_sub(27).filter(|p| *p <= 1).ok_or_else(|| anyhow!("valeur v inattendue renvoyée par le Ledger"))?;
@@ -143,7 +143,7 @@ fn finish_message_signature(response: &[u8], digest: &[u8; 32], expected: &[u8; 
     Ok(out)
 }
 
-/// Message personnel EIP-191 (`personal_sign`), affiché sur l'appareil.
+/// EIP-191 personal message (`personal_sign`), displayed on the device.
 pub fn sign_personal_message(transport: &mut dyn Transport, path: &[u32], message: &[u8], expected: &[u8; 20]) -> Result<[u8; 65]> {
     let mut payload = encode_path(path)?;
     payload.extend_from_slice(&(message.len() as u32).to_be_bytes());
@@ -155,9 +155,9 @@ pub fn sign_personal_message(transport: &mut dyn Transport, path: &[u32], messag
     finish_message_signature(&response, &crate::evm_sign::personal_message_hash(message), expected)
 }
 
-/// Données structurées EIP-712 en mode "empreintes" (V0) : l'appareil affiche
-/// les empreintes du domaine et du message, pas leur contenu — l'app montre le
-/// contenu décodé dans sa propre boîte de confirmation avant d'arriver ici.
+/// EIP-712 typed data in "hashes" mode (V0): the device shows the domain and
+/// message hashes, not their contents. The app shows the decoded contents in its
+/// own confirmation dialog before getting here.
 pub fn sign_eip712_hashed(
     transport: &mut dyn Transport,
     path: &[u32],
@@ -175,18 +175,18 @@ pub fn sign_eip712_hashed(
     finish_message_signature(&response, &keccak(&data), expected)
 }
 
-// --- EIP-712 complet (V1) : l'appareil reçoit la structure et les valeurs, et
-// AFFICHE lui-même chaque champ (au lieu de deux empreintes illisibles en V0,
-// que l'application refuse d'ailleurs sans l'option "signature à l'aveugle").
-// Séquence et encodages repris de `hw-app-eth` (`modules/EIP712`), lus
-// directement : définitions de TOUS les types (ordre alphabétique), valeurs du
-// domaine, valeurs du message, puis signature (INS 0x0C, P2 = 1).
+// --- Full EIP-712 (V1): the device receives the structure and the values, and
+// DISPLAYS every field itself (instead of two unreadable hashes in V0, which the
+// app refuses anyway unless "blind signing" is enabled). Sequence and encodings
+// taken from `hw-app-eth` (`modules/EIP712`), read directly from its source:
+// definitions of ALL types (alphabetical order), domain values, message values,
+// then the signature (INS 0x0C, P2 = 1).
 
 const INS_EIP712_STRUCT_DEF: u8 = 0x1a;
 const INS_EIP712_STRUCT_IMPL: u8 = 0x1c;
 
-/// Type de base et niveaux de tableau, de gauche à droite (`uint8[2][]` ->
-/// ("uint8", [Some(2), None])) — même lecture que `destructTypeFromString`.
+/// Base type and array levels, from left to right (`uint8[2][]` -> ("uint8",
+/// [Some(2), None])), parsed the same way as `destructTypeFromString`.
 fn split_type(kind: &str) -> Result<(&str, Vec<Option<u8>>)> {
     let base_end = kind.find('[').unwrap_or(kind.len());
     let (base, mut rest) = kind.split_at(base_end);
@@ -201,7 +201,7 @@ fn split_type(kind: &str) -> Result<(&str, Vec<Option<u8>>)> {
     Ok((base, levels))
 }
 
-/// (identifiant de type, taille en octets éventuelle) — `EIP712_TYPE_PROPERTIES`.
+/// (type identifier, size in bytes if any), as in `EIP712_TYPE_PROPERTIES`.
 fn atomic_type(base: &str) -> Option<(u8, Option<u8>)> {
     let size = |digits: &str, divisor: u32| -> Option<u8> { digits.parse::<u32>().ok().map(|n| (n / divisor) as u8) };
     match base {
@@ -221,7 +221,7 @@ fn atomic_type(base: &str) -> Option<(u8, Option<u8>)> {
     }
 }
 
-/// Définition d'un champ (`makeTypeEntryStructBuffer`).
+/// Definition of a field (`makeTypeEntryStructBuffer`).
 fn field_definition(name: &str, kind: &str) -> Result<Vec<u8>> {
     let (base, levels) = split_type(kind)?;
     let (key, size) = atomic_type(base).unwrap_or((0, None));
@@ -247,9 +247,9 @@ fn field_definition(name: &str, kind: &str) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-/// Octets bruts d'une valeur atomique (`EIP712_TYPE_ENCODERS`) : entiers en
-/// gros-boutiste minimal (complément à deux sur la taille du type s'ils sont
-/// négatifs), adresse sur 20 octets, texte UTF-8, octets tels quels.
+/// Raw bytes of an atomic value (`EIP712_TYPE_ENCODERS`): integers as minimal
+/// big-endian (two's complement over the type's size when negative), addresses on
+/// 20 bytes, strings as UTF-8, bytes as is.
 fn atomic_value(base: &str, key: u8, size: Option<u8>, value: &serde_json::Value) -> Result<Vec<u8>> {
     use crate::evm_sign::{parse_address, parse_uint256};
     let hex_bytes = |v: &serde_json::Value| -> Result<Vec<u8>> {
@@ -262,7 +262,7 @@ fn atomic_value(base: &str, key: u8, size: Option<u8>, value: &serde_json::Value
     };
     Ok(match key {
         1 => {
-            // int : négatif -> complément à deux sur `size` octets.
+            // int: negative -> two's complement over `size` bytes.
             let (negative, magnitude) = match value {
                 serde_json::Value::String(s) if s.trim().starts_with('-') => (true, parse_uint256(&serde_json::Value::String(s.trim()[1..].to_string()))?),
                 serde_json::Value::Number(n) if n.as_i64().is_some_and(|i| i < 0) => {
@@ -310,7 +310,7 @@ fn send_struct_value(transport: &mut dyn Transport, typed: &crate::evm_sign::Typ
         let items = value.as_array().ok_or_else(|| anyhow!("tableau attendu pour « {kind} »"))?;
         let count = u8::try_from(items.len()).map_err(|_| anyhow!("tableau EIP-712 de plus de 255 éléments non pris en charge par le Ledger"))?;
         send(transport, CLA, INS_EIP712_STRUCT_IMPL, 0x00, 0x0f, &[count])?;
-        // Même descente que hw-app-eth : un niveau de tableau en moins.
+        // Same descent as hw-app-eth: one array level fewer.
         let mut inner = base.to_string();
         for level in &levels[1..] {
             inner.push_str(&level.map_or("[]".to_string(), |n| format!("[{n}]")));
@@ -338,10 +338,10 @@ fn send_struct_value(transport: &mut dyn Transport, typed: &crate::evm_sign::Typ
     Ok(())
 }
 
-/// Données structurées EIP-712 en mode COMPLET : l'appareil affiche le domaine
-/// et chaque champ du message, calcule lui-même les empreintes, puis signe.
+/// EIP-712 typed data in FULL mode: the device displays the domain and every field
+/// of the message, computes the hashes itself, then signs.
 pub fn sign_eip712(transport: &mut dyn Transport, path: &[u32], typed: &crate::evm_sign::TypedData, expected: &[u8; 20]) -> Result<[u8; 65]> {
-    let digest = typed.digest()?; // aussi une validation complète avant tout envoi
+    let digest = typed.digest()?; // also a full validation before anything is sent
     let mut names: Vec<&String> = typed.types.keys().collect();
     names.sort();
     for name in names {
@@ -369,10 +369,10 @@ pub fn sign_eip712(transport: &mut dyn Transport, path: &[u32], typed: &crate::e
 mod tests {
     use super::*;
 
-    /// Transactions et découpages produits par le code officiel de ledgerjs
-    /// (`@ethersproject/rlp` + `hw-app-eth` `safeChunkTransaction`) : notre RLP
-    /// doit être identique octet par octet, et le découpage aussi — y compris
-    /// les deux cas limites où le dernier bloc serait trop court.
+    /// Transactions and chunks produced by the official ledgerjs code
+    /// (`@ethersproject/rlp` + `hw-app-eth` `safeChunkTransaction`): our RLP must be
+    /// byte-for-byte identical, and so must the chunking, including the two edge cases
+    /// where the last chunk would be too short.
     #[test]
     fn rlp_and_chunking_match_ledgerjs() {
         use sha2::{Digest, Sha256};
@@ -398,19 +398,17 @@ mod tests {
             let lens: Vec<usize> = safe_chunks(&payload, vrs_tail_len(chain_id)).iter().map(|c| c.len()).collect();
             assert_eq!(lens, expected_chunks, "données {data_len}, chain {chain_id}");
         }
-        // RLP exact de la transaction Sepolia longue (vecteur ledgerjs, préfixe).
+        // Exact RLP of the long Sepolia transaction (ledgerjs vector, prefix).
         let tx = EthTx { nonce: 5, gas_price: 20_000_000_000, gas_limit: 21_000, to: [0x11; 20], value: 1_000_000_000_000_000_000, chain_id: 11_155_111, data: (0..300usize).map(|i| ((i * 13) & 0xff) as u8).collect() };
         let rlp = hex::encode(tx.unsigned_rlp());
         assert!(rlp.starts_with("f9015d058504a817c80082520894111111111111111111111111111111111111111188"), "{}", &rlp[..70]);
         assert!(rlp.ends_with("83aa36a78080"));
     }
 
-    /// Application Ethereum OFFICIELLE dans l'émulateur Speculos (graine de test
-    /// publique) : adresse identique à NOTRE dérivation de la même graine ;
-    /// transaction signée après validation à l'écran, écrans vérifiés (montant,
-    /// destinataire, réseau) et signature recouvrée ; refus sur l'appareil
-    /// traduit en erreur claire ; message personnel signé et vérifié.
-    /// Speculos doit tourner avec `ethereum-nanosp.elf` (voir ETAPES.md).
+    /// The OFFICIAL Ethereum app in the Speculos emulator (public test seed): address identical to OUR
+    /// derivation from the same seed; transaction signed after on-screen approval, screens checked (amount,
+    /// recipient, network) and signature recovered; a refusal on the device turned into a clear error;
+    /// personal message signed and verified. Speculos must run `ethereum-nanosp.elf`.
     /// `cargo test -- --ignored ledger_eth_against_the_official_app_in_speculos --nocapture --test-threads=1`
     #[test]
     #[ignore]
@@ -419,7 +417,7 @@ mod tests {
         let path = super::super::parse_path("44'/60'/0'/0/0").unwrap();
         let mut t = TcpTransport::connect(speculos::APDU).unwrap();
 
-        // 1. Adresse : celle que NOUS dérivons de la graine de test (BIP39 -> BIP32).
+        // 1. Address: the one WE derive from the test seed (BIP39 -> BIP32).
         let seed = bip39::Mnemonic::parse(speculos::TEST_MNEMONIC).unwrap().to_seed("");
         let (_, ours) = crate::derivation::derive_evm_key(&seed, 0).unwrap();
         let device = get_address(&mut t, &path, false).unwrap();
@@ -427,7 +425,7 @@ mod tests {
         println!("adresse Ledger = adresse dérivée : {device}");
         let expected: [u8; 20] = ours;
 
-        // 2. Transaction Sepolia, validée à l'écran.
+        // 2. Sepolia transaction, approved on screen.
         let tx = EthTx { nonce: 7, gas_price: 3_000_000_000, gas_limit: 21_000, to: [0x33; 20], value: 50_000_000_000_000_000, chain_id: 11_155_111, data: vec![] };
         let approver = std::thread::spawn(|| speculos::review_and_accept(&["Sign transaction"]));
         let signed = sign_transaction(&mut t, &path, &tx, &expected).unwrap();
@@ -436,24 +434,24 @@ mod tests {
         assert!(screens.contains("0.05 ETH"), "montant affiché");
         assert!(screens.contains("0x33333333333333333"), "destinataire affiché");
         assert!(screens.contains("Sepolia"), "réseau affiché");
-        // La transaction signée se décode et se recouvre en notre adresse.
+        // The signed transaction decodes and recovers to our address.
         let items = rlp::Rlp::new(&signed);
         let v: u64 = items.val_at(6).unwrap();
         assert!(v == 11_155_111 * 2 + 35 || v == 11_155_111 * 2 + 36, "v EIP-155 : {v}");
 
-        // 3. Refus sur l'appareil : erreur claire, rien de signé.
+        // 3. Refusal on the device: clear error, nothing signed.
         let rejecter = std::thread::spawn(|| speculos::review_and_accept(&["Reject"]));
         let err = sign_transaction(&mut t, &path, &tx, &expected).unwrap_err();
         rejecter.join().unwrap();
         assert!(err.to_string().contains("refusée sur le Ledger"), "{err}");
 
-        // 4. Message personnel.
+        // 4. Personal message.
         let approver = std::thread::spawn(|| speculos::review_and_accept(&["Sign message"]));
         let signature = sign_personal_message(&mut t, &path, b"Connexion a example.com", &expected).unwrap();
         println!("écrans message : {}", approver.join().unwrap().join(" | "));
         assert!(matches!(signature[64], 27 | 28));
 
-        // 5. EIP-712 en mode empreintes : exemple de la spécification (Mail).
+        // 5. EIP-712 in hashes mode: the example from the specification (Mail).
         let typed = crate::evm_sign::parse_typed_data(&serde_json::json!({
             "types": {
                 "EIP712Domain": [{"name": "name", "type": "string"}, {"name": "version", "type": "string"}, {"name": "chainId", "type": "uint256"}, {"name": "verifyingContract", "type": "address"}],
@@ -465,9 +463,9 @@ mod tests {
             "message": {"from": {"name": "Cow", "wallet": "0xCD2a3d9F938E13CD947Ec05AbC7FE734Df8DD826"}, "to": {"name": "Bob", "wallet": "0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB"}, "contents": "Hello, Bob!"}
         }))
         .unwrap();
-        // Application 1.22 : TOUT message EIP-712 que Ledger ne sait pas
-        // "clear-signer" (sans descripteur signé par Ledger) exige l'option
-        // "Blind signing" — mode empreintes (V0) comme mode complet (V1).
+        // App 1.22: ANY EIP-712 message that Ledger cannot "clear-sign" (no descriptor
+        // signed by Ledger) requires the "Blind signing" setting, in hashes mode (V0) as
+        // well as full mode (V1).
         let (domain, message) = (typed.domain_separator().unwrap(), typed.hash_struct("Mail", &typed.message).unwrap());
         speculos::set_blind_signing(false);
         let err = sign_eip712_hashed(&mut t, &path, &domain, &message, &expected).unwrap_err();
@@ -476,17 +474,17 @@ mod tests {
         let err = sign_eip712(&mut t, &path, &typed, &expected).unwrap_err();
         assert!(err.to_string().contains("signature à l'aveugle"), "{err}");
         speculos::back_to_home();
-        // Option activée : en mode complet l'appareil reçoit la structure et les
-        // valeurs, AFFICHE le domaine et l'empreinte du message qu'il a
-        // calculée LUI-MÊME — elle doit être celle que NOUS calculons (et celle
-        // de la spécification EIP-712 pour cet exemple) ; puis il signe.
+        // With the setting enabled, in full mode the device receives the structure and the
+        // values, then DISPLAYS the domain and the message hash it computed ITSELF. That
+        // hash must match the one WE compute (and the one in the EIP-712 specification for
+        // this example); then it signs.
         speculos::set_blind_signing(true);
         let approver = std::thread::spawn(|| speculos::review_and_accept(&["Sign typed", "Sign message"]));
         let signature = sign_eip712(&mut t, &path, &typed, &expected).unwrap_or_else(|e| panic!("EIP-712 complet : {e:#} ; écran : {:?}", speculos::screen()));
         let screens = approver.join().unwrap().join(" | ");
         println!("écrans EIP-712 : {screens}");
         assert!(screens.contains("Ether Mail") && screens.contains("verifyingContract"), "domaine affiché par l'appareil");
-        // "Message hash (1/2) 0xC52C… | Message hash (2/2) …" : valeurs seules.
+        // "Message hash (1/2) 0xC52C… | Message hash (2/2) …": values only.
         let shown: String = screens
             .split(" | ")
             .filter_map(|s| s.strip_prefix("Message hash").and_then(|rest| rest.split_once(')')).map(|(_, value)| value))
@@ -498,9 +496,9 @@ mod tests {
         speculos::set_blind_signing(false);
     }
 
-    /// Exploration : textes réellement affichés par l'application Ethereum
-    /// officielle pendant une signature (écran par écran), pour écrire les
-    /// tests suivants sur des faits. Rejette à la fin.
+    /// Exploration: the text actually displayed by the official Ethereum app during
+    /// signing (screen by screen), so that the following tests are written from facts.
+    /// Rejects at the end.
     #[test]
     #[ignore]
     fn explore_speculos_eth_screens() {
@@ -521,7 +519,7 @@ mod tests {
         println!("résultat : {:?}", handle.join());
     }
 
-    /// Enregistre chaque APDU et répond "OK" (et une fausse signature à 0x0C).
+    /// Records every APDU and answers "OK" (plus a fake signature for 0x0C).
     struct Recorder(Vec<String>);
     impl Transport for Recorder {
         fn exchange(&mut self, apdu: &[u8]) -> Result<Vec<u8>> {
@@ -536,10 +534,10 @@ mod tests {
         }
     }
 
-    /// Séquence d'APDU identique, octet par octet, à celle de `hw-app-eth`
-    /// (`signEIP712Message` tel qu'appelé par Ledger Live) : 41 commandes pour un message avec
-    /// tableaux de structures, tableau vide, int16 négatif, tableau fixe de
-    /// booléens, bytes4 et 300 octets de `bytes` (découpés en 2 commandes).
+    /// APDU sequence identical, byte for byte, to that of `hw-app-eth` (`signEIP712Message` as
+    /// called by Ledger Live): 41 commands for a message with arrays of structs, an empty
+    /// array, a negative int16, a fixed-size array of booleans, a bytes4 and 300 bytes of
+    /// `bytes` (split over 2 commands).
     #[test]
     fn eip712_full_mode_apdus_match_ledgerjs() {
         use sha2::{Digest, Sha256};
@@ -560,24 +558,24 @@ mod tests {
         .unwrap();
         let mut recorder = Recorder(Vec::new());
         let path = super::super::parse_path("44'/60'/0'/0/0").unwrap();
-        // La fausse signature ne se recouvre pas : erreur attendue, APDU comparées.
+        // The fake signature does not recover: error expected, APDUs compared.
         assert!(sign_eip712(&mut recorder, &path, &typed, &[0u8; 20]).is_err());
         assert_eq!(recorder.0.len(), 41);
         assert_eq!(recorder.0[33], "e01c00ff040002fed4", "int16 -300 en complément à deux");
         assert_eq!(recorder.0[19], "e01c00ff050003aa36a7", "chainId minimal");
-        // Signature en mode complet : P2 = 1 (spécification, et appel par défaut
-        // de Ledger Live ; le paramètre `fullImplem = true` de hw-app-eth, lui,
-        // envoie P2 = 0 — nom trompeur, vérifié dans son code).
+        // Full-mode signature: P2 = 1 (per the specification, and Ledger Live's default
+        // call; hw-app-eth's `fullImplem = true` parameter actually sends P2 = 0, a
+        // misleading name, checked in its code).
         assert_eq!(recorder.0[40], "e00c000115058000002c8000003c800000000000000000000000");
         assert_eq!(hex::encode(Sha256::digest(recorder.0.join("\n"))), "d76254139aacdd485c98aa4366177d37a914f63fca62717bab1917a04ec9ef1b");
     }
 
     #[test]
     fn device_v_parity_follows_ledgerjs() {
-        // Mainnet : 1*2+35 = 37 -> 0x25/0x26.
+        // Mainnet: 1*2+35 = 37 -> 0x25/0x26.
         assert_eq!(parity_from_device_v(0x25, 1).unwrap(), 0);
         assert_eq!(parity_from_device_v(0x26, 1).unwrap(), 1);
-        // Sepolia : (11155111*2+35) % 256 = 0x71 -> 0x71/0x72 (octet débordé).
+        // Sepolia: (11155111*2+35) % 256 = 0x71 -> 0x71/0x72 (the byte overflows).
         assert_eq!(parity_from_device_v(0x71, 11_155_111).unwrap(), 0);
         assert_eq!(parity_from_device_v(0x72, 11_155_111).unwrap(), 1);
         assert!(parity_from_device_v(0x00, 1).is_err());

@@ -1,8 +1,8 @@
-//! Flux d'interaction "dérive une clé depuis une seed puis utilise un vrai wallet
-//! (recevoir/envoyer) testnet/devnet/mainnet", partagés entre les démos autonomes
-//! (wallet_demo*, entropie jetable) et la restauration Shamir+PGP dans main.rs
-//! (seed reconstruite). Ce module ne génère ni ne protège la seed : il reçoit
-//! toujours une seed déjà prête et n'en garde aucune copie au-delà de l'appel.
+//! "Derive a key from a seed, then use a real wallet (receive/send) on
+//! testnet/devnet/mainnet" flows, shared by the standalone demos (the wallet_demo*
+//! examples, throwaway entropy) and by the Shamir+PGP restore in the shamir_pgp_cli
+//! example (rebuilt seed). This module neither generates nor protects the seed: it
+//! always receives a ready-made seed and keeps no copy of it beyond the call.
 
 use crate::btc_rpc::EsploraClient;
 use crate::btc_tx::BtcTx;
@@ -14,10 +14,10 @@ use crate::sol_tx;
 use anyhow::{anyhow, Context, Result};
 use std::io::{self, Write};
 
-/// Diffusion sans réponse nette — délai dépassé, réponse coupée ou
-/// illisible : la transaction a pu partir. Jamais présentée comme refusée ni
-/// comme simple panne : un nouvel envoi pourrait la payer une seconde fois
-/// (nonce ou séquence suivants, autres UTXO) — 31ᵉ passage.
+/// Broadcast without a clear answer (timeout, response cut off or unreadable): the
+/// transaction may have gone out. Never shown as refused or as a plain outage:
+/// sending again could pay a second time (next nonce or sequence, other UTXOs).
+/// Audit round 31.
 pub const MAYBE_SENT_PREFIX: &str = "connexion perdue pendant l'envoi : la transaction ";
 pub const MAYBE_SENT_SUFFIX: &str = " est peut-être partie — vérifiez l'historique avant de renvoyer";
 
@@ -25,13 +25,13 @@ pub fn maybe_sent(id: &str) -> anyhow::Error {
     anyhow!("{MAYBE_SENT_PREFIX}{id}{MAYBE_SENT_SUFFIX}")
 }
 
-/// Rien n'a pu partir : la connexion ne s'est même pas établie.
+/// Nothing could have gone out: the connection was never even established.
 pub fn nothing_sent(error: &reqwest::Error) -> bool {
     error.is_connect() || error.is_builder()
 }
 
-/// Échec réseau d'une diffusion à serveur unique : l'erreur d'origine si rien
-/// n'a pu partir, sinon `maybe_sent`.
+/// Network failure while broadcasting to a single server: the original error if
+/// nothing could have gone out, `maybe_sent` otherwise.
 pub fn broadcast_failure(error: reqwest::Error, context: &'static str, id: &str) -> anyhow::Error {
     if nothing_sent(&error) {
         anyhow::Error::new(error).context(context)
@@ -40,8 +40,8 @@ pub fn broadcast_failure(error: reqwest::Error, context: &'static str, id: &str)
     }
 }
 
-/// Réponse HTTP d'erreur serveur à une diffusion : la transaction a pu être
-/// relayée avant l'erreur (passerelle, délai) — sauf 503, service fermé.
+/// HTTP server error in response to a broadcast: the transaction may have been
+/// relayed before the error (gateway, timeout), except for 503, service closed.
 pub fn server_error_may_have_sent(status: reqwest::StatusCode) -> bool {
     status.is_server_error() && status != reqwest::StatusCode::SERVICE_UNAVAILABLE
 }
@@ -54,67 +54,66 @@ pub fn prompt(message: &str) -> Result<String> {
     Ok(line.trim().to_string())
 }
 
-/// Paramètres réseau EVM : les fonctions de ce module sont agnostiques du réseau,
-/// pour ne jamais coder en dur "mainnet" dans un chemin de test — le choix
-/// mainnet/testnet est fait explicitement par l'appelant. Tous ces réseaux
-/// partagent la MÊME adresse (même clé, même format) ; chacun a son identifiant
-/// de chaîne (EIP-155 : une signature ne vaut que pour lui) et sa monnaie de frais.
+/// EVM network parameters: the functions in this module are network-agnostic, so
+/// "mainnet" is never hard-coded in a test path; the caller chooses mainnet/testnet
+/// explicitly. All these networks share the SAME address (same key, same format);
+/// each has its own chain ID (EIP-155: a signature is only valid for that chain)
+/// and its own fee currency.
 pub struct EvmNetwork {
-    /// Identifiant utilisé par l'interface et dans les fichiers ("evm_mainnet",
-    /// "bsc_mainnet"…) — "evm_mainnet"/"evm_sepolia" gardés pour Ethereum
-    /// (carnet d'adresses, wallets externes déjà enregistrés).
+    /// Identifier used by the UI and in files ("evm_mainnet", "bsc_mainnet"…).
+    /// "evm_mainnet"/"evm_sepolia" are kept for Ethereum (address book, external
+    /// wallets already saved).
     pub id: &'static str,
-    /// Nom court affiché (boîtes de confirmation, menus) : « Arbitrum One »…
+    /// Short display name (confirmation dialogs, menus): "Arbitrum One"…
     pub name: &'static str,
     pub rpc: &'static str,
     pub chain_id: u64,
     pub label: &'static str,
     pub explorer_tx_prefix: &'static str,
-    /// Monnaie native, qui paie les frais (ETH, BNB, AVAX…), 18 décimales.
+    /// Native currency that pays the fees (ETH, BNB, AVAX…), 18 decimals.
     pub native_symbol: &'static str,
-    /// Fonds réels (`false` : réseau de test).
+    /// Real funds (`false`: test network).
     pub mainnet: bool,
-    /// Plafond de sécurité du prix du gas annoncé par le nœud : au-delà,
-    /// l'envoi est refusé plutôt que de lui faire confiance (`None` : réseau
-    /// de test). Très au-dessus des prix usuels de chaque réseau.
+    /// Safety cap on the gas price announced by the node: above it, the send is refused
+    /// rather than trusting the node (`None`: test network). Far above each network's
+    /// usual prices.
     pub max_gas_price_wei: Option<u128>,
-    /// Gas d'un virement natif simple : 21 000 sur la plupart des réseaux ;
-    /// `None` (Arbitrum) : estimé par le nœud, le coût de publication sur
-    /// Ethereum y étant compté en gas.
+    /// Gas for a simple native transfer: 21,000 on most networks; `None` (Arbitrum):
+    /// estimated by the node, since the cost of posting to Ethereum is counted in gas
+    /// there.
     pub transfer_gas: Option<u64>,
-    /// Frais de publication sur Ethereum facturés EN PLUS du gas (réseaux OP
-    /// Stack, comme Base), lus auprès du contrat oracle du réseau.
+    /// Ethereum posting fees charged ON TOP of gas (OP Stack networks, such as Base),
+    /// read from the network's oracle contract.
     pub op_stack_l1_fee: bool,
-    /// Source de l'historique des transactions ; `None` : aucune source,
-    /// l'app renvoie alors vers l'explorateur du réseau.
+    /// Source of the transaction history; `None`: no source, so the app links to the
+    /// network's explorer instead.
     pub history: Option<EvmHistory>,
-    /// Réseau ajouté par l'utilisateur (RPC personnalisé, voir
-    /// `custom_networks`) : jamais de cours en dollars (son symbole ne dit
-    /// rien de sa valeur), signalé dans la boîte de confirmation.
+    /// Network added by the user (custom RPC, see `custom_networks`): never a dollar
+    /// price (its symbol says nothing about its value), and flagged in the confirmation
+    /// dialog.
     pub custom: bool,
 }
 
-/// Source de l'historique d'une adresse EVM (sans clé, sauf NodeReal).
+/// Source of an EVM address's history (keyless, except NodeReal).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EvmHistory {
-    /// Instance Blockscout (API v2).
+    /// Blockscout instance (API v2).
     Blockscout(&'static str),
-    /// API compatible Etherscan de Routescan, par identifiant de chaîne
-    /// (Avalanche C-Chain).
+    /// Routescan's Etherscan-compatible API, by chain ID (Avalanche C-Chain).
     Routescan,
-    /// NodeReal, avec la clé intégrée à l'app (voir `nodereal`) : BNB Chain,
-    /// qu'aucun service public sans clé ne couvre.
+    /// NodeReal, with the key embedded in the app (see `nodereal`): BNB Chain, which no
+    /// keyless public service covers.
     NodeReal,
-    /// Alchemy, avec la clé intégrée à l'app (voir `alchemy`) : Base et
-    /// Polygon, dont l'instance Blockscout est bloquée et réservée aux offres
-    /// payantes de son API officielle (constaté le 10/10/2026).
+    /// Alchemy, with the key embedded in the app (see `alchemy`): Base and Polygon,
+    /// whose Blockscout instances are blocked and reserved for the paid plans of its
+    /// official API (as of 2026-10-10).
     Alchemy,
 }
 
 impl EvmNetwork {
-    /// Page d'une adresse (ou, avec `token`, de ses mouvements de ce jeton) sur
-    /// l'explorateur du réseau. Tous les explorateurs de l'app suivent le même
-    /// schéma que leurs liens de transaction (`/tx/` → `/address/`, `/token/`).
+    /// Page for an address (or, with `token`, for its movements of that token) on the
+    /// network's explorer. Every explorer in the app follows the same pattern as its
+    /// transaction links (`/tx/` → `/address/`, `/token/`).
     pub fn explorer_address_url(&self, address: &str, token: Option<&str>) -> String {
         let root = self.explorer_tx_prefix.trim_end_matches("tx/");
         match token {
@@ -151,11 +150,11 @@ pub const ETHEREUM_MAINNET: EvmNetwork = EvmNetwork {
     explorer_tx_prefix: "https://etherscan.io/tx/",
     native_symbol: "ETH",
     mainnet: true,
-    // Trouvé lors de l'audit « failles connues des hot wallets » (manipulation
-    // des frais par un nœud RPC) : le prix du gas était lu auprès du nœud APRÈS
-    // la confirmation, jamais affiché, jamais plafonné — un nœud compromis
-    // annonçant 100 000 gwei aurait fait payer 2,1 ETH de frais pour un simple
-    // virement. 200 gwei laisse une marge énorme sur les prix réels.
+    // Found during the "known hot wallet weaknesses" audit (fee manipulation by an RPC
+    // node): the gas price was read from the node AFTER confirmation, never shown and
+    // never capped. A compromised node announcing 100,000 gwei would have charged 2.1
+    // ETH in fees for a simple transfer. 200 gwei leaves a huge margin over real
+    // prices.
     max_gas_price_wei: Some(200 * GWEI),
     transfer_gas: Some(21_000),
     op_stack_l1_fee: false,
@@ -236,7 +235,7 @@ pub const POLYGON_MAINNET: EvmNetwork = EvmNetwork {
     explorer_tx_prefix: "https://polygonscan.com/tx/",
     native_symbol: "POL",
     mainnet: true,
-    // Pics mesurés à plusieurs milliers de gwei lors de congestions.
+    // Spikes of several thousand gwei measured during congestion.
     max_gas_price_wei: Some(10_000 * GWEI),
     transfer_gas: Some(21_000),
     op_stack_l1_fee: false,
@@ -244,7 +243,7 @@ pub const POLYGON_MAINNET: EvmNetwork = EvmNetwork {
     custom: false,
 };
 
-/// Tous les réseaux EVM connus de l'app.
+/// Every EVM network the app knows.
 pub const EVM_NETWORKS: &[&EvmNetwork] = &[
     &ETHEREUM_MAINNET,
     &SEPOLIA,
@@ -255,27 +254,27 @@ pub const EVM_NETWORKS: &[&EvmNetwork] = &[
     &POLYGON_MAINNET,
 ];
 
-/// Réseau EVM par son identifiant ("evm_mainnet", "bsc_mainnet"…).
-/// Réseau EVM de l'app, ou ajouté par l'utilisateur (`custom_networks`).
+/// EVM network by its identifier ("evm_mainnet", "bsc_mainnet"…): one of the app's
+/// networks, or one added by the user (`custom_networks`).
 pub fn evm_network(id: &str) -> Option<&'static EvmNetwork> {
     EVM_NETWORKS.iter().copied().find(|n| n.id == id).or_else(|| crate::custom_networks::find(id))
 }
 
-/// Paramètres réseau Bitcoin, même logique que EvmNetwork/SolNetwork — sauf que
-/// mainnet et testnet Bitcoin utilisent des ADRESSES DIFFÉRENTES pour un même index
-/// (chemins de dérivation et préfixes bech32 distincts, voir `derivation.rs`),
-/// contrairement à EVM/Solana où la même adresse sert sur toutes les variantes du
-/// réseau. D'où les pointeurs de fonction : `send_btc`/`get_btc_balance`/etc.
-/// restent agnostiques du réseau sans avoir chacun leur propre `match`.
+/// Bitcoin network parameters, same idea as EvmNetwork/SolNetwork, except that
+/// Bitcoin mainnet and testnet use DIFFERENT ADDRESSES for the same index (separate
+/// derivation paths and bech32 prefixes, see `derivation.rs`), unlike EVM/Solana
+/// where the same address works on every variant of the network. Hence the function
+/// pointers: `send_btc`/`get_btc_balance`/etc. stay network-agnostic without each
+/// needing its own `match`.
 pub struct BtcNetwork {
     pub esplora_base: &'static str,
     pub label: &'static str,
     pub explorer_tx_prefix: &'static str,
     pub derive_key: fn(&[u8], u32) -> Result<(k256::ecdsa::SigningKey, [u8; 20])>,
     pub format_address: fn(&[u8; 20]) -> Result<String>,
-    /// Adresse du portefeuille (P2WPKH) en hash160.
+    /// The wallet's address (P2WPKH) as a hash160.
     pub parse_address: fn(&str) -> Result<[u8; 20]>,
-    /// Adresse de destination, de tout type standard, en script de sortie.
+    /// Destination address, of any standard type, as an output script.
     pub recipient_script: fn(&str) -> Result<Vec<u8>>,
     pub testnet: bool,
 }
@@ -302,23 +301,23 @@ pub const BTC_TESTNET: BtcNetwork = BtcNetwork {
     testnet: true,
 };
 
-/// Frais fixes, généreux pour Bitcoin testnet (évite une estimation dynamique).
+/// Fixed fee, generous for Bitcoin testnet (avoids a dynamic estimate).
 const BTC_FEE_SAT: u64 = 500;
-/// En dessous de ce seuil, la monnaie BTC part dans les frais plutôt que de créer
-/// une sortie "poussière" que le réseau pourrait rejeter comme non standard.
+/// Below this threshold, BTC change goes to the fee rather than creating a "dust"
+/// output the network could reject as non-standard.
 const BTC_DUST_THRESHOLD_SAT: u64 = 1_000;
-/// Frais de base réseau Solana pour une transaction à une signature.
+/// Solana network base fee for a single-signature transaction.
 const SOL_FEE_LAMPORTS: u64 = 5_000;
 
-/// Paramètres réseau Solana, même logique que EvmNetwork : jamais de mainnet codé
-/// en dur dans un chemin de test.
+/// Solana network parameters, same idea as EvmNetwork: mainnet is never hard-coded
+/// in a test path.
 pub struct SolNetwork {
     pub rpc: &'static str,
     pub label: &'static str,
     pub explorer_tx_prefix: &'static str,
-    /// Suffixe ajouté après la signature dans le lien explorateur (ex: "?cluster=devnet").
+    /// Suffix added after the signature in the explorer link (e.g. "?cluster=devnet").
     pub explorer_tx_suffix: &'static str,
-    /// L'airdrop RPC (`requestAirdrop`) n'existe que sur devnet/testnet, jamais sur mainnet.
+    /// The RPC airdrop (`requestAirdrop`) only exists on devnet/testnet, never on mainnet.
     pub supports_airdrop: bool,
 }
 
@@ -334,7 +333,7 @@ pub const SOLANA_MAINNET: SolNetwork = SolNetwork {
     rpc: "https://api.mainnet-beta.solana.com",
     label: "Solana MAINNET — FONDS RÉELS",
     explorer_tx_prefix: "https://explorer.solana.com/tx/",
-    explorer_tx_suffix: "", // mainnet est le cluster par défaut de l'explorateur
+    explorer_tx_suffix: "", // mainnet is the explorer's default cluster
     supports_airdrop: false,
 };
 
@@ -345,8 +344,8 @@ fn read_menu_choice() -> Result<String> {
     prompt("Choix : ")
 }
 
-// Refus d'une adresse EVM, en clair (sans « hex » ni « octets ») ; traduits
-// par l'app.
+// Refusal of an EVM address, in plain words (no "hex" or "bytes"); translated by
+// the app.
 pub const EVM_ADDRESS_NOT_RECOGNIZED: &str = "adresse non reconnue : sur ce réseau, une adresse s'écrit 0x suivi de 40 caractères";
 pub const EVM_ADDRESS_WRONG_LENGTH: &str = "adresse incomplète ou trop longue : sur ce réseau, une adresse s'écrit 0x suivi de 40 caractères";
 pub const EVM_ADDRESS_MISCOPIED: &str = "adresse mal recopiée : un caractère ne correspond pas (majuscules et minuscules comptent) — copiez-la à nouveau";
@@ -356,13 +355,12 @@ pub(crate) fn parse_evm_address(input: &str) -> Result<[u8; 20]> {
     let bytes = hex::decode(hex_str).context(EVM_ADDRESS_NOT_RECOGNIZED)?;
     let address: [u8; 20] = bytes.try_into().map_err(|_| anyhow!(EVM_ADDRESS_WRONG_LENGTH))?;
 
-    // EIP-55 : une adresse en casse mixte prétend porter un checksum — on le vérifie
-    // pour détecter une faute de frappe (copier-coller corrompu, caractère modifié)
-    // qui resterait sinon invisible sur une adresse par ailleurs valide en hexadécimal
-    // et qui enverrait irrémédiablement les fonds vers une adresse différente. Une
-    // adresse tout en minuscules ou tout en majuscules n'a pas de casse à vérifier
-    // (format historique sans checksum, toujours valide selon la norme) et est
-    // acceptée telle quelle.
+    // EIP-55: a mixed-case address claims to carry a checksum, so we verify it to
+    // catch a typo (corrupted copy-paste, altered character) that would otherwise go
+    // unnoticed on an address that is still valid hex, and would send the funds
+    // irreversibly to a different address. An all-lowercase or all-uppercase address
+    // has no case to check (the legacy format without a checksum, still valid under
+    // the standard) and is accepted as is.
     let has_mixed_case =
         hex_str.chars().any(|c| c.is_ascii_uppercase()) && hex_str.chars().any(|c| c.is_ascii_lowercase());
     if has_mixed_case {
@@ -373,7 +371,7 @@ pub(crate) fn parse_evm_address(input: &str) -> Result<[u8; 20]> {
     Ok(address)
 }
 
-/// Convertit un montant décimal en ETH (ex: "0.01") en wei, sans perte de précision.
+/// Converts a decimal amount in ETH (e.g. "0.01") to wei, without losing precision.
 pub(crate) fn parse_eth_to_wei(input: &str) -> Result<u128> {
     let input = input.trim();
     let (whole, frac) = input.split_once('.').unwrap_or((input, ""));
@@ -386,17 +384,17 @@ pub(crate) fn parse_eth_to_wei(input: &str) -> Result<u128> {
         frac_padded.push('0');
     }
     let frac_val: u128 = if frac_padded.is_empty() { 0 } else { frac_padded.parse().context("partie décimale invalide")? };
-    // Arithmétique vérifiée : en profil release, un dépassement d'entier s'enroule
-    // silencieusement au lieu de planter (`overflow-checks` désactivé par défaut) —
-    // un montant absurdement grand ne doit jamais se transformer en petit montant.
+    // Checked arithmetic: in the release profile, an integer overflow wraps around
+    // silently instead of panicking (`overflow-checks` is off by default). An absurdly
+    // large amount must never turn into a small one.
     whole
         .checked_mul(1_000_000_000_000_000_000u128)
         .and_then(|w| w.checked_add(frac_val))
         .context("montant ETH trop grand (dépassement arithmétique)")
 }
 
-/// Dérive une clé EVM depuis `seed` et ouvre un menu recevoir/envoyer sur `network`
-/// (voir SEPOLIA / ETHEREUM_MAINNET).
+/// Derives an EVM key from `seed` and opens a receive/send menu on `network` (see
+/// SEPOLIA / ETHEREUM_MAINNET).
 pub fn run_evm_wallet(seed: &[u8], network: &EvmNetwork) -> Result<()> {
     let (signing_key, address) = derivation::derive_evm_key(seed, 0)?;
     let address_str = derivation::format_address(&address);
@@ -482,7 +480,7 @@ pub(crate) fn parse_btc_to_sat(input: &str) -> Result<u64> {
         .context("montant BTC trop grand (dépassement arithmétique)")
 }
 
-/// Dérive une clé Bitcoin testnet depuis `seed` et ouvre un menu recevoir/envoyer.
+/// Derives a Bitcoin testnet key from `seed` and opens a receive/send menu.
 pub fn run_btc_wallet(seed: &[u8]) -> Result<()> {
     let (signing_key, hash160) = derivation::derive_btc_testnet_key(seed, 0)?;
     let address = derivation::format_btc_testnet_address(&hash160)?;
@@ -558,7 +556,7 @@ fn send_btc(
     Ok(())
 }
 
-/// Convertit un montant décimal en SOL (ex: "0.01") en lamports (9 décimales).
+/// Converts a decimal amount in SOL (e.g. "0.01") to lamports (9 decimals).
 pub(crate) fn parse_sol_to_lamports(input: &str) -> Result<u64> {
     let input = input.trim();
     let (whole, frac) = input.split_once('.').unwrap_or((input, ""));
@@ -577,8 +575,8 @@ pub(crate) fn parse_sol_to_lamports(input: &str) -> Result<u64> {
         .context("montant SOL trop grand (dépassement arithmétique)")
 }
 
-/// Convertit un montant décimal en USDC (ex: "12.50") en plus petite unité
-/// (6 décimales, comme l'ETH en a 18 et le SOL en a 9) — même structure que
+/// Converts a decimal amount in USDC (e.g. "12.50") to its smallest unit (6
+/// decimals, just as ETH has 18 and SOL has 9). Same structure as
 /// `parse_sol_to_lamports`/`parse_eth_to_wei`.
 pub(crate) fn parse_usdc_to_micros(input: &str) -> Result<u64> {
     let input = input.trim();
@@ -598,8 +596,8 @@ pub(crate) fn parse_usdc_to_micros(input: &str) -> Result<u64> {
         .context("montant USDC trop grand (dépassement arithmétique)")
 }
 
-/// Dérive une clé Solana depuis `seed` et ouvre un menu recevoir/envoyer sur `network`
-/// (voir SOLANA_DEVNET / SOLANA_MAINNET).
+/// Derives a Solana key from `seed` and opens a receive/send menu on `network` (see
+/// SOLANA_DEVNET / SOLANA_MAINNET).
 pub fn run_sol_wallet(seed: &[u8], network: &SolNetwork) -> Result<()> {
     let signing_key = derivation::derive_solana_key(seed, 0);
     let from_pubkey = signing_key.verifying_key().to_bytes();
@@ -696,15 +694,15 @@ mod tests {
 
     #[test]
     fn parse_evm_address_rejects_a_single_flipped_case_character() {
-        // Un seul caractère dont la casse a été inversée par rapport au checksum attendu
-        // ("a" en position 2 devient "A") : simule une faute de frappe/copier-coller.
+        // A single character with its case flipped compared with the expected checksum
+        // ("a" at position 2 becomes "A"): simulates a typo or a bad copy-paste.
         let corrupted = "0x5Aaeb6053F3E94C9b9A09f33669435E7Ef1BeAed";
         assert!(parse_evm_address(corrupted).is_err());
     }
 
     #[test]
     fn parse_evm_address_accepts_all_lowercase_without_checksum() {
-        // Format historique sans checksum (pas de casse mixte) : toujours valide.
+        // Legacy format without a checksum (no mixed case): still valid.
         assert!(parse_evm_address(&VALID_CHECKSUM.to_lowercase()).is_ok());
     }
 

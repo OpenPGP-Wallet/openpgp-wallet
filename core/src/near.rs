@@ -1,24 +1,23 @@
-//! NEAR : compte implicite (64 caractères hexadécimaux, clé ed25519 dérivée
-//! en m/44'/397'/p', comme les portefeuilles NEAR), solde, envoi de NEAR,
-//! historique.
+//! NEAR: implicit account (64 hex characters, ed25519 key derived at m/44'/397'/p',
+//! like NEAR wallets), balance, sending NEAR, history.
 //!
-//! Transactions sérialisées (Borsh) et signées ici, identiques octet pour
-//! octet à la bibliothèque officielle (@near-js/transactions) dans les tests,
-//! et vérifiées de bout en bout sur le réseau de test (test réel).
+//! Transactions are serialized (Borsh) and signed here. The tests check they are
+//! byte-for-byte identical to the official library (@near-js/transactions), and
+//! they are verified end to end on testnet (live test).
 //!
-//! Règles du réseau appliquées avant la boîte de confirmation :
-//! - stockage : chaque compte garde de quoi payer ses octets (~0,00182 NEAR
-//!   pour un compte implicite), jamais envoyable ;
-//! - un destinataire implicite jamais utilisé est CRÉÉ par le virement, avec
-//!   au moins son stockage ; un compte nommé (alice.near) doit exister ;
-//! - adresses Ethereum (0x…, comptes « eth-implicites ») refusées : un envoi
-//!   sur Ethereum se fait depuis la carte Ethereum ;
-//! - frais : gaz du virement (coûts lus dans la configuration du protocole).
-//!   Le réseau RETIENT d'abord le gaz d'exécution à son prix d'achat minimal
-//!   (`min_gas_purchase_price`, 10 × le prix actuel en 2026) puis rend le
-//!   surplus un bloc plus tard : cette retenue (+ 20 %) est le maximum
-//!   affiché et vérifié, les frais réels (gaz × prix du moment) sont bien
-//!   plus bas.
+//! Network rules enforced before the confirmation dialog:
+//! - storage: every account keeps enough to pay for its bytes (~0.00182 NEAR for an
+//!   implicit account), which can never be sent;
+//! - an implicit recipient that has never been used is CREATED by the transfer,
+//!   which must cover at least its storage; a named account (alice.near) must
+//!   already exist;
+//! - Ethereum addresses (0x…, "eth-implicit" accounts) are refused: sending on
+//!   Ethereum is done from the Ethereum card;
+//! - fees: the transfer's gas (costs read from the protocol config). The network
+//!   first HOLDS the execution gas at its minimum purchase price
+//!   (`min_gas_purchase_price`, 10 × the current price in 2026), then refunds the
+//!   surplus one block later. That hold (+ 20%) is the maximum shown and checked;
+//!   the actual fee (gas × current price) is much lower.
 
 use crate::history;
 use anyhow::{anyhow, bail, ensure, Context, Result};
@@ -28,7 +27,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::sync::OnceLock;
 
-/// Réseau NEAR : nœuds JSON-RPC (dans l'ordre) et index des transactions.
+/// NEAR network: JSON-RPC nodes (in order) and the transaction index.
 pub struct Network {
     pub rpc: [&'static str; 2],
     pub tx_index: &'static str,
@@ -39,9 +38,9 @@ pub const MAINNET: Network = Network { rpc: ["https://rpc.mainnet.fastnear.com",
 const TESTNET: Network = Network { rpc: ["https://rpc.testnet.fastnear.com", "https://rpc.testnet.near.org"], tx_index: "https://tx.test.fastnear.com" };
 
 pub const DECIMALS: u8 = 24;
-/// Taille du stockage d'un compte implicite neuf (compte + clé d'accès).
+/// Storage size of a new implicit account (account + access key).
 const IMPLICIT_ACCOUNT_BYTES: u128 = 182;
-/// Plafond des frais d'un virement (0,01 NEAR ; ~0,00005 au repos).
+/// Fee cap for a transfer (0.01 NEAR; ~0.00005 when the network is quiet).
 const MAX_FEE_YOCTO: u128 = 10_000_000_000_000_000_000_000;
 
 fn client() -> &'static reqwest::blocking::Client {
@@ -55,21 +54,21 @@ fn client() -> &'static reqwest::blocking::Client {
     })
 }
 
-/// Erreur renvoyée par le nœud (nom de la cause, message).
+/// Error returned by the node (cause name, message).
 struct RpcError {
     name: String,
     detail: String,
 }
 
-/// Appel JSON-RPC : `Ok(Err(..))` pour une erreur DU NŒUD (compte inconnu,
-/// transaction invalide…), `Err` si aucun nœud ne répond.
+/// JSON-RPC call: `Ok(Err(..))` for an error FROM THE NODE (unknown account,
+/// invalid transaction…), `Err` if no node answers.
 fn rpc(net: &Network, method: &str, params: Value) -> Result<std::result::Result<Value, RpcError>> {
     let mut last = anyhow!("nœud NEAR injoignable");
     for node in net.rpc {
         let attempt = (|| -> Result<Value> {
             let response = client().post(node).json(&json!({ "jsonrpc": "2.0", "id": "ow", "method": method, "params": params })).send().context("nœud NEAR injoignable")?;
             let status = response.status();
-            // 400 : erreur du nœud, détaillée dans le corps JSON-RPC.
+            // 400: node error, detailed in the JSON-RPC body.
             ensure!(status.is_success() || status == reqwest::StatusCode::BAD_REQUEST, "nœud NEAR : réponse {status}");
             response.json().context("réponse du nœud NEAR illisible")
         })();
@@ -81,14 +80,14 @@ fn rpc(net: &Network, method: &str, params: Value) -> Result<std::result::Result
     Err(last)
 }
 
-/// Réponse JSON-RPC : le résultat, ou l'erreur DU NŒUD.
+/// JSON-RPC response: the result, or the error FROM THE NODE.
 fn reply(value: &Value) -> std::result::Result<Value, RpcError> {
     if let Some(error) = value.get("error") {
         let name = error["cause"]["name"].as_str().or(error["name"].as_str()).unwrap_or("").to_string();
         let detail = [error["cause"]["info"].to_string(), error["data"].to_string()].into_iter().find(|d| d != "null" && d != "{}").unwrap_or_default();
         return Err(RpcError { name, detail });
     }
-    // Réponse d'une requête « query » : erreur dans le résultat.
+    // Response to a "query" request: the error is inside the result.
     if let Some(error) = value["result"]["error"].as_str() {
         return Err(RpcError { name: "QUERY_ERROR".into(), detail: error.to_string() });
     }
@@ -103,15 +102,15 @@ fn yocto(text: &str) -> Result<u128> {
     text.parse::<u128>().context("montant NEAR illisible")
 }
 
-/// Montant en NEAR, 5 décimales (« 12.50000 », arrondi inférieur) ; la
-/// boîte de confirmation affiche le montant exact saisi.
+/// Amount in NEAR with 5 decimals ("12.50000", rounded down); the confirmation
+/// dialog shows the exact amount entered.
 pub fn format_near(yocto: u128) -> String {
     let whole = yocto / 10u128.pow(24);
     let fraction = (yocto % 10u128.pow(24)) / 10u128.pow(19);
     format!("{whole}.{fraction:05}")
 }
 
-/// Montant exact en NEAR (24 décimales, zéros finaux retirés).
+/// Exact amount in NEAR (24 decimals, trailing zeros removed).
 pub fn format_near_exact(yocto: u128) -> String {
     let whole = yocto / 10u128.pow(24);
     let fraction = format!("{:024}", yocto % 10u128.pow(24));
@@ -123,9 +122,10 @@ pub fn format_near_exact(yocto: u128) -> String {
     }
 }
 
-// --- Comptes -------------------------------------------------------------------------
+// --- Accounts
+// --------------------------------------------------------------------------
 
-/// Compte implicite d'une clé : sa clé publique en hexadécimal.
+/// Implicit account of a key: its public key in hexadecimal.
 pub fn implicit_account(key: &SigningKey) -> String {
     hex::encode(key.verifying_key().to_bytes())
 }
@@ -134,8 +134,8 @@ fn is_implicit(account: &str) -> bool {
     account.len() == 64 && account.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-/// Identifiant de compte NEAR valide : implicite (64 hex) ou nommé
-/// (« alice.near », règles du protocole). Adresses Ethereum refusées.
+/// Valid NEAR account ID: implicit (64 hex) or named ("alice.near", protocol
+/// rules). Ethereum addresses are refused.
 pub fn parse_account(text: &str) -> Result<String> {
     let text = text.trim();
     if text.len() == 42 && (text.starts_with("0x") || text.starts_with("0X")) && text[2..].bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -143,8 +143,8 @@ pub fn parse_account(text: &str) -> Result<String> {
     }
     ensure!(!text.bytes().any(|b| b.is_ascii_uppercase()), "adresse NEAR invalide (minuscules seulement)");
     ensure!((2..=64).contains(&text.len()), "adresse NEAR invalide");
-    // Parties séparées par « . » ; dans une partie, « - » ou « _ » entre deux
-    // caractères alphanumériques seulement.
+    // Parts separated by "."; within a part, "-" or "_" only between two alphanumeric
+    // characters.
     let valid = text.split('.').all(|part| {
         !part.is_empty()
             && part.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
@@ -158,7 +158,7 @@ pub fn parse_account(text: &str) -> Result<String> {
 
 // --- Transaction (Borsh) -------------------------------------------------------------------
 
-/// Virement de NEAR, tel que signé.
+/// A NEAR transfer, as signed.
 pub struct Transfer {
     pub signer: String,
     pub public_key: [u8; 32],
@@ -177,12 +177,12 @@ impl Transfer {
     fn borsh(&self) -> Vec<u8> {
         let mut out = Vec::new();
         borsh_string(&mut out, &self.signer);
-        out.push(0); // clé ed25519
+        out.push(0); // ed25519 key
         out.extend_from_slice(&self.public_key);
         out.extend_from_slice(&self.nonce.to_le_bytes());
         borsh_string(&mut out, &self.receiver);
         out.extend_from_slice(&self.block_hash);
-        out.extend_from_slice(&1u32.to_le_bytes()); // une action
+        out.extend_from_slice(&1u32.to_le_bytes()); // one action
         out.push(3); // Transfer
         out.extend_from_slice(&self.deposit.to_le_bytes());
         out
@@ -195,19 +195,19 @@ impl Transfer {
 
 pub struct Signed {
     pub bytes: Vec<u8>,
-    /// Identifiant (base58 du condensé SHA-256 de la transaction).
+    /// Identifier (base58 of the transaction's SHA-256 digest).
     pub hash: String,
 }
 
 pub fn sign(tx: &Transfer, key: &SigningKey) -> Signed {
     let hash = tx.hash();
     let mut bytes = tx.borsh();
-    bytes.push(0); // signature ed25519
+    bytes.push(0); // ed25519 signature
     bytes.extend_from_slice(&key.sign(&hash).to_bytes());
     Signed { bytes, hash: bs58::encode(hash).into_string() }
 }
 
-// --- Compte et réseau ----------------------------------------------------------------------
+// --- Account and network -------------------------------------------------------------------
 
 struct AccountState {
     amount: u128,
@@ -226,15 +226,15 @@ fn account_state(net: &Network, account: &str) -> Result<Option<AccountState>> {
     }
 }
 
-/// Coûts du protocole utiles à un virement.
+/// Protocol costs relevant to a transfer.
 struct Costs {
     storage_per_byte: u128,
-    /// Gaz d'un virement vers un compte existant : (envoi, exécution).
+    /// Gas for a transfer to an existing account: (send, execution).
     transfer_gas: (u128, u128),
-    /// Gaz en plus quand le virement crée un compte implicite.
+    /// Extra gas when the transfer creates an implicit account.
     create_gas: (u128, u128),
     gas_price: u128,
-    /// Prix d'achat minimal du gaz d'exécution, retenu d'avance.
+    /// Minimum purchase price of execution gas, held up front.
     purchase_price: u128,
 }
 
@@ -260,7 +260,7 @@ fn costs(net: &Network) -> Result<Costs> {
 }
 
 impl Costs {
-    /// (frais réels attendus, maximum retenu) d'un virement.
+    /// (expected actual fee, maximum held) for a transfer.
     fn fee(&self, creates: bool) -> Result<(u128, u128)> {
         let (send, exec) = if creates { (self.transfer_gas.0 + self.create_gas.0, self.transfer_gas.1 + self.create_gas.1) } else { self.transfer_gas };
         let actual = (send + exec) * self.gas_price;
@@ -270,12 +270,12 @@ impl Costs {
     }
 }
 
-/// Solde (yoctoNEAR) ; 0 pour un compte jamais utilisé.
+/// Balance (yoctoNEAR); 0 for an account that has never been used.
 pub fn balance(net: &Network, account: &str) -> Result<u128> {
     Ok(account_state(net, account)?.map_or(0, |a| a.amount))
 }
 
-/// Activité d'une adresse destinataire : (détient des NEAR, existe).
+/// Activity of a recipient address: (holds NEAR, exists).
 pub fn address_activity(net: &Network, account: &str) -> Result<(bool, bool)> {
     Ok(match account_state(net, account)? {
         Some(a) => (a.amount > 0, true),
@@ -283,23 +283,23 @@ pub fn address_activity(net: &Network, account: &str) -> Result<(bool, bool)> {
     })
 }
 
-/// Envoi préparé pour la boîte de confirmation.
+/// A send prepared for the confirmation dialog.
 #[derive(Clone, Copy, Debug)]
 pub struct NearPlan {
     pub amount: u128,
-    /// Maximum retenu pour les frais (le surplus revient en quelques secondes).
+    /// Maximum held for fees (the surplus comes back within seconds).
     pub fee: u128,
-    /// Frais réels attendus (gaz × prix du moment).
+    /// Expected actual fee (gas × current price).
     pub fee_actual: u128,
-    /// NEAR réservés au stockage du compte de départ.
+    /// NEAR reserved for the sending account's storage.
     pub reserved: u128,
-    /// Destinataire implicite jamais utilisé : le virement le crée.
+    /// An implicit recipient that has never been used: the transfer creates it.
     pub creates: bool,
 }
 
 const NOT_ACTIVATED: &str = "compte NEAR pas encore activé : il doit d'abord recevoir des NEAR";
 
-/// Contrôles du réseau (stockage, création, compte nommé existant) et frais.
+/// Network checks (storage, account creation, named account exists) and fees.
 pub fn plan(net: &Network, from: &str, to: &str, amount: u128) -> Result<NearPlan> {
     ensure!(amount > 0, "montant nul");
     let (from, to) = (parse_account(from)?, parse_account(to)?);
@@ -327,8 +327,8 @@ pub fn plan(net: &Network, from: &str, to: &str, amount: u128) -> Result<NearPla
     Ok(NearPlan { amount, fee, fee_actual, reserved, creates })
 }
 
-/// Plus grand montant envoyable (vers `to` s'il est connu : un compte à
-/// créer coûte un peu plus de gaz).
+/// Largest amount that can be sent (to `to` if known: an account that must be
+/// created costs a little more gas).
 pub fn max_amount(net: &Network, from: &str, to: Option<&str>) -> Result<u128> {
     let sender = account_state(net, from)?.context(NOT_ACTIVATED)?;
     let costs = costs(net)?;
@@ -340,12 +340,12 @@ pub fn max_amount(net: &Network, from: &str, to: Option<&str>) -> Result<u128> {
     sender.amount.saturating_sub(sender.storage_usage * costs.storage_per_byte).checked_sub(fee).filter(|m| *m > 0).context("NEAR insuffisants pour couvrir les frais du réseau")
 }
 
-/// Construit, signe et diffuse l'envoi préparé ; renvoie son identifiant.
+/// Builds, signs and broadcasts the prepared send; returns its identifier.
 pub fn send(net: &Network, key: &SigningKey, to: &str, plan: &NearPlan) -> Result<String> {
     let signer = implicit_account(key);
     let public_key = key.verifying_key().to_bytes();
-    // Nonce lu au dernier bloc (« optimistic ») : deux envois rapprochés ne
-    // réutilisent pas un nonce déjà consommé (refus InvalidNonce).
+    // Nonce read at the latest block ("optimistic"): two sends close together never
+    // reuse a nonce that is already consumed (InvalidNonce refusal).
     let access = rpc_ok(net, "query", json!({ "request_type": "view_access_key", "finality": "optimistic", "account_id": signer, "public_key": format!("ed25519:{}", bs58::encode(public_key).into_string()) }))?;
     let nonce = access["nonce"].as_u64().context("clé d'accès NEAR illisible")?;
     let block_hash: [u8; 32] = access["block_hash"].as_str().and_then(|h| bs58::decode(h).into_vec().ok()).and_then(|h| h.try_into().ok()).context("bloc NEAR illisible")?;
@@ -353,11 +353,11 @@ pub fn send(net: &Network, key: &SigningKey, to: &str, plan: &NearPlan) -> Resul
     submit(net, &sign(&tx, key))
 }
 
-/// Diffuse (nœud suivant si l'un ne répond pas). Sans réponse nette d'aucun :
-/// « peut-être partie » (voir `wallet_flow::maybe_sent`) ; et un refus
-/// venu APRÈS un nœud resté sans réponse (nonce déjà utilisé…) peut venir de
-/// CETTE transaction déjà reçue : « peut-être partie » aussi, jamais
-/// « refusée ».
+/// Broadcasts (moving to the next node if one does not answer). If none gives a
+/// clear answer: "maybe sent" (see `wallet_flow::maybe_sent`). A refusal that comes
+/// AFTER a node that never answered (nonce already used…) may be caused by THIS
+/// transaction having already been received, so that is "maybe sent" too, never
+/// "refused".
 pub fn submit(net: &Network, signed: &Signed) -> Result<String> {
     let blob = base64::engine::general_purpose::STANDARD.encode(&signed.bytes);
     let body = json!({ "jsonrpc": "2.0", "id": "ow", "method": "send_tx", "params": { "signed_tx_base64": blob, "wait_until": "EXECUTED_OPTIMISTIC" } });
@@ -395,32 +395,32 @@ fn submit_outcome(outcome: std::result::Result<Value, RpcError>, signed: &Signed
             if let Some(failure) = status.get("Failure") {
                 bail!("transaction NEAR refusée : {}", compact(failure));
             }
-            // Acceptée mais d'état inattendu, ou sous un autre identifiant que
-            // le nôtre : peut-être exécutée — jamais présentée comme refusée,
-            // un nouvel envoi la paierait deux fois (32ᵉ passage).
+            // Accepted but in an unexpected state, or under an identifier other than ours: it
+            // may have been executed. Never shown as refused, since sending again would pay
+            // twice (audit round 32).
             let succeeded = status.get("SuccessValue").is_some() || status.get("SuccessReceiptId").is_some();
             if !succeeded || result["transaction"]["hash"].as_str() != Some(signed.hash.as_str()) {
                 return Err(crate::wallet_flow::maybe_sent(&signed.hash));
             }
             Ok(signed.hash.clone())
         }
-        // Délai dépassé : la transaction peut encore être exécutée.
+        // Timed out: the transaction may still be executed.
         Err(e) if e.name == "TIMEOUT_ERROR" => bail!("réseau NEAR lent : transaction {} envoyée mais pas encore confirmée — vérifiez l'historique avant de renvoyer", signed.hash),
         Err(_) if uncertain => Err(crate::wallet_flow::maybe_sent(&signed.hash)),
         Err(e) => bail!("transaction NEAR refusée : {} {}", e.name, e.detail),
     }
 }
 
-/// Erreur d'exécution en une ligne courte.
+/// Execution error as one short line.
 fn compact(value: &Value) -> String {
     let text = value.to_string();
     text.chars().filter(|c| !matches!(c, '{' | '}' | '"')).take(200).collect()
 }
 
-// --- Historique ----------------------------------------------------------------------------
+// --- History -------------------------------------------------------------------------------
 
-/// Virements de NEAR de l'adresse (envoyés, reçus — y compris d'un contrat,
-/// hors remboursements de gaz), les plus récents d'abord.
+/// NEAR transfers of the address (sent and received, including from a contract,
+/// excluding gas refunds), most recent first.
 pub fn history(net: &Network, account: &str, limit: usize) -> Result<Vec<history::TxEntry>> {
     let account = parse_account(account)?;
     let list: Value = client().post(format!("{}/v0/account", net.tx_index)).json(&json!({ "account_id": account })).send().context("index NEAR injoignable")?.json().context("réponse de l'index NEAR illisible")?;
@@ -497,9 +497,9 @@ mod tests {
 
     const SEED: &str = "5eb00bbddcf069084889a8ab9155568165f5c453ccb85e70811aaed6f6da5fc19a5ac40b389cd370d086206dec8aa6c43daea6690f20ad3d8d48b2d2ce9e38e4";
 
-    /// 32ᵉ passage : une transaction ACCEPTÉE par le nœud n'est jamais
-    /// présentée comme refusée — autre identifiant ou état inattendu :
-    /// « peut-être partie » ; seul un échec d'exécution est un refus.
+    /// Audit round 32: a transaction ACCEPTED by the node is never shown as refused. A
+    /// different identifier or an unexpected state means "maybe sent"; only an
+    /// execution failure is a refusal.
     #[test]
     fn accepted_transactions_are_never_reported_as_refused() {
         let signed = Signed { bytes: vec![], hash: "Hash1".into() };
@@ -517,8 +517,8 @@ mod tests {
         crate::derivation::derive_near_key(&hex::decode(SEED).unwrap(), index)
     }
 
-    /// Vecteurs de near-seed-phrase (dérivation des portefeuilles NEAR) et
-    /// de @near-js/transactions, indépendants de ce code.
+    /// Vectors from near-seed-phrase (NEAR wallet derivation) and
+    /// @near-js/transactions, independent of this code.
     #[test]
     fn keys_and_transactions_match_the_official_libraries() {
         for (index, expected) in [(0, "5510e2b44cae6eb807e3e0e45d579dda058c274abcba15e5cb84636f5d1ee412"), (1, "3b93b03253b9715213ec314eb50ecc99d25602ccb5b059f91f51d24710d54326"), (7, "689ec7ca9d844e55d75d1fd43c2d3c5582a3b54722f89ffbb4cc3b8d28d46735")] {
@@ -557,8 +557,8 @@ mod tests {
         assert_eq!(format_near_exact(1), "0.000000000000000000000001");
     }
 
-    /// Historique : virement reçu d'un contrat compté, remboursement de gaz
-    /// (« system ») ignoré, frais du signataire déduits.
+    /// History: a transfer received from a contract is counted, a gas refund ("system")
+    /// is ignored, and the signer's fees are deducted.
     #[test]
     fn history_entries_come_from_receipts() {
         let me = "5510e2b44cae6eb807e3e0e45d579dda058c274abcba15e5cb84636f5d1ee412";
@@ -578,10 +578,10 @@ mod tests {
         assert!(history_entry(&unrelated, me).is_none());
     }
 
-    /// Réel, réseau de test (compte créé gratuitement par le service de
-    /// création de comptes) : virement qui CRÉE un compte implicite, puis
-    /// renvoi depuis ce compte implicite, signés ici et exécutés ; signature
-    /// altérée refusée ; compte nommé inexistant refusé avant signature.
+    /// Live, on testnet (account created for free by the account creation service): a
+    /// transfer that CREATES an implicit account, then a transfer back from that
+    /// implicit account, both signed here and executed; a tampered signature is
+    /// refused; a named account that does not exist is refused before signing.
     /// `cargo test -- --ignored real_near --nocapture`
     #[test]
     #[ignore]
@@ -591,7 +591,7 @@ mod tests {
             getrandom::getrandom(&mut seed).unwrap();
             SigningKey::from_bytes(&seed)
         };
-        // Compte nommé financé (10 NEAR de test), à la clé de « alice ».
+        // Funded named account (10 testnet NEAR), with "alice"'s key.
         let alice = random_key();
         let alice_name = format!("ow{}.testnet", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis());
         let created = client()
@@ -600,7 +600,7 @@ mod tests {
             .send()
             .unwrap();
         assert!(created.status().is_success(), "création du compte de test : {}", created.status());
-        // Lectures en finalité « final » : quelques secondes de retard.
+        // Reads at "final" finality: a few seconds behind.
         let wait_for = |account: &str| {
             for _ in 0..15 {
                 if account_state(&TESTNET, account).unwrap().is_some() {
@@ -613,7 +613,7 @@ mod tests {
         wait_for(&alice_name);
         let bob = random_key();
         let bob_account = implicit_account(&bob);
-        // Le compte de « alice » est nommé : envoi par sa clé, signataire = son nom.
+        // "alice"'s account is a named account: sent with its key, signer = its name.
         let send_from_named = |plan: &NearPlan, to: &str| -> Result<String> {
             let public_key = alice.verifying_key().to_bytes();
             let access = rpc_ok(&TESTNET, "query", json!({ "request_type": "view_access_key", "finality": "final", "account_id": alice_name, "public_key": format!("ed25519:{}", bs58::encode(public_key).into_string()) }))?;
@@ -628,12 +628,12 @@ mod tests {
         println!("création : {} (frais max {} NEAR)", send_from_named(&first, &bob_account).unwrap(), format_near_exact(first.fee));
         wait_for(&bob_account);
         assert_eq!(balance(&TESTNET, &bob_account).unwrap(), 50_000_000_000_000_000_000_000);
-        // Renvoi depuis le compte implicite (chemin de l'app).
+        // Send back from the implicit account (the app's code path).
         let back = plan(&TESTNET, &bob_account, &alice_name, 10_000_000_000_000_000_000_000).unwrap();
         assert!(!back.creates);
         let sent = send(&TESTNET, &bob, &alice_name, &back).unwrap();
         println!("renvoi : {sent} depuis {bob_account}");
-        // Après le remboursement du surplus retenu : frais réels EXACTS.
+        // After the held surplus is refunded: the EXACT actual fee.
         let expected = 40_000_000_000_000_000_000_000 - back.fee_actual;
         let mut left = 0;
         for _ in 0..20 {
@@ -644,7 +644,7 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_secs(1));
         }
         assert_eq!(left, expected, "frais réels {} NEAR attendus, retenue max {} NEAR", format_near_exact(back.fee_actual), format_near_exact(back.fee));
-        // Signature altérée : refusée par le nœud.
+        // Tampered signature: refused by the node.
         let access = rpc_ok(&TESTNET, "query", json!({ "request_type": "view_access_key", "finality": "final", "account_id": bob_account, "public_key": format!("ed25519:{}", bs58::encode(bob.verifying_key().to_bytes()).into_string()) })).unwrap();
         let tx = Transfer { signer: bob_account.clone(), public_key: bob.verifying_key().to_bytes(), nonce: access["nonce"].as_u64().unwrap() + 1, receiver: alice_name.clone(), block_hash: bs58::decode(access["block_hash"].as_str().unwrap()).into_vec().unwrap().try_into().unwrap(), deposit: 1 };
         let mut signed = sign(&tx, &bob);
@@ -653,9 +653,9 @@ mod tests {
         let error = submit(&TESTNET, &signed).unwrap_err().to_string();
         println!("{error}");
         assert!(error.contains("InvalidSignature") || error.contains("INVALID_TRANSACTION"), "{error}");
-        // Compte nommé inexistant : refusé avant toute signature.
+        // Named account that does not exist: refused before anything is signed.
         assert!(plan(&TESTNET, &bob_account, "personne-ici-123.testnet", 1).unwrap_err().to_string().contains("n'existe pas"));
-        // Historique (l'index suit le réseau à quelques secondes).
+        // History (the index follows the network within a few seconds).
         let mut found = Vec::new();
         for _ in 0..10 {
             found = history(&TESTNET, &bob_account, 10).unwrap();
@@ -666,7 +666,7 @@ mod tests {
         }
         assert!(found.iter().any(|e| e.kind == history::TxKind::Received && e.net_amount_minor == Some(50_000_000_000_000_000_000_000)), "historique : {}", found.len());
         assert!(found.iter().any(|e| e.id == sent && e.net_amount_minor.is_some_and(|n| n < -10_000_000_000_000_000_000_000)));
-        // Réseau principal : lectures.
+        // Mainnet: reads.
         let main = costs(&MAINNET).unwrap();
         println!("principal : gaz {} yocto, frais virement {} NEAR, création {} NEAR", main.gas_price, format_near_exact(main.fee(false).unwrap().0), format_near_exact(main.fee(true).unwrap().0));
         assert!(balance(&MAINNET, "relay.tg").unwrap() > 0);

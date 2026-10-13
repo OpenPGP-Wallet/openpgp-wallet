@@ -1,22 +1,22 @@
-//! Historique de Base et de Polygon par Alchemy (offre gratuite) :
-//! `alchemy_getAssetTransfers`, les virements d'une adresse — monnaie du
-//! réseau envoyée et reçue (y compris reçue d'un contrat : sortie d'un
-//! échange, d'un pont), jetons ERC-20.
+//! Base and Polygon history from Alchemy (free tier): `alchemy_getAssetTransfers`,
+//! the transfers of an address: the network's native coin sent and received
+//! (including coins received from a contract, such as swap or bridge outputs) and
+//! ERC-20 tokens.
 //!
-//! Aucun service sans clé ne fournit plus cet historique (constaté le
-//! 10/10/2026) : base/polygon.blockscout.com sont derrière la vérification
-//! anti-robots de Cloudflare et l'API officielle de Blockscout les réserve à
-//! ses offres payantes ; Etherscan gratuit exclut Base. Clé lue À LA
-//! COMPILATION (`ALCHEMY_API_KEY` dans `partner-keys.env`, voir build.rs) ;
-//! absente : historique indisponible, l'app renvoie vers l'explorateur.
-//! Lecture seule, purement informatif ; seule l'adresse publique est envoyée.
+//! No keyless service provides this history any more (as of 2026-10-10):
+//! base/polygon.blockscout.com sit behind Cloudflare's bot check, Blockscout's
+//! official API keeps them for paid plans, and the free Etherscan tier excludes
+//! Base. The key is read AT BUILD TIME (`ALCHEMY_API_KEY` in `partner-keys.env`,
+//! see build.rs); without it the history is unavailable and the app links to the
+//! block explorer instead. Read-only and purely informational; only the public
+//! address is sent.
 //!
-//! Même forme de réponse que `nr_getAssetTransfers` de NodeReal (qui
-//! reproduit cette méthode) : pagination dans les deux sens, regroupement par
-//! transaction et filtrage des jetons sont ceux de `nodereal`. Mesuré le
-//! 10/10/2026 : une transaction échouée n'y figure jamais (ni à l'envoi ni à
-//! la réception, vérifié sur Base et Polygon) ; les frais n'y sont pas, ils
-//! viennent des reçus (`gasUsed` × `effectiveGasPrice`, plus `l1Fee` sur Base).
+//! Same response shape as NodeReal's `nr_getAssetTransfers` (which mirrors this
+//! method): pagination in both directions, grouping by transaction and token
+//! filtering all come from `nodereal`. Measured on 2026-10-10: a failed transaction
+//! never shows up (neither sent nor received, checked on Base and Polygon). Fees
+//! are not included; they come from the receipts (`gasUsed` × `effectiveGasPrice`,
+//! plus `l1Fee` on Base).
 
 use crate::blockscout::{EvmTx, TokenMove};
 use crate::nodereal::{self, Cursor, Transfer};
@@ -26,34 +26,33 @@ use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-/// Clé d'API (offre gratuite), intégrée à la compilation.
+/// API key (free tier), embedded at build time.
 pub const API_KEY: Option<&str> = option_env!("ALCHEMY_API_KEY");
-/// Virements demandés par sens et par appel.
+/// Transfers requested per direction and per call.
 const BATCH: usize = 50;
-/// Débit visé, en unités de calcul (CU) par seconde. L'offre gratuite en
-/// garantit 300, mesurées sur 10 s glissantes et partagées par tous les
-/// utilisateurs de l'app (plus 30 millions par mois). Un simple écart de
-/// 250 ms entre appels les dépassait (120 CU par page de virements, 1 000
-/// pour un lot de 50 reçus) : Alchemy l'a signalé par mail le 10/10/2026.
+/// Target throughput, in compute units (CU) per second. The free tier guarantees
+/// 300, measured over a rolling 10 s window and shared by every user of the app
+/// (plus 30 million per month). A plain 250 ms gap between calls went over it (120
+/// CU per page of transfers, 1,000 for a batch of 50 receipts): Alchemy flagged it
+/// by email on 2026-10-10.
 const CU_PER_SECOND: u64 = 200;
 const _: () = assert!(CU_PER_SECOND < 300, "sous le débit garanti de l'offre gratuite");
-/// Coûts relevés dans la documentation d'Alchemy (10/10/2026).
+/// Costs taken from Alchemy's documentation (2026-10-10).
 const TRANSFERS_CU: u64 = 120;
 const RECEIPT_CU: u64 = 20;
-/// Reçus par lot (400 CU au plus d'un coup).
+/// Receipts per batch (at most 400 CU at once).
 const RECEIPTS_PER_BATCH: usize = 20;
-/// Attentes avant chaque nouvelle tentative après un dépassement de débit
-/// (Alchemy recommande de réessayer).
+/// Waits before each retry after a rate-limit error (Alchemy recommends retrying).
 const THROUGHPUT_RETRIES: [Duration; 2] = [Duration::from_secs(1), Duration::from_secs(3)];
-/// Reçus gardés en mémoire au plus (au-delà, le cache repart de zéro).
+/// Maximum number of receipts kept in memory (beyond that, the cache starts over).
 const RECEIPT_CACHE_MAX: usize = 20_000;
-/// Historique indisponible : clé absente de cette version de l'app.
+/// History unavailable: this build of the app has no key.
 pub const KEY_MISSING: &str = "historique de ce réseau indisponible dans cette version de l'app";
-/// Quota ou débit de l'offre gratuite atteint (même message que Blockscout).
+/// Free-tier quota or rate limit reached (same message as Blockscout).
 pub const LIMITED: &str = crate::blockscout::BLOCKSCOUT_LIMITED;
 
-/// Réseaux servis : ceux activés pour la clé de l'app, et que plus aucun
-/// service sans clé ne couvre.
+/// Networks served: those enabled for the app's key, which no keyless service
+/// covers any more.
 fn host(chain_id: u64) -> Option<&'static str> {
     match chain_id {
         8_453 => Some("base-mainnet"),
@@ -71,13 +70,13 @@ fn shared_client() -> &'static reqwest::blocking::Client {
     CLIENT.get_or_init(|| reqwest::blocking::Client::builder().timeout(Duration::from_secs(30)).build().expect("configuration du client HTTP valide"))
 }
 
-/// Temps qu'occupe un appel de `cost` CU au débit visé.
+/// Time taken by a call costing `cost` CU at the target throughput.
 fn spacing(cost: u64) -> Duration {
     Duration::from_millis(cost * 1000 / CU_PER_SECOND)
 }
 
-/// Attend que le débit visé permette un appel de `cost` CU (appels de toute
-/// l'app mis en file, quel que soit le réseau).
+/// Waits until the target throughput allows a call costing `cost` CU (calls from
+/// the whole app are queued, whatever the network).
 fn pace(cost: u64) {
     static NEXT: Mutex<Option<Instant>> = Mutex::new(None);
     let mut next = NEXT.lock().unwrap_or_else(|p| p.into_inner());
@@ -87,12 +86,12 @@ fn pace(cost: u64) {
     *next = Some(start + spacing(cost));
 }
 
-/// Ce que signale une erreur d'Alchemy.
+/// What an Alchemy error means.
 #[derive(Debug, PartialEq)]
 enum Refusal {
-    /// Débit par seconde dépassé : réessayer un peu plus tard.
+    /// Per-second rate exceeded: retry a little later.
     Throughput,
-    /// Quota du mois épuisé, ou autre limite.
+    /// Monthly quota used up, or some other limit.
     Limited,
     Other,
 }
@@ -113,20 +112,20 @@ fn error_message(reply: &Value) -> Option<&str> {
     Some(error["message"].as_str().or_else(|| error.as_str()).unwrap_or_default())
 }
 
-/// Réponse (ou lot de réponses) signalant un dépassement de débit.
+/// A response (or batch of responses) reporting a rate-limit error.
 fn throughput_exceeded(reply: &Value) -> bool {
     let exceeded = |r: &Value| error_message(r).is_some_and(|m| refusal(m) == Refusal::Throughput);
     exceeded(reply) || reply.as_array().is_some_and(|items| items.iter().any(exceeded))
 }
 
-/// Un appel JSON-RPC (ou un lot) de `cost` CU au nœud Alchemy du réseau ;
-/// débit dépassé : nouvelles tentatives espacées, puis `LIMITED`.
+/// A JSON-RPC call (or batch) costing `cost` CU to the network's Alchemy node. If
+/// the rate limit is hit: spaced-out retries, then `LIMITED`.
 fn call(chain_id: u64, body: &Value, cost: u64) -> Result<Value> {
     let key = API_KEY.ok_or_else(|| anyhow!(KEY_MISSING))?;
     let host = host(chain_id).ok_or_else(|| anyhow!("historique Alchemy non prévu pour ce réseau"))?;
     for retry in THROUGHPUT_RETRIES.iter().map(Some).chain([None]) {
         pace(cost);
-        // La clé voyage dans l'URL : erreurs réseau reformulées SANS l'URL.
+        // The key travels in the URL: network errors are reworded WITHOUT the URL.
         let response = shared_client()
             .post(format!("https://{host}.g.alchemy.com/v2/{key}"))
             .json(body)
@@ -157,7 +156,7 @@ fn call(chain_id: u64, body: &Value, cost: u64) -> Result<Value> {
     bail!(LIMITED)
 }
 
-/// Erreur d'une réponse JSON-RPC : limite de l'offre gratuite, ou refus.
+/// Error from a JSON-RPC response: a free-tier limit, or a refusal.
 fn check_error(reply: &Value) -> Result<()> {
     let Some(message) = error_message(reply) else { return Ok(()) };
     match refusal(message) {
@@ -166,9 +165,9 @@ fn check_error(reply: &Value) -> Result<()> {
     }
 }
 
-/// Un virement de la réponse (champs relevés le 10/10/2026), au format commun
-/// avec NodeReal. Montant brut : `rawContract.value` (`value` est arrondi, en
-/// unités affichées). Frais : 0 ici, complétés par `add_fees`.
+/// A transfer from the response (fields recorded on 2026-10-10), in the format
+/// shared with NodeReal. Raw amount: `rawContract.value` (`value` is rounded, in
+/// display units). Fee: 0 here, filled in by `add_fees`.
 fn transfer(value: &Value) -> Result<Transfer> {
     let text = |v: &Value| v.as_str().map(str::to_lowercase);
     let block = nodereal::number(&value["blockNum"]).context("réponse Alchemy : bloc absent")?;
@@ -201,15 +200,15 @@ fn fetch(chain_id: u64, params: Value) -> Result<(Vec<Transfer>, Option<String>)
     parse_transfers(&call(chain_id, &body, TRANSFERS_CU)?)
 }
 
-/// `with_zero` : garder les virements de montant nul — une transaction de
-/// l'adresse sans monnaie envoyée (envoi de jeton, approbation, échange)
-/// lui coûte quand même des frais (Alchemy les écarte par défaut).
+/// `with_zero`: keep zero-value transfers. A transaction from the address that
+/// sends no native coin (token transfer, approval, swap) still costs it fees
+/// (Alchemy drops them by default).
 fn params(categories: &[&str], with_zero: bool) -> Value {
     json!({ "category": categories, "order": "desc", "maxCount": format!("0x{BATCH:x}"), "withMetadata": true, "excludeZeroValue": !with_zero })
 }
 
-/// Frais d'un reçu de transaction : gaz × prix effectif, plus la part payée
-/// à la couche 1 sur les réseaux OP Stack (Base : `l1Fee`).
+/// Fee from a transaction receipt: gas × effective price, plus the share paid to
+/// layer 1 on OP Stack networks (Base: `l1Fee`).
 fn receipt_fee(receipt: &Value) -> Option<u128> {
     let gas = nodereal::number(&receipt["gasUsed"])?;
     let price = nodereal::number(&receipt["effectiveGasPrice"])?;
@@ -217,18 +216,19 @@ fn receipt_fee(receipt: &Value) -> Option<u128> {
     gas.checked_mul(price)?.checked_add(l1)
 }
 
-/// (réseau, transaction) → (frais, échec).
+/// (network, transaction) → (fee, failed).
 type ReceiptCache = HashMap<(u64, String), (u128, bool)>;
 
-/// Frais et échec des transactions déjà lues, par réseau : le reçu d'une
-/// transaction minée ne change plus, il n'est pas redemandé pendant la
-/// session (courbe relue toutes les 5 minutes, onglet Activité rouvert).
+/// Fee and failure status of transactions already read, per network. A mined
+/// transaction's receipt never changes, so it is not requested again during the
+/// session (the chart is reread every 5 minutes, and the Activity tab when it is
+/// reopened).
 fn receipt_cache() -> &'static Mutex<ReceiptCache> {
     static CACHE: OnceLock<Mutex<ReceiptCache>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// Reçus de `hashes` (lot JSON-RPC) : frais et échec de chacun.
+/// Receipts for `hashes` (JSON-RPC batch): the fee and failure status of each.
 fn fetch_receipts(chain_id: u64, hashes: &[String]) -> Result<Vec<(u128, bool)>> {
     let batch: Vec<Value> = hashes.iter().enumerate().map(|(i, hash)| json!({ "jsonrpc": "2.0", "id": i, "method": "eth_getTransactionReceipt", "params": [hash] })).collect();
     let reply = call(chain_id, &Value::Array(batch), RECEIPT_CU * hashes.len() as u64)?;
@@ -247,8 +247,8 @@ fn fetch_receipts(chain_id: u64, hashes: &[String]) -> Result<Vec<(u128, bool)>>
     found.into_iter().map(|r| r.context("réponse Alchemy : reçu manquant")).collect()
 }
 
-/// Complète les frais des transactions émises par `address` (virement
-/// externe qui part d'elle) : reçus pas encore connus demandés par lots.
+/// Fills in the fees of transactions sent by `address` (external transfers leaving
+/// it): receipts not yet known are requested in batches.
 fn add_fees(chain_id: u64, page: &mut [Transfer], address: &str) -> Result<()> {
     let address = address.to_lowercase();
     let sent = |t: &Transfer| t.category == "external" && t.from == address;
@@ -275,17 +275,18 @@ fn add_fees(chain_id: u64, page: &mut [Transfer], address: &str) -> Result<()> {
     Ok(())
 }
 
-/// Page d'historique de la monnaie du réseau `chain_id` pour `address`
-/// (transactions émises, monnaie reçue, y compris d'un contrat) et suite.
+/// A page of native-coin history on network `chain_id` for `address` (transactions
+/// sent, coins received, including from a contract), and the cursor for the next
+/// one.
 pub fn tx_history_page(chain_id: u64, address: &str, cursor: Option<&Cursor>) -> Result<(Vec<EvmTx>, Option<Cursor>)> {
     let (mut page, next) = nodereal::next_page(address, params(&["external"], true), params(&["external", "internal"], false), cursor, &mut |p| fetch(chain_id, p))?;
     add_fees(chain_id, &mut page, address)?;
     Ok((nodereal::transactions(&page, address), next))
 }
 
-/// Page des virements du jeton ERC-20 `contract` pour `address`, regroupés
-/// par transaction, et suite. Filtré par contrat chez Alchemy ET revérifié
-/// ici : un faux jeton au même symbole n'y entre jamais.
+/// A page of transfers of the ERC-20 token `contract` for `address`, grouped by
+/// transaction, and the cursor for the next one. Filtered by contract on Alchemy's
+/// side AND checked again here: a fake token with the same symbol never gets in.
 pub fn token_history_page(chain_id: u64, address: &str, contract: &str, cursor: Option<&Cursor>) -> Result<(Vec<TokenMove>, Option<Cursor>)> {
     let contract = contract.to_lowercase();
     let mut p = params(&["erc20"], false);
@@ -300,8 +301,8 @@ mod tests {
 
     const ME: &str = "0xd8da6bf26964aF9D7eEd9e03E53415D37aA96045";
 
-    /// Formats réels relevés le 10/10/2026 (Base : interne et externe ;
-    /// Polygon : USDC).
+    /// Real formats recorded on 2026-10-10 (Base: internal and external; Polygon:
+    /// USDC).
     #[test]
     fn real_transfer_formats_are_read() {
         let internal = json!({ "blockNum": "0x2c0bafa", "uniqueId": "0xcf9f:internal:0", "hash": "0xCF9F", "from": "0xabc", "to": ME, "value": 1e-13, "asset": "ETH", "category": "internal",
@@ -309,13 +310,13 @@ mod tests {
         let t = transfer(&internal).unwrap();
         assert_eq!((t.value, t.category.as_str(), t.contract, t.hash.as_str(), t.to.as_str()), (100_000, "internal", None, "0xcf9f", ME.to_lowercase().as_str()));
         assert_eq!(t.timestamp, crate::blockscout::parse_iso8601_utc("2026-10-09T12:13:11Z"));
-        // 20 735 jours après le 1/1/1970, plus 12 h 13 min 11 s.
+        // 20,735 days after 1970-01-01, plus 12 h 13 min 11 s.
         assert_eq!(t.timestamp, Some(20_735 * 86_400 + 43_991));
         let usdc = json!({ "blockNum": "0x57dad21", "uniqueId": "0x4845:log:1103", "hash": "0x4845", "from": ME, "to": "0xdef", "value": 0.5, "category": "erc20",
             "rawContract": { "value": "0x7a120", "address": "0x3C499c542cEF5E3811e1192ce70d8cC03d5c3359", "decimal": "0x6" }, "metadata": { "blockTimestamp": "2026-08-15T12:16:04.000Z" } });
         let t = transfer(&usdc).unwrap();
         assert_eq!((t.value, t.contract.as_deref()), (500_000, Some("0x3c499c542cef5e3811e1192ce70d8cc03d5c3359")));
-        // Montant brut absent : refusé plutôt que compté nul.
+        // Missing raw amount: rejected rather than counted as zero.
         let mut broken = usdc.clone();
         broken["rawContract"]["value"] = Value::Null;
         assert!(transfer(&broken).is_err());
@@ -330,7 +331,7 @@ mod tests {
         assert_eq!(receipt_fee(&json!({ "gasUsed": "0x5208" })), None);
     }
 
-    /// Messages réels d'Alchemy (documentation du 10/10/2026).
+    /// Real Alchemy messages (documentation as of 2026-10-10).
     #[test]
     fn limits_and_refusals_are_told_apart() {
         let per_second = "Your app has exceeded its compute units per second capacity. If you have retries enabled, you can safely ignore this message.";
@@ -350,8 +351,8 @@ mod tests {
         assert!(check_error(&json!({ "result": [] })).is_ok());
     }
 
-    /// Sous les 300 CU/s de l'offre gratuite : une page de virements toutes
-    /// les 0,6 s, un lot de 20 reçus toutes les 2 s.
+    /// Below the free tier's 300 CU/s: one page of transfers every 0.6 s, one batch of
+    /// 20 receipts every 2 s.
     #[test]
     fn calls_are_spaced_by_their_cost() {
         assert_eq!(spacing(TRANSFERS_CU), Duration::from_millis(600));
@@ -366,10 +367,10 @@ mod tests {
         assert_eq!(host(42_161), None);
     }
 
-    /// Service réel : chaque transaction émise d'une page, comparée au solde
-    /// lu sur le nœud au bloc précédent et à son bloc — la variation doit
-    /// être exactement le montant net moins les frais (frais L1 de Base
-    /// compris) quand c'est la seule transaction de l'adresse dans ce bloc.
+    /// Live service: each transaction sent on a page is compared with the balance read
+    /// from the node at the previous block and at its own block. The change must be
+    /// exactly the net amount minus the fee (including Base's L1 fee) when it is the
+    /// address's only transaction in that block.
     /// `cargo test -- --ignored real_alchemy --nocapture`
     #[test]
     #[ignore]
@@ -382,8 +383,8 @@ mod tests {
             let reply = call(chain, &json!({ "jsonrpc": "2.0", "id": 1, "method": "eth_getBalance", "params": [address, format!("0x{block:x}")] }), 20).unwrap();
             i128::try_from(nodereal::number(&reply["result"]).unwrap()).unwrap()
         };
-        // Polygon : vitalik.eth n'y envoie rien ; une adresse ordinaire qui
-        // envoie (49 envois dans des blocs distincts, relevée le 10/10/2026).
+        // Polygon: vitalik.eth sends nothing there, so we use an ordinary address that
+        // does (49 sends in separate blocks, recorded on 2026-10-10).
         let networks = [(8_453, ME, "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"), (137, "0x1d296189638ec7509b58eea83c681cde6bf90871", "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359")];
         for (chain, sender, usdc) in networks {
             let (txs, next) = tx_history_page(chain, sender, None).unwrap();
@@ -393,8 +394,8 @@ mod tests {
                 let (second, _) = tx_history_page(chain, sender, Some(next)).unwrap();
                 assert!(second.iter().all(|tx| !txs.iter().any(|t| t.hash == tx.hash)), "pages sans doublon");
             }
-            // Vérification au wei sur les transactions isolées dans leur bloc
-            // (blocs de toute la page lus en un lot de reçus).
+            // Checked to the wei on the transactions that are alone in their block (the blocks
+            // for the whole page are read in one batch of receipts).
             let batch: Vec<Value> = txs.iter().enumerate().map(|(i, t)| json!({ "jsonrpc": "2.0", "id": i, "method": "eth_getTransactionReceipt", "params": [t.hash] })).collect();
             let reply = call(chain, &Value::Array(batch), RECEIPT_CU * txs.len() as u64).unwrap();
             let mut blocks = vec![0u64; txs.len()];

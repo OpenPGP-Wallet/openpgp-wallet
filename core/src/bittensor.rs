@@ -1,18 +1,18 @@
-//! Bittensor (TAO) : chaîne Substrate. Adresse SS58 (format 42, « 5… »),
-//! clé sr25519 tirée de l'entropie maîtresse (même schéma que les
-//! portefeuilles Substrate : mini-secret = PBKDF2-HMAC-SHA512(entropie,
-//! « mnemonic », 2048)[..32], profils > 0 par dérivation dure « //n »),
-//! solde, envoi (`Balances.transfer_keep_alive`), historique (Taostats).
+//! Bittensor (TAO): a Substrate chain. SS58 address (format 42, "5…"), sr25519 key
+//! drawn from the master entropy (same scheme as Substrate wallets: mini-secret =
+//! PBKDF2-HMAC-SHA512(entropy, "mnemonic", 2048)[..32], profiles > 0 through hard
+//! derivation "//n"), balance, sending (`Balances.transfer_keep_alive`), history
+//! (Taostats).
 //!
-//! Le format d'une transaction dépend du runtime du réseau (mis à jour
-//! souvent) : à chaque envoi, ses métadonnées sont relues et doivent
-//! correspondre exactement à ce que ce module sait encoder (module et appel,
-//! types du destinataire et du montant, extensions de signature) ; sinon,
-//! refus net — jamais une transaction mal formée. Avant la diffusion, la
-//! transaction est validée par le nœud lui-même (`validate_transaction`).
+//! The transaction format depends on the network's runtime (which is updated
+//! often): on every send, its metadata is reread and must match exactly what this
+//! module knows how to encode (pallet and call, recipient and amount types, signed
+//! extensions); otherwise it is a flat refusal, never a malformed transaction.
+//! Before broadcasting, the transaction is validated by the node itself
+//! (`validate_transaction`).
 //!
-//! Formats vérifiés le 07/10/2026 sur le réseau réel (runtime 473) et contre
-//! les vecteurs de test de Substrate (comptes de développement).
+//! Formats verified on 2026-10-07 on the real network (runtime 473) and against
+//! Substrate's test vectors (development accounts).
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use blake2b_simd::Params;
@@ -25,17 +25,17 @@ use crate::history;
 use std::sync::Mutex;
 use std::time::Duration;
 
-/// Nœud public de Bittensor (Opentensor Foundation).
+/// Public Bittensor node (Opentensor Foundation).
 pub const RPC: &str = "https://entrypoint-finney.opentensor.ai";
-/// Bloc d'origine du réseau principal : tout autre nœud est refusé.
+/// Mainnet genesis block: any other node is refused.
 const GENESIS: [u8; 32] = hex_literal("2f0555cc76fc2840a25a6ea3b9637146806f1f44b090c175ffde2a7e5ab36c03");
 pub const DECIMALS: u8 = 9;
 const SS58_PREFIX: u8 = 42;
-/// Clé de stockage de `System.Account` : twox128("System") ++ twox128("Account").
+/// Storage key for `System.Account`: twox128("System") ++ twox128("Account").
 const SYSTEM_ACCOUNT: [u8; 32] = hex_literal("26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9");
-/// Durée de validité d'une transaction, en blocs (~13 min à 12 s le bloc).
+/// Transaction validity period, in blocks (~13 min at 12 s per block).
 const ERA_PERIOD: u64 = 64;
-/// `Balances` et `transfer_keep_alive` dans le runtime (relevés le 07/10/2026).
+/// `Balances` and `transfer_keep_alive` in the runtime (recorded on 2026-10-07).
 const BALANCES_PALLET: u8 = 5;
 const TRANSFER_KEEP_ALIVE: u8 = 3;
 
@@ -66,10 +66,10 @@ fn blake2_256(data: &[u8]) -> [u8; 32] {
     blake2(32, data).try_into().expect("32 octets")
 }
 
-// --- Clés et adresses ---------------------------------------------------------------------
+// --- Keys and addresses -------------------------------------------------------------------
 
-/// Paire de clés sr25519 du profil : racine pour le profil 0, dérivation
-/// dure « //n » au-delà (chemin numérique Substrate : n encodé en u64).
+/// The profile's sr25519 key pair: the root for profile 0, hard derivation "//n"
+/// beyond that (Substrate numeric path: n encoded as u64).
 pub fn keypair(entropy: &[u8], profile: u32) -> Result<Keypair> {
     ensure!((16..=32).contains(&entropy.len()) && entropy.len().is_multiple_of(4), "entropie de taille inattendue");
     let mut seed = zeroize::Zeroizing::new([0u8; 64]);
@@ -82,8 +82,8 @@ pub fn keypair(entropy: &[u8], profile: u32) -> Result<Keypair> {
     Ok(hard_derive(&root, &junction(&u64::from(profile).encode())))
 }
 
-/// Code de chaîne d'un segment de chemin (ses octets SCALE, complétés à 32,
-/// ou leur blake2-256 au-delà).
+/// Chain code of a path segment (its SCALE bytes padded to 32, or their blake2-256
+/// if longer).
 fn junction(encoded: &[u8]) -> [u8; 32] {
     let mut cc = [0u8; 32];
     if encoded.len() > 32 {
@@ -98,7 +98,7 @@ fn hard_derive(pair: &Keypair, cc: &[u8; 32]) -> Keypair {
     pair.secret.hard_derive_mini_secret_key(Some(schnorrkel::derive::ChainCode(*cc)), b"").0.expand_to_keypair(ExpansionMode::Ed25519)
 }
 
-/// Adresse SS58 (format 42) d'une clé publique.
+/// SS58 address (format 42) of a public key.
 pub fn address(public: &[u8; 32]) -> String {
     let mut body = vec![SS58_PREFIX];
     body.extend_from_slice(public);
@@ -113,10 +113,9 @@ fn ss58_checksum(body: &[u8]) -> Vec<u8> {
     blake2(64, &data)
 }
 
-/// Compte d'une adresse SS58 Bittensor (format 42, somme de contrôle
-/// vérifiée). Une adresse d'un autre réseau Substrate (Polkadot « 1… »,
-/// Kusama…) est refusée : c'est souvent une adresse de dépôt d'une
-/// plateforme pour CE réseau-là.
+/// Account of a Bittensor SS58 address (format 42, checksum verified). An address
+/// from another Substrate network (Polkadot "1…", Kusama…) is refused: it is often
+/// an exchange's deposit address for THAT network.
 pub fn parse_address(text: &str) -> Result<[u8; 32]> {
     let bytes = bs58::decode(text.trim()).into_vec().map_err(|_| anyhow!("adresse Bittensor invalide"))?;
     ensure!(bytes.len() == 35, "adresse Bittensor invalide");
@@ -125,14 +124,14 @@ pub fn parse_address(text: &str) -> Result<[u8; 32]> {
     Ok(bytes[1..33].try_into().expect("32 octets"))
 }
 
-// --- Nœud -----------------------------------------------------------------------------------
+// --- Node -----------------------------------------------------------------------------------
 
 fn client() -> &'static reqwest::blocking::Client {
     static CLIENT: std::sync::OnceLock<reqwest::blocking::Client> = std::sync::OnceLock::new();
     CLIENT.get_or_init(|| reqwest::blocking::Client::builder().timeout(Duration::from_secs(30)).build().expect("configuration du client HTTP valide"))
 }
 
-/// Erreur JSON-RPC du nœud (code et données), pour distinguer un refus net.
+/// JSON-RPC error from the node (code and data), to tell a flat refusal apart.
 #[derive(Debug)]
 pub struct NodeError {
     pub code: i64,
@@ -179,9 +178,9 @@ fn state_call(method: &str, data: &[u8], at: Option<&[u8; 32]>) -> Result<Vec<u8
     hex_bytes(&rpc("state_call", Value::Array(params))?)
 }
 
-// --- Compte ---------------------------------------------------------------------------------
+// --- Account --------------------------------------------------------------------------------
 
-/// État d'un compte (en RAO, 10⁻⁹ TAO).
+/// State of an account (in RAO, 10⁻⁹ TAO).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Account {
     pub nonce: u32,
@@ -191,7 +190,7 @@ pub struct Account {
 }
 
 impl Account {
-    /// Dépensable : le libre moins la part gelée qui n'est pas déjà réservée.
+    /// Spendable: the free balance minus the frozen part that is not already reserved.
     pub fn spendable(&self) -> u64 {
         self.free.saturating_sub(self.frozen.saturating_sub(self.reserved))
     }
@@ -227,22 +226,22 @@ fn account_of(id: &[u8; 32]) -> Result<Account> {
     }
 }
 
-/// Solde affiché : TAO libres (en RAO).
+/// Displayed balance: free TAO (in RAO).
 pub fn balance(address_text: &str) -> Result<u64> {
     Ok(account(address_text)?.free)
 }
 
-/// RAO → texte en TAO (9 décimales, comme les autres soldes).
+/// RAO → text in TAO (9 decimals, like the other balances).
 pub fn format_tao(rao: u64) -> String {
     format!("{}.{:09}", rao / 1_000_000_000, rao % 1_000_000_000)
 }
 
-// --- Format des transactions ----------------------------------------------------------------
+// --- Transaction format ---------------------------------------------------------------------
 
-/// Extension de signature, telle que ce module l'encode.
+/// A signed extension, as this module encodes it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Extension {
-    /// Sans contenu (rien d'encodé).
+    /// No content (nothing encoded).
     Empty,
     SpecVersion,
     TxVersion,
@@ -253,20 +252,20 @@ enum Extension {
     MetadataHash,
 }
 
-/// Ce que les métadonnées du runtime imposent, vérifié une fois par version.
+/// What the runtime metadata requires, checked once per version.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Layout {
     spec_version: u32,
     tx_version: u32,
     balances: u8,
     transfer_keep_alive: u8,
-    /// Réserve minimale d'un compte (`Balances.ExistentialDeposit`, 500 RAO
-    /// le 07/10/2026).
+    /// Minimum balance an account must keep (`Balances.ExistentialDeposit`, 500 RAO on
+    /// 2026-10-07).
     existential_deposit: u64,
     extensions: Vec<Extension>,
 }
 
-/// Type sans contenu (rien à encoder) ?
+/// A type with no content (nothing to encode)?
 fn zero_sized(registry: &PortableRegistry, id: u32) -> bool {
     match registry.resolve(id).map(|t| &t.type_def) {
         Some(TypeDef::Composite(c)) => c.fields.iter().all(|f| zero_sized(registry, f.ty.id)),
@@ -276,7 +275,7 @@ fn zero_sized(registry: &PortableRegistry, id: u32) -> bool {
     }
 }
 
-/// Le type `id` (ou son seul champ) est-il de cette forme ?
+/// Is the type `id` (or its only field) of this shape?
 fn unwrap_single(registry: &PortableRegistry, id: u32) -> Option<&TypeDef<PortableForm>> {
     let def = &registry.resolve(id)?.type_def;
     match def {
@@ -297,7 +296,7 @@ fn is_compact_of(registry: &PortableRegistry, id: u32, primitive: TypeDefPrimiti
     matches!(unwrap_single(registry, id), Some(TypeDef::Compact(c)) if is_primitive(registry, c.type_param.id, primitive))
 }
 
-/// Extensions reconnues : nom, et forme exacte de leurs données.
+/// Recognized extensions: name, and the exact shape of their data.
 fn classify_extension(registry: &PortableRegistry, name: &str, extra: u32, additional: u32) -> Result<Extension> {
     let (empty_extra, empty_additional) = (zero_sized(registry, extra), zero_sized(registry, additional));
     let ok = match name {
@@ -322,13 +321,12 @@ fn layout_from(metadata: &RuntimeMetadataV14, spec_version: u32, tx_version: u32
     let calls = pallet.calls.as_ref().context(update)?;
     let Some(TypeDef::Variant(variants)) = registry.resolve(calls.ty.id).map(|t| &t.type_def) else { bail!(update) };
     let call = variants.variants.iter().find(|v| v.name == "transfer_keep_alive").context(update)?;
-    // Index du module et de l'appel figés (relevés le 07/10/2026) : un nœud
-    // qui annoncerait d'autres index ferait signer un autre appel que le
-    // virement affiché (33ᵉ passage). Un vrai changement du réseau exigera
-    // une mise à jour de l'app.
+    // Pallet and call indexes are frozen (recorded on 2026-10-07): a node announcing
+    // other indexes would make us sign a different call from the transfer shown (audit
+    // round 33). A genuine change on the network will require an app update.
     ensure!((pallet.index, call.index) == (BALANCES_PALLET, TRANSFER_KEEP_ALIVE), update);
     ensure!(call.fields.len() == 2, update);
-    // Destinataire : MultiAddress, « Id » en variante 0 ; montant : Compact<u64>.
+    // Recipient: MultiAddress, "Id" as variant 0; amount: Compact<u64>.
     let Some(TypeDef::Variant(dest)) = registry.resolve(call.fields[0].ty.id).map(|t| &t.type_def) else { bail!(update) };
     let id = dest.variants.iter().find(|v| v.name == "Id").context(update)?;
     ensure!(id.index == 0 && id.fields.len() == 1 && unwrap_single(registry, id.fields[0].ty.id).is_some_and(|d| matches!(d, TypeDef::Array(a) if a.len == 32)), update);
@@ -347,7 +345,7 @@ fn layout_from(metadata: &RuntimeMetadataV14, spec_version: u32, tx_version: u32
     Ok(Layout { spec_version, tx_version, balances: pallet.index, transfer_keep_alive: call.index, existential_deposit, extensions })
 }
 
-/// Format du runtime en cours (relu à chaque changement de version).
+/// Format of the current runtime (reread whenever the version changes).
 fn layout() -> Result<Layout> {
     static CACHE: Mutex<Option<Layout>> = Mutex::new(None);
     let runtime = rpc("state_getRuntimeVersion", json!([]))?;
@@ -365,7 +363,7 @@ fn layout() -> Result<Layout> {
     Ok(fresh)
 }
 
-/// Ère mortelle (période, bloc courant) encodée sur 2 octets.
+/// Mortal era (period, current block) encoded on 2 bytes.
 fn mortal_era(period: u64, current: u64) -> [u8; 2] {
     let period = period.next_power_of_two().clamp(4, 1 << 16);
     let phase = current % period;
@@ -374,7 +372,7 @@ fn mortal_era(period: u64, current: u64) -> [u8; 2] {
     encoded.to_le_bytes()
 }
 
-/// Données variables d'une transaction (lues sur le réseau).
+/// Variable data of a transaction (read from the network).
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct TxContext {
     nonce: u32,
@@ -382,7 +380,7 @@ struct TxContext {
     block_hash: [u8; 32],
 }
 
-/// Appel `Balances.transfer_keep_alive(Id(dest), Compact(value))`.
+/// The `Balances.transfer_keep_alive(Id(dest), Compact(value))` call.
 fn transfer_call(layout: &Layout, dest: &[u8; 32], value: u64) -> Vec<u8> {
     let mut call = vec![layout.balances, layout.transfer_keep_alive, 0x00];
     call.extend_from_slice(dest);
@@ -390,8 +388,7 @@ fn transfer_call(layout: &Layout, dest: &[u8; 32], value: u64) -> Vec<u8> {
     call
 }
 
-/// Données des extensions : « extra » (dans la transaction) et
-/// « additionnelles » (signées seulement).
+/// Extension data: "extra" (inside the transaction) and "additional" (signed only).
 fn extensions(layout: &Layout, ctx: &TxContext) -> (Vec<u8>, Vec<u8>) {
     let (mut extra, mut additional) = (Vec::new(), Vec::new());
     for extension in &layout.extensions {
@@ -407,7 +404,7 @@ fn extensions(layout: &Layout, ctx: &TxContext) -> (Vec<u8>, Vec<u8>) {
             Extension::Nonce => Compact(ctx.nonce).encode_to(&mut extra),
             Extension::Tip => Compact(0u64).encode_to(&mut extra),
             Extension::MetadataHash => {
-                extra.push(0); // mode « Disabled »
+                extra.push(0); // "Disabled" mode
                 additional.push(0); // None
             }
         }
@@ -415,8 +412,8 @@ fn extensions(layout: &Layout, ctx: &TxContext) -> (Vec<u8>, Vec<u8>) {
     (extra, additional)
 }
 
-/// Transaction signée (encodée, longueur comprise). `sign` reçoit les
-/// octets à signer (le message, ou son blake2-256 au-delà de 256 octets).
+/// Signed transaction (encoded, length included). `sign` receives the bytes to sign
+/// (the message, or its blake2-256 beyond 256 bytes).
 fn signed_extrinsic(layout: &Layout, ctx: &TxContext, from: &[u8; 32], call: &[u8], sign: impl FnOnce(&[u8]) -> [u8; 64]) -> Vec<u8> {
     let (extra, additional) = extensions(layout, ctx);
     let mut payload = call.to_vec();
@@ -438,7 +435,7 @@ fn sr25519_sign(pair: &Keypair, message: &[u8]) -> [u8; 64] {
     pair.sign(schnorrkel::signing_context(b"substrate").bytes(message)).to_bytes()
 }
 
-/// Bloc finalisé (numéro, empreinte), nonce du compte, et contrôle du réseau.
+/// Finalized block (number, hash), account nonce, and network check.
 fn context(from: &str) -> Result<TxContext> {
     let genesis = hex_bytes(&rpc("chain_getBlockHash", json!([0]))?)?;
     ensure!(genesis == GENESIS, "ce nœud n'est pas sur le réseau principal Bittensor");
@@ -450,13 +447,13 @@ fn context(from: &str) -> Result<TxContext> {
     Ok(TxContext { nonce, block_number, block_hash })
 }
 
-/// Résultat de la validation par le nœud (sans diffusion).
+/// Result of validation by the node (without broadcasting).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Validity {
     Valid,
-    /// Refus du runtime : 1 = frais impayables, 4 = signature invalide…
+    /// Refused by the runtime: 1 = fees cannot be paid, 4 = invalid signature…
     Invalid(u8),
-    /// Validité indéterminée (code « Unknown »).
+    /// Validity undetermined ("Unknown" code).
     Unknown(u8),
 }
 
@@ -473,7 +470,7 @@ fn validate(extrinsic: &[u8], at: &[u8; 32]) -> Result<Validity> {
     })
 }
 
-/// Frais estimés par le runtime (`TransactionPaymentApi_query_info`), en RAO.
+/// Fee estimated by the runtime (`TransactionPaymentApi_query_info`), in RAO.
 fn query_fee(extrinsic: &[u8]) -> Result<u64> {
     let mut data = extrinsic.to_vec();
     (extrinsic.len() as u32).encode_to(&mut data);
@@ -497,7 +494,7 @@ fn validity_error(validity: Validity) -> anyhow::Error {
     }
 }
 
-/// Envoi préparé pour la boîte de confirmation : montant et frais exacts.
+/// A send prepared for the confirmation dialog: exact amount and fee.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TaoPlan {
     pub to: String,
@@ -505,22 +502,22 @@ pub struct TaoPlan {
     pub fee: u64,
 }
 
-/// Frais au-delà desquels l'envoi est refusé (un virement coûte ~0,0001 TAO
-/// le 07/10/2026) : un nœud qui annoncerait des frais aberrants.
+/// Fee above which the send is refused (a transfer cost ~0.0001 TAO on 2026-10-07):
+/// protects against a node announcing absurd fees.
 const MAX_FEE: u64 = 10_000_000;
 
-/// Frais d'un virement de `amount` vers `to_id`, estimés sur la transaction
-/// réelle signée par une signature factice (même longueur).
+/// Fee for a transfer of `amount` to `to_id`, estimated on the real transaction
+/// signed with a dummy signature (same length).
 fn transfer_fee(layout: &Layout, ctx: &TxContext, from_id: &[u8; 32], to_id: &[u8; 32], amount: u64) -> Result<u64> {
     let fee = query_fee(&signed_extrinsic(layout, ctx, from_id, &transfer_call(layout, to_id, amount), |_| [0u8; 64]))?;
     ensure!(fee <= MAX_FEE, "frais du réseau Bittensor anormalement élevés ({} TAO) — réessayez plus tard", format_tao(fee));
     Ok(fee)
 }
 
-/// Prépare un virement : solde, frais, réserve minimale de l'envoyeur
-/// (`transfer_keep_alive`), et compte destinataire ouvert par ce virement.
-/// Ces refus-là ne sont PAS vus par la validation du nœud : la transaction
-/// partirait, frais payés, puis échouerait.
+/// Prepares a transfer: balance, fee, the sender's minimum balance
+/// (`transfer_keep_alive`), and a recipient account opened by this transfer. The
+/// node's validation does NOT catch these refusals: the transaction would go out,
+/// pay its fee, then fail.
 pub fn plan(from: &str, to: &str, amount: u64) -> Result<TaoPlan> {
     let from_id = parse_address(from)?;
     let to_id = parse_address(to)?;
@@ -548,14 +545,14 @@ pub fn plan(from: &str, to: &str, amount: u64) -> Result<TaoPlan> {
     Ok(TaoPlan { to: address(&to_id), amount, fee })
 }
 
-/// État d'une adresse destinataire, pour les avertissements de la boîte :
-/// (détient des TAO, déjà utilisée).
+/// State of a recipient address, for the dialog's warnings: (holds TAO, already
+/// used).
 pub fn address_activity(address_text: &str) -> Result<(bool, bool)> {
     let account = account(address_text)?;
     Ok((account.free.saturating_add(account.reserved) > 0, account.nonce > 0))
 }
 
-/// Montant maximal envoyable (frais et réserve minimale déduits).
+/// Maximum amount that can be sent (fee and minimum balance deducted).
 pub fn max_amount(from: &str, to: Option<&str>) -> Result<u64> {
     let from_id = parse_address(from)?;
     let to_id = to.and_then(|t| parse_address(t).ok()).unwrap_or([1u8; 32]);
@@ -568,9 +565,9 @@ pub fn max_amount(from: &str, to: Option<&str>) -> Result<u64> {
     Ok(max)
 }
 
-/// Signe, fait valider par le nœud, puis diffuse ; renvoie l'empreinte de
-/// la transaction. Refus net : rien n'est parti ; sans réponse nette après
-/// l'envoi : « peut-être partie » (voir `wallet_flow::maybe_sent`).
+/// Signs, has the node validate, then broadcasts; returns the transaction hash. A
+/// flat refusal means nothing went out; without a clear answer after sending:
+/// "maybe sent" (see `wallet_flow::maybe_sent`).
 pub fn send(pair: &Keypair, plan: &TaoPlan) -> Result<String> {
     let from_id = pair.public.to_bytes();
     let from = address(&from_id);
@@ -585,9 +582,9 @@ pub fn send(pair: &Keypair, plan: &TaoPlan) -> Result<String> {
     let hash = format!("0x{}", hex::encode(blake2_256(&extrinsic)));
     match rpc("author_submitExtrinsic", json!([format!("0x{}", hex::encode(&extrinsic))])) {
         Ok(returned) => {
-            // Le nœud renvoie l'empreinte de ce qu'il a reçu : la même. Sinon,
-            // transaction quand même acceptée : « peut-être partie », jamais
-            // « refusée » — un nouvel envoi la paierait deux fois (32ᵉ passage).
+            // The node returns the hash of what it received: the same one. Otherwise, the
+            // transaction was still accepted: "maybe sent", never "refused", since sending
+            // again would pay twice (audit round 32).
             if !returned.as_str().is_some_and(|r| r.eq_ignore_ascii_case(&hash)) {
                 return Err(crate::wallet_flow::maybe_sent(&hash));
             }
@@ -599,7 +596,7 @@ pub fn send(pair: &Keypair, plan: &TaoPlan) -> Result<String> {
                 return Ok(hash);
             }
             if node.is_some() {
-                // Refus net du nœud (validation, débit) : rien n'est parti.
+                // Flat refusal from the node (validation, rate limit): nothing went out.
                 return Err(e);
             }
             match e.chain().find_map(|c| c.downcast_ref::<reqwest::Error>()) {
@@ -610,11 +607,12 @@ pub fn send(pair: &Keypair, plan: &TaoPlan) -> Result<String> {
     }
 }
 
-// --- Historique (Taostats) ----------------------------------------------------------------
+// --- History (Taostats)
+// --------------------------------------------------------------------
 
-/// Clé de l'API Taostats, intégrée À LA COMPILATION (`TAOSTATS_API_KEY` dans
-/// `partner-keys.env`, voir build.rs) : sans elle, la page de l'adresse sur
-/// l'explorateur à la place.
+/// Taostats API key, embedded AT BUILD TIME (`TAOSTATS_API_KEY` in
+/// `partner-keys.env`, see build.rs). Without it, the address's page on the
+/// explorer is shown instead.
 const TAOSTATS_KEY: Option<&str> = option_env!("TAOSTATS_API_KEY");
 const TAOSTATS: &str = "https://api.taostats.io/api/transfer/v1";
 pub const HISTORY_KEY_MISSING: &str = "historique Bittensor indisponible dans cette version de l'app";
@@ -624,19 +622,19 @@ pub fn history_available() -> bool {
     TAOSTATS_KEY.is_some()
 }
 
-/// Page de l'adresse sur l'explorateur Taostats.
+/// The address's page on the Taostats explorer.
 pub fn explorer_address_url(address_text: &str) -> String {
     format!("https://taostats.io/account/{}", address_text.trim())
 }
 
-/// Lien d'une transaction de l'historique (identifiant « bloc-index »).
+/// Link for a history transaction (identifier "block-index").
 pub fn explorer_tx_url(extrinsic_id: &str) -> String {
     format!("https://taostats.io/extrinsic/{extrinsic_id}")
 }
 
-/// Virements de TAO de l'adresse (reçus − envoyés, frais de l'envoyeur à
-/// part), les plus récents d'abord. Identifiant : « bloc-index » de la
-/// transaction (celui des liens de Taostats).
+/// TAO transfers of the address (received − sent, sender fees kept separate), most
+/// recent first. Identifier: the transaction's "block-index" (the one Taostats
+/// links use).
 pub fn history(address_text: &str, limit: usize) -> Result<Vec<history::TxEntry>> {
     let me = parse_address(address_text)?;
     let key = TAOSTATS_KEY.ok_or_else(|| anyhow!(HISTORY_KEY_MISSING))?;
@@ -651,7 +649,7 @@ pub fn history(address_text: &str, limit: usize) -> Result<Vec<history::TxEntry>
     parse_transfers(&response.json().context("réponse de Taostats illisible")?, &me)
 }
 
-/// Compte d'une partie (« from »/« to ») d'un virement Taostats.
+/// Account of one party ("from"/"to") of a Taostats transfer.
 fn party(value: &Value) -> Option<[u8; 32]> {
     value["ss58"].as_str().and_then(|s| parse_address(s).ok()).or_else(|| hex::decode(value["hex"].as_str()?.trim_start_matches("0x")).ok()?.try_into().ok())
 }
@@ -675,8 +673,7 @@ fn parse_transfers(body: &Value, me: &[u8; 32]) -> Result<Vec<history::TxEntry>>
         }
         let net = if received { amount } else { 0 } - if sent { amount } else { 0 };
         let fee = if sent { rao(&item["fee"]).unwrap_or(0) } else { 0 };
-        // Plusieurs virements dans une même transaction (lot) : une ligne,
-        // frais comptés une fois.
+        // Several transfers in the same transaction (batch): one line, fee counted once.
         if let Some(entry) = entries.iter_mut().find(|e| e.id == id) {
             entry.net_amount_minor = entry.net_amount_minor.map(|n| n + net);
             entry.fee_minor = entry.fee_minor.max(fee);
@@ -685,7 +682,7 @@ fn parse_transfers(body: &Value, me: &[u8; 32]) -> Result<Vec<history::TxEntry>>
         entries.push(history::TxEntry {
             id: id.to_string(),
             timestamp_unix: item["timestamp"].as_str().and_then(crate::blockscout::parse_iso8601_utc),
-            // Taostats ne liste que les virements exécutés.
+            // Taostats only lists executed transfers.
             status: history::TxStatus::Confirmed,
             net_amount_minor: Some(net),
             fee_minor: fee,
@@ -712,8 +709,8 @@ mod tests {
         bip39::Mnemonic::parse(DEV_PHRASE).unwrap().to_entropy()
     }
 
-    /// Vecteurs des comptes de développement Substrate (phrase publique
-    /// DEV_PHRASE) : chemins durs « //Alice », « //Bob », adresses SS58 42.
+    /// Vectors from Substrate's development accounts (public phrase DEV_PHRASE): hard
+    /// paths "//Alice", "//Bob", SS58 42 addresses.
     #[test]
     fn keys_and_addresses_match_substrate() {
         let mini = {
@@ -726,15 +723,15 @@ mod tests {
         assert_eq!(hex::encode(alice.public.to_bytes()), "d43593c715fdd31c61141abd04a99fd6822c8558854ccde39a5684e7a56da27d");
         assert_eq!(address(&alice.public.to_bytes()), "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY");
         assert_eq!(address(&derive("Bob").public.to_bytes()), "5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty");
-        // Racine (profil 0) et profil 1 (« //1 ») : distincts et stables.
+        // Root (profile 0) and profile 1 ("//1"): distinct and stable.
         let root = keypair(&dev_entropy(), 0).unwrap();
         assert_eq!(root.public, mini.public);
         assert_ne!(keypair(&dev_entropy(), 1).unwrap().public, root.public);
         assert_eq!(keypair(&dev_entropy(), 1).unwrap().public, hard_derive(&mini, &junction(&1u64.encode())).public);
-        // Lecture d'adresse : somme de contrôle, réseau.
+        // Address parsing: checksum, network.
         assert_eq!(parse_address("5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY").unwrap(), alice.public.to_bytes());
         assert!(parse_address("5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQZ").is_err());
-        // Même compte au format Polkadot (0) : refusé.
+        // The same account in Polkadot format (0): refused.
         let polkadot = {
             let mut body = vec![0u8];
             body.extend_from_slice(&alice.public.to_bytes());
@@ -746,7 +743,7 @@ mod tests {
         assert!(parse_address(&polkadot).unwrap_err().to_string().contains("autre réseau"));
     }
 
-    /// Ère mortelle : vecteurs de Substrate (`Era::mortal`).
+    /// Mortal era: Substrate's vectors (`Era::mortal`).
     #[test]
     fn eras_match_substrate() {
         assert_eq!(mortal_era(64, 42), [0xa5, 0x02]);
@@ -763,9 +760,9 @@ mod tests {
         assert_eq!((account.nonce, account.free, account.spendable()), (7, 5_000, 4_800));
     }
 
-    /// Virements Taostats (format de leur documentation) : sens, frais de
-    /// l'envoyeur seulement, lot d'une même transaction fusionné, lignes
-    /// d'autres comptes ou illisibles écartées.
+    /// Taostats transfers (format from their documentation): direction, sender fees
+    /// only, a batch within one transaction merged, lines for other accounts or
+    /// unreadable lines dropped.
     #[test]
     fn taostats_transfers_are_read() {
         let me = parse_address("5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY").unwrap();
@@ -776,7 +773,7 @@ mod tests {
               "from": { "ss58": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY", "hex": me_hex }, "to": { "ss58": bob } },
             { "extrinsic_id": "6611400-0002", "timestamp": "2025-02-26T13:00:00Z", "amount": "250000000", "fee": "90000",
               "from": { "ss58": bob }, "to": { "ss58": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY" } },
-            // Lot : deux virements dans la même transaction.
+            // Batch: two transfers in the same transaction.
             { "extrinsic_id": "6611300-0005", "amount": "100", "fee": "70000", "from": { "hex": me_hex }, "to": { "ss58": bob } },
             { "extrinsic_id": "6611300-0005", "amount": "200", "fee": "70000", "from": { "hex": me_hex }, "to": { "ss58": bob } },
             { "extrinsic_id": "6611200-0001", "amount": "5", "fee": "1", "from": { "ss58": bob }, "to": { "ss58": bob } },
@@ -796,7 +793,7 @@ mod tests {
         assert!(parse_transfers(&json!({ "message": "x" }), &me).is_err());
     }
 
-    /// Réel : métadonnées du réseau conformes au format encodé ici.
+    /// Live: the network's metadata matches the format encoded here.
     /// `cargo test -- --ignored real_bittensor_layout --nocapture`
     #[test]
     #[ignore]
@@ -806,11 +803,11 @@ mod tests {
         assert_eq!((layout.balances, layout.transfer_keep_alive, layout.existential_deposit), (5, 3, 500));
     }
 
-    /// Réel : un virement correctement signé depuis un compte vide est
-    /// refusé par le nœud pour frais impayables (code 1) — jamais pour
-    /// signature invalide (4) : signature et extensions sont donc justes.
-    /// Une signature altérée, elle, est refusée comme invalide. Rien n'est
-    /// diffusé (`validate_transaction` seulement). Frais estimés.
+    /// Live: a correctly signed transfer from an empty account is refused by the node
+    /// because the fee cannot be paid (code 1), never for an invalid signature (4),
+    /// which proves the signature and extensions are right. A tampered signature, on
+    /// the other hand, is refused as invalid. Nothing is broadcast
+    /// (`validate_transaction` only). Fee estimated.
     /// `cargo test -- --ignored real_bittensor_signature --nocapture`
     #[test]
     #[ignore]
@@ -833,11 +830,11 @@ mod tests {
         assert_eq!(validate(&forged, &ctx.block_hash).unwrap(), Validity::Invalid(4), "signature altérée : refus attendu");
     }
 
-    /// Réel (clé Taostats requise) : historique d'un compte actif recoupé
-    /// avec la chaîne. Chaque ligne « bloc-index » désigne bien la
-    /// transaction dont Taostats donne l'empreinte (blake2-256 des octets lus
-    /// sur le nœud) ; pour un virement direct (`Balances`), destinataire et
-    /// montant relus dans la transaction = ceux de l'historique.
+    /// Live (Taostats key required): history of an active account cross-checked against
+    /// the chain. Each "block-index" line does point to the transaction whose hash
+    /// Taostats gives (blake2-256 of the bytes read from the node); for a direct
+    /// transfer (`Balances`), the recipient and amount reread from the transaction
+    /// match the history.
     /// `cargo test -- --ignored real_taostats_history --nocapture`
     #[test]
     #[ignore]
@@ -847,7 +844,7 @@ mod tests {
         let me = parse_address(me_text).unwrap();
         let entries = history(me_text, 20).unwrap();
         assert!(!entries.is_empty(), "aucun virement");
-        // Données brutes (empreintes), même requête.
+        // Raw data (hashes), same request.
         let raw: Value = client()
             .get(format!("{TAOSTATS}?network=finney&address={me_text}&limit=20&order=block_number_desc"))
             .header("Authorization", TAOSTATS_KEY.unwrap())
@@ -865,7 +862,7 @@ mod tests {
             let expected = raw["data"].as_array().unwrap().iter().find(|i| i["extrinsic_id"] == entry.id.as_str()).unwrap()["transaction_hash"].as_str().unwrap().to_lowercase();
             assert_eq!(format!("0x{}", hex::encode(blake2_256(&extrinsic))), expected, "{} : autre transaction à cette position", entry.id);
             hashes += 1;
-            // Virement direct signé (format du runtime actuel) : appel relu.
+            // Signed direct transfer (current runtime format): call reread.
             let mut input = &extrinsic[..];
             let _len = Compact::<u32>::decode(&mut input).unwrap();
             if input.len() < 100 || input[0] != 0x84 || input[1] != 0x00 || input[34] != 0x01 {
@@ -902,10 +899,10 @@ mod tests {
         assert!(amounts > 0, "aucun virement direct à recouper");
     }
 
-    /// Réel : signataires de transactions récentes : nonce décodé égal à
-    /// celui du nœud (`system_accountNextIndex`, autre chemin) à quelques
-    /// transactions en attente près ; au moins un compte actif (nonce et
-    /// solde non nuls — un compte vidé est supprimé, nonce compris).
+    /// Live: signers of recent transactions. The decoded nonce matches the node's
+    /// (`system_accountNextIndex`, a different path) give or take a few pending
+    /// transactions; at least one active account (non-zero nonce and balance: an
+    /// emptied account is deleted, nonce included).
     /// `cargo test -- --ignored real_bittensor_account --nocapture`
     #[test]
     #[ignore]
