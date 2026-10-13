@@ -1,30 +1,27 @@
-//! LI.FI : échanges directs entre deux écosystèmes (ex. RENDER sur Solana →
-//! LINK sur Ethereum), là où THORChain, Maya, Jupiter et CoW ne relient rien.
-//! LI.FI est un agrégateur : il choisit un pont (Mayan, Relay, Layerswap…) et
-//! construit LUI-MÊME la transaction, que l'app ne peut donc pas reconstruire
-//! comme un memo THORChain ou un ordre CoW. Elle est vérifiée avant
-//! signature :
-//! - source EVM : simulation (`eth_simulateV1`) de l'autorisation et de
-//!   l'appel, puis lecture des événements émis par le contrat LI.FI — seul le
-//!   jeton vendu quitte l'utilisateur, au montant exact, et le destinataire
-//!   émis par le contrat est celui affiché. Un pont qui garde le destinataire
-//!   hors chaîne (« Relay depository ») est écarté et un nouveau devis
-//!   demandé sans lui. Avalanche : ses nœuds ne simulent pas,
-//!   le destinataire est lu dans les données de l'appel (destination EVM
-//!   seulement) ;
-//! - source Solana : simulation des effets sur les comptes de l'utilisateur
-//!   (même contrôle que Jupiter, voir `api::send_lifi_solana`) ; le
-//!   destinataire, géré hors chaîne par le pont, n'est pas vérifiable — la
-//!   boîte de confirmation le dit ;
-//! - source Bitcoin : PSBT relue sortie par sortie (`verify_btc_deposit`) —
-//!   entrées de l'utilisateur, un seul dépôt, frais bornés — puis
-//!   re-sérialisée et signée par l'app ; destinataire non vérifiable non
-//!   plus (pont hors chaîne), dit dans la boîte de confirmation.
+//! LI.FI: direct swaps between two ecosystems (e.g. RENDER on Solana → LINK on
+//! Ethereum), where THORChain, Maya, Jupiter and CoW connect nothing. LI.FI is an
+//! aggregator: it picks a bridge (Mayan, Relay, Layerswap…) and builds the
+//! transaction ITSELF, so the app cannot rebuild it the way it does a THORChain
+//! memo or a CoW order. It is verified before signing:
+//! - EVM source: simulation (`eth_simulateV1`) of the approval and the call, then
+//!   reading the events emitted by the LI.FI contract. Only the token sold leaves
+//!   the user, for the exact amount, and the recipient emitted by the contract is
+//!   the one shown. A bridge that keeps the recipient off-chain ("Relay
+//!   depository") is dropped and a new quote requested without it. Avalanche: its
+//!   nodes do not simulate, so the recipient is read from the calldata (EVM
+//!   destination only);
+//! - Solana source: simulation of the effects on the user's accounts (same check as
+//!   Jupiter, see `api::send_lifi_solana`); the recipient, handled off-chain by the
+//!   bridge, cannot be verified, and the confirmation dialog says so;
+//! - Bitcoin source: the PSBT is reread output by output (`verify_btc_deposit`: the
+//!   user's inputs, a single deposit, bounded fees), then re-serialized and signed
+//!   by the app; the recipient cannot be verified either (off-chain bridge), as
+//!   stated in the confirmation dialog.
 //!
-//! Sans clé d'API (elle ne doit jamais être embarquée dans une app installée) :
-//! 75 devis par 2 heures et par adresse IP, assez pour un portefeuille. Les
-//! frais intégrateur (`FEE`) exigent un compte sur portal.li.fi : tant que
-//! `INTEGRATOR` n'est pas renseigné, aucune route LI.FI n'est proposée.
+//! No API key (one must never be embedded in an installed app): 75 quotes per 2
+//! hours per IP address, plenty for a wallet. Integrator fees (`FEE`) require an
+//! account on portal.li.fi: as long as `INTEGRATOR` is not set, no LI.FI route is
+//! offered.
 
 use crate::{btc_psbt, btc_tx, derivation, eth_rpc, evm_sign, tokens, wallet_flow};
 use anyhow::{anyhow, bail, ensure, Context, Result};
@@ -32,30 +29,29 @@ use serde_json::Value;
 use std::sync::OnceLock;
 
 const API_BASE: &str = "https://li.quest/v1";
-/// Nom d'intégrateur enregistré sur portal.li.fi par l'utilisateur le
-/// 02/10/2026 (portefeuilles de frais configurés là-bas ; frais acceptés par
-/// LI.FI, vérifié sur de vrais devis : « LIFI Fixed Fee » 1,05 % = 0,25 % de
-/// LI.FI + nos 0,80 %). Sans lui (`None`), aucune route LI.FI.
+/// Integrator name registered on portal.li.fi on 2026-10-02 (fee wallets configured
+/// there; fees accepted by LI.FI, checked on real quotes: "LIFI Fixed Fee" 1.05% =
+/// LI.FI's 0.25% + our 0.80%). Without it (`None`), no LI.FI route.
 pub const INTEGRATOR: Option<&str> = Some("openpgp-wallet");
-/// Frais intégrateur : 0,80 % du montant envoyé (LI.FI prend en plus 0,25 %).
+/// Integrator fee: 0.80% of the amount sent (LI.FI takes an extra 0.25%).
 pub const FEE: f64 = 0.008;
-/// Frais de LI.FI lui-même, en plus des nôtres (relevé sur de vrais devis :
-/// « LIFI Fixed Fee » 1,05 % = 0,25 % + nos 0,80 %).
+/// LI.FI's own fee, on top of ours (recorded on real quotes: "LIFI Fixed Fee" 1.05%
+/// = 0.25% + our 0.80%).
 const LIFI_OWN_FEE_BPS: u128 = 25;
-/// Glissement toléré (1 %), garanti par le pont.
+/// Tolerated slippage (1%), guaranteed by the bridge.
 const SLIPPAGE: &str = "0.01";
-/// Identifiants de chaîne LI.FI des réseaux non EVM.
+/// LI.FI chain IDs for non-EVM networks.
 pub const SOLANA_CHAIN: u64 = 1_151_111_081_099_710;
 pub const BITCOIN_CHAIN: u64 = 20_000_000_000_001;
-/// Destinataire inscrit par le contrat LI.FI quand l'arrivée n'est pas sur un
-/// réseau EVM (le vrai est émis à part, `BridgeToNonEVMChain…`).
+/// Recipient written by the LI.FI contract when the destination is not an EVM
+/// network (the real one is emitted separately, `BridgeToNonEVMChain…`).
 const NON_EVM_RECEIVER: [u8; 20] = [
     0x11, 0xf1, 0x11, 0xf1, 0x11, 0xf1, 0x11, 0xf1, 0x11, 0xf1, 0x11, 0xf1, 0x11, 0xf1, 0x11, 0xf1, 0x11, 0xf1, 0x11, 0xf1,
 ];
-/// Devis LI.FI depuis une adresse Bitcoin sans fonds confirmés.
+/// LI.FI quote from a Bitcoin address with no confirmed funds.
 pub const NO_CONFIRMED_BTC: &str = "aucun BTC confirmé sur votre adresse : LI.FI prépare le dépôt à partir de fonds reçus et confirmés (au moins une confirmation)";
-/// Nouveaux devis demandés au plus quand le pont proposé garde le destinataire
-/// hors chaîne.
+/// Maximum number of new quotes requested when the proposed bridge keeps the
+/// recipient off-chain.
 pub const MAX_ROUTE_ATTEMPTS: usize = 3;
 
 fn shared_client() -> &'static reqwest::blocking::Client {
@@ -68,8 +64,8 @@ fn shared_client() -> &'static reqwest::blocking::Client {
     })
 }
 
-/// Contrat d'entrée de LI.FI (« diamond ») sur un réseau EVM de l'app, relevé
-/// sur `li.quest/v1/chains` (même adresse partout).
+/// LI.FI's entry contract ("diamond") on one of the app's EVM networks, taken from
+/// `li.quest/v1/chains` (same address everywhere).
 pub fn diamond(network: &str) -> Option<&'static str> {
     Some(match network {
         "evm_mainnet" | "arbitrum_mainnet" | "base_mainnet" | "bsc_mainnet" | "avax_mainnet" | "polygon_mainnet" => "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE",
@@ -77,7 +73,7 @@ pub fn diamond(network: &str) -> Option<&'static str> {
     })
 }
 
-/// Identifiant de chaîne LI.FI d'un réseau de l'app.
+/// LI.FI chain ID of one of the app's networks.
 pub fn chain_id(network: &str) -> Option<u64> {
     match network {
         "sol_mainnet" => Some(SOLANA_CHAIN),
@@ -86,7 +82,7 @@ pub fn chain_id(network: &str) -> Option<u64> {
     }
 }
 
-/// Le nœud du réseau sait-il simuler (`eth_simulateV1`, relevé le 02/10/2026) ?
+/// Can the network's node simulate (`eth_simulateV1`, recorded on 2026-10-02)?
 pub fn simulates(network: &str) -> bool {
     network != "avax_mainnet"
 }
@@ -95,7 +91,7 @@ fn is_evm(network: &str) -> bool {
     diamond(network).is_some()
 }
 
-/// Identifiant de carte de la monnaie native d'un réseau EVM.
+/// Card identifier of an EVM network's native coin.
 fn native_coin(network: &wallet_flow::EvmNetwork) -> &'static str {
     match network.native_symbol {
         "ETH" => "evm",
@@ -106,13 +102,12 @@ fn native_coin(network: &wallet_flow::EvmNetwork) -> &'static str {
     }
 }
 
-/// Crypto de l'app telle que LI.FI la désigne.
+/// One of the app's cryptos, as LI.FI designates it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LifiToken {
     pub chain: u64,
-    /// Adresse du contrat (EVM), mint (Solana), ou identifiant LI.FI de la
-    /// monnaie native (`0x00…00`, `11111111111111111111111111111111`,
-    /// `bitcoin`).
+    /// Contract address (EVM), mint (Solana), or LI.FI identifier for the native coin
+    /// (`0x00…00`, `11111111111111111111111111111111`, `bitcoin`).
     pub address: String,
     pub decimals: u8,
     pub symbol: &'static str,
@@ -143,7 +138,7 @@ pub fn token(coin: &str, network: &str) -> Option<LifiToken> {
     Some(LifiToken { chain, address: address.to_string(), decimals, symbol, native: true })
 }
 
-/// Toutes les cryptos de l'app que LI.FI sait désigner (identifiant, réseau).
+/// Every app crypto LI.FI can designate (identifier, network).
 pub fn tradable() -> Vec<(&'static str, &'static str)> {
     let natives = wallet_flow::EVM_NETWORKS
         .iter()
@@ -156,12 +151,12 @@ pub fn tradable() -> Vec<(&'static str, &'static str)> {
     natives.chain(registry).collect()
 }
 
-/// LI.FI relie-t-il ces deux cryptos (hors activation) ? Entre deux réseaux
-/// différents seulement (un même réseau passe par CoW ou Jupiter) ; depuis un
-/// réseau qui ne simule pas, seulement vers un réseau EVM (destinataire lu
-/// dans les données de l'appel). Depuis Bitcoin : PSBT vérifiée par
-/// `verify_btc_deposit` (relevé le 03/10/2026 : LI.FI propose BTC vers
-/// chaque réseau de l'app, via LayerSwap ou Relay).
+/// Does LI.FI connect these two cryptos (ignoring activation)? Only between two
+/// different networks (the same network goes through CoW or Jupiter); from a
+/// network that does not simulate, only to an EVM network (recipient read from the
+/// calldata). From Bitcoin: PSBT verified by `verify_btc_deposit` (recorded on
+/// 2026-10-03: LI.FI offers BTC to every one of the app's networks, through
+/// LayerSwap or Relay).
 pub fn links(from: (&str, &str), to: (&str, &str)) -> bool {
     let ((from_coin, from_network), (to_coin, to_network)) = (from, to);
     from_network != to_network
@@ -170,18 +165,18 @@ pub fn links(from: (&str, &str), to: (&str, &str)) -> bool {
         && token(to_coin, to_network).is_some()
 }
 
-/// Transaction fournie par LI.FI, à vérifier avant signature.
+/// Transaction provided by LI.FI, to be verified before signing.
 #[derive(Clone, Debug)]
 pub enum LifiTx {
     Evm { to: [u8; 20], data: Vec<u8>, value: u128 },
-    /// Transaction Solana sérialisée (un seul signataire : l'utilisateur).
+    /// Serialized Solana transaction (a single signer: the user).
     Solana { raw: Vec<u8> },
-    /// PSBT d'un dépôt Bitcoin vers l'adresse du pont (`deposit`, script
-    /// `deposit_script`), vérifiée par `verify_btc_deposit` avant signature.
+    /// PSBT for a Bitcoin deposit to the bridge's address (`deposit`, script
+    /// `deposit_script`), verified by `verify_btc_deposit` before signing.
     Bitcoin { psbt: btc_psbt::Psbt, deposit: String, deposit_script: Vec<u8> },
 }
 
-/// Devis LI.FI revérifié.
+/// LI.FI quote, checked again.
 #[derive(Clone, Debug)]
 pub struct LifiQuote {
     pub from_network: &'static str,
@@ -193,7 +188,7 @@ pub struct LifiQuote {
     pub to_amount_min: u128,
     pub from_address: String,
     pub to_address: String,
-    /// Pont choisi par LI.FI (clé technique, et nom affiché).
+    /// Bridge chosen by LI.FI (technical key, and display name).
     pub tool: String,
     pub tool_name: String,
     pub duration_secs: u64,
@@ -221,11 +216,11 @@ fn hex_u128(value: Option<&Value>) -> Result<u128> {
     u128::from_str_radix(s.trim_start_matches("0x"), 16).context("montant hexadécimal LI.FI illisible")
 }
 
-/// Devis LI.FI pour envoyer `amount` (unités) de `from` (sur `from_network`,
-/// depuis `from_address`) vers `to` sur `to_network`, livré à `to_address`.
-/// `deny` : ponts à écarter ; `allow` : seul pont permis (nouveau devis sur le
-/// pont déjà affiché). La réponse est revérifiée (chaînes, jetons, montant,
-/// adresses, contrat appelé) avant d'être utilisée.
+/// LI.FI quote for sending `amount` (units) of `from` (on `from_network`, from
+/// `from_address`) to `to` on `to_network`, delivered to `to_address`. `deny`:
+/// bridges to exclude; `allow`: the only bridge allowed (a new quote on the bridge
+/// already shown). The response is checked again (chains, tokens, amount,
+/// addresses, contract called) before being used.
 #[allow(clippy::too_many_arguments)]
 pub fn quote(
     from_network: &'static str,
@@ -247,8 +242,8 @@ pub fn quote(
         ("fromAddress", from_address.to_string()),
         ("toAddress", to_address.to_string()),
         ("slippage", SLIPPAGE.to_string()),
-        // Pas d'appel de contrat à l'arrivée : le destinataire émis au départ
-        // est alors bien celui qui reçoit.
+        // No contract call on arrival: the recipient emitted at departure is then indeed
+        // the one who receives.
         ("allowDestinationCall", "false".to_string()),
     ];
     if let Some(integrator) = INTEGRATOR {
@@ -270,9 +265,8 @@ pub fn quote(
     let q: Value = response.json().context("réponse de devis LI.FI illisible")?;
     if q.get("transactionRequest").is_none() {
         let message = q.get("message").and_then(Value::as_str).unwrap_or("réponse inattendue");
-        // Depuis Bitcoin, LI.FI construit le dépôt sur les sorties confirmées
-        // de l'adresse (réponse réelle sans elles : « No UTXOs found for any
-        // sender addresses »).
+        // From Bitcoin, LI.FI builds the deposit from the address's confirmed outputs
+        // (real response without them: "No UTXOs found for any sender addresses").
         if message.contains("No UTXOs found") {
             bail!(NO_CONFIRMED_BTC);
         }
@@ -333,8 +327,8 @@ fn parse_quote(
         let raw = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, text(request, &["data"])).context("transaction LI.FI Solana illisible")?;
         LifiTx::Solana { raw }
     } else if from_network == "btc_mainnet" {
-        // `to` : adresse de dépôt du pont ; `value` : montant (décimal) ;
-        // `data` : PSBT en hexadécimal (relevé sur de vrais devis).
+        // `to`: the bridge's deposit address; `value`: amount (decimal); `data`: PSBT in
+        // hexadecimal (recorded on real quotes).
         ensure!(text(request, &["value"]) == amount.to_string(), "transaction LI.FI avec un autre montant que celui demandé");
         let deposit = text(request, &["to"]);
         let deposit_script = derivation::btc_mainnet_script_pubkey(&deposit).context("adresse de dépôt LI.FI invalide")?;
@@ -360,45 +354,44 @@ fn parse_quote(
     })
 }
 
-// --- Dépôt Bitcoin (PSBT) -------------------------------------------------------
+// --- Bitcoin deposit (PSBT) -----------------------------------------------------
 
-/// Dépôt Bitcoin d'un devis LI.FI, vérifié : la transaction à signer et ce
-/// que montre la boîte de confirmation.
+/// Bitcoin deposit from a LI.FI quote, verified: the transaction to sign and what
+/// the confirmation dialog shows.
 #[derive(Debug)]
 pub struct BtcDeposit {
     pub tx: btc_tx::RawTx,
     pub network_fee: u64,
-    /// Taille une fois signée, au plus.
+    /// Upper bound on the size once signed.
     pub vsize: u64,
-    /// Sorties de frais vers LI.FI et l'intégrateur.
+    /// Fee outputs to LI.FI and to the integrator.
     pub service_fees: u64,
-    /// Total qui quitte l'adresse : dépôt, frais LI.FI et intégrateur, frais
-    /// réseau (montré dans la boîte de confirmation).
+    /// Total leaving the address: deposit, LI.FI and integrator fees, network fee
+    /// (shown in the confirmation dialog).
     pub total_debit: u64,
 }
 
-/// Plus petite sortie P2WPKH relayée par le réseau Bitcoin (seuil de
-/// poussière de Bitcoin Core) : une part de frais plus petite est arrondie à
-/// ce montant par LI.FI, le complément venant de la monnaie (relevé le
-/// 03/10/2026 : 0,25 % de 58 928 sats = 147, sortie de 294).
+/// Smallest P2WPKH output relayed by the Bitcoin network (Bitcoin Core's dust
+/// threshold): LI.FI rounds a smaller fee share up to this amount, with the
+/// difference coming out of the change (recorded on 2026-10-03: 0.25% of 58,928
+/// sats = 147, output of 294).
 const BTC_DUST_SAT: u64 = 294;
 
-/// Vérifie la PSBT d'un dépôt LI.FI depuis Bitcoin, sortie par sortie, avec
-/// les sorties dépensables de l'utilisateur relues par l'app (`utxos`,
-/// confirmées) — rien n'est repris des montants annoncés par la PSBT :
-/// - chaque entrée dépense une de SES sorties, une seule fois (montant relu,
-///   engagé par la signature BIP143) ;
-///   sans verrou temporel relatif (séquence 0xfffffffd au moins) ;
-/// - exactement un paiement à l'adresse de dépôt annoncée (`deposit_script`) ;
-/// - la monnaie revient à son adresse ; au plus un memo OP_RETURN, sans valeur ;
-/// - le reste (frais LI.FI et intégrateur, 3 sorties au plus) : dépôt au
-///   moins égal au montant moins 1,05 %, frais au plus 1,05 % — plus, par
-///   sortie de frais, le complément au seuil de poussière (`BTC_DUST_SAT`)
-///   quand une part est trop petite pour être relayée ;
-/// - frais réseau au plus `max_fee_rate` sat/vB (taille signée maximale).
+/// Verifies the PSBT of a LI.FI deposit from Bitcoin, output by output, against the
+/// user's spendable outputs as reread by the app (`utxos`, confirmed). Nothing is
+/// taken from the amounts the PSBT announces:
+/// - each input spends one of THEIR outputs, exactly once (amount reread, committed
+///   to by the BIP143 signature), with no relative timelock (sequence at least
+///   0xfffffffd);
+/// - exactly one payment to the announced deposit address (`deposit_script`);
+/// - change goes back to their address; at most one OP_RETURN memo, with no value;
+/// - the rest (LI.FI and integrator fees, 3 outputs at most): deposit at least the
+///   amount minus 1.05%, fees at most 1.05%, plus, per fee output, the top-up to
+///   the dust threshold (`BTC_DUST_SAT`) when a share is too small to be relayed;
+/// - network fee at most `max_fee_rate` sat/vB (maximum signed size).
 ///
-/// L'adresse d'arrivée, gérée hors chaîne par le pont, reste invérifiable
-/// (dit dans la boîte de confirmation).
+/// The destination address, handled off-chain by the bridge, remains unverifiable
+/// (stated in the confirmation dialog).
 pub fn verify_btc_deposit(
     psbt: &btc_psbt::Psbt,
     deposit_script: &[u8],
@@ -432,7 +425,7 @@ pub fn verify_btc_deposit(
             deposits += 1;
             deposit = *value;
         } else if script.as_slice() == own_script {
-            // Monnaie rendue : reste à l'utilisateur.
+            // Change returned: stays with the user.
         } else if script.first() == Some(&0x6a) {
             memos += 1;
             ensure!(*value == 0 && script.len() <= 83, "memo OP_RETURN inattendu dans la transaction LI.FI — refusé");
@@ -474,7 +467,7 @@ pub fn verify_btc_deposit(
     Ok(BtcDeposit { tx, network_fee, vsize, service_fees, total_debit })
 }
 
-// --- Décodage ABI (juste ce qu'exige BridgeData) ------------------------------
+// --- ABI decoding (just what BridgeData needs) ---------------------------------
 
 fn word(data: &[u8], offset: usize) -> Result<&[u8]> {
     data.get(offset..offset + 32).ok_or_else(|| anyhow!("données LI.FI tronquées"))
@@ -511,7 +504,7 @@ fn abi_bytes(data: &[u8], offset: usize) -> Result<&[u8]> {
     data.get(offset + 32..offset + 32 + len).ok_or_else(|| anyhow!("données LI.FI tronquées"))
 }
 
-/// Structure `ILiFi.BridgeData` du contrat LI.FI.
+/// The LI.FI contract's `ILiFi.BridgeData` struct.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BridgeData {
     pub transaction_id: [u8; 32],
@@ -525,11 +518,11 @@ pub struct BridgeData {
     pub has_destination_call: bool,
 }
 
-/// `BridgeData` encodée en tête de paramètres ABI (structure dynamique en
-/// premier paramètre : un décalage, puis la structure) — forme commune aux
-/// arguments de toutes les fonctions de pont du contrat
-/// (`startBridgeTokensVia…`, `swapAndStartBridgeTokensVia…`) et aux données de
-/// l'événement `LiFiTransferStarted`.
+/// `BridgeData` encoded at the start of ABI parameters (a dynamic struct as the
+/// first parameter: an offset, then the struct). This shape is shared by the
+/// arguments of every bridge function in the contract (`startBridgeTokensVia…`,
+/// `swapAndStartBridgeTokensVia…`) and by the data of the `LiFiTransferStarted`
+/// event.
 pub fn decode_bridge_data(encoded: &[u8]) -> Result<BridgeData> {
     let start = word_usize(encoded, 0)?;
     let tuple = encoded.get(start..).ok_or_else(|| anyhow!("données LI.FI tronquées"))?;
@@ -551,27 +544,27 @@ pub fn decode_bridge_data(encoded: &[u8]) -> Result<BridgeData> {
     })
 }
 
-/// `BridgeData` d'un appel au contrat LI.FI (sélecteur, puis paramètres).
+/// `BridgeData` from a call to the LI.FI contract (selector, then parameters).
 pub fn decode_call_bridge_data(calldata: &[u8]) -> Result<BridgeData> {
     decode_bridge_data(calldata.get(4..).ok_or_else(|| anyhow!("appel LI.FI vide"))?)
 }
 
-// --- Vérification avant signature --------------------------------------------
+// --- Verification before signing ---------------------------------------------
 
-/// Destinataire attendu, sous la forme où le contrat LI.FI l'émet.
+/// Expected recipient, in the form the LI.FI contract emits it.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Receiver {
     Evm([u8; 20]),
-    /// Clé publique Solana.
+    /// Solana public key.
     Solana([u8; 32]),
-    /// Adresse Bitcoin : texte, et pour une adresse native SegWit v0 de 20
-    /// octets (bc1q…), les 32 groupes de 5 bits de son programme témoin —
-    /// forme relevée dans l'événement `BridgeToNonEVMChainBytes32`.
+    /// Bitcoin address: text, and for a 20-byte native SegWit v0 address (bc1q…), the
+    /// 32 five-bit groups of its witness program, the form found in the
+    /// `BridgeToNonEVMChainBytes32` event.
     Bitcoin { text: String, five_bit: Option<[u8; 32]> },
 }
 
 impl Receiver {
-    /// Destinataire saisi pour `network`, vérifié au format du réseau.
+    /// Recipient entered for `network`, checked against the network's format.
     pub fn parse(network: &str, address: &str) -> Result<Self> {
         if is_evm(network) {
             return Ok(Receiver::Evm(wallet_flow::parse_evm_address(address)?));
@@ -582,7 +575,7 @@ impl Receiver {
                 Ok(Receiver::Solana(key))
             }
             "btc_mainnet" => {
-                // Version SegWit et encodage cohérents (voir `derivation::decode_segwit`).
+                // Consistent SegWit version and encoding (see `derivation::decode_segwit`).
                 derivation::btc_mainnet_script_pubkey(address).context("adresse Bitcoin invalide (bech32 attendu)")?;
                 let (hrp, data, _) = bech32::decode(address).context("adresse Bitcoin invalide (bech32 attendu)")?;
                 ensure!(hrp == "bc", "adresse Bitcoin du réseau principal attendue (bc1…)");
@@ -611,10 +604,10 @@ impl Receiver {
     }
 }
 
-/// Ce que la transaction doit faire, et rien d'autre.
+/// What the transaction must do, and nothing else.
 pub struct Expected<'a> {
     pub user: [u8; 20],
-    /// Jeton vendu (`None` : monnaie du réseau, envoyée en valeur).
+    /// Token sold (`None`: the network's native coin, sent as value).
     pub sell_token: Option<[u8; 20]>,
     pub amount: u128,
     pub diamond: [u8; 20],
@@ -623,12 +616,12 @@ pub struct Expected<'a> {
     pub integrator: Option<&'a str>,
 }
 
-/// Issue d'une vérification qui n'a rien trouvé d'anormal.
+/// Outcome of a verification that found nothing abnormal.
 #[derive(Debug, PartialEq)]
 pub enum Verification {
-    /// Destinataire émis par le contrat = destinataire affiché.
+    /// Recipient emitted by the contract = recipient shown.
     Verified,
-    /// Le pont garde le destinataire hors chaîne : route à écarter.
+    /// The bridge keeps the recipient off-chain: route to drop.
     ReceiverHidden { bridge: String },
 }
 
@@ -655,15 +648,15 @@ fn check_bridge_data(bridge: &BridgeData, expected: &Expected) -> Result<()> {
     Ok(())
 }
 
-/// Destinataire non EVM émis par le contrat : identifiant du transfert,
-/// réseau d'arrivée, adresse, et forme (`bytes32` ou octets libres).
+/// Non-EVM recipient emitted by the contract: transfer ID, destination network,
+/// address, and form (`bytes32` or raw bytes).
 type NonEvmReceiver = ([u8; 32], [u8; 32], Vec<u8>, bool);
 
-/// Vérifie la simulation de l'autorisation (s'il y en a une) puis de l'appel
-/// LI.FI : tous réussis ; seul le jeton vendu quitte l'utilisateur, pour le
-/// montant exact ; autorisations seulement au contrat LI.FI, au plus le
-/// montant ; un seul transfert LI.FI, vers le bon réseau, sans appel à
-/// l'arrivée ; destinataire émis = destinataire affiché. Fonction pure.
+/// Checks the simulation of the approval (if any), then of the LI.FI call: all
+/// succeed; only the token sold leaves the user, for the exact amount; approvals
+/// only to the LI.FI contract, at most the amount; a single LI.FI transfer, to the
+/// right network, with no call on arrival; emitted recipient = recipient shown.
+/// Pure function.
 pub fn verify_simulation(calls: &[eth_rpc::SimulatedCall], expected: &Expected) -> Result<Verification> {
     ensure!(calls.iter().all(|c| c.success), "la transaction LI.FI échouerait (simulation) — rien n'a été envoyé");
     let (transfer, approval) = (topic("Transfer(address,address,uint256)"), topic("Approval(address,address,uint256)"));
@@ -676,9 +669,9 @@ pub fn verify_simulation(calls: &[eth_rpc::SimulatedCall], expected: &Expected) 
     let mut non_evm_receivers: Vec<NonEvmReceiver> = Vec::new();
     for log in calls.iter().flat_map(|c| &c.logs) {
         let Some(kind) = log.topics.first() else { continue };
-        // Tout transfert ou toute autorisation AU DÉPART de l'utilisateur : seul
-        // le jeton vendu (ERC-20, 3 sujets) est permis — un NFT (ERC-721, 4
-        // sujets) ou une autorisation globale (ApprovalForAll) est refusé.
+        // Any transfer or approval FROM the user: only the token sold (ERC-20, 3 topics)
+        // is allowed; an NFT (ERC-721, 4 topics) or a global approval (ApprovalForAll) is
+        // refused.
         if (*kind == transfer || *kind == approval || *kind == approval_for_all) && log.topics.get(1) == Some(&user) {
             ensure!(
                 *kind != approval_for_all && log.topics.len() == 3,
@@ -734,11 +727,11 @@ pub fn verify_simulation(calls: &[eth_rpc::SimulatedCall], expected: &Expected) 
     Ok(Verification::Verified)
 }
 
-/// Vérification sans simulation (Avalanche) : `BridgeData` lue dans
-/// l'appel — destination EVM seulement, destinataire = celui affiché, bon
-/// réseau, pas d'appel à l'arrivée, jeton envoyé = jeton vendu s'il n'est pas
-/// d'abord échangé. Ce qui quitte l'utilisateur reste borné par l'app :
-/// autorisation au montant exact, valeur native vérifiée au devis.
+/// Verification without simulation (Avalanche): `BridgeData` read from the call.
+/// EVM destination only, recipient = the one shown, right network, no call on
+/// arrival, token sent = token sold unless it is swapped first. What leaves the
+/// user stays bounded by the app: approval for the exact amount, native value
+/// checked at quote time.
 pub fn verify_static(calldata: &[u8], expected: &Expected) -> Result<()> {
     ensure!(matches!(expected.receiver, Receiver::Evm(_)), "sur ce réseau, LI.FI n'est proposé que vers un réseau EVM");
     let bridge = decode_call_bridge_data(calldata)?;
@@ -749,12 +742,12 @@ pub fn verify_static(calldata: &[u8], expected: &Expected) -> Result<()> {
     Ok(())
 }
 
-// --- Suivi ---------------------------------------------------------------------
+// --- Tracking ------------------------------------------------------------------
 
-/// État d'un transfert (« NOT_FOUND », « PENDING », « DONE », « FAILED »),
-/// suivi du sous-état pour « DONE » (« DONE:COMPLETED », « DONE:REFUNDED »…).
+/// State of a transfer ("NOT_FOUND", "PENDING", "DONE", "FAILED"), followed by the
+/// substate for "DONE" ("DONE:COMPLETED", "DONE:REFUNDED"…).
 pub fn status(tx_hash: &str, from_chain: u64, to_chain: u64) -> Result<String> {
-    // Venu de l'interface et placé dans l'URL : format exact exigé.
+    // Comes from the UI and goes into the URL: exact format required.
     let hash = tx_hash.trim_start_matches("0x");
     ensure!(!hash.is_empty() && hash.len() <= 100 && hash.bytes().all(|b| b.is_ascii_alphanumeric()), "identifiant de transaction invalide");
     let response: Value = shared_client()
@@ -771,7 +764,7 @@ pub fn status(tx_hash: &str, from_chain: u64, to_chain: u64) -> Result<String> {
     })
 }
 
-/// Page d'une transaction sur LI.FI Scan.
+/// A transaction's page on LI.FI Scan.
 pub fn explorer_url(tx_hash: &str) -> String {
     format!("https://scan.li.fi/tx/{tx_hash}")
 }
@@ -781,15 +774,14 @@ mod tests {
     use super::*;
     use crate::eth_rpc::{SimulatedCall, SimulatedLog};
 
-    /// Appel réel renvoyé par LI.FI le 02/10/2026 (10 LINK Ethereum → RENDER
-    /// Solana, pont « relaydepository », `swapAndStartBridgeTokensViaRelayDepository`).
+    /// Real call returned by LI.FI on 2026-10-02 (10 LINK on Ethereum → RENDER on
+    /// Solana, bridge "relaydepository", `swapAndStartBridgeTokensViaRelayDepository`).
     const REAL_CALLDATA: &str = "0xa3443faa0000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000024039c2562bd5b5a02e7a2a86c771b83a11f0ba77c0aca5a3dd2d8d8d664c656f9d00000000000000000000000059d78c44ac60f09369b544778358704b7b18e6ba632d49ef8427b270f90367c38ee0a356c1d20ea4b4f95b78568878e11db5d515000000000000000000000000000000000000000000000000000000000000014000000000000000000000000000000000000000000000000000000000000001800000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc200000000000000000000000011f111f111f111f111f111f111f111f111f111f100000000000000000000000000000000000000000000000000b9be0a563d6e95000000000000000000000000000000000000000000000000000416edef1601be00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000f72656c61796465706f7369746f7279000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000086c6966692d617069000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000200000000000000000000000000ce40449b773a3e6e5e769adb4e567179d4828cbd000000000000000000000000ce40449b773a3e6e5e769adb4e567179d4828cbd000000000000000000000000514910771af9ca656af840dff83e8264ecf986ca000000000000000000000000514910771af9ca656af840dff83e8264ecf986ca0000000000000000000000000000000000000000000000008ac7230489e8000000000000000000000000000000000000000000000000000000000000000000e0000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000a4332d746b000000000000000000000000514910771af9ca656af840dff83e8264ecf986ca00000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000001000000000000000000000000c06ebbefd94032b85424d51906e2a335efae264b0000000000000000000000000000000000000000000000000058d15e1762800000000000000000000000000000000000000000000000000000000000000000000000000000000000a929c559e5e6537359680f39cb4e3708e1a14dd1000000000000000000000000a929c559e5e6537359680f39cb4e3708e1a14dd1000000000000000000000000514910771af9ca656af840dff83e8264ecf986ca000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20000000000000000000000000000000000000000000000008a6e51a67285800000000000000000000000000000000000000000000000000000000000000000e0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000bf3f0bde25eb7422ec88b9ff78c6f2458ab1a7aa8bb99d84bd4b8600000000000000008a6e51a672858000000000000000000000b9be0a563d6e960622ec88b9ff78c6f2458ab1a7aa8bb99d84bd4b861231deb6f5749ef6ce6943a275a1d3e7486f4eae514910771af9ca656af840dff83e8264ecf986cac02aaa39b223fe8d0a0e5c4f27ead9083c756cc228bf6006d87de7f44445905aa4f5cb8c0d8cba025d4f3c6fa16908609bac31ff148bd002aa6b8c8347050204f928bb9f900301ff00";
-    /// Données de `LiFiTransferStarted` encodées par ethers (ABI officielle).
+    /// `LiFiTransferStarted` data encoded by ethers (official ABI).
     const EVENT_TO_SOLANA: &str = "00000000000000000000000000000000000000000000000000000000000000201111111111111111111111111111111111111111111111111111111111111111000000000000000000000000000000000000000000000000000000000000014000000000000000000000000000000000000000000000000000000000000001800000000000000000000000000000000000000000000000000000000000000000000000000000000000000000514910771af9ca656af840dff83e8264ecf986ca00000000000000000000000011f111f111f111f111f111f111f111f111f111f10000000000000000000000000000000000000000000000008ac7230489e80000000000000000000000000000000000000000000000000000000416edef1601be0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000056d6179616e00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000046f70677000000000000000000000000000000000000000000000000000000000";
     const EVENT_TO_ARBITRUM: &str = "00000000000000000000000000000000000000000000000000000000000000201111111111111111111111111111111111111111111111111111111111111111000000000000000000000000000000000000000000000000000000000000014000000000000000000000000000000000000000000000000000000000000001800000000000000000000000000000000000000000000000000000000000000000000000000000000000000000514910771af9ca656af840dff83e8264ecf986ca00000000000000000000000022222222222222222222222222222222222222220000000000000000000000000000000000000000000000008ac7230489e80000000000000000000000000000000000000000000000000000000000000000a4b10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000066163726f7373000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000046f70677000000000000000000000000000000000000000000000000000000000";
     const EVENT_WITH_DESTINATION_CALL: &str = "00000000000000000000000000000000000000000000000000000000000000201111111111111111111111111111111111111111111111111111111111111111000000000000000000000000000000000000000000000000000000000000014000000000000000000000000000000000000000000000000000000000000001800000000000000000000000000000000000000000000000000000000000000000000000000000000000000000514910771af9ca656af840dff83e8264ecf986ca00000000000000000000000011f111f111f111f111f111f111f111f111f111f10000000000000000000000000000000000000000000000008ac7230489e80000000000000000000000000000000000000000000000000000000416edef1601be0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000056d6179616e00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000046f70677000000000000000000000000000000000000000000000000000000000";
-    /// Données d'un événement `BridgeToNonEVMChain(bytes)` portant une adresse
-    /// Bitcoin en texte.
+    /// Data of a `BridgeToNonEVMChain(bytes)` event carrying a Bitcoin address as text.
     const BYTES_RECEIVER_EVENT: &str = "0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000002a6263317139777a3036756a327534736d76777532716e6c68616c6c6b7966716d6c35346877613030797500000000000000000000000000000000000000000000";
     const LINK: &str = "0x514910771af9ca656af840dff83e8264ecf986ca";
     const DIAMOND: &str = "0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE";
@@ -852,7 +844,7 @@ mod tests {
         Receiver::parse("sol_mainnet", SOLANA_USER).unwrap()
     }
 
-    /// Décodage de `BridgeData` identique à celui d'ethers sur un appel réel.
+    /// `BridgeData` decoding identical to ethers' on a real call.
     #[test]
     fn bridge_data_matches_the_official_abi_decoding() {
         let bridge = decode_call_bridge_data(&hex::decode(REAL_CALLDATA.trim_start_matches("0x")).unwrap()).unwrap();
@@ -864,8 +856,8 @@ mod tests {
         assert!(bridge.has_source_swaps && !bridge.has_destination_call);
     }
 
-    /// Destinataire émis par le contrat = destinataire affiché : vérifié.
-    /// Pont qui ne l'émet pas : signalé pour être écarté.
+    /// Recipient emitted by the contract = recipient shown: verified. A bridge that
+    /// does not emit it: flagged to be dropped.
     #[test]
     fn shown_receiver_must_be_emitted_by_the_contract() {
         let receiver = solana_receiver();
@@ -885,7 +877,7 @@ mod tests {
         assert_eq!(verify_simulation(&calls(logs), &expected(&arbitrum, 42161)).unwrap(), Verification::Verified);
     }
 
-    /// Chaque détournement est refusé, jamais signalé comme simple pont caché.
+    /// Every diversion is refused, never flagged as just a hidden bridge.
     #[test]
     fn diversions_are_refused() {
         let receiver = solana_receiver();
@@ -896,44 +888,44 @@ mod tests {
             logs.push(started(EVENT_TO_SOLANA));
             logs
         };
-        // Autre destinataire émis.
+        // A different recipient emitted.
         let mut logs = base();
         logs.push(non_evm_bytes32([0x44; 32], SOLANA_CHAIN));
         assert!(run(logs, &receiver, SOLANA_CHAIN).is_err());
-        // Un autre jeton quitte l'utilisateur.
+        // Another token leaves the user.
         let mut logs = base();
         logs.push(non_evm_bytes32(key, SOLANA_CHAIN));
         logs.push(erc20_log("Transfer(address,address,uint256)", "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", USER, [0x99; 20], 1));
         assert!(run(logs, &receiver, SOLANA_CHAIN).is_err());
-        // Autorisation à un autre contrat.
+        // Approval to another contract.
         let mut logs = base();
         logs.push(non_evm_bytes32(key, SOLANA_CHAIN));
         logs.push(erc20_log("Approval(address,address,uint256)", LINK, USER, [0x99; 20], AMOUNT));
         assert!(run(logs, &receiver, SOLANA_CHAIN).is_err());
-        // Plus que le montant.
+        // More than the amount.
         let mut logs = base();
         logs.push(non_evm_bytes32(key, SOLANA_CHAIN));
         logs.push(erc20_log("Transfer(address,address,uint256)", LINK, USER, [0x99; 20], 1));
         assert!(run(logs, &receiver, SOLANA_CHAIN).is_err());
-        // Appel de contrat à l'arrivée.
+        // Contract call on arrival.
         let mut logs = token_flow();
         logs.push(started(EVENT_WITH_DESTINATION_CALL));
         logs.push(non_evm_bytes32(key, SOLANA_CHAIN));
         assert!(run(logs, &receiver, SOLANA_CHAIN).is_err());
-        // Autre réseau d'arrivée que celui affiché.
+        // A destination network other than the one shown.
         let mut logs = base();
         logs.push(non_evm_bytes32(key, SOLANA_CHAIN));
         assert!(run(logs, &receiver, BITCOIN_CHAIN).is_err());
-        // Deux transferts LI.FI.
+        // Two LI.FI transfers.
         let mut logs = base();
         logs.push(started(EVENT_TO_SOLANA));
         logs.push(non_evm_bytes32(key, SOLANA_CHAIN));
         assert!(run(logs, &receiver, SOLANA_CHAIN).is_err());
-        // Destination EVM : autre adresse.
+        // EVM destination: a different address.
         let mut logs = token_flow();
         logs.push(started(EVENT_TO_ARBITRUM));
         assert!(run(logs, &Receiver::Evm([0x55; 20]), 42161).is_err());
-        // NFT (ERC-721 : 4 sujets) ou autorisation globale au départ de l'utilisateur.
+        // NFT (ERC-721: 4 topics) or global approval from the user.
         let mut logs = base();
         logs.push(non_evm_bytes32(key, SOLANA_CHAIN));
         let mut nft = erc20_log("Transfer(address,address,uint256)", LINK, USER, [0x99; 20], 0);
@@ -944,13 +936,13 @@ mod tests {
         logs.push(non_evm_bytes32(key, SOLANA_CHAIN));
         logs.push(SimulatedLog { address: [0x77; 20], topics: vec![topic("ApprovalForAll(address,address,bool)"), padded(&USER), padded(&[0x99; 20])], data: word(1) });
         assert!(run(logs, &receiver, SOLANA_CHAIN).is_err());
-        // Appel qui échouerait.
+        // A call that would fail.
         let failed = vec![SimulatedCall { success: false, logs: vec![] }];
         assert!(verify_simulation(&failed, &expected(&receiver, SOLANA_CHAIN)).is_err());
     }
 
-    /// Adresse Bitcoin : forme 5 bits (relevée dans un vrai événement
-    /// Layerswap le 02/10/2026) et forme texte.
+    /// Bitcoin address: five-bit form (taken from a real Layerswap event on 2026-10-02)
+    /// and text form.
     #[test]
     fn bitcoin_receiver_forms() {
         let receiver = Receiver::parse("btc_mainnet", "bc1q9wz06uj2u4smvwu2qnlhallkyfqml54hwa00yu").unwrap();
@@ -962,7 +954,7 @@ mod tests {
         assert!(Receiver::parse("sol_mainnet", "0x2222222222222222222222222222222222222222").is_err());
     }
 
-    /// Sans simulation : destinataire lu dans l'appel, destination EVM seulement.
+    /// Without simulation: recipient read from the call, EVM destination only.
     #[test]
     fn static_check_reads_the_receiver_from_the_call() {
         let mut call = vec![0xde, 0xad, 0xbe, 0xef];
@@ -998,7 +990,7 @@ mod tests {
         }
     }
 
-    /// Devis réels (réseau, lecture seule) dans chaque sens pris en charge.
+    /// Real quotes (live, read-only) in each supported direction.
     #[test]
     #[ignore]
     fn real_quotes() {
@@ -1025,9 +1017,9 @@ mod tests {
         }
     }
 
-    /// Simulation réelle depuis une adresse publique qui détient du LINK
-    /// (lecture seule) : « relaydepository » cache le destinataire, Mayan
-    /// émet exactement l'adresse Solana affichée.
+    /// Real simulation from a public address holding LINK (read-only):
+    /// "relaydepository" hides the recipient, Mayan emits exactly the Solana address
+    /// shown.
     #[test]
     #[ignore]
     fn real_simulation_flags_hidden_receivers() {
@@ -1053,9 +1045,9 @@ mod tests {
         }
     }
 
-    /// Devis réel BTC → ETH (LayerSwap, testdata) : lu, puis sa PSBT vérifiée
-    /// contre la sortie dépensée (montant relevé sur Esplora) ; chaque
-    /// altération qui coûterait à l'utilisateur est refusée.
+    /// Real BTC → ETH quote (LayerSwap, testdata): read, then its PSBT verified against
+    /// the spent output (amount taken from Esplora); every tampering that would cost
+    /// the user is refused.
     #[test]
     fn bitcoin_deposits_are_verified_output_by_output() {
         let q: Value = serde_json::from_str(include_str!("../testdata/lifi_btc_quote.json")).unwrap();
@@ -1096,10 +1088,10 @@ mod tests {
         assert!(altered(&|p| { p.outputs[0].0 -= 2_000; p.outputs[2].0 += 2_000 }), "dépôt réduit au-delà des frais annoncés");
     }
 
-    /// Petit montant (forme réelle relevée le 03/10/2026 pour 58 928 sats) :
-    /// la part de LI.FI (147 sats) est arrondie au seuil de poussière (294),
-    /// le complément pris sur la monnaie — accepté, et compté dans le total
-    /// débité ; au-delà du seuil, refusé.
+    /// Small amount (real shape recorded on 2026-10-03 for 58,928 sats): LI.FI's share
+    /// (147 sats) is rounded up to the dust threshold (294), the difference taken from
+    /// the change. Accepted, and counted in the total debited; beyond the threshold,
+    /// refused.
     #[test]
     fn small_bitcoin_deposits_allow_the_dust_top_up() {
         let own = derivation::btc_mainnet_script_pubkey("bc1q0syth5ya7up2k0jj36uw8l03c2dpru2c3hhjy3").unwrap();

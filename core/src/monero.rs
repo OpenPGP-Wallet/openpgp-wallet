@@ -1,30 +1,27 @@
-//! Monero : adresse principale 4…, réception, solde, historique et envoi.
+//! Monero: primary address 4…, receiving, balance, history and sending.
 //!
-//! Bibliothèques : `monero-wallet` (monero-oxide, issue de monero-serai,
-//! auditée) pour l'analyse des blocs avec la clé de VISUALISATION, la
-//! sélection des leurres et la signature CLSAG + Bulletproofs+ ;
-//! `monero-simple-request-rpc` pour parler à un nœud Monero.
+//! Libraries: `monero-wallet` (monero-oxide, derived from monero-serai, audited)
+//! for scanning blocks with the VIEW key, decoy selection and CLSAG + Bulletproofs+
+//! signing; `monero-simple-request-rpc` to talk to a Monero node.
 //!
-//! Clés : schéma de l'app Monero de Ledger — clé BIP32 m/44'/128'/p'/0/0 de la
-//! seed, clé de dépense = keccak256(clé) réduite, clé de visualisation =
-//! keccak256(clé de dépense) réduite. Vérifié contre les vecteurs des tests de
-//! l'app Ledger : la même seed BIP39 donne le même portefeuille Monero.
+//! Keys: the Ledger Monero app's scheme. BIP32 key m/44'/128'/p'/0/0 from the seed,
+//! spend key = reduced keccak256(key), view key = reduced keccak256(spend key).
+//! Checked against the vectors from the Ledger app's tests: the same BIP39 seed
+//! gives the same Monero wallet.
 //!
-//! Nœud : public par défaut (`DEFAULT_NODES`, essayés dans l'ordre), ou celui
-//! de l'utilisateur (Paramètres). L'app télécharge TOUS les blocs (élagués) et
-//! les analyse localement : le nœud n'apprend pas quelles sorties sont à nous
-//! en synchronisant. Il voit l'adresse IP et les transactions qu'on lui fait
-//! diffuser, et fournit l'index des sorties et les leurres : un nœud
-//! malveillant peut montrer des fonds qui n'existent pas ou affaiblir la
-//! confidentialité d'un envoi (limite de tout portefeuille léger) ; la
-//! sélection des leurres refuse un nœud qui ment sur la sortie dépensée.
+//! Node: public by default (`DEFAULT_NODES`, tried in order), or the user's own
+//! (Settings). The app downloads ALL blocks (pruned) and scans them locally, so the
+//! node does not learn which outputs are ours while syncing. It does see the IP
+//! address and the transactions we ask it to broadcast, and it provides the output
+//! index and the decoys: a malicious node can show funds that do not exist or
+//! weaken a send's privacy (a limit of any light wallet); decoy selection refuses a
+//! node that lies about the output being spent.
 //!
-//! État local (`monero_wallet.json`) : sorties reçues, key images, envois. La
-//! clé de dépense n'est jamais gardée : les key images (détection des
-//! dépenses) sont calculées quand la seed est disponible (déverrouillage,
-//! envoi), et les blocs analysés sans elles depuis la réception d'une sortie
-//! sont alors relus. Fuite de ce fichier = historique Monero visible, jamais
-//! de fonds perdus.
+//! Local state (`monero_wallet.json`): received outputs, key images, sends. The
+//! spend key is never stored: key images (spend detection) are computed whenever
+//! the seed is available (unlock, send), and the blocks scanned without them since
+//! an output was received are then reread. A leak of this file exposes the Monero
+//! history, never the funds.
 
 use crate::{derivation, history, tokens, wallet_birthday};
 use anyhow::{anyhow, bail, ensure, Context, Result};
@@ -47,13 +44,12 @@ use zeroize::Zeroizing;
 
 type Daemon = MoneroDaemon<SimpleRequestTransport>;
 
-/// Naissance des comptes : aucune adresse Monero de l'app n'existait avant
-/// (relevé le 03/10/2026 : hauteur 3 776 115), donc rien ne peut être manqué.
+/// Account birthday: no Monero address from the app existed before it (recorded on
+/// 2026-10-03: height 3,776,115), so nothing can be missed.
 pub const BIRTHDAY_HEIGHT: usize = 3_776_000;
 
-/// Nœuds publics (RPC restreint, HTTPS ; relevés le 03/10/2026, tous à la
-/// même hauteur et au même hash) : ceux de Cake Wallet et de Stack Wallet,
-/// puis deux nœuds communautaires.
+/// Public nodes (restricted RPC, HTTPS; recorded on 2026-10-03, all at the same
+/// height and hash): Cake Wallet's and Stack Wallet's, then two community nodes.
 pub const DEFAULT_NODES: [&str; 4] = [
     "https://xmr-node.cakewallet.com:18081",
     "https://monero.stackwallet.com:18081",
@@ -63,39 +59,38 @@ pub const DEFAULT_NODES: [&str; 4] = [
 
 const STATE_FILE: &str = "monero_wallet.json";
 const NODE_FILE: &str = "monero_node.txt";
-/// Taille d'anneau imposée par le consensus depuis la mise à niveau 15.
+/// Ring size enforced by consensus since hard fork 15.
 const RING_LEN: u8 = 16;
-/// Mise à niveau du réseau dont les règles sont connues de la bibliothèque
-/// (CLSAG + Bulletproofs+) : une autre version de bloc fait refuser l'envoi.
+/// Network upgrade whose rules the library knows (CLSAG + Bulletproofs+): any other
+/// block version makes the send fail.
 const KNOWN_HARDFORK: u8 = 16;
-/// Blocs demandés par appel (`get_blocks.bin`, élagués).
+/// Blocks requested per call (`get_blocks.bin`, pruned).
 const BATCH: usize = 100;
-/// Derniers blocs gardés pour détecter une réorganisation de la chaîne.
+/// Latest blocks kept to detect a chain reorganization.
 const RECENT_BLOCKS: usize = 30;
-/// Plafond des frais par unité de poids (piconeros) : 20 000 au 03/10/2026
-/// en priorité basse (celle de wallet2 par défaut), 320 000 en priorité
-/// haute ; au-delà, le nœud est suspect et l'envoi est refusé.
+/// Fee cap per unit of weight (piconeros): 20,000 on 2026-10-03 at low priority
+/// (wallet2's default), 320,000 at high priority; above that, the node is
+/// suspicious and the send is refused.
 const MAX_FEE_PER_WEIGHT: u64 = 400_000;
-/// Envoi jamais miné après ce délai (durée de vie d'une transaction dans la
-/// réserve des nœuds) : ses sorties redeviennent disponibles.
+/// A send never mined after this delay (a transaction's lifetime in the nodes'
+/// mempool): its outputs become available again.
 const PENDING_EXPIRY_SECS: u64 = 3 * 24 * 3600;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(90);
 pub const DECIMALS: u32 = 12;
 
-/// Une seule lecture-modification-écriture de l'état à la fois
-/// (synchronisation de fond et envois).
+/// One read-modify-write of the state at a time (background sync and sends).
 static STATE_LOCK: Mutex<()> = Mutex::new(());
 
-/// Dossier de l'état et profils connus (adresse → profil), notés au début de
-/// chaque synchronisation : la courbe du portefeuille lit solde et historique
-/// par adresse (`balance_of_address`, `history_of_address`).
+/// State folder and known profiles (address → profile), recorded at the start of
+/// each sync: the portfolio chart reads balance and history by address
+/// (`balance_of_address`, `history_of_address`).
 static KNOWN: Mutex<Option<(std::path::PathBuf, BTreeMap<String, u32>)>> = Mutex::new(None);
 
-// --- Clés et adresse -------------------------------------------------------------
+// --- Keys and address ------------------------------------------------------------
 
-/// Clés de visualisation d'un profil (mémorisées au déverrouillage, jamais
-/// envoyées à l'interface) : clé publique de dépense et clé privée de
-/// visualisation — de quoi trouver les sorties reçues, pas de les dépenser.
+/// A profile's view keys (kept in memory on unlock, never sent to the UI): the
+/// public spend key and the private view key, enough to find received outputs but
+/// not to spend them.
 #[derive(Clone)]
 pub struct ViewKeys {
     pub profile: u32,
@@ -110,7 +105,7 @@ impl ViewKeys {
         ViewPair::new(spend, Zeroizing::new(view)).map_err(|e| anyhow!("clés Monero invalides ({e})"))
     }
 
-    /// Adresse principale (4…) du profil.
+    /// The profile's primary address (4…).
     pub fn address(&self) -> Result<String> {
         Ok(self.pair()?.legacy_address(Network::Mainnet).to_string())
     }
@@ -120,7 +115,7 @@ fn dalek(bytes: &[u8; 32]) -> curve25519_dalek::Scalar {
     curve25519_dalek::Scalar::from_bytes_mod_order(*bytes)
 }
 
-/// Clé privée de dépense du profil (schéma Ledger, voir l'en-tête).
+/// The profile's private spend key (Ledger scheme, see the header).
 fn spend_key(seed: &[u8], profile: u32) -> Result<Zeroizing<Scalar>> {
     let base = derivation::derive_monero_base_key(seed, profile)?;
     Ok(Zeroizing::new(Scalar::hash(&base[..])))
@@ -137,8 +132,8 @@ fn keys_from_spend(profile: u32, spend: &Scalar) -> ViewKeys {
     ViewKeys { profile, spend_public, view_private: Zeroizing::new(<[u8; 32]>::from(view)) }
 }
 
-/// Key image d'une sortie : (clé de dépense + décalage de la sortie) × Hp(clé
-/// de la sortie), publiée par la transaction qui la dépense.
+/// Key image of an output: (spend key + output offset) × Hp(output key), published
+/// by the transaction that spends it.
 fn key_image(spend: &Scalar, output_key: Point, key_offset: Scalar) -> [u8; 32] {
     let spend_bytes = Zeroizing::new(<[u8; 32]>::from(*spend));
     let secret = Zeroizing::new(dalek(&spend_bytes) + dalek(&<[u8; 32]>::from(key_offset)));
@@ -150,9 +145,8 @@ fn key_image_for(secret: &curve25519_dalek::Scalar, output_key: Point) -> [u8; 3
     (secret * hp).compress().to_bytes()
 }
 
-/// Destinataire : adresse Monero du réseau principal (standard 4…,
-/// sous-adresse 8…, intégrée) ; réseaux de test et formats non standard
-/// refusés.
+/// Recipient: a mainnet Monero address (standard 4…, subaddress 8…, integrated);
+/// test networks and non-standard formats refused.
 pub fn parse_recipient(address: &str) -> Result<MoneroAddress> {
     let address = MoneroAddress::from_str(Network::Mainnet, address.trim()).map_err(|e| match e {
         AddressError::DifferentNetwork { .. } => anyhow!("adresse Monero d'un réseau de test (stagenet/testnet) : refusée"),
@@ -162,7 +156,7 @@ pub fn parse_recipient(address: &str) -> Result<MoneroAddress> {
     Ok(address)
 }
 
-// --- Montants --------------------------------------------------------------------
+// --- Amounts ---------------------------------------------------------------------
 
 pub fn format_xmr(piconero: u64) -> String {
     tokens::format_amount(u128::from(piconero), DECIMALS as u8)
@@ -172,14 +166,14 @@ pub fn parse_xmr(amount: &str) -> Result<u64> {
     u64::try_from(tokens::parse_amount(amount, DECIMALS as u8)?).context("montant hors limites")
 }
 
-// --- État local ------------------------------------------------------------------
+// --- Local state -----------------------------------------------------------------
 
 #[derive(Serialize, Deserialize, Default)]
 struct State {
-    /// Dernier bloc connu du nœud (dernière synchronisation).
+    /// The node's latest known block (last sync).
     #[serde(default)]
     tip: usize,
-    /// Derniers blocs analysés (numéro, hash), du plus ancien au plus récent.
+    /// Latest scanned blocks (number, hash), oldest to newest.
     #[serde(default)]
     recent: Vec<(usize, String)>,
     #[serde(default)]
@@ -188,13 +182,13 @@ struct State {
 
 #[derive(Serialize, Deserialize)]
 struct ProfileState {
-    /// Clé publique de dépense (hex) des sorties gardées : un état écrit pour
-    /// un AUTRE portefeuille (réinitialisation puis création ou restauration
-    /// sur cet appareil) est oublié au lieu d'être mélangé (voir
-    /// `bind_profile`). `None` : état d'avant ce champ.
+    /// Public spend key (hex) of the stored outputs: a state written for ANOTHER wallet
+    /// (a reset, then a new wallet or a restore on this device) is forgotten instead of
+    /// being mixed in (see `bind_profile`). `None`: state from before this field
+    /// existed.
     #[serde(default)]
     spend_public: Option<String>,
-    /// Prochain bloc à analyser pour ce profil.
+    /// Next block to scan for this profile.
     next_block: usize,
     #[serde(default)]
     outputs: Vec<Received>,
@@ -208,9 +202,9 @@ impl ProfileState {
     }
 }
 
-/// État du profil lié à SES clés : créé s'il manque (analyse à partir de
-/// `start`), remplacé s'il a été écrit pour un autre portefeuille, marqué s'il
-/// date d'avant le lien.
+/// The profile's state, bound to ITS keys: created if missing (scan from `start`),
+/// replaced if it was written for another wallet, marked if it predates the
+/// binding.
 fn bind_profile(state: &mut State, profile: u32, spend_public: &[u8; 32], start: usize) {
     let expected = hex::encode(spend_public);
     match state.profiles.get_mut(&profile) {
@@ -224,13 +218,12 @@ fn bind_profile(state: &mut State, profile: u32, spend_public: &[u8; 32], start:
 
 #[derive(Serialize, Deserialize, Clone)]
 struct Received {
-    /// Sortie complète (format de `monero-wallet`, hex) : de quoi la dépenser
-    /// avec la clé de dépense.
+    /// Full output (`monero-wallet` format, hex): enough to spend it with the spend
+    /// key.
     output: String,
     tx: String,
-    /// Clé publique de la sortie (hex) : une sortie déjà vue n'est jamais
-    /// comptée deux fois (relecture, ou « burning bug » : seule la première
-    /// est dépensable).
+    /// The output's public key (hex): an output already seen is never counted twice
+    /// (rereading, or the "burning bug": only the first one is spendable).
     key: String,
     block: usize,
     time: u64,
@@ -244,7 +237,7 @@ struct Received {
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 struct Spend {
     tx: String,
-    /// `None` : envoi diffusé, pas encore miné.
+    /// `None`: send broadcast, not mined yet.
     block: Option<usize>,
     time: u64,
 }
@@ -284,8 +277,7 @@ fn now() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
-/// Dépense en attente trop ancienne : jamais minée, sortie de nouveau
-/// disponible.
+/// Pending spend that is too old: never mined, output available again.
 fn spend_expired(spend: &Spend, now: u64) -> bool {
     spend.block.is_none() && now.saturating_sub(spend.time) > PENDING_EXPIRY_SECS
 }
@@ -295,14 +287,14 @@ fn decode_output(hex_output: &str) -> Result<WalletOutput> {
     WalletOutput::read(&mut bytes.as_slice()).context("sortie Monero illisible")
 }
 
-// --- Nœud ------------------------------------------------------------------------
+// --- Node ------------------------------------------------------------------------
 
-/// Nœud choisi par l'utilisateur dans Paramètres, s'il y en a un.
+/// Node chosen by the user in Settings, if any.
 pub fn custom_node(data_dir: &Path) -> Option<String> {
     std::fs::read_to_string(data_dir.join(NODE_FILE)).ok().and_then(|text| normalize_node(&text).ok())
 }
 
-/// Enregistre le nœud de l'utilisateur (vide : retour aux nœuds publics).
+/// Saves the user's node (empty: back to the public nodes).
 pub fn set_custom_node(data_dir: &Path, url: &str) -> Result<Option<String>> {
     let path = data_dir.join(NODE_FILE);
     if url.trim().is_empty() {
@@ -318,9 +310,9 @@ pub fn set_custom_node(data_dir: &Path, url: &str) -> Result<Option<String>> {
     Ok(Some(url))
 }
 
-/// Adresse de nœud acceptée : `https://hôte[:port]`, ou `http://` pour un
-/// nœud local ou du réseau local seulement (en clair sur Internet, un
-/// intermédiaire pourrait montrer de faux blocs). Sans chemin ni identifiants.
+/// Accepted node address: `https://host[:port]`, or `http://` for a local or LAN
+/// node only (in the clear over the Internet, a middleman could show fake blocks).
+/// No path or credentials.
 fn normalize_node(url: &str) -> Result<String> {
     let url = url.trim().trim_end_matches('/');
     let (scheme, rest) = url.split_once("://").ok_or_else(|| anyhow!("adresse de nœud invalide : https://hôte:port attendu"))?;
@@ -360,7 +352,7 @@ fn runtime() -> Result<tokio::runtime::Runtime> {
     tokio::runtime::Builder::new_current_thread().enable_all().build().context("démarrage du client Monero impossible")
 }
 
-/// Premier nœud qui répond, avec la hauteur du dernier bloc.
+/// The first node that answers, with the height of the latest block.
 async fn connect(data_dir: &Path) -> Result<(Daemon, usize)> {
     let mut errors = Vec::new();
     for url in nodes(data_dir) {
@@ -385,19 +377,19 @@ fn node_err(e: impl std::fmt::Display) -> anyhow::Error {
     anyhow!("nœud Monero : {e}")
 }
 
-// --- Synchronisation ---------------------------------------------------------------
+// --- Sync ------------------------------------------------------------------------
 
-/// Oublie les adresses mémorisées (effacement de l'état, voir `seed_state`).
+/// Forgets the remembered addresses (state wipe, see `seed_state`).
 pub(crate) fn forget_known() {
     *KNOWN.lock().unwrap_or_else(|p| p.into_inner()) = None;
 }
 
-/// Analyse les blocs jusqu'au bout de la chaîne pour tous les profils
-/// (appelé en arrière-plan après le déverrouillage). L'état est enregistré
-/// après chaque lot : une interruption ne perd que le lot en cours.
-/// `generation` (voir `seed_state`) : l'état n'est lu et écrit que sous son
-/// autorisation, jamais pendant les appels réseau — une réinitialisation
-/// n'attend qu'un lot en mémoire, et la passe s'arrête sans rien réécrire.
+/// Scans blocks up to the tip of the chain for every profile (called in the
+/// background after unlocking). The state is saved after each batch, so an
+/// interruption only loses the current batch. `generation` (see `seed_state`): the
+/// state is only read and written under its authorization, never during network
+/// calls; a reset only waits for one batch in memory, and the pass stops without
+/// writing anything back.
 pub fn sync(data_dir: &Path, keys: &[ViewKeys], generation: u64) -> Result<()> {
     if keys.is_empty() || crate::seed_state::pass(generation).is_none() {
         return Ok(());
@@ -408,14 +400,12 @@ pub fn sync(data_dir: &Path, keys: &[ViewKeys], generation: u64) -> Result<()> {
     runtime()?.block_on(async {
         let (rpc, _) = connect(data_dir).await?;
         loop {
-            // Réinitialisation ou restauration demandée : rien n'est réécrit
-            // (voir `seed_state`).
+            // Reset or restore requested: nothing is written back (see `seed_state`).
             if crate::seed_state::cancelled() {
                 return Ok(());
             }
             let tip = rpc.latest_block_number().await.map_err(node_err)?;
-            // Verrou relâché pendant les appels réseau : un envoi n'attend
-            // jamais la fin d'un lot.
+            // Lock released during network calls: a send never waits for a batch to finish.
             let (start, recent) = {
                 let Some(_pass) = crate::seed_state::pass(generation) else { return Ok(()) };
                 let _guard = lock();
@@ -432,11 +422,10 @@ pub fn sync(data_dir: &Path, keys: &[ViewKeys], generation: u64) -> Result<()> {
             let Some(_pass) = crate::seed_state::pass(generation) else { return Ok(()) };
             let _guard = lock();
             let mut state = load(data_dir)?;
-            // Nouveau profil : analyse depuis peu avant la création du
-            // portefeuille (naissance fixe si elle est inconnue) ; jamais au-delà
-            // de la chaîne connue (horloge faussée).
-            // (Nom distinct de `start`, le premier bloc de CE lot : les confondre
-            // faisait tourner la boucle à vide.)
+            // New profile: scan from shortly before the wallet was created (fixed birthday if
+            // unknown); never beyond the known chain (wrong clock). (A different name from
+            // `start`, the first block of THIS batch: mixing them up made the loop spin
+            // without doing anything.)
             let new_profile_start = wallet_birthday::start_height(data_dir, tip as u64, 120, BIRTHDAY_HEIGHT as u64) as usize;
             for k in keys {
                 bind_profile(&mut state, k.profile, &k.spend_public, new_profile_start);
@@ -453,8 +442,8 @@ pub fn sync(data_dir: &Path, keys: &[ViewKeys], generation: u64) -> Result<()> {
                 save(data_dir, &state)?;
                 continue;
             }
-            // État changé pendant la lecture (key images calculées : blocs à
-            // relire) : on recommence avec lui.
+            // State changed during the read (key images computed: blocks to reread): start
+            // over with it.
             if scan_start(&state, keys) != start || state.recent != recent {
                 save(data_dir, &state)?;
                 continue;
@@ -462,8 +451,8 @@ pub fn sync(data_dir: &Path, keys: &[ViewKeys], generation: u64) -> Result<()> {
             if start > tip {
                 return save(data_dir, &state);
             }
-            // Chaîne réorganisée entre la vérification et la lecture : le
-            // prochain passage remonte jusqu'au point commun.
+            // Chain reorganized between the check and the read: the next pass goes back to the
+            // common point.
             if let (Some((number, hash)), Some(first)) = (state.recent.last(), blocks.first()) {
                 if number + 1 == start && hex::encode(first.block.header.previous) != *hash {
                     state.recent.pop();
@@ -472,7 +461,7 @@ pub fn sync(data_dir: &Path, keys: &[ViewKeys], generation: u64) -> Result<()> {
                 }
             }
             for block in blocks {
-                // Effacement demandé : arrêt entre deux blocs, rien réécrit.
+                // Wipe requested: stop between two blocks, nothing written back.
                 if crate::seed_state::cancelled() {
                     return Ok(());
                 }
@@ -483,13 +472,13 @@ pub fn sync(data_dir: &Path, keys: &[ViewKeys], generation: u64) -> Result<()> {
     })
 }
 
-/// Prochain bloc à analyser : le plus en retard des profils.
+/// Next block to scan: the furthest behind across profiles.
 fn scan_start(state: &State, keys: &[ViewKeys]) -> usize {
     keys.iter().map(|k| state.profiles.get(&k.profile).map_or(BIRTHDAY_HEIGHT, |p| p.next_block)).min().unwrap_or(BIRTHDAY_HEIGHT)
 }
 
-/// Compare les derniers blocs analysés à ceux du nœud : `Some(dernier bloc
-/// commun)` en cas de réorganisation de la chaîne.
+/// Compares the latest scanned blocks with the node's: `Some(last common block)` if
+/// the chain was reorganized.
 async fn find_fork(rpc: &Daemon, recent: &[(usize, String)]) -> Result<Option<usize>> {
     let Some(&(last, _)) = recent.last() else { return Ok(None) };
     for (number, hash) in recent.iter().rev() {
@@ -498,13 +487,12 @@ async fn find_fork(rpc: &Daemon, recent: &[(usize, String)]) -> Result<Option<us
             return Ok((*number != last).then_some(*number));
         }
     }
-    // Plus profond que les blocs gardés (jamais vu sur Monero) : on remonte
-    // au plus ancien.
+    // Deeper than the blocks kept (never seen on Monero): go back to the oldest.
     Ok(Some(recent[0].0.saturating_sub(1)))
 }
 
-/// Oublie les blocs après `fork` : sorties reçues retirées, dépenses
-/// repassées en attente, profils à relire depuis `fork + 1`.
+/// Forgets the blocks after `fork`: received outputs removed, spends set back to
+/// pending, profiles to reread from `fork + 1`.
 fn rollback(state: &mut State, fork: usize) {
     state.recent.retain(|(number, _)| *number <= fork);
     for profile in state.profiles.values_mut() {
@@ -540,7 +528,7 @@ fn process_block(state: &mut State, scanners: &mut BTreeMap<u32, Scanner>, block
     let time = block.block.header.timestamp;
     let hash = hex::encode(block.block.hash());
 
-    // Dépenses : key images des entrées, comparées à celles de nos sorties.
+    // Spends: key images of the inputs, compared with those of our outputs.
     let ours: HashSet<String> = state.profiles.values().flat_map(|p| p.outputs.iter().filter_map(|o| o.key_image.clone())).collect();
     if !ours.is_empty() {
         for (tx_hash, tx) in block.block.transactions.iter().zip(&block.transactions) {
@@ -580,7 +568,7 @@ fn process_block(state: &mut State, scanners: &mut BTreeMap<u32, Scanner>, block
         state_profile.next_block = number + 1;
     }
 
-    // Blocs relus (key images calculées après coup) : déjà gardés.
+    // Reread blocks (key images computed afterwards): already stored.
     if state.recent.last().is_none_or(|(last, _)| number > *last) {
         state.recent.push((number, hash));
         let excess = state.recent.len().saturating_sub(RECENT_BLOCKS);
@@ -589,8 +577,7 @@ fn process_block(state: &mut State, scanners: &mut BTreeMap<u32, Scanner>, block
     Ok(())
 }
 
-/// Sortie de key image `image` dépensée par `tx` (miné dans `block`, ou en
-/// attente).
+/// Output with key image `image` spent by `tx` (mined in `block`, or pending).
 fn mark_spent(state: &mut State, image: &str, tx: &str, block: Option<usize>, time: u64) {
     for profile in state.profiles.values_mut() {
         for output in profile.outputs.iter_mut().filter(|o| o.key_image.as_deref() == Some(image)) {
@@ -604,21 +591,20 @@ fn mark_spent(state: &mut State, image: &str, tx: &str, block: Option<usize>, ti
     }
 }
 
-/// Calcule les key images des sorties qui n'en ont pas encore (seed
-/// disponible : déverrouillage ou envoi) et fait relire les blocs analysés
-/// sans elles depuis leur réception, pour y trouver une éventuelle dépense.
+/// Computes the key images of outputs that do not have one yet (seed available:
+/// unlock or send) and has the blocks scanned without them since their receipt
+/// reread, to find any spend there.
 pub fn update_key_images(data_dir: &Path, seed: &[u8], profile: u32) -> Result<()> {
     let _guard = lock();
     let mut state = load(data_dir)?;
     if !state.profiles.contains_key(&profile) {
         return Ok(());
     }
-    // Déverrouillage : état d'un autre portefeuille oublié avant tout affichage.
+    // Unlock: another wallet's state is forgotten before anything is displayed.
     let spend = spend_key(seed, profile)?;
     let spend_public = keys_from_spend(profile, &spend).spend_public;
     let before = state.profiles.get(&profile).and_then(|p| p.spend_public.clone());
-    // Autre portefeuille (restauration) : naissance fixe, les fonds peuvent
-    // être anciens.
+    // Another wallet (restore): fixed birthday, since the funds may be old.
     bind_profile(&mut state, profile, &spend_public, BIRTHDAY_HEIGHT);
     let Some(state_profile) = state.profiles.get_mut(&profile) else { return Ok(()) };
     if state_profile.outputs.iter().all(|o| o.key_image.is_some()) {
@@ -637,15 +623,14 @@ pub fn update_key_images(data_dir: &Path, seed: &[u8], profile: u32) -> Result<(
     save(data_dir, &state)
 }
 
-// --- Solde et historique ---------------------------------------------------------
+// --- Balance and history ---------------------------------------------------------
 
 pub struct Balance {
-    /// Dépensable maintenant (10 confirmations).
+    /// Spendable now (10 confirmations).
     pub unlocked: u64,
-    /// Reçu mais pas encore dépensable, plus la monnaie attendue des envois
-    /// en attente.
+    /// Received but not spendable yet, plus the change expected from pending sends.
     pub locked: u64,
-    /// Chaîne entièrement analysée pour ce profil.
+    /// Chain fully scanned for this profile.
     pub synced: bool,
 }
 
@@ -675,13 +660,13 @@ pub fn balance(data_dir: &Path, profile: u32) -> Result<Balance> {
     Ok(Balance { unlocked, locked, synced: state.tip > 0 && p.next_block > state.tip })
 }
 
-/// Transactions du profil, la plus récente d'abord : montant net (reçu moins
-/// dépensé, frais compris pour un envoi).
+/// The profile's transactions, newest first: net amount (received minus spent,
+/// including the fee for a send).
 pub fn history(data_dir: &Path, profile: u32) -> Result<Vec<history::TxEntry>> {
     let state = load(data_dir)?;
     let Some(p) = state.profiles.get(&profile) else { return Ok(Vec::new()) };
     let now = now();
-    // tx → (net, bloc, heure, abandonné)
+    // tx → (net, block, time, abandoned)
     let mut txs: BTreeMap<String, (i128, Option<usize>, u64, bool)> = BTreeMap::new();
     for output in &p.outputs {
         let entry = txs.entry(output.tx.clone()).or_insert((0, Some(output.block), output.time, false));
@@ -721,9 +706,8 @@ fn known_profile(address: &str) -> Result<(std::path::PathBuf, u32)> {
     Ok((dir.clone(), *profile))
 }
 
-/// Somme des sorties non dépensées de l'adresse (sans la monnaie attendue
-/// des envois en attente, absente aussi de l'historique) : courbe du
-/// portefeuille.
+/// Sum of the address's unspent outputs (without the change expected from pending
+/// sends, which is not in the history either): portfolio chart.
 pub fn balance_of_address(address: &str) -> Result<u64> {
     let (dir, profile) = known_profile(address)?;
     let state = load(&dir)?;
@@ -731,20 +715,20 @@ pub fn balance_of_address(address: &str) -> Result<u64> {
     Ok(state.profiles.get(&profile).map_or(0, |p| p.outputs.iter().filter(|o| available(o, now)).map(|o| o.amount).sum()))
 }
 
-/// Historique complet de l'adresse (état local) : courbe du portefeuille.
+/// Full history of the address (local state): portfolio chart.
 pub fn history_of_address(address: &str) -> Result<Vec<history::TxEntry>> {
     let (dir, profile) = known_profile(address)?;
     history(&dir, profile)
 }
 
-/// Des sorties ont déjà été reçues (un profil au moins) : la synchronisation
-/// continue même carte Monero masquée (dépenses à suivre).
+/// Outputs have already been received (by at least one profile): sync continues
+/// even with the Monero card hidden (spends to track).
 pub fn has_received(data_dir: &Path) -> bool {
     load(data_dir).is_ok_and(|state| state.profiles.values().any(|p| !p.outputs.is_empty()))
 }
 
-/// « Réanalyser depuis le début » : tous les profils relus depuis la naissance
-/// fixe (sorties déjà connues gardées, jamais comptées deux fois).
+/// "Rescan from the beginning": every profile reread from the fixed birthday
+/// (outputs already known are kept, never counted twice).
 pub fn rescan_from_birthday(data_dir: &Path) -> Result<()> {
     let _guard = lock();
     let mut state = load(data_dir)?;
@@ -754,17 +738,17 @@ pub fn rescan_from_birthday(data_dir: &Path) -> Result<()> {
     save(data_dir, &state)
 }
 
-/// Envoi diffusé pas encore miné (la carte se rafraîchit plus souvent).
+/// A send broadcast but not mined yet (the card refreshes more often).
 pub fn has_pending(data_dir: &Path, profile: u32) -> Result<bool> {
     let state = load(data_dir)?;
     let now = now();
     Ok(state.profiles.get(&profile).is_some_and(|p| p.sends.iter().any(|s| s.block.is_none() && now.saturating_sub(s.time) <= PENDING_EXPIRY_SECS)))
 }
 
-// --- Envoi -----------------------------------------------------------------------
+// --- Sending ---------------------------------------------------------------------
 
-/// Envoi préparé pour la boîte de confirmation : sorties choisies, leurres
-/// tirés, frais calculés — exactement ce qui sera signé.
+/// A send prepared for the confirmation dialog: outputs chosen, decoys drawn, fee
+/// computed; exactly what will be signed.
 pub struct SendPlan {
     pub profile: u32,
     pub to: String,
@@ -774,8 +758,8 @@ pub struct SendPlan {
     tx: SignableTransaction,
 }
 
-/// Sorties dépensables du profil (les plus grosses d'abord), leur total et le
-/// montant encore bloqué ; refus tant que la synchronisation n'est pas à jour.
+/// The profile's spendable outputs (largest first), their total and the amount
+/// still locked; refused until the sync is up to date.
 fn spendable(data_dir: &Path, keys: &ViewKeys) -> Result<(Vec<Received>, u64, u64)> {
     let (outputs, synced, locked) = {
         let state = load(data_dir)?;
@@ -791,7 +775,7 @@ fn spendable(data_dir: &Path, keys: &ViewKeys) -> Result<(Vec<Received>, u64, u6
     Ok((outputs, total, locked))
 }
 
-/// Destinataire vérifié : adresse du réseau principal, jamais la sienne.
+/// Verified recipient: a mainnet address, never our own.
 fn checked_recipient(keys: &ViewKeys, to: &str) -> Result<MoneroAddress> {
     let recipient = parse_recipient(to)?;
     let pair = keys.pair()?;
@@ -802,10 +786,9 @@ fn checked_recipient(keys: &ViewKeys, to: &str) -> Result<MoneroAddress> {
     Ok(recipient)
 }
 
-/// Prépare l'envoi de TOUT le solde dépensable, frais déduits, vers `to`
-/// (`None` : une adresse tirée au hasard, pour connaître le montant — les
-/// frais ne dépendent que du nombre d'entrées et de sorties). Toutes les
-/// sorties sont dépensées ; monnaie nulle.
+/// Prepares a send of the WHOLE spendable balance, fee deducted, to `to` (`None`: a
+/// random address, just to find out the amount, since the fee only depends on the
+/// number of inputs and outputs). Every output is spent; zero change.
 pub fn prepare_send_max(data_dir: &Path, keys: &ViewKeys, to: Option<&str>) -> Result<SendPlan> {
     let recipient = match to {
         Some(to) => checked_recipient(keys, to)?,
@@ -844,8 +827,8 @@ pub fn prepare_send_max(data_dir: &Path, keys: &ViewKeys, to: Option<&str>) -> R
                 fee_rate,
             )
         };
-        // Frais de cette forme de transaction (toutes les entrées, deux
-        // sorties), puis le montant qui les laisse exactement.
+        // Fee for this transaction shape (all the inputs, two outputs), then the amount
+        // that leaves exactly that.
         let fee = match build(1) {
             Ok(tx) => tx.necessary_fee(),
             Err(SendError::NotEnoughFunds { necessary_fee, .. }) => {
@@ -860,8 +843,8 @@ pub fn prepare_send_max(data_dir: &Path, keys: &ViewKeys, to: Option<&str>) -> R
     })
 }
 
-/// Prépare un envoi de `amount` piconeros vers `to` depuis le profil de
-/// `keys` (sans la clé de dépense : rien n'est signé ici).
+/// Prepares a send of `amount` piconeros to `to` from the profile of `keys`
+/// (without the spend key: nothing is signed here).
 pub fn prepare_send(data_dir: &Path, keys: &ViewKeys, to: &str, amount: u64) -> Result<SendPlan> {
     let recipient = checked_recipient(keys, to)?;
     let pair = keys.pair()?;
@@ -928,8 +911,8 @@ fn insufficient(amount: u64, unlocked: u64, locked: u64) -> String {
     message
 }
 
-/// Signe exactement l'envoi préparé (et confirmé) avec la clé de dépense
-/// tirée de `seed`, le diffuse, puis marque ses sorties comme dépensées.
+/// Signs exactly the prepared (and confirmed) send with the spend key drawn from
+/// `seed`, broadcasts it, then marks its outputs as spent.
 pub fn sign_and_send(data_dir: &Path, seed: &[u8], plan: SendPlan) -> Result<String> {
     update_key_images(data_dir, seed, plan.profile)?;
     let spend = spend_key(seed, plan.profile)?;
@@ -957,10 +940,9 @@ pub fn sign_and_send(data_dir: &Path, seed: &[u8], plan: SendPlan) -> Result<Str
         Err(PublishTransactionError::TransactionRejected(reason)) => {
             bail!("transaction refusée par le nœud Monero : {reason}")
         }
-        // Délai dépassé ou connexion coupée après l'envoi : la transaction
-        // est peut-être partie. Ses sorties sont marquées en attente (jamais
-        // dépensées deux fois) ; si elle n'est jamais minée, elles
-        // redeviennent disponibles après `PENDING_EXPIRY_SECS`.
+        // Timed out or connection lost after sending: the transaction may have gone out.
+        // Its outputs are marked pending (never spent twice); if it is never mined, they
+        // become available again after `PENDING_EXPIRY_SECS`.
         Err(PublishTransactionError::InterfaceError(e)) => {
             record_send(data_dir, &record, &images)?;
             bail!("diffusion Monero incertaine ({e}) : vérifiez l'historique dans quelques minutes avant de renvoyer")
@@ -986,8 +968,8 @@ fn record_send(data_dir: &Path, sent: &Sent, images: &[String]) -> Result<()> {
 mod tests {
     use super::*;
 
-    /// Seed BIP39 de « abandon ×11 about » (sans phrase de passe), celle des
-    /// tests de l'app Monero de Ledger (`tests/conftest.py`).
+    /// BIP39 seed of "abandon ×11 about" (no passphrase), the one used in the Ledger
+    /// Monero app's tests (`tests/conftest.py`).
     const ABANDON_SEED: &str = "5eb00bbddcf069084889a8ab9155568165f5c453ccb85e70811aaed6f6da5fc19a5ac40b389cd370d086206dec8aa6c43daea6690f20ad3d8d48b2d2ce9e38e4";
 
     fn seed() -> Vec<u8> {
@@ -996,7 +978,7 @@ mod tests {
 
     #[test]
     fn keys_match_the_ledger_monero_app() {
-        // Vecteurs de `tests/test_crypto.py` de LedgerHQ/app-monero.
+        // Vectors from LedgerHQ/app-monero's `tests/test_crypto.py`.
         let spend = spend_key(&seed(), 0).unwrap();
         assert_eq!(hex::encode(<[u8; 32]>::from(*spend)), "3b094ca7218f175e91fa2402b4ae239a2fe8262792a3e718533a1a357a1e4109");
         let keys = view_keys(&seed(), 0).unwrap();
@@ -1022,7 +1004,7 @@ mod tests {
 
     #[test]
     fn key_images_match_the_monero_vectors() {
-        // `generate_key_image <clé publique> <clé privée> <key image>` de
+        // `generate_key_image <public key> <private key> <key image>` from
         // tests/crypto/tests.txt (monero-project/monero).
         for (public, secret, expected) in [
             (
@@ -1040,7 +1022,7 @@ mod tests {
             let public = CompressedPoint::from(public).decompress().unwrap();
             let secret = Scalar::read(&mut hex::decode(secret).unwrap().as_slice()).unwrap();
             let zero = Scalar::read(&mut [0u8; 32].as_slice()).unwrap();
-            // Chemin des sorties : clé de dépense + décalage (ici nul).
+            // Output path: spend key + offset (zero here).
             assert_eq!(hex::encode(key_image(&secret, public, zero)), expected);
         }
     }
@@ -1091,8 +1073,8 @@ mod tests {
         Received { output: String::new(), tx: tx.into(), key: format!("k{tx}"), block, time: 1, amount, key_image: Some(format!("i{tx}")), spent }
     }
 
-    /// Un état écrit pour un autre portefeuille est remplacé, jamais mélangé ;
-    /// le sien est gardé ; un état d'avant le lien est adopté.
+    /// A state written for another wallet is replaced, never mixed in; our own is kept;
+    /// a state from before the binding is adopted.
     #[test]
     fn profile_state_is_bound_to_its_wallet() {
         let mine = view_keys(&seed(), 0).unwrap().spend_public;
@@ -1166,8 +1148,8 @@ mod tests {
         assert!(has_pending(&dir, 0).unwrap());
     }
 
-    /// Réel : synchronisation depuis la naissance avec les nœuds publics
-    /// (`cargo test -p openpgp-wallet-core monero::tests::real_sync -- --ignored --nocapture`).
+    /// Live: sync from the birthday with the public nodes.
+    /// `cargo test -p openpgp-wallet-core monero::tests::real_sync -- --ignored --nocapture`
     #[test]
     #[ignore]
     fn real_sync() {
@@ -1178,7 +1160,7 @@ mod tests {
         let state = load(&dir).unwrap();
         println!("{} blocs en {:?}, hauteur {}", state.tip + 1 - BIRTHDAY_HEIGHT, started.elapsed(), state.tip);
         assert!(balance(&dir, 0).unwrap().synced);
-        // Seconde passe : rien à relire.
+        // Second pass: nothing to reread.
         let again = std::time::Instant::now();
         sync(&dir, std::slice::from_ref(&keys), crate::seed_state::generation()).unwrap();
         println!("seconde passe {:?}", again.elapsed());

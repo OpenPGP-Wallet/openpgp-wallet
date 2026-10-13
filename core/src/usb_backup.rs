@@ -1,51 +1,49 @@
-//! Sauvegarde du kit de récupération sur clé USB (ETAPES.md, « Phase 3 :
-//! appareil de backup ») : brancher une clé suffit, l'app la détecte et y écrit
-//! des parts COMPLÈTES (fichier de part, clé privée, mot de passe) — rien à
-//! noter. Deux usages, choisis par l'utilisateur :
-//! - une part par clé (`write_share`) : une clé seule ne sert à rien (2 parts
-//!   sur 3 sont nécessaires) ; d'où le refus d'y écrire une deuxième part du
-//!   même kit ;
-//! - tout le kit sur une clé (`write_kit`) : cette clé suffit alors À ELLE
-//!   SEULE à tout récupérer, sans mot de passe — l'app le fait confirmer, et le
-//!   fichier LISEZ-MOI le rappelle à qui trouve la clé.
+//! Backing up the recovery kit to a USB drive: plugging in a drive is enough, the
+//! app detects it and writes COMPLETE shares to it (share file, private key,
+//! password), so there is nothing to write down. Two uses, chosen by the user:
+//! - one share per drive (`write_share`): a single drive is useless on its own (2
+//!   shares out of 3 are needed), hence the refusal to write a second share of the
+//!   same kit to it;
+//! - the whole kit on one drive (`write_kit`): that drive is then enough ON ITS OWN
+//!   to recover everything, with no password. The app asks for confirmation, and
+//!   the LISEZ-MOI (README) file warns whoever finds the drive.
 //!
-//! Une même clé peut porter les sauvegardes de PLUSIEURS portefeuilles, chacune
-//! dans son dossier, au nom choisi par l'utilisateur (« Perso », « Pro »…) :
-//! `PGP-Wallet-Sauvegarde/<nom>-<kit>/part-N/` (part.asc, cle-privee.asc,
-//! mot-de-passe.txt, sauvegarde.json), un LISEZ-MOI par dossier et un à la
-//! racine. Les clés écrites avant (`PGP-Wallet-Sauvegarde/part-N/`, sans nom)
-//! restent lues, et une part y est réécrite au même endroit.
+//! One drive can hold backups of SEVERAL wallets, each in its own folder, named by
+//! the user ("Perso", "Pro"…): `PGP-Wallet-Sauvegarde/<name>-<kit>/part-N/`
+//! (part.asc, cle-privee.asc, mot-de-passe.txt, sauvegarde.json), with a LISEZ-MOI
+//! per folder and one at the root. Drives written earlier
+//! (`PGP-Wallet-Sauvegarde/part-N/`, unnamed) are still read, and a share there is
+//! rewritten in the same place. These on-drive names are frozen: existing drives
+//! must keep working.
 //!
-//! Écriture vérifiée : relue et comparée, puis chaque part est réellement
-//! déchiffrée avec la clé et le mot de passe écrits (voir
-//! `api::verify_backup_share`), avant de dire à l'utilisateur que c'est fait.
-//! Seules les clés USB détectées par le système sont acceptées comme
-//! destination ou source (jamais un chemin choisi par l'interface).
+//! Verified writes: reread and compared, then each share is actually decrypted with
+//! the key and password written (see `api::verify_backup_share`) before telling the
+//! user it is done. Only USB drives detected by the system are accepted as a
+//! destination or source (never a path chosen by the UI).
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use zeroize::Zeroizing;
 
-/// Dossier créé à la racine de la clé.
+/// Folder created at the root of the drive.
 pub const BACKUP_DIR: &str = "PGP-Wallet-Sauvegarde";
 const SHARE_FILE: &str = "part.asc";
 const KEY_FILE: &str = "cle-privee.asc";
 const PASSWORD_FILE: &str = "mot-de-passe.txt";
 const INFO_FILE: &str = "sauvegarde.json";
 const README_FILE: &str = "LISEZ-MOI.txt";
-/// Fichiers d'une part : quelques Ko ; au-delà, ce n'est pas une sauvegarde.
+/// A share's files: a few KB; anything bigger is not a backup.
 const MAX_FILE_BYTES: u64 = 1 << 20;
 const MIN_FREE_BYTES: u64 = 256 * 1024;
-/// 2 : nom de la sauvegarde (1 : sans nom, ancien rangement).
+/// 2: backup name (1: unnamed, legacy layout).
 const FORMAT_VERSION: u32 = 2;
-/// Dossiers de sauvegarde lus au plus sur une clé.
+/// Maximum number of backup folders read on a drive.
 const MAX_FOLDERS: usize = 32;
 pub const NAME_INVALID: &str = "nom de la sauvegarde : 1 à 30 caractères (lettres, chiffres, espaces, - _)";
 
-/// Part présente sur une clé : kit (identifiant aléatoire, ne révèle rien du
-/// portefeuille), numéro de part et nom de la sauvegarde (vide : écrite avant
-/// les noms).
+/// A share found on a drive: kit (random identifier, reveals nothing about the
+/// wallet), share number and backup name (empty: written before names existed).
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct ShareInfo {
     pub kit: String,
@@ -62,67 +60,65 @@ struct InfoFile {
     name: String,
 }
 
-/// Vérification d'une part sur la clé (« Vérifier mes clés de sauvegarde ») :
-/// relue et déchiffrée, rien n'est écrit ni restauré.
+/// Check of a share on the drive ("Check my backup drives"): reread and decrypted,
+/// nothing is written or restored.
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct ShareCheck {
-    /// Vide pour une part non reconnue.
+    /// Empty for an unrecognized share.
     pub kit: String,
     pub part: u8,
-    /// Nom de la sauvegarde ; pour une part non reconnue, nom de son dossier.
+    /// Backup name; for an unrecognized share, the name of its folder.
     pub name: String,
-    /// `None` : intacte. Sinon `PROBLEM_UNREADABLE`, `PROBLEM_DECRYPT` ou
+    /// `None`: intact. Otherwise `PROBLEM_UNREADABLE`, `PROBLEM_DECRYPT` or
     /// `PROBLEM_UNRECOGNIZED`.
     pub problem: Option<&'static str>,
 }
 
-/// Fichier de la part absent, anormalement gros ou illisible.
+/// The share's file is missing, abnormally large or unreadable.
 pub const PROBLEM_UNREADABLE: &str = "unreadable";
-/// La part ne se déchiffre plus avec sa clé et son mot de passe.
+/// The share no longer decrypts with its key and password.
 pub const PROBLEM_DECRYPT: &str = "decrypt";
-/// `sauvegarde.json` abîmé : la part n'est plus vue par la restauration par
-/// clé (ses fichiers restent peut-être utilisables par la restauration par
-/// fichiers).
+/// Damaged `sauvegarde.json`: restore-from-drive no longer sees the share (its
+/// files may still be usable through restore-from-files).
 pub const PROBLEM_UNRECOGNIZED: &str = "unrecognized";
 
-/// Clé USB détectée.
+/// A detected USB drive.
 #[derive(Debug)]
 pub struct RemovableDrive {
-    /// Racine, `E:\`.
+    /// Root, `E:\`.
     pub root: PathBuf,
     pub label: String,
     pub free_bytes: u64,
-    /// Parts de sauvegarde déjà présentes.
+    /// Backup shares already present.
     pub shares: Vec<ShareInfo>,
 }
 
-/// Contenu d'une part de sauvegarde.
+/// Content of a backup share.
 pub struct ShareFiles {
     pub encrypted_share: Vec<u8>,
     pub privkey_armored: Vec<u8>,
     pub passphrase: Zeroizing<String>,
 }
 
-/// Clés USB branchées (lecteurs amovibles avec un support inséré).
+/// Plugged-in USB drives (removable drives with media inserted).
 #[cfg(windows)]
 pub fn removable_drives() -> Vec<RemovableDrive> {
     use windows::core::HSTRING;
     use windows::Win32::Storage::FileSystem::{GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW};
     use windows::Win32::System::Diagnostics::Debug::{SetThreadErrorMode, SEM_FAILCRITICALERRORS, SEM_NOOPENFILEERRORBOX, THREAD_ERROR_MODE};
-    /// `DRIVE_REMOVABLE` : clé USB, carte mémoire (un disque dur externe USB
-    /// se déclare « fixe » et n'est pas proposé).
+    /// `DRIVE_REMOVABLE`: USB stick, memory card (an external USB hard drive reports
+    /// itself as "fixed" and is not offered).
     const DRIVE_REMOVABLE: u32 = 2;
-    /// Rétablit le mode d'erreur précédent du fil en fin de détection.
+    /// Restores the thread's previous error mode at the end of detection.
     struct ErrorModeGuard(THREAD_ERROR_MODE);
     impl Drop for ErrorModeGuard {
         fn drop(&mut self) {
             let _ = unsafe { SetThreadErrorMode(self.0, None) };
         }
     }
-    // Lecteur sans support (lecteur de cartes vide) : sans ce mode, Windows
-    // peut afficher sa boîte « Aucun disque dans le lecteur » à chaque
-    // détection — toutes les 1,5 s tant que la fenêtre USB est ouverte. Mode
-    // du seul fil courant, rétabli à la fin.
+    // Drive with no media (empty card reader): without this mode, Windows may show its
+    // "No disk in the drive" dialog on every detection, i.e. every 1.5 s while the USB
+    // window is open. Applies to the current thread only, restored at the end.
     let mut previous = THREAD_ERROR_MODE(0);
     let _guard = unsafe { SetThreadErrorMode(SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX, Some(&mut previous)) }
         .ok()
@@ -138,7 +134,7 @@ pub fn removable_drives() -> Vec<RemovableDrive> {
         if unsafe { GetDriveTypeW(&root_w) } != DRIVE_REMOVABLE {
             continue;
         }
-        // Lecteur sans support (lecteur de cartes vide) : ignoré.
+        // Drive with no media (empty card reader): ignored.
         let mut name = [0u16; 261];
         if unsafe { GetVolumeInformationW(&root_w, Some(&mut name), None, None, None, None) }.is_err() {
             continue;
@@ -153,13 +149,13 @@ pub fn removable_drives() -> Vec<RemovableDrive> {
     drives
 }
 
-/// Détection des clés USB : Windows seulement pour l'instant.
+/// USB drive detection: Windows only for now.
 #[cfg(not(windows))]
 pub fn removable_drives() -> Vec<RemovableDrive> {
     Vec::new()
 }
 
-/// Part trouvée sur la clé, avec le dossier qui contient ses `part-N`.
+/// A share found on the drive, with the folder that contains its `part-N` folders.
 struct Located {
     info: ShareInfo,
     kit_dir: PathBuf,
@@ -169,10 +165,10 @@ fn part_dir(kit_dir: &Path, part: u8) -> PathBuf {
     kit_dir.join(format!("part-{part}"))
 }
 
-/// Parts reconnues sur la clé `root` : ancien rangement (`part-N` directement
-/// sous le dossier de sauvegarde) et un dossier par sauvegarde nommée. Format
-/// connu, numéro cohérent avec le dossier, identifiant de kit valide ; un même
-/// couple (kit, part) n'est retenu qu'une fois.
+/// Shares recognized on the drive `root`: the legacy layout (`part-N` directly
+/// under the backup folder) and one folder per named backup. Known format, number
+/// consistent with the folder, valid kit identifier; a given (kit, share) pair is
+/// kept only once.
 fn located_shares(root: &Path) -> Vec<Located> {
     let mut found: Vec<Located> = Vec::new();
     for kit_dir in kit_dirs(root) {
@@ -186,8 +182,8 @@ fn located_shares(root: &Path) -> Vec<Located> {
     found
 }
 
-/// Dossiers qui contiennent des `part-N` : le dossier de sauvegarde lui-même
-/// (ancien rangement) puis un par sauvegarde nommée.
+/// Folders containing `part-N` folders: the backup folder itself (legacy layout),
+/// then one per named backup.
 fn kit_dirs(root: &Path) -> Vec<PathBuf> {
     let base = root.join(BACKUP_DIR);
     let mut kit_dirs = vec![base.clone()];
@@ -204,8 +200,8 @@ fn kit_dirs(root: &Path) -> Vec<PathBuf> {
     kit_dirs
 }
 
-/// `sauvegarde.json` de la part `part` de `kit_dir`, s'il est bien formé :
-/// format connu, numéro cohérent avec le dossier, identifiant de kit valide.
+/// `sauvegarde.json` of share `part` in `kit_dir`, if well-formed: known format,
+/// number consistent with the folder, valid kit identifier.
 fn read_info(kit_dir: &Path, part: u8) -> Option<ShareInfo> {
     let path = part_dir(kit_dir, part).join(INFO_FILE);
     let info = std::fs::metadata(&path)
@@ -218,10 +214,10 @@ fn read_info(kit_dir: &Path, part: u8) -> Option<ShareInfo> {
     well_formed.then_some(ShareInfo { kit: info.kit, part, name })
 }
 
-/// Vérifie chaque part de la clé `root` (relue puis déchiffrée par `verify`),
-/// sans rien écrire : à refaire de temps en temps, une clé USB pouvant
-/// s'abîmer avec les années. Signale aussi les dossiers de part dont
-/// `sauvegarde.json` est abîmé, que la restauration par clé ne voit plus.
+/// Checks every share on the drive `root` (reread, then decrypted by `verify`)
+/// without writing anything. Worth doing from time to time, since a USB drive can
+/// degrade over the years. Also reports share folders whose `sauvegarde.json` is
+/// damaged, which restore-from-drive no longer sees.
 pub fn check_drive(root: &str, verify: impl Fn(&ShareFiles) -> Result<()>) -> Result<Vec<ShareCheck>> {
     let drive = detected_drive(root)?;
     Ok(check_drive_at(&drive.root, &verify))
@@ -258,24 +254,24 @@ fn shares_on(root: &Path) -> Vec<ShareInfo> {
     located_shares(root).into_iter().map(|l| l.info).collect()
 }
 
-/// Nom de sauvegarde accepté : 1 à 30 caractères, lettres (accentuées
-/// comprises), chiffres, espaces, « - » et « _ » — rien qui gêne un nom de
-/// dossier sur la clé.
+/// Accepted backup name: 1 to 30 characters, letters (accented ones included),
+/// digits, spaces, "-" and "_"; nothing that causes trouble in a folder name on the
+/// drive.
 pub fn normalize_name(name: &str) -> Result<String> {
     let name = name.split_whitespace().collect::<Vec<_>>().join(" ");
     ensure!((1..=30).contains(&name.chars().count()) && name.chars().all(|c| c.is_alphanumeric() || " -_".contains(c)), NAME_INVALID);
     Ok(name)
 }
 
-/// Dossier d'une sauvegarde nommée : nom (espaces en « - ») suivi du début de
-/// l'identifiant du kit — deux sauvegardes du même nom ne se mélangent pas.
+/// Folder of a named backup: the name (spaces as "-") followed by the start of the
+/// kit identifier, so two backups with the same name never get mixed up.
 fn kit_folder(name: &str, kit: &str, full_id: bool) -> String {
     let base: String = name.chars().map(|c| if c == ' ' { '-' } else { c }).collect();
     format!("{base}-{}", if full_id { kit } else { &kit[..kit.len().min(6)] })
 }
 
-/// La clé USB de racine `root`, si elle est bien branchée et amovible : seule
-/// destination ou source acceptée (l'interface ne choisit pas un chemin).
+/// The USB drive with root `root`, if it is actually plugged in and removable: the
+/// only destination or source accepted (the UI does not choose a path).
 fn detected_drive(root: &str) -> Result<RemovableDrive> {
     removable_drives()
         .into_iter()
@@ -283,9 +279,9 @@ fn detected_drive(root: &str) -> Result<RemovableDrive> {
         .ok_or_else(|| anyhow!("clé USB introuvable : branchez-la puis réessayez"))
 }
 
-/// Écrit `content` dans `path` : fichier temporaire, écriture forcée sur le
-/// support, renommage, puis relecture comparée. En cas d'échec, le fichier
-/// temporaire (qui peut contenir le mot de passe d'une part) est supprimé.
+/// Writes `content` to `path`: temporary file, write flushed to the media, rename,
+/// then reread and compare. On failure, the temporary file (which may contain a
+/// share's password) is deleted.
 fn write_verified(path: &Path, content: &[u8]) -> Result<()> {
     use std::io::Write;
     let tmp = path.with_extension("tmp");
@@ -305,7 +301,7 @@ fn write_verified(path: &Path, content: &[u8]) -> Result<()> {
     Ok(())
 }
 
-/// LISEZ-MOI d'une sauvegarde selon ses parts présentes sur la clé.
+/// LISEZ-MOI for a backup, based on its shares present on the drive.
 fn readme(name: &str, parts: &[u8]) -> String {
     let list = parts.iter().map(u8::to_string).collect::<Vec<_>>().join(", ");
     let title = if name.is_empty() { String::new() } else { format!(" « {name} »") };
@@ -354,7 +350,7 @@ fn readme(name: &str, parts: &[u8]) -> String {
     }
 }
 
-/// LISEZ-MOI à la racine quand la clé porte des sauvegardes nommées.
+/// LISEZ-MOI at the root when the drive holds named backups.
 const ROOT_README: &str = "SAUVEGARDES OPENPGP WALLET\r\n\
 \r\n\
 Chaque dossier contient des parts du kit de récupération d'un portefeuille\r\n\
@@ -375,10 +371,10 @@ fn check_kit_id(kit: &str) -> Result<()> {
     Ok(())
 }
 
-/// Dossier où écrire les parts du kit : celui où il est déjà sur la clé
-/// (ancien rangement compris, avec son nom), sinon un nouveau dossier nommé —
-/// jamais un dossier déjà rempli (même nom et même début d'identifiant
-/// qu'une autre sauvegarde : l'identifiant complet les sépare).
+/// Folder to write the kit's shares into: the one it already occupies on the drive
+/// (legacy layout included, with its name), otherwise a new named folder. Never a
+/// folder that is already filled (same name and same start of identifier as another
+/// backup: the full identifier tells them apart).
 fn kit_destination(root: &Path, located: &[Located], kit: &str, name: &str) -> Result<(PathBuf, String)> {
     if let Some(existing) = located.iter().find(|l| l.info.kit == kit) {
         return Ok((existing.kit_dir.clone(), existing.info.name.clone()));
@@ -392,7 +388,7 @@ fn kit_destination(root: &Path, located: &[Located], kit: &str, name: &str) -> R
     Ok((dir, name))
 }
 
-/// Écrit une part dans le dossier de son kit.
+/// Writes a share into its kit's folder.
 fn write_part(kit_dir: &Path, kit: &str, name: &str, part: u8, files: &ShareFiles) -> Result<()> {
     let dir = part_dir(kit_dir, part);
     std::fs::create_dir_all(&dir).context("écriture sur la clé USB impossible")?;
@@ -404,9 +400,8 @@ fn write_part(kit_dir: &Path, kit: &str, name: &str, part: u8, files: &ShareFile
     write_verified(&dir.join(INFO_FILE), &info)
 }
 
-/// Retire une part de la clé (ses seuls fichiers, puis son dossier s'il est
-/// vide) : une part écrite mais invérifiable ne doit pas passer pour une
-/// sauvegarde valable.
+/// Removes a share from the drive (only its files, then its folder if empty): a
+/// share that was written but cannot be verified must not pass for a valid backup.
 fn remove_part(kit_dir: &Path, part: u8) {
     let dir = part_dir(kit_dir, part);
     for name in [SHARE_FILE, KEY_FILE, PASSWORD_FILE, INFO_FILE] {
@@ -415,10 +410,10 @@ fn remove_part(kit_dir: &Path, part: u8) {
     let _ = std::fs::remove_dir(&dir);
 }
 
-/// Retire de la clé des parts écrites mais non vérifiées (écriture
-/// interrompue, vérification en échec) : rien d'invérifiable ne reste, mot de
-/// passe compris. Le dossier d'une sauvegarde nommée qui n'a plus aucune part
-/// disparaît ; sinon les LISEZ-MOI suivent les parts restantes.
+/// Removes from the drive shares that were written but not verified (interrupted
+/// write, failed verification): nothing unverifiable is left behind, password
+/// included. The folder of a named backup that has no shares left disappears;
+/// otherwise the LISEZ-MOI files follow the remaining shares.
 fn discard_parts(root: &Path, kit_dir: &Path, kit: &str, parts: &[u8]) {
     for &part in parts {
         remove_part(kit_dir, part);
@@ -431,10 +426,10 @@ fn discard_parts(root: &Path, kit_dir: &Path, kit: &str, parts: &[u8]) {
     let _ = write_readmes(root, kit);
 }
 
-/// Relit chaque part écrite depuis la clé et la fait vérifier par `verify`
-/// (déchiffrement réel), puis réécrit les LISEZ-MOI d'après les parts
-/// présentes. Au premier échec, cette part et celles pas encore vérifiées
-/// sont retirées de la clé (les parts déjà vérifiées restent valables).
+/// Rereads each written share from the drive and has `verify` check it (real
+/// decryption), then rewrites the LISEZ-MOI files from the shares present. At the
+/// first failure, that share and those not yet verified are removed from the drive
+/// (shares already verified remain valid).
 fn verify_parts_at(root: &Path, kit_dir: &Path, kit: &str, parts: &[u8], verify: &impl Fn(&ShareFiles) -> Result<()>) -> Result<()> {
     for (index, &part) in parts.iter().enumerate() {
         let located = located_shares(root).into_iter().find(|l| l.info.kit == kit && l.info.part == part);
@@ -450,8 +445,8 @@ fn verify_parts_at(root: &Path, kit_dir: &Path, kit: &str, parts: &[u8], verify:
     write_readmes(root, kit)
 }
 
-/// Écrit les parts dans le dossier du kit, puis les vérifie. Écriture
-/// interrompue : les parts déjà écrites dans cet appel sont retirées.
+/// Writes the shares into the kit's folder, then verifies them. If the write is
+/// interrupted, the shares already written in this call are removed.
 fn write_and_verify(root: &Path, kit_dir: &Path, kit: &str, name: &str, parts: &[(u8, &ShareFiles)], verify: &impl Fn(&ShareFiles) -> Result<()>) -> Result<()> {
     let numbers: Vec<u8> = parts.iter().map(|(p, _)| *p).collect();
     for (index, (part, files)) in parts.iter().enumerate() {
@@ -463,9 +458,9 @@ fn write_and_verify(root: &Path, kit_dir: &Path, kit: &str, name: &str, parts: &
     verify_parts_at(root, kit_dir, kit, &numbers, verify)
 }
 
-/// LISEZ-MOI du dossier du kit `kit` et de la racine. À la racine : celui de
-/// l'ancien rangement (parts sans nom, rangées là), précédé du texte général
-/// dès que la clé porte des sauvegardes nommées.
+/// LISEZ-MOI for the folder of kit `kit` and for the root. At the root: the one for
+/// the legacy layout (unnamed shares stored there), preceded by the general text as
+/// soon as the drive holds named backups.
 fn write_readmes(root: &Path, kit: &str) -> Result<()> {
     let base = root.join(BACKUP_DIR);
     let located = located_shares(root);
@@ -485,7 +480,7 @@ fn write_readmes(root: &Path, kit: &str) -> Result<()> {
     write_verified(&base.join(README_FILE), content.as_bytes())
 }
 
-/// `write_share` sur un dossier racine déjà reconnu comme clé USB.
+/// `write_share` on a root folder already recognized as a USB drive.
 fn write_share_at(root: &Path, free_bytes: u64, kit: &str, name: &str, part: u8, files: &ShareFiles, verify: &impl Fn(&ShareFiles) -> Result<()>) -> Result<()> {
     let located = located_shares(root);
     if let Some(other) = located.iter().find(|l| l.info.kit == kit && l.info.part != part) {
@@ -499,7 +494,7 @@ fn write_share_at(root: &Path, free_bytes: u64, kit: &str, name: &str, part: u8,
     write_and_verify(root, &kit_dir, kit, &name, &[(part, files)], verify)
 }
 
-/// `write_kit` sur un dossier racine déjà reconnu comme clé USB.
+/// `write_kit` on a root folder already recognized as a USB drive.
 fn write_kit_at(root: &Path, free_bytes: u64, kit: &str, name: &str, parts: &[(u8, ShareFiles)], verify: &impl Fn(&ShareFiles) -> Result<()>) -> Result<()> {
     ensure!(free_bytes >= MIN_FREE_BYTES, "espace insuffisant sur la clé USB");
     let (kit_dir, name) = kit_destination(root, &located_shares(root), kit, name)?;
@@ -507,12 +502,12 @@ fn write_kit_at(root: &Path, free_bytes: u64, kit: &str, name: &str, parts: &[(u
     write_and_verify(root, &kit_dir, kit, &name, &parts, verify)
 }
 
-/// Une part par clé : écrit la part `part` du kit `kit` sur la clé `root`,
-/// dans le dossier de la sauvegarde `name` (celui où ce kit est déjà, s'il y
-/// est), puis la vérifie (relue depuis la clé). Les sauvegardes d'autres
-/// portefeuilles présentes ne sont pas touchées. Refus : clé non détectée,
-/// clé contenant déjà une AUTRE part de ce kit (deux parts sur une clé = accès
-/// complet — pour cela, `write_kit`, choix explicite).
+/// One share per drive: writes share `part` of kit `kit` to the drive `root`, in
+/// the folder of backup `name` (the one this kit already occupies, if any), then
+/// verifies it (reread from the drive). Other wallets' backups on the drive are
+/// left alone. Refused: drive not detected, or drive already holding ANOTHER share
+/// of this kit (two shares on one drive = full access; that is what `write_kit` is
+/// for, as an explicit choice).
 pub fn write_share(root: &str, kit: &str, name: &str, part: u8, files: &ShareFiles, verify: impl Fn(&ShareFiles) -> Result<()>) -> Result<RemovableDrive> {
     ensure!((1..=3).contains(&part), "numéro de part invalide");
     check_kit_id(kit)?;
@@ -521,9 +516,9 @@ pub fn write_share(root: &str, kit: &str, name: &str, part: u8, files: &ShareFil
     detected_drive(root)
 }
 
-/// Tout le kit sur une clé (choix explicite de l'utilisateur, confirmé avant
-/// l'appel) : écrit chaque part `(numéro, contenu)` puis les vérifie toutes.
-/// Refus : clé non détectée.
+/// The whole kit on one drive (the user's explicit choice, confirmed before the
+/// call): writes each share `(number, content)`, then verifies them all. Refused:
+/// drive not detected.
 pub fn write_kit(root: &str, kit: &str, name: &str, parts: &[(u8, ShareFiles)], verify: impl Fn(&ShareFiles) -> Result<()>) -> Result<RemovableDrive> {
     check_kit_id(kit)?;
     ensure!(!parts.is_empty() && parts.iter().all(|(p, _)| (1..=3).contains(p)), "numéro de part invalide");
@@ -532,7 +527,7 @@ pub fn write_kit(root: &str, kit: &str, name: &str, parts: &[(u8, ShareFiles)], 
     detected_drive(root)
 }
 
-/// Lit la part `part` du kit `kit` présente sur la clé USB `root`.
+/// Reads share `part` of kit `kit` from the USB drive `root`.
 pub fn read_share(root: &str, kit: &str, part: u8) -> Result<(ShareInfo, ShareFiles)> {
     let drive = detected_drive(root)?;
     read_share_at(&drive.root, kit, part)
@@ -577,9 +572,9 @@ mod tests {
         ShareInfo { kit: kit.into(), part, name: name.into() }
     }
 
-    /// Parts reconnues : format connu et numéro cohérent avec le dossier ;
-    /// illisible, d'un autre format ou mal rangée → ignorée. Ancien rangement
-    /// (sans nom) et dossiers nommés lus ensemble.
+    /// Recognized shares: known format and number consistent with the folder;
+    /// unreadable, in another format or misplaced → ignored. Legacy layout (unnamed)
+    /// and named folders read together.
     #[test]
     fn shares_are_recognized_only_when_well_formed() {
         let root = temp_root("info");
@@ -617,8 +612,8 @@ mod tests {
         assert_eq!(kit_folder("Mon portefeuille", "0123456789ab", false), "Mon-portefeuille-012345");
     }
 
-    /// LISEZ-MOI : une part seule ne permet rien ; plusieurs parts sur la même
-    /// clé = accès complet, et le fichier le dit, avec le nom de la sauvegarde.
+    /// LISEZ-MOI: a single share allows nothing; several shares on the same drive =
+    /// full access, and the file says so, with the backup's name.
     #[test]
     fn readme_warns_when_one_drive_holds_several_shares() {
         assert!(readme("", &[2]).contains("UNE part") && readme("", &[2]).contains("PART N°2"));
@@ -634,9 +629,9 @@ mod tests {
         }
     }
 
-    /// Aller-retour réel : un vrai kit écrit sous un dossier temporaire (à la
-    /// place de la clé), relu à l'identique, et chaque part relue se déchiffre
-    /// avec la clé et le mot de passe relus ; aucun fichier temporaire ne reste.
+    /// Real round trip: a real kit written under a temporary folder (in place of the
+    /// drive), reread identically, and each reread share decrypts with the reread key
+    /// and password; no temporary file is left behind.
     #[test]
     fn written_parts_read_back_identical_and_decrypt() {
         let base = temp_root("roundtrip");
@@ -659,8 +654,8 @@ mod tests {
             assert_eq!(files.passphrase.as_str(), backup.passphrase);
             verify(&files).expect("déchiffrement");
         }
-        // Mauvais mot de passe : la vérification échoue (c'est elle qui fait
-        // retirer une part invérifiable de la clé).
+        // Wrong password: verification fails (that is what gets an unverifiable share
+        // removed from the drive).
         let (_, files) = read_share_at(&root, &kit, 1).unwrap();
         assert!(crate::api::verify_backup_share(&data, &files.encrypted_share, &files.privkey_armored, "faux").is_err());
         let leftovers = std::fs::read_dir(part_dir(&kit_dir, 1)).unwrap().filter_map(|e| e.ok()).filter(|e| e.path().extension().is_some_and(|x| x == "tmp")).count();
@@ -671,11 +666,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
-    /// Plusieurs portefeuilles sur une même clé : chacun dans son dossier
-    /// nommé, une part de chacun ; jamais deux parts du même (sauf « tout sur
-    /// une clé ») ; une part réécrite reste dans le dossier de son kit (nom
-    /// d'origine gardé), ancien rangement compris ; une part invérifiable est
-    /// retirée sans toucher aux autres.
+    /// Several wallets on one drive: each in its own named folder, one share of each;
+    /// never two shares of the same wallet (except "everything on one drive"); a
+    /// rewritten share stays in its kit's folder (original name kept), legacy layout
+    /// included; an unverifiable share is removed without touching the others.
     #[test]
     fn several_wallets_share_one_drive() {
         let base = temp_root("several");
@@ -689,30 +683,30 @@ mod tests {
         assert_eq!(shares_on(&root), vec![info(&kit_a, 1, "Perso"), info(&kit_b, 2, "Pro")]);
         let err = write_share_at(&root, u64::MAX, &kit_a, "Perso", 2, &files_of(&created_a.backups[1]), &ok).unwrap_err().to_string();
         assert!(err.contains("part n°1 de ce kit"), "{err}");
-        // Réécriture de la part 1 sous un autre nom : même dossier, nom d'origine.
+        // Rewriting share 1 under another name: same folder, original name.
         write_share_at(&root, u64::MAX, &kit_a, "Autre nom", 1, &files_of(&created_a.backups[0]), &ok).unwrap();
         assert_eq!(shares_on(&root), vec![info(&kit_a, 1, "Perso"), info(&kit_b, 2, "Pro")]);
-        // Part invérifiable : retirée, l'autre portefeuille intact.
+        // Unverifiable share: removed, the other wallet intact.
         let refuse = |_: &ShareFiles| -> Result<()> { bail!("ne se déchiffre pas") };
         assert!(write_share_at(&root, u64::MAX, &kit_a, "Perso", 1, &files_of(&created_a.backups[0]), &refuse).is_err());
         assert_eq!(shares_on(&root), vec![info(&kit_b, 2, "Pro")]);
-        // Ancien rangement : une part réécrite y reste, sans nom.
+        // Legacy layout: a rewritten share stays there, unnamed.
         let old = base.join("ancienne");
         let legacy = old.join(BACKUP_DIR);
         write_part(&legacy, &kit_a, "", 3, &files_of(&created_a.backups[2])).unwrap();
         write_share_at(&old, u64::MAX, &kit_a, "Perso", 3, &files_of(&created_a.backups[2]), &ok).unwrap();
         assert_eq!(shares_on(&old), vec![info(&kit_a, 3, "")]);
         assert!(part_dir(&legacy, 3).join(INFO_FILE).exists());
-        // Puis une sauvegarde nommée à côté : le LISEZ-MOI racine garde la
-        // description de l'ancienne part, après le texte général.
+        // Then a named backup next to it: the root LISEZ-MOI keeps the description of the
+        // legacy share, after the general text.
         write_share_at(&old, u64::MAX, &kit_b, "Pro", 1, &files_of(&created_b.backups[0]), &ok).unwrap();
         assert_eq!(shares_on(&old), vec![info(&kit_a, 3, ""), info(&kit_b, 1, "Pro")]);
         let root_readme = std::fs::read_to_string(legacy.join(README_FILE)).unwrap();
         assert!(root_readme.starts_with("SAUVEGARDES OPENPGP WALLET") && root_readme.contains("PART N°3 SUR 3"), "{root_readme}");
         let pro_readme = std::fs::read_to_string(legacy.join(kit_folder("Pro", &kit_b, false)).join(README_FILE)).unwrap();
         assert!(pro_readme.contains("« Pro » — PART N°1"), "{pro_readme}");
-        // Dossier du même nom déjà présent (même début d'identifiant) : jamais
-        // réutilisé, l'identifiant complet sépare.
+        // A folder with the same name already present (same start of identifier): never
+        // reused, the full identifier tells them apart.
         let clash = base.join("collision");
         let taken = clash.join(BACKUP_DIR).join(kit_folder("Perso", &kit_a, false));
         std::fs::create_dir_all(&taken).unwrap();
@@ -720,21 +714,20 @@ mod tests {
         write_share_at(&clash, u64::MAX, &kit_a, "Perso", 1, &files_of(&created_a.backups[0]), &ok).unwrap();
         assert!(clash.join(BACKUP_DIR).join(kit_folder("Perso", &kit_a, true)).join("part-1").join(INFO_FILE).exists());
         assert_eq!(std::fs::read_dir(&taken).unwrap().count(), 1, "dossier existant intact");
-        // Un nom « part » ne se confond pas avec l'ancien rangement.
+        // A backup named "part" is not confused with the legacy layout.
         write_share_at(&clash, u64::MAX, &kit_b, "part", 2, &files_of(&created_b.backups[1]), &ok).unwrap();
         assert!(shares_on(&clash).contains(&info(&kit_b, 2, "part")));
-        // Nom invalide ou clé pleine : refus avant toute écriture.
+        // Invalid name or full drive: refused before anything is written.
         assert!(write_share_at(&base.join("vide"), u64::MAX, &kit_a, "../x", 1, &files_of(&created_a.backups[0]), &ok).is_err());
         assert!(write_share_at(&base.join("pleine"), 1024, &kit_a, "Perso", 1, &files_of(&created_a.backups[0]), &ok).is_err());
         assert!(!base.join("vide").join(BACKUP_DIR).exists() && !base.join("pleine").join(BACKUP_DIR).exists());
         let _ = std::fs::remove_dir_all(&base);
     }
 
-    /// Rien d'invérifiable ne reste sur la clé : vérification en échec sur la
-    /// part 2 → parts 2 et 3 retirées, la part 1 (vérifiée) gardée et le
-    /// LISEZ-MOI à jour ; écriture interrompue → parts de l'appel retirées, et
-    /// le dossier d'une sauvegarde sans part disparaît ; autre portefeuille
-    /// intact.
+    /// Nothing unverifiable stays on the drive: verification fails on share 2 → shares
+    /// 2 and 3 removed, share 1 (verified) kept and the LISEZ-MOI updated; interrupted
+    /// write → the call's shares removed, and the folder of a backup with no shares
+    /// disappears; the other wallet intact.
     #[test]
     fn failed_writes_leave_nothing_unverified() {
         let base = temp_root("failed");
@@ -752,27 +745,27 @@ mod tests {
         assert!(!part_dir(&kit_dir, 2).exists() && !part_dir(&kit_dir, 3).exists());
         let text = std::fs::read_to_string(kit_dir.join(README_FILE)).unwrap();
         assert!(text.contains("PART N°1 SUR 3"), "{text}");
-        // Écriture interrompue : « part-2 » est un fichier, le dossier ne peut
-        // pas être créé ; la part 1 réécrite (non vérifiée) est retirée aussi.
+        // Interrupted write: "part-2" is a file, so the folder cannot be created; the
+        // rewritten share 1 (not verified) is removed too.
         std::fs::write(part_dir(&kit_dir, 2), "obstacle").unwrap();
         assert!(write_kit_at(&root, u64::MAX, &kit, "Coffre", &parts, &|_: &ShareFiles| Ok(())).is_err());
         assert_eq!(shares_on(&root), vec![info(&kit_other, 1, "Pro")]);
         assert!(!part_dir(&kit_dir, 1).join(PASSWORD_FILE).exists() && !kit_dir.join(README_FILE).exists());
         std::fs::remove_file(part_dir(&kit_dir, 2)).unwrap();
-        // Tout en échec dès la première part : le dossier nommé disparaît.
+        // Everything fails from the first share: the named folder disappears.
         assert!(write_kit_at(&root, u64::MAX, &kit, "Coffre", &parts, &|_: &ShareFiles| -> Result<()> { bail!("non") }).is_err());
         assert!(!kit_dir.exists(), "dossier de sauvegarde vide retiré");
         assert_eq!(shares_on(&root), vec![info(&kit_other, 1, "Pro")]);
         let _ = std::fs::remove_dir_all(&base);
     }
 
-    /// Clés écrites par les versions précédentes : rangement d'origine
-    /// (`PGP-Wallet-Sauvegarde/part-N/`, format 1, sans nom) et rangement
-    /// nommé (format 2), écrits ici avec des chemins et un contenu LITTÉRAUX
-    /// (pas avec le code d'écriture actuel), à partir du kit figé
-    /// (`testdata/backup_kit_v1.json`) : reconnus, relus à l'identique, et une
-    /// part de chaque rangement restaure le portefeuille aux mêmes adresses.
-    /// Un échec voudrait dire que des clés déjà faites ne seraient plus lues.
+    /// Drives written by previous versions: the original layout
+    /// (`PGP-Wallet-Sauvegarde/part-N/`, format 1, unnamed) and the named layout
+    /// (format 2), written here with LITERAL paths and content (not with the current
+    /// writing code), from the frozen kit (`testdata/backup_kit_v1.json`): recognized,
+    /// reread identically, and one share from each layout restores the wallet to the
+    /// same addresses. A failure would mean that drives people already made could no
+    /// longer be read.
     #[test]
     fn drives_written_by_earlier_versions_still_restore() {
         let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/backup_kit_v1.json")).unwrap();
@@ -830,9 +823,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
-    /// Vérification d'une clé : parts intactes reconnues ; part qui ne se
-    /// déchiffre plus, fichier manquant, `sauvegarde.json` abîmé (part
-    /// invisible pour la restauration par clé) : chacun signalé, rien écrit.
+    /// Checking a drive: intact shares recognized; a share that no longer decrypts, a
+    /// missing file, a damaged `sauvegarde.json` (share invisible to
+    /// restore-from-drive): each one reported, nothing written.
     #[test]
     fn drive_check_reports_damaged_shares_without_writing() {
         let base = temp_root("check");
@@ -858,13 +851,13 @@ mod tests {
             all.sort();
             all
         };
-        // Part 2 : un octet du contenu chiffré changé.
+        // Share 2: one byte of the encrypted content changed.
         let share_path = part_dir(&kit_dir, 2).join(SHARE_FILE);
         let mut share = std::fs::read(&share_path).unwrap();
         let at = share.len() - 5;
         share[at] ^= 0x10;
         std::fs::write(&share_path, share).unwrap();
-        // Part 3 : clé privée disparue ; part 1 : sauvegarde.json abîmé.
+        // Share 3: private key gone; share 1: damaged sauvegarde.json.
         std::fs::remove_file(part_dir(&kit_dir, 3).join(KEY_FILE)).unwrap();
         std::fs::write(part_dir(&kit_dir, 1).join(INFO_FILE), "{\"format\": 2, \"kit\": \"ab").unwrap();
         let before = snapshot(&root);
@@ -878,14 +871,14 @@ mod tests {
                 ShareCheck { kit: String::new(), part: 1, name: kit_folder("Coffre", &kit, false), problem: Some(PROBLEM_UNRECOGNIZED) },
             ]
         );
-        // Clé sans sauvegarde : rien à signaler.
+        // Drive with no backup: nothing to report.
         assert!(check_drive_at(&base.join("vide"), &verify).is_empty());
         assert!(check_drive("C:\\", verify).is_err(), "disque système refusé");
         let _ = std::fs::remove_dir_all(&base);
     }
 
-    /// Une destination qui n'est pas une clé USB détectée est refusée (le disque
-    /// système, un dossier quelconque), et les paramètres invalides aussi.
+    /// A destination that is not a detected USB drive is refused (the system disk, an
+    /// arbitrary folder), and so are invalid parameters.
     #[test]
     fn only_detected_usb_drives_are_accepted() {
         let files = || ShareFiles { encrypted_share: vec![1], privkey_armored: vec![2], passphrase: Zeroizing::new("x".into()) };
