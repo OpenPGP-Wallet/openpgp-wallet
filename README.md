@@ -1,94 +1,143 @@
-# OpenPGP Wallet PoC
+# OpenPGP Wallet
 
-Portefeuille crypto multi-réseaux (Bitcoin, Ethereum, Solana), **non-custodial** — la clé maîtresse n'existe jamais en clair hors de l'appareil, et n'est jamais visible par un tiers.
+A non-custodial, multi-network crypto wallet for the desktop with **no seed phrase to write down**. The master key
+is protected by OpenPGP and a 2-of-3 Shamir backup kit instead of 12 or 24 words on a piece of paper.
 
-Contrairement aux wallets classiques, il n'y a **aucune seed phrase de 12/24 mots à noter**. La clé maîtresse est protégée par un partage de secret de Shamir (2 parts sur 3 suffisent, aucune seule ne sert à rien) chiffré avec OpenPGP, plutôt que par un unique artefact papier dont la moindre fuite compromet tout.
+> [!WARNING]
+> **Pre-audit software.** OpenPGP Wallet works end to end and is used with small real amounts, but it has not
+> been reviewed by an independent auditor and the Windows binaries are not code-signed yet. Do not use it with
+> funds you cannot afford to lose. See [SECURITY.md](SECURITY.md) and the
+> [threat model](docs/THREAT_MODEL.md).
 
-> **Statut : preuve de concept.** Fonctionnel de bout en bout sur les trois réseaux, mais pas encore audité par un tiers indépendant ni distribué à de vrais utilisateurs. À ne pas utiliser avec des fonds dont la perte serait un problème.
+Website and video guides: <https://khadevs.github.io/openpgp-wallet-site/>
 
-## Fonctionnalités
+## Why no seed phrase?
 
-- **Bitcoin, Ethereum et Solana** depuis une seule entropie maître (dérivation HD), mainnet et testnet/devnet pour chaque réseau.
-- **Profils multiples** : plusieurs adresses par réseau, un seul secret à protéger.
-- Soldes, prix et capitalisations en direct, historique de transactions par crypto, détection des transactions en attente.
-- Estimation dynamique des frais Bitcoin (rapide / moyen / lent) plutôt qu'un montant fixe.
-- Messagerie chiffrée PGP entre destinataires (bonus : le protocole qui protège le wallet sert aussi à son usage d'origine).
-- Confirmation systématique par boîte de dialogue **native de l'OS** avant tout envoi de fonds — jamais une simple modale web, pour rester fiable même si l'interface était compromise.
+A seed phrase is a single point of failure. Whoever sees the words owns the funds, and whoever loses them loses
+the funds. The whole security of a classic wallet rests on a piece of paper that the user has to write down, hide
+and never photograph, and the weakest link is almost always the human, not the cryptography.
 
-## Architecture
-
-### Le problème avec une seed phrase
-
-Une seed phrase classique est un point de défaillance unique : les 12/24 mots donnent un accès complet et immédiat aux fonds. Les perdre, c'est tout perdre ; les montrer une seule fois à la mauvaise personne (photo, malware presse-papier, épaule indiscrète), c'est aussi tout perdre. Toute la sécurité du wallet repose sur un seul artefact que l'utilisateur doit lui-même noter et cacher correctement — la partie la plus fragile de la chaîne étant systématiquement l'humain, pas la cryptographie.
-
-### Modèle retenu : coffre local + kit de sauvegarde à seuil
-
-La clé maîtresse (256 bits d'entropie, source de toutes les adresses du wallet) n'existe sous deux formes distinctes, chacune adaptée à un usage :
-
-1. **Coffre local de l'appareil** — l'entropie complète, chiffrée par une identité PGP propre à cet appareil, déverrouillée par un seul mot de passe. C'est le chemin du quotidien : consulter un solde, envoyer un virement. Chaque opération sensible redéchiffre le coffre à la volée avec le mot de passe fourni ; rien n'est mis en cache en mémoire entre deux actions.
-2. **Kit de sauvegarde Shamir 2-sur-3** — généré une seule fois à la création, indépendant du coffre local. L'entropie est découpée en 3 parts mathématiques (Shamir's Secret Sharing) ; 2 d'entre elles suffisent à tout reconstruire, mais **aucune part seule n'a de valeur**. Chaque part est elle-même chiffrée avec sa propre identité PGP et sa propre passphrase générée aléatoirement — donc distribuable sur 3 supports distincts (clé USB, coffre-fort, personne de confiance) sans qu'aucun d'eux, pris isolément, ne représente un risque.
+OpenPGP Wallet keeps one master secret, and protects it in two independent ways:
 
 ```
-Entropie maître (256 bits, générée une seule fois via le CSPRNG de l'OS)
+Master entropy (256 bits, generated once by the OS CSPRNG)
 │
-├── Coffre local de l'appareil (1 mot de passe)
-│   └── Usage quotidien : consulter un solde, dériver les adresses, signer un envoi
+├── Local vault on this device (one password)
+│   └── Everyday use: balances, addresses, signing
 │
-└── Kit de sauvegarde Shamir 2-sur-3 (généré une fois, indépendant du coffre)
-    ├── Part A — chiffrée PGP, passphrase dédiée
-    ├── Part B — chiffrée PGP, passphrase dédiée
-    └── Part C — chiffrée PGP, passphrase dédiée
-        └── 2 parts sur 3 (n'importe lesquelles) → reconstruction sur un nouvel appareil
+└── 2-of-3 Shamir backup kit (generated once, independent of the vault)
+    ├── Share A, PGP-encrypted with its own passphrase
+    ├── Share B, PGP-encrypted with its own passphrase
+    └── Share C, PGP-encrypted with its own passphrase
+        └── any 2 shares → restore on a new device
 ```
 
-Une seule primitive mathématique (l'entropie maître) protégée deux fois, pour deux usages différents — jamais de compromis entre "facile à utiliser au quotidien" et "sûr en cas de perte de l'appareil".
+A single share is useless on its own, so the three shares can live in three different places (USB drives, a
+safe, a trusted person) without any one of them being a risk. The app can write each share, complete with its
+key and passphrase, to a USB drive and check that it decrypts before saying it is done.
 
-### Structure du code
+## Features
+
+- **18 networks from one master key**: Bitcoin, Ethereum and its L2s (Arbitrum, Base), BNB Chain, Avalanche,
+  Polygon, Solana, Zcash (transparent and shielded), Monero, Dogecoin, Tron, XRP Ledger, Stellar, NEAR, Cardano,
+  Stacks and Bittensor, plus custom EVM networks added by RPC.
+- **Tokens**: USDC, USDT and other ERC-20, SPL and TRC-20 tokens from a built-in registry, and xStocks tokenized
+  shares on Solana.
+- **Swaps** through THORChain, Maya, Jupiter, CoW Protocol, LI.FI, SwapKit (NEAR Intents, Chainflip) and MoonPay
+  Trade. Quotes, memos and third-party transactions are checked or simulated before anything is signed.
+- **Staking**: native Solana staking, Cardano delegation, liquid staking (JitoSOL, stETH).
+- **Hardware wallets**: Ledger and Trezor, with on-device review.
+- **WalletConnect v2**, implemented in Rust (no JavaScript SDK in the webview).
+- **Windows Hello** as an optional second way to unlock, sealed in the TPM. The password keeps working.
+- **Safer sends**: native OS confirmation dialog, a 5-second cancellation delay, warnings for new, unused and
+  lookalike addresses, and a balance check before you confirm.
+- **Encrypted messaging** with OpenPGP, multiple profiles, an address book, watch-only external wallets,
+  portfolio charts, French and English interface.
+
+## Security model in short
+
+- The web interface is treated as **untrusted**. It never receives a secret, only public addresses, balances and
+  transaction IDs. Everything that is signed is rebuilt and checked in Rust.
+- Every send goes through a **native OS dialog** that shows exactly what will be signed. A compromised frontend
+  can neither fake it nor skip it.
+- The seed is never cached: it is decrypted for each sensitive operation, kept in locked memory and wiped
+  (`zeroize`) right after.
+- Unlock attempts are rate-limited, the device key lives in the Windows Credential Manager, and the password is
+  stretched with the maximum OpenPGP S2K cost.
+
+The full picture, including what is **not** protected, is in [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).
+
+## Repository layout
 
 ```
-core/     Worker cryptographique (Rust), indépendant de toute interface : Shamir, OpenPGP,
-          dérivation multi-réseaux, construction et signature de transactions "from scratch"
-          (pas de SDK lourd type rust-bitcoin/solana-sdk). Bibliothèque + binaires CLI de démo.
-app/      Application de bureau Tauri v2.
-  ├─ src-tauri/   Backend Rust : expose core/ au frontend via des commandes Tauri typées.
-  └─ src/         Frontend web (HTML/CSS/JS vanilla, sans framework ni dépendance JS).
+core/            Rust crate `openpgp-wallet-core`: Shamir, OpenPGP, key derivation, transaction building and
+                 signing for every network, swap and staking logic. No UI code.
+  examples/      Small command-line demos (Shamir, PGP, wallet flows, hardware spikes).
+app/             Tauri v2 desktop application.
+  src-tauri/     Rust backend: exposes `core` to the frontend through typed Tauri commands.
+  src/           Frontend in plain HTML, CSS and JavaScript (no framework, no runtime JS dependency).
+docs/            Threat model and architecture notes.
 ```
 
-`core/` ne sait rien de Tauri ni d'une interface graphique — c'est délibéré : la même logique de dérivation/signature est réutilisable telle quelle sur une future cible mobile (iOS/Android), sans dupliquer le code sensible.
+`core/` knows nothing about Tauri or any interface on purpose, so the same signing code can be reused by a
+future mobile app. More detail in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-### Frontière de confiance frontend/backend
+## Building from source
 
-Le frontend web est traité comme **non fiable par principe**, même si c'est le seul code de ce projet qui s'exécute dans ce dépôt. Concrètement :
+Windows 10 or 11 is the only platform tested so far. You need:
 
-- Il ne reçoit jamais un secret (clé privée, entropie, mot de passe en retour) — seulement des adresses publiques, des soldes et des identifiants de transaction. Chaque commande Tauri qui traverse cette frontière est un point de passage explicite, jamais un accès direct au système de fichiers ou au réseau.
-- Une CSP stricte (`connect-src 'self'`) empêche le frontend de contacter un serveur directement : tout appel réseau (prix, historique, diffusion de transaction) passe obligatoirement par le backend Rust.
-- Avant tout envoi de fonds, une **boîte de dialogue native de l'OS** (pas une modale HTML) affiche réseau, destinataire, montant et frais, et exige une confirmation explicite. Un frontend compromis — dépendance JS piégée, faille XSS — ne peut ni la falsifier ni la contourner silencieusement, puisqu'elle n'est pas rendue par la webview.
-
-## Développement
-
-Prérequis : [Rust](https://rustup.rs/), [Node.js](https://nodejs.org/), et les [prérequis Tauri](https://tauri.app/start/prerequisites/) pour votre plateforme.
+- [Rust](https://rustup.rs/) (stable),
+- [Node.js](https://nodejs.org/) 18 or later,
+- the [Tauri prerequisites](https://tauri.app/start/prerequisites/) for your platform (on Windows: the Microsoft
+  C++ Build Tools and WebView2).
 
 ```bash
 cd app
 npm install
-npm run tauri dev
+npm run tauri dev      # development build with hot reload
+npm run tauri build    # release build and installers
 ```
 
-Les binaires de démonstration du worker crypto (sans interface graphique) sont accessibles depuis `core/` :
+### Optional partner API keys
+
+A few providers need an API key: SwapKit, MoonPay Trade, NodeReal (BNB Chain history), Taostats (Bittensor
+history), Blockscout and Alchemy (Arbitrum, Base and Polygon history). The keys are read **at build time** from
+`partner-keys.env` at the repository root, which git ignores. Copy
+[`partner-keys.env.example`](partner-keys.env.example) and fill in the ones you have. Without a key, the matching
+provider is simply not offered and the app links to the block explorer instead.
+
+### Tests
 
 ```bash
-cd core
-cargo run --bin shamir_demo      # Découpage/reconstruction Shamir, isolé
-cargo run --bin pgp_demo         # Chiffrement/déchiffrement PGP, isolé
-cargo run --bin wallet_demo      # Dérivation + virement EVM (testnet)
+cargo test --workspace
 ```
 
-## Sécurité
+Tests that talk to real networks are marked `#[ignore]` and are run on demand, for example
+`cargo test -p openpgp-wallet-core -- --ignored real_near --nocapture`. Each one documents its command next to
+its definition.
 
-- Entropie maître générée via le CSPRNG de l'OS, jamais un générateur maison.
-- Effacement mémoire (`zeroize`) et verrouillage anti-swap (`mlock`/`VirtualLock`) sur tout secret en clair.
-- Coût de dérivation de clé (S2K) au maximum du format OpenPGP sur le mot de passe de l'appareil.
-- Verrouillage anti-brute-force avec délai croissant sur toute commande qui redéchiffre le coffre.
-- Aucune clé API tierce nécessaire ni stockée (CoinGecko, Blockscout, Esplora et les RPC publics utilisés sont tous accessibles sans authentification).
+### Command-line demos
 
-Aucun rapport d'audit externe n'existe encore pour ce projet — les protections ci-dessus sont le résultat de plusieurs rounds de relecture interne, pas d'une validation indépendante.
+```bash
+cargo run -p openpgp-wallet-core --example shamir_demo     # Shamir split and recovery
+cargo run -p openpgp-wallet-core --example pgp_demo        # PGP encryption and decryption
+cargo run -p openpgp-wallet-core --example shamir_pgp_cli  # the full Shamir + PGP flow
+```
+
+## Status and roadmap
+
+The current release is **2.13.1** (see [CHANGELOG.md](CHANGELOG.md)). Before the wallet can be recommended for
+real funds, it still needs Authenticode code signing, an independent security audit and reproducible builds.
+
+Next on the list is user-friendly threshold signing with FROST for shielded Zcash (2-of-3 between a computer, a
+phone and a backup, coordinated by QR codes with no server). The design is described in the
+[FROST white paper](https://khadevs.github.io/openpgp-wallet-site/frost-white-paper.html).
+
+## Contributing
+
+Bug reports, reviews and pull requests are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) first, and
+report security issues privately as described in [SECURITY.md](SECURITY.md).
+
+## License
+
+[MIT](LICENSE) © 2026 Khadim
