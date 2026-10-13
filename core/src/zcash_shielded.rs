@@ -265,9 +265,12 @@ pub fn balance(data_dir: &Path, profile: u32) -> Result<ShieldedBalance> {
     let Some(account) = find_account(&db, profile)? else { return Ok(ShieldedBalance::default()) };
     let Some(summary) = db.get_wallet_summary(ConfirmationsPolicy::default())? else { return Ok(ShieldedBalance::default()) };
     let Some(balances) = summary.account_balances().get(&account) else { return Ok(ShieldedBalance::default()) };
-    let orchard = balances.orchard_balance();
-    let spendable = u64::from(orchard.spendable_value());
-    let total = u64::from(orchard.total());
+    // Since NU6.3 (block 3,428,143) the Orchard pool is sealed and every new
+    // shielded note lands in Ironwood. Both pools are counted so that nothing
+    // the wallet holds is ever left off the balance.
+    let pools = [balances.orchard_balance(), balances.ironwood_balance()];
+    let spendable: u64 = pools.iter().map(|b| u64::from(b.spendable_value())).sum();
+    let total: u64 = pools.iter().map(|b| u64::from(b.total())).sum();
     Ok(ShieldedBalance {
         spendable,
         pending: total.saturating_sub(spendable),
@@ -303,10 +306,12 @@ pub fn history(data_dir: &Path, profile: u32) -> Result<Vec<history::TxEntry>> {
     let account_id: i64 = conn
         .query_row("SELECT id FROM accounts WHERE uuid = ?1", [account.expose_uuid().as_bytes().to_vec()], |row| row.get(0))
         .context("compte Zcash protégé introuvable")?;
-    orchard_history(&conn, account_id)
+    shielded_history(&conn, account_id)
 }
 
-fn orchard_history(conn: &rusqlite::Connection, account_id: i64) -> Result<Vec<history::TxEntry>> {
+/// Net shielded value per transaction, across the Orchard and Ironwood pools
+/// (Ironwood holds every note received since NU6.3).
+fn shielded_history(conn: &rusqlite::Connection, account_id: i64) -> Result<Vec<history::TxEntry>> {
     let tip: Option<u32> = conn.query_row("SELECT MAX(height) FROM blocks", [], |row| row.get(0)).context("base Zcash protégée illisible")?;
     let mut statement = conn
         .prepare(
@@ -317,6 +322,14 @@ fn orchard_history(conn: &rusqlite::Connection, account_id: i64) -> Result<Vec<h
                  SELECT s.transaction_id AS tx, -rn.value AS value
                  FROM orchard_received_note_spends s
                  JOIN orchard_received_notes rn ON rn.id = s.orchard_received_note_id
+                 WHERE rn.account_id = ?1
+                 UNION ALL
+                 SELECT rn.transaction_id AS tx, rn.value AS value
+                 FROM ironwood_received_notes rn WHERE rn.account_id = ?1
+                 UNION ALL
+                 SELECT s.transaction_id AS tx, -rn.value AS value
+                 FROM ironwood_received_note_spends s
+                 JOIN ironwood_received_notes rn ON rn.id = s.ironwood_received_note_id
                  WHERE rn.account_id = ?1
              )
              SELECT t.txid, t.mined_height, b.time, t.expiry_height, SUM(d.value)
@@ -463,8 +476,11 @@ pub struct SpendSummary {
     pub recipient: String,
 }
 
+/// Change, and shielded transparent funds, go to Ironwood: the Orchard pool
+/// has been sealed since NU6.3 and refuses new value. (The library would
+/// already redirect an Orchard fallback there; this states it outright.)
 fn change_strategy() -> SingleOutputChangeStrategy<StandardFeeRule, Db> {
-    SingleOutputChangeStrategy::new(StandardFeeRule::Zip317, None, ShieldedPool::Orchard, DustOutputPolicy::default())
+    SingleOutputChangeStrategy::new(StandardFeeRule::Zip317, None, ShieldedPool::Ironwood, DustOutputPolicy::default())
 }
 
 /// Clés de dépense du profil : clé unifiée du compte ZIP-32, et clé de
@@ -611,7 +627,9 @@ fn max_proposal(db: &mut Db, account: AccountUuid, recipient: zcash_address::Zca
         db,
         &MainNetwork,
         account,
-        &[ShieldedPool::Orchard],
+        // Ironwood holds every note received since NU6.3; Orchard notes, if
+        // any, may still leave their sealed pool through the turnstile.
+        &[ShieldedPool::Orchard, ShieldedPool::Ironwood],
         &StandardFeeRule::Zip317,
         recipient,
         None,
@@ -764,8 +782,44 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         drop(open(&dir).unwrap());
         let conn = rusqlite::Connection::open(dir.join(WALLET_FILE)).unwrap();
-        assert!(orchard_history(&conn, 1).unwrap().is_empty());
+        assert!(shielded_history(&conn, 1).unwrap().is_empty());
         assert!(history(&dir, 0).unwrap().is_empty(), "profil sans compte : historique vide");
+        drop(conn);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Since NU6.3 every shielded note lands in Ironwood: a note received,
+    /// then spent with change, must show up in the history with the right net
+    /// amounts. Rows are written straight into the library's real schema
+    /// (foreign keys off: no account or block rows are needed for the query).
+    #[test]
+    fn history_counts_ironwood_notes() {
+        let dir = std::env::temp_dir().join(format!("zec-shielded-ironwood-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        drop(open(&dir).unwrap());
+        let conn = rusqlite::Connection::open(dir.join(WALLET_FILE)).unwrap();
+        conn.execute_batch(
+            "PRAGMA foreign_keys = OFF;
+             INSERT INTO transactions (id_tx, txid, mined_height, min_observed_height) VALUES
+                 (1, x'0000000000000000000000000000000000000000000000000000000000000001', 3500000, 3500000),
+                 (2, x'0000000000000000000000000000000000000000000000000000000000000002', 3500010, 3500010);
+             INSERT INTO ironwood_received_notes
+                 (id, transaction_id, action_index, account_id, diversifier, value, rho, rseed, is_change, note_version) VALUES
+                 (1, 1, 0, 1, x'00', 150000, x'00', x'00', 0, 0),
+                 (2, 2, 0, 1, x'00', 90000, x'00', x'00', 1, 0);
+             INSERT INTO ironwood_received_note_spends (ironwood_received_note_id, transaction_id) VALUES (1, 2);",
+        )
+        .unwrap();
+        let entries = shielded_history(&conn, 1).unwrap();
+        assert_eq!(entries.len(), 2);
+        // Most recent first: the spend (50,000 sent + 10,000 fee), then the receipt.
+        assert_eq!(entries[0].kind, history::TxKind::Sent);
+        assert_eq!(entries[0].net_amount_minor, Some(-60_000));
+        assert_eq!(entries[1].kind, history::TxKind::Received);
+        assert_eq!(entries[1].net_amount_minor, Some(150_000));
+        assert!(entries.iter().all(|e| matches!(e.status, history::TxStatus::Confirmed)));
+        assert!(shielded_history(&conn, 2).unwrap().is_empty(), "another account sees nothing");
         drop(conn);
         let _ = std::fs::remove_dir_all(&dir);
     }
