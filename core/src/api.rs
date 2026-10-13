@@ -1,17 +1,18 @@
-//! API non-interactive du "worker" crypto, pensée pour être appelée depuis une
-//! interface graphique (Tauri) plutôt qu'un terminal : aucune fonction ici ne lit
-//! stdin ni n'imprime sur stdout, tout passe par des paramètres et des valeurs de
-//! retour. `wallet_flow.rs` reste la version CLI interactive (prompts) pour les
-//! démos en ligne de commande ; ce module réutilise les mêmes briques (derivation,
-//! shamir, pgp_engine, eth/btc/sol_tx/rpc) sans jamais imprimer ni lire de secret.
+//! Non-interactive API of the crypto worker, designed to be called from a graphical
+//! interface (Tauri) rather than a terminal: no function here reads stdin or prints
+//! to stdout; everything goes through parameters and return values.
+//! `wallet_flow.rs` remains the interactive CLI version (prompts) for the
+//! command-line demos; this module reuses the same building blocks (derivation,
+//! shamir, pgp_engine, eth/btc/sol_tx/rpc) without ever printing or reading a
+//! secret.
 //!
-//! Modèle retenu :
-//! - Un "coffre local" par appareil : l'entropie maître complète, chiffrée par une
-//!   clé PGP dédiée à CET appareil, déverrouillée par un seul mot de passe — usage
-//!   quotidien façon hot wallet.
-//! - Un "kit de sauvegarde" Shamir 2-sur-3, généré une seule fois à la création,
-//!   qui ne sert qu'à restaurer le wallet sur un NOUVEL appareil si celui-ci est
-//!   perdu — jamais utilisé pour le déverrouillage quotidien.
+//! The model:
+//! - One "local vault" per device: the complete master entropy, encrypted with a
+//!   PGP key dedicated to THIS device, unlocked with a single password, for
+//!   everyday hot-wallet use.
+//! - A 2-of-3 Shamir "backup kit", generated once at creation, only used to restore
+//!   the wallet on a NEW device if this one is lost; never used for everyday
+//!   unlocking.
 
 use crate::{
     btc_rpc, cow, dapp_requests, derivation, doge, lifi, tron, xrp, stellar, near, cardano, stacks, bittensor, moonpay_trade, monero, native_deposit, wallet_birthday, zcash, zcash_shielded, entropy, eth_rpc, eth_tx, history, jupiter_rpc, memory_guard, pgp_engine, secure_storage, shamir,
@@ -33,31 +34,30 @@ const DEVICE_PRIVKEY_FILE: &str = "device_privkey.asc";
 const DEVICE_VAULT_FILE: &str = "device_vault.asc";
 const BACKUP_IDENTITIES: [&str; 3] = ["backup_a", "backup_b", "backup_c"];
 
-// Déverrouillage biométrique (Windows Hello/TPM, voir windows_hello.rs et
-// enroll_biometric_unlock ci-dessous) : une SECONDE identité PGP, en plus de
-// "device" (mot de passe, inchangée), dont la clé privée est protégée par un
-// secret aléatoire scellé matériellement plutôt qu'un mot de passe humain. Le
-// coffre (`DEVICE_VAULT_FILE`) est alors chiffré pour les deux identités à la
-// fois (voir `pgp_engine::encrypt_share_multi`) — n'importe laquelle des deux
-// clés privées le déchiffre indépendamment.
+// Biometric unlock (Windows Hello/TPM, see windows_hello.rs and
+// enroll_biometric_unlock below): a SECOND PGP identity, alongside "device"
+// (password, unchanged), whose private key is protected by a hardware-sealed
+// random secret rather than a human password. The vault (`DEVICE_VAULT_FILE`) is
+// then encrypted for both identities at once (see
+// `pgp_engine::encrypt_share_multi`): either private key decrypts it on its own.
 const DEVICE_BIOMETRIC_PUBKEY_FILE: &str = "device_biometric_pubkey.asc";
 const DEVICE_BIOMETRIC_PRIVKEY_FILE: &str = "device_biometric_privkey.asc";
 const DEVICE_BIOMETRIC_SEALED_SECRET_FILE: &str = "device_biometric_sealed_secret.bin";
 const DEVICE_BIOMETRIC_KEY_META_FILE: &str = "device_biometric_key_meta.json";
 
 const UNLOCK_ATTEMPTS_FILE: &str = "unlock_attempts.json";
-/// Nombre d'échecs consécutifs tolérés avant qu'un délai commence à s'appliquer.
+/// Number of consecutive failures tolerated before a delay starts applying.
 const MAX_FREE_ATTEMPTS: u32 = 5;
-/// Délai de base (secondes), doublé à chaque échec supplémentaire au-delà de
-/// `MAX_FREE_ATTEMPTS`, plafonné à `MAX_LOCKOUT_SECS`.
+/// Base delay (seconds), doubled with each additional failure beyond
+/// `MAX_FREE_ATTEMPTS`, capped at `MAX_LOCKOUT_SECS`.
 const BASE_LOCKOUT_SECS: u64 = 5;
 const MAX_LOCKOUT_SECS: u64 = 300;
 
-/// Compteur d'échecs de déverrouillage, persisté à côté du coffre : sans lui, rien
-/// n'empêchait un script capable d'appeler `unlock_wallet`/`send_*` en boucle
-/// (devtools, dépendance compromise) d'essayer des mots de passe indéfiniment et
-/// aussi vite que le CPU le permet — la complexité minimale de 12 caractères imposée
-/// à la création ne protège que contre un essai manuel, pas contre un script.
+/// Unlock failure counter, persisted next to the vault. Without it, nothing stopped
+/// a script able to call `unlock_wallet`/`send_*` in a loop (devtools, compromised
+/// dependency) from trying passwords forever, as fast as the CPU allows. The
+/// 12-character minimum enforced at creation only protects against manual guessing,
+/// not against a script.
 #[derive(serde::Serialize, serde::Deserialize, Default)]
 struct UnlockAttempts {
     consecutive_failures: u32,
@@ -85,13 +85,13 @@ fn required_lockout_secs(consecutive_failures: u32) -> u64 {
     if consecutive_failures < MAX_FREE_ATTEMPTS {
         return 0;
     }
-    let extra = (consecutive_failures - MAX_FREE_ATTEMPTS).min(6); // évite un décalage démesuré
+    let extra = (consecutive_failures - MAX_FREE_ATTEMPTS).min(6); // avoids an absurdly large shift
     BASE_LOCKOUT_SECS.saturating_mul(1u64 << extra).min(MAX_LOCKOUT_SECS)
 }
 
-/// À appeler avant toute tentative de déchiffrement du coffre avec un mot de passe
-/// fourni par l'appelant. Renvoie une erreur si l'appareil est actuellement "en
-/// attente" suite à trop d'échecs récents.
+/// To call before any attempt to decrypt the vault with a password supplied by the
+/// caller. Returns an error if the device is currently "on hold" after too many
+/// recent failures.
 fn enforce_unlock_lockout(data_dir: &Path) -> Result<()> {
     let attempts = read_unlock_attempts(data_dir);
     let delay = required_lockout_secs(attempts.consecutive_failures);
@@ -119,13 +119,13 @@ fn reset_unlock_attempts(data_dir: &Path) {
     let _ = std::fs::remove_file(unlock_attempts_path(data_dir));
 }
 
-// Compteur d'échecs SÉPARÉ pour le chemin biométrique (jamais partagé avec
-// `UNLOCK_ATTEMPTS_FILE`/le mot de passe) : un prompt Windows Hello qui traîne,
-// échoue ou est spammé ne doit jamais mettre en attente le déverrouillage par
-// mot de passe, et inversement. Copie quasi verbatim de la logique ci-dessus
-// (`required_lockout_secs` est une fonction pure sur un compteur, réutilisée
-// telle quelle) — dupliquée plutôt que paramétrée pour ne surtout pas risquer de
-// modifier, même indirectement, le chemin mot de passe déjà audité.
+// A SEPARATE failure counter for the biometric path (never shared with
+// `UNLOCK_ATTEMPTS_FILE`/the password): a Windows Hello prompt that lingers, fails
+// or gets spammed must never put password unlock on hold, and vice versa. A
+// near-verbatim copy of the logic above (`required_lockout_secs` is a pure
+// function over a counter, reused as is), duplicated rather than parameterized so
+// there is no risk of changing, even indirectly, the already-audited password
+// path.
 const BIOMETRIC_UNLOCK_ATTEMPTS_FILE: &str = "unlock_attempts_biometric.json";
 
 fn biometric_unlock_attempts_path(data_dir: &Path) -> std::path::PathBuf {
@@ -175,79 +175,79 @@ fn reset_biometric_unlock_attempts(data_dir: &Path) {
 pub struct Addresses {
     pub evm: String,
     pub btc_testnet: String,
-    /// Distincte de `btc_testnet` pour le même profil (chemin de dérivation et
-    /// préfixe bech32 différents, voir `derivation.rs`) — contrairement à `evm`/
-    /// `solana`, qui servent inchangées sur toutes les variantes de leur réseau.
+    /// Distinct from `btc_testnet` for the same profile (different derivation path and
+    /// bech32 prefix, see `derivation.rs`), unlike `evm`/`solana`, which are used
+    /// unchanged on every variant of their network.
     pub btc_mainnet: String,
     pub solana: String,
-    /// Adresse Zcash transparente (t1…), chemin m/44'/133'/0'/0/{index}.
+    /// Transparent Zcash address (t1…), path m/44'/133'/0'/0/{index}.
     pub zcash: String,
-    /// Adresse Dogecoin (D…), chemin m/44'/3'/0'/0/{index}.
+    /// Dogecoin address (D…), path m/44'/3'/0'/0/{index}.
     pub doge: String,
-    /// Adresse Tron (T…), chemin m/44'/195'/0'/0/{index}.
+    /// Tron address (T…), path m/44'/195'/0'/0/{index}.
     pub tron: String,
-    /// Adresse XRP (r…), chemin m/44'/144'/0'/0/{index}.
+    /// XRP address (r…), path m/44'/144'/0'/0/{index}.
     pub xrp: String,
-    /// Adresse Stellar (G…), chemin SEP-0005 m/44'/148'/{index}'.
+    /// Stellar address (G…), SEP-0005 path m/44'/148'/{index}'.
     pub stellar: String,
-    /// Compte NEAR implicite (64 hex), chemin m/44'/397'/{index}'.
+    /// NEAR implicit account (64 hex), path m/44'/397'/{index}'.
     pub near: String,
-    /// Adresse Cardano de base (addr1…), CIP-1852 m/1852'/1815'/{index}'.
+    /// Cardano base address (addr1…), CIP-1852 m/1852'/1815'/{index}'.
     pub cardano: String,
-    /// Adresse Stacks (SP…), chemin m/44'/5757'/0'/0/{index}.
+    /// Stacks address (SP…), path m/44'/5757'/0'/0/{index}.
     pub stacks: String,
-    /// Adresse Bittensor (5…, SS58 format 42), clé sr25519 : racine de
-    /// l'entropie pour le profil 0, chemin dur « //n » au-delà (voir `bittensor`).
+    /// Bittensor address (5…, SS58 format 42), sr25519 key: the root of the entropy for
+    /// profile 0, hard path "//n" beyond that (see `bittensor`).
     pub bittensor: String,
-    /// Adresse THORChain (thor1…), chemin m/44'/931'/0'/0/{index} : celle du
-    /// profil principal du développeur est l'adresse d'affiliation de l'app.
+    /// THORChain address (thor1…), path m/44'/931'/0'/0/{index}: the one for the
+    /// developer's main profile is the app's affiliate address.
     pub thor: String,
-    /// Adresse Zcash protégée (u1…, récepteur Orchard seul) du compte ZIP-32
-    /// n°{index}.
+    /// Shielded Zcash address (u1…, Orchard receiver only) of ZIP-32 account no.
+    /// {index}.
     pub zcash_shielded: String,
-    /// Clés de visualisation du compte protégé (jamais envoyées à
-    /// l'interface) : création du compte et synchronisation sans la seed.
+    /// Viewing keys of the shielded account (never sent to the UI): account creation
+    /// and sync without the seed.
     pub zcash_shielded_keys: zcash_shielded::ProfileKeys,
-    /// Adresse Monero principale (4…), schéma de l'app Monero de Ledger
-    /// (m/44'/128'/{index}'/0/0, voir `monero`).
+    /// Primary Monero address (4…), the Ledger Monero app's scheme
+    /// (m/44'/128'/{index}'/0/0, see `monero`).
     pub monero: String,
-    /// Clés de visualisation Monero (jamais envoyées à l'interface) :
-    /// synchronisation et préparation des envois sans la seed.
+    /// Monero view keys (never sent to the UI): sync and send preparation without the
+    /// seed.
     pub monero_keys: monero::ViewKeys,
 }
 
 const PROFILES_FILE: &str = "profiles.json";
 const DEFAULT_PROFILE_LABEL: &str = "Principal";
 
-/// Un "profil" n'est qu'un index de dérivation HD (BIP32/SLIP-10) étiqueté : la
-/// sécurité (Shamir 2-sur-3 + PGP) protège une seule entropie maître, comme avant.
-/// `derive_evm_key`/`derive_btc_testnet_key`/`derive_solana_key` acceptent déjà un
-/// index depuis le début (voir `core/src/derivation.rs`) — plusieurs adresses par
-/// réseau ne demandent donc aucun changement du modèle de sécurité, seulement de
-/// n'plus toujours dériver l'index 0. Le fichier `profiles.json` (labels + index)
-/// n'a rien de sensible : sans lui, les mêmes adresses restent dérivables à partir
-/// de la seed, seuls les libellés choisis par l'utilisateur seraient perdus.
+/// A "profile" is just a labeled HD derivation index (BIP32/SLIP-10): the security
+/// layer (2-of-3 Shamir + PGP) protects a single master entropy, as before.
+/// `derive_evm_key`/`derive_btc_testnet_key`/`derive_solana_key` have accepted an
+/// index from the start (see `core/src/derivation.rs`), so several addresses per
+/// network need no change to the security model, only to stop always deriving index
+/// 0. The `profiles.json` file (labels + indexes) holds nothing sensitive: without
+/// it, the same addresses can still be derived from the seed, and only the labels
+/// the user chose would be lost.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Profile {
     pub index: u32,
     pub label: String,
-    /// Un profil archivé n'apparaît plus dans le sélecteur principal ni dans les
-    /// adresses dérivées par `unlock_wallet`, mais reste dans `profiles.json` et
-    /// peut être désarchivé à tout moment (voir `archive_profile`/`unarchive_profile`)
-    /// — c'est la suppression "légère", réversible, sans mot de passe : contrairement
-    /// à `delete_profile`, rien n'est perdu de façon irréversible. `#[serde(default)]`
-    /// pour rester compatible avec un `profiles.json` écrit avant l'ajout de ce champ.
+    /// An archived profile no longer appears in the main selector or in the addresses
+    /// derived by `unlock_wallet`, but stays in `profiles.json` and can be unarchived
+    /// at any time (see `archive_profile`/`unarchive_profile`). This is the "soft",
+    /// reversible removal, with no password: unlike `delete_profile`, nothing is lost
+    /// irreversibly. `#[serde(default)]` keeps compatibility with a `profiles.json`
+    /// written before this field existed.
     #[serde(default)]
     pub archived: bool,
 }
 
 pub struct ProfileAddresses {
     pub profile: Profile,
-    /// `None` quand le profil a été créé sans mot de passe (voir `create_profile`) :
-    /// dériver une adresse suppose de redéchiffrer la seed, jamais mise en cache —
-    /// sans mot de passe, on enregistre juste le label/index, et l'adresse
-    /// apparaîtra au prochain `unlock_wallet` (qui dérive tous les profils connus
-    /// pendant qu'il a déjà la seed en main).
+    /// `None` when the profile was created without a password (see `create_profile`):
+    /// deriving an address means decrypting the seed again, which is never cached.
+    /// Without a password, only the label/index is saved, and the address will appear
+    /// at the next `unlock_wallet` (which derives every known profile while it already
+    /// has the seed at hand).
     pub addresses: Option<Addresses>,
 }
 
@@ -255,9 +255,9 @@ fn profiles_path(data_dir: &Path) -> std::path::PathBuf {
     data_dir.join(PROFILES_FILE)
 }
 
-/// Compatibilité ascendante : un coffre créé avant l'introduction des profils n'a
-/// pas de `profiles.json` — on lui suppose alors un unique profil par défaut à
-/// l'index 0 (celui déjà utilisé partout jusqu'ici), pour ne perdre l'accès à rien.
+/// Backward compatibility: a vault created before profiles existed has no
+/// `profiles.json`, so it is assumed to have a single default profile at index 0
+/// (the one used everywhere until then), so no access is lost.
 fn load_profiles(data_dir: &Path) -> Vec<Profile> {
     std::fs::read_to_string(profiles_path(data_dir))
         .ok()
@@ -277,8 +277,8 @@ fn save_profiles(data_dir: &Path, profiles: &[Profile]) -> Result<()> {
     std::fs::write(profiles_path(data_dir), content).context("écriture des profils")
 }
 
-/// Une part de sauvegarde Shamir, chiffrée par sa propre identité PGP jetable.
-/// À exporter par l'utilisateur (fichiers + passphrase) hors de l'appareil.
+/// A Shamir backup share, encrypted with its own throwaway PGP identity. To be
+/// exported by the user (files + passphrase) off the device.
 pub struct BackupShare {
     pub label: String,
     pub passphrase: String,
@@ -317,14 +317,15 @@ fn generate_pgp_identity(label: &str, passphrase: &str) -> Result<(Vec<u8>, Vec<
     Ok((pubkey_armored, privkey_armored))
 }
 
-/// Passphrase générée automatiquement pour un backup (jamais tapée par l'utilisateur,
-/// juste affichée une fois pour être sauvegardée hors ligne).
+/// Passphrase generated automatically for a backup (never typed by the user, just
+/// shown once so it can be saved offline).
 fn random_passphrase() -> String {
-    // Le buffer d'entropie brut est effacé dès que le hex en est extrait (`Zeroizing`) —
-    // seul le cas de `generate_master_entropy` dans tout le projet qui ne le faisait pas
-    // encore. La `String` hex retournée, elle, est délibérément affichée à l'utilisateur
-    // (passphrase d'une part de sauvegarde à noter) : rien à gagner à la protéger, elle
-    // finit de toute façon rendue en clair côté interface.
+    // The raw entropy buffer is wiped as soon as the hex has been extracted from it
+    // (`Zeroizing`); this was the only case outside `generate_master_entropy` in the
+    // whole project that did not do it yet. The returned hex `String`, on the other
+    // hand, is deliberately shown to the user (the passphrase of a backup share, to be
+    // written down): there is nothing to gain by protecting it, since it ends up in the
+    // clear in the UI anyway.
     let bytes = Zeroizing::new(entropy::generate_master_entropy());
     hex::encode(&bytes[..16])
 }
@@ -365,25 +366,25 @@ fn derive_addresses(seed: &[u8], index: u32) -> Result<Addresses> {
     })
 }
 
-/// Liste des profils ACTIFS de cet appareil (labels + index de dérivation), sans
-/// jamais toucher au coffre ni au mot de passe : purement de la lecture de fichier.
-/// N'inclut pas les profils archivés (voir `archive_profile`) : ils n'apparaissent
-/// ni dans le sélecteur principal ni dans les adresses dérivées par `unlock_wallet`.
+/// List of this device's ACTIVE profiles (labels + derivation indexes), without ever
+/// touching the vault or the password: just a file read. Does not include archived
+/// profiles (see `archive_profile`): they appear neither in the main selector nor in
+/// the addresses derived by `unlock_wallet`.
 pub fn list_profiles(data_dir: &Path) -> Vec<Profile> {
     load_profiles(data_dir).into_iter().filter(|p| !p.archived).collect()
 }
 
-/// Liste des profils archivés (voir `archive_profile`) : mis de côté sans être
-/// supprimés, récupérables à tout moment via `unarchive_profile`.
+/// List of archived profiles (see `archive_profile`): set aside without being
+/// deleted, recoverable at any time through `unarchive_profile`.
 pub fn list_archived_profiles(data_dir: &Path) -> Vec<Profile> {
     load_profiles(data_dir).into_iter().filter(|p| p.archived).collect()
 }
 
-/// Suppression "légère" et réversible : le profil disparaît du sélecteur principal
-/// et des adresses dérivées à chaque déverrouillage, mais reste dans
-/// `profiles.json` et peut être remis en service à tout moment via
-/// `unarchive_profile`, sans mot de passe — rien n'est irréversible, donc rien
-/// n'exige de confirmation lourde ici (contrairement à `delete_profile`).
+/// "Soft", reversible removal: the profile disappears from the main selector and
+/// from the addresses derived at each unlock, but stays in `profiles.json` and can
+/// be brought back at any time through `unarchive_profile`, with no password.
+/// Nothing is irreversible, so nothing here calls for a heavy confirmation (unlike
+/// `delete_profile`).
 pub fn archive_profile(data_dir: &Path, index: u32) -> Result<()> {
     let mut profiles = load_profiles(data_dir);
     anyhow::ensure!(
@@ -398,9 +399,8 @@ pub fn archive_profile(data_dir: &Path, index: u32) -> Result<()> {
     save_profiles(data_dir, &profiles)
 }
 
-/// Annule un archivage (voir `archive_profile`) : le profil redevient actif,
-/// réapparaît dans le sélecteur principal et dans les adresses dérivées au
-/// prochain déverrouillage.
+/// Undoes an archive (see `archive_profile`): the profile becomes active again and
+/// reappears in the main selector and in the derived addresses at the next unlock.
 pub fn unarchive_profile(data_dir: &Path, index: u32) -> Result<()> {
     let mut profiles = load_profiles(data_dir);
     let profile = profiles
@@ -411,53 +411,52 @@ pub fn unarchive_profile(data_dir: &Path, index: u32) -> Result<()> {
     save_profiles(data_dir, &profiles)
 }
 
-/// Retire un profil de la liste (label + index).
-///
-/// Exige le mot de passe de l'appareil (vérifié via `unlock_seed`, seed aussitôt
-/// rejetée sans être utilisée) : pas parce que la suppression elle-même touche à la
-/// seed, mais comme confirmation à part entière avant une action dont la
-/// conséquence pratique peut être sérieuse (voir ci-dessous), et pour profiter au
-/// passage du même verrou anti-brute-force que les autres actions sensibles.
-///
-/// Important, à ne pas enjoliver : cryptographiquement, l'adresse reste dérivable
-/// depuis la même seed au même index (rien n'est détruit "en théorie"). Mais cette
-/// application n'offre **aucun moyen de recréer un profil à un index précis** —
-/// `create_profile` choisit toujours le prochain index libre, jamais un index déjà
-/// utilisé puis supprimé. Concrètement, pour l'utilisateur de cette app (pas un
-/// développeur capable de re-dériver l'index à la main), supprimer un profil qui a
-/// déjà reçu des fonds revient à en perdre l'accès de façon définitive depuis cette
-/// interface. D'où l'exigence du mot de passe : ce n'est pas une simple opération
-/// de confort sur une liste de labels.
-///
-/// Toujours au moins un profil restant : sans coffre par défaut affichable,
-/// l'utilisateur n'aurait plus aucune adresse visible après un déverrouillage.
-/// Mot de passe de l'appareil juste (coffre déchiffré puis effacé aussitôt) :
-/// vérifié AVANT d'ouvrir une fenêtre de confirmation, pour ne pas la faire
-/// accepter pour rien.
+/// Checks the device password (vault decrypted, then wiped straight away). Done
+/// BEFORE opening a confirmation window, so the user is never asked to confirm for
+/// nothing.
 pub fn check_device_password(data_dir: &Path, device_password: &str) -> Result<()> {
     let _ = unlock_seed(data_dir, device_password)?;
     Ok(())
 }
 
-/// Nom d'un profil (actif ou archivé), lu dans le fichier des profils.
+/// Name of a profile (active or archived), read from the profiles file.
 pub fn profile_label(data_dir: &Path, index: u32) -> Option<String> {
     load_profiles(data_dir).into_iter().find(|p| p.index == index).map(|p| p.label)
 }
 
+/// Removes a profile from the list (label + index).
+///
+/// Requires the device password (checked through `unlock_seed`, the seed discarded
+/// straight away without being used): not because the removal itself touches the
+/// seed, but as a proper confirmation before an action whose practical consequence
+/// can be serious (see below), and to benefit from the same anti-brute-force lock as
+/// the other sensitive actions.
+///
+/// To be clear about it: cryptographically, the address can still be derived from the
+/// same seed at the same index (nothing is destroyed "in theory"). But this app offers
+/// **no way to recreate a profile at a specific index**: `create_profile` always picks
+/// the next free index, never one that was used and then removed. In practice, for a
+/// user of this app (not a developer able to re-derive the index by hand), removing a
+/// profile that has already received funds means losing access to them from this
+/// interface for good. Hence the password: this is not a mere convenience operation on
+/// a list of labels.
+///
+/// At least one active profile always remains: without a default vault to show, the
+/// user would have no visible address after unlocking.
 pub fn delete_profile(data_dir: &Path, device_password: &str, index: u32) -> Result<()> {
-    // Seed jetée sans être utilisée : on ne veut que vérifier le mot de passe.
-    // `Zeroizing` l'efface automatiquement à la fin de cette expression, pas besoin
-    // d'appel manuel (voir les rounds d'audit précédents sur ce sujet).
+    // Seed discarded without being used: we only want to check the password.
+    // `Zeroizing` wipes it automatically at the end of this expression, no manual call
+    // needed (see earlier audit rounds on this).
     let _ = unlock_seed(data_dir, device_password)?;
 
     let mut profiles = load_profiles(data_dir);
     let before = profiles.len();
     profiles.retain(|p| p.index != index);
     anyhow::ensure!(profiles.len() < before, "profil introuvable (index {index})");
-    // Vérifié APRÈS la suppression, sur les profils ACTIFS uniquement : sans ça,
-    // supprimer le seul profil actif restant aurait pu passer tant qu'un profil
-    // archivé traînait encore dans le fichier (le compte total > 1 suffisait), en
-    // laissant le tableau de bord sans aucune adresse à afficher après déverrouillage.
+    // Checked AFTER the removal, on ACTIVE profiles only: otherwise, removing the last
+    // active profile could have gone through as long as an archived profile was still
+    // lying around in the file (a total count > 1 was enough), leaving the dashboard
+    // with no address to show after unlocking.
     anyhow::ensure!(
         profiles.iter().any(|p| !p.archived),
         "impossible de supprimer le dernier profil actif restant"
@@ -465,14 +464,13 @@ pub fn delete_profile(data_dir: &Path, device_password: &str, index: u32) -> Res
     save_profiles(data_dir, &profiles)
 }
 
-/// Découpe `secret` en un nouveau kit Shamir 2-sur-3 (3 nouvelles identités PGP
-/// jetables, 3 nouvelles passphrases aléatoires — jamais réutilisées d'un appel à
-/// l'autre) chiffrant chacune une part. Partagé entre `create_wallet` (kit initial)
-/// et `regenerate_backup_kit` (recréer un kit si l'utilisateur a perdu ses fichiers) :
-/// avoir plusieurs kits Shamir valides simultanément pour le même secret ne pose
-/// aucun problème (ce sont juste des découpages différents du même secret), donc un
-/// ancien kit non révoqué reste valable — ce n'est pas un souci de sécurité, juste
-/// un doublon inoffensif si l'utilisateur en génère plusieurs.
+/// Splits `secret` into a new 2-of-3 Shamir kit (3 new throwaway PGP identities, 3 new
+/// random passphrases, never reused from one call to the next), each encrypting one
+/// share. Shared by `create_wallet` (initial kit) and `regenerate_backup_kit`
+/// (recreating a kit if the user lost their files). Having several valid Shamir kits
+/// for the same secret at once is not a problem (they are just different splits of the
+/// same secret), so an old kit that was not revoked stays valid: not a security issue,
+/// just a harmless duplicate if the user generates several.
 fn generate_backup_kit(data_dir: &Path, secret: &[u8]) -> Result<Vec<BackupShare>> {
     let shares: Vec<Zeroizing<Vec<u8>>> = shamir::split_secret(secret, 2, 3)?
         .into_iter()
@@ -497,23 +495,23 @@ fn generate_backup_kit(data_dir: &Path, secret: &[u8]) -> Result<Vec<BackupShare
     Ok(backups)
 }
 
-/// Régénère un kit de sauvegarde Shamir 2-sur-3 tout neuf (3 nouvelles identités PGP,
-/// 3 nouvelles passphrases) à partir de l'entropie maître actuelle, sans toucher au
-/// coffre local ni au mot de passe de l'appareil. Utile si l'utilisateur a perdu un
-/// ou plusieurs de ses fichiers de sauvegarde d'origine : jusqu'ici, la seule façon
-/// de revoir un kit de sauvegarde était de tout recréer via `reset_wallet` +
-/// `create_wallet`, ce qui change aussi l'entropie maître (donc les adresses).
+/// Regenerates a brand-new 2-of-3 Shamir backup kit (3 new PGP identities, 3 new
+/// passphrases) from the current master entropy, without touching the local vault or
+/// the device password. Useful if the user lost one or more of their original backup
+/// files: until this existed, the only way to get a backup kit again was to recreate
+/// everything through `reset_wallet` + `create_wallet`, which also changes the master
+/// entropy (and therefore the addresses).
 pub fn regenerate_backup_kit(data_dir: &Path, device_password: &str) -> Result<Vec<BackupShare>> {
     let seed = unlock_seed(data_dir, device_password)?;
     let _seed_lock = memory_guard::lock(&seed);
     generate_backup_kit(data_dir, &seed)
 }
 
-/// Adresse THORChain (RUNE) dérivée de la même entropie maître, index 0 fixe
-/// (jamais un "profil" au sens des autres réseaux — une seule adresse, pas une
-/// par profil). Sert UNIQUEMENT à recevoir les frais d'affiliation des swaps
-/// (voir thorchain_rpc.rs) : purement informatif ici, aucune fonctionnalité
-/// d'envoi/solde RUNE dans cette v1.
+/// THORChain (RUNE) address derived from the same master entropy, fixed index 0
+/// (never a "profile" in the sense of the other networks: a single address, not one
+/// per profile). Only used to receive swap affiliate fees (see thorchain_rpc.rs)
+/// and to register the affiliate name (see `native_deposit`); purely informational
+/// here.
 pub fn get_thor_fee_address(data_dir: &Path, device_password: &str) -> Result<String> {
     let seed = unlock_seed(data_dir, device_password)?;
     let _seed_lock = memory_guard::lock(&seed);
@@ -521,24 +519,24 @@ pub fn get_thor_fee_address(data_dir: &Path, device_password: &str) -> Result<St
     derivation::format_thor_address(&hash160)
 }
 
-/// Ajoute un nouveau profil (nouvel index de dérivation, jamais réutilisé).
-///
-/// Le mot de passe est optionnel : le fournir dérive et renvoie tout de suite
-/// l'adresse du nouveau profil (redéchiffre la seed, jamais mise en cache — même
-/// principe que pour un envoi de fonds, voir `unlock_seed`) ; l'omettre se contente
-/// d'enregistrer le label/index sans toucher au coffre ni demander le mot de passe.
-/// Dans ce second cas, `addresses` vaut `None` : l'adresse apparaîtra d'elle-même au
-/// prochain `unlock_wallet`, qui dérive tous les profils connus pendant qu'il a déjà
-/// la seed en main pour cet appel.
-/// Plafond arbitraire mais généreux (aucun usage réel n'en approche) : sans lui, le
-/// chemin sans mot de passe de `create_profile` ne demande AUCUNE authentification —
-/// un script capable d'invoquer directement la commande Tauri pourrait sinon faire
-/// grossir `profiles.json` sans limite. Conséquence concrète : `unlock_wallet` dérive
-/// les adresses de TOUS les profils connus à chaque déverrouillage (voir sa doc) ;
-/// des dizaines de milliers de profils bidons ralentiraient (voire, à l'extrême,
-/// bloqueraient perceptiblement) le déverrouillage légitime du vrai propriétaire.
+/// An arbitrary but generous cap (no real use comes anywhere near it). Without it,
+/// the passwordless path of `create_profile` requires NO authentication at all, and a
+/// script able to invoke the Tauri command directly could grow `profiles.json`
+/// without limit. The concrete consequence: `unlock_wallet` derives the addresses of
+/// EVERY known profile on each unlock (see its docs), so tens of thousands of bogus
+/// profiles would slow down (or, at the extreme, noticeably stall) the real owner's
+/// legitimate unlock.
 const MAX_PROFILES: usize = 50;
 
+/// Adds a new profile (a new derivation index, never reused).
+///
+/// The password is optional: supplying it derives and returns the new profile's
+/// address straight away (decrypting the seed again, which is never cached; the same
+/// principle as sending funds, see `unlock_seed`); leaving it out only saves the
+/// label/index without touching the vault or asking for the password. In that second
+/// case, `addresses` is `None`: the address will appear on its own at the next
+/// `unlock_wallet`, which derives every known profile while it already has the seed
+/// at hand.
 pub fn create_profile(data_dir: &Path, device_password: Option<&str>, label: &str) -> Result<ProfileAddresses> {
     let mut profiles = load_profiles(data_dir);
     anyhow::ensure!(
@@ -567,12 +565,11 @@ pub fn create_profile(data_dir: &Path, device_password: Option<&str>, label: &st
     Ok(ProfileAddresses { profile, addresses })
 }
 
-/// Garantit la suppression du fichier temporaire même si l'opération panique
-/// (le `Drop` s'exécute pendant le unwinding) — sans ce guard, un panic entre
-/// l'écriture et la suppression manuelle laisserait le fichier sur le disque,
-/// ce qui est particulièrement sensible pour `decrypt_with_armored_privkey`
-/// (le fichier contient alors une clé privée en clair, quoique protégée par
-/// PGP elle-même).
+/// Guarantees the temporary file is deleted even if the operation panics (`Drop`
+/// runs during unwinding). Without this guard, a panic between writing and the
+/// manual deletion would leave the file on disk, which is especially sensitive for
+/// `decrypt_with_armored_privkey` (the file then holds a private key in the clear,
+/// albeit itself protected by PGP).
 struct TempFileGuard<'a>(&'a Path);
 
 impl Drop for TempFileGuard<'_> {
@@ -581,17 +578,17 @@ impl Drop for TempFileGuard<'_> {
     }
 }
 
-/// Encrypt_share exige un chemin de fichier pour la clé publique : petit fichier
-/// temporaire écrit puis lu immédiatement, aucun secret dedans (clé publique only).
+/// Encrypt_share requires a file path for the public key: a small temporary file,
+/// written then read immediately, with no secret in it (public key only).
 fn encrypt_with_armored_pubkey(data: &[u8], tmp_path: &Path, pubkey_armored: &[u8], name: Option<&str>) -> Result<Vec<u8>> {
     std::fs::write(tmp_path, pubkey_armored)?;
     let _guard = TempFileGuard(tmp_path);
     pgp_engine::encrypt_share_named(data, &tmp_path.to_string_lossy(), name)
 }
 
-/// Identifiant d'un kit de sauvegarde : empreinte de ses parts CHIFFRÉES (rien
-/// du portefeuille ne s'en déduit). Même valeur pour les 3 parts d'un kit ;
-/// sert à refuser deux parts d'un même kit sur une même clé USB.
+/// Identifier of a backup kit: a fingerprint of its ENCRYPTED shares (nothing about
+/// the wallet can be derived from it). The same value for all 3 shares of a kit;
+/// used to refuse two shares of the same kit on the same USB drive.
 pub fn backup_kit_id(backups: &[BackupShare]) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
@@ -602,14 +599,14 @@ pub fn backup_kit_id(backups: &[BackupShare]) -> String {
     hex::encode(&hasher.finalize()[..12])
 }
 
-/// Marque d'un kit (kits créés depuis le 2026-10-09), portée CHIFFRÉE par
-/// chaque part (nom du paquet littéral, voir `pgp_engine::encrypt_share_named`) :
-/// `pgpwallet-kit-v1:<identifiant du kit>:<empreinte du portefeuille>`, 16
-/// caractères hexadécimaux chacun. Deux parts de kits différents redonnent un
-/// FAUX secret sans aucune erreur (Shamir ne contrôle rien, mesuré) : la
-/// marque les fait refuser, et l'empreinte vérifie le secret reconstruit. Les
-/// versions précédentes de l'app ignorent ce nom et restaurent ces kits comme
-/// avant ; les kits d'avant (sans marque) restent restaurables, sans preuve.
+/// Kit mark (kits created since 2026-10-09), carried ENCRYPTED by each share (the
+/// literal packet name, see `pgp_engine::encrypt_share_named`):
+/// `pgpwallet-kit-v1:<kit identifier>:<wallet fingerprint>`, 16 hex characters
+/// each. Two shares from different kits yield a WRONG secret without any error
+/// (Shamir checks nothing, measured): the mark gets them refused, and the
+/// fingerprint verifies the rebuilt secret. Earlier versions of the app ignore this
+/// name and restore these kits as before; older kits (without a mark) can still be
+/// restored, without proof.
 const KIT_MARK_PREFIX: &str = "pgpwallet-kit-v1:";
 pub const KITS_DIFFERENT: &str = "ces deux parts viennent de deux kits de sauvegarde différents : utilisez deux parts d'un même kit";
 pub const KIT_CHECK_FAILED: &str = "ces deux parts ne redonnent pas le portefeuille de leur kit : essayez avec une autre part de ce kit";
@@ -620,8 +617,8 @@ struct KitMark {
     check: String,
 }
 
-/// Empreinte du portefeuille dans la marque : 8 octets d'un SHA-256 du
-/// secret, séparé par domaine — rien du secret ne s'en déduit.
+/// Wallet fingerprint in the mark: 8 bytes of a domain-separated SHA-256 of the
+/// secret; nothing about the secret can be derived from it.
 fn kit_check(secret: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
@@ -634,7 +631,7 @@ fn kit_mark_name(kit: &str, check: &str) -> String {
     format!("{KIT_MARK_PREFIX}{kit}:{check}")
 }
 
-/// Marque lue dans le nom d'une part ; tout autre nom (ou aucun) : `None`.
+/// Mark read from a share's name; any other name (or none): `None`.
 fn parse_kit_mark(name: Option<&[u8]>) -> Option<KitMark> {
     let rest = std::str::from_utf8(name?).ok()?.strip_prefix(KIT_MARK_PREFIX)?;
     let (kit, check) = rest.split_once(':')?;
@@ -642,9 +639,9 @@ fn parse_kit_mark(name: Option<&[u8]>) -> Option<KitMark> {
     (hex16(kit) && hex16(check)).then(|| KitMark { kit: kit.to_string(), check: check.to_string() })
 }
 
-/// Vérifie qu'une part de sauvegarde se déchiffre avec sa clé privée et son mot
-/// de passe (après son écriture sur une clé USB, relue depuis la clé) ; la part
-/// déchiffrée est effacée de la mémoire aussitôt.
+/// Checks that a backup share decrypts with its private key and password (after
+/// being written to a USB drive and reread from it); the decrypted share is wiped
+/// from memory straight away.
 pub fn verify_backup_share(data_dir: &Path, encrypted: &[u8], privkey_armored: &[u8], passphrase: &str) -> Result<()> {
     static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     std::fs::create_dir_all(data_dir)?;
@@ -659,27 +656,27 @@ fn decrypt_with_armored_privkey(data: &[u8], tmp_path: &Path, privkey_armored: &
     decrypt_with_armored_privkey_named(data, tmp_path, privkey_armored, passphrase).map(|(share, _)| share)
 }
 
-/// `decrypt_with_armored_privkey` avec le nom porté par la part (marque de kit).
+/// `decrypt_with_armored_privkey` with the name carried by the share (kit mark).
 fn decrypt_with_armored_privkey_named(data: &[u8], tmp_path: &Path, privkey_armored: &[u8], passphrase: &str) -> Result<(Vec<u8>, Option<Vec<u8>>)> {
     std::fs::write(tmp_path, privkey_armored)?;
     let _guard = TempFileGuard(tmp_path);
     pgp_engine::decrypt_share_named(data, &tmp_path.to_string_lossy(), passphrase)
 }
 
-// --- Stockage de la clé privée "device" (coffre OS plutôt qu'un simple fichier) --
-// Voir `secure_storage.rs` pour le "pourquoi" (contrôle d'accès OS réel, pas
-// seulement un chemin de fichier à deviner) et l'isolation par `data_dir`.
-// Ne concerne QUE `device_privkey.asc` (déverrouillage par mot de passe) : la
-// clé privée "device_biometric" reste en fichier, son secret est déjà scellé
-// matériellement par le TPM (voir windows_hello.rs), le gain marginal d'un
-// second mécanisme de protection serait minime.
+// --- Storing the "device" private key (OS vault rather than a plain file) ------
+//
+// See `secure_storage.rs` for the "why" (real OS access control, not just a file
+// path to guess) and the isolation by `data_dir`. Only concerns
+// `device_privkey.asc` (password unlock): the "device_biometric" private key stays
+// in a file, since its secret is already hardware-sealed by the TPM (see
+// windows_hello.rs) and a second protection mechanism would add little.
 
-/// Sélectionne le coffre actif : le vrai coffre OS en production, un faux
-/// coffre en mémoire partagé entre tests en `#[cfg(test)]` — même motif que
-/// `SecretSealer`/`WindowsHelloSealer` pour le déverrouillage biométrique,
-/// justifié ici pour la même raison : `cargo test` ne doit jamais toucher le
-/// vrai Gestionnaire d'identification/Trousseau de la machine qui l'exécute,
-/// ni dépendre d'un coffre OS réellement configuré sur une machine de CI.
+/// Selects the active vault: the real OS vault in production, a fake in-memory
+/// vault shared between tests under `#[cfg(test)]`. Same pattern as
+/// `SecretSealer`/`WindowsHelloSealer` for biometric unlock, for the same reason:
+/// `cargo test` must never touch the real Credential Manager/Keychain of the
+/// machine running it, nor depend on an OS vault actually being configured on a CI
+/// machine.
 #[cfg(not(test))]
 fn active_key_store() -> &'static dyn secure_storage::KeyStore {
     static STORE: secure_storage::OsKeyStore = secure_storage::OsKeyStore;
@@ -692,11 +689,10 @@ fn active_key_store() -> &'static dyn secure_storage::KeyStore {
     STORE.get_or_init(secure_storage::InMemoryKeyStore::default)
 }
 
-/// Écrit une nouvelle clé privée "device" : essaie le coffre OS en premier,
-/// ne retombe sur un fichier classique QUE s'il est indisponible (jamais de
-/// blocage de la création/restauration du wallet à cause de ça). Supprime un
-/// éventuel fichier existant en cas de succès du coffre OS : une seule copie
-/// du secret doit exister à la fois, jamais les deux en parallèle.
+/// Writes a new "device" private key: tries the OS vault first and falls back to a
+/// regular file ONLY if it is unavailable (wallet creation/restore is never blocked
+/// because of it). Deletes any existing file when the OS vault succeeds: only one
+/// copy of the secret must exist at a time, never both side by side.
 fn write_device_privkey(data_dir: &Path, armored: &[u8]) -> Result<()> {
     let text = std::str::from_utf8(armored).context("clé privée générée non-UTF8 (bug de génération PGP)")?;
     let username = secure_storage::entry_username(data_dir);
@@ -710,33 +706,30 @@ fn write_device_privkey(data_dir: &Path, armored: &[u8]) -> Result<()> {
     }
 }
 
-/// Donne un accès temporaire, sous forme de CHEMIN DE FICHIER, à la clé
-/// privée "device" — `pgp_engine::decrypt_share` (biais hérité de
-/// `sequoia-openpgp::Cert::from_file`) n'accepte qu'un chemin, jamais des
-/// octets en mémoire directement. Lit D'ABORD le coffre OS puis, seulement à
-/// défaut, l'ancien fichier (compatibilité avec les wallets créés avant ce
-/// changement, ou coffre OS momentanément indisponible). Quand la source est
-/// le coffre OS, le secret est brièvement matérialisé dans un fichier
-/// temporaire à usage unique, supprimé même en cas de panique/erreur
-/// (`TempFileGuard`, même mécanisme déjà utilisé pour les clés de sauvegarde
-/// Shamir) : une fenêtre d'exposition sur disque de la durée d'un seul appel,
-/// contre une exposition permanente à un chemin fixe et prévisible avant ce
-/// changement.
+/// Gives temporary access to the "device" private key as a FILE PATH, since
+/// `pgp_engine::decrypt_share` (a constraint inherited from
+/// `sequoia-openpgp::Cert::from_file`) only accepts a path, never bytes in memory.
+/// Reads the OS vault FIRST, then falls back to the legacy file only if needed
+/// (compatibility with wallets created before this change, or an OS vault that is
+/// temporarily unavailable). When the source is the OS vault, the secret is briefly
+/// materialized in a single-use temporary file, deleted even on panic/error
+/// (`TempFileGuard`, the same mechanism already used for the Shamir backup keys):
+/// an on-disk exposure window lasting a single call, instead of the permanent
+/// exposure at a fixed, predictable path before this change.
 fn with_device_privkey_path<T>(data_dir: &Path, f: impl FnOnce(&str) -> Result<T>) -> Result<T> {
     with_device_privkey_path_in(data_dir, active_key_store(), f)
 }
 
-/// Erreur "la clé privée n'a même pas pu être atteinte" (coffre OS en panne ET
-/// aucun fichier de repli, ou fichier temporaire impossible à écrire) —
-/// jamais un mauvais mot de passe. Trouvé lors du 20ᵉ passage d'auto-revue :
-/// `unlock_seed` comptait TOUTE erreur de `with_device_privkey_path` comme une
-/// tentative de mot de passe ratée, alors que sa propre doc dit que le verrou
-/// "ne compte que les mauvais mots de passe". Depuis la migration vers le
-/// coffre OS, un simple souci transitoire de celui-ci aurait donc pénalisé un
-/// utilisateur légitime ayant tapé le BON mot de passe (délai croissant
-/// jusqu'à 5 minutes). Type marqueur plutôt qu'une comparaison de texte
-/// (contrairement à `is_user_cancellation`, contraint par un code d'erreur
-/// Windows formaté par une crate tierce) : ici on contrôle les deux bouts.
+/// Error meaning "the private key could not even be reached" (OS vault down AND no
+/// fallback file, or a temporary file that could not be written), never a wrong
+/// password. Found in self-review round 20: `unlock_seed` counted ANY error from
+/// `with_device_privkey_path` as a failed password attempt, even though its own
+/// docs say the lock "only counts wrong passwords". Since the move to the OS vault,
+/// a simple transient problem with it would therefore have penalized a legitimate
+/// user who typed the RIGHT password (with a growing delay of up to 5 minutes). A
+/// marker type rather than a text comparison (unlike `is_user_cancellation`, which
+/// is constrained by a Windows error code formatted by a third-party crate): here
+/// we control both ends.
 #[derive(Debug)]
 struct KeyMaterialUnavailable(String);
 
@@ -768,10 +761,10 @@ fn with_device_privkey_path_in<T>(
         let _guard = TempFileGuard(&tmp_path);
         return f(&tmp_path.to_string_lossy());
     }
-    // `Ok(None)` (wallet dont la clé vit encore en fichier) ET `Err` (coffre OS
-    // en panne) tentent tous deux le fichier : une panne du coffre OS ne doit
-    // jamais bloquer un wallet dont la clé est justement en fichier (ex :
-    // coffre indisponible au moment de la création, voir `write_device_privkey`).
+    // `Ok(None)` (a wallet whose key still lives in a file) AND `Err` (OS vault down)
+    // both try the file: an OS vault failure must never block a wallet whose key is
+    // precisely in a file (e.g. the vault was unavailable at creation time, see
+    // `write_device_privkey`).
     let path = data_dir.join(DEVICE_PRIVKEY_FILE);
     if !path.exists() {
         let detail = match &from_store {
@@ -785,15 +778,14 @@ fn with_device_privkey_path_in<T>(
     f(&path.to_string_lossy())
 }
 
-/// Wallet créé avant le passage au coffre OS (25/09/2026) : sa clé privée
-/// "device" était restée en fichier, rien ne la déplaçait (constaté sur un
-/// vrai wallet). Appelé après un déverrouillage RÉUSSI (le fichier est alors
-/// connu bon) : la clé est écrite dans le coffre OS, relue et comparée, et
-/// seulement alors le fichier est supprimé. Une seule copie à la fois : si le
-/// fichier ne peut pas être supprimé, l'entrée du coffre est retirée et la
-/// migration sera retentée au prochain déverrouillage. Sans effet si la clé
-/// est déjà dans le coffre ou si celui-ci est indisponible ; un échec laisse
-/// toujours le wallet dans son état précédent.
+/// A wallet created before the move to the OS vault (2026-09-25): its "device"
+/// private key had stayed in a file, and nothing moved it (seen on a real wallet).
+/// Called after a SUCCESSFUL unlock (the file is then known to be good): the key is
+/// written to the OS vault, read back and compared, and only then is the file
+/// deleted. One copy at a time: if the file cannot be deleted, the vault entry is
+/// removed and the migration will be retried at the next unlock. No effect if the
+/// key is already in the vault or if the vault is unavailable; a failure always
+/// leaves the wallet in its previous state.
 fn migrate_device_privkey_to_store(data_dir: &Path, store: &dyn secure_storage::KeyStore) {
     let username = secure_storage::entry_username(data_dir);
     if !matches!(store.read(&username), Ok(None)) {
@@ -817,13 +809,12 @@ fn migrate_device_privkey_to_store(data_dir: &Path, store: &dyn secure_storage::
     }
 }
 
-/// Supprime la clé privée "device", où qu'elle vive (coffre OS et/ou fichier
-/// — au plus l'un des deux en pratique, voir `write_device_privkey`, mais
-/// vérifie les deux pour ne jamais laisser une copie orpheline). Best-effort
-/// sur le coffre OS (absence normale si le wallet a toujours vécu en
-/// fichier) ; erreur si le fichier existe mais ne peut pas être supprimé
-/// (permissions, verrouillage) — comportement identique à `reset_wallet`
-/// pour les autres fichiers du coffre.
+/// Deletes the "device" private key wherever it lives (OS vault and/or file: at
+/// most one of the two in practice, see `write_device_privkey`, but both are
+/// checked so an orphaned copy is never left behind). Best-effort on the OS vault
+/// (its absence is normal if the wallet has always lived in a file); an error if
+/// the file exists but cannot be deleted (permissions, lock), the same behavior as
+/// `reset_wallet` for the vault's other files.
 fn remove_device_privkey(data_dir: &Path) -> Result<()> {
     let username = secure_storage::entry_username(data_dir);
     let _ = active_key_store().remove(&username);
@@ -834,18 +825,18 @@ fn remove_device_privkey(data_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Crée un nouveau wallet dans `data_dir` : coffre local (mot de passe de l'appareil)
-/// + kit de sauvegarde Shamir 2-sur-3 (3 parts, chacune avec sa propre passphrase
-/// générée automatiquement). Ne journalise et ne retourne jamais l'entropie elle-même.
+/// Creates a new wallet in `data_dir`: local vault (device password) + 2-of-3 Shamir
+/// backup kit (3 shares, each with its own automatically generated passphrase). Never
+/// logs or returns the entropy itself.
 pub fn create_wallet(data_dir: &Path, device_password: &str) -> Result<CreateWalletResult> {
-    // Sans ce garde-fou, appeler `create_wallet` une seconde fois sur un appareil qui
-    // a déjà un coffre écraserait silencieusement `device_vault.asc`/`device_privkey.asc`
-    // avec une entropie maître totalement différente — aucune fonction appelante ne
-    // vérifiait cette invariant côté Rust, seul le frontend s'en chargeait (en
-    // n'affichant l'écran d'onboarding que si `wallet_exists` renvoie faux). Un script
-    // capable d'invoquer directement la commande Tauri (devtools, dépendance
-    // compromise) aurait pu déclencher ce remplacement sans confirmation. La bonne
-    // façon de "repartir de zéro" passe explicitement par `reset_wallet` d'abord.
+    // Without this guard, calling `create_wallet` a second time on a device that already
+    // has a vault would silently overwrite `device_vault.asc`/`device_privkey.asc` with a
+    // completely different master entropy. No caller checked this invariant on the Rust
+    // side; only the frontend did (by showing the onboarding screen only when
+    // `wallet_exists` returns false). A script able to invoke the Tauri command directly
+    // (devtools, compromised dependency) could have triggered that replacement without
+    // confirmation. The right way to "start over" goes explicitly through `reset_wallet`
+    // first.
     anyhow::ensure!(
         !device_vault_exists(data_dir),
         "un coffre existe déjà sur cet appareil ; réinitialisez-le d'abord (reset_wallet) si vous voulez repartir de zéro"
@@ -861,52 +852,51 @@ pub fn create_wallet(data_dir: &Path, device_password: &str) -> Result<CreateWal
     };
     let addresses = derive_addresses(&master_entropy, default_profile.index)?;
     save_profiles(data_dir, std::slice::from_ref(&default_profile))?;
-    // Entropie neuve : aucun fonds ne peut être plus ancien — synchronisations
-    // des cryptos privées depuis peu avant maintenant (voir `wallet_birthday`).
+    // Fresh entropy: no funds can be older than now, so the private cryptos sync from
+    // shortly before now (see `wallet_birthday`).
     wallet_birthday::record_created(data_dir)?;
 
-    // 1. Coffre local de l'appareil.
+    // 1. The device's local vault.
     let (device_pub, device_priv) = generate_pgp_identity("device", device_password)?;
-    // Trouvé lors d'un audit indépendant (pas seulement `cargo test`) : contrairement
-    // à l'entropie/la seed/les mots de passe, la clé privée PGP fraîchement générée
-    // ici n'était jamais effacée après usage — même écart que celui corrigé pour
-    // d'autres buffers lors du 2ᵉ passage d'auto-revue (voir ETAPES.md), juste
-    // resté invisible jusqu'ici parce que `generate_pgp_identity` est plus récente.
+    // Found during an independent audit (not just `cargo test`): unlike the entropy,
+    // the seed and the passwords, the PGP private key freshly generated here was never
+    // wiped after use. The same gap that was fixed for other buffers in self-review
+    // round 2, which had simply stayed unnoticed because `generate_pgp_identity` is
+    // more recent.
     let device_priv = Zeroizing::new(device_priv);
     std::fs::write(data_dir.join(DEVICE_PUBKEY_FILE), &device_pub)?;
     write_device_privkey(data_dir, &device_priv)?;
     let vault = encrypt_with_armored_pubkey(&master_entropy, &data_dir.join("tmp_device_pub.asc"), &device_pub, None)?;
     std::fs::write(data_dir.join(DEVICE_VAULT_FILE), &vault)?;
-    // Un compteur d'échecs résiduel (ex: fichier laissé par un `reset_wallet` qui
-    // aurait échoué en partie, ou une manipulation manuelle des fichiers) ne doit
-    // jamais faire naître un coffre tout juste créé déjà "en attente".
+    // A leftover failure counter (e.g. a file left behind by a `reset_wallet` that
+    // partly failed, or manual file tampering) must never make a freshly created vault
+    // start out "on hold".
     reset_unlock_attempts(data_dir);
 
-    // 2. Kit de sauvegarde Shamir 2-sur-3 (indépendant du coffre local). Chaque part
-    //    est enveloppée dans `Zeroizing` à l'intérieur de `generate_backup_kit` : 2
-    //    d'entre elles suffisent à reconstruire la clé maîtresse, donc aussi
-    //    sensibles qu'elle et à effacer de la même façon.
+    // 2. 2-of-3 Shamir backup kit (independent of the local vault). Each share is
+    //    wrapped in `Zeroizing` inside `generate_backup_kit`: 2 of them are enough to
+    //    rebuild the master key, so they are just as sensitive and must be wiped the
+    //    same way.
     let backups = generate_backup_kit(data_dir, &master_entropy)?;
 
-    // `master_entropy` est effacée automatiquement à la fin de la fonction (Drop de
-    // `Zeroizing`), y compris sur un retour anticipé via `?` ci-dessus — contrairement
-    // à un `memory_guard::wipe` manuel en fin de fonction, qui serait sauté si une
-    // opération précédente échoue.
+    // `master_entropy` is wiped automatically at the end of the function (the
+    // `Zeroizing` Drop), including on an early return through `?` above, unlike a
+    // manual `memory_guard::wipe` at the end of the function, which would be skipped
+    // if an earlier operation failed.
     Ok(CreateWalletResult { addresses, backups })
 }
 
-/// Déverrouille le coffre local avec le mot de passe de l'appareil et retourne les
-/// adresses publiques de TOUS les profils connus (jamais la clé privée ni
-/// l'entropie) : la seed n'est jamais mise en cache entre deux appels (voir
-/// `unlock_seed`), donc dériver tous les profils pendant qu'elle est déjà en
-/// mémoire ici évite d'avoir à redemander le mot de passe juste pour changer de
-/// profil affiché dans le tableau de bord.
+/// Unlocks the local vault with the device password and returns the public
+/// addresses of ALL known profiles (never the private key or the entropy). The seed
+/// is never cached between calls (see `unlock_seed`), so deriving every profile
+/// while it is already in memory here avoids asking for the password again just to
+/// switch the profile shown on the dashboard.
 pub fn unlock_wallet(data_dir: &Path, device_password: &str) -> Result<Vec<ProfileAddresses>> {
     let seed = unlock_seed(data_dir, device_password)?;
     let _seed_lock = memory_guard::lock(&seed);
     forget_other_shielded_wallets(data_dir, &seed);
-    // Seuls les profils actifs : un profil archivé (voir `archive_profile`) ne doit
-    // plus apparaître nulle part tant qu'il n'a pas été explicitement désarchivé.
+    // Active profiles only: an archived profile (see `archive_profile`) must not
+    // appear anywhere until it has been explicitly unarchived.
     list_profiles(data_dir)
         .into_iter()
         .map(|profile| {
@@ -917,39 +907,37 @@ pub fn unlock_wallet(data_dir: &Path, device_password: &str) -> Result<Vec<Profi
         .collect()
 }
 
-/// Comptes Zcash protégés d'un autre portefeuille (même appareil) écartés
-/// avant tout affichage ; un échec est retenté au déverrouillage suivant.
+/// Shielded Zcash accounts of another wallet (same device) are removed before
+/// anything is displayed; a failure is retried at the next unlock.
 fn forget_other_shielded_wallets(data_dir: &Path, seed: &[u8]) {
     if let Err(e) = zcash_shielded::forget_other_wallets(data_dir, seed) {
         eprintln!("Zcash protégé : {e:#}");
     }
 }
 
-/// Key images Monero des sorties reçues depuis le dernier passage (détection
-/// des dépenses faites ailleurs, voir `monero`), tant que la seed est en
-/// mémoire. Un échec ne bloque pas le déverrouillage : refait au suivant ou
-/// au prochain envoi.
+/// Monero key images for outputs received since the last pass (detecting spends
+/// made elsewhere, see `monero`), while the seed is in memory. A failure does not
+/// block the unlock: it is redone at the next one or at the next send.
 fn update_monero_key_images(data_dir: &Path, seed: &[u8], profile: u32) {
     if let Err(e) = monero::update_key_images(data_dir, seed, profile) {
         eprintln!("Monero : key images non calculées ({e:#})");
     }
 }
 
-/// Déchiffre deux parts et reconstruit le secret, sans rien écrire d'autre
-/// que des fichiers temporaires. Parts marquées (voir `KIT_MARK_PREFIX`) :
-/// refus si elles viennent de deux kits différents, et le secret reconstruit
-/// doit redonner l'empreinte du kit → `true`. Parts sans marque (kits
-/// d'avant) : reconstruit sans preuve possible → `false` (l'utilisateur
-/// vérifie alors l'adresse retrouvée). Une part marquée avec une part sans
-/// marque : deux kits différents, refus.
+/// Decrypts two shares and rebuilds the secret, writing nothing but temporary
+/// files. Marked shares (see `KIT_MARK_PREFIX`): refused if they come from two
+/// different kits, and the rebuilt secret must give back the kit's fingerprint →
+/// `true`. Unmarked shares (older kits): rebuilt with no possible proof → `false`
+/// (the user then checks the recovered address). A marked share with an unmarked
+/// one: two different kits, refused.
 fn recover_backup_secret(
     data_dir: &Path,
     backup_1: (&[u8], &[u8], &str),
     backup_2: (&[u8], &[u8], &str),
 ) -> Result<(Zeroizing<Vec<u8>>, bool)> {
     std::fs::create_dir_all(data_dir)?;
-    // Chaque part déchiffrée est aussi sensible qu'une clé maîtresse partielle
-    // (2 sur 3 suffisent à tout reconstruire) : même traitement `Zeroizing`.
+    // Each decrypted share is as sensitive as a partial master key (2 of 3 are enough
+    // to rebuild everything): same `Zeroizing` treatment.
     let mut decrypted_shares: Vec<Zeroizing<Vec<u8>>> = Vec::with_capacity(2);
     let mut marks = Vec::with_capacity(2);
     for (i, (encrypted, privkey_armored, passphrase)) in [backup_1, backup_2].iter().enumerate() {
@@ -976,27 +964,28 @@ fn recover_backup_secret(
     Ok((recovered, verified))
 }
 
-/// Contrôle de deux parts AVANT une restauration, sans rien écrire.
+/// Check of two shares BEFORE a restore, writing nothing.
 pub struct RestoreCheck {
-    /// Adresses que la restauration redonnera (profil principal), à montrer
-    /// à l'utilisateur avant qu'il confirme.
+    /// Addresses the restore will give back (main profile), to show the user before
+    /// they confirm.
     pub addresses: Addresses,
-    /// Kit marqué : les parts vont ensemble et redonnent le portefeuille du
-    /// kit (empreinte vérifiée). `false` : kit d'avant les marques.
+    /// Marked kit: the shares belong together and give back the kit's wallet
+    /// (fingerprint verified). `false`: a kit from before marks existed.
     pub verified: bool,
 }
 
-/// Contrôle de deux parts avant restauration : refus de parts qui ne vont
-/// pas ensemble (`KITS_DIFFERENT`, `KIT_CHECK_FAILED`), adresses retrouvées.
+/// Check of two shares before a restore: shares that do not belong together are
+/// refused (`KITS_DIFFERENT`, `KIT_CHECK_FAILED`), and the recovered addresses are
+/// returned.
 pub fn check_restore(data_dir: &Path, backup_1: (&[u8], &[u8], &str), backup_2: (&[u8], &[u8], &str)) -> Result<RestoreCheck> {
     let (recovered, verified) = recover_backup_secret(data_dir, backup_1, backup_2)?;
     let _recovered_lock = memory_guard::lock(&recovered);
     Ok(RestoreCheck { addresses: derive_addresses(&recovered, 0)?, verified })
 }
 
-/// Restaure un wallet à partir de 2 parts de sauvegarde (peu importe lesquelles
-/// parmi les 3) et recrée un coffre local sur CET appareil avec un nouveau mot de
-/// passe. À utiliser quand l'appareil d'origine est perdu.
+/// Restores a wallet from 2 backup shares (any 2 of the 3) and recreates a local
+/// vault on THIS device with a new password. To use when the original device is
+/// lost.
 pub fn restore_wallet(
     data_dir: &Path,
     new_device_password: &str,
@@ -1006,18 +995,17 @@ pub fn restore_wallet(
     restore_wallet_with(data_dir, new_device_password, backup_1, backup_2, &WindowsHelloSealer)
 }
 
-/// `sealer` injectable pour les tests, même raison que `reset_wallet_with` :
-/// trouvé dans le même audit, la même classe de bug existait ici. `restore_
-/// wallet` remplace l'identité "device" de l'appareil (contrairement à
-/// `create_wallet`, il n'exige même pas l'absence d'un coffre existant — voir
-/// sa propre doc, c'est le scénario "appareil d'origine perdu") SANS jamais
-/// invalider un enrôlement biométrique préexistant, qui référence l'ANCIENNE
-/// identité "device" : `device_vault.asc` (nouveau) n'est chiffré que pour la
-/// nouvelle identité, jamais pour l'ancienne "device_biometric", donc un
-/// déverrouillage biométrique après restauration échouerait proprement, mais
-/// resterait affiché comme activé (`biometric_unlock_enrolled` ne vérifie que
-/// l'existence des fichiers) et laisserait la clé TPM de l'ancien appareil
-/// orpheline indéfiniment.
+/// `sealer` is injectable for tests, for the same reason as `reset_wallet_with`:
+/// found in the same audit, the same class of bug existed here. `restore_wallet`
+/// replaces the device's "device" identity (unlike `create_wallet`, it does not
+/// even require that no vault exists; see its own docs, this is the "original
+/// device lost" scenario) WITHOUT ever invalidating an existing biometric
+/// enrollment, which refers to the OLD "device" identity. The new
+/// `device_vault.asc` is only encrypted for the new identity, never for the old
+/// "device_biometric" one, so a biometric unlock after restoring would fail
+/// cleanly, but would still show as enabled (`biometric_unlock_enrolled` only
+/// checks that the files exist) and would leave the old device's TPM key orphaned
+/// forever.
 fn restore_wallet_with(
     data_dir: &Path,
     new_device_password: &str,
@@ -1025,8 +1013,8 @@ fn restore_wallet_with(
     backup_2: (&[u8], &[u8], &str),
     sealer: &dyn SecretSealer,
 ) -> Result<Addresses> {
-    // Parts qui ne vont pas ensemble : refus AVANT de toucher à l'état de
-    // l'appareil (voir `recover_backup_secret`).
+    // Shares that do not belong together: refused BEFORE touching the device's state
+    // (see `recover_backup_secret`).
     let (recovered, _verified) = recover_backup_secret(data_dir, backup_1, backup_2)?;
     let _recovered_lock = memory_guard::lock(&recovered);
     let default_profile = Profile {
@@ -1035,27 +1023,26 @@ fn restore_wallet_with(
         archived: false,
     };
     let addresses = derive_addresses(&recovered, default_profile.index)?;
-    // État de l'ancien portefeuille effacé AVANT d'écrire le nouveau coffre :
-    // en cas d'échec, l'ancien reste entier (voir `remove_seed_bound_state`).
+    // The old wallet's state is wiped BEFORE writing the new vault: on failure, the
+    // old one stays intact (see `remove_seed_bound_state`).
     remove_seed_bound_state(data_dir)?;
-    // Toute étiquette de profil créée en plus du défaut sur l'ancien appareil est
-    // perdue (elle n'est pas incluse dans la sauvegarde Shamir, qui ne protège que
-    // l'entropie) : sans conséquence sur les fonds, les mêmes adresses restent
-    // dérivables aux mêmes index depuis la seed retrouvée si l'utilisateur les
-    // recrée avec les mêmes index.
+    // Any profile label created beyond the default on the old device is lost (it is
+    // not part of the Shamir backup, which only protects the entropy). No consequence
+    // for the funds: the same addresses can still be derived at the same indexes from
+    // the recovered seed if the user recreates them with the same indexes.
     save_profiles(data_dir, std::slice::from_ref(&default_profile))?;
 
     let (device_pub, device_priv) = generate_pgp_identity("device", new_device_password)?;
-    let device_priv = Zeroizing::new(device_priv); // voir le commentaire équivalent dans create_wallet
+    let device_priv = Zeroizing::new(device_priv); // see the equivalent comment in create_wallet
     std::fs::write(data_dir.join(DEVICE_PUBKEY_FILE), &device_pub)?;
     write_device_privkey(data_dir, &device_priv)?;
     let vault = encrypt_with_armored_pubkey(&recovered, &data_dir.join("tmp_device_pub.asc"), &device_pub, None)?;
     std::fs::write(data_dir.join(DEVICE_VAULT_FILE), &vault)?;
 
-    // Un enrôlement biométrique éventuel référençait l'ANCIENNE identité
-    // "device" : plus jamais valide une fois `device_vault.asc` remplacé
-    // ci-dessus (voir la doc de cette fonction) — best-effort, comme le
-    // nettoyage équivalent dans `disable_biometric_unlock_with`.
+    // Any biometric enrollment referred to the OLD "device" identity: it can never be
+    // valid again once `device_vault.asc` has been replaced above (see this function's
+    // docs). Best-effort, like the equivalent cleanup in
+    // `disable_biometric_unlock_with`.
     try_remove_existing_biometric_enrollment(data_dir, sealer);
     for file in [
         DEVICE_BIOMETRIC_PUBKEY_FILE,
@@ -1066,28 +1053,27 @@ fn restore_wallet_with(
         let _ = std::fs::remove_file(data_dir.join(file));
     }
 
-    // Prouver la possession de 2 parts de sauvegarde est une preuve d'identité bien
-    // plus forte qu'un mot de passe ; un éventuel verrou anti-brute-force accumulé
-    // sur l'ancien mot de passe (avant restauration) n'a plus de raison de s'appliquer
-    // au nouveau coffre qui vient d'être créé avec un mot de passe différent.
+    // Proving possession of 2 backup shares is a far stronger proof of identity than a
+    // password; any anti-brute-force lock built up on the old password (before the
+    // restore) has no reason to apply to the new vault, which was just created with a
+    // different password.
     reset_unlock_attempts(data_dir);
 
-    // `recovered` est effacée automatiquement à la fin de la fonction (Drop de
-    // `Zeroizing`), même en cas de retour anticipé sur une des lignes `?` ci-dessus.
+    // `recovered` is wiped automatically at the end of the function (the `Zeroizing`
+    // Drop), even on an early return from one of the `?` lines above.
     Ok(addresses)
 }
 
-/// État local propre à une seed (base Zcash protégée, état Monero) :
-/// supprimé quand le portefeuille de cet appareil change — best-effort, un
-/// fichier encore ouvert est de toute façon écarté au déverrouillage suivant
-/// (`zcash_shielded::forget_other_wallets`, lien des profils Monero). Aussi
-/// les destinataires déjà payés : sinon l'alerte « nouvelle adresse »
-/// disparaîtrait pour un autre portefeuille (au pire, quelques alertes de plus
-/// si c'est le même qui revient).
-/// Efface l'état lié à la graine, synchronisations de fond arrêtées d'abord
-/// (voir `seed_state`). Un fichier qui ne s'efface pas est une erreur : la
-/// réinitialisation ou la restauration s'arrête AVANT de toucher au coffre,
-/// au lieu de laisser les données de l'ancien portefeuille au suivant.
+/// Local state tied to a seed (shielded Zcash database, Monero state), deleted when
+/// this device's wallet changes. Also the recipients already paid: otherwise the
+/// "new address" warning would disappear for a different wallet (at worst, a few
+/// extra warnings if the same wallet comes back).
+///
+/// Background syncs are stopped first (see `seed_state`). A file that cannot be
+/// deleted is an error: the reset or restore stops BEFORE touching the vault,
+/// instead of leaving the old wallet's data to the next one. (A file still open is
+/// in any case set aside at the next unlock:
+/// `zcash_shielded::forget_other_wallets`, Monero profile binding.)
 fn remove_seed_bound_state(data_dir: &Path) -> Result<()> {
     crate::seed_state::wipe(|| {
         zcash_shielded::forget_known();
@@ -1102,9 +1088,9 @@ fn remove_seed_bound_state(data_dir: &Path) -> Result<()> {
     })
 }
 
-/// Efface `path` (absent : déjà fait), en réessayant 3 s : une lecture brève
-/// (solde affiché) peut le tenir ouvert un instant, et Windows refuse alors
-/// l'effacement d'un fichier ouvert.
+/// Deletes `path` (absent: already done), retrying for 3 s: a brief read (balance
+/// display) may hold it open for a moment, and Windows then refuses to delete an
+/// open file.
 fn remove_with_retry(path: &Path) -> std::io::Result<()> {
     let mut attempts = 0;
     loop {
@@ -1124,30 +1110,30 @@ pub fn device_vault_exists(data_dir: &Path) -> bool {
     data_dir.join(DEVICE_VAULT_FILE).exists()
 }
 
-/// Lit la clé publique (certificat) de l'appareil, pour affichage/partage — utile
-/// pour la section "chiffrer un message" (les autres peuvent l'ajouter comme
-/// destinataire pour t'écrire) et l'onglet "Certificat" de l'app.
+/// Reads the device's public key (certificate) for display/sharing: used by the
+/// "encrypt a message" section (others can add it as a recipient to write to you)
+/// and by the app's "Certificate" tab.
 pub fn read_device_pubkey_armored(data_dir: &Path) -> Result<String> {
     std::fs::read_to_string(data_dir.join(DEVICE_PUBKEY_FILE)).context("lecture de la clé publique de l'appareil")
 }
 
-/// Déchiffre un message PGP arbitraire (section "Message" de l'app) reçu par cet
-/// appareil, avec la clé privée du coffre local. Contrairement au coffre du
-/// wallet, le contenu déchiffré ici est un texte quelconque destiné à être lu,
-/// pas un secret à re-protéger — pas de `memory_guard::wipe` nécessaire.
+/// Decrypts an arbitrary PGP message (the app's "Message" section) received by this
+/// device, with the local vault's private key. Unlike the wallet's vault, the
+/// content decrypted here is arbitrary text meant to be read, not a secret to
+/// protect again, so no `memory_guard::wipe` is needed.
 ///
-/// Passe par `unlock_seed` (seed jetée sans être utilisée, même motif que
-/// `delete_profile`) uniquement pour bénéficier de son verrou anti-brute-force :
-/// la clé privée déchiffrée ici est protégée par exactement le même mot de passe
-/// que le coffre du wallet, donc l'appeler directement sans cette barrière aurait
-/// offert une deuxième porte, non limitée en tentatives, pour deviner CE mot de
-/// passe — rendant inutile le verrou déjà en place sur `unlock_wallet`/`send_*`.
+/// Goes through `unlock_seed` (seed discarded without being used, same pattern as
+/// `delete_profile`) only to benefit from its anti-brute-force lock: the private
+/// key decrypted here is protected by exactly the same password as the wallet's
+/// vault, so calling it directly without that barrier would have opened a second
+/// door, with unlimited attempts, for guessing THAT password, making the lock
+/// already in place on `unlock_wallet`/`send_*` useless.
 ///
-/// La clé qui déchiffre ces messages est AUSSI celle qui déchiffre le coffre :
-/// le contenu de `device_vault.asc`, collé ici comme un "message", donnerait
-/// l'entropie maître. Seule protection jusqu'au 22ᵉ passage : 32 octets
-/// aléatoires ne forment presque jamais du texte UTF-8 valide — une
-/// probabilité, pas une garantie. Désormais refusé explicitement.
+/// The key that decrypts these messages is ALSO the one that decrypts the vault:
+/// the contents of `device_vault.asc`, pasted here as a "message", would give back
+/// the master entropy. Until audit round 22, the only protection was that 32 random
+/// bytes almost never form valid UTF-8 text: a probability, not a guarantee. It is
+/// now refused explicitly.
 pub fn decrypt_incoming_message(data_dir: &Path, device_password: &str, ciphertext: &str) -> Result<String> {
     let seed = unlock_seed(data_dir, device_password)?;
     let plaintext = Zeroizing::new(with_device_privkey_path(data_dir, |privkey_path| {
@@ -1160,30 +1146,28 @@ pub fn decrypt_incoming_message(data_dir: &Path, device_password: &str, cipherte
     String::from_utf8(plaintext.to_vec()).context("le message déchiffré n'est pas du texte UTF-8 valide")
 }
 
-/// Supprime le coffre local de cet appareil (utile pour retester l'onboarding, ou
-/// pour un vrai "réinitialiser cet appareil"). Ne touche à rien d'autre : si
-/// l'utilisateur a bien exporté ses 3 parts de sauvegarde à la création, le wallet
-/// reste récupérable via `restore_wallet`. Aucune erreur si le coffre n'existait déjà pas.
+/// Deletes this device's local vault (useful to test onboarding again, or for a real
+/// "reset this device"). Touches nothing else: if the user did export their 3 backup
+/// shares at creation, the wallet can still be recovered through `restore_wallet`. No
+/// error if the vault did not exist.
 pub fn reset_wallet(data_dir: &Path) -> Result<()> {
     reset_wallet_with(data_dir, &WindowsHelloSealer)
 }
 
-/// Trouvé lors d'un audit indépendant (pas un test qui a échoué) : cette
-/// fonction ne touchait jusqu'ici QUE `device_pubkey.asc`/`device_vault.asc`
-/// et la clé privée "device" — jamais l'enrôlement biométrique. Concrètement,
-/// réinitialiser un appareil sur lequel Windows Hello était activé laissait
-/// une clé orpheline dans le TPM indéfiniment (exactement le risque déjà
-/// documenté par `disable_biometric_unlock`, juste jamais appliqué ici), plus
-/// les 4 fichiers `device_biometric_*` obsolètes sur disque — qui auraient
-/// ensuite fait croire à `biometric_unlock_enrolled` qu'un DEUXIÈME wallet
-/// créé sur ce même appareil après coup a la biométrie active, alors que ce
-/// nouveau coffre n'a jamais été chiffré pour cette identité (l'échec
-/// resterait propre au déverrouillage, mais l'état affiché serait faux).
-/// `sealer` injectable pour les tests, même motif que `enroll_biometric_
-/// unlock`/`disable_biometric_unlock` : ne doit jamais déclencher un vrai
-/// prompt Windows Hello pendant `cargo test`.
+/// Found during an independent audit (not a failing test): until then, this
+/// function only touched `device_pubkey.asc`/`device_vault.asc` and the "device"
+/// private key, never the biometric enrollment. In practice, resetting a device
+/// with Windows Hello enabled left an orphaned key in the TPM forever (exactly the
+/// risk already documented by `disable_biometric_unlock`, just never applied here),
+/// plus the 4 obsolete `device_biometric_*` files on disk, which would then have
+/// made `biometric_unlock_enrolled` believe that a SECOND wallet created later on
+/// the same device had biometrics enabled, even though the new vault was never
+/// encrypted for that identity (the unlock would still fail cleanly, but the
+/// displayed state would be wrong). `sealer` is injectable for tests, same pattern
+/// as `enroll_biometric_unlock`/`disable_biometric_unlock`: it must never trigger a
+/// real Windows Hello prompt during `cargo test`.
 fn reset_wallet_with(data_dir: &Path, sealer: &dyn SecretSealer) -> Result<()> {
-    // D'abord : en cas d'échec, le portefeuille reste entier.
+    // First: on failure, the wallet stays intact.
     remove_seed_bound_state(data_dir)?;
     try_remove_existing_biometric_enrollment(data_dir, sealer);
     for file in [
@@ -1200,33 +1184,31 @@ fn reset_wallet_with(data_dir: &Path, sealer: &dyn SecretSealer) -> Result<()> {
         }
     }
     remove_device_privkey(data_dir)?;
-    // Best-effort : un nouveau coffre doit repartir avec un compteur d'échecs vierge.
+    // Best-effort: a new vault must start with a clean failure counter.
     reset_unlock_attempts(data_dir);
     Ok(())
 }
 
-/// Retourne la seed déverrouillée enveloppée dans `Zeroizing` : elle sera effacée
-/// automatiquement à sa destruction, y compris si l'appelant retourne tôt via `?`
-/// après l'avoir obtenue (contrairement à un `memory_guard::wipe` manuel, qui
-/// serait sauté dans ce cas).
-/// Sérialise tout le cycle lecture-tentative-écriture du compteur d'échecs par
-/// processus. Sans lui, le compteur sur disque (lu, puis modifié, puis réécrit en
-/// 3 étapes séparées dans `unlock_seed`) est vulnérable à une course : un script
-/// invoquant `unlock_wallet`/`send_*` plusieurs fois EN PARALLÈLE verrait chaque
-/// appel lire le même compteur avant qu'aucun n'ait eu le temps de l'incrémenter,
-/// puis chacun réécrirait sa propre valeur en écrasant celle des autres — N mots de
-/// passe testés simultanément ne compteraient alors que comme un seul échec,
-/// vidant le verrou anti-brute-force de son effet. Protège contre un script qui
-/// boucle depuis CETTE instance de l'app ; une seconde instance du programme lancée
-/// en parallèle n'est pas couverte par un mutex en mémoire, mais c'est un scénario
-/// bien plus contraint qu'une simple boucle `Promise.all` côté frontend.
+/// Serializes the whole read-attempt-write cycle of the failure counter within the
+/// process. Without it, the on-disk counter (read, then modified, then written back
+/// in 3 separate steps in `unlock_seed`) is open to a race: a script invoking
+/// `unlock_wallet`/`send_*` several times IN PARALLEL would see every call read the
+/// same counter before any had time to increment it, then each would write back its
+/// own value over the others'. N passwords tried at once would count as a single
+/// failure, defeating the anti-brute-force lock. This protects against a script
+/// looping from THIS instance of the app; a second instance of the program running
+/// in parallel is not covered by an in-memory mutex, but that is a far more
+/// constrained scenario than a simple `Promise.all` loop in the frontend.
 static UNLOCK_MUTEX: Mutex<()> = Mutex::new(());
 
+/// Returns the unlocked seed wrapped in `Zeroizing`: it is wiped automatically when
+/// dropped, including when the caller returns early through `?` after getting it
+/// (unlike a manual `memory_guard::wipe`, which would be skipped in that case).
 fn unlock_seed(data_dir: &Path, device_password: &str) -> Result<Zeroizing<Vec<u8>>> {
     let _serialize = UNLOCK_MUTEX.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
 
-    // Le verrou ne compte que les mauvais mots de passe, pas l'absence de coffre
-    // (sinon interroger un appareil sans wallet créerait un compteur artificiel).
+    // The lock only counts wrong passwords, not a missing vault (otherwise querying a
+    // device with no wallet would build up an artificial counter).
     let vault = std::fs::read(data_dir.join(DEVICE_VAULT_FILE)).context("coffre local introuvable")?;
     enforce_unlock_lockout(data_dir)?;
     let result = with_device_privkey_path(data_dir, |privkey_path| pgp_engine::decrypt_share(&vault, privkey_path, device_password));
@@ -1237,9 +1219,8 @@ fn unlock_seed(data_dir: &Path, device_password: &str) -> Result<Zeroizing<Vec<u
             Ok(Zeroizing::new(seed))
         }
         Err(e) => {
-            // Seul un vrai échec de déchiffrement (mauvais mot de passe) compte :
-            // une clé privée injoignable n'est pas une tentative de mot de passe,
-            // voir `KeyMaterialUnavailable`.
+            // Only a real decryption failure (wrong password) counts: an unreachable private
+            // key is not a password attempt, see `KeyMaterialUnavailable`.
             if !is_key_material_unavailable(&e) {
                 record_unlock_failure(data_dir);
             }
@@ -1248,34 +1229,32 @@ fn unlock_seed(data_dir: &Path, device_password: &str) -> Result<Zeroizing<Vec<u
     }
 }
 
-// --- Déverrouillage biométrique (Windows Hello/TPM) ------------------------
-// Chemin ADDITIONNEL au mot de passe, jamais un remplacement : voir le
-// commentaire sur les constantes `DEVICE_BIOMETRIC_*` plus haut, et
-// `windows_hello.rs` pour le "pourquoi" du choix TPM plutôt que DPAPI.
+// --- Biometric unlock (Windows Hello/TPM) ----------------------------------
+//
+// A path IN ADDITION to the password, never a replacement: see the comment on the
+// `DEVICE_BIOMETRIC_*` constants above, and `windows_hello.rs` for why the TPM was
+// chosen over DPAPI.
 
-/// Abstraction sur "sceller/récupérer un secret via une vérification
-/// biométrique locale" — permet de tester toute l'orchestration
-/// (activation/désactivation/déverrouillage, fichiers, verrou anti-brute-force)
-/// avec un faux scelleur en mémoire, sans matériel Windows Hello réel. En
-/// production, toujours `WindowsHelloSealer`.
+/// Abstraction over "seal/recover a secret through a local biometric check". It
+/// lets the whole orchestration (enable/disable/unlock, files, anti-brute-force
+/// lock) be tested with a fake in-memory sealer, without real Windows Hello
+/// hardware. In production, always `WindowsHelloSealer`.
 pub(crate) trait SecretSealer {
     fn enroll(&self, secret: &[u8]) -> Result<(String, Vec<u8>)>;
     fn unlock(&self, key_name: &str, sealed_blob: &[u8]) -> Result<Zeroizing<Vec<u8>>>;
     fn remove(&self, key_name: &str) -> Result<()>;
 }
 
-/// `true` si `err` correspond à une annulation volontaire du prompt Windows
-/// Hello par l'utilisateur (NTE_USER_CANCELLED, code Windows `0x800704c7`) —
-/// un choix délibéré ("je préfère taper mon mot de passe"), jamais une
-/// tentative de deviner le secret : la biométrie n'est structurellement pas
-/// "devinable" par cette fonction, elle est intégralement gated par le
-/// TPM/l'OS. Sans cette distinction, un utilisateur qui clique "Annuler"
-/// plusieurs fois (changement d'avis, capteur capricieux) déclencherait le
-/// même verrou anti-brute-force que prévu pour une vraie attaque, punissant
-/// un usage légitime. Le code numérique (contrairement au texte du message,
-/// dépendant de la langue de Windows) est stable, indépendant de la langue du
-/// système — vérifié empiriquement lors du spike (`tpm_hello_spike.rs`,
-/// commande `cancel`).
+/// `true` if `err` is a deliberate cancellation of the Windows Hello prompt by the
+/// user (NTE_USER_CANCELLED, Windows code `0x800704c7`): a deliberate choice ("I'd
+/// rather type my password"), never an attempt to guess the secret. Biometrics are
+/// structurally not "guessable" through this function; they are entirely gated by
+/// the TPM/OS. Without this distinction, a user clicking "Cancel" several times
+/// (change of mind, flaky sensor) would trigger the same anti-brute-force lock
+/// meant for a real attack, punishing legitimate use. The numeric code (unlike the
+/// message text, which depends on the Windows language) is stable and independent
+/// of the system language, as checked empirically during the spike
+/// (`tpm_hello_spike.rs`, `cancel` command).
 fn is_user_cancellation(err: &anyhow::Error) -> bool {
     err.to_string().to_lowercase().contains("0x800704c7")
 }
@@ -1324,7 +1303,7 @@ fn read_biometric_meta(data_dir: &Path) -> Result<BiometricKeyMeta> {
     serde_json::from_str(&content).context("métadonnées de la clé biométrique corrompues")
 }
 
-/// `true` si le déverrouillage biométrique est activé sur cet appareil.
+/// `true` if biometric unlock is enabled on this device.
 pub fn biometric_unlock_enrolled(data_dir: &Path) -> bool {
     data_dir.join(DEVICE_BIOMETRIC_SEALED_SECRET_FILE).exists()
 }
@@ -1335,19 +1314,18 @@ fn try_remove_existing_biometric_enrollment(data_dir: &Path, sealer: &dyn Secret
     }
 }
 
-/// Active le déverrouillage biométrique EN PLUS du mot de passe existant,
-/// jamais à sa place : ré-chiffre `device_vault.asc` pour DEUX destinataires
-/// (l'identité "device" existante, inchangée, + une nouvelle identité
-/// "device_biometric" dont la passphrase est un secret aléatoire de 256 bits
-/// scellé par le TPM, voir `windows_hello::enroll`). Exige le mot de passe
-/// actuel de l'appareil (même verrou anti-brute-force que les autres actions
-/// sensibles, via `unlock_seed`) : activer ce second chemin est une action de
-/// sécurité, pas un simple confort.
+/// Enables biometric unlock IN ADDITION to the existing password, never instead of
+/// it: re-encrypts `device_vault.asc` for TWO recipients (the existing "device"
+/// identity, unchanged, + a new "device_biometric" identity whose passphrase is a
+/// random 256-bit secret sealed by the TPM, see `windows_hello::enroll`). Requires
+/// the device's current password (same anti-brute-force lock as the other sensitive
+/// actions, through `unlock_seed`): enabling this second path is a security action,
+/// not just a convenience.
 ///
-/// Ré-enrôler alors qu'un enrôlement existe déjà le remplace proprement
-/// (l'ancienne clé TPM est supprimée en best-effort) plutôt que d'exiger un
-/// `disable_biometric_unlock` préalable — utile si l'utilisateur reconfigure
-/// son empreinte/visage Windows Hello.
+/// Re-enrolling when an enrollment already exists replaces it cleanly (the old TPM
+/// key is deleted best-effort) rather than requiring a prior
+/// `disable_biometric_unlock`, which helps when the user reconfigures their Windows
+/// Hello fingerprint/face.
 pub fn enroll_biometric_unlock(data_dir: &Path, device_password: &str) -> Result<()> {
     enroll_biometric_unlock_with(data_dir, device_password, &WindowsHelloSealer)
 }
@@ -1361,16 +1339,15 @@ fn enroll_biometric_unlock_with(data_dir: &Path, device_password: &str, sealer: 
     let secret = Zeroizing::new(entropy::generate_master_entropy());
     let biometric_passphrase = Zeroizing::new(hex::encode(&secret[..]));
     let (bio_pub, bio_priv) = generate_pgp_identity("device_biometric", &biometric_passphrase)?;
-    let bio_priv = Zeroizing::new(bio_priv); // voir le commentaire équivalent dans create_wallet
+    let bio_priv = Zeroizing::new(bio_priv); // see the equivalent comment in create_wallet
 
     let (key_name, sealed_blob) = sealer.enroll(&secret)?;
 
-    // À partir d'ici, la clé TPM existe réellement (voir `windows_hello::enroll`).
-    // Si une étape suivante échoue, cette fonction n'écrit jamais le fichier de
-    // métadonnées (`DEVICE_BIOMETRIC_KEY_META_FILE`) qui permettrait de la
-    // retrouver plus tard : sans ce nettoyage explicite, elle resterait
-    // orpheline dans le TPM indéfiniment, invisible pour
-    // `try_remove_existing_biometric_enrollment` lors d'un futur essai.
+    // From here on, the TPM key really exists (see `windows_hello::enroll`). If a
+    // later step fails, this function never writes the metadata file
+    // (`DEVICE_BIOMETRIC_KEY_META_FILE`) that would let it be found later: without
+    // this explicit cleanup, it would stay orphaned in the TPM forever, invisible to
+    // `try_remove_existing_biometric_enrollment` on a future attempt.
     let result = finish_enroll(data_dir, device_password, &master_entropy, &bio_pub, &bio_priv, &key_name, &sealed_blob);
     if result.is_err() {
         let _ = sealer.remove(&key_name);
@@ -1390,10 +1367,9 @@ fn finish_enroll(
     let device_pub = std::fs::read(data_dir.join(DEVICE_PUBKEY_FILE)).context("lecture de la clé publique de l'appareil")?;
     let new_vault = pgp_engine::encrypt_share_multi(master_entropy, &[&device_pub, bio_pub])?;
 
-    // Écrit-vérifie-renomme : le mot de passe existant doit pouvoir déchiffrer
-    // le NOUVEAU coffre avant que l'ancien ne soit jamais écrasé — sans ça, un
-    // nouveau coffre mal formé casserait le seul chemin de déverrouillage qui
-    // existait avant cet appel.
+    // Write-verify-rename: the existing password must be able to decrypt the NEW vault
+    // before the old one is ever overwritten. Otherwise, a malformed new vault would
+    // break the only unlock path that existed before this call.
     let tmp_vault_path = data_dir.join("tmp_device_vault_new.asc");
     std::fs::write(&tmp_vault_path, &new_vault)?;
     let _guard = TempFileGuard(&tmp_vault_path);
@@ -1406,15 +1382,15 @@ fn finish_enroll(
     let created_unix = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
     let meta = BiometricKeyMeta { key_name: key_name.to_string(), created_unix };
     std::fs::write(data_dir.join(DEVICE_BIOMETRIC_KEY_META_FILE), serde_json::to_string(&meta)?)?;
-    std::fs::rename(&tmp_vault_path, data_dir.join(DEVICE_VAULT_FILE))?; // dernière étape, atomique
+    std::fs::rename(&tmp_vault_path, data_dir.join(DEVICE_VAULT_FILE))?; // last step, atomic
     reset_biometric_unlock_attempts(data_dir);
     Ok(())
 }
 
-/// Désactive le déverrouillage biométrique : revient à un coffre protégé par le
-/// seul mot de passe (comme avant toute activation), supprime la clé TPM
-/// (best-effort) et les fichiers biométriques. Exige le mot de passe de
-/// l'appareil — jamais la biométrie elle-même pour se désactiver.
+/// Disables biometric unlock: goes back to a vault protected by the password alone
+/// (as before it was ever enabled), deletes the TPM key (best-effort) and the
+/// biometric files. Requires the device password, never the biometrics themselves,
+/// to disable it.
 pub fn disable_biometric_unlock(data_dir: &Path, device_password: &str) -> Result<()> {
     disable_biometric_unlock_with(data_dir, device_password, &WindowsHelloSealer)
 }
@@ -1449,9 +1425,9 @@ fn disable_biometric_unlock_with(data_dir: &Path, device_password: &str, sealer:
     Ok(())
 }
 
-/// Sérialise le cycle lecture-tentative-écriture du compteur d'échecs
-/// biométrique — même raison que `UNLOCK_MUTEX` pour le mot de passe, mutex
-/// entièrement séparé pour ne jamais faire attendre l'un sur l'autre.
+/// Serializes the read-attempt-write cycle of the biometric failure counter, for
+/// the same reason as `UNLOCK_MUTEX` for the password; an entirely separate mutex
+/// so one never waits on the other.
 static BIOMETRIC_UNLOCK_MUTEX: Mutex<()> = Mutex::new(());
 
 fn unlock_seed_biometric(data_dir: &Path, sealer: &dyn SecretSealer) -> Result<Zeroizing<Vec<u8>>> {
@@ -1466,10 +1442,9 @@ fn unlock_seed_biometric(data_dir: &Path, sealer: &dyn SecretSealer) -> Result<Z
     let secret = match sealer.unlock(&meta.key_name, &sealed_blob) {
         Ok(s) => s,
         Err(e) => {
-            // Une annulation volontaire du prompt (voir `is_user_cancellation`)
-            // ne compte jamais dans le verrou anti-brute-force — seul un
-            // véritable échec de vérification (blob corrompu, clé TPM absente,
-            // etc.) y contribue.
+            // A deliberate cancellation of the prompt (see `is_user_cancellation`) never
+            // counts toward the anti-brute-force lock; only a real verification failure
+            // (corrupt blob, missing TPM key, etc.) does.
             if !is_user_cancellation(&e) {
                 record_biometric_unlock_failure(data_dir);
             }
@@ -1490,10 +1465,10 @@ fn unlock_seed_biometric(data_dir: &Path, sealer: &dyn SecretSealer) -> Result<Z
     }
 }
 
-/// Déverrouille le coffre via la biométrie (Windows Hello/TPM) plutôt que le mot
-/// de passe — chemin parallèle à `unlock_wallet`, jamais mêlé à son verrou
-/// anti-brute-force ni à son mutex. Renvoie les mêmes adresses, pour tous les
-/// profils actifs.
+/// Unlocks the vault through biometrics (Windows Hello/TPM) rather than the
+/// password: a path parallel to `unlock_wallet`, never mixed with its
+/// anti-brute-force lock or its mutex. Returns the same addresses, for every active
+/// profile.
 pub fn unlock_wallet_biometric(data_dir: &Path) -> Result<Vec<ProfileAddresses>> {
     unlock_wallet_biometric_with(data_dir, &WindowsHelloSealer)
 }
@@ -1521,20 +1496,20 @@ pub fn get_btc_balance(address: &str, network: &wallet_flow::BtcNetwork) -> Resu
     Ok(utxos.iter().map(|u| u.value_sat).sum())
 }
 
-/// Solde de la carte Bitcoin.
+/// Balance of the Bitcoin card.
 pub struct BtcBalanceView {
-    /// Confirmé, moins ce qui part dans des transactions en attente : un envoi
-    /// se voit dès sa diffusion (il ne peut que partir).
+    /// Confirmed, minus what is leaving in pending transactions: a send shows up as
+    /// soon as it is broadcast (it can only go out).
     pub settled_sat: u64,
-    /// Réceptions non confirmées, montrées À PART et non comptées : une
-    /// réception en attente peut encore être annulée par son émetteur (double
-    /// dépense, remplacement RBF) — l'arnaque classique du « paiement reçu »
-    /// qui disparaît. Trouvé au 23ᵉ passage : la carte les comptait.
+    /// Unconfirmed receipts, shown SEPARATELY and not counted: a pending receipt can
+    /// still be cancelled by its sender (double spend, RBF replacement), the classic
+    /// "payment received" scam that vanishes. Found in audit round 23: the card was
+    /// counting them.
     pub incoming_pending_sat: u64,
 }
 
-/// Transaction en attente classée d'après sa variation nette pour l'adresse :
-/// négative = envoi (monnaie rendue déduite), positive = réception.
+/// A pending transaction classified by its net change for the address: negative =
+/// send (change returned deducted), positive = receipt.
 pub fn get_btc_balance_view(address: &str, network: &wallet_flow::BtcNetwork) -> Result<BtcBalanceView> {
     let esplora = btc_rpc::EsploraClient::new(network.esplora_base);
     let (stats, mempool) = std::thread::scope(|scope| {
@@ -1563,15 +1538,15 @@ pub fn get_sol_balance(address: &str, network: &wallet_flow::SolNetwork) -> Resu
     sol_rpc::SolRpc::new(network.rpc).balance_lamports(address)
 }
 
-/// Solde USDC de `owner_address` (mainnet uniquement, voir sol_spl.rs), en
-/// plus petite unité (6 décimales) — 0 si l'Associated Token Account n'existe
-/// pas encore (jamais reçu d'USDC), pas une erreur.
+/// USDC balance of `owner_address` (mainnet only, see sol_spl.rs), in the smallest
+/// unit (6 decimals); 0 if the Associated Token Account does not exist yet (no USDC
+/// ever received), not an error.
 pub fn get_usdc_balance(owner_address: &str, network: &wallet_flow::SolNetwork) -> Result<u64> {
     get_spl_balance(owner_address, &sol_spl::usdc_mint_mainnet(), network)
 }
 
-/// Solde d'un jeton SPL `mint` de `owner_address` (compte de jetons associé ;
-/// absent : 0).
+/// Balance of an SPL token `mint` held by `owner_address` (associated token
+/// account; absent: 0).
 pub fn get_spl_balance(owner_address: &str, mint: &[u8; 32], network: &wallet_flow::SolNetwork) -> Result<u64> {
     let owner_bytes = bs58::decode(owner_address.trim()).into_vec().context("adresse Solana invalide (base58 attendu)")?;
     let owner: [u8; 32] = owner_bytes.try_into().map_err(|_| anyhow::anyhow!("une adresse Solana fait 32 octets"))?;
@@ -1580,22 +1555,23 @@ pub fn get_spl_balance(owner_address: &str, mint: &[u8; 32], network: &wallet_fl
     Ok(sol_rpc::SolRpc::new(network.rpc).token_account_balance(&ata_b58)?.unwrap_or(0))
 }
 
-/// Historique d'un jeton SPL du registre pour `owner_address` : dérive son
-/// compte de jetons associé (ATA) puis délègue à `history::spl_history` (voir
-/// sa doc — l'ATA, pas l'adresse "propriétaire", est ce qui reçoit/envoie
-/// effectivement le jeton). Si l'ATA n'existe pas encore (jeton jamais reçu),
-/// `getSignaturesForAddress` renvoie simplement une liste vide, sans erreur.
+/// History of a registry SPL token for `owner_address`: derives its associated
+/// token account (ATA), then delegates to `history::spl_history` (see its docs: the
+/// ATA, not the "owner" address, is what actually receives/sends the token). If the
+/// ATA does not exist yet (token never received), `getSignaturesForAddress` simply
+/// returns an empty list, without an error.
 pub fn get_spl_tx_history(owner_address: &str, mint: &[u8; 32], network: &wallet_flow::SolNetwork, limit: u32) -> Result<Vec<history::TxEntry>> {
     history::spl_history(network.rpc, &spl_token_account(owner_address, mint)?, limit)
 }
 
-/// Compte de jetons USDC associé (ATA, base58) de l'adresse Solana `owner_address`.
+/// Associated USDC token account (ATA, base58) of the Solana address
+/// `owner_address`.
 pub fn usdc_token_account(owner_address: &str) -> Result<String> {
     spl_token_account(owner_address, &sol_spl::usdc_mint_mainnet())
 }
 
-/// Compte de jetons associé (ATA, base58) de l'adresse Solana `owner_address`
-/// pour le jeton `mint`.
+/// Associated token account (ATA, base58) of the Solana address `owner_address` for
+/// the token `mint`.
 pub fn spl_token_account(owner_address: &str, mint: &[u8; 32]) -> Result<String> {
     let owner_bytes = bs58::decode(owner_address.trim()).into_vec().context("adresse Solana invalide (base58 attendu)")?;
     let owner: [u8; 32] = owner_bytes.try_into().map_err(|_| anyhow::anyhow!("une adresse Solana fait 32 octets"))?;
@@ -1603,18 +1579,18 @@ pub fn spl_token_account(owner_address: &str, mint: &[u8; 32]) -> Result<String>
     Ok(bs58::encode(ata).into_string())
 }
 
-/// `Some(lamports de rent)` si l'Associated Token Account USDC de `to_address`
-/// n'existe pas encore (sa création par `send_usdc` facturera ce montant en
-/// plus des frais réseau habituels), `None` si elle existe déjà — lecture
-/// seule, pensée pour être appelée AVANT confirmation afin de ne jamais
-/// présenter un coût caché après coup (voir `describe_possible_ata_rent` côté
-/// app-tauri, qui met ce chiffre en forme pour la boîte de dialogue).
+/// `Some(rent lamports)` if the USDC Associated Token Account of `to_address` does
+/// not exist yet (creating it in `send_usdc` will charge this amount on top of the
+/// usual network fee), `None` if it already exists. Read-only, meant to be called
+/// BEFORE confirmation so a hidden cost is never revealed after the fact (see
+/// `describe_possible_ata_rent` in the Tauri app, which formats this figure for the
+/// dialog).
 pub fn usdc_ata_rent_lamports_if_missing(to_address: &str, network: &wallet_flow::SolNetwork) -> Result<Option<u64>> {
     spl_ata_rent_lamports_if_missing(to_address, &sol_spl::usdc_mint_mainnet(), network)
 }
 
-/// Rent du compte de jetons `mint` du destinataire s'il n'existe pas encore
-/// (créé et payé par l'expéditeur) ; `None` s'il existe.
+/// Rent for the recipient's `mint` token account if it does not exist yet (created
+/// and paid for by the sender); `None` if it exists.
 pub fn spl_ata_rent_lamports_if_missing(to_address: &str, mint: &[u8; 32], network: &wallet_flow::SolNetwork) -> Result<Option<u64>> {
     let to_bytes = bs58::decode(to_address.trim()).into_vec().context("adresse Solana invalide (base58 attendu)")?;
     let to_owner: [u8; 32] = to_bytes.try_into().map_err(|_| anyhow::anyhow!("une adresse Solana fait 32 octets"))?;
@@ -1627,13 +1603,13 @@ pub fn spl_ata_rent_lamports_if_missing(to_address: &str, mint: &[u8; 32], netwo
     Ok(Some(rpc.minimum_rent_exempt_balance(165)?))
 }
 
-/// `true` si une transaction touchant `address` n'a pas encore atteint sa finalité
-/// (mempool Bitcoin, ou dernière signature Solana pas encore "finalized") — sert à
-/// signaler "transaction détectée, en attente" côté UI avant que le solde ne bouge.
-/// Aucun équivalent pour Ethereum : contrairement à Esplora et à
-/// `getSignaturesForAddress` (une méthode JSON-RPC standard), aucun nœud EVM public
-/// n'expose les transactions en attente pour une adresse donnée (même limite que
-/// pour l'historique, voir `history::evm_history`).
+/// `true` if a transaction involving `address` has not reached finality yet
+/// (Bitcoin mempool, or a latest Solana signature not yet "finalized"); used to
+/// show "transaction detected, pending" in the UI before the balance moves. No
+/// equivalent for Ethereum: unlike Esplora and `getSignaturesForAddress` (a
+/// standard JSON-RPC method), no public EVM node exposes the pending transactions
+/// of a given address (the same limit as for the history, see
+/// `history::evm_history`).
 pub fn has_pending_btc(address: &str, network: &wallet_flow::BtcNetwork) -> Result<bool> {
     btc_rpc::EsploraClient::new(network.esplora_base).has_mempool_tx(address)
 }
@@ -1642,21 +1618,22 @@ pub fn has_pending_sol(address: &str, network: &wallet_flow::SolNetwork) -> Resu
     sol_rpc::SolRpc::new(network.rpc).has_unfinalized_tx(address)
 }
 
-/// Plafond du tarif de frais d'un swap Bitcoin (frais choisis automatiquement,
-/// voir `send_swap_btc`) — largement au-dessus des tarifs usuels, seuls des
-/// pics extrêmes et brefs l'ont dépassé.
+/// Fee rate cap for a Bitcoin swap (fees chosen automatically, see
+/// `send_swap_btc`), far above usual rates; only extreme, brief spikes have
+/// exceeded it.
 pub const BTC_SWAP_MAX_FEE_RATE_SAT_VB: u32 = 300;
-/// Gas d'un virement ETH simple vers une adresse ordinaire.
+/// Gas for a simple ETH transfer to an ordinary address.
 pub const EVM_TRANSFER_GAS_LIMIT: u64 = 21_000;
-/// Plafond du gas d'un dépôt sur le routeur THORChain : mesuré à 45 632 en
-/// réel (`eth_estimateGas`, test `thorchain_router_deposit_gas_vs_intrinsic_on_
-/// the_real_network`) — plus de 3x de marge, sert aussi de borne à afficher
-/// comme frais maximum AVANT confirmation.
+/// Gas cap for a deposit on the THORChain router: measured at 45,632 for real
+/// (`eth_estimateGas`, test
+/// `thorchain_router_deposit_gas_vs_intrinsic_on_the_real_network`), so more than
+/// 3x headroom; also used as the bound shown as the maximum fee BEFORE
+/// confirmation.
 pub const EVM_SWAP_MAX_GAS_LIMIT: u64 = 150_000;
 
-/// Prix du gas à afficher dans la boîte de confirmation PUIS à utiliser tel
-/// quel pour signer (jamais relu après la confirmation) — "on signe ce qu'on
-/// voit", appliqué aux frais. Refusé au-delà du plafond de sécurité sur mainnet.
+/// Gas price shown in the confirmation dialog, THEN used as is for signing (never
+/// reread after confirmation): "sign what you see", applied to fees. Refused above
+/// the safety cap on mainnet.
 pub fn evm_gas_price_for_confirmation(network: &wallet_flow::EvmNetwork) -> Result<u128> {
     let gas_price = eth_rpc::EthRpc::new(network.rpc).gas_price()?;
     check_evm_gas_price(network, gas_price)?;
@@ -1664,8 +1641,8 @@ pub fn evm_gas_price_for_confirmation(network: &wallet_flow::EvmNetwork) -> Resu
 }
 
 fn check_evm_gas_price(network: &wallet_flow::EvmNetwork, gas_price: u128) -> Result<()> {
-    // Plafond propre à chaque réseau (`EvmNetwork::max_gas_price_wei`) ; aucun
-    // sur un réseau de test.
+    // Each network's own cap (`EvmNetwork::max_gas_price_wei`); none on a test
+    // network.
     if let Some(cap) = network.max_gas_price_wei {
         anyhow::ensure!(
             gas_price <= cap,
@@ -1677,28 +1654,28 @@ fn check_evm_gas_price(network: &wallet_flow::EvmNetwork, gas_price: u128) -> Re
     Ok(())
 }
 
-/// Plafond d'une limite de gas ESTIMÉE par le nœud (Arbitrum, où le coût de
-/// publication sur Ethereum est compté en gas) : au-delà, refus plutôt que de
-/// lui faire confiance. Un virement y consomme d'ordinaire moins de 1 million.
+/// Cap on a gas limit ESTIMATED by the node (Arbitrum, where the cost of posting to
+/// Ethereum is counted in gas): above it, refused rather than trusting the node. A
+/// transfer there usually uses less than 1 million.
 pub const EVM_MAX_ESTIMATED_GAS: u64 = 5_000_000;
-/// Oracle des frais des réseaux OP Stack (même adresse sur tous : Base…).
+/// Fee oracle of OP Stack networks (same address on all of them: Base…).
 const OP_GAS_PRICE_ORACLE: &str = "0x420000000000000000000000000000000000000F";
 
-/// Frais d'un envoi EVM, montrés dans la boîte de confirmation PUIS utilisés
-/// tels quels pour signer ("on signe ce qu'on voit") — jamais relus après.
+/// Fees for an EVM send, shown in the confirmation dialog THEN used as is for
+/// signing ("sign what you see"); never reread afterwards.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct EvmFee {
     pub gas_price: u128,
     pub gas_limit: u64,
-    /// Réseaux OP Stack (Base) : frais de publication sur Ethereum, facturés
-    /// en plus du gas par le réseau lui-même (estimation avec marge) ; 0
-    /// ailleurs. Compris dans le contrôle du solde.
+    /// OP Stack networks (Base): Ethereum posting fees, charged on top of gas by the
+    /// network itself (estimate with a margin); 0 elsewhere. Included in the balance
+    /// check.
     pub l1_fee: u128,
 }
 
 impl EvmFee {
-    /// Frais maximum : gas × prix (borne réelle : jamais plus que la limite)
-    /// + frais de publication estimés.
+    /// Maximum fee: gas × price (a hard bound: never more than the limit) + estimated
+    /// posting fees.
     pub fn max_total(&self) -> Result<u128> {
         self.gas_price
             .checked_mul(u128::from(self.gas_limit))
@@ -1707,10 +1684,9 @@ impl EvmFee {
     }
 }
 
-/// Frais d'un virement natif de `value` wei (`data` : appel de contrat, vide
-/// pour un simple virement) depuis `from` : prix du gas du nœud (plafonné),
-/// limite de gas fixe ou estimée (+20 %, bornée), frais de publication OP
-/// Stack le cas échéant (+25 %).
+/// Fees for a native transfer of `value` wei (`data`: a contract call, empty for a
+/// plain transfer) from `from`: the node's gas price (capped), a fixed or estimated
+/// gas limit (+20%, bounded), and OP Stack posting fees where applicable (+25%).
 pub fn evm_fee_for_confirmation(network: &wallet_flow::EvmNetwork, from: &[u8; 20], to: &[u8; 20], value: u128, data: &[u8]) -> Result<EvmFee> {
     let rpc = eth_rpc::EthRpc::new(network.rpc);
     let gas_price = rpc.gas_price()?;
@@ -1718,10 +1694,9 @@ pub fn evm_fee_for_confirmation(network: &wallet_flow::EvmNetwork, from: &[u8; 2
     let gas_limit = match (network.transfer_gas, data.is_empty()) {
         (Some(fixed), true) => fixed,
         _ => {
-            // Estimation refusée faute de fonds : message clair plutôt que l'erreur
-            // brute du nœud, qui dépend de son logiciel (« insufficient funds »
-            // sur Arbitrum, « EVM error: OutOfFunds » sur OP Mainnet, constatés
-            // avec un solde nul).
+            // Estimate refused for lack of funds: a clear message rather than the node's raw
+            // error, which depends on its software ("insufficient funds" on Arbitrum, "EVM
+            // error: OutOfFunds" on OP Mainnet, seen with a zero balance).
             let estimated = rpc.estimate_gas(&derivation::format_address(from), &derivation::format_address(to), value, data).map_err(|e| {
                 let text = format!("{e:#}");
                 if text.contains("insufficient funds") || text.contains("OutOfFunds") {
@@ -1742,9 +1717,9 @@ pub fn evm_fee_for_confirmation(network: &wallet_flow::EvmNetwork, from: &[u8; 2
     Ok(EvmFee { gas_price, gas_limit, l1_fee })
 }
 
-/// Frais de publication sur Ethereum d'une transaction sur un réseau OP Stack
-/// (Base), marge de 25 % comprise ; 0 sur les autres réseaux. Aussi utilisé
-/// pour les transactions demandées par une dApp (`dapp_requests`).
+/// Ethereum posting fee for a transaction on an OP Stack network (Base), 25% margin
+/// included; 0 on other networks. Also used for transactions requested by a dApp
+/// (`dapp_requests`).
 pub fn evm_l1_fee(network: &wallet_flow::EvmNetwork, to: &[u8; 20], value: u128, data: &[u8], gas_price: u128, gas_limit: u64) -> Result<u128> {
     if !network.op_stack_l1_fee {
         return Ok(0);
@@ -1754,13 +1729,10 @@ pub fn evm_l1_fee(network: &wallet_flow::EvmNetwork, to: &[u8; 20], value: u128,
     Ok(fee.saturating_add(fee / 4))
 }
 
-/// Frais d'un virement natif de `amount` (texte, 18 décimales) vers `to` : voir
-/// `evm_fee_for_confirmation`. `from` : adresse d'envoi, nécessaire seulement
-/// là où la limite de gas est estimée (Arbitrum).
-/// Solde suffisant pour un virement EVM (montant + frais maximum affichés),
-/// vérifié AVANT la boîte de confirmation — jusqu'ici seulement après :
-/// l'utilisateur confirmait un envoi refusé juste ensuite, avec un message en
-/// wei. Montants dans l'unité du réseau (ETH, BNB…).
+/// Enough balance for an EVM transfer (amount + maximum fee shown), checked BEFORE
+/// the confirmation dialog. It used to be checked only afterwards: the user
+/// confirmed a send that was refused right after, with a message in wei. Amounts in
+/// the network's unit (ETH, BNB…).
 pub fn ensure_evm_transfer_funds(network: &wallet_flow::EvmNetwork, from: &str, amount: &str, fee: EvmFee) -> Result<()> {
     let value = wallet_flow::parse_eth_to_wei(amount)?;
     let gas = fee.max_total()?;
@@ -1771,10 +1743,10 @@ pub fn ensure_evm_transfer_funds(network: &wallet_flow::EvmNetwork, from: &str, 
     Ok(())
 }
 
-/// Fonds suffisants pour vendre `amount` de `from_coin` via Jupiter, vérifiés
-/// AVANT la boîte de confirmation (constaté le 10/10/2026 : sans fonds, la
-/// boîte s'ouvrait et le refus ne venait qu'après). SOL : le montant seul — la
-/// réserve exacte de frais et de rent reste vérifiée par `send_jupiter_swap`.
+/// Enough funds to sell `amount` of `from_coin` through Jupiter, checked BEFORE the
+/// confirmation dialog (seen on 2026-10-10: without funds, the dialog opened and
+/// the refusal only came afterwards). SOL: the amount alone; the exact fee and rent
+/// reserve is still checked by `send_jupiter_swap`.
 pub fn ensure_jupiter_funds(from_coin: &str, owner: &str, amount: &str) -> Result<()> {
     if from_coin != "sol" {
         return ensure_token_funds(from_coin, "sol_mainnet", owner, amount);
@@ -1790,8 +1762,8 @@ pub fn ensure_jupiter_funds(from_coin: &str, owner: &str, amount: &str) -> Resul
     Ok(())
 }
 
-/// Solde de jeton suffisant pour un virement (registre `tokens.rs`, USDC
-/// compris), vérifié avant la boîte de confirmation.
+/// Enough token balance for a transfer (registry `tokens.rs`, USDC included),
+/// checked before the confirmation dialog.
 pub fn ensure_token_funds(token_id: &str, network: &str, owner: &str, amount: &str) -> Result<()> {
     let (balance, decimals) = if token_id == "usdc" && network == "sol_mainnet" {
         (u128::from(get_spl_balance(owner, &sol_spl::usdc_mint_mainnet(), &wallet_flow::SOLANA_MAINNET)?), 6)
@@ -1809,8 +1781,8 @@ pub fn ensure_token_funds(token_id: &str, network: &str, owner: &str, amount: &s
     Ok(())
 }
 
-/// Monnaie du réseau suffisante pour le gas d'un virement de jeton ERC-20,
-/// vérifiée avant la boîte de confirmation.
+/// Enough native coin for the gas of an ERC-20 token transfer, checked before the
+/// confirmation dialog.
 pub fn ensure_evm_gas_funds(network: &wallet_flow::EvmNetwork, from: &str, fee: EvmFee) -> Result<()> {
     let gas = fee.max_total()?;
     let balance = get_evm_balance(from, network)?;
@@ -1819,8 +1791,8 @@ pub fn ensure_evm_gas_funds(network: &wallet_flow::EvmNetwork, from: &str, fee: 
     Ok(())
 }
 
-/// Même vérification pour un virement SOL (montant + frais de base), avant la
-/// boîte de confirmation.
+/// The same check for a SOL transfer (amount + base fee), before the confirmation
+/// dialog.
 pub fn ensure_sol_transfer_funds(network: &wallet_flow::SolNetwork, from: &str, amount: &str) -> Result<()> {
     const SOL_FEE_LAMPORTS: u64 = 5_000;
     let lamports = wallet_flow::parse_sol_to_lamports(amount)?;
@@ -1831,21 +1803,23 @@ pub fn ensure_sol_transfer_funds(network: &wallet_flow::SolNetwork, from: &str, 
     Ok(())
 }
 
-// --- Montant maximal envoyable (bouton « Max ») ------------------------------------
-// Solde moins les frais du réseau, avec les mêmes règles de frais que l'envoi
-// lui-même : recalculé au moment de la boîte de confirmation, pour que le
-// montant affiché (et signé) reste exact si les frais ont bougé.
+// --- Maximum amount that can be sent ("Max" button)
+// ---------------------------------
+//
+// Balance minus the network fees, with the same fee rules as the send itself:
+// recomputed when the confirmation dialog opens, so the amount shown (and signed)
+// stays exact if the fees have moved.
 
-/// Frais estimés d'un virement EVM maximal : gas d'un virement nul vers `to`
-/// (le montant ne change pas le gas d'un virement natif ; une estimation avec
-/// tout le solde échouerait faute de quoi payer le gas).
+/// Estimated fee for a maximum EVM transfer: gas for a zero transfer to `to` (the
+/// amount does not change the gas of a native transfer; an estimate with the whole
+/// balance would fail for lack of anything to pay the gas with).
 pub fn evm_max_fee(network: &wallet_flow::EvmNetwork, from: Option<&str>, to: &str) -> Result<EvmFee> {
     evm_transfer_fee_for_confirmation(network, from, to, "0")
 }
 
-/// Monnaie EVM : solde moins gas × prix, moins les frais de publication sur
-/// Ethereum (OP Stack) majorés d'un quart — ils sont facturés au bloc et
-/// peuvent monter un peu d'ici là ; le reste, minuscule, demeure.
+/// EVM native coin: balance minus gas × price, minus the Ethereum posting fees (OP
+/// Stack) increased by a quarter, since they are charged at the block and may rise
+/// a little by then; the tiny remainder stays.
 pub fn evm_max_native(network: &wallet_flow::EvmNetwork, from: &str, fee: EvmFee) -> Result<String> {
     let margin = fee.l1_fee / 4;
     let reserved = fee.max_total()?.checked_add(margin).context("frais de gas dépassant la capacité représentable")?;
@@ -1856,30 +1830,30 @@ pub fn evm_max_native(network: &wallet_flow::EvmNetwork, from: &str, fee: EvmFee
     Ok(tokens::format_amount(max, 18))
 }
 
-/// SOL : solde moins les frais d'une signature (un compte vidé à zéro est
-/// permis).
+/// SOL: balance minus the fee for one signature (an account emptied to zero is
+/// allowed).
 pub fn sol_max(network: &wallet_flow::SolNetwork, from: &str) -> Result<String> {
     const SOL_FEE_LAMPORTS: u64 = 5_000;
     let max = get_sol_balance(from, network)?.checked_sub(SOL_FEE_LAMPORTS).filter(|max| *max > 0).context("SOL insuffisants pour couvrir les frais du réseau")?;
     Ok(tokens::format_amount(u128::from(max), 9))
 }
 
-/// Bitcoin : toutes les sorties (comme `send_btc`) couvrent montant et frais
-/// choisis — vérifié avant la boîte de confirmation.
+/// Bitcoin: all the outputs (as in `send_btc`) cover the amount and the chosen fee;
+/// checked before the confirmation dialog.
 pub fn ensure_btc_transfer_funds(network: &wallet_flow::BtcNetwork, address: &str, amount: &str, fee_sat: u64) -> Result<()> {
     let total: u64 = btc_rpc::EsploraClient::new(network.esplora_base).utxos(address)?.iter().map(|u| u.value_sat).sum();
     btc_change(total, wallet_flow::parse_btc_to_sat(amount)?, fee_sat).map(|_| ())
 }
 
-/// Bitcoin : toutes les sorties (comme `send_btc`) moins les frais choisis.
+/// Bitcoin: all the outputs (as in `send_btc`) minus the chosen fee.
 pub fn btc_max(network: &wallet_flow::BtcNetwork, address: &str, fee_sat: u64) -> Result<String> {
     let total: u64 = btc_rpc::EsploraClient::new(network.esplora_base).utxos(address)?.iter().map(|u| u.value_sat).sum();
     let max = total.checked_sub(fee_sat).filter(|max| *max > 1_000).context("BTC insuffisants pour couvrir les frais choisis")?;
     Ok(tokens::format_amount(u128::from(max), 8))
 }
 
-/// Jeton (registre, USDC Solana compris) : tout le solde du jeton, les frais
-/// étant payés dans la monnaie du réseau.
+/// Token (registry, Solana USDC included): the whole token balance, since the fees
+/// are paid in the network's native coin.
 pub fn token_max(token_id: &str, network: &str, owner: &str) -> Result<String> {
     let (balance, decimals) = if token_id == "usdc" && network == "sol_mainnet" {
         (u128::from(get_spl_balance(owner, &sol_spl::usdc_mint_mainnet(), &wallet_flow::SOLANA_MAINNET)?), 6)
@@ -1890,40 +1864,43 @@ pub fn token_max(token_id: &str, network: &str, owner: &str) -> Result<String> {
     Ok(tokens::format_amount(balance, decimals))
 }
 
-/// Zcash transparent : sorties choisies au mieux, frais ZIP-317 déduits.
+/// Transparent Zcash: the best choice of outputs, ZIP-317 fee deducted.
 pub fn zec_max(from: &str) -> Result<String> {
     Ok(zcash::format_zec(zcash::max_amount(&zcash::utxos(from)?)?))
 }
 
-/// Dogecoin : sorties confirmées choisies au mieux, frais du moment déduits.
+/// Dogecoin: the best choice of confirmed outputs, current fee deducted.
 pub fn doge_max(from: &str) -> Result<String> {
     let doge::Recipient::P2pkh(own) = doge::parse_recipient(from)? else { anyhow::bail!("adresse Dogecoin du profil invalide") };
     Ok(doge::format_doge(doge::max_send(&own)?))
 }
 
-/// Zcash protégé : montant de la proposition « tout envoyer » de la
-/// bibliothèque (vers `to`, ou sa propre adresse pour une estimation).
+/// Shielded Zcash: the amount of the library's "send everything" proposal (to `to`,
+/// or to our own address for an estimate).
 pub fn zec_shielded_max(data_dir: &Path, profile_index: u32, to: &str) -> Result<String> {
     Ok(zcash::format_zec(zcash_shielded::max_amount(data_dir, profile_index, to)?))
 }
 
+/// Fees for a native transfer of `amount` (text, 18 decimals) to `to`: see
+/// `evm_fee_for_confirmation`. `from`: the sending address, only needed where the gas
+/// limit is estimated (Arbitrum).
 pub fn evm_transfer_fee_for_confirmation(network: &wallet_flow::EvmNetwork, from: Option<&str>, to: &str, amount: &str) -> Result<EvmFee> {
     let to = wallet_flow::parse_evm_address(to)?;
     let value = wallet_flow::parse_eth_to_wei(amount)?;
     let from = match (from, network.transfer_gas) {
         (Some(address), _) => wallet_flow::parse_evm_address(address)?,
-        // Limite de gas fixe : l'adresse d'envoi n'intervient pas.
+        // Fixed gas limit: the sending address plays no part.
         (None, Some(_)) => [0u8; 20],
         (None, None) => anyhow::bail!("adresse d'envoi inconnue : déverrouillez le portefeuille"),
     };
     evm_fee_for_confirmation(network, &from, &to, value, &[])
 }
 
-/// Frais de publication sur Ethereum d'une transaction (encodage non signé)
-/// sur un réseau OP Stack : `getL1Fee(bytes)` de l'oracle du réseau.
+/// Ethereum posting fee for a transaction (unsigned encoding) on an OP Stack
+/// network: `getL1Fee(bytes)` on the network's oracle.
 fn op_stack_l1_fee(rpc: &eth_rpc::EthRpc, unsigned_tx: &[u8]) -> Result<u128> {
-    // Sélecteur de getL1Fee(bytes), puis l'argument `bytes` en ABI : position
-    // (0x20), longueur, données complétées à un multiple de 32 octets.
+    // Selector of getL1Fee(bytes), then the `bytes` argument in ABI form: offset
+    // (0x20), length, data padded to a multiple of 32 bytes.
     let mut calldata = vec![0x49, 0x94, 0x8e, 0x0e];
     let mut word = [0u8; 32];
     word[31] = 0x20;
@@ -1940,10 +1917,10 @@ fn op_stack_l1_fee(rpc: &eth_rpc::EthRpc, unsigned_tx: &[u8]) -> Result<u128> {
     Ok(u128::from_be_bytes(answer[16..].try_into().expect("16 octets")))
 }
 
-/// Déverrouille le coffre (mot de passe requis : c'est la barrière d'authentification
-/// avant toute dépense), signe et diffuse un virement EVM. `gas_price` : celui
-/// AFFICHÉ dans la boîte de confirmation (voir `evm_gas_price_for_confirmation`),
-/// utilisé tel quel — jamais un prix relu auprès du nœud après coup.
+/// Unlocks the vault (password required: this is the authentication barrier before
+/// any spending), signs and broadcasts an EVM transfer. `gas_price`: the one SHOWN in
+/// the confirmation dialog (see `evm_gas_price_for_confirmation`), used as is, never
+/// a price reread from the node afterwards.
 pub fn send_evm(
     data_dir: &Path,
     device_password: &str,
@@ -1962,9 +1939,9 @@ pub fn send_evm(
     eth_rpc::EthRpc::new(network.rpc).send_raw_transaction(&raw_tx)
 }
 
-/// Virement EVM prêt à signer depuis `address` (portefeuille logiciel ou
-/// matériel, voir `hardware::send_evm`) : nonce, réseau et solde lus auprès
-/// du nœud, réseau vérifié, solde suffisant pour montant + frais maximum.
+/// An EVM transfer ready to sign from `address` (software or hardware wallet, see
+/// `hardware::send_evm`): nonce, network and balance read from the node, network
+/// checked, balance enough for amount + maximum fee.
 pub(crate) fn prepare_evm_transfer(
     network: &wallet_flow::EvmNetwork,
     address: &[u8; 20],
@@ -1979,9 +1956,9 @@ pub(crate) fn prepare_evm_transfer(
 
     let rpc = eth_rpc::EthRpc::new(network.rpc);
     let address_str = derivation::format_address(address);
-    // Les 3 appels ci-dessous sont des lectures RPC indépendantes (aucune ne dépend
-    // du résultat d'une autre) : les lancer en parallèle plutôt que l'une après
-    // l'autre réduit la latence perçue d'un envoi ETH à ~1x un aller-retour réseau.
+    // The 3 calls below are independent RPC reads (none depends on another's result):
+    // running them in parallel rather than one after the other cuts the perceived
+    // latency of an ETH send to ~1 network round trip.
     let (nonce, chain_id, balance) = std::thread::scope(|scope| {
         let nonce_handle = scope.spawn(|| rpc.nonce(&address_str));
         let chain_id_handle = scope.spawn(|| rpc.chain_id());
@@ -1995,19 +1972,20 @@ pub(crate) fn prepare_evm_transfer(
     let nonce = nonce?;
     let chain_id = chain_id?;
     let balance = balance?;
-    // Un nœud qui répondrait un autre réseau que celui choisi ferait signer une
-    // transaction rejouable ailleurs (EIP-155 lie la signature au chain_id).
+    // A node answering for a different network than the one chosen would get us to
+    // sign a transaction replayable elsewhere (EIP-155 binds the signature to the
+    // chain_id).
     anyhow::ensure!(
         chain_id == network.chain_id,
         "le nœud RPC répond pour le réseau {chain_id}, pas {} — envoi refusé",
         network.chain_id
     );
 
-    // Contrairement à Bitcoin (UTXO, vérifié dans `send_btc`), rien ne vérifiait ici
-    // que le solde couvre montant + frais de gas avant de signer et diffuser : sans
-    // ce contrôle, l'erreur ne remonte que via le rejet du nœud RPC après signature,
-    // ce qui masque la vraie cause côté utilisateur ("fonds insuffisants") derrière un
-    // message d'erreur RPC générique.
+    // Unlike Bitcoin (UTXOs, checked in `send_btc`), nothing here checked that the
+    // balance covers amount + gas fees before signing and broadcasting. Without this
+    // check, the error only surfaces through the RPC node's rejection after signing,
+    // which hides the real cause from the user ("insufficient funds") behind a generic
+    // RPC error message.
     let gas_cost = fee.max_total()?;
     let total_needed = value
         .checked_add(gas_cost)
@@ -2028,17 +2006,16 @@ pub(crate) fn prepare_evm_transfer(
     })
 }
 
-/// Déverrouille le coffre, signe et diffuse un swap Ethereum -> THORChain :
-/// contrairement à un envoi normal, la transaction n'est PAS un simple
-/// transfert vers `quote.inbound_address`, mais un appel au contrat
-/// "THORChain Router" (`quote.router` — jamais `inbound_address` directement
-/// sur une chaîne EVM, voir `thorchain_rpc::SwapQuote`) : `depositWithExpiry`
-/// avec `asset` = adresse nulle (monnaie native) et `amount` = le montant envoyé
-/// (`msg.value`, exigé par le routeur récent d'Avalanche et Base). `expiration` :
-/// horodatage Unix + marge large (1h), comme documenté par THORChain pour
-/// éviter qu'un appel resté longtemps en attente ne s'exécute à un cours
-/// périmé. `gas_price` : celui AFFICHÉ dans la boîte de confirmation (voir
-/// `evm_gas_price_for_confirmation`), utilisé tel quel.
+/// Unlocks the vault, signs and broadcasts an Ethereum -> THORChain swap. Unlike a
+/// normal send, the transaction is NOT a plain transfer to `quote.inbound_address`
+/// but a call to the "THORChain Router" contract (`quote.router`; never
+/// `inbound_address` directly on an EVM chain, see `thorchain_rpc::SwapQuote`):
+/// `depositWithExpiry` with `asset` = the zero address (native coin) and `amount` =
+/// the amount sent (`msg.value`, required by the newer router on Avalanche and
+/// Base). `expiration`: Unix timestamp + a wide margin (1h), as THORChain
+/// documents, so a call left pending for a long time does not execute at a stale
+/// rate. `gas_price`: the one SHOWN in the confirmation dialog (see
+/// `evm_gas_price_for_confirmation`), used as is.
 pub fn send_swap_evm(
     data_dir: &Path,
     device_password: &str,
@@ -2055,10 +2032,10 @@ pub fn send_swap_evm(
         .context("devis THORChain sans adresse de routeur (attendu pour un swap EVM)")?;
     let router_bytes = wallet_flow::parse_evm_address(router)?;
     let vault_bytes = wallet_flow::parse_evm_address(&quote.inbound_address)?;
-    // ETH natif = adresse nulle côté contrat (PAS la convention "0xEeee...Eeee"
-    // utilisée par d'autres protocoles — vérifié en lisant le vrai code source
-    // vérifié du routeur déployé, via Sourcify : `if(asset == address(0))`,
-    // voir `deposit()` dans le contrat THORChain_Router).
+    // Native ETH = the zero address on the contract side (NOT the "0xEeee...Eeee"
+    // convention used by other protocols), checked by reading the deployed router's
+    // real verified source code through Sourcify: `if(asset == address(0))`, see
+    // `deposit()` in the THORChain_Router contract.
     let native_asset_bytes = [0u8; 20];
 
     let seed = unlock_seed(data_dir, device_password)?;
@@ -2093,17 +2070,16 @@ pub fn send_swap_evm(
         .as_secs()
         + 3600;
 
-    // `amount` = le montant envoyé : le routeur récent (Avalanche, Base) refuse
-    // un dépôt natif où il diffère de `msg.value` (« TC:eth amount mismatch »,
-    // constaté en réel) ; l'ancien (Ethereum) l'ignore.
+    // `amount` = the amount sent: the newer router (Avalanche, Base) refuses a native
+    // deposit where it differs from `msg.value` ("TC:eth amount mismatch", seen for
+    // real); the older one (Ethereum) ignores it.
     let calldata = eth_tx::thorchain_deposit_calldata(&vault_bytes, &native_asset_bytes, value, &quote.memo, expiration);
-    // Gas RÉELLEMENT nécessaire à l'exécution du contrat (+20 %), pas le gas
-    // intrinsèque — trouvé lors du même audit : la version précédente prenait
-    // `intrinsic_gas` (23 844 mesuré) comme limite, alors qu'un dépôt réel sur
-    // le routeur en consomme 45 632 (`eth_estimateGas` sur mainnet) : CHAQUE
-    // swap ETH aurait manqué de gas et échoué on-chain, en brûlant les frais,
-    // sans jamais rien échanger. Borné par `EVM_SWAP_MAX_GAS_LIMIT`, le
-    // maximum affiché dans la boîte de confirmation.
+    // The gas ACTUALLY needed to execute the contract (+20%), not the intrinsic gas.
+    // Found in the same audit: the previous version used `intrinsic_gas` (23,844
+    // measured) as the limit, whereas a real deposit on the router uses 45,632
+    // (`eth_estimateGas` on mainnet): EVERY ETH swap would have run out of gas and
+    // failed on-chain, burning the fees without ever swapping anything. Bounded by
+    // `EVM_SWAP_MAX_GAS_LIMIT`, the maximum shown in the confirmation dialog.
     let estimated = rpc.estimate_gas(&address_str, router, value, &calldata)?;
     let gas_limit = estimated
         .saturating_mul(12)
@@ -2115,7 +2091,7 @@ pub fn send_swap_evm(
         "gas estimé anormalement élevé pour un dépôt THORChain ({gas_limit}, maximum {deposit_cap}) — swap refusé"
     );
 
-    // Base (OP Stack) : frais de publication sur Ethereum en plus du gas.
+    // Base (OP Stack): Ethereum posting fees on top of gas.
     let l1_fee = evm_l1_fee(network, &router_bytes, value, &calldata, gas_price, gas_limit)?;
     let gas_cost = gas_price
         .checked_mul(u128::from(gas_limit))
@@ -2142,35 +2118,32 @@ pub fn send_swap_evm(
     rpc.send_raw_transaction(&raw_tx)
 }
 
-/// Plafond du gas d'une autorisation ERC-20 (`approve`) : d'ordinaire
-/// 46 000 à 60 000.
+/// Gas cap for an ERC-20 approval (`approve`): usually 46,000 to 60,000.
 pub const EVM_APPROVE_MAX_GAS_LIMIT: u64 = 100_000;
 
-/// Plafonds de gas (autorisation, dépôt) d'un échange sur `network`. Là où
-/// la limite de gas compte aussi la publication sur Ethereum (Arbitrum,
-/// `transfer_gas` = `None`), elle monte avec le prix du gas d'Ethereum : même
-/// plafond large que pour un virement (`EVM_MAX_ESTIMATED_GAS`), sinon des
-/// échanges légitimes seraient refusés quand Ethereum est chargé.
+/// Gas caps (approval, deposit) for a swap on `network`. Where the gas limit also
+/// counts posting to Ethereum (Arbitrum, `transfer_gas` = `None`), it rises with
+/// Ethereum's gas price: the same wide cap as for a transfer
+/// (`EVM_MAX_ESTIMATED_GAS`), otherwise legitimate swaps would be refused when
+/// Ethereum is busy.
 pub fn swap_gas_caps(network: &wallet_flow::EvmNetwork) -> (u64, u64) {
     match network.transfer_gas {
         None => (EVM_MAX_ESTIMATED_GAS, EVM_MAX_ESTIMATED_GAS),
         Some(_) => (EVM_APPROVE_MAX_GAS_LIMIT, EVM_SWAP_MAX_GAS_LIMIT),
     }
 }
-/// Attente maximale de la confirmation d'une autorisation avant le dépôt.
+/// Maximum wait for an approval to be confirmed before the deposit.
 const APPROVE_WAIT: std::time::Duration = std::time::Duration::from_secs(180);
 
-/// Échange THORChain depuis un jeton ERC-20 (USDC, USDT, DAI, VVV…) : le
-/// routeur prélève lui-même le jeton, ce qui demande d'abord une autorisation
-/// (`approve`) au MONTANT EXACT de l'échange — jamais illimitée —, puis
-/// `depositWithExpiry(vault, jeton, montant, memo, expiration)`. Les deux
-/// transactions sont construites ici (aucun appel fourni par un tiers), au
-/// prix du gas affiché dans la boîte de confirmation. Une autorisation déjà
-/// suffisante n'est pas redemandée ; une autorisation non nulle mais
-/// insuffisante est d'abord remise à 0 (exigé par USDT). L'autorisation doit
-/// être minée avant le dépôt (sinon l'estimation du dépôt échoue) : attente
-/// bornée ; au-delà, l'échange peut être relancé, l'autorisation restant
-/// acquise.
+/// THORChain swap from an ERC-20 token (USDC, USDT, DAI, VVV…): the router pulls
+/// the token itself, which first requires an approval (`approve`) for the EXACT
+/// amount of the swap (never unlimited), then `depositWithExpiry(vault, token,
+/// amount, memo, expiration)`. Both transactions are built here (no call supplied
+/// by a third party), at the gas price shown in the confirmation dialog. An
+/// approval that is already sufficient is not requested again; a non-zero but
+/// insufficient approval is first reset to 0 (required by USDT). The approval must
+/// be mined before the deposit (otherwise the deposit's estimate fails): a bounded
+/// wait; beyond it, the swap can be restarted, and the approval stays in place.
 #[allow(clippy::too_many_arguments)]
 pub fn send_swap_erc20(
     data_dir: &Path,
@@ -2216,8 +2189,8 @@ pub fn send_swap_erc20(
     );
 
     let approvals = approval_amounts(allowance, units);
-    // Monnaie du réseau pour TOUTES les transactions, au pire : autorisations
-    // et dépôt à leur plafond de gas (+ frais L1 sur Base).
+    // Native coin for ALL the transactions, at worst: approvals and deposit at their
+    // gas cap (+ L1 fees on Base).
     let (_, deposit_cap) = swap_gas_caps(network);
     let deposit_draft = eth_tx::thorchain_deposit_calldata(&vault_bytes, &contract_bytes, units, &quote.memo, u64::MAX);
     let deposit_fee = gas_price
@@ -2239,10 +2212,9 @@ pub fn send_swap_erc20(
     rpc.send_raw_transaction(&tx.sign(&signing_key)?)
 }
 
-/// Autorisations à envoyer pour qu'un contrat puisse prélever exactement
-/// `units` : aucune si l'autorisation actuelle suffit ; sinon le montant exact
-/// — jamais illimité —, précédé d'une remise à 0 si une autorisation partielle
-/// existe (exigé par USDT).
+/// Approvals to send so a contract can pull exactly `units`: none if the current
+/// approval is enough; otherwise the exact amount (never unlimited), preceded by a
+/// reset to 0 if a partial approval exists (required by USDT).
 fn approval_amounts(allowance: u128, units: u128) -> Vec<u128> {
     match allowance {
         a if a >= units => vec![],
@@ -2251,8 +2223,8 @@ fn approval_amounts(allowance: u128, units: u128) -> Vec<u128> {
     }
 }
 
-/// Vérifie que la monnaie du réseau couvre, au pire, les autorisations à
-/// leur plafond de gas (+ frais L1 sur Base) plus `other_fees`.
+/// Checks that the native coin covers, at worst, the approvals at their gas cap (+
+/// L1 fees on Base) plus `other_fees`.
 fn ensure_fees_covered(
     network: &wallet_flow::EvmNetwork,
     contract: &[u8; 20],
@@ -2282,8 +2254,8 @@ fn ensure_fees_covered(
     Ok(())
 }
 
-/// Envoie les autorisations une à une, chacune attendue minée et réussie
-/// avant la suivante ; renvoie le nonce suivant.
+/// Sends the approvals one by one, waiting for each to be mined and successful
+/// before the next; returns the next nonce.
 #[allow(clippy::too_many_arguments)]
 fn send_approvals(
     rpc: &eth_rpc::EthRpc,
@@ -2315,15 +2287,15 @@ fn send_approvals(
     Ok(nonce)
 }
 
-/// Frais maximum d'un échange THORChain depuis un réseau EVM, montrés AVANT
-/// la confirmation avec le prix du gas qui sera signé : dépôt au plafond de
-/// gas (+ frais L1 sur Base) et, pour un jeton, la ou les autorisations
-/// préalables (deux quand une autorisation partielle doit être remise à 0).
+/// Maximum fee for a THORChain swap from an EVM network, shown BEFORE confirmation
+/// with the gas price that will be signed: the deposit at its gas cap (+ L1 fees on
+/// Base) and, for a token, the prior approval(s) (two when a partial approval must
+/// be reset to 0).
 pub struct EvmSwapFees {
     pub deposit: EvmFee,
     pub approve: EvmFee,
-    /// Autorisations à envoyer avant le dépôt (0 pour une monnaie native, ou
-    /// si l'autorisation déjà accordée suffit).
+    /// Approvals to send before the deposit (0 for a native coin, or if the approval
+    /// already granted is enough).
     pub approvals: usize,
 }
 
@@ -2366,8 +2338,8 @@ pub fn evm_swap_fees(
     Ok(EvmSwapFees { deposit, approve, approvals })
 }
 
-/// Attend qu'une transaction soit minée et RÉUSSIE (autorisation avant un
-/// dépôt), au plus `APPROVE_WAIT`.
+/// Waits for a transaction to be mined and SUCCESSFUL (an approval before a
+/// deposit), for at most `APPROVE_WAIT`.
 fn wait_for_success(rpc: &eth_rpc::EthRpc, hash: &str) -> Result<()> {
     let started = std::time::Instant::now();
     loop {
@@ -2382,31 +2354,31 @@ fn wait_for_success(rpc: &eth_rpc::EthRpc, hash: &str) -> Result<()> {
     }
 }
 
-// --- Échange CoW Protocol (même réseau EVM) ----------------------------------
+// --- CoW Protocol swap (same EVM network) ------------------------------------
 
-/// Jetons CoW (vendu, acheté) d'une paire désignée par l'interface.
+/// CoW tokens (sold, bought) for a pair designated by the UI.
 pub fn cow_tokens(network: &str, from_coin: &str, to_coin: &str) -> Result<(cow::CowToken, cow::CowToken)> {
     let sell = cow::token(from_coin, network).with_context(|| format!("{from_coin} n'est pas échangeable via CoW sur ce réseau"))?;
     let buy = cow::token(to_coin, network).with_context(|| format!("{to_coin} n'est pas échangeable via CoW sur ce réseau"))?;
     Ok((sell, buy))
 }
 
-/// Forme canonique du montant vendu (décimales du jeton), affichée ET signée.
+/// Canonical form of the amount sold (the token's decimals), shown AND signed.
 pub fn canonical_cow_amount(sell: &cow::CowToken, amount: &str) -> Result<String> {
     Ok(tokens::format_amount(tokens::parse_amount(amount, sell.decimals)?, sell.decimals))
 }
 
-/// Devis CoW pour vendre `amount` de `sell` contre `buy`, au profit de
-/// `owner` (vendeur ET destinataire). Refusé tant que l'adresse des frais
-/// partenaire n'est pas renseignée (voir `cow::PARTNER_FEE_RECIPIENT`).
+/// CoW quote for selling `amount` of `sell` for `buy`, on behalf of `owner` (seller
+/// AND recipient). Refused as long as the partner fee address is not set (see
+/// `cow::PARTNER_FEE_RECIPIENT`).
 pub fn get_cow_quote(network: &wallet_flow::EvmNetwork, sell: &cow::CowToken, buy: &cow::CowToken, amount: &str, owner: &str, partner_fee_bps: u32) -> Result<cow::CowOrder> {
     let recipient = cow::PARTNER_FEE_RECIPIENT.context("échange via CoW pas encore activé")?;
     wallet_flow::parse_evm_address(owner)?;
     cow::quote(network.id, sell, buy, tokens::parse_amount(amount, sell.decimals)?, owner, recipient, partner_fee_bps)
 }
 
-/// Autorisations à envoyer au VaultRelayer de CoW avant l'ordre, et frais
-/// maximum de chacune (montrés avant la confirmation, au prix du gas signé).
+/// Approvals to send to CoW's VaultRelayer before the order, and the maximum fee
+/// for each (shown before confirmation, at the signed gas price).
 pub fn cow_approval_fees(network: &wallet_flow::EvmNetwork, order: &cow::CowOrder, gas_price: u128) -> Result<(EvmFee, usize)> {
     let relayer = wallet_flow::parse_evm_address(cow::VAULT_RELAYER)?;
     let contract = wallet_flow::parse_evm_address(&order.sell_token)?;
@@ -2418,17 +2390,17 @@ pub fn cow_approval_fees(network: &wallet_flow::EvmNetwork, order: &cow::CowOrde
     Ok((fee, approvals))
 }
 
-/// Marge minimale de validité au moment de signer : un ordre qui expire
-/// presque aussitôt n'aurait aucune chance d'être exécuté.
+/// Minimum validity margin at signing time: an order that expires almost
+/// immediately would have no chance of being executed.
 const COW_MIN_REMAINING_VALIDITY_SECS: u64 = 120;
 
-/// Échange CoW : autorisation(s) au VaultRelayer au montant exact si
-/// nécessaire (mêmes règles que `send_swap_erc20`), puis signature de l'ordre
-/// AFFICHÉ dans la boîte de confirmation (`order`), sans nouveau devis : si le
-/// marché passe sous le minimum signé, l'ordre expire sans rien coûter. L'ordre
-/// doit être au nom du profil qui signe (destinataire = vendeur). Aucune
-/// transaction d'échange : les frais réseau de CoW sont pris sur le jeton
-/// vendu, déjà comptés dans l'ordre. Renvoie l'identifiant de l'ordre.
+/// CoW swap: approval(s) to the VaultRelayer for the exact amount if needed (same
+/// rules as `send_swap_erc20`), then signing of the order SHOWN in the confirmation
+/// dialog (`order`), with no new quote: if the market drops below the signed
+/// minimum, the order expires at no cost. The order must be in the name of the
+/// signing profile (recipient = seller). No swap transaction: CoW's network fees
+/// are taken from the token sold and already counted in the order. Returns the
+/// order identifier.
 pub fn send_cow_swap(
     data_dir: &Path,
     device_password: &str,
@@ -2483,8 +2455,8 @@ pub fn send_cow_swap(
     cow::submit(order, &digest, &signature, &address_str)
 }
 
-/// Frais maximum de la transaction EthFlow (`createOrder`), montrés avant la
-/// confirmation au prix du gas signé (+ frais de publication sur Base).
+/// Maximum fee for the EthFlow transaction (`createOrder`), shown before
+/// confirmation at the signed gas price (+ posting fees on Base).
 pub fn cow_eth_flow_fee(network: &wallet_flow::EvmNetwork, order: &cow::CowOrder, gas_price: u128) -> Result<EvmFee> {
     let contract = wallet_flow::parse_evm_address(cow::ETH_FLOW)?;
     let data = cow::eth_flow_calldata(order)?;
@@ -2492,13 +2464,12 @@ pub fn cow_eth_flow_fee(network: &wallet_flow::EvmNetwork, order: &cow::CowOrder
     Ok(EvmFee { gas_price, gas_limit: cap, l1_fee: evm_l1_fee(network, &contract, order.sell_amount, &data, gas_price, cap)? })
 }
 
-/// Vente de la monnaie du réseau via le contrat EthFlow de CoW : la
-/// transaction `createOrder` — construite ici, au prix du gas affiché — lui
-/// confie le montant de l'ordre AFFICHÉ (`order`), au nom du profil qui
-/// signe. Avant l'envoi, l'appData est déposée chez CoW : l'ordre on-chain
-/// n'en porte que l'empreinte, et c'est elle qui déclare les frais partenaire.
-/// Non exécuté, l'ordre expire et CoW rembourse. Renvoie (transaction,
-/// identifiant de l'ordre).
+/// Selling the network's native coin through CoW's EthFlow contract: the
+/// `createOrder` transaction (built here, at the gas price shown) hands it the
+/// amount of the order SHOWN (`order`), in the name of the signing profile. Before
+/// sending, the appData is uploaded to CoW: the on-chain order only carries its
+/// hash, and that document is what declares the partner fee. If not executed, the
+/// order expires and CoW refunds. Returns (transaction, order identifier).
 pub fn send_cow_eth_flow(
     data_dir: &Path,
     device_password: &str,
@@ -2532,8 +2503,8 @@ pub fn send_cow_eth_flow(
     let (nonce, chain_id, balance) = (nonce?, chain_id?, balance?);
     anyhow::ensure!(chain_id == network.chain_id, "le nœud RPC répond pour le réseau {chain_id}, pas {} — envoi refusé", network.chain_id);
 
-    // Montant + frais au pire (plafond de gas) couverts AVANT l'estimation, qui
-    // échouerait sinon avec une erreur brute du nœud.
+    // Amount + worst-case fees (gas cap) covered BEFORE the estimate, which would
+    // otherwise fail with a raw node error.
     let worst_case = cow_eth_flow_fee(network, order, gas_price)?
         .max_total()?
         .checked_add(order.sell_amount)
@@ -2560,29 +2531,29 @@ pub fn send_cow_eth_flow(
     Ok((hash, uid))
 }
 
-// --- Échange LI.FI (entre deux écosystèmes) ------------------------------------
+// --- LI.FI swap (between two ecosystems) ----------------------------------------
 
-/// Ponts qui gardent le destinataire hors chaîne quand l'arrivée n'est pas sur
-/// un réseau EVM (relevé le 02/10/2026 : l'événement du contrat ne porte
-/// qu'un marqueur) : écartés d'emblée depuis un réseau EVM, sinon chaque devis
-/// serait refusé à la vérification. Vers un réseau EVM, le destinataire est
-/// dans `BridgeData` : ils restent permis.
+/// Bridges that keep the recipient off-chain when the destination is not an EVM
+/// network (recorded on 2026-10-02: the contract's event only carries a marker):
+/// excluded upfront from an EVM network, otherwise every quote would fail
+/// verification. To an EVM network, the recipient is in `BridgeData`, so they stay
+/// allowed.
 const LIFI_HIDDEN_RECEIVER_BRIDGES: [&str; 1] = ["relaydepository"];
-/// Plafond du gas d'un appel LI.FI (pont avec échange préalable : ~550 000
-/// mesurés en simulation sur Ethereum).
+/// Gas cap for a LI.FI call (a bridge with a prior swap: ~550,000 measured in
+/// simulation on Ethereum).
 const LIFI_MAX_GAS: u64 = 1_000_000;
-/// Budget de frais Solana d'un envoi LI.FI (frais, priorité, rent d'un compte
-/// d'ordre du pont) : 0,01 SOL.
+/// Solana fee budget for a LI.FI send (fees, priority, rent for a bridge order
+/// account): 0.01 SOL.
 pub const LIFI_SOL_FEE_BUDGET_LAMPORTS: u64 = 10_000_000;
 
-/// Jetons LI.FI (envoyé, reçu) d'une paire désignée par l'interface.
+/// LI.FI tokens (sent, received) for a pair designated by the UI.
 pub fn lifi_tokens(from_coin: &str, from_network: &str, to_coin: &str, to_network: &str) -> Result<(lifi::LifiToken, lifi::LifiToken)> {
     let from = lifi::token(from_coin, from_network).context("crypto non échangeable via LI.FI")?;
     let to = lifi::token(to_coin, to_network).context("crypto non échangeable via LI.FI")?;
     Ok((from, to))
 }
 
-/// Forme canonique du montant envoyé (décimales du jeton), affichée ET signée.
+/// Canonical form of the amount sent (the token's decimals), shown AND signed.
 pub fn canonical_lifi_amount(from: &lifi::LifiToken, amount: &str) -> Result<String> {
     Ok(tokens::format_amount(tokens::parse_amount(amount, from.decimals)?, from.decimals))
 }
@@ -2595,8 +2566,8 @@ fn lifi_initial_deny(from_network: &str, to_network: &str) -> Vec<String> {
     }
 }
 
-/// Devis LI.FI pour l'aperçu (sans vérification de la transaction, faite à
-/// la confirmation) : mêmes ponts écartés que pour l'envoi.
+/// LI.FI quote for the preview (without verifying the transaction, which happens at
+/// confirmation): the same bridges excluded as for the send.
 #[allow(clippy::too_many_arguments)]
 pub fn get_lifi_quote(
     from_network: &'static str,
@@ -2612,11 +2583,11 @@ pub fn get_lifi_quote(
     lifi::quote(from_network, from, to_network, to, units, from_address, to_address, &lifi_initial_deny(from_network, to_network), None)
 }
 
-/// Vérifie la transaction d'un devis LI.FI avant signature (voir
-/// `core/src/lifi.rs`). `Some(true)` : destinataire vérifié ; `Some(false)` :
-/// effets vérifiés mais destinataire géré hors chaîne par le pont (source
-/// Solana, dit dans la boîte de confirmation) ; `None` : pont qui cache le
-/// destinataire depuis un réseau EVM, à écarter.
+/// Verifies the transaction of a LI.FI quote before signing (see
+/// `core/src/lifi.rs`). `Some(true)`: recipient verified; `Some(false)`: effects
+/// verified but the recipient is handled off-chain by the bridge (Solana source,
+/// stated in the confirmation dialog); `None`: a bridge that hides the recipient
+/// from an EVM network, to be excluded.
 fn verify_lifi_quote(quote: &lifi::LifiQuote, receiver: &lifi::Receiver) -> Result<Option<bool>> {
     match &quote.tx {
         lifi::LifiTx::Evm { to, data, value } => {
@@ -2654,19 +2625,17 @@ fn verify_lifi_quote(quote: &lifi::LifiQuote, receiver: &lifi::Receiver) -> Resu
             check_swap_effects(&rpc, raw, &lifi_solana_limits(owner, quote)?)?;
             Ok(Some(false))
         }
-        // Dépôt vérifié par `lifi_btc_deposit` (sorties relues sur Esplora) :
-        // avant la boîte de confirmation, qui en montre les frais, puis de
-        // nouveau juste avant la signature (`send_lifi_btc`) — pas ici, pour
-        // ne pas relire deux fois les mêmes données à chaque étape.
+        // Deposit verified by `lifi_btc_deposit` (outputs reread from Esplora): before the
+        // confirmation dialog, which shows its fees, then again just before signing
+        // (`send_lifi_btc`); not here, so the same data is not reread twice at each step.
         lifi::LifiTx::Bitcoin { .. } => Ok(Some(false)),
     }
 }
 
-/// Dépôt Bitcoin d'un devis LI.FI vérifié contre les sorties confirmées de
-/// l'adresse, relues ICI (voir `lifi::verify_btc_deposit`), avec un tarif
-/// de frais réseau au plus double du tarif « prochain bloc » d'Esplora (20
-/// sat/vB au moins, `BTC_SWAP_MAX_FEE_RATE_SAT_VB` au plus) : c'est LI.FI
-/// qui fixe ces frais, l'app les borne.
+/// Bitcoin deposit from a LI.FI quote, verified against the address's confirmed
+/// outputs, reread HERE (see `lifi::verify_btc_deposit`), with a network fee rate
+/// of at most twice Esplora's "next block" rate (at least 20 sat/vB, at most
+/// `BTC_SWAP_MAX_FEE_RATE_SAT_VB`): LI.FI sets these fees, and the app bounds them.
 pub fn lifi_btc_deposit(quote: &lifi::LifiQuote) -> Result<lifi::BtcDeposit> {
     let lifi::LifiTx::Bitcoin { psbt, deposit_script, .. } = &quote.tx else { anyhow::bail!("devis LI.FI non Bitcoin") };
     let network = &wallet_flow::BTC_MAINNET;
@@ -2682,10 +2651,10 @@ pub fn lifi_btc_deposit(quote: &lifi::LifiQuote) -> Result<lifi::BtcDeposit> {
     lifi::verify_btc_deposit(psbt, deposit_script, &own_script, &utxos?, amount, max_fee_rate)
 }
 
-/// Envoi LI.FI depuis Bitcoin : dépôt revérifié juste avant la signature
-/// (sorties relues, frais réseau au plus `max_network_fee`, le plafond
-/// affiché), transaction re-sérialisée et signée par l'app au nom du profil,
-/// diffusée via Esplora. Renvoie l'identifiant de la transaction.
+/// LI.FI send from Bitcoin: the deposit is checked again just before signing
+/// (outputs reread, network fee at most `max_network_fee`, the cap shown), the
+/// transaction re-serialized and signed by the app in the profile's name, and
+/// broadcast through Esplora. Returns the transaction identifier.
 pub fn send_lifi_btc(data_dir: &Path, device_password: &str, quote: &lifi::LifiQuote, max_network_fee: u64, profile_index: u32) -> Result<String> {
     let network = &wallet_flow::BTC_MAINNET;
     let seed = unlock_seed(data_dir, device_password)?;
@@ -2701,9 +2670,9 @@ pub fn send_lifi_btc(data_dir: &Path, device_password: &str, quote: &lifi::LifiQ
     btc_rpc::EsploraClient::new(network.esplora_base).broadcast(&raw)
 }
 
-/// Bornes d'un envoi LI.FI depuis Solana : le jeton vendu sort au plus du
-/// montant, les lamports au plus du montant (SOL) + budget de frais, rien
-/// n'est attendu en retour sur Solana.
+/// Bounds of a LI.FI send from Solana: the token sold leaves for at most the
+/// amount, lamports for at most the amount (SOL) + the fee budget, and nothing is
+/// expected back on Solana.
 fn lifi_solana_limits(owner: [u8; 32], quote: &lifi::LifiQuote) -> Result<SwapEffectLimits> {
     let amount = u64::try_from(quote.from_amount).context("montant hors limites")?;
     let (sold_lamports, input_token) = if quote.from.native {
@@ -2720,10 +2689,10 @@ fn lifi_solana_limits(owner: [u8; 32], quote: &lifi::LifiQuote) -> Result<SwapEf
     })
 }
 
-/// Devis LI.FI dont la transaction a passé la vérification : nouveau devis
-/// sans le pont fautif tant que le destinataire est caché (au plus
-/// `lifi::MAX_ROUTE_ATTEMPTS` fois). Renvoie le devis et si le destinataire a
-/// été vérifié.
+/// A LI.FI quote whose transaction passed verification: a new quote without the
+/// offending bridge while the recipient is hidden (at most
+/// `lifi::MAX_ROUTE_ATTEMPTS` times). Returns the quote and whether the recipient
+/// was verified.
 #[allow(clippy::too_many_arguments)]
 pub fn lifi_verified_quote(
     from_network: &'static str,
@@ -2748,11 +2717,11 @@ pub fn lifi_verified_quote(
     anyhow::bail!("aucune route LI.FI dont le destinataire soit vérifiable (ponts écartés : {})", deny.join(", "))
 }
 
-/// Solde suffisant pour l'envoi, vérifié avant la simulation (qui échouerait
-/// sinon avec un message trompeur).
+/// Enough balance for the send, checked before the simulation (which would
+/// otherwise fail with a misleading message).
 fn ensure_lifi_balance(from_network: &str, from: &lifi::LifiToken, units: u128, from_address: &str) -> Result<()> {
     let available = if from_network == "btc_mainnet" {
-        // Sorties confirmées seulement : les seules que le dépôt peut dépenser.
+        // Confirmed outputs only: the only ones the deposit can spend.
         let utxos = btc_rpc::EsploraClient::new(wallet_flow::BTC_MAINNET.esplora_base).utxos(from_address)?;
         utxos.iter().map(|u| u128::from(u.value_sat)).sum()
     } else if let Some(network) = wallet_flow::evm_network(from_network) {
@@ -2782,10 +2751,10 @@ fn ensure_lifi_balance(from_network: &str, from: &lifi::LifiToken, units: u128, 
     Ok(())
 }
 
-/// Devis RE-demandé après la confirmation (la boîte native reste ouverte un
-/// temps arbitraire, la transaction d'un pont expire vite) sur le MÊME pont,
-/// refusé s'il ne correspond plus à ce qui a été affiché : même destinataire,
-/// minimum d'au moins 99 % de celui affiché, même niveau de vérification.
+/// Quote requested AGAIN after confirmation (the native dialog stays open for an
+/// arbitrary time, and a bridge's transaction expires quickly) on the SAME bridge,
+/// refused if it no longer matches what was shown: same recipient, a minimum of at
+/// least 99% of the one shown, the same level of verification.
 pub fn refresh_lifi_quote_matching(shown: &lifi::LifiQuote, shown_verified: bool) -> Result<lifi::LifiQuote> {
     let receiver = lifi::Receiver::parse(shown.to_network, &shown.to_address)?;
     let quote = lifi::quote(
@@ -2814,9 +2783,9 @@ pub fn refresh_lifi_quote_matching(shown: &lifi::LifiQuote, shown_verified: bool
     Ok(quote)
 }
 
-/// Frais maximum d'un envoi LI.FI depuis un réseau EVM, montrés avant la
-/// confirmation : l'appel au plafond de gas (+ frais L1 sur Base) et les
-/// autorisations au contrat LI.FI s'il en faut.
+/// Maximum fee for a LI.FI send from an EVM network, shown before confirmation: the
+/// call at its gas cap (+ L1 fees on Base) and the approvals to the LI.FI contract
+/// if needed.
 pub fn lifi_evm_fees(network: &wallet_flow::EvmNetwork, quote: &lifi::LifiQuote, gas_price: u128) -> Result<(EvmFee, EvmFee, usize)> {
     let lifi::LifiTx::Evm { to, data, value } = &quote.tx else { anyhow::bail!("devis LI.FI non EVM") };
     let cap = lifi_gas_cap(network);
@@ -2835,7 +2804,7 @@ pub fn lifi_evm_fees(network: &wallet_flow::EvmNetwork, quote: &lifi::LifiQuote,
 }
 
 fn lifi_gas_cap(network: &wallet_flow::EvmNetwork) -> u64 {
-    // Arbitrum : la limite de gas compte aussi la publication sur Ethereum.
+    // Arbitrum: the gas limit also counts posting to Ethereum.
     if network.transfer_gas.is_none() {
         EVM_MAX_ESTIMATED_GAS
     } else {
@@ -2843,10 +2812,10 @@ fn lifi_gas_cap(network: &wallet_flow::EvmNetwork) -> u64 {
     }
 }
 
-/// Envoi LI.FI depuis un réseau EVM : la transaction AFFICHÉE et vérifiée
-/// (`quote`), au nom du profil qui signe, au prix du gas affiché ;
-/// autorisation au montant exact au contrat LI.FI si nécessaire (mêmes règles
-/// que les autres échanges). Renvoie le hash de la transaction.
+/// LI.FI send from an EVM network: the transaction SHOWN and verified (`quote`), in
+/// the name of the signing profile, at the gas price shown; an approval for the
+/// exact amount to the LI.FI contract if needed (same rules as the other swaps).
+/// Returns the transaction hash.
 pub fn send_lifi_evm(
     data_dir: &Path,
     device_password: &str,
@@ -2906,10 +2875,10 @@ pub fn send_lifi_evm(
     rpc.send_raw_transaction(&tx.sign(&signing_key)?)
 }
 
-/// Envoi LI.FI depuis Solana : effets revérifiés par simulation juste avant
-/// la signature (le jeton vendu sort au plus du montant, rien d'autre ne
-/// quitte l'utilisateur au-delà du budget de frais, aucune autorité cédée),
-/// puis signature de la transaction AFFICHÉE au nom du profil.
+/// LI.FI send from Solana: effects checked again by simulation just before signing
+/// (the token sold leaves for at most the amount, nothing else leaves the user
+/// beyond the fee budget, no authority handed over), then the transaction SHOWN is
+/// signed in the profile's name.
 pub fn send_lifi_solana(data_dir: &Path, device_password: &str, quote: &lifi::LifiQuote, profile_index: u32) -> Result<String> {
     let lifi::LifiTx::Solana { raw } = &quote.tx else { anyhow::bail!("devis LI.FI non Solana") };
     let seed = unlock_seed(data_dir, device_password)?;
@@ -2919,7 +2888,7 @@ pub fn send_lifi_solana(data_dir: &Path, device_password: &str, quote: &lifi::Li
     anyhow::ensure!(bs58::encode(owner).into_string() == quote.from_address, "la transaction LI.FI n'est pas au nom de ce profil — échange refusé");
     let rpc = sol_rpc::SolRpc::new(wallet_flow::SOLANA_MAINNET.rpc);
     check_swap_effects(&rpc, raw, &lifi_solana_limits(owner, quote)?)?;
-    // Blockhash frais de notre nœud (voir `jupiter_rpc::with_recent_blockhash`).
+    // A fresh blockhash from our node (see `jupiter_rpc::with_recent_blockhash`).
     let raw = jupiter_rpc::with_recent_blockhash(raw, &rpc.latest_blockhash()?)?;
     let signed = jupiter_rpc::sign_swap_transaction(&raw, &signing_key, &owner)?;
     rpc.send_transaction(&signed)
@@ -2927,10 +2896,9 @@ pub fn send_lifi_solana(data_dir: &Path, device_password: &str, quote: &lifi::Li
 
 // --- Monero ----------------------------------------------------------------------
 
-/// Synchronise les comptes Monero jusqu'au bout de la chaîne (appelé en
-/// arrière-plan après le déverrouillage).
-/// Passe de synchronisation Monero ; `generation` : lue avant les clés (voir
-/// `seed_state`), sans quoi la passe est écartée.
+/// Syncs the Monero accounts up to the tip of the chain (called in the background
+/// after unlocking). `generation`: read before the keys (see `seed_state`),
+/// otherwise the pass is discarded.
 pub fn sync_xmr(data_dir: &Path, keys: &[monero::ViewKeys], generation: u64) -> Result<()> {
     monero::sync(data_dir, keys, generation)
 }
@@ -2955,37 +2923,37 @@ pub fn canonical_xmr_amount(amount: &str) -> Result<String> {
     Ok(monero::format_xmr(monero::parse_xmr(amount)?))
 }
 
-/// Envoi préparé pour la boîte de confirmation : destinataire vérifié
-/// (jamais soi-même), sorties choisies, leurres tirés, frais calculés —
-/// exactement ce que `send_xmr` signera.
+/// A send prepared for the confirmation dialog: recipient verified (never
+/// ourselves), outputs chosen, decoys drawn, fee computed; exactly what `send_xmr`
+/// will sign.
 pub fn xmr_send_plan(data_dir: &Path, keys: &monero::ViewKeys, to: &str, amount: &str) -> Result<monero::SendPlan> {
     monero::prepare_send(data_dir, keys, to, monero::parse_xmr(amount)?)
 }
 
-/// Envoi de tout le solde Monero dépensable, frais déduits (`to` absent :
-/// estimation du montant pour le bouton « Max »).
+/// Sends the whole spendable Monero balance, fee deducted (`to` absent: amount
+/// estimate for the "Max" button).
 pub fn xmr_send_plan_max(data_dir: &Path, keys: &monero::ViewKeys, to: Option<&str>) -> Result<monero::SendPlan> {
     monero::prepare_send_max(data_dir, keys, to)
 }
 
-/// Signe l'envoi préparé (et confirmé) avec la clé de dépense tirée de la
-/// seed, le diffuse et renvoie l'identifiant de la transaction.
+/// Signs the prepared (and confirmed) send with the spend key drawn from the seed,
+/// broadcasts it and returns the transaction identifier.
 pub fn send_xmr(data_dir: &Path, device_password: &str, plan: monero::SendPlan) -> Result<String> {
     let seed = unlock_seed(data_dir, device_password)?;
     let _seed_lock = memory_guard::lock(&seed);
     monero::sign_and_send(data_dir, &seed, plan)
 }
 
-/// « Réanalyser depuis le début » (Paramètres) : Monero et Zcash protégé relus
-/// depuis la naissance fixe de l'app — pour des fonds plus anciens que la
-/// création du portefeuille sur cet appareil (portefeuille importé autrement).
+/// "Rescan from the beginning" (Settings): Monero and shielded Zcash reread from
+/// the app's fixed birthday, for funds older than the wallet's creation on this
+/// device (a wallet imported some other way).
 pub fn rescan_private_funds(data_dir: &Path) -> Result<()> {
     wallet_birthday::forget(data_dir);
     monero::rescan_from_birthday(data_dir)?;
     zcash_shielded::request_rescan(data_dir)
 }
 
-/// Nœud Monero choisi dans Paramètres (`None` : nœuds publics par défaut).
+/// Monero node chosen in Settings (`None`: the default public nodes).
 pub fn xmr_node(data_dir: &Path) -> Option<String> {
     monero::custom_node(data_dir)
 }
@@ -2994,11 +2962,12 @@ pub fn set_xmr_node(data_dir: &Path, url: &str) -> Result<Option<String>> {
     monero::set_custom_node(data_dir, url)
 }
 
-// --- Zcash protégé (Orchard) ------------------------------------------------------
+// --- Shielded Zcash (Orchard and Ironwood)
+// ------------------------------------------
 
-/// Crée les comptes protégés manquants puis synchronise jusqu'au bout de la
-/// chaîne (appelé en arrière-plan après le déverrouillage).
-/// Passe de synchronisation Zcash protégée (même règle que `sync_xmr`).
+/// Creates any missing shielded accounts, then syncs up to the tip of the chain
+/// (called in the background after unlocking). Same `generation` rule as
+/// `sync_xmr`.
 pub fn sync_zec_shielded(data_dir: &Path, keys: &[zcash_shielded::ProfileKeys], generation: u64) -> Result<()> {
     let Some(_pass) = crate::seed_state::pass(generation) else { return Ok(()) };
     zcash_shielded::ensure_accounts(data_dir, keys)?;
@@ -3013,14 +2982,14 @@ pub fn zec_shielded_history(data_dir: &Path, profile_index: u32) -> Result<Vec<h
     zcash_shielded::history(data_dir, profile_index)
 }
 
-/// Protège les ZEC de l'adresse t1 du profil : résumé confirmé par
-/// `confirm`, puis seed déverrouillée (mot de passe), signature, diffusion.
-/// `Ok(None)` : confirmation refusée.
+/// Shields the ZEC on the profile's t1 address: summary confirmed through
+/// `confirm`, then the seed is unlocked (password), signed, broadcast. `Ok(None)`:
+/// confirmation declined.
 pub fn shield_zec(data_dir: &Path, device_password: &str, profile_index: u32, t1: &str, confirm: impl FnOnce(&zcash_shielded::SpendSummary) -> bool) -> Result<Option<String>> {
     zcash_shielded::shield(data_dir, profile_index, t1, confirm, || unlock_seed(data_dir, device_password))
 }
 
-/// Envoie depuis les fonds protégés du profil (montant en ZEC, 8 décimales).
+/// Sends from the profile's shielded funds (amount in ZEC, 8 decimals).
 pub fn send_zec_shielded(
     data_dir: &Path,
     device_password: &str,
@@ -3033,7 +3002,7 @@ pub fn send_zec_shielded(
     zcash_shielded::send(data_dir, profile_index, to, units, confirm, || unlock_seed(data_dir, device_password))
 }
 
-/// Envoi de tous les fonds protégés dépensables, frais déduits.
+/// Sends all spendable shielded funds, fee deducted.
 pub fn send_zec_shielded_max(
     data_dir: &Path,
     device_password: &str,
@@ -3044,13 +3013,13 @@ pub fn send_zec_shielded_max(
     zcash_shielded::send_max(data_dir, profile_index, to, confirm, || unlock_seed(data_dir, device_password))
 }
 
-// --- Zcash (adresses transparentes) ---------------------------------------------
+// --- Zcash (transparent addresses) ---------------------------------------------
 
 pub fn get_zec_balance(address: &str) -> Result<u64> {
     zcash::balance(address)
 }
 
-/// État d'une adresse Zcash destinataire, pour les avertissements de la boîte.
+/// State of a Zcash recipient address, for the dialog's warnings.
 pub fn zec_recipient_activity(to: &str) -> Result<RecipientActivity> {
     let address = zcash::transparent_address(&zcash::parse_recipient(to)?);
     Ok(match zcash::address_activity(&address)? {
@@ -3060,14 +3029,13 @@ pub fn zec_recipient_activity(to: &str) -> Result<RecipientActivity> {
     })
 }
 
-/// Forme canonique d'un montant en ZEC (8 décimales), affichée ET signée.
+/// Canonical form of an amount in ZEC (8 decimals), shown AND signed.
 pub fn canonical_zec_amount(amount: &str) -> Result<String> {
     Ok(tokens::format_amount(tokens::parse_amount(amount, 8)?, 8))
 }
 
-/// Envoi préparé pour la boîte de confirmation : destinataire vérifié (t1,
-/// t3, tex1 ; jamais soi-même), sorties choisies, frais ZIP-317 et monnaie
-/// rendue.
+/// A send prepared for the confirmation dialog: recipient verified (t1, t3, tex1;
+/// never ourselves), outputs chosen, ZIP-317 fee and change returned.
 pub fn zec_send_plan(from_address: &str, to: &str, amount: &str) -> Result<zcash::SendPlan> {
     let recipient = zcash::parse_recipient(to)?;
     anyhow::ensure!(recipient != zcash::parse_recipient(from_address)?, "envoi vers votre propre adresse Zcash");
@@ -3075,9 +3043,9 @@ pub fn zec_send_plan(from_address: &str, to: &str, amount: &str) -> Result<zcash
     zcash::plan_send(zcash::utxos(from_address)?, units)
 }
 
-/// Envoi Zcash : sorties relues, frais jamais supérieurs à ceux affichés
-/// (`shown_fee`), branche de consensus vérifiée auprès du serveur,
-/// transaction construite et signée ici, puis diffusée.
+/// Zcash send: outputs reread, fee never higher than the one shown (`shown_fee`),
+/// consensus branch checked with the server, transaction built and signed here,
+/// then broadcast.
 pub fn send_zec(data_dir: &Path, device_password: &str, to: &str, amount: &str, shown_fee: u64, profile_index: u32) -> Result<String> {
     let recipient = zcash::parse_recipient(to)?;
     let units = u64::try_from(tokens::parse_amount(amount, 8)?).context("montant hors limites")?;
@@ -3100,10 +3068,10 @@ pub fn send_zec(data_dir: &Path, device_password: &str, to: &str, amount: &str, 
     zcash::broadcast(&signed.raw, &signed.txid)
 }
 
-/// Dépôt d'un échange depuis Zcash (Maya), préparé pour la boîte de
-/// confirmation : frais calculés pour un memo de 80 octets, le plus long
-/// possible — le devis relu après la confirmation peut porter un memo d'un
-/// octet de plus ou de moins, jamais des frais au-delà de ceux affichés.
+/// Deposit for a swap from Zcash (Maya), prepared for the confirmation dialog: fee
+/// computed for an 80-byte memo, the longest possible. The quote reread after
+/// confirmation may carry a memo one byte longer or shorter, never fees beyond
+/// those shown.
 pub fn zec_swap_plan(from_address: &str, quote: &thorchain_rpc::SwapQuote, amount: &str) -> Result<zcash::SendPlan> {
     let vault = zec_vault(quote)?;
     anyhow::ensure!(vault != zcash::parse_recipient(from_address)?, "adresse de dépôt Maya égale à votre propre adresse — échange refusé");
@@ -3111,8 +3079,8 @@ pub fn zec_swap_plan(from_address: &str, quote: &thorchain_rpc::SwapQuote, amoun
     zcash::plan_deposit(zcash::utxos(from_address)?, units, &[0; 80])
 }
 
-/// Coffre Zcash du devis : une adresse transparente (Maya n'en annonce pas
-/// d'autre, voir les notes de ses devis).
+/// The quote's Zcash vault: a transparent address (Maya announces no other kind,
+/// see the notes in its quotes).
 fn zec_vault(quote: &thorchain_rpc::SwapQuote) -> Result<zcash::Recipient> {
     anyhow::ensure!(
         quote.memo.len() <= 80,
@@ -3122,10 +3090,10 @@ fn zec_vault(quote: &thorchain_rpc::SwapQuote) -> Result<zcash::Recipient> {
     zcash::parse_recipient(&quote.inbound_address).context("adresse de dépôt Maya invalide")
 }
 
-/// Envoie un échange depuis Zcash : virement transparent vers le coffre du
-/// devis, avec le memo en sortie OP_RETURN (coffre, monnaie, memo — l'ordre
-/// demandé par Maya), frais ZIP-317 jamais au-delà de ceux affichés
-/// (`shown_fee`), branche de consensus vérifiée auprès du serveur.
+/// Sends a swap from Zcash: a transparent transfer to the quote's vault, with the
+/// memo in an OP_RETURN output (vault, change, memo: the order Maya requires),
+/// ZIP-317 fee never beyond the one shown (`shown_fee`), consensus branch checked
+/// with the server.
 pub fn send_swap_zec(data_dir: &Path, device_password: &str, quote: &thorchain_rpc::SwapQuote, amount: &str, shown_fee: u64, profile_index: u32) -> Result<String> {
     let vault = zec_vault(quote)?;
     let units = u64::try_from(tokens::parse_amount(amount, 8)?).context("montant hors limites")?;
@@ -3154,7 +3122,7 @@ pub fn get_trx_balance(address: &str) -> Result<u64> {
     tron::balance(address)
 }
 
-/// État d'une adresse Tron destinataire, pour les avertissements de la boîte.
+/// State of a Tron recipient address, for the dialog's warnings.
 pub fn trx_recipient_activity(to: &str) -> Result<RecipientActivity> {
     Ok(match tron::address_activity(to)? {
         (true, _) => RecipientActivity::Funded,
@@ -3163,7 +3131,7 @@ pub fn trx_recipient_activity(to: &str) -> Result<RecipientActivity> {
     })
 }
 
-/// Forme canonique d'un montant en TRX (6 décimales), affichée ET signée.
+/// Canonical form of an amount in TRX (6 decimals), shown AND signed.
 pub fn canonical_trx_amount(amount: &str) -> Result<String> {
     Ok(tokens::format_amount(tokens::parse_amount(amount, tron::DECIMALS)?, tron::DECIMALS))
 }
@@ -3172,15 +3140,15 @@ fn trx_units(amount: &str) -> Result<u64> {
     u64::try_from(tokens::parse_amount(amount, tron::DECIMALS)?).context("montant hors limites")
 }
 
-/// Envoi préparé pour la boîte de confirmation : destinataire vérifié
-/// (jamais soi-même), frais maximum (bande passante, activation d'un compte
-/// inexistant), solde suffisant.
+/// A send prepared for the confirmation dialog: recipient verified (never
+/// ourselves), maximum fee (bandwidth, activating an account that does not exist),
+/// enough balance.
 pub fn trx_send_plan(from_address: &str, to: &str, amount: &str) -> Result<tron::TrxPlan> {
     tron::plan_trx(from_address, to, trx_units(amount)?)
 }
 
-/// Envoi de TRX : frais jamais supérieurs à ceux affichés (`shown_fee`),
-/// transaction construite et signée ici, puis diffusée.
+/// TRX send: fee never higher than the one shown (`shown_fee`), transaction built
+/// and signed here, then broadcast.
 pub fn send_trx(data_dir: &Path, device_password: &str, to: &str, amount: &str, shown_fee: u64, profile_index: u32) -> Result<String> {
     let recipient = tron::parse_address(to)?;
     let units = trx_units(amount)?;
@@ -3197,8 +3165,8 @@ pub fn send_trx(data_dir: &Path, device_password: &str, to: &str, amount: &str, 
     tron::send_trx(&key, &recipient, units)
 }
 
-/// Transfert d'un jeton TRC-20 du registre, préparé pour la boîte : énergie
-/// simulée, frais maximum, solde de jeton et TRX vérifiés.
+/// Transfer of a registry TRC-20 token, prepared for the dialog: energy simulated,
+/// maximum fee, token and TRX balances checked.
 pub fn trc20_send_plan(token_id: &str, from_address: &str, to: &str, amount: &str) -> Result<(tron::Trc20Plan, &'static str)> {
     let (_, deployment) = registered_token(token_id, "tron_mainnet")?;
     let tokens::TokenKind::Trc20 { contract } = deployment.kind else { anyhow::bail!("jeton TRC-20 attendu") };
@@ -3207,8 +3175,8 @@ pub fn trc20_send_plan(token_id: &str, from_address: &str, to: &str, amount: &st
     Ok((tron::plan_trc20(from_address, contract, to, units)?, contract))
 }
 
-/// Envoi d'un jeton TRC-20 : frais jamais supérieurs à ceux affichés
-/// (`shown_fee`), transaction signée ici avec le `fee_limit` recalculé.
+/// TRC-20 token send: fee never higher than the one shown (`shown_fee`),
+/// transaction signed here with the recomputed `fee_limit`.
 pub fn send_trc20(data_dir: &Path, device_password: &str, token_id: &str, to: &str, amount: &str, shown_fee: u64, profile_index: u32) -> Result<String> {
     let (_, deployment) = registered_token(token_id, "tron_mainnet")?;
     let tokens::TokenKind::Trc20 { contract } = deployment.kind else { anyhow::bail!("jeton TRC-20 attendu") };
@@ -3227,7 +3195,7 @@ pub fn send_trc20(data_dir: &Path, device_password: &str, token_id: &str, to: &s
     tron::send_trc20(&key, &tron::parse_address(contract)?, &recipient, units, plan.fee_limit)
 }
 
-/// Bouton « Max » : solde moins les frais maximum (vers `to` s'il est connu).
+/// "Max" button: balance minus the maximum fee (to `to` if known).
 pub fn trx_max(from: &str, to: Option<&str>) -> Result<String> {
     Ok(tron::format_trx(tron::max_trx(from, to)?))
 }
@@ -3238,7 +3206,7 @@ pub fn get_xrp_balance(address: &str) -> Result<u64> {
     xrp::balance(&xrp::MAINNET, address)
 }
 
-/// État d'une adresse XRP destinataire, pour les avertissements de la boîte.
+/// State of an XRP recipient address, for the dialog's warnings.
 pub fn xrp_recipient_activity(to: &str) -> Result<RecipientActivity> {
     Ok(match xrp::address_activity(&xrp::MAINNET, to)? {
         (true, _) => RecipientActivity::Funded,
@@ -3247,7 +3215,7 @@ pub fn xrp_recipient_activity(to: &str) -> Result<RecipientActivity> {
     })
 }
 
-/// Forme canonique d'un montant en XRP (6 décimales), affichée ET signée.
+/// Canonical form of an amount in XRP (6 decimals), shown AND signed.
 pub fn canonical_xrp_amount(amount: &str) -> Result<String> {
     Ok(tokens::format_amount(tokens::parse_amount(amount, xrp::DECIMALS)?, xrp::DECIMALS))
 }
@@ -3256,7 +3224,7 @@ fn xrp_units(amount: &str) -> Result<u64> {
     u64::try_from(tokens::parse_amount(amount, xrp::DECIMALS)?).context("montant hors limites")
 }
 
-/// Tag de destination saisi (vide = aucun) : entier 32 bits.
+/// Destination tag entered (empty = none): a 32-bit integer.
 pub fn parse_destination_tag(tag: Option<&str>) -> Result<Option<u32>> {
     match tag.map(str::trim).filter(|t| !t.is_empty()) {
         None => Ok(None),
@@ -3264,14 +3232,14 @@ pub fn parse_destination_tag(tag: Option<&str>) -> Result<Option<u32>> {
     }
 }
 
-/// Envoi préparé pour la boîte de confirmation : réserve du réseau,
-/// activation d'un destinataire neuf, tag exigé, frais.
+/// A send prepared for the confirmation dialog: network reserve, activation of a
+/// new recipient, required tag, fee.
 pub fn xrp_send_plan(from_address: &str, to: &str, amount: &str, destination_tag: Option<u32>) -> Result<xrp::XrpPlan> {
     xrp::plan_xrp(&xrp::MAINNET, from_address, to, xrp_units(amount)?, destination_tag)
 }
 
-/// Envoi de XRP : contrôles refaits, signé avec les frais revérifiés à
-/// l'instant (jamais supérieurs à ceux affichés, `shown_fee`), puis diffusé.
+/// XRP send: checks redone, signed with the fee rechecked just now (never higher
+/// than the one shown, `shown_fee`), then broadcast.
 pub fn send_xrp(data_dir: &Path, device_password: &str, to: &str, amount: &str, destination_tag: Option<u32>, shown_fee: u64, profile_index: u32) -> Result<String> {
     let recipient = xrp::parse_address(to)?;
     let units = xrp_units(amount)?;
@@ -3288,7 +3256,7 @@ pub fn send_xrp(data_dir: &Path, device_password: &str, to: &str, amount: &str, 
     xrp::send_xrp(&xrp::MAINNET, &key, &recipient, units, plan.fee, destination_tag)
 }
 
-/// Bouton « Max » : solde moins la réserve et les frais.
+/// "Max" button: balance minus the reserve and the fee.
 pub fn xrp_max(from: &str) -> Result<String> {
     Ok(xrp::format_xrp(xrp::max_xrp(&xrp::MAINNET, from)?))
 }
@@ -3299,7 +3267,7 @@ pub fn get_xlm_balance(address: &str) -> Result<i64> {
     stellar::balance(&stellar::MAINNET, address)
 }
 
-/// État d'une adresse Stellar destinataire, pour les avertissements de la boîte.
+/// State of a Stellar recipient address, for the dialog's warnings.
 pub fn xlm_recipient_activity(to: &str) -> Result<RecipientActivity> {
     Ok(match stellar::address_activity(&stellar::MAINNET, to)? {
         (true, _) => RecipientActivity::Funded,
@@ -3308,7 +3276,7 @@ pub fn xlm_recipient_activity(to: &str) -> Result<RecipientActivity> {
     })
 }
 
-/// Forme canonique d'un montant en XLM (7 décimales), affichée ET signée.
+/// Canonical form of an amount in XLM (7 decimals), shown AND signed.
 pub fn canonical_xlm_amount(amount: &str) -> Result<String> {
     Ok(tokens::format_amount(tokens::parse_amount(amount, stellar::DECIMALS)?, stellar::DECIMALS))
 }
@@ -3317,19 +3285,19 @@ fn xlm_units(amount: &str) -> Result<i64> {
     i64::try_from(tokens::parse_amount(amount, stellar::DECIMALS)?).context("montant hors limites")
 }
 
-/// Mémo saisi (vide = aucun) : identifiant numérique ou texte ASCII court.
+/// Memo entered (empty = none): a numeric ID or short ASCII text.
 pub fn parse_stellar_memo(memo: Option<&str>) -> Result<stellar::Memo> {
     stellar::parse_memo(memo)
 }
 
-/// Envoi préparé pour la boîte de confirmation : réserve du réseau,
-/// création d'un destinataire neuf, mémo exigé, frais.
+/// A send prepared for the confirmation dialog: network reserve, creation of a new
+/// recipient, required memo, fee.
 pub fn xlm_send_plan(from_address: &str, to: &str, amount: &str, memo: &stellar::Memo) -> Result<stellar::XlmPlan> {
     stellar::plan(&stellar::MAINNET, from_address, to, xlm_units(amount)?, memo)
 }
 
-/// Envoi de XLM : contrôles refaits, signé avec l'offre de frais revérifiée
-/// à l'instant (jamais supérieure à celle affichée, `shown_fee`), puis diffusé.
+/// XLM send: checks redone, signed with the fee bid rechecked just now (never
+/// higher than the one shown, `shown_fee`), then broadcast.
 pub fn send_xlm(data_dir: &Path, device_password: &str, to: &str, amount: &str, memo: stellar::Memo, shown_fee: u32, profile_index: u32) -> Result<String> {
     let recipient = stellar::parse_address(to)?;
     let units = xlm_units(amount)?;
@@ -3346,7 +3314,7 @@ pub fn send_xlm(data_dir: &Path, device_password: &str, to: &str, amount: &str, 
     stellar::send(&stellar::MAINNET, &key, &recipient, &plan, memo)
 }
 
-/// Bouton « Max » : solde moins la réserve et les frais.
+/// "Max" button: balance minus the reserve and the fee.
 pub fn xlm_max(from: &str) -> Result<String> {
     Ok(stellar::format_xlm(stellar::max_amount(&stellar::MAINNET, from)?))
 }
@@ -3357,7 +3325,7 @@ pub fn get_near_balance(account: &str) -> Result<u128> {
     near::balance(&near::MAINNET, account)
 }
 
-/// État d'un compte NEAR destinataire, pour les avertissements de la boîte.
+/// State of a NEAR recipient account, for the dialog's warnings.
 pub fn near_recipient_activity(to: &str) -> Result<RecipientActivity> {
     Ok(match near::address_activity(&near::MAINNET, to)? {
         (true, _) => RecipientActivity::Funded,
@@ -3366,19 +3334,19 @@ pub fn near_recipient_activity(to: &str) -> Result<RecipientActivity> {
     })
 }
 
-/// Forme canonique d'un montant en NEAR (24 décimales au plus), affichée ET signée.
+/// Canonical form of an amount in NEAR (at most 24 decimals), shown AND signed.
 pub fn canonical_near_amount(amount: &str) -> Result<String> {
     Ok(tokens::format_amount(tokens::parse_amount(amount, near::DECIMALS)?, near::DECIMALS))
 }
 
-/// Envoi préparé pour la boîte de confirmation : stockage du compte,
-/// création d'un compte implicite neuf, compte nommé existant, frais.
+/// A send prepared for the confirmation dialog: account storage, creation of a new
+/// implicit account, existing named account, fee.
 pub fn near_send_plan(from_account: &str, to: &str, amount: &str) -> Result<near::NearPlan> {
     near::plan(&near::MAINNET, from_account, to, tokens::parse_amount(amount, near::DECIMALS)?)
 }
 
-/// Envoi de NEAR : contrôles refaits, frais jamais supérieurs au maximum
-/// affiché (`shown_fee`), virement signé ici puis diffusé.
+/// NEAR send: checks redone, fee never higher than the maximum shown (`shown_fee`),
+/// transfer signed here, then broadcast.
 pub fn send_near(data_dir: &Path, device_password: &str, to: &str, amount: &str, shown_fee: u128, profile_index: u32) -> Result<String> {
     let units = tokens::parse_amount(amount, near::DECIMALS)?;
     let seed = unlock_seed(data_dir, device_password)?;
@@ -3394,7 +3362,7 @@ pub fn send_near(data_dir: &Path, device_password: &str, to: &str, amount: &str,
     near::send(&near::MAINNET, &key, to, &plan)
 }
 
-/// Bouton « Max » : solde moins le stockage et les frais (vers `to` s'il est connu).
+/// "Max" button: balance minus storage and fees (to `to` if known).
 pub fn near_max(from: &str, to: Option<&str>) -> Result<String> {
     Ok(near::format_near_exact(near::max_amount(&near::MAINNET, from, to)?))
 }
@@ -3405,7 +3373,7 @@ pub fn get_ada_balance(address: &str) -> Result<u64> {
     cardano::balance(address)
 }
 
-/// État d'une adresse Cardano destinataire, pour les avertissements de la boîte.
+/// State of a Cardano recipient address, for the dialog's warnings.
 pub fn ada_recipient_activity(to: &str) -> Result<RecipientActivity> {
     Ok(match cardano::address_activity(to)? {
         (true, _) => RecipientActivity::Funded,
@@ -3414,7 +3382,7 @@ pub fn ada_recipient_activity(to: &str) -> Result<RecipientActivity> {
     })
 }
 
-/// Forme canonique d'un montant en ADA (6 décimales), affichée ET signée.
+/// Canonical form of an amount in ADA (6 decimals), shown AND signed.
 pub fn canonical_ada_amount(amount: &str) -> Result<String> {
     Ok(tokens::format_amount(tokens::parse_amount(amount, cardano::DECIMALS)?, cardano::DECIMALS))
 }
@@ -3423,15 +3391,13 @@ fn ada_units(amount: &str) -> Result<u64> {
     u64::try_from(tokens::parse_amount(amount, cardano::DECIMALS)?).context("montant hors limites")
 }
 
-/// Envoi préparé pour la boîte de confirmation : sorties choisies (ADA
-/// seul), frais exacts, monnaie rendue, minimum d'une sortie.
+/// A send prepared for the confirmation dialog: outputs chosen (ADA only), exact
+/// fee, change returned, output minimum.
 pub fn ada_send_plan(from_address: &str, to: &str, amount: &str) -> Result<cardano::AdaPlan> {
     cardano::plan(from_address, to, ada_units(amount)?)
 }
 
-/// Envoi d'ADA : préparation refaite, frais jamais supérieurs à ceux
-/// affichés (`shown_fee`), transaction signée ici puis diffusée.
-/// Opération de mise en jeu Cardano (« Staker » sur la carte Cardano).
+/// Cardano staking operation ("Stake" on the Cardano card).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AdaStakeAction {
     Delegate,
@@ -3439,8 +3405,8 @@ pub enum AdaStakeAction {
     Undelegate,
 }
 
-/// Opération préparée depuis l'adresse publique du profil (boîte de
-/// confirmation) : exactement ce qui sera signé.
+/// Operation prepared from the profile's public address (confirmation dialog):
+/// exactly what will be signed.
 pub fn ada_stake_plan(address: &str, account: &cardano::StakeAccount, action: AdaStakeAction, pool: Option<&str>) -> Result<cardano::StakePlan> {
     match action {
         AdaStakeAction::Delegate => cardano::plan_delegate(address, account, pool.context("pool Cardano non choisi")?),
@@ -3449,9 +3415,9 @@ pub fn ada_stake_plan(address: &str, account: &cardano::StakeAccount, action: Ad
     }
 }
 
-/// Signe et diffuse l'opération confirmée : préparée à nouveau ICI, elle doit
-/// être celle affichée (mêmes certificats, même retrait, frais au plus ceux
-/// affichés), sinon refus.
+/// Signs and broadcasts the confirmed operation: prepared again HERE, it must be
+/// the one shown (same certificates, same withdrawal, fee at most the one shown),
+/// otherwise refused.
 pub fn send_ada_stake(data_dir: &Path, device_password: &str, action: AdaStakeAction, pool: Option<&str>, shown: &cardano::StakePlan, profile_index: u32) -> Result<String> {
     let seed = unlock_seed(data_dir, device_password)?;
     let _seed_lock = memory_guard::lock(&seed);
@@ -3465,6 +3431,8 @@ pub fn send_ada_stake(data_dir: &Path, device_password: &str, action: AdaStakeAc
     cardano::send_stake(&payment, &stake, &from, &plan)
 }
 
+/// ADA send: preparation redone, fee never higher than the one shown (`shown_fee`),
+/// transaction signed here, then broadcast.
 pub fn send_ada(data_dir: &Path, device_password: &str, to: &str, amount: &str, shown_fee: u64, profile_index: u32) -> Result<String> {
     let units = ada_units(amount)?;
     let seed = unlock_seed(data_dir, device_password)?;
@@ -3482,7 +3450,7 @@ pub fn send_ada(data_dir: &Path, device_password: &str, to: &str, amount: &str, 
     cardano::send(&payment, &from, to, &plan)
 }
 
-// --- Staking natif Solana -----------------------------------------------------------
+// --- Native Solana staking ---------------------------------------------------------
 
 fn sol_mainnet_rpc() -> sol_rpc::SolRpc {
     sol_rpc::SolRpc::new(wallet_flow::SOLANA_MAINNET.rpc)
@@ -3496,19 +3464,19 @@ pub fn sol_validators() -> Result<Vec<sol_stake::Validator>> {
     sol_stake::validators(&sol_mainnet_rpc())
 }
 
-/// SOL stakés en natif (lamports) : ligne de la carte SOL et valeur totale.
+/// Natively staked SOL (lamports): the SOL card's line and the total value.
 pub fn sol_staked_lamports(owner: &str) -> Result<u64> {
     sol_stake::staked_lamports(&sol_mainnet_rpc(), owner)
 }
 
-/// « Max » de la fenêtre de staking natif, en SOL.
+/// "Max" of the native staking window, in SOL.
 pub fn sol_stake_max(owner: &str) -> Result<String> {
     Ok(sol_rpc::format_lamports(sol_stake::max_delegation(&sol_mainnet_rpc(), owner)?))
 }
 
-/// Opération préparée et simulée depuis l'adresse publique du profil (boîte
-/// de confirmation). Mise : `amount` (SOL) et `target` = compte de vote ;
-/// arrêt ou retrait : `target` = compte de mise.
+/// Operation prepared and simulated from the profile's public address (confirmation
+/// dialog). Stake: `amount` (SOL) and `target` = vote account; deactivate or
+/// withdraw: `target` = stake account.
 pub fn sol_stake_plan(owner: &str, action: sol_stake::Action, amount: Option<&str>, target: &str) -> Result<sol_stake::Plan> {
     let rpc = sol_mainnet_rpc();
     match action {
@@ -3521,8 +3489,8 @@ pub fn sol_stake_plan(owner: &str, action: sol_stake::Action, amount: Option<&st
     }
 }
 
-/// Signe et diffuse l'opération confirmée : préparée et simulée à nouveau
-/// ICI, elle doit être exactement celle affichée, sinon refus.
+/// Signs and broadcasts the confirmed operation: prepared and simulated again HERE,
+/// it must be exactly the one shown, otherwise refused.
 pub fn send_sol_stake(data_dir: &Path, device_password: &str, action: sol_stake::Action, amount: Option<&str>, target: &str, shown: &sol_stake::Plan, profile_index: u32) -> Result<String> {
     let seed = unlock_seed(data_dir, device_password)?;
     let _seed_lock = memory_guard::lock(&seed);
@@ -3536,27 +3504,26 @@ pub fn send_sol_stake(data_dir: &Path, device_password: &str, action: sol_stake:
     rpc.send_transaction(&raw_tx)
 }
 
-// --- MoonPay Trade (voir core/src/moonpay_trade.rs) ------------------------------------
+// --- MoonPay Trade (see core/src/moonpay_trade.rs) -------------------------------------
 
-/// Paire MoonPay Trade désignée par l'interface (réseaux de l'app).
+/// MoonPay Trade pair designated by the UI (the app's networks).
 pub fn moonpay_assets(from_coin: &str, from_network: &str, to_coin: &str, to_network: &str) -> Result<(moonpay_trade::Asset, moonpay_trade::Asset)> {
     let from = moonpay_trade::asset(from_coin, from_network).context("crypto non échangeable via MoonPay Trade")?;
     let to = moonpay_trade::asset(to_coin, to_network).context("crypto non échangeable via MoonPay Trade")?;
     Ok((from, to))
 }
 
-/// Devis MoonPay Trade (forme vérifiée, voir `moonpay_trade::parse_action`)
-/// pour un montant saisi.
+/// MoonPay Trade quote (shape verified, see `moonpay_trade::parse_action`) for an
+/// amount entered.
 pub fn moonpay_quote(from: &moonpay_trade::Asset, to: &moonpay_trade::Asset, amount: &str, sender: &str, recipient: &str) -> Result<moonpay_trade::Quote> {
     let units = tokens::parse_amount(amount, from.decimals)?;
     moonpay_trade::quote(from, to, units, sender, recipient)
 }
 
-/// Simule l'échange par le routeur (même réseau EVM) depuis `sender` :
-/// autorisation au montant exact s'il en faut, puis l'appel ; vérifie que
-/// seul le jeton vendu sort, au montant exact, et que le jeton acheté arrive
-/// sur l'adresse de `sender`, au moins le minimum garanti. Renvoie ce qui
-/// arriverait.
+/// Simulates the swap through the router (same EVM network) from `sender`: an
+/// approval for the exact amount if needed, then the call; checks that only the
+/// token sold leaves, for the exact amount, and that the token bought lands on
+/// `sender`'s address, at least the guaranteed minimum. Returns what would arrive.
 pub fn verify_moonpay_router(from: &moonpay_trade::Asset, to: &moonpay_trade::Asset, quote: &moonpay_trade::Quote, sender: &str) -> Result<u128> {
     let moonpay_trade::TradeTx::Router { router, data, value } = &quote.tx else { anyhow::bail!("devis MoonPay Trade sans routeur") };
     anyhow::ensure!(from.network == to.network, "échange MoonPay Trade par le routeur : même réseau seulement");
@@ -3576,9 +3543,9 @@ pub fn verify_moonpay_router(from: &moonpay_trade::Asset, to: &moonpay_trade::As
     moonpay_trade::verify_router(&simulated, &expected)
 }
 
-/// Plafond du gas d'un échange MoonPay Trade par le routeur (~325 000 mesurés
-/// en simulation sur Ethereum le 07/10/2026, ETH → USDC) ; Arbitrum : la
-/// limite compte aussi la publication sur Ethereum.
+/// Gas cap for a MoonPay Trade swap through the router (~325,000 measured in
+/// simulation on Ethereum on 2026-10-07, ETH → USDC); Arbitrum: the limit also
+/// counts posting to Ethereum.
 fn moonpay_gas_cap(network: &wallet_flow::EvmNetwork) -> u64 {
     if network.transfer_gas.is_none() {
         EVM_MAX_ESTIMATED_GAS
@@ -3587,9 +3554,9 @@ fn moonpay_gas_cap(network: &wallet_flow::EvmNetwork) -> u64 {
     }
 }
 
-/// Frais maximum d'un échange MoonPay Trade par le routeur, montrés avant la
-/// confirmation : l'appel au plafond de gas (+ frais L1 sur Base) et les
-/// autorisations au routeur s'il en faut.
+/// Maximum fee for a MoonPay Trade swap through the router, shown before
+/// confirmation: the call at its gas cap (+ L1 fees on Base) and the approvals to
+/// the router if needed.
 pub fn moonpay_router_fees(from: &moonpay_trade::Asset, quote: &moonpay_trade::Quote, sender: &str, gas_price: u128) -> Result<(EvmFee, EvmFee, usize)> {
     let moonpay_trade::TradeTx::Router { router, data, value } = &quote.tx else { anyhow::bail!("devis MoonPay Trade sans routeur") };
     let network = wallet_flow::evm_network(from.network).context("réseau EVM inconnu")?;
@@ -3605,10 +3572,10 @@ pub fn moonpay_router_fees(from: &moonpay_trade::Asset, quote: &moonpay_trade::Q
     Ok((call, approve, approvals))
 }
 
-/// Échange MoonPay Trade par le routeur : la transaction AFFICHÉE, revérifiée
-/// par simulation juste avant la signature (au moins le minimum affiché sur
-/// l'adresse du profil), au nom du profil qui signe, au prix du gas affiché ;
-/// autorisation au montant exact au routeur si nécessaire. Renvoie le hash.
+/// MoonPay Trade swap through the router: the transaction SHOWN, checked again by
+/// simulation just before signing (at least the minimum shown on the profile's
+/// address), in the name of the signing profile, at the gas price shown; an
+/// approval for the exact amount to the router if needed. Returns the hash.
 #[allow(clippy::too_many_arguments)]
 pub fn send_moonpay_router(
     data_dir: &Path,
@@ -3679,7 +3646,7 @@ pub fn get_stx_balance(address: &str) -> Result<u64> {
     stacks::balance(&stacks::MAINNET, address)
 }
 
-/// État d'une adresse Stacks destinataire, pour les avertissements de la boîte.
+/// State of a Stacks recipient address, for the dialog's warnings.
 pub fn stx_recipient_activity(to: &str) -> Result<RecipientActivity> {
     Ok(match stacks::address_activity(&stacks::MAINNET, to)? {
         (true, _) => RecipientActivity::Funded,
@@ -3688,7 +3655,7 @@ pub fn stx_recipient_activity(to: &str) -> Result<RecipientActivity> {
     })
 }
 
-/// Forme canonique d'un montant en STX (6 décimales), affichée ET signée.
+/// Canonical form of an amount in STX (6 decimals), shown AND signed.
 pub fn canonical_stx_amount(amount: &str) -> Result<String> {
     Ok(tokens::format_amount(tokens::parse_amount(amount, stacks::DECIMALS)?, stacks::DECIMALS))
 }
@@ -3697,18 +3664,18 @@ fn stx_units(amount: &str) -> Result<u64> {
     u64::try_from(tokens::parse_amount(amount, stacks::DECIMALS)?).context("montant hors limites")
 }
 
-/// Mémo Stacks saisi (34 caractères ASCII au plus ; vide = aucun).
+/// Stacks memo entered (at most 34 ASCII characters; empty = none).
 pub fn parse_stacks_memo(memo: Option<&str>) -> Result<String> {
     stacks::parse_memo(memo)
 }
 
-/// Envoi préparé pour la boîte de confirmation : solde disponible, frais.
+/// A send prepared for the confirmation dialog: available balance, fee.
 pub fn stx_send_plan(from_address: &str, to: &str, amount: &str) -> Result<stacks::StxPlan> {
     stacks::plan(&stacks::MAINNET, from_address, to, stx_units(amount)?)
 }
 
-/// Envoi de STX : préparation refaite, frais jamais supérieurs à ceux
-/// affichés (`shown_fee`), virement signé ici puis diffusé.
+/// STX send: preparation redone, fee never higher than the one shown (`shown_fee`),
+/// transfer signed here, then broadcast.
 pub fn send_stx(data_dir: &Path, device_password: &str, to: &str, amount: &str, memo: &str, shown_fee: u64, profile_index: u32) -> Result<String> {
     let units = stx_units(amount)?;
     let seed = unlock_seed(data_dir, device_password)?;
@@ -3724,7 +3691,7 @@ pub fn send_stx(data_dir: &Path, device_password: &str, to: &str, amount: &str, 
     stacks::send(&stacks::MAINNET, &key, to, &plan, memo)
 }
 
-/// Bouton « Max » : solde disponible moins les frais.
+/// "Max" button: available balance minus the fee.
 pub fn stx_max(from: &str) -> Result<String> {
     Ok(stacks::format_stx(stacks::max_amount(&stacks::MAINNET, from)?))
 }
@@ -3735,7 +3702,7 @@ pub fn get_tao_balance(address: &str) -> Result<u64> {
     bittensor::balance(address)
 }
 
-/// État d'une adresse Bittensor destinataire, pour les avertissements de la boîte.
+/// State of a Bittensor recipient address, for the dialog's warnings.
 pub fn tao_recipient_activity(to: &str) -> Result<RecipientActivity> {
     Ok(match bittensor::address_activity(to)? {
         (true, _) => RecipientActivity::Funded,
@@ -3744,7 +3711,7 @@ pub fn tao_recipient_activity(to: &str) -> Result<RecipientActivity> {
     })
 }
 
-/// Forme canonique d'un montant en TAO (9 décimales), affichée ET signée.
+/// Canonical form of an amount in TAO (9 decimals), shown AND signed.
 pub fn canonical_tao_amount(amount: &str) -> Result<String> {
     Ok(tokens::format_amount(tokens::parse_amount(amount, bittensor::DECIMALS)?, bittensor::DECIMALS))
 }
@@ -3753,14 +3720,14 @@ fn tao_units(amount: &str) -> Result<u64> {
     u64::try_from(tokens::parse_amount(amount, bittensor::DECIMALS)?).context("montant hors limites")
 }
 
-/// Envoi préparé pour la boîte de confirmation : frais, réserves vérifiées.
+/// A send prepared for the confirmation dialog: fee, reserves checked.
 pub fn tao_send_plan(from_address: &str, to: &str, amount: &str) -> Result<bittensor::TaoPlan> {
     bittensor::plan(from_address, to, tao_units(amount)?)
 }
 
-/// Envoi de TAO : préparation refaite, frais au plus ceux affichés à 10 %
-/// près (ils suivent la charge du réseau, de très peu), virement signé ici,
-/// validé par le nœud, puis diffusé.
+/// TAO send: preparation redone, fee at most the one shown give or take 10% (it
+/// follows network load, very slightly), transfer signed here, validated by the
+/// node, then broadcast.
 pub fn send_tao(data_dir: &Path, device_password: &str, to: &str, amount: &str, shown_fee: u64, profile_index: u32) -> Result<String> {
     let units = tao_units(amount)?;
     let seed = unlock_seed(data_dir, device_password)?;
@@ -3776,12 +3743,12 @@ pub fn send_tao(data_dir: &Path, device_password: &str, to: &str, amount: &str, 
     bittensor::send(&pair, &plan)
 }
 
-/// Bouton « Max » : solde disponible moins les frais et la réserve du compte.
+/// "Max" button: available balance minus the fee and the account's reserve.
 pub fn tao_max(from: &str, to: Option<&str>) -> Result<String> {
     Ok(tokens::format_amount(u128::from(bittensor::max_amount(from, to)?), bittensor::DECIMALS))
 }
 
-/// Bouton « Max » : tout l'ADA dépensable, frais déduits (vers `to` s'il est connu).
+/// "Max" button: all spendable ADA, fee deducted (to `to` if known).
 pub fn ada_max(from: &str, to: Option<&str>) -> Result<String> {
     Ok(cardano::format_ada(match to {
         Some(to) => cardano::plan_max(from, to)?.amount,
@@ -3799,7 +3766,7 @@ pub fn has_pending_doge(address: &str) -> Result<bool> {
     doge::has_pending(address)
 }
 
-/// État d'une adresse Dogecoin destinataire, pour les avertissements de la boîte.
+/// State of a Dogecoin recipient address, for the dialog's warnings.
 pub fn doge_recipient_activity(to: &str) -> Result<RecipientActivity> {
     doge::parse_recipient(to)?;
     Ok(match doge::address_activity(to.trim())? {
@@ -3809,14 +3776,14 @@ pub fn doge_recipient_activity(to: &str) -> Result<RecipientActivity> {
     })
 }
 
-/// Forme canonique d'un montant en DOGE (8 décimales), affichée ET signée.
+/// Canonical form of an amount in DOGE (8 decimals), shown AND signed.
 pub fn canonical_doge_amount(amount: &str) -> Result<String> {
     Ok(tokens::format_amount(tokens::parse_amount(amount, doge::DECIMALS)?, doge::DECIMALS))
 }
 
-/// Envoi préparé pour la boîte de confirmation : destinataire vérifié (jamais
-/// soi-même), sorties choisies puis vérifiées sur leurs transactions
-/// d'origine, frais au taux du moment, monnaie rendue.
+/// A send prepared for the confirmation dialog: recipient verified (never
+/// ourselves), outputs chosen then verified against their source transactions, fee
+/// at the current rate, change returned.
 pub fn doge_send_plan(from_address: &str, to: &str, amount: &str) -> Result<doge::SendPlan> {
     let own = match doge::parse_recipient(from_address)? {
         doge::Recipient::P2pkh(hash) => hash,
@@ -3828,9 +3795,8 @@ pub fn doge_send_plan(from_address: &str, to: &str, amount: &str) -> Result<doge
     doge::plan(&own, units)
 }
 
-/// Envoi Dogecoin : sorties relues et revérifiées, frais jamais supérieurs à
-/// ceux affichés (`shown_fee`), transaction construite et signée ici, puis
-/// diffusée.
+/// Dogecoin send: outputs reread and checked again, fee never higher than the one
+/// shown (`shown_fee`), transaction built and signed here, then broadcast.
 pub fn send_doge(data_dir: &Path, device_password: &str, to: &str, amount: &str, shown_fee: u64, profile_index: u32) -> Result<String> {
     let recipient = doge::parse_recipient(to)?;
     let units = u64::try_from(tokens::parse_amount(amount, doge::DECIMALS)?).context("montant hors limites")?;
@@ -3855,11 +3821,11 @@ pub struct BtcFeeEstimate {
     pub slow_sat: u64,
 }
 
-/// Cible de confirmation (en blocs) la plus proche disponible dans `estimates`
-/// (triés par cible croissante, voir `btc_rpc::EsploraClient::fee_estimates`),
-/// préférée à une cible <= `target` (jamais un tarif plus cher que prévu) ; à
-/// défaut, la cible la plus proche au-dessus. `1.0` sat/vByte (le minimum de relais
-/// standard du réseau) sert de filet de sécurité si l'API ne renvoie rien.
+/// The closest confirmation target (in blocks) available in `estimates` (sorted by
+/// increasing target, see `btc_rpc::EsploraClient::fee_estimates`), preferring a
+/// target <= `target` (never a rate more expensive than planned); failing that, the
+/// closest target above. `1.0` sat/vByte (the network's standard minimum relay fee)
+/// is the safety net if the API returns nothing.
 fn fee_rate_for_target(estimates: &[(u32, f64)], target: u32) -> f64 {
     estimates
         .iter()
@@ -3870,13 +3836,13 @@ fn fee_rate_for_target(estimates: &[(u32, f64)], target: u32) -> f64 {
         .unwrap_or(1.0)
 }
 
-/// Début du refus d'un montant Bitcoin sous le seuil de poussière (traduit
-/// par l'app).
+/// Start of the refusal message for a Bitcoin amount below the dust threshold
+/// (translated by the app).
 pub const BTC_DUST_PREFIX: &str = "montant trop petit pour le réseau Bitcoin : au moins ";
 
-/// Script de sortie du destinataire d'un envoi Bitcoin (tout type standard,
-/// voir `derivation::btc_recipient_script`), montant au-dessus du seuil de
-/// poussière de ce type de sortie — sinon les nœuds refusent la transaction.
+/// Output script of a Bitcoin send's recipient (any standard type, see
+/// `derivation::btc_recipient_script`), with an amount above the dust threshold for
+/// that output type; otherwise nodes refuse the transaction.
 pub fn btc_recipient(network: &wallet_flow::BtcNetwork, to: &str, amount_sat: u64) -> Result<Vec<u8>> {
     let script = (network.recipient_script)(to)?;
     let dust = crate::btc_tx::dust_threshold(&script);
@@ -3884,20 +3850,20 @@ pub fn btc_recipient(network: &wallet_flow::BtcNetwork, to: &str, amount_sat: u6
     Ok(script)
 }
 
-/// `btc_recipient` pour un montant saisi (en BTC) : vérification de l'aperçu
-/// et des dépôts, avant la boîte de confirmation.
+/// `btc_recipient` for an amount entered (in BTC): checks for the preview and for
+/// deposits, before the confirmation dialog.
 pub fn check_btc_recipient(network: &wallet_flow::BtcNetwork, to: &str, amount_btc: &str) -> Result<()> {
     btc_recipient(network, to, wallet_flow::parse_btc_to_sat(amount_btc)?).map(|_| ())
 }
 
-/// Monnaie d'un envoi Bitcoin qui consomme `total_sat` : fonds suffisants
-/// exigés ; 0 sous le seuil de poussière (le reliquat part alors en frais).
+/// Change of a Bitcoin send consuming `total_sat`: sufficient funds required; 0
+/// below the dust threshold (the remainder then goes to the fee).
 pub(crate) fn btc_change(total_sat: u64, amount_sat: u64, fee_sat: u64) -> Result<u64> {
     const DUST_THRESHOLD_SAT: u64 = 1_000;
-    // `checked_add` plutôt que `+` : `amount_sat` vient du montant tapé par
-    // l'utilisateur, potentiellement proche de u64::MAX (voir parse_btc_to_sat) —
-    // un dépassement ici s'enroulerait silencieusement en release et pourrait
-    // faire passer un montant invalide comme "suffisant".
+    // `checked_add` rather than `+`: `amount_sat` comes from the amount the user
+    // typed, potentially close to u64::MAX (see parse_btc_to_sat). An overflow here
+    // would wrap around silently in release builds and could let an invalid amount
+    // pass as "sufficient".
     let total_needed = amount_sat
         .checked_add(fee_sat)
         .context("montant + frais dépasse la capacité représentable")?;
@@ -3909,26 +3875,26 @@ pub(crate) fn btc_change(total_sat: u64, amount_sat: u64, fee_sat: u64) -> Resul
     Ok(if remaining > DUST_THRESHOLD_SAT { remaining } else { 0 })
 }
 
-/// Estime les frais rapide/moyen/lent (~1/~3/~6 blocs, soit environ 10 minutes,
-/// 30 minutes et 1 heure — une cible d'un jour entier n'a d'intérêt pratique pour
-/// personne) pour un virement depuis `address`, en sats — à choisir avant
-/// `send_btc`. Le nombre d'entrées dépend des UTXOs réellement disponibles sur
-/// cette adresse (tous consommés, voir `send_btc`) ; le nombre de sorties est
-/// supposé à 2 (destinataire + monnaie), le cas le plus fréquent — si la
-/// transaction réelle n'a finalement qu'une sortie, les frais payés seront très
-/// légèrement supérieurs à nécessaire (quelques sats), jamais insuffisants.
+/// Estimates the fast/medium/slow fees (~1/~3/~6 blocks, i.e. about 10 minutes, 30
+/// minutes and 1 hour; a full-day target is of no practical use to anyone) for a
+/// transfer from `address`, in sats, to choose before `send_btc`. The number of
+/// inputs depends on the UTXOs actually available on this address (all consumed,
+/// see `send_btc`); the number of outputs is assumed to be 2 (recipient + change),
+/// the most common case. If the real transaction ends up with only one output, the
+/// fee paid will be very slightly higher than needed (a few sats), never
+/// insufficient.
 pub fn estimate_btc_fees(address: &str, network: &wallet_flow::BtcNetwork) -> Result<BtcFeeEstimate> {
     estimate_btc_fees_for(&[address], network)
 }
 
-/// `estimate_btc_fees` pour un envoi qui consomme les UTXOs de plusieurs
-/// adresses (compte Ledger : réception et monnaie, voir `hardware::send_btc`).
+/// `estimate_btc_fees` for a send consuming the UTXOs of several addresses (Ledger
+/// account: receive and change, see `hardware::send_btc`).
 pub(crate) fn estimate_btc_fees_for(addresses: &[&str], network: &wallet_flow::BtcNetwork) -> Result<BtcFeeEstimate> {
     let esplora = btc_rpc::EsploraClient::new(network.esplora_base);
-    // Les UTXOs des adresses et les estimations de frais du réseau sont des appels
-    // HTTP indépendants (aucun ne dépend du résultat d'un autre) : les lancer en
-    // parallèle plutôt que l'un après l'autre coupe environ de moitié la latence
-    // perçue à l'ouverture de la modale d'envoi Bitcoin.
+    // The addresses' UTXOs and the network fee estimates are independent HTTP calls
+    // (none depends on another's result): running them in parallel rather than one
+    // after the other roughly halves the perceived latency when the Bitcoin send
+    // window opens.
     let (utxos, estimates) = std::thread::scope(|scope| {
         let utxo_handles: Vec<_> = addresses.iter().map(|a| scope.spawn(|| esplora.utxos(a))).collect();
         let estimates_handle = scope.spawn(|| esplora.fee_estimates());
@@ -3952,12 +3918,11 @@ pub(crate) fn estimate_btc_fees_for(addresses: &[&str], network: &wallet_flow::B
     })
 }
 
-/// Déverrouille le coffre, signe et diffuse un virement Bitcoin (mainnet ou
-/// testnet selon `network`). `fee_sat` est choisi par l'appelant (voir
-/// `estimate_btc_fees` : rapide/moyen/lent) plutôt que fixé ici — les frais réels
-/// sont dictés par le marché sur mainnet, contrairement au testnet où ils sont
-/// dérisoires ; une constante unique aurait laissé une vraie transaction
-/// sous-payée et non confirmée indéfiniment.
+/// Unlocks the vault, signs and broadcasts a Bitcoin transfer (mainnet or testnet
+/// depending on `network`). `fee_sat` is chosen by the caller (see
+/// `estimate_btc_fees`: fast/medium/slow) rather than fixed here: real fees are set
+/// by the market on mainnet, unlike testnet where they are negligible, and a single
+/// constant would have left a real transaction underpaid and unconfirmed forever.
 pub fn send_btc(
     data_dir: &Path,
     device_password: &str,
@@ -3992,14 +3957,13 @@ pub fn send_btc(
     esplora.broadcast(&raw_tx)
 }
 
-/// Déverrouille le coffre, signe et diffuse un swap Bitcoin -> THORChain :
-/// même mécanique que `send_btc`, mais l'envoi part vers l'`inbound_address`
-/// du devis (pas l'adresse tapée par l'utilisateur) et porte le memo du swap
-/// dans une sortie OP_RETURN. Contrairement à `send_btc`, les frais ne sont
-/// pas choisis par l'appelant (pas de sélecteur rapide/moyen/lent dans la
-/// modale de swap, déjà chargée d'étapes) : la cible "moyenne" est utilisée
-/// automatiquement, cohérente avec le reste du flux de swap (Jupiter/THORChain
-/// choisissent aussi leurs propres frais réseau sans intervention).
+/// Unlocks the vault, signs and broadcasts a Bitcoin -> THORChain swap: the same
+/// mechanics as `send_btc`, but the send goes to the quote's `inbound_address` (not
+/// an address typed by the user) and carries the swap memo in an OP_RETURN output.
+/// Unlike `send_btc`, the fee is not chosen by the caller (no fast/medium/slow
+/// selector in the swap window, which already has plenty of steps): the "medium"
+/// target is used automatically, consistent with the rest of the swap flow
+/// (Jupiter/THORChain also choose their own network fees without user input).
 pub fn send_swap_btc(
     data_dir: &Path,
     device_password: &str,
@@ -4035,17 +3999,17 @@ pub fn send_swap_btc(
     let estimates = estimates?;
     let total_sat: u64 = utxos.iter().map(|u| u.value_sat).sum();
 
-    // Coffre + monnaie (P2WPKH), plus la sortie OP_RETURN à sa taille réelle
-    // (66 octets pour un memo de 55, contre 31 pour une sortie P2WPKH).
+    // Vault + change (P2WPKH), plus the OP_RETURN output at its real size (66 bytes
+    // for a 55-byte memo, versus 31 for a P2WPKH output).
     let vsize = (crate::btc_tx::estimate_p2wpkh_vsize(utxos.len(), 2) + crate::btc_tx::op_return_output_size(quote.memo.len())) as f64;
-    // Jamais sous le tarif conseillé par le protocole (`recommended_gas_rate`) :
-    // un dépôt moins payé peut tarder à être pris en compte.
+    // Never below the rate recommended by the protocol (`recommended_gas_rate`): an
+    // underpaying deposit may take a while to be picked up.
     let fee_rate = fee_rate_for_target(&estimates, 3).max(quote.recommended_gas_rate.unwrap_or(0) as f64);
-    // Tarif lu auprès d'Esplora sans intervention de l'utilisateur (contrairement
-    // à `send_btc`, où il choisit un palier affiché en sats) : plafonné pour qu'un
-    // serveur compromis ne puisse pas gonfler les frais à volonté — même famille
-    // que le plafond du prix du gas EVM (`EvmNetwork::max_gas_price_wei`). Plafond
-    // affiché dans la boîte de confirmation du swap.
+    // Rate read from Esplora without user input (unlike `send_btc`, where the user
+    // picks a tier shown in sats): capped so a compromised server cannot inflate the
+    // fees at will, the same idea as the EVM gas price cap
+    // (`EvmNetwork::max_gas_price_wei`). The cap is shown in the swap's confirmation
+    // dialog.
     anyhow::ensure!(
         fee_rate.is_finite() && fee_rate <= BTC_SWAP_MAX_FEE_RATE_SAT_VB as f64,
         "tarif de frais Bitcoin anormalement élevé ({fee_rate:.1} sat/vB, plafond {BTC_SWAP_MAX_FEE_RATE_SAT_VB}) — swap refusé"
@@ -4075,17 +4039,14 @@ pub fn send_swap_btc(
     esplora.broadcast(&raw_tx)
 }
 
-/// Déverrouille le coffre, signe et diffuse un virement Solana.
-/// Vérifie qu'une adresse Solana est bien un PORTEFEUILLE avant d'y envoyer
-/// des fonds — trouvé lors de l'audit "failles connues des hot wallets"
-/// (classe "envoi vers un type d'adresse où les fonds sont perdus", piège
-/// classique de Solana contre lequel Phantom/Solflare avertissent). Aucune
-/// vérification n'existait : coller par erreur l'adresse d'un COMPTE DE
-/// JETONS (celle que montrent souvent les explorateurs) au lieu de celle du
-/// portefeuille faisait créer un compte USDC détenu par... ce compte de
-/// jetons, que personne ne pourra jamais signer — fonds définitivement perdus.
-/// À appeler AVANT la confirmation (voir app-tauri), et de nouveau juste avant
-/// de signer (défense en profondeur).
+/// Checks that a Solana address really is a WALLET before sending funds to it.
+/// Found during the "known hot wallet weaknesses" audit (the "sending to an address
+/// type where funds are lost" class, a classic Solana trap that Phantom/Solflare
+/// warn about). There was no check at all: pasting a TOKEN ACCOUNT address by
+/// mistake (the one explorers often show) instead of the wallet's created a USDC
+/// account owned by... that token account, which nobody can ever sign for, so the
+/// funds were lost for good. To call BEFORE confirmation (see the Tauri app), and
+/// again just before signing (defense in depth).
 pub fn check_solana_recipient(to: &str, network: &wallet_flow::SolNetwork) -> Result<()> {
     let pubkey: [u8; 32] = bs58::decode(to.trim())
         .into_vec()
@@ -4102,36 +4063,37 @@ pub fn check_solana_recipient(to: &str, network: &wallet_flow::SolNetwork) -> Re
 
 fn classify_solana_recipient(pubkey: &[u8; 32], state: Option<&sol_rpc::AccountState>) -> Result<()> {
     match state {
-        // Portefeuille (ou coffre multisig, lui aussi détenu par le programme système).
+        // A wallet (or a multisig vault, also owned by the system program).
         Some(s) if s.owner == SYSTEM_PROGRAM_ID => Ok(()),
         Some(s) if s.owner == TOKEN_PROGRAM_ID || s.owner == TOKEN_2022_PROGRAM_ID => anyhow::bail!(
             "cette adresse est un compte de jetons (ou un mint), pas un portefeuille : les fonds y seraient perdus. Demandez l'adresse du PORTEFEUILLE du destinataire."
         ),
         Some(_) => anyhow::bail!("cette adresse appartient à un programme, pas à un portefeuille — envoi refusé (fonds probablement irrécupérables)"),
-        None if sol_spl::is_on_curve(pubkey) => Ok(()), // portefeuille neuf, jamais utilisé
+        None if sol_spl::is_on_curve(pubkey) => Ok(()), // new wallet, never used
         None => anyhow::bail!(
             "cette adresse n'a aucune clé privée (dérivée d'un programme) et n'a jamais été utilisée — les fonds y seraient très probablement perdus"
         ),
     }
 }
 
-// --- État d'une adresse destinataire sur la blockchain ----------------------
-// Demandé explicitement par l'utilisateur : prévenir, dans la boîte de
-// confirmation native, qu'une adresse destinataire n'a jamais servi (adresse
-// mal recopiée, ou fraîchement générée par un escroc) ou qu'elle est vide.
-// Lecture seule, AVANT la confirmation ; un échec réseau n'empêche pas l'envoi
-// (l'app affiche alors "impossible à vérifier" plutôt qu'un silence rassurant).
+// --- State of a recipient address on the blockchain ------------------------
+//
+// Requested explicitly by the user: warn, in the native confirmation dialog, that
+// a recipient address has never been used (a miscopied address, or one freshly
+// generated by a scammer) or that it is empty. Read-only, BEFORE confirmation; a
+// network failure does not prevent the send (the app then shows "could not be
+// checked" rather than a reassuring silence).
 
-/// Voir le bloc ci-dessus.
+/// See the block above.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RecipientActivity {
-    /// Aucune trace sur la blockchain : adresse jamais utilisée (EVM : aucune
-    /// transaction envoyée et aucun ETH — un nœud EVM n'expose pas les
-    /// transactions REÇUES, voir `history::evm_history`).
+    /// No trace on the blockchain: an address that has never been used (EVM: no
+    /// transaction sent and no ETH, since an EVM node does not expose RECEIVED
+    /// transactions, see `history::evm_history`).
     Unused,
-    /// Déjà utilisée, mais ne détient aucun fonds actuellement.
+    /// Already used, but currently holds no funds.
     Empty,
-    /// Détient des fonds.
+    /// Holds funds.
     Funded,
 }
 
@@ -4155,9 +4117,9 @@ fn classify_btc_activity(stats: &btc_rpc::AddressStats) -> RecipientActivity {
     }
 }
 
-/// `lamports` : `None` si le compte n'existe pas on-chain (jamais utilisé OU
-/// vidé : Solana supprime un compte à 0 lamport), d'où `has_history` pour
-/// distinguer les deux.
+/// `lamports`: `None` if the account does not exist on-chain (never used OR
+/// emptied: Solana deletes an account at 0 lamports), hence `has_history` to tell
+/// the two apart.
 fn classify_sol_activity(lamports: Option<u64>, has_history: bool) -> RecipientActivity {
     match lamports {
         Some(l) if l > 0 => RecipientActivity::Funded,
@@ -4166,14 +4128,14 @@ fn classify_sol_activity(lamports: Option<u64>, has_history: bool) -> RecipientA
     }
 }
 
-/// Refuse AVANT la boîte de confirmation une adresse EVM mal formée (ou au
-/// checksum EIP-55 faux) — elle n'était jusqu'ici rejetée qu'après la
-/// confirmation, au moment de signer.
+/// Refuses a malformed EVM address (or one with a wrong EIP-55 checksum) BEFORE the
+/// confirmation dialog; until now it was only rejected after confirmation, at
+/// signing time.
 pub fn validate_evm_recipient(to: &str) -> Result<()> {
     wallet_flow::parse_evm_address(to).map(|_| ())
 }
 
-/// Même principe que `validate_evm_recipient`, pour Bitcoin.
+/// Same principle as `validate_evm_recipient`, for Bitcoin.
 pub fn validate_btc_recipient(to: &str, network: &wallet_flow::BtcNetwork) -> Result<()> {
     (network.recipient_script)(to).map(|_| ())
 }
@@ -4193,9 +4155,9 @@ pub fn evm_recipient_activity(to: &str, network: &wallet_flow::EvmNetwork) -> Re
 }
 
 pub fn btc_recipient_activity(to: &str, network: &wallet_flow::BtcNetwork) -> Result<RecipientActivity> {
-    // Format validé d'abord : l'adresse est insérée dans le chemin de l'URL.
-    // Minuscules pour une adresse bech32 seulement (insensible à la casse) :
-    // une adresse 1…/3… (base58) en minuscules serait une autre adresse.
+    // Format validated first: the address is inserted into the URL path. Lowercase for
+    // a bech32 address only (case-insensitive): a 1…/3… (base58) address in lowercase
+    // would be a different address.
     (network.recipient_script)(to)?;
     let to = to.trim();
     let bech32 = to.get(..3).is_some_and(|p| p.eq_ignore_ascii_case("bc1") || p.eq_ignore_ascii_case("tb1"));
@@ -4203,8 +4165,8 @@ pub fn btc_recipient_activity(to: &str, network: &wallet_flow::BtcNetwork) -> Re
     Ok(classify_btc_activity(&stats))
 }
 
-/// Pour un envoi USDC aussi : c'est le PORTEFEUILLE destinataire qui est
-/// évalué (l'absence de compte USDC est déjà signalée à part, avec son coût).
+/// For a USDC send too: it is the recipient WALLET that is assessed (a missing USDC
+/// account is already flagged separately, with its cost).
 pub fn sol_recipient_activity(to: &str, network: &wallet_flow::SolNetwork) -> Result<RecipientActivity> {
     let pubkey: [u8; 32] = bs58::decode(to.trim())
         .into_vec()
@@ -4218,10 +4180,10 @@ pub fn sol_recipient_activity(to: &str, network: &wallet_flow::SolNetwork) -> Re
     Ok(classify_sol_activity(lamports, has_history))
 }
 
-/// Envoi USDC : un portefeuille peut détenir de l'USDC sans aucun SOL (son
-/// compte principal est alors purgé, seul son compte USDC existe) — le dire
-/// "vide" serait faux. Détient de l'USDC => `Funded` ; un compte USDC existant
-/// même vide prouve que l'adresse a servi => au moins `Empty`.
+/// USDC send: a wallet can hold USDC without any SOL (its main account is then
+/// purged, and only its USDC account exists), so calling it "empty" would be wrong.
+/// Holds USDC => `Funded`; an existing USDC account, even empty, proves the address
+/// has been used => at least `Empty`.
 pub fn usdc_recipient_activity(to: &str, network: &wallet_flow::SolNetwork) -> Result<RecipientActivity> {
     let owner: [u8; 32] = bs58::decode(to.trim())
         .into_vec()
@@ -4239,6 +4201,7 @@ pub fn usdc_recipient_activity(to: &str, network: &wallet_flow::SolNetwork) -> R
     })
 }
 
+/// Unlocks the vault, signs and broadcasts a Solana transfer.
 pub fn send_sol(
     data_dir: &Path,
     device_password: &str,
@@ -4256,9 +4219,9 @@ pub fn send_sol(
     sol_rpc::SolRpc::new(network.rpc).send_transaction(&raw_tx)
 }
 
-/// Message d'un virement SOL prêt à signer depuis `from_pubkey` (portefeuille
-/// logiciel ou matériel, voir `hardware::send_sol`) : solde suffisant pour
-/// montant + frais, dernier blockhash.
+/// Message for a SOL transfer ready to sign from `from_pubkey` (software or
+/// hardware wallet, see `hardware::send_sol`): enough balance for amount + fee,
+/// latest blockhash.
 pub(crate) fn prepare_sol_transfer(network: &wallet_flow::SolNetwork, from_pubkey: &[u8; 32], to: &str, amount_sol: &str) -> Result<Vec<u8>> {
     let to_bytes = bs58::decode(to.trim())
         .into_vec()
@@ -4270,9 +4233,9 @@ pub(crate) fn prepare_sol_transfer(network: &wallet_flow::SolNetwork, from_pubke
 
     let rpc = sol_rpc::SolRpc::new(network.rpc);
     let from_address = bs58::encode(from_pubkey).into_string();
-    // Le solde et le dernier blockhash sont deux lectures RPC indépendantes : les
-    // lancer en parallèle plutôt que l'une après l'autre réduit la latence perçue
-    // d'un envoi SOL d'environ moitié.
+    // The balance and the latest blockhash are two independent RPC reads: running them
+    // in parallel rather than one after the other cuts the perceived latency of a SOL
+    // send by about half.
     let (balance, recent_blockhash) = std::thread::scope(|scope| {
         let balance_handle = scope.spawn(|| rpc.balance_lamports(&from_address));
         let blockhash_handle = scope.spawn(|| rpc.latest_blockhash());
@@ -4284,9 +4247,9 @@ pub(crate) fn prepare_sol_transfer(network: &wallet_flow::SolNetwork, from_pubke
     let balance = balance?;
     let recent_blockhash = recent_blockhash?;
 
-    // Même contrôle que côté CLI (`wallet_flow::send_sol`), absent ici jusqu'à présent :
-    // sans lui, un montant + frais supérieur au solde n'était détecté qu'au rejet par
-    // le nœud RPC après signature, au lieu d'un message clair "fonds insuffisants".
+    // The same check as on the CLI side (`wallet_flow::send_sol`), missing here until
+    // now: without it, an amount + fee above the balance was only detected when the RPC
+    // node rejected it after signing, instead of a clear "insufficient funds" message.
     const SOL_FEE_LAMPORTS: u64 = 5_000;
     let total_needed = lamports
         .checked_add(SOL_FEE_LAMPORTS)
@@ -4309,14 +4272,13 @@ fn parse_swap_amount_for_coin(coin: &str, amount: &str) -> Result<u128> {
     }
 }
 
-/// Montant à AFFICHER dans une boîte de confirmation native, reconstruit
-/// depuis la valeur exacte qui sera signée (plus petite unité) plutôt que
-/// recopié depuis la saisie — trouvé lors du 22ᵉ passage : les fonctions de
-/// parsing tolèrent des formes que l'œil lit mal (`"0.+5"` = 0,05 BTC, des
-/// retours à la ligne en tête ou en fin, retirés par `trim`), si bien que le
-/// texte affiché pouvait différer de ce qui part réellement. `coin` : "evm",
-/// "btc", "sol" ou "usdc". Le résultat se re-parse en exactement la même
-/// valeur : l'appelant l'utilise pour l'affichage ET pour la signature.
+/// Amount to SHOW in a native confirmation dialog, rebuilt from the exact value
+/// that will be signed (smallest unit) rather than copied from the input. Found in
+/// audit round 22: the parsing functions tolerate forms the eye misreads (`"0.+5"`
+/// = 0.05 BTC, leading or trailing line breaks removed by `trim`), so the text
+/// shown could differ from what actually goes out. `coin`: "evm", "btc", "sol" or
+/// "usdc". The result re-parses to exactly the same value: the caller uses it for
+/// display AND for signing.
 pub fn canonical_amount(coin: &str, amount: &str) -> Result<String> {
     let decimals: usize = match coin {
         "evm" => 18,
@@ -4335,9 +4297,9 @@ pub fn canonical_amount(coin: &str, amount: &str) -> Result<String> {
     Ok(format!("{whole}.{}", frac.trim_end_matches('0')))
 }
 
-/// Mint Solana (32 octets) d'une crypto échangée via Jupiter : SOL natif
-/// (wSOL), ou jeton SPL du registre (USDC, USDT, EURC, RENDER…, voir
-/// tokens.rs) — jamais un mint fourni par l'interface.
+/// Solana mint (32 bytes) of a crypto swapped through Jupiter: native SOL (wSOL),
+/// or a registry SPL token (USDC, USDT, EURC, RENDER…, see tokens.rs); never a mint
+/// supplied by the UI.
 fn jupiter_mint_bytes_for_coin(coin: &str) -> Result<[u8; 32]> {
     match coin {
         "sol" => bs58::decode(jupiter_rpc::SOL_MINT)
@@ -4353,7 +4315,7 @@ fn jupiter_mint_for_coin(coin: &str) -> Result<String> {
     Ok(bs58::encode(jupiter_mint_bytes_for_coin(coin)?).into_string())
 }
 
-/// Décimales d'une crypto échangée via Jupiter (SOL : 9 ; jeton : registre).
+/// Decimals of a crypto swapped through Jupiter (SOL: 9; token: registry).
 pub fn jupiter_decimals(coin: &str) -> Result<u8> {
     if coin == "sol" {
         return Ok(9);
@@ -4361,7 +4323,7 @@ pub fn jupiter_decimals(coin: &str) -> Result<u8> {
     Ok(registered_token(coin, "sol_mainnet")?.1.decimals)
 }
 
-/// Symbole affiché d'une crypto échangée via Jupiter.
+/// Display symbol of a crypto swapped through Jupiter.
 pub fn jupiter_symbol(coin: &str) -> Result<&'static str> {
     if coin == "sol" {
         return Ok("SOL");
@@ -4369,24 +4331,23 @@ pub fn jupiter_symbol(coin: &str) -> Result<&'static str> {
     Ok(registered_token(coin, "sol_mainnet")?.0.symbol)
 }
 
-/// Montant (texte) → plus petite unité de la crypto vendue via Jupiter
-/// (xStocks : unité BRUTE, voir `jupiter_raw_amount`).
+/// Amount (text) → smallest unit of the crypto sold through Jupiter (xStocks: RAW
+/// unit, see `jupiter_raw_amount`).
 fn jupiter_amount(coin: &str, amount: &str) -> Result<u64> {
     let shown: u64 = tokens::parse_amount(amount, jupiter_decimals(coin)?)?.try_into().context("montant trop grand")?;
     jupiter_raw_amount(coin, shown)
 }
 
-/// Montant d'un échange Jupiter sous sa forme canonique (affichée ET signée,
-/// voir `canonical_amount`).
+/// Amount of a Jupiter swap in its canonical form (shown AND signed, see
+/// `canonical_amount`).
 pub fn canonical_jupiter_amount(coin: &str, amount: &str) -> Result<String> {
     let decimals = jupiter_decimals(coin)?;
     Ok(tokens::format_amount(tokens::parse_amount(amount, decimals)?, decimals))
 }
 
-/// Obtient un devis Jupiter (lecture seule, aucun secret impliqué) — montant
-/// de sortie attendu, dans la plus petite unité de l'actif de destination.
-/// `amount` dans l'unité humaine de l'actif SOURCE, comme partout ailleurs
-/// dans cette API.
+/// Gets a Jupiter quote (read-only, no secrets involved): the expected output
+/// amount, in the destination asset's smallest unit. `amount` in the SOURCE asset's
+/// human unit, as everywhere else in this API.
 pub fn get_jupiter_quote(from_coin: &str, to_coin: &str, amount: &str, slippage_bps: u32) -> Result<JupiterQuoteInfo> {
     let input_mint = jupiter_mint_for_coin(from_coin)?;
     let output_mint = jupiter_mint_for_coin(to_coin)?;
@@ -4394,37 +4355,37 @@ pub fn get_jupiter_quote(from_coin: &str, to_coin: &str, amount: &str, slippage_
     let fee_mint = jupiter_fee_mint(&sol_rpc::SolRpc::new(wallet_flow::SOLANA_MAINNET.rpc), &input_mint, &output_mint)?;
     let fee_bps = jupiter_fee_bps(from_coin, to_coin);
     let quote = jupiter_rpc::quote_with_fee(&input_mint, &output_mint, amount_native, slippage_bps, fee_mint, fee_bps)?;
-    // Sortie montrée (et rendue à `send_jupiter_swap`) en unités affichées.
+    // Output shown (and passed back to `send_jupiter_swap`) in display units.
     Ok(JupiterQuoteInfo { out_amount: jupiter_shown_out(to_coin, quote.out_amount)?, fee_mint, fee_bps })
 }
 
-/// Frais d'affiliation Jupiter de la paire : ceux du staking liquide
-/// (`swap_routes::staking_fee_bps`), sinon `jupiter_rpc::AFFILIATE_FEE_BPS`.
+/// Jupiter affiliate fee for the pair: the liquid staking rate
+/// (`swap_routes::staking_fee_bps`), otherwise `jupiter_rpc::AFFILIATE_FEE_BPS`.
 pub fn jupiter_fee_bps(from_coin: &str, to_coin: &str) -> u32 {
     crate::swap_routes::staking_fee_bps((from_coin, "sol_mainnet"), (to_coin, "sol_mainnet")).unwrap_or(jupiter_rpc::AFFILIATE_FEE_BPS)
 }
 
-/// Devis Jupiter tel qu'affiché : sortie attendue, et jeton des frais
-/// d'affiliation (`None` : échange sans frais).
+/// Jupiter quote as shown: expected output, and the token for the affiliate fee
+/// (`None`: fee-free swap).
 pub struct JupiterQuoteInfo {
     pub out_amount: u64,
     pub fee_mint: Option<[u8; 32]>,
-    /// Taux appliqué si `fee_mint` existe (points de base).
+    /// Rate applied if `fee_mint` exists (basis points).
     pub fee_bps: u32,
 }
 
-/// Jeton des frais d'affiliation d'un échange Jupiter : le premier des
-/// candidats (`jupiter_rpc::fee_mint_candidates`) dont le compte de frais de
-/// l'affilié EXISTE ; `None` sinon — l'échange se fait alors sans frais
-/// plutôt que de faire payer à l'utilisateur la création du compte de frais
-/// du développeur, ou d'échouer (Jupiter refuse un compte absent).
+/// Token for a Jupiter swap's affiliate fee: the first candidate
+/// (`jupiter_rpc::fee_mint_candidates`) for which the affiliate's fee account
+/// EXISTS; `None` otherwise. The swap then goes ahead without a fee rather than
+/// making the user pay to create the developer's fee account, or failing (Jupiter
+/// refuses a missing account).
 fn jupiter_fee_mint(rpc: &sol_rpc::SolRpc, input_mint: &str, output_mint: &str) -> Result<Option<[u8; 32]>> {
-    // xStocks (Token-2022), mesuré par simulation le 09/10/2026 : à l'achat,
-    // les frais pris sur le jeton VENDU font échouer la route Jupiter (erreur
-    // 6014, IncorrectTokenProgramID) ; pris sur le xStock reçu (compte de
-    // frais Token-2022), elle passe. Vers un xStock : frais sur lui seulement
-    // (sans compte de frais xStock de l'affilié : échange sans frais). Depuis
-    // un xStock : frais sur le jeton reçu (USDC…), jamais sur le xStock vendu.
+    // xStocks (Token-2022), measured by simulation on 2026-10-09: when buying, a fee
+    // taken on the token SOLD makes the Jupiter route fail (error 6014,
+    // IncorrectTokenProgramID); taken on the xStock received (Token-2022 fee account),
+    // it goes through. To an xStock: fee on it only (without an affiliate xStock fee
+    // account: fee-free swap). From an xStock: fee on the token received (USDC…),
+    // never on the xStock sold.
     let candidates = jupiter_rpc::fee_mint_candidates(input_mint, output_mint);
     let is_2022 = |mint: &[u8; 32]| jupiter_rpc::fee_token_program(mint) == sol_spl::token_2022_program_id();
     let output_2022 = bs58::decode(output_mint).into_vec().ok().and_then(|v| <[u8; 32]>::try_from(v).ok()).is_some_and(|m| is_2022(&m));
@@ -4441,29 +4402,28 @@ fn jupiter_fee_mint(rpc: &sol_rpc::SolRpc, input_mint: &str, output_mint: &str) 
     Ok(None)
 }
 
-/// Réserve de SOL d'un échange Jupiter, vérifiée avant de construire la
-/// transaction : frais (plancher généreux, pas de valeur exacte avant
-/// construction), compte wSOL temporaire si l'on vend du SOL, compte de
-/// jetons de destination s'il faut le créer.
+/// SOL reserve for a Jupiter swap, checked before building the transaction: fees (a
+/// generous floor, since there is no exact value before building), a temporary wSOL
+/// account when selling SOL, and the destination token account if it has to be
+/// created.
 fn jupiter_sol_reserve(rpc: &sol_rpc::SolRpc, owner: &[u8; 32], from_coin: &str, to_coin: &str) -> Result<u64> {
     const SOL_FEE_RESERVE_LAMPORTS: u64 = 50_000;
     let mut reserve = SOL_FEE_RESERVE_LAMPORTS;
-    // Swapper depuis du SOL natif l'enveloppe d'abord en jeton SPL "wSOL" —
-    // exige de financer un compte de jetons temporaire au minimum
-    // d'exemption de rent, EN PLUS du montant du swap lui-même (récupéré à la
-    // clôture de ce même compte en fin de transaction, mais nécessaire un
-    // instant plus tôt dans la même transaction). Interrogé en direct plutôt
-    // que codé en dur (paramètre réseau qui évolue), même principe que pour
-    // l'ATA USDC (voir send_usdc) — un plancher fixe sous-estimerait
-    // largement ce besoin réel.
+    // Swapping from native SOL first wraps it into the SPL token "wSOL", which
+    // requires funding a temporary token account at the rent-exemption minimum, ON TOP
+    // of the swap amount itself (recovered when that same account is closed at the end
+    // of the transaction, but needed a moment earlier in the same transaction).
+    // Queried live rather than hard-coded (a network parameter that changes), the same
+    // principle as for the USDC ATA (see send_usdc); a fixed floor would badly
+    // underestimate this real need.
     if from_coin == "sol" {
         reserve = reserve
             .checked_add(rpc.minimum_rent_exempt_balance(165)?)
             .context("réserve de frais dépasse la capacité représentable")?;
     }
-    // Le compte de jetons de destination peut aussi devoir être créé (Jupiter
-    // l'inclut alors dans la transaction, voir CreateIdempotent côté ATA) :
-    // même coût de rent si le compte n'existe pas encore.
+    // The destination token account may also need to be created (Jupiter then includes
+    // it in the transaction, see CreateIdempotent for the ATA): the same rent cost if
+    // the account does not exist yet.
     if to_coin != "sol" {
         let output = registered_solana_token(to_coin)?;
         let dest_ata = sol_spl::find_associated_token_address_for(owner, &output.mint, &output.program);
@@ -4477,16 +4437,16 @@ fn jupiter_sol_reserve(rpc: &sol_rpc::SolRpc, owner: &[u8; 32], from_coin: &str,
     Ok(reserve)
 }
 
-/// « Max » indisponible pour cet échange.
+/// "Max" unavailable for this swap.
 pub const SWAP_MAX_UNAVAILABLE: &str = "« Max » indisponible pour cet échange — saisissez le montant";
 
-/// « Max » de la fenêtre « Convertir », depuis `owner` (adresse du profil sur
-/// `from_network`). Jeton : tout son solde, les frais se payant dans la
-/// monnaie du réseau. Monnaie du réseau : le solde moins ce que l'échange
-/// par `protocol` coûtera au plus — mêmes plafonds que sa propre
-/// vérification des fonds (gas du contrat, sortie memo Bitcoin, comptes
-/// Solana à financer), avec une marge si le prix du gas ou le tarif Bitcoin
-/// monte d'ici le devis. Cette vérification, avant toute signature, fait foi.
+/// "Max" in the "Convert" window, from `owner` (the profile's address on
+/// `from_network`). Token: its whole balance, since fees are paid in the network's
+/// native coin. Native coin: the balance minus the most that the swap through
+/// `protocol` will cost, using the same caps as its own funds check (contract gas,
+/// Bitcoin memo output, Solana accounts to fund), with a margin in case the gas
+/// price or the Bitcoin fee rate rises before the quote. That check, done before
+/// any signing, is the one that counts.
 pub fn swap_max(protocol: &str, from_coin: &str, from_network: &str, to_coin: &str, owner: &str) -> Result<String> {
     let token = tokens::find(from_coin, from_network).is_some() || (from_coin == "usdc" && from_network == "sol_mainnet");
     if token {
@@ -4520,9 +4480,8 @@ pub fn swap_max(protocol: &str, from_coin: &str, from_network: &str, to_coin: &s
             btc_max(net, owner, estimate_btc_fees(owner, net)?.medium_sat)
         }
         ("btc_mainnet", _) => {
-            // Comme `send_swap_btc` : deux sorties et le memo le plus long,
-            // tarif à 3 blocs (marge de moitié : relu au devis, et au moins
-            // celui conseillé par THORChain).
+            // Like `send_swap_btc`: two outputs and the longest memo, 3-block rate (half again
+            // as margin: reread at quote time, and at least the rate THORChain recommends).
             let esplora = btc_rpc::EsploraClient::new(wallet_flow::BTC_MAINNET.esplora_base);
             let (utxos, estimates) = (esplora.utxos(owner)?, esplora.fee_estimates()?);
             let vsize = (crate::btc_tx::estimate_p2wpkh_vsize(utxos.len(), 2) + crate::btc_tx::op_return_output_size(80)) as f64;
@@ -4532,11 +4491,11 @@ pub fn swap_max(protocol: &str, from_coin: &str, from_network: &str, to_coin: &s
             let max = total.checked_sub(fee_sat).filter(|max| *max > 1_000).context("BTC insuffisants pour couvrir les frais de l'échange")?;
             Ok(tokens::format_amount(u128::from(max), 8))
         }
-        // Dépôt Maya : memo de 80 octets au plus (comme `zec_swap_plan`), qui
-        // peut coûter une action ZIP-317 de plus (31ᵉ passage).
+        // Maya deposit: a memo of at most 80 bytes (like `zec_swap_plan`), which may cost
+        // one more ZIP-317 action (audit round 31).
         ("zec_mainnet", "swapkit") => zec_max(owner),
         ("zec_mainnet", _) => Ok(zcash::format_zec(zcash::max_amount_with_memo(&zcash::utxos(owner)?, Some(80))?)),
-        // Dépôts simples (SwapKit).
+        // Plain deposits (SwapKit).
         ("doge_mainnet", "swapkit") => doge_max(owner),
         ("tron_mainnet", "swapkit") => trx_max(owner, None),
         ("xrp_mainnet", "swapkit") => xrp_max(owner),
@@ -4546,10 +4505,9 @@ pub fn swap_max(protocol: &str, from_coin: &str, from_network: &str, to_coin: &s
     }
 }
 
-/// Envoie un swap SOL <-> USDC via Jupiter (même chaîne, contrairement au
-/// swap cross-chain via THORChain) — voir jupiter_rpc.rs pour le contexte
-/// complet, notamment pourquoi la transaction elle-même n'est pas
-/// reconstruite à la main ici (seulement vérifiée puis signée).
+/// Sends a swap through Jupiter (within Solana, unlike cross-chain swaps through
+/// THORChain); see jupiter_rpc.rs for the full context, notably why the transaction
+/// itself is not rebuilt by hand here (only verified, then signed).
 #[allow(clippy::too_many_arguments)]
 pub fn send_jupiter_swap(
     data_dir: &Path,
@@ -4577,14 +4535,13 @@ pub fn send_jupiter_swap(
     let sol_balance = rpc.balance_lamports(&owner_address)?;
     let reserve = jupiter_sol_reserve(&rpc, &owner, from_coin, to_coin)?;
 
-    // Swapper depuis du SOL natif l'enveloppe d'abord en jeton SPL "wSOL" —
-    // exige de financer un compte de jetons temporaire au minimum
-    // d'exemption de rent, EN PLUS du montant du swap lui-même (récupéré à la
-    // clôture de ce même compte en fin de transaction, mais nécessaire un
-    // instant plus tôt dans la même transaction). Interrogé en direct plutôt
-    // que codé en dur (paramètre réseau qui évolue), même principe que pour
-    // l'ATA USDC (voir send_usdc) — un plancher fixe sous-estimerait
-    // largement ce besoin réel.
+    // Swapping from native SOL first wraps it into the SPL token "wSOL", which
+    // requires funding a temporary token account at the rent-exemption minimum, ON TOP
+    // of the swap amount itself (recovered when that same account is closed at the end
+    // of the transaction, but needed a moment earlier in the same transaction).
+    // Queried live rather than hard-coded (a network parameter that changes), the same
+    // principle as for the USDC ATA (see send_usdc); a fixed floor would badly
+    // underestimate this real need.
     if from_coin == "sol" {
         let total_needed = amount_native.checked_add(reserve).context("montant + frais dépasse la capacité représentable")?;
         anyhow::ensure!(
@@ -4596,14 +4553,15 @@ pub fn send_jupiter_swap(
             reserve <= sol_balance,
             "SOL insuffisant pour les frais/rent : {sol_balance} lamports disponibles, ~{reserve} lamports requis"
         );
-        // Source autre que SOL natif (USDC) : le solde de jetons lui-même
-        // n'est jamais couvert par la vérification de solde SOL ci-dessus,
-        // qui ne porte que sur les frais/rent — vérifié séparément ici.
+        // A source other than native SOL (USDC): the token balance itself is never covered
+        // by the SOL balance check above, which only covers fees/rent, so it is checked
+        // separately here.
         let input = registered_solana_token(from_coin)?;
         let source_ata = sol_spl::find_associated_token_address_for(&owner, &input.mint, &input.program);
         let source_ata_b58 = bs58::encode(source_ata).into_string();
         let source_balance = rpc.token_account_balance(&source_ata_b58)?.unwrap_or(0);
-        // xStocks, tout le solde affiché : tout le solde brut, sans reste.
+        // xStocks, the whole displayed balance: the whole raw balance, with nothing left
+        // over.
         if input.scaled {
             let shown = tokens::parse_amount(amount, input.decimals)?;
             let multiplier = scaled_mint_config(&rpc, input.mint_b58, false)?.effective(unix_now());
@@ -4615,16 +4573,16 @@ pub fn send_jupiter_swap(
         );
     }
 
-    // Même décision de frais que celle AFFICHÉE dans la confirmation (`fee_mint`).
-    // Sortie montrée en unités affichées (xStocks) : plancher vérifié en brut.
+    // The same fee decision as the one SHOWN in the confirmation (`fee_mint`). Output
+    // shown in display units (xStocks): the floor is checked in raw units.
     let min_out_shown = shown_out_amount.saturating_mul(u64::from(10_000 - slippage_bps.min(10_000))) / 10_000;
     let min_out = match registered_solana_token(to_coin) {
         Ok(output) if output.scaled => scaled_mint_config(&rpc, output.mint_b58, true)?.effective(unix_now()).to_raw(u128::from(min_out_shown))?,
         _ => min_out_shown,
     };
     let limits = swap_effect_limits(owner, from_coin, amount_native, to_coin, min_out)?;
-    // Prix qui a bougé entre le devis et la simulation : un devis neuf, une
-    // seule fois. Rien n'est signé avant une simulation réussie.
+    // Price moved between the quote and the simulation: one fresh quote, once only.
+    // Nothing is signed before a successful simulation.
     let mut retried = false;
     let raw_tx = loop {
         let quote = jupiter_rpc::quote_with_fee(&input_mint, &output_mint, amount_native, slippage_bps, fee_mint, jupiter_fee_bps(from_coin, to_coin))?;
@@ -4636,76 +4594,75 @@ pub fn send_jupiter_swap(
         }
     };
 
-    // Simulation de la transaction ENTIÈREMENT CONSTRUITE, avec vérification de
-    // ses effets réels sur les comptes de l'utilisateur (voir
-    // `check_swap_effects`) — AVANT de la signer. Trouvé lors du 22ᵉ passage :
-    // la version précédente signait d'abord, puis envoyait la transaction
-    // SIGNÉE au nœud RPC pour la simulation — une transaction malveillante
-    // rejetée ensuite par la vérification avait donc déjà quitté l'app,
-    // signée et diffusable par quiconque la voyait passer. La simulation ne
-    // vérifie aucune signature (`sigVerify: false`) : le message non signé
-    // suffit, et c'est exactement ce message qui est signé juste après.
+    // Simulation of the FULLY BUILT transaction, with a check of its real effects on
+    // the user's accounts (see `check_swap_effects`), BEFORE signing it. Found in
+    // audit round 22: the previous version signed first, then sent the SIGNED
+    // transaction to the RPC node for simulation, so a malicious transaction later
+    // rejected by the check had already left the app, signed and broadcastable by
+    // anyone who saw it go by. The simulation verifies no signatures (`sigVerify:
+    // false`): the unsigned message is enough, and that exact message is what gets
+    // signed right after.
 
-    // Blockhash frais de notre nœud (voir `jupiter_rpc::with_recent_blockhash`).
+    // A fresh blockhash from our node (see `jupiter_rpc::with_recent_blockhash`).
     let raw_tx = jupiter_rpc::with_recent_blockhash(&raw_tx, &rpc.latest_blockhash()?)?;
     let signed_tx = jupiter_rpc::sign_swap_transaction(&raw_tx, &signing_key, &owner)?;
     rpc.send_transaction(&signed_tx)
 }
 
-// --- Vérification des effets d'une transaction construite par un tiers -------
-// Trouvé lors de l'audit "failles connues des hot wallets" (classe "signature
-// aveugle d'une transaction construite par un tiers") : pour un swap Jupiter,
-// la SEULE vérification avant signature portait sur le payeur de frais. Une
-// API Jupiter compromise pouvait renvoyer une transaction avec le bon payeur
-// de frais MAIS aussi un transfert de tout le SOL vers elle, un `Approve`
-// (délégué qui pourra vider l'USDC plus tard), un `SetAuthority` (vol du
-// compte USDC lui-même) ou un `Assign` du compte principal — tout aurait
-// été signé. Désormais : simulation par le nœud RPC (tiers INDÉPENDANT de
-// Jupiter) avec l'état des comptes APRÈS exécution, comparé à l'état avant.
+// --- Checking the effects of a transaction built by a third party -------------
+//
+// Found during the "known hot wallet weaknesses" audit (the "blind signing of a
+// transaction built by a third party" class): for a Jupiter swap, the ONLY check
+// before signing was on the fee payer. A compromised Jupiter API could return a
+// transaction with the right fee payer BUT also a transfer of all the SOL to
+// itself, an `Approve` (a delegate able to drain the USDC later), a `SetAuthority`
+// (theft of the USDC account itself) or an `Assign` of the main account, and all
+// of it would have been signed. Now: simulation by the RPC node (a party
+// INDEPENDENT of Jupiter) returning the accounts' state AFTER execution, compared
+// with the state before.
 
 const SYSTEM_PROGRAM_ID: &str = "11111111111111111111111111111111";
 pub(crate) const TOKEN_PROGRAM_ID: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 pub(crate) const TOKEN_2022_PROGRAM_ID: &str = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
 const ADDRESS_LOOKUP_TABLE_PROGRAM_ID: &str = "AddressLookupTab1e1111111111111111111111111";
-/// Taille de l'en-tête d'une table de correspondance d'adresses avant la liste
-/// de clés (discriminant 4 + deactivation_slot 8 + last_extended_slot 8 +
-/// start_index 1 + authority Option<Pubkey> 33 + padding 2).
+/// Size of an address lookup table's header before the list of keys (discriminator
+/// 4 + deactivation_slot 8 + last_extended_slot 8 + start_index 1 + authority
+/// Option<Pubkey> 33 + padding 2).
 const LOOKUP_TABLE_META_SIZE: usize = 56;
-/// Budget maximal de frais réseau (frais de base + priorité) toléré au-delà
-/// du montant échangé : 0,005 SOL. Coût réel mesuré sur de vrais swaps
-/// mainnet simulés (test `jupiter_swap_effects_pass_on_real_mainnet_swaps`) :
-/// entre ~25 000 et ~490 000 lamports selon la route et la congestion, et les
-/// frais de priorité sont plafonnés à 1 000 000 lamports côté Jupiter (voir
-/// `jupiter_rpc::build_swap_transaction`) — ce budget ne peut donc pas être
-/// atteint légitimement, et borne ce qu'une transaction malveillante pourrait
-/// détourner en frais/pourboires.
+/// Maximum network fee budget (base fee + priority) tolerated beyond the amount
+/// swapped: 0.005 SOL. Real cost measured on real simulated mainnet swaps (test
+/// `jupiter_swap_effects_pass_on_real_mainnet_swaps`): between ~25,000 and ~490,000
+/// lamports depending on the route and congestion, and priority fees are capped at
+/// 1,000,000 lamports on Jupiter's side (see
+/// `jupiter_rpc::build_swap_transaction`). This budget therefore cannot be reached
+/// legitimately, and it bounds what a malicious transaction could divert as
+/// fees/tips.
 const JUPITER_SWAP_FEE_BUDGET_LAMPORTS: u64 = 5_000_000;
 
-/// Ce que l'utilisateur a accepté de perdre dans le swap, et rien de plus.
+/// What the user agreed to lose in the swap, and nothing more.
 struct SwapEffectLimits {
     user: [u8; 32],
-    /// Perte maximale en lamports, TOUS comptes de l'utilisateur confondus
-    /// (principal + comptes de jetons, rent incluse) : montant de SOL vendu +
-    /// budget de frais. Créer un compte de jetons pour l'utilisateur ou
-    /// envelopper/désenvelopper du SOL déplace des lamports entre SES comptes
-    /// sans en perdre, d'où ce total plutôt qu'un contrôle compte par compte.
+    /// Maximum loss in lamports, across ALL the user's accounts (main + token accounts,
+    /// rent included): SOL amount sold + fee budget. Creating a token account for the
+    /// user or wrapping/unwrapping SOL moves lamports between THEIR accounts without
+    /// losing any, hence this total rather than an account-by-account check.
     max_lamport_loss: u64,
-    /// Jeton vendu (hors SOL natif) et quantité maximale qui peut en sortir.
+    /// Token sold (other than native SOL) and the maximum quantity that may leave.
     input_token: Option<([u8; 32], u64)>,
-    /// Ce que l'utilisateur doit AU MOINS recevoir — trouvé lors du même audit :
-    /// sans ce plancher, borner les PERTES ne suffisait pas, une transaction
-    /// malveillante pouvait prendre le SOL vendu (perte "autorisée") et ne rien
-    /// rendre (route via un pool contrôlé par l'attaquant).
+    /// What the user must receive AT LEAST. Found in the same audit: without this
+    /// floor, bounding LOSSES was not enough, since a malicious transaction could take
+    /// the SOL sold (an "authorized" loss) and return nothing (a route through a pool
+    /// controlled by the attacker).
     min_output: MinOutput,
 }
 
 enum MinOutput {
-    /// SOL natif : vérifié via le total des lamports de l'utilisateur.
+    /// Native SOL: checked through the user's total lamports.
     Lamports(u64),
-    /// Jeton SPL (mint, quantité minimale).
+    /// SPL token (mint, minimum quantity).
     Token([u8; 32], u64),
-    /// Rien n'arrive sur Solana : échange vers un autre réseau (LI.FI), où
-    /// seules les pertes sont bornées.
+    /// Nothing arrives on Solana: a swap to another network (LI.FI), where only losses
+    /// are bounded.
     Nothing,
 }
 
@@ -4727,9 +4684,9 @@ fn swap_effect_limits(owner: [u8; 32], from_coin: &str, amount_native: u64, to_c
     })
 }
 
-/// Vue sur un compte de jetons SPL (programme Token ou Token-2022). Disposition
-/// de base identique pour les deux : mint 0..32, propriétaire 32..64, montant
-/// 64..72, délégué COption 72..108, autorité de fermeture COption 129..165.
+/// View of an SPL token account (Token or Token-2022 program). The same base layout
+/// for both: mint 0..32, owner 32..64, amount 64..72, delegate COption 72..108,
+/// close authority COption 129..165.
 struct TokenAccountView {
     mint: [u8; 32],
     owner: [u8; 32],
@@ -4742,9 +4699,9 @@ fn parse_token_account(state: &sol_rpc::AccountState) -> Option<TokenAccountView
     if state.owner != TOKEN_PROGRAM_ID && state.owner != TOKEN_2022_PROGRAM_ID {
         return None;
     }
-    // Compte de jetons : exactement 165 octets, ou plus avec extensions
-    // Token-2022 — auquel cas l'octet 165 vaut 2 (AccountType::Account ; un
-    // mint Token-2022 avec extensions dépasse aussi 165 octets mais vaut 1).
+    // Token account: exactly 165 bytes, or more with Token-2022 extensions, in which
+    // case byte 165 is 2 (AccountType::Account; a Token-2022 mint with extensions also
+    // exceeds 165 bytes but has 1).
     let data = &state.data;
     if !(data.len() == 165 || (data.len() > 165 && data[165] == 2)) {
         return None;
@@ -4758,9 +4715,9 @@ fn parse_token_account(state: &sol_rpc::AccountState) -> Option<TokenAccountView
     })
 }
 
-/// Bilan d'une transaction simulée sur les comptes de l'utilisateur : lamports
-/// (compte principal + rent de ses comptes de jetons, wSOL compris) et jetons
-/// par mint (hors wSOL, déjà compté en lamports), avant et après.
+/// Balance sheet of a simulated transaction on the user's accounts: lamports (main
+/// account + rent of their token accounts, wSOL included) and tokens per mint
+/// (excluding wSOL, already counted in lamports), before and after.
 pub(crate) struct UserEffects {
     pub lamports_pre: u128,
     pub lamports_post: u128,
@@ -4768,14 +4725,14 @@ pub(crate) struct UserEffects {
     pub tokens_post: std::collections::HashMap<[u8; 32], u128>,
 }
 
-/// Effets d'une transaction sur les comptes de `user`, à partir de l'état de
-/// ses comptes inscriptibles avant (`pre`) et après simulation (`post`),
-/// alignés sur `addresses` — avec les REFUS STRUCTURELS qui ne dépendent pas
-/// de ce que la transaction est censée faire (Assign, délégué, changement de
-/// propriétaire, compte cédé, compte non standard). Partagé par le swap
-/// Jupiter (`verify_swap_effects`, qui borne en plus pertes et gains) et les
-/// transactions de dApps WalletConnect (qui AFFICHENT ce bilan). Fonction
-/// pure : testable contre chaque type d'attaque sans réseau.
+/// Effects of a transaction on `user`'s accounts, from the state of their writable
+/// accounts before (`pre`) and after simulation (`post`), aligned with `addresses`,
+/// with the STRUCTURAL REFUSALS that do not depend on what the transaction is
+/// supposed to do (Assign, delegate, owner change, account handed over,
+/// non-standard account). Shared by the Jupiter swap (`verify_swap_effects`, which
+/// also bounds losses and gains) and WalletConnect dApp transactions (which SHOW
+/// this balance sheet). Pure function: testable against every type of attack
+/// without a network.
 pub(crate) fn user_effects(
     addresses: &[String],
     pre: &[Option<sol_rpc::AccountState>],
@@ -4796,11 +4753,11 @@ pub(crate) fn user_effects(
     let mut tokens_post: std::collections::HashMap<[u8; 32], u128> = std::collections::HashMap::new();
     let mut main_seen = false;
 
-    // Un compte à 0 lamport n'existe plus (purgé en fin de transaction) : la
-    // simulation renvoie un compte FERMÉ comme "0 lamport, programme système,
-    // 0 octet", PAS comme `null` — constaté sur un vrai swap mainnet (compte
-    // wSOL fermé par le désenveloppement de Jupiter), qui déclenchait à tort
-    // le refus "SetAuthority". Normalisé ici en "absent", des deux côtés.
+    // An account at 0 lamports no longer exists (purged at the end of the
+    // transaction): the simulation returns a CLOSED account as "0 lamports, system
+    // program, 0 bytes", NOT as `null`. Seen on a real mainnet swap (a wSOL account
+    // closed by Jupiter's unwrapping), which wrongly triggered the "SetAuthority"
+    // refusal. Normalized to "absent" here, on both sides.
     let live = |s: &Option<sol_rpc::AccountState>| s.clone().filter(|s| s.lamports > 0);
     let pre: Vec<_> = pre.iter().map(live).collect();
     let post: Vec<_> = post.iter().map(live).collect();
@@ -4831,8 +4788,8 @@ pub(crate) fn user_effects(
                 *tokens_pre.entry(before.mint).or_default() += u128::from(before.amount);
             }
             match (&post[i], &post_token) {
-                // Compte fermé : sa valeur doit réapparaître ailleurs chez
-                // l'utilisateur, ce que le contrôle global des lamports vérifie.
+                // Closed account: its value must reappear elsewhere with the user, which the
+                // global lamports check verifies.
                 (None, _) => {}
                 (Some(p), Some(after)) if after.owner == *user => {
                     anyhow::ensure!(after.mint == before.mint, "un de vos comptes de jetons changerait de jeton — refus de signer");
@@ -4854,20 +4811,20 @@ pub(crate) fn user_effects(
                 ),
             }
         } else if let (true, Some(after), Some(p)) = (post_is_user, &post_token, &post[i]) {
-            // Compte qui devient celui de l'utilisateur : seul le cas "créé par
-            // cette transaction" (ex : ATA de destination) est légitime — un
-            // compte EXISTANT remis à l'utilisateur pourrait porter un piège
-            // (délégué déjà fixé, fonds déposés plus tard puis siphonnés).
+            // An account that becomes the user's: only the "created by this transaction" case
+            // (e.g. the destination ATA) is legitimate. An EXISTING account handed to the user
+            // could carry a trap (a delegate already set, funds deposited later and then
+            // drained).
             anyhow::ensure!(pre[i].is_none(), "la transaction vous céderait un compte de jetons existant — refus de signer");
-            // Et seulement à l'adresse STANDARD (compte associé) de ce jeton —
-            // trouvé lors du 22ᵉ passage : l'utilisateur signant la transaction,
-            // une API compromise pouvait créer un compte de jetons à une adresse
-            // arbitraire (CreateAccountWithSeed avec l'utilisateur comme base)
-            // et y livrer la sortie du swap. Rien de volé, mais des fonds que
-            // l'app n'affiche ni ne dépense jamais (elle ne lit que le compte
-            // associé) : pour l'utilisateur, un swap qui n'a "rien rendu".
-            // Programme du compte créé (Token, ou Token-2022 pour les xStocks) :
-            // il fait partie de l'adresse du compte associé.
+            // And only at that token's STANDARD address (associated account). Found in audit
+            // round 22: since the user signs the transaction, a compromised API could create a
+            // token account at an arbitrary address (CreateAccountWithSeed with the user as
+            // the base) and deliver the swap output there. Nothing stolen, but funds the app
+            // never shows or spends (it only reads the associated account): for the user, a
+            // swap that "returned nothing".
+            //
+            // Program of the created account (Token, or Token-2022 for xStocks): it is part of
+            // the associated account's address.
             let program = if p.owner == TOKEN_2022_PROGRAM_ID { sol_spl::token_2022_program_id() } else { sol_spl::token_program_id() };
             let canonical = bs58::encode(sol_spl::find_associated_token_address_for(user, &after.mint, &program)).into_string();
             anyhow::ensure!(
@@ -4890,8 +4847,8 @@ pub(crate) fn user_effects(
     Ok(UserEffects { lamports_pre, lamports_post, tokens_pre, tokens_post })
 }
 
-/// Vérifie les effets d'un swap Jupiter : refus structurels de `user_effects`,
-/// puis perte bornée au montant vendu + budget de frais, et sortie minimale.
+/// Checks the effects of a Jupiter swap: the structural refusals of `user_effects`,
+/// then a loss bounded to the amount sold + the fee budget, and a minimum output.
 fn verify_swap_effects(
     addresses: &[String],
     pre: &[Option<sol_rpc::AccountState>],
@@ -4907,8 +4864,8 @@ fn verify_swap_effects(
     );
     match limits.min_output {
         MinOutput::Lamports(min) => anyhow::ensure!(
-            // Les frais réseau se paient en SOL : ils peuvent réduire le gain
-            // net d'au plus le budget de frais.
+            // Network fees are paid in SOL: they can reduce the net gain by at most the fee
+            // budget.
             lamports_post + u128::from(JUPITER_SWAP_FEE_BUDGET_LAMPORTS) >= lamports_pre + u128::from(min),
             "la transaction vous rendrait moins de SOL que le minimum annoncé ({min} lamports) — refus de signer"
         ),
@@ -4939,18 +4896,18 @@ fn verify_swap_effects(
     Ok(())
 }
 
-/// Résout les comptes inscriptibles d'une transaction (clés statiques + tables
-/// de correspondance lues ON-CHAIN, jamais fournies par Jupiter), récupère leur
-/// état avant, simule avec leur état après, puis appelle `verify_swap_effects`.
-/// Simulation refusée par Jupiter pour glissement de prix (6001,
-/// `SlippageToleranceExceeded`) : le prix a bougé entre le devis et la
-/// simulation. Rien n'a été signé ; un devis neuf peut réussir.
+/// Simulation refused by Jupiter for price slippage (6001,
+/// `SlippageToleranceExceeded`): the price moved between the quote and the
+/// simulation. Nothing has been signed; a fresh quote may succeed.
 const SWAP_PRICE_MOVED: &str = "le prix a bougé pendant la préparation de l'échange (au-delà du glissement toléré) — rien n'a été envoyé, relancez l'échange";
 
 fn is_jupiter_slippage(err: &serde_json::Value, logs: &str) -> bool {
     err.to_string().contains("\"Custom\":6001") && logs.contains("JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 failed: custom program error: 0x1771")
 }
 
+/// Resolves a transaction's writable accounts (static keys + lookup tables read
+/// ON-CHAIN, never supplied by Jupiter), fetches their state before, simulates with
+/// their state after, then calls `verify_swap_effects`.
 fn check_swap_effects(rpc: &sol_rpc::SolRpc, tx: &[u8], limits: &SwapEffectLimits) -> Result<()> {
     let addresses = resolve_writable_addresses(rpc, tx)?;
     let pre = rpc.multiple_accounts(&addresses)?;
@@ -4997,12 +4954,11 @@ pub(crate) fn resolve_writable_addresses(rpc: &sol_rpc::SolRpc, tx: &[u8]) -> Re
     Ok(addresses)
 }
 
-/// Obtient un devis de swap THORChain (lecture seule, aucun secret impliqué) —
-/// voir `thorchain_rpc` pour le contexte complet. `amount` dans l'unité
-/// principale de l'actif SOURCE (ex: "0.5" pour 0,5 SOL), comme partout
-/// ailleurs dans cette API. `destination` : l'adresse de l'utilisateur sur la
-/// chaîne DESTINATION (jamais celle du développeur — voir
-/// `thorchain_rpc::AFFILIATE_ADDRESS`, déjà injectée automatiquement par
+/// Gets a THORChain swap quote (read-only, no secrets involved); see
+/// `thorchain_rpc` for the full context. `amount` in the SOURCE asset's main unit
+/// (e.g. "0.5" for 0.5 SOL), as everywhere else in this API. `destination`: the
+/// user's address on the DESTINATION chain (never the developer's;
+/// `thorchain_rpc::AFFILIATE_ADDRESS` is added automatically by
 /// `thorchain_rpc::quote_swap`).
 pub fn get_swap_quote(
     protocol: &thorchain_rpc::CrossChain,
@@ -5020,30 +4976,30 @@ fn swap_amount_1e8(from: &thorchain_rpc::ThorAsset, amount: &str) -> Result<u64>
     thorchain_rpc::to_thorchain_amount(amount_native, from.decimals)
 }
 
-/// Actif d'une crypto de l'app (`coin`) sur `network` pour `protocol`
-/// (THORChain ou Maya).
+/// Asset of one of the app's cryptos (`coin`) on `network` for `protocol`
+/// (THORChain or Maya).
 pub fn cross_chain_asset(protocol: &thorchain_rpc::CrossChain, coin: &str, network: &str) -> Result<&'static thorchain_rpc::ThorAsset> {
     protocol
         .asset(coin, network)
         .ok_or_else(|| anyhow::anyhow!("échange {} non disponible pour cette crypto sur ce réseau", protocol.name))
 }
 
-/// Montant d'un échange sous sa forme canonique (affichée ET signée, voir
-/// `canonical_amount`), selon les décimales de l'actif source.
+/// Amount of a swap in its canonical form (shown AND signed, see
+/// `canonical_amount`), using the source asset's decimals.
 pub fn canonical_swap_amount(from: &thorchain_rpc::ThorAsset, amount: &str) -> Result<String> {
     let decimals = from.decimals as u8;
     Ok(tokens::format_amount(tokens::parse_amount(amount, decimals)?, decimals))
 }
 
-/// Re-demande un devis JUSTE AVANT l'envoi (jamais de vault périmé, voir la doc
-/// de `thorchain_rpc::SwapQuote`) tout en garantissant que ce qui part est ce
-/// qui a été AFFICHÉ dans la boîte de confirmation (`shown`) : même adresse de
-/// vault, même routeur, et une sortie minimale d'au moins 99 % de la sortie
-/// attendue affichée — sinon refus (l'utilisateur relance et voit les nouvelles
-/// valeurs). Résout la tension laissée par le 18ᵉ passage d'auto-revue entre
-/// "devis toujours frais" et "on signe ce qu'on voit" : relire le devis après la
-/// confirmation pouvait faire payer un vault/routeur jamais affiché, ou livrer
-/// moins que la sortie annoncée si le cours avait bougé entre-temps.
+/// Requests a quote again JUST BEFORE sending (never a stale vault, see the docs of
+/// `thorchain_rpc::SwapQuote`) while guaranteeing that what goes out is what was
+/// SHOWN in the confirmation dialog (`shown`): same vault address, same router, and
+/// a minimum output of at least 99% of the expected output shown; otherwise refused
+/// (the user restarts and sees the new values). This resolves the tension left by
+/// self-review round 18 between "always a fresh quote" and "sign what you see":
+/// rereading the quote after confirmation could pay a vault/router that was never
+/// shown, or deliver less than the announced output if the rate had moved in the
+/// meantime.
 pub fn refresh_swap_quote_matching(
     protocol: &thorchain_rpc::CrossChain,
     from: &thorchain_rpc::ThorAsset,
@@ -5052,7 +5008,7 @@ pub fn refresh_swap_quote_matching(
     destination: &str,
     shown: &thorchain_rpc::SwapQuote,
 ) -> Result<thorchain_rpc::SwapQuote> {
-    // Même affilié que le devis affiché (frais annoncés dans la boîte).
+    // Same affiliate as the quote shown (fees announced in the dialog).
     let fresh = protocol.quote_swap_as(from.asset, to.asset, swap_amount_1e8(from, amount)?, destination, shown.affiliate.as_deref())?;
     ensure_quote_matches_shown(protocol, &fresh, shown, to.asset, destination)?;
     Ok(fresh)
@@ -5075,12 +5031,13 @@ fn ensure_quote_matches_shown(
         .context("le cours a bougé pendant la confirmation (sortie minimale sous 99 % du montant affiché) — relancez l'échange")
 }
 
-// --- Nom d'affiliation (THORName / MAYAName) -----------------------------------
-// Réservé au portefeuille du développeur : celui dont l'adresse THOR (clé
-// m/44'/931'/0'/0/0, même hash160 sur Maya) EST l'adresse d'affiliation de
-// l'app. Inscription par un dépôt natif signé ici (voir `native_deposit`).
+// --- Affiliate name (THORName / MAYAName) -------------------------------------
+//
+// Reserved for the developer's wallet: the one whose THOR address (key
+// m/44'/931'/0'/0/0, same hash160 on Maya) IS the app's affiliate address.
+// Registration through a native deposit signed here (see `native_deposit`).
 
-/// Protocole d'un nom : réseau natif et protocole d'échange.
+/// A name's protocol: native network and swap protocol.
 pub fn affiliate_name_chains(chain: &str) -> Result<(&'static native_deposit::NativeChain, &'static thorchain_rpc::CrossChain)> {
     match chain {
         "thorchain" => Ok((&native_deposit::THORCHAIN, &thorchain_rpc::THORCHAIN)),
@@ -5089,33 +5046,34 @@ pub fn affiliate_name_chains(chain: &str) -> Result<(&'static native_deposit::Na
     }
 }
 
-/// Nom d'affiliation sur un protocole, vu depuis l'app.
+/// Affiliate name on a protocol, as seen from the app.
 #[derive(Clone, Debug, PartialEq)]
 pub enum NameState {
-    /// Libre (ou expiré) : inscription possible.
+    /// Free (or expired): registration possible.
     Free,
-    /// Inscrit par l'adresse d'affiliation ; années restantes ; alias correct.
+    /// Registered by the affiliate address; years remaining; alias correct.
     Ours { years_left: f64, points_to_affiliate: bool },
-    /// Inscrit par quelqu'un d'autre.
+    /// Registered by someone else.
     Taken,
 }
 
 pub struct NameStatus {
     pub name: &'static str,
     pub state: NameState,
-    /// Adresse d'affiliation sur ce réseau (paie l'inscription, reçoit les frais).
+    /// Affiliate address on this network (pays for the registration, receives the
+    /// fees).
     pub address: &'static str,
     pub balance: u128,
     pub decimals: u32,
-    /// Montant du dépôt proposé : inscription (un an inclus) + un an, ou un
-    /// an de plus si le nom est déjà à nous.
+    /// Proposed deposit amount: registration (one year included) + one year, or one
+    /// more year if the name is already ours.
     pub deposit: u128,
     pub network_fee: u128,
 }
 
-/// Inscription (un an inclus) et un an de plus, d'après les constantes du
-/// protocole (relevées sur de vraies inscriptions : 10 RUNE ou 10 CACAO, puis
-/// ~1,05 par an).
+/// Registration (one year included) and one extra year, from the protocol's
+/// constants (taken from real registrations: 10 RUNE or 10 CACAO, then ~1.05 per
+/// year).
 fn name_costs(native: &native_deposit::NativeChain) -> Result<(u128, u128)> {
     let register = native_deposit::constant(native, "TNSRegisterFee")?;
     let per_block = native_deposit::constant(native, "TNSFeePerBlock")?;
@@ -5134,7 +5092,7 @@ fn name_state(protocol: &thorchain_rpc::CrossChain, name: &str) -> Result<NameSt
     })
 }
 
-/// Dépôt à faire pour l'état `state` (`None` : nom pris par un autre).
+/// Deposit to make for state `state` (`None`: name taken by someone else).
 fn name_deposit(state: &NameState, register: u128, year: u128) -> Option<u128> {
     match state {
         NameState::Free => Some(register + year),
@@ -5143,8 +5101,8 @@ fn name_deposit(state: &NameState, register: u128, year: u128) -> Option<u128> {
     }
 }
 
-/// État du nom d'affiliation sur `chain` (« thorchain », « maya ») : lecture
-/// seule, données publiques.
+/// State of the affiliate name on `chain` ("thorchain", "maya"): read-only, public
+/// data.
 pub fn affiliate_name_status(chain: &str) -> Result<NameStatus> {
     let (native, protocol) = affiliate_name_chains(chain)?;
     let name = protocol.affiliate_name.context("aucun nom d'affiliation prévu sur ce réseau")?;
@@ -5161,10 +5119,10 @@ pub fn affiliate_name_status(chain: &str) -> Result<NameStatus> {
     })
 }
 
-/// Inscrit (ou prolonge d'un an) le nom d'affiliation sur `chain`, signé par
-/// la clé THOR du profil principal — refusé si elle n'est pas l'adresse
-/// d'affiliation de l'app. `shown_deposit` : montant affiché dans la boîte
-/// de confirmation, jamais dépassé. Renvoie l'identifiant de la transaction.
+/// Registers (or extends by a year) the affiliate name on `chain`, signed by the
+/// main profile's THOR key; refused if it is not the app's affiliate address.
+/// `shown_deposit`: the amount shown in the confirmation dialog, never exceeded.
+/// Returns the transaction identifier.
 pub fn register_affiliate_name(data_dir: &Path, device_password: &str, chain: &str, shown_deposit: u128) -> Result<String> {
     let (native, protocol) = affiliate_name_chains(chain)?;
     let name = protocol.affiliate_name.context("aucun nom d'affiliation prévu sur ce réseau")?;
@@ -5190,19 +5148,18 @@ pub fn register_affiliate_name(data_dir: &Path, device_password: &str, chain: &s
         tokens::format_amount(deposit + fee, native.decimals as u8)
     );
     let (account_number, sequence) = native_deposit::account(native, &address)?.context("adresse d'affiliation jamais approvisionnée sur ce réseau")?;
-    // Alias de la chaîne native vers l'adresse d'affiliation ; propriétaire :
-    // le signataire (cette même adresse).
+    // Native chain alias pointing to the affiliate address; owner: the signer (that
+    // same address).
     let memo = format!("~:{name}:{}:{address}", protocol.native_chain());
     let tx = native_deposit::signed_deposit(native, &key, deposit, &memo, account_number, sequence)?;
     native_deposit::broadcast(native, &tx)
 }
 
-/// Envoie un swap THORChain depuis Solana : construit un transfert SOL vers
-/// l'adresse de vault du devis, plus une instruction Memo (SPL Memo Program)
-/// portant le memo THORChain — dans la MÊME transaction, pour que THORChain
-/// associe les deux de façon atomique. `quote` doit avoir été obtenu juste
-/// avant cet appel (l'adresse de vault n'est jamais mise en cache, voir la
-/// doc de `thorchain_rpc::SwapQuote`).
+/// Sends a THORChain swap from Solana: builds a SOL transfer to the quote's vault
+/// address, plus a Memo instruction (SPL Memo Program) carrying the THORChain memo,
+/// in the SAME transaction, so THORChain links the two atomically. `quote` must
+/// have been obtained just before this call (the vault address is never cached, see
+/// the docs of `thorchain_rpc::SwapQuote`).
 pub fn send_swap_sol(
     data_dir: &Path,
     device_password: &str,
@@ -5254,13 +5211,12 @@ pub fn send_swap_sol(
     rpc.send_transaction(&raw_tx)
 }
 
-/// Déverrouille le coffre, signe et diffuse un virement USDC (mainnet
-/// uniquement, voir sol_spl.rs) — un jeton SPL, pas du SOL natif : deux
-/// instructions dans une seule transaction (créer l'Associated Token Account
-/// du destinataire si besoin, puis transférer), voir sol_spl.rs. Vérifie le
-/// solde USDC ET le solde SOL (frais + rent éventuel) AVANT de signer ou
-/// diffuser quoi que ce soit — même principe "échec précoce et clair" que
-/// send_sol/send_btc/send_evm.
+/// Unlocks the vault, signs and broadcasts a USDC transfer (mainnet only, see
+/// sol_spl.rs). This is an SPL token, not native SOL: two instructions in a single
+/// transaction (create the recipient's Associated Token Account if needed, then
+/// transfer), see sol_spl.rs. Checks the USDC balance AND the SOL balance (fees +
+/// any rent) BEFORE signing or broadcasting anything, the same "fail early and
+/// clearly" principle as send_sol/send_btc/send_evm.
 pub fn send_usdc(
     data_dir: &Path,
     device_password: &str,
@@ -5273,9 +5229,9 @@ pub fn send_usdc(
     send_spl(data_dir, device_password, network, &sol_spl::usdc_mint_mainnet(), sol_spl::USDC_DECIMALS, "USDC", to, amount, profile_index)
 }
 
-/// Virement d'un jeton SPL `mint` (`amount` en unités, `decimals` du mint) —
-/// voir `send_usdc` : compte de jetons du destinataire créé si besoin, soldes
-/// du jeton et SOL (frais + rent) vérifiés avant de signer.
+/// Transfer of an SPL token `mint` (`amount` in units, `decimals` of the mint); see
+/// `send_usdc`: the recipient's token account is created if needed, and the token
+/// and SOL balances (fees + rent) are checked before signing.
 #[allow(clippy::too_many_arguments)]
 pub fn send_spl(
     data_dir: &Path,
@@ -5304,9 +5260,9 @@ pub fn send_spl(
     let owner_b58 = bs58::encode(owner).into_string();
 
     let rpc = sol_rpc::SolRpc::new(network.rpc);
-    // 4 lectures RPC indépendantes en parallèle (même motif que send_sol/send_evm) :
-    // solde SOL (frais), solde USDC (ATA source), blockhash récent, et existence de
-    // l'ATA destinataire (pour savoir si sa création va facturer du rent).
+    // 4 independent RPC reads in parallel (same pattern as send_sol/send_evm): SOL
+    // balance (fees), USDC balance (source ATA), recent blockhash, and whether the
+    // recipient's ATA exists (to know whether creating it will charge rent).
     let (sol_balance, usdc_balance, recent_blockhash, dest_ata_exists) = std::thread::scope(|scope| {
         let sol_handle = scope.spawn(|| rpc.balance_lamports(&owner_b58));
         let usdc_handle = scope.spawn(|| rpc.token_account_balance(&source_ata_b58));
@@ -5323,9 +5279,8 @@ pub fn send_spl(
     let recent_blockhash = recent_blockhash?;
     let dest_ata_exists = dest_ata_exists?;
 
-    // ATA source absente == solde USDC forcément nul (jamais reçu d'USDC) :
-    // échouer clairement plutôt que de construire une transaction qui
-    // échouerait de toute façon on-chain.
+    // Missing source ATA == USDC balance necessarily zero (no USDC ever received):
+    // fail clearly rather than build a transaction that would fail on-chain anyway.
     let usdc_balance = usdc_balance?.ok_or_else(|| anyhow::anyhow!("aucun compte {symbol} trouvé pour cette adresse (solde 0)"))?;
     anyhow::ensure!(
         amount <= usdc_balance,
@@ -5336,9 +5291,9 @@ pub fn send_spl(
     let rent_lamports = if dest_ata_exists {
         0
     } else {
-        // Taille standard d'un compte SPL Token (165 octets), vérifiée contre
-        // le réseau réel — voir sol_spl.rs. Interrogé en direct plutôt que
-        // codé en dur : le montant de rent est un paramètre réseau qui évolue.
+        // Standard size of an SPL Token account (165 bytes), checked against the real
+        // network; see sol_spl.rs. Queried live rather than hard-coded: the rent amount is
+        // a network parameter that changes.
         rpc.minimum_rent_exempt_balance(165)?
     };
     let total_sol_needed = SOL_FEE_LAMPORTS
@@ -5356,9 +5311,10 @@ pub fn send_spl(
     rpc.send_transaction(&raw_tx)
 }
 
-// --- Jetons du registre (voir tokens.rs) ---------------------------------------
-// L'interface ne donne que l'identifiant du jeton et le réseau : contrat, mint
-// et décimales viennent TOUJOURS du registre.
+// --- Registry tokens (see tokens.rs) -------------------------------------------
+//
+// The UI only provides the token identifier and the network: contract, mint and
+// decimals ALWAYS come from the registry.
 
 fn abi_word_address(address: &[u8; 20]) -> [u8; 32] {
     let mut word = [0u8; 32];
@@ -5372,7 +5328,7 @@ fn abi_word_u128(value: u128) -> [u8; 32] {
     word
 }
 
-/// Données d'un appel ERC-20 `transfer(to, amount)`.
+/// Calldata for an ERC-20 `transfer(to, amount)` call.
 pub fn erc20_transfer_data(to: &[u8; 20], amount: u128) -> Vec<u8> {
     let mut data = vec![0xa9, 0x05, 0x9c, 0xbb];
     data.extend_from_slice(&abi_word_address(to));
@@ -5380,7 +5336,7 @@ pub fn erc20_transfer_data(to: &[u8; 20], amount: u128) -> Vec<u8> {
     data
 }
 
-/// Données d'un appel ERC-20 `approve(spender, amount)`.
+/// Calldata for an ERC-20 `approve(spender, amount)` call.
 pub fn erc20_approve_data(spender: &[u8; 20], amount: u128) -> Vec<u8> {
     let mut data = vec![0x09, 0x5e, 0xa7, 0xb3];
     data.extend_from_slice(&abi_word_address(spender));
@@ -5388,21 +5344,21 @@ pub fn erc20_approve_data(spender: &[u8; 20], amount: u128) -> Vec<u8> {
     data
 }
 
-/// Montant que `spender` peut encore prélever sur `owner` : `allowance(owner, spender)`.
+/// Amount `spender` can still pull from `owner`: `allowance(owner, spender)`.
 pub fn get_erc20_allowance(network: &wallet_flow::EvmNetwork, contract: &str, owner: &[u8; 20], spender: &[u8; 20]) -> Result<u128> {
     let mut data = vec![0xdd, 0x62, 0xed, 0x3e];
     data.extend_from_slice(&abi_word_address(owner));
     data.extend_from_slice(&abi_word_address(spender));
     let answer = eth_rpc::EthRpc::new(network.rpc).call_contract(&derivation::format_address(owner), contract, 0, &data)?;
     anyhow::ensure!(answer.len() == 32, "réponse du contrat de jeton inattendue");
-    // Autorisation « illimitée » (2^256 − 1) donnée ailleurs : bornée à u128::MAX.
+    // An "unlimited" approval (2^256 − 1) granted elsewhere: capped at u128::MAX.
     if answer[..16].iter().any(|&b| b != 0) {
         return Ok(u128::MAX);
     }
     Ok(u128::from_be_bytes(answer[16..].try_into().expect("16 octets")))
 }
 
-/// Solde ERC-20 de `owner` (unités du jeton) : `balanceOf(owner)`.
+/// ERC-20 balance of `owner` (token units): `balanceOf(owner)`.
 pub fn get_erc20_balance(network: &wallet_flow::EvmNetwork, contract: &str, owner: &str) -> Result<u128> {
     let owner_bytes = wallet_flow::parse_evm_address(owner)?;
     let mut data = vec![0x70, 0xa0, 0x82, 0x31];
@@ -5421,7 +5377,7 @@ fn token_evm_network(network: &str) -> Result<&'static wallet_flow::EvmNetwork> 
     wallet_flow::evm_network(network).ok_or_else(|| anyhow::anyhow!("réseau EVM inconnu : {network}"))
 }
 
-/// Solde d'un jeton du registre sur `network` : (unités, décimales).
+/// Balance of a registry token on `network`: (units, decimals).
 pub fn get_token_balance(token_id: &str, network: &str, owner: &str) -> Result<(u128, u8)> {
     let (_, deployment) = registered_token(token_id, network)?;
     let units = match deployment.kind {
@@ -5436,7 +5392,7 @@ pub fn get_token_balance(token_id: &str, network: &str, owner: &str) -> Result<(
     Ok((units, deployment.decimals))
 }
 
-/// Mint (32 octets) d'un jeton SPL du registre.
+/// Mint (32 bytes) of a registry SPL token.
 pub fn registered_spl_mint(token_id: &str) -> Result<[u8; 32]> {
     let (_, deployment) = registered_token(token_id, "sol_mainnet")?;
     let tokens::TokenKind::Spl { mint } = deployment.kind else { anyhow::bail!("jeton SPL attendu") };
@@ -5447,16 +5403,15 @@ fn sol_spl_mint(mint: &str) -> Result<[u8; 32]> {
     bs58::decode(mint).into_vec().ok().and_then(|b| b.try_into().ok()).ok_or_else(|| anyhow::anyhow!("mint invalide"))
 }
 
-/// Montant canonique d'un jeton (forme affichée ET signée).
+/// Canonical amount of a token (the form shown AND signed).
 pub fn canonical_token_amount(token_id: &str, network: &str, amount: &str) -> Result<String> {
     let (_, deployment) = registered_token(token_id, network)?;
     Ok(tokens::format_amount(tokens::parse_amount(amount, deployment.decimals)?, deployment.decimals))
 }
 
-/// Frais d'un virement ERC-20, montrés dans la boîte de confirmation puis
-/// signés tels quels (gas de l'appel estimé par le nœud, voir
-/// `evm_fee_for_confirmation`). Refus d'un virement VERS un contrat de jeton
-/// (fonds perdus à jamais).
+/// Fees for an ERC-20 transfer, shown in the confirmation dialog and then signed as
+/// is (the call's gas estimated by the node, see `evm_fee_for_confirmation`). A
+/// transfer TO a token contract is refused (funds lost forever).
 pub fn erc20_fee_for_confirmation(token_id: &str, network: &str, from: &str, to: &str, amount: &str) -> Result<EvmFee> {
     let (_, deployment) = registered_token(token_id, network)?;
     let tokens::TokenKind::Erc20 { contract } = deployment.kind else { anyhow::bail!("jeton ERC-20 attendu") };
@@ -5464,10 +5419,9 @@ pub fn erc20_fee_for_confirmation(token_id: &str, network: &str, from: &str, to:
     let units = tokens::parse_amount(amount, deployment.decimals)?;
     let data = erc20_transfer_data(&wallet_flow::parse_evm_address(to)?, units);
     evm_fee_for_confirmation(token_evm_network(network)?, &wallet_flow::parse_evm_address(from)?, &wallet_flow::parse_evm_address(contract)?, 0, &data).map_err(|e| {
-        // Appel refusé par le contrat lors de l'estimation : le cas courant est
-        // un solde de jeton insuffisant.
-        // Refus classique (« revert ») ou ancien contrat qui s'arrête sur un
-        // opcode invalide (USDT, constaté avec un solde nul).
+        // Call refused by the contract during the estimate: the common case is an
+        // insufficient token balance. A classic refusal ("revert") or an old contract that
+        // stops on an invalid opcode (USDT, seen with a zero balance).
         let message = format!("{e:#}");
         if message.contains("revert") || message.contains("invalid opcode") {
             anyhow::anyhow!("solde de jeton insuffisant, ou transfert refusé par le contrat du jeton")
@@ -5477,10 +5431,9 @@ pub fn erc20_fee_for_confirmation(token_id: &str, network: &str, from: &str, to:
     })
 }
 
-/// Déverrouille le coffre, signe et diffuse un virement ERC-20 du registre.
-/// `fee` : celui affiché dans la boîte de confirmation, utilisé tel quel.
-/// Vérifie avant de signer : réseau du nœud, solde du jeton, solde natif pour
-/// les frais.
+/// Unlocks the vault, signs and broadcasts an ERC-20 transfer of a registry token.
+/// `fee`: the one shown in the confirmation dialog, used as is. Checks before
+/// signing: the node's network, the token balance, the native balance for fees.
 #[allow(clippy::too_many_arguments)]
 pub fn send_erc20(
     data_dir: &Path,
@@ -5540,8 +5493,8 @@ pub fn send_erc20(
     rpc.send_raw_transaction(&tx.sign(&signing_key)?)
 }
 
-/// Virement d'un jeton Solana du registre (programme classique, ou
-/// Token-2022 pour les xStocks : voir `send_scaled_token`).
+/// Transfer of a registry Solana token (classic program, or Token-2022 for xStocks:
+/// see `send_scaled_token`).
 pub fn send_registered_spl(data_dir: &Path, device_password: &str, token_id: &str, to: &str, amount: &str, profile_index: u32) -> Result<String> {
     let (token, deployment) = registered_token(token_id, "sol_mainnet")?;
     match deployment.kind {
@@ -5554,16 +5507,17 @@ pub fn send_registered_spl(data_dir: &Path, device_password: &str, token_id: &st
     }
 }
 
-// --- Actions tokenisées xStocks (Token-2022, coefficient d'affichage) ---------
-// Voir `tokens::TokenKind::Spl2022`. Mesuré le 09/10/2026 : le nœud applique le
-// coefficient en vigueur au solde (getTokenAccountBalance), PAS aux soldes des
-// transactions passées ; les prix de Jupiter sont par unité affichée
-// (usdPrice), ses devis et les virements en unités brutes. L'app compte en
-// unités affichées partout et convertit au moment de signer.
+// --- xStocks tokenized shares (Token-2022, display multiplier) -----------------
+//
+// See `tokens::TokenKind::Spl2022`. Measured on 2026-10-09: the node applies the
+// current multiplier to the balance (getTokenAccountBalance), NOT to the balances
+// of past transactions; Jupiter's prices are per displayed unit (usdPrice), while
+// its quotes and transfers are in raw units. The app counts in displayed units
+// everywhere and converts at signing time.
 
-/// Coefficient d'affichage en décimal exact : valeur = `num` / 10^`scale`.
-/// Lu tel que le nœud l'écrit (« 1 », « 1.0211807004882871 ») — pas de
-/// calcul en virgule flottante sur un montant.
+/// Display multiplier as an exact decimal: value = `num` / 10^`scale`. Read as the
+/// node writes it ("1", "1.0211807004882871"), with no floating-point arithmetic on
+/// an amount.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct UiMultiplier {
     num: u128,
@@ -5573,8 +5527,8 @@ pub struct UiMultiplier {
 impl UiMultiplier {
     pub const ONE: Self = Self { num: 1, scale: 0 };
 
-    /// Au plus 18 décimales, entre 0,01 et 100 : au-delà, refus plutôt qu'un
-    /// montant faux.
+    /// At most 18 decimals, between 0.01 and 100: beyond that, refused rather than
+    /// giving a wrong amount.
     pub fn parse(text: &str) -> Result<Self> {
         let text = text.trim();
         let (whole, frac) = text.split_once('.').unwrap_or((text, ""));
@@ -5593,36 +5547,35 @@ impl UiMultiplier {
         10u128.pow(self.scale)
     }
 
-    /// Unités brutes → unités affichées, tronqué (comme le nœud). Sans
-    /// dépassement pour tout montant u64.
+    /// Raw units → displayed units, truncated (like the node). No overflow for any u64
+    /// amount.
     pub fn to_ui(self, raw: u64) -> u128 {
         let (raw, unit) = (u128::from(raw), self.unit());
         raw / unit * self.num + raw % unit * self.num / unit
     }
 
-    /// Unités affichées → unités brutes, arrondi vers le bas : jamais plus que
-    /// le montant demandé.
+    /// Displayed units → raw units, rounded down: never more than the amount requested.
     pub fn to_raw(self, ui: u128) -> Result<u64> {
         let raw = ui.checked_mul(self.unit()).context("montant trop grand")? / self.num;
         u64::try_from(raw).context("montant trop grand")
     }
 }
 
-/// Ce que l'app lit d'un mint xStocks.
+/// What the app reads from an xStocks mint.
 #[derive(Clone, Debug, PartialEq)]
 struct ScaledMintConfig {
     current: UiMultiplier,
     next: UiMultiplier,
-    /// Heure (Unix) d'entrée en vigueur de `next`.
+    /// Time (Unix) at which `next` takes effect.
     next_at: i64,
     paused: bool,
     transfer_hook: Option<String>,
 }
 
 impl ScaledMintConfig {
-    /// Coefficient en vigueur à `now` : le nouveau dès son heure (constaté : le
-    /// rapport des prix brut/affiché de Jupiter est le nouveau coefficient une
-    /// fois son heure passée).
+    /// Multiplier in force at `now`: the new one from its effective time (observed:
+    /// Jupiter's raw/displayed price ratio is the new multiplier once its time has
+    /// passed).
     fn effective(&self, now: i64) -> UiMultiplier {
         if now >= self.next_at {
             self.next
@@ -5636,7 +5589,7 @@ pub const XSTOCK_PAUSED: &str = "transferts de ce jeton suspendus par son émett
 pub const XSTOCK_TRANSFER_HOOK: &str = "l'émetteur de ce jeton a ajouté une règle de transfert que l'app ne gère pas encore : envoi refusé, rien n'a été dépensé";
 pub const XSTOCK_MULTIPLIER_SWITCH: &str = "le coefficient de ce jeton change en ce moment (dividende ou division d'action) : réessayez dans quelques minutes";
 
-/// Champs `info` d'un mint lu en `jsonParsed` → configuration utile.
+/// `info` fields of a mint read as `jsonParsed` → the useful configuration.
 fn parse_scaled_mint(info: &serde_json::Value) -> Result<ScaledMintConfig> {
     let extension = |name: &str| info["extensions"].as_array().and_then(|list| list.iter().find(|e| e["extension"] == name)).map(|e| &e["state"]);
     let scaled = extension("scaledUiAmountConfig").context("coefficient d'affichage absent du mint")?;
@@ -5651,10 +5604,9 @@ fn parse_scaled_mint(info: &serde_json::Value) -> Result<ScaledMintConfig> {
     })
 }
 
-/// Mouvement de ce jeton possible à `now` ? Refus si l'émetteur a suspendu
-/// les transferts, si un crochet de transfert est actif (le virement simple
-/// échouerait), ou à moins de 5 minutes d'un changement de coefficient
-/// (montant converti avec l'un, exécuté avec l'autre).
+/// Can this token move at `now`? Refused if the issuer has paused transfers, if a
+/// transfer hook is active (a plain transfer would fail), or within 5 minutes of a
+/// multiplier change (amount converted with one, executed with the other).
 fn check_scaled_transfer(config: &ScaledMintConfig, now: i64) -> Result<()> {
     anyhow::ensure!(!config.paused, XSTOCK_PAUSED);
     anyhow::ensure!(config.transfer_hook.is_none(), XSTOCK_TRANSFER_HOOK);
@@ -5666,9 +5618,9 @@ fn unix_now() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
-/// Configuration du mint xStocks `mint` ; gardée 10 minutes pour les soldes et
-/// l'historique (le coefficient change quelques fois par an, et son heure est
-/// connue d'avance), relue (`fresh`) avant tout mouvement.
+/// Configuration of the xStocks mint `mint`; kept for 10 minutes for balances and
+/// history (the multiplier changes a few times a year, and its time is known in
+/// advance), reread (`fresh`) before any movement.
 fn scaled_mint_config(rpc: &sol_rpc::SolRpc, mint: &str, fresh: bool) -> Result<ScaledMintConfig> {
     type Cache = std::collections::HashMap<String, (std::time::Instant, ScaledMintConfig)>;
     static CACHE: std::sync::OnceLock<Mutex<Cache>> = std::sync::OnceLock::new();
@@ -5688,20 +5640,20 @@ fn scaled_mint_config(rpc: &sol_rpc::SolRpc, mint: &str, fresh: bool) -> Result<
     Ok(config)
 }
 
-/// Jeton Solana du registre (programme classique ou Token-2022).
+/// A registry Solana token (classic program or Token-2022).
 pub struct SolanaToken {
     pub mint: [u8; 32],
     pub mint_b58: &'static str,
-    /// Programme de jetons (fait partie de l'adresse du compte associé).
+    /// Token program (part of the associated account's address).
     pub program: [u8; 32],
     pub decimals: u8,
     pub symbol: &'static str,
-    /// Coefficient d'affichage (xStocks).
+    /// Display multiplier (xStocks).
     pub scaled: bool,
 }
 
 impl SolanaToken {
-    /// Taille d'un compte de jetons de ce jeton (rent de sa création).
+    /// Size of a token account for this token (rent for creating it).
     pub fn account_size(&self) -> u64 {
         if self.scaled {
             tokens::XSTOCK_ACCOUNT_SIZE
@@ -5726,15 +5678,15 @@ fn solana_owner(address: &str) -> Result<[u8; 32]> {
     bytes.try_into().map_err(|_| anyhow::anyhow!("une adresse Solana fait 32 octets"))
 }
 
-/// Compte de jetons associé (base58) de `owner_address` pour le jeton
-/// `token_id` du registre, avec le bon programme.
+/// Associated token account (base58) of `owner_address` for the registry token
+/// `token_id`, under the right program.
 pub fn registered_token_account(owner_address: &str, token_id: &str) -> Result<String> {
     let token = registered_solana_token(token_id)?;
     Ok(bs58::encode(sol_spl::find_associated_token_address_for(&solana_owner(owner_address)?, &token.mint, &token.program)).into_string())
 }
 
-/// Rent du compte de jetons `token_id` du destinataire s'il n'existe pas
-/// encore (créé et payé par l'expéditeur) ; `None` s'il existe.
+/// Rent for the recipient's `token_id` token account if it does not exist yet
+/// (created and paid for by the sender); `None` if it exists.
 pub fn token_account_rent_if_missing(token_id: &str, to_address: &str, network: &wallet_flow::SolNetwork) -> Result<Option<u64>> {
     let token = registered_solana_token(token_id)?;
     let account = bs58::encode(sol_spl::find_associated_token_address_for(&solana_owner(to_address)?, &token.mint, &token.program)).into_string();
@@ -5745,8 +5697,8 @@ pub fn token_account_rent_if_missing(token_id: &str, to_address: &str, network: 
     Ok(Some(rpc.minimum_rent_exempt_balance(token.account_size())?))
 }
 
-/// Solde xStocks de `owner`, en unités affichées (coefficient lu seulement
-/// s'il y a un solde).
+/// xStocks balance of `owner`, in displayed units (multiplier only read if there is
+/// a balance).
 fn scaled_token_balance(owner: &str, mint: &'static str) -> Result<u128> {
     let account = sol_spl::find_associated_token_address_for(&solana_owner(owner)?, &sol_spl_mint(mint)?, &sol_spl::token_2022_program_id());
     let rpc = sol_rpc::SolRpc::new(wallet_flow::SOLANA_MAINNET.rpc);
@@ -5757,9 +5709,9 @@ fn scaled_token_balance(owner: &str, mint: &'static str) -> Result<u128> {
     Ok(scaled_mint_config(&rpc, mint, false)?.effective(unix_now()).to_ui(raw))
 }
 
-/// Soldes xStocks de `owner` en UNE requête (tous ses comptes Token-2022),
-/// en unités affichées : seuls les comptes associés comptent (ceux que l'app
-/// dépense). Jetons sans solde : absents.
+/// xStocks balances of `owner` in ONE request (all their Token-2022 accounts), in
+/// displayed units: only associated accounts count (the ones the app spends from).
+/// Tokens with no balance: absent.
 pub fn stock_balances(owner: &str) -> Result<Vec<(&'static str, u128)>> {
     let owner_bytes = solana_owner(owner)?;
     let rpc = sol_rpc::SolRpc::new(wallet_flow::SOLANA_MAINNET.rpc);
@@ -5785,7 +5737,7 @@ pub fn stock_balances(owner: &str) -> Result<Vec<(&'static str, u128)>> {
     Ok(balances)
 }
 
-/// Montant signé en unités brutes → unités affichées.
+/// Signed amount in raw units → displayed units.
 fn scale_signed(amount: i128, multiplier: UiMultiplier) -> i128 {
     let shown = multiplier.to_ui(u64::try_from(amount.unsigned_abs()).unwrap_or(u64::MAX)) as i128;
     if amount < 0 {
@@ -5795,10 +5747,9 @@ fn scale_signed(amount: i128, multiplier: UiMultiplier) -> i128 {
     }
 }
 
-/// Historique d'un jeton Solana du registre (compte associé du bon
-/// programme). xStocks : montants en unités affichées au coefficient EN
-/// VIGUEUR (les soldes des transactions passées sont bruts) — cohérents avec
-/// le solde affiché.
+/// History of a registry Solana token (associated account under the right program).
+/// xStocks: amounts in displayed units at the CURRENT multiplier (past transaction
+/// balances are raw), consistent with the displayed balance.
 pub fn get_registered_spl_tx_history(token_id: &str, owner_address: &str, network: &wallet_flow::SolNetwork, limit: u32) -> Result<Vec<history::TxEntry>> {
     let token = registered_solana_token(token_id)?;
     let account = registered_token_account(owner_address, token_id)?;
@@ -5812,8 +5763,9 @@ pub fn get_registered_spl_tx_history(token_id: &str, owner_address: &str, networ
     Ok(entries)
 }
 
-/// Montant d'un mouvement xStocks : unités affichées `shown` → brutes. Tout le
-/// solde (`shown` égal au solde affiché) : tout le solde brut, sans reste.
+/// Amount of an xStocks movement: displayed units `shown` → raw. The whole balance
+/// (`shown` equal to the displayed balance): the whole raw balance, with nothing
+/// left over.
 fn scaled_raw_amount(shown: u128, multiplier: UiMultiplier, raw_balance: u64) -> Result<u64> {
     if shown == multiplier.to_ui(raw_balance) {
         return Ok(raw_balance);
@@ -5823,10 +5775,10 @@ fn scaled_raw_amount(shown: u128, multiplier: UiMultiplier, raw_balance: u64) ->
     Ok(raw)
 }
 
-/// Virement d'un xStock : compte associé du programme Token-2022 (créé chez
-/// le destinataire si besoin, rent annoncé dans la confirmation), montant
-/// saisi en unités affichées converti au coefficient en vigueur, mint relu
-/// juste avant (suspension, crochet de transfert, changement de coefficient).
+/// Transfer of an xStock: associated account under the Token-2022 program (created
+/// for the recipient if needed, rent announced in the confirmation), amount entered
+/// in displayed units converted at the current multiplier, mint reread just before
+/// (pause, transfer hook, multiplier change).
 #[allow(clippy::too_many_arguments)]
 fn send_scaled_token(data_dir: &Path, device_password: &str, symbol: &str, mint: &'static str, decimals: u8, to: &str, amount: &str, profile_index: u32) -> Result<String> {
     let network = &wallet_flow::SOLANA_MAINNET;
@@ -5883,8 +5835,8 @@ fn send_scaled_token(data_dir: &Path, device_password: &str, symbol: &str, mint:
     rpc.send_transaction(&raw_tx)
 }
 
-/// Unités brutes d'un montant d'échange Jupiter : xStocks convertis au
-/// coefficient en vigueur (mint relu), autres jetons inchangés.
+/// Raw units of a Jupiter swap amount: xStocks converted at the current multiplier
+/// (mint reread), other tokens unchanged.
 fn jupiter_raw_amount(coin: &str, shown: u64) -> Result<u64> {
     if coin == "sol" {
         return Ok(shown);
@@ -5900,7 +5852,7 @@ fn jupiter_raw_amount(coin: &str, shown: u64) -> Result<u64> {
     config.effective(now).to_raw(u128::from(shown))
 }
 
-/// Sortie d'un devis Jupiter (brute) en unités affichées.
+/// Output of a Jupiter quote (raw) in displayed units.
 fn jupiter_shown_out(coin: &str, raw: u64) -> Result<u64> {
     if coin == "sol" || !registered_solana_token(coin)?.scaled {
         return Ok(raw);
@@ -5910,15 +5862,15 @@ fn jupiter_shown_out(coin: &str, raw: u64) -> Result<u64> {
     u64::try_from(multiplier.to_ui(raw)).context("montant trop grand")
 }
 
-// --- Signatures demandées par des dApps (WalletConnect) ---------------------
+// --- Signatures requested by dApps (WalletConnect) ---------------------------
 
-/// Signe une demande de dApp DÉJÀ préparée (voir `dapp_requests::prepare` :
-/// validation, exécution à blanc ou simulation, décodage) et confirmée dans la
-/// boîte native — rien n'est relu ni recalculé ici à partir de la dApp. Mot
-/// de passe exigé à chaque signature, comme pour tout envoi de fonds. `account`
-/// : les adresses de la session ; la clé dérivée doit y correspondre (défense
-/// en profondeur : une session liée à un autre profil ne peut rien signer).
-/// Renvoie le résultat JSON attendu par la dApp.
+/// Signs a dApp request that has ALREADY been prepared (see
+/// `dapp_requests::prepare`: validation, dry run or simulation, decoding) and
+/// confirmed in the native dialog; nothing is reread or recomputed here from the
+/// dApp. The password is required for every signature, as for any send of funds.
+/// `account`: the session's addresses; the derived key must match one of them
+/// (defense in depth: a session bound to another profile cannot sign anything).
+/// Returns the JSON result the dApp expects.
 pub fn sign_dapp_request(
     data_dir: &Path,
     device_password: &str,
@@ -6016,9 +5968,8 @@ mod swap_matrix;
 mod tests {
     use super::*;
 
-    /// Destinataire Bitcoin de chaque type standard : accepté dès son seuil
-    /// de poussière, refusé en dessous avec le minimum en BTC ; adresse du
-    /// réseau de test refusée sur le réseau principal.
+    /// Bitcoin recipient of every standard type: accepted from its dust threshold,
+    /// refused below it with the minimum in BTC; a testnet address refused on mainnet.
     #[test]
     fn bitcoin_recipients_of_every_type_need_an_amount_above_their_dust() {
         let net = &wallet_flow::BTC_MAINNET;
@@ -6038,7 +5989,7 @@ mod tests {
         assert!(btc_recipient(&wallet_flow::BTC_TESTNET, "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx", 10_000).is_ok());
     }
 
-    /// Glissement Jupiter (6001) reconnu ; autres échecs laissés tels quels.
+    /// Jupiter slippage (6001) recognized; other failures left as they are.
     #[test]
     fn jupiter_slippage_is_recognized() {
         let logs = "Program JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 consumed 56922 of 1372519 compute units\nProgram JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 failed: custom program error: 0x1771";
@@ -6047,19 +5998,19 @@ mod tests {
         assert!(!is_jupiter_slippage(&serde_json::json!({ "InstructionError": [2, { "Custom": 6001 }] }), "Program Other failed: custom program error: 0x1771"));
     }
 
-    /// Réel (lecture seule) : « Max » sur des adresses publiques pourvues —
-    /// sous le solde, de l'écart des frais du réseau seulement.
+    /// Live (read-only): "Max" on funded public addresses, below the balance by the
+    /// network fee difference only.
     /// `cargo test -- --ignored real_max_amounts --nocapture`
     #[test]
     #[ignore]
     fn real_max_amounts_on_funded_addresses() {
         let parse = |s: &str, d: u8| tokens::parse_amount(s, d).unwrap();
-        // Dogecoin : adresse aux 1 000+ sorties (plafond de 600 entrées).
+        // Dogecoin: an address with 1,000+ outputs (600-input cap).
         let doge = doge_max("DH5yaieqoZN36fDVciNyRueRGvGLR3mr7L").unwrap();
         let doge_balance = doge::balance("DH5yaieqoZN36fDVciNyRueRGvGLR3mr7L").unwrap();
         println!("DOGE : max {doge} sur {}", doge::format_doge(doge_balance));
         assert!(parse(&doge, 8) < u128::from(doge_balance));
-        // Ethereum : gas d'un virement déduit (réseau principal : pas de frais L1).
+        // Ethereum: gas for a transfer deducted (mainnet: no L1 fee).
         let evm = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
         let net = wallet_flow::evm_network("evm_mainnet").unwrap();
         let fee = evm_max_fee(net, Some(evm), evm).unwrap();
@@ -6067,19 +6018,19 @@ mod tests {
         let balance = get_evm_balance(evm, net).unwrap();
         println!("ETH : max {} sur {}, frais {}", tokens::format_amount(max, 18), tokens::format_amount(balance, 18), tokens::format_amount(fee.max_total().unwrap(), 18));
         assert_eq!(balance - max, fee.max_total().unwrap(), "solde stable entre les deux lectures attendu");
-        // Jeton : tout le solde.
+        // Token: the whole balance.
         let usdt = token_max("usdt", "evm_mainnet", "0x28C6c06298d514Db089934071355E5743bf21d60").unwrap();
         println!("USDT : max {usdt}");
-        // Solana : une signature de frais.
+        // Solana: one signature's fee.
         let sol_account = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
         let sol = parse(&sol_max(&wallet_flow::SOLANA_MAINNET, sol_account).unwrap(), 9);
         assert_eq!(u128::from(get_sol_balance(sol_account, &wallet_flow::SOLANA_MAINNET).unwrap()) - sol, 5_000);
         println!("SOL : max {}", tokens::format_amount(sol, 9));
     }
 
-    /// Réel (lecture seule) : « Max » d'un échange — sous le solde de la
-    /// réserve propre au fournisseur (gas du contrat, comptes Solana, sortie
-    /// memo Bitcoin), tout le solde d'un jeton.
+    /// Live (read-only): a swap's "Max", below the balance by the provider's own
+    /// reserve (contract gas, Solana accounts, Bitcoin memo output), the whole balance
+    /// for a token.
     /// `cargo test -- --ignored real_swap_max --nocapture`
     #[test]
     #[ignore]
@@ -6093,8 +6044,8 @@ mod tests {
             let max = parse(&swap_max(protocol, "evm", "evm_mainnet", "btc", evm).unwrap(), 18);
             let kept = balance - max;
             println!("ETH via {protocol} : max {}, gardé {}", tokens::format_amount(max, 18), tokens::format_amount(kept, 18));
-            // Gas au plafond du fournisseur, prix majoré d'un quart (le prix,
-            // relu à chaque appel, peut bouger d'un bloc à l'autre : 5 %).
+            // Gas at the provider's cap, price increased by a quarter (the price, reread on
+            // each call, can move from one block to the next: 5%).
             let expected = (gas_price + gas_price / 4) * u128::from(gas_limit);
             assert!(kept.abs_diff(expected) <= expected / 20, "{protocol} : gardé {kept}, attendu {expected}");
         }
@@ -6105,15 +6056,15 @@ mod tests {
         let sol_balance = u128::from(get_sol_balance(sol, &wallet_flow::SOLANA_MAINNET).unwrap());
         let jupiter = sol_balance - parse(&swap_max("jupiter", "sol", "sol_mainnet", "usdc", sol).unwrap(), 9);
         println!("SOL via Jupiter : gardé {}", tokens::format_amount(jupiter, 9));
-        // Frais (50 000) + priorité au plafond + compte wSOL (+ compte USDC à
-        // créer) ; dépôt d'un compte de jetons lu en direct (baissé depuis
-        // 2 039 280 lamports : 1 488 440 le 05/10/2026).
+        // Fees (50,000) + priority at the cap + wSOL account (+ USDC account to create); a
+        // token account's deposit read live (down from 2,039,280 lamports: 1,488,440 on
+        // 2026-10-05).
         let rent = sol_rpc::SolRpc::new(wallet_flow::SOLANA_MAINNET.rpc).minimum_rent_exempt_balance(165).unwrap();
         assert!(jupiter >= u128::from(50_000 + jupiter_rpc::PRIORITY_FEE_MAX_LAMPORTS + rent), "{jupiter}");
         assert_eq!(sol_balance - parse(&swap_max("lifi", "sol", "sol_mainnet", "usdc", sol).unwrap(), 9), u128::from(LIFI_SOL_FEE_BUDGET_LAMPORTS));
         assert_eq!(sol_balance - parse(&swap_max("swapkit", "sol", "sol_mainnet", "usdc", sol).unwrap(), 9), 5_000);
 
-        // Bitcoin : une adresse ordinaire du dernier bloc (peu de sorties).
+        // Bitcoin: an ordinary address from the latest block (few outputs).
         let tip = reqwest::blocking::get("https://mempool.space/api/blocks/tip/hash").unwrap().text().unwrap();
         let block: serde_json::Value = reqwest::blocking::get(format!("https://mempool.space/api/block/{tip}/txs")).unwrap().json().unwrap();
         let btc = block.as_array().unwrap().iter().skip(1).filter_map(|tx| tx["vout"][0]["scriptpubkey_address"].as_str()).find(|a| a.starts_with("bc1q")).unwrap().to_string();
@@ -6129,9 +6080,9 @@ mod tests {
         assert_eq!(swap_max("thorchain", "xlm", "xlm_mainnet", "evm", "G").unwrap_err().to_string(), SWAP_MAX_UNAVAILABLE);
     }
 
-    /// 23ᵉ passage : un envoi en attente (variation nette négative, monnaie
-    /// rendue déduite) compte tout de suite ; une réception non confirmée est
-    /// montrée à part, JAMAIS dans le solde (elle peut encore être annulée).
+    /// Audit round 23: a pending send (negative net change, change returned deducted)
+    /// counts straight away; an unconfirmed receipt is shown separately, NEVER in the
+    /// balance (it can still be cancelled).
     #[test]
     fn unconfirmed_receptions_are_never_counted_in_the_btc_balance() {
         let view = btc_balance_view(100_000, [-30_000, 5_000].into_iter());
@@ -6142,12 +6093,11 @@ mod tests {
         assert_eq!(view.settled_sat, 0, "jamais négatif");
     }
 
-    /// Vérification de bout en bout contre le RPC mainnet réel (lecture seule,
-    /// aucun risque) : même portefeuille public utilisé pour valider
-    /// `find_associated_token_address` (voir sol_spl.rs) — solde connu non
-    /// nul au moment de l'écriture de ce test. Ignoré par défaut (dépend du
-    /// réseau, pas exécuté par la suite normale) : lancer explicitement avec
-    /// `cargo test -- --ignored get_usdc_balance_matches_the_real_network`.
+    /// End-to-end check against the real mainnet RPC (read-only, no risk): the same
+    /// public wallet used to validate `find_associated_token_address` (see sol_spl.rs),
+    /// with a known non-zero balance when this test was written. Ignored by default
+    /// (depends on the network, not run by the normal suite); run it explicitly with:
+    /// `cargo test -- --ignored get_usdc_balance_matches_the_real_network`
     #[test]
     #[ignore]
     fn get_usdc_balance_matches_the_real_network() {
@@ -6160,13 +6110,13 @@ mod tests {
     #[test]
     fn fee_rate_for_target_prefers_the_closest_target_at_or_below_the_requested_one() {
         let estimates = [(2, 20.0), (6, 8.0), (144, 1.5)];
-        // Cible exacte présente.
+        // Exact target present.
         assert_eq!(fee_rate_for_target(&estimates, 6), 8.0);
-        // Cible absente entre deux valeurs connues : la plus proche EN DESSOUS (moins
-        // cher que prévu n'arrive jamais avant confirmation, donc on ne doit jamais
-        // sous-estimer en choisissant une cible plus rapide qu'espéré).
+        // Target missing between two known values: the closest one BELOW (cheaper than
+        // planned never happens before confirmation, so we must never underestimate by
+        // picking a faster target than hoped for).
         assert_eq!(fee_rate_for_target(&estimates, 10), 8.0);
-        // Cible plus rapide que tout ce qui est connu : la plus rapide disponible.
+        // A target faster than anything known: the fastest available.
         assert_eq!(fee_rate_for_target(&estimates, 1), 20.0);
     }
 
@@ -6214,18 +6164,18 @@ mod tests {
         create_wallet(&dir, password).expect("création du wallet");
         create_profile(&dir, None, "Épargne").expect("création d'un second profil");
 
-        // Archivé : disparaît de la liste active, apparaît dans les archives.
+        // Archived: disappears from the active list, appears in the archives.
         archive_profile(&dir, 1).expect("archivage du second profil");
         assert_eq!(list_profiles(&dir).len(), 1, "le profil archivé ne doit plus être actif");
         let archived = list_archived_profiles(&dir);
         assert_eq!(archived.len(), 1);
         assert_eq!(archived[0].index, 1);
 
-        // Le déverrouillage complet ne doit dériver que les profils actifs.
+        // A full unlock must derive active profiles only.
         let unlocked = unlock_wallet(&dir, password).expect("déverrouillage");
         assert_eq!(unlocked.len(), 1, "un profil archivé ne doit pas être dérivé au déverrouillage");
 
-        // Désarchivé : redevient actif, disparaît des archives.
+        // Unarchived: active again, gone from the archives.
         unarchive_profile(&dir, 1).expect("désarchivage");
         assert_eq!(list_profiles(&dir).len(), 2, "le profil désarchivé doit redevenir actif");
         assert!(list_archived_profiles(&dir).is_empty());
@@ -6250,11 +6200,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Garde-fou contre l'effet de bord découvert en ajoutant l'archivage : sans lui,
-    /// `delete_profile` ne vérifiait que le compte TOTAL de profils (actifs +
-    /// archivés) > 1, donc supprimer le seul profil actif restant aurait pu passer
-    /// tant qu'un profil archivé traînait — laissant le tableau de bord sans aucune
-    /// adresse à afficher après déverrouillage.
+    /// Guard against the side effect discovered while adding archiving: without it,
+    /// `delete_profile` only checked that the TOTAL number of profiles (active +
+    /// archived) was > 1, so removing the last active profile could have gone through
+    /// as long as an archived profile was lying around, leaving the dashboard with no
+    /// address to show after unlocking.
     #[test]
     fn delete_profile_refuses_to_remove_the_last_active_profile_even_with_an_archived_one_present() {
         let dir = std::env::temp_dir().join(format!("pgp_wallet_delete_last_active_test_{}", std::process::id()));
@@ -6265,8 +6215,8 @@ mod tests {
         create_profile(&dir, None, "Épargne").expect("création d'un second profil");
         archive_profile(&dir, 1).expect("archivage du second profil");
 
-        // 2 profils au total (1 actif + 1 archivé), mais un seul actif : la
-        // suppression du profil actif restant doit être refusée.
+        // 2 profiles in total (1 active + 1 archived), but only one active: removing the
+        // last active profile must be refused.
         assert!(
             delete_profile(&dir, password, 0).is_err(),
             "supprimer le seul profil actif restant doit être refusé même si un profil archivé existe"
@@ -6305,16 +6255,16 @@ mod tests {
         let second = create_profile(&dir, Some(password), "Épargne").expect("création d'un second profil");
         assert_eq!(second.profile.index, 1, "le second profil doit prendre l'index suivant, jamais réutiliser 0");
         assert_eq!(second.profile.label, "Épargne");
-        // Un profil différent doit déterministiquement dériver une adresse différente
-        // (même seed, index différent) — sinon "plusieurs profils" ne servirait à rien.
+        // A different profile must deterministically derive a different address (same
+        // seed, different index); otherwise "several profiles" would be pointless.
         let second_evm = second.addresses.expect("mot de passe fourni : l'adresse doit être dérivée tout de suite").evm;
         assert_ne!(second_evm, initial_addresses_for(&dir, password).evm);
 
         let all = list_profiles(&dir);
         assert_eq!(all.len(), 2, "le nouveau profil doit être persisté à côté du premier");
 
-        // Un déverrouillage complet doit renvoyer les adresses des DEUX profils en un
-        // seul appel (voir doc de `unlock_wallet`), sans redemander le mot de passe.
+        // A full unlock must return the addresses of BOTH profiles in a single call (see
+        // the docs of `unlock_wallet`), without asking for the password again.
         let unlocked = unlock_wallet(&dir, password).expect("déverrouillage");
         assert_eq!(unlocked.len(), 2);
         assert!(unlocked.iter().all(|p| p.addresses.is_some()));
@@ -6322,9 +6272,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Régénérer un kit ne doit ni changer les adresses (même seed, même profils),
-    /// ni exiger un coffre différent : seules de nouvelles identités PGP/passphrases
-    /// jetables sont produites à chaque appel.
+    /// Regenerating a kit must neither change the addresses (same seed, same profiles)
+    /// nor require a different vault: only new throwaway PGP identities/passphrases are
+    /// produced on each call.
     #[test]
     fn regenerate_backup_kit_produces_a_fresh_valid_kit_without_touching_addresses() {
         let dir = std::env::temp_dir().join(format!("pgp_wallet_regen_backup_test_{}", std::process::id()));
@@ -6339,13 +6289,13 @@ mod tests {
         let kit2 = regenerate_backup_kit(&dir, password).expect("seconde régénération");
         assert_eq!(kit1.len(), 3);
         assert_eq!(kit2.len(), 3);
-        // Deux régénérations distinctes doivent produire des identités PGP différentes
-        // (passphrases fraîches à chaque fois), pas la même paire réutilisée.
+        // Two separate regenerations must produce different PGP identities (fresh
+        // passphrases each time), not the same pair reused.
         assert_ne!(kit1[0].passphrase, kit2[0].passphrase);
 
-        // Le nouveau kit doit être un vrai découpage Shamir fonctionnel de LA MÊME
-        // entropie maître que celle protégée par le coffre : 2 de ses 3 parts
-        // doivent permettre de retrouver les mêmes adresses qu'avant régénération.
+        // The new kit must be a real, working Shamir split of THE SAME master entropy as
+        // the one protected by the vault: 2 of its 3 shares must recover the same
+        // addresses as before the regeneration.
         let share1 = decrypt_with_armored_privkey(
             &kit1[0].encrypted_share,
             &dir.join("tmp_test_decrypt_0.asc"),
@@ -6381,8 +6331,8 @@ mod tests {
         assert_eq!(profile.profile.index, 1);
         assert!(profile.addresses.is_none(), "sans mot de passe, l'adresse ne doit pas être dérivée tout de suite");
 
-        // L'adresse doit malgré tout apparaître dès le prochain déverrouillage complet,
-        // puisque le profil (label + index) a bien été persisté.
+        // The address must still appear at the next full unlock, since the profile (label
+        // + index) was persisted.
         let unlocked = unlock_wallet(&dir, password).expect("déverrouillage");
         let deferred = unlocked.iter().find(|p| p.profile.index == 1).expect("le profil doit être persisté");
         assert!(deferred.addresses.is_some(), "l'adresse doit être dérivable au prochain déverrouillage");
@@ -6390,11 +6340,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Garde-fou contre une croissance non authentifiée et non bornée de
-    /// `profiles.json` : le chemin sans mot de passe de `create_profile` ne demande
-    /// aucune authentification, donc sans plafond un script pourrait en créer un
-    /// nombre arbitraire, ralentissant `unlock_wallet` (qui dérive tous les profils
-    /// connus à chaque déverrouillage) pour le vrai propriétaire.
+    /// Guard against unauthenticated, unbounded growth of `profiles.json`: the
+    /// passwordless path of `create_profile` requires no authentication, so without a
+    /// cap a script could create any number of profiles, slowing down `unlock_wallet`
+    /// (which derives every known profile on each unlock) for the real owner.
     #[test]
     fn create_profile_without_password_is_capped() {
         let dir = std::env::temp_dir().join(format!("pgp_wallet_profiles_cap_test_{}", std::process::id()));
@@ -6403,8 +6352,8 @@ mod tests {
         let password = "un mot de passe de test bien assez long";
         create_wallet(&dir, password).expect("création du wallet");
 
-        // Le profil par défaut compte déjà pour 1 : (MAX_PROFILES - 1) créations
-        // supplémentaires doivent réussir, la suivante doit échouer.
+        // The default profile already counts as 1: (MAX_PROFILES - 1) more creations must
+        // succeed, and the next one must fail.
         for i in 0..(MAX_PROFILES - 1) {
             create_profile(&dir, None, &format!("Profil {i}")).expect("sous le plafond, la création doit réussir");
         }
@@ -6440,8 +6389,8 @@ mod tests {
         assert_eq!(first, BASE_LOCKOUT_SECS);
         let second = required_lockout_secs(MAX_FREE_ATTEMPTS + 1);
         assert!(second > first, "le délai doit croître avec les échecs supplémentaires");
-        // Même avec un nombre d'échecs énorme, le délai ne doit jamais dépasser le plafond
-        // (et ne doit surtout pas déborder arithmétiquement sur `1u64 << extra`).
+        // Even with a huge number of failures, the delay must never exceed the cap (and
+        // above all must not overflow arithmetically on `1u64 << extra`).
         let capped = required_lockout_secs(u32::MAX);
         assert_eq!(capped, MAX_LOCKOUT_SECS);
     }
@@ -6467,13 +6416,12 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Garde-fou contre la régression trouvée lors d'un audit : `decrypt_incoming_message`
-    /// appelait directement `pgp_engine::decrypt_share` avec le mot de passe de
-    /// l'appareil, sans passer par `unlock_seed` — un mot de passe incorrect n'y
-    /// alimentait donc jamais le compteur d'échecs, offrant une deuxième porte pour
-    /// deviner ce mot de passe sans la moindre limite de tentatives (alors que
-    /// `unlock_wallet`/`send_*`/`delete_profile`/`regenerate_backup_kit` y sont tous
-    /// soumis). Ce test échouerait si cette porte dérobée revenait.
+    /// Guard against the regression found during an audit: `decrypt_incoming_message`
+    /// called `pgp_engine::decrypt_share` directly with the device password, without going
+    /// through `unlock_seed`, so a wrong password there never fed the failure counter.
+    /// That offered a second door for guessing the password with no attempt limit at all
+    /// (whereas `unlock_wallet`/`send_*`/`delete_profile`/`regenerate_backup_kit` are all
+    /// subject to it). This test would fail if that back door came back.
     #[test]
     fn decrypt_incoming_message_is_covered_by_the_same_lockout_as_unlock_wallet() {
         let dir = std::env::temp_dir().join(format!("pgp_wallet_decrypt_lockout_test_{}", std::process::id()));
@@ -6489,16 +6437,16 @@ mod tests {
             enforce_unlock_lockout(&dir).is_err(),
             "les échecs de decrypt_incoming_message doivent déclencher le même verrou que unlock_wallet"
         );
-        // Le verrou étant partagé, même le BON mot de passe reste bloqué tant qu'il est actif.
+        // Since the lock is shared, even the RIGHT password stays blocked while it is active.
         assert!(unlock_wallet(&dir, password).is_err());
 
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Garde-fou contre le bug de course déjà rencontré (lecture-modification-écriture
-    /// non atomique du compteur sur disque) : sans `UNLOCK_MUTEX` sérialisant l'accès,
-    /// des threads concurrents perdraient des mises à jour et le compteur final serait
-    /// inférieur au nombre réel d'échecs.
+    /// Guard against the race we already hit (non-atomic read-modify-write of the
+    /// on-disk counter): without `UNLOCK_MUTEX` serializing access, concurrent threads
+    /// would lose updates and the final counter would be lower than the real number of
+    /// failures.
     #[test]
     fn concurrent_failures_are_not_lost_under_the_mutex() {
         let dir = std::env::temp_dir().join(format!("pgp_wallet_lockout_race_test_{}", std::process::id()));
@@ -6524,11 +6472,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Garde-fou contre un bug introduit par le correctif lui-même : sans le
-    /// `reset_unlock_attempts` ajouté dans `create_wallet`, un compteur d'échecs
-    /// résiduel (ex: fichier laissé par un `reset_wallet` interrompu) aurait pu
-    /// faire naître un coffre tout juste créé déjà "en attente", bloquant le tout
-    /// premier déverrouillage légitime de l'utilisateur.
+    /// Guard against a bug introduced by the fix itself: without the
+    /// `reset_unlock_attempts` added to `create_wallet`, a leftover failure counter
+    /// (e.g. a file left by an interrupted `reset_wallet`) could have made a freshly
+    /// created vault start out "on hold", blocking the user's very first legitimate
+    /// unlock.
     #[test]
     fn create_wallet_clears_stale_lockout_state() {
         let dir = std::env::temp_dir().join(format!("pgp_wallet_create_lockout_test_{}", std::process::id()));
@@ -6554,12 +6502,13 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    // --- Déverrouillage biométrique ----------------------------------------
-    // `FakeSealer` ne fait AUCUN vrai scellement (le blob "scellé" est le secret
-    // en clair) : la propriété testée ici est l'orchestration côté api.rs
-    // (fichiers, ré-chiffrement du coffre, verrou anti-brute-force), pas la
-    // cryptographie NCrypt/TPM elle-même — voir `windows_hello.rs` et le spike
-    // manuel pour cette partie-là, non automatisable.
+    // --- Biometric unlock --------------------------------------------------
+    //
+    // `FakeSealer` does NO real sealing (the "sealed" blob is the secret in the
+    // clear): what is tested here is the orchestration in api.rs (files, re-encrypting
+    // the vault, anti-brute-force lock), not the NCrypt/TPM cryptography itself; see
+    // `windows_hello.rs` and the manual spike for that part, which cannot be
+    // automated.
     struct FakeSealer {
         fail_enroll: bool,
     }
@@ -6579,9 +6528,9 @@ mod tests {
         }
     }
 
-    /// Scelleur dont l'enrôlement réussit mais dont `remove` enregistre chaque
-    /// appel (via `Cell`, `&self` suffit) — sert à vérifier qu'une clé
-    /// "TPM" est bien nettoyée si une étape APRÈS l'enrôlement échoue.
+    /// A sealer whose enrollment succeeds but whose `remove` records every call
+    /// (through `Cell`, so `&self` is enough): used to check that a "TPM" key is
+    /// cleaned up if a step AFTER enrollment fails.
     struct TrackingSealer {
         removed: std::cell::Cell<bool>,
     }
@@ -6599,8 +6548,8 @@ mod tests {
         }
     }
 
-    /// Simule une annulation du prompt Windows Hello par l'utilisateur (code
-    /// NTE_USER_CANCELLED, voir `is_user_cancellation`).
+    /// Simulates the user cancelling the Windows Hello prompt (code NTE_USER_CANCELLED,
+    /// see `is_user_cancellation`).
     struct CancellingSealer;
 
     impl SecretSealer for CancellingSealer {
@@ -6623,9 +6572,9 @@ mod tests {
         let password = "un mot de passe de test bien assez long";
         create_wallet(&dir, password).expect("création du wallet");
 
-        // Corrompt la lecture de la clé publique de l'appareil (supprimée) pour
-        // forcer un échec APRÈS que le scelleur ait déjà "créé" sa clé — le seul
-        // moment où un nettoyage est nécessaire (voir enroll_biometric_unlock_with).
+        // Breaks reading the device's public key (deleted) to force a failure AFTER the
+        // sealer has already "created" its key, the only moment a cleanup is needed (see
+        // enroll_biometric_unlock_with).
         std::fs::remove_file(dir.join(DEVICE_PUBKEY_FILE)).unwrap();
 
         let sealer = TrackingSealer { removed: std::cell::Cell::new(false) };
@@ -6635,11 +6584,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Garde-fou direct contre le bug trouvé lors d'un audit indépendant :
-    /// `reset_wallet` ne touchait jusqu'ici que les fichiers "device"
-    /// (mot de passe), jamais l'enrôlement biométrique — laissant une clé
-    /// orpheline dans le TPM (ici, dans le scelleur de test) indéfiniment,
-    /// plus 4 fichiers `device_biometric_*` obsolètes sur disque.
+    /// Direct guard against the bug found during an independent audit: `reset_wallet`
+    /// only touched the "device" (password) files, never the biometric enrollment,
+    /// leaving an orphaned key in the TPM (here, in the test sealer) forever, plus 4
+    /// obsolete `device_biometric_*` files on disk.
     #[test]
     fn reset_wallet_also_cleans_up_the_biometric_enrollment() {
         let dir = std::env::temp_dir().join(format!("pgp_wallet_reset_bio_cleanup_test_{}", std::process::id()));
@@ -6667,11 +6615,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Base Zcash protégée encore ouverte (comme pendant une synchronisation) :
-    /// Windows refuse de l'effacer — constaté le 07/10/2026, l'échec était
-    /// ignoré et la base de l'ancien portefeuille restait. La réinitialisation
-    /// s'arrête désormais AVANT de toucher au coffre, puis réussit une fois la
-    /// base refermée.
+    /// Shielded Zcash database still open (as during a sync): Windows refuses to delete
+    /// it. Seen on 2026-10-07: the failure was ignored and the old wallet's database
+    /// stayed. The reset now stops BEFORE touching the vault, then succeeds once the
+    /// database is closed.
     #[cfg(windows)]
     #[test]
     fn reset_stops_before_the_vault_when_state_stays_open() {
@@ -6690,8 +6637,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// L'état propre à une seed (Zcash protégé, Monero, destinataires payés)
-    /// ne survit ni à une réinitialisation ni à une restauration.
+    /// State tied to a seed (shielded Zcash, Monero, paid recipients) survives neither
+    /// a reset nor a restore.
     #[test]
     fn wallet_change_removes_seed_bound_state() {
         let dir = std::env::temp_dir().join(format!("pgp_wallet_seed_state_test_{}", std::process::id()));
@@ -6709,7 +6656,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    // --- Type d'adresse du destinataire Solana -------------------------------
+    // --- Solana recipient address type ---------------------------------------
 
     #[test]
     fn solana_recipient_must_be_a_wallet() {
@@ -6730,9 +6677,9 @@ mod tests {
         assert!(err.to_string().contains("aucune clé privée"), "{err}");
     }
 
-    /// Vraies adresses mainnet : un portefeuille, SON compte USDC (l'erreur type
-    /// d'un utilisateur qui copie l'adresse depuis un explorateur), le mint
-    /// USDC et le programme Jupiter. `cargo test -- --ignored solana_recipient_check_on_real`
+    /// Real mainnet addresses: a wallet, ITS USDC account (the typical mistake of a user
+    /// copying the address from an explorer), the USDC mint and the Jupiter program.
+    /// `cargo test -- --ignored solana_recipient_check_on_real`
     #[test]
     #[ignore]
     fn solana_recipient_check_on_real_mainnet_addresses() {
@@ -6748,7 +6695,7 @@ mod tests {
         }
     }
 
-    // --- Frais et devis : "on signe ce qu'on voit" ---------------------------
+    // --- Fees and quotes: "sign what you see" ---------------------------------
 
     #[test]
     fn evm_gas_price_is_capped_on_mainnet_only() {
@@ -6771,8 +6718,8 @@ mod tests {
         }
     }
 
-    /// Coût d'un nom selon son état : libre = inscription + un an, à nous = un
-    /// an de plus, pris = rien.
+    /// Cost of a name depending on its state: free = registration + one year, ours =
+    /// one more year, taken = nothing.
     #[test]
     fn name_deposit_follows_the_state() {
         assert_eq!(name_deposit(&NameState::Free, 1_000_000_000, 105_120_000), Some(1_105_120_000));
@@ -6793,13 +6740,13 @@ mod tests {
         rerouted.router = Some("0xAutreRouteur".into());
         assert!(ensure_quote_matches_shown(&thorchain_rpc::THORCHAIN, &rerouted, &shown, "BTC.BTC", "bc1qdest").is_err(), "routeur changé");
 
-        // Cours tombé à 950 000 : la nouvelle sortie minimale (99 % de 950 000)
-        // est sous 99 % de ce qui a été AFFICHÉ (1 000 000) — refusé.
+        // Rate dropped to 950,000: the new minimum output (99% of 950,000) is below 99% of
+        // what was SHOWN (1,000,000), so refused.
         let price_dropped = shown_quote(940_500);
         let err = ensure_quote_matches_shown(&thorchain_rpc::THORCHAIN, &price_dropped, &shown, "BTC.BTC", "bc1qdest").unwrap_err();
         assert!(format!("{err:#}").contains("cours a bougé"), "{err:#}");
 
-        // Depuis Zcash (Maya, sans affilié) : memo à 4 champs relu de même.
+        // From Zcash (Maya, no affiliate): a 4-field memo reread the same way.
         let mut zec_shown = shown_quote(990_000);
         zec_shown.memo = "=:b:bc1qdest:990000".into();
         zec_shown.affiliate = None;
@@ -6809,7 +6756,7 @@ mod tests {
         assert!(ensure_quote_matches_shown(&thorchain_rpc::MAYA, &zec_fresh("=:b:bc1qdest:990000:maya1x:50"), &zec_shown, "BTC.BTC", "bc1qdest").is_err());
     }
 
-    // --- verify_swap_effects : une attaque par cas -------------------------
+    // --- verify_swap_effects: one attack per case -------------------------
 
     const USER: [u8; 32] = [1u8; 32];
     const ATTACKER: [u8; 32] = [9u8; 32];
@@ -6831,7 +6778,7 @@ mod tests {
             d[72..76].copy_from_slice(&1u32.to_le_bytes());
             d[76..108].copy_from_slice(&delegate);
         }
-        d[108] = 1; // initialisé
+        d[108] = 1; // initialized
         d
     }
 
@@ -6855,7 +6802,7 @@ mod tests {
         SwapEffectLimits { user: USER, max_lamport_loss: amount + JUPITER_SWAP_FEE_BUDGET_LAMPORTS, input_token: None, min_output: MinOutput::Token(USDC_MINT_T, 0) }
     }
 
-    /// [compte principal, compte associé (adresse standard) de `mint`].
+    /// [main account, associated account (standard address) of `mint`].
     fn addrs_with_ata(mint: [u8; 32]) -> Vec<String> {
         vec![bs58::encode(USER).into_string(), bs58::encode(sol_spl::find_associated_token_address(&USER, &mint)).into_string()]
     }
@@ -6867,9 +6814,9 @@ mod tests {
         verify_swap_effects(&addrs_with_ata(USDC_MINT_T), &pre, &post, &sol_to_usdc_limits(SOL)).expect("swap légitime + création de l'ATA");
     }
 
-    /// 22ᵉ passage : la sortie livrée sur un compte de jetons créé à une adresse
-    /// NON standard (invisible dans l'app) doit être refusée, même si le montant
-    /// est bon — seule l'adresse change par rapport au cas légitime ci-dessus.
+    /// Audit round 22: output delivered to a token account created at a NON-standard
+    /// address (invisible in the app) must be refused, even if the amount is right;
+    /// only the address differs from the legitimate case above.
     #[test]
     fn swap_effects_reject_output_delivered_to_a_non_standard_token_account() {
         let pre = vec![sys(10 * SOL), None];
@@ -6921,25 +6868,25 @@ mod tests {
         let wsol = native_mint_bytes();
         let pre = vec![sys(5 * SOL), tok(ATA_RENT + SOL, token_data(wsol, USER, SOL, None))];
         let limits = SwapEffectLimits { user: USER, max_lamport_loss: JUPITER_SWAP_FEE_BUDGET_LAMPORTS, input_token: None, min_output: MinOutput::Lamports(0) };
-        // Compte wSOL fermé, valeur rendue à l'utilisateur : légitime.
+        // wSOL account closed, value returned to the user: legitimate.
         let returned = vec![sys(5 * SOL + SOL + ATA_RENT - 10_000), None];
         verify_swap_effects(&addrs(2), &pre, &returned, &limits).expect("désenveloppement légitime");
-        // Compte wSOL fermé, valeur partie ailleurs : refusé.
+        // wSOL account closed, value gone elsewhere: refused.
         let stolen = vec![sys(5 * SOL - 10_000), None];
         assert!(verify_swap_effects(&addrs(2), &pre, &stolen, &limits).is_err(), "wSOL détourné");
 
-        // Compte EXISTANT cédé à l'utilisateur, ou créé avec un délégué : refusé.
+        // An EXISTING account handed to the user, or one created with a delegate: refused.
         let foreign = tok(ATA_RENT, token_data(USDC_MINT_T, ATTACKER, 0, None));
         let given = vec![sys(5 * SOL - 10_000), tok(ATA_RENT, token_data(USDC_MINT_T, USER, 0, None))];
         assert!(verify_swap_effects(&addrs(2), &[sys(5 * SOL), foreign], &given, &limits).is_err(), "compte cédé");
         let trapped = vec![sys(5 * SOL - ATA_RENT - 10_000), tok(ATA_RENT, token_data(USDC_MINT_T, USER, 0, Some(ATTACKER)))];
-        // À l'adresse standard : c'est bien le délégué qui doit faire refuser.
+        // At the standard address: it really is the delegate that must cause the refusal.
         let err = verify_swap_effects(&addrs_with_ata(USDC_MINT_T), &[sys(5 * SOL), None], &trapped, &limits).unwrap_err();
         assert!(err.to_string().contains("délégué"), "créé piégé : {err}");
     }
 
-    /// "Prendre le SOL et ne rien rendre" : la perte reste dans ce qui est
-    /// autorisé (le montant vendu), seul le plancher de sortie l'attrape.
+    /// "Take the SOL and return nothing": the loss stays within what is authorized (the
+    /// amount sold), so only the output floor catches it.
     #[test]
     fn swap_effects_reject_taking_the_input_and_returning_nothing_or_too_little() {
         let mut limits = sol_to_usdc_limits(SOL);
@@ -6951,7 +6898,7 @@ mod tests {
         let enough = vec![sys(9 * SOL - 10_000), tok(ATA_RENT, token_data(USDC_MINT_T, USER, 150_000_000, None))];
         verify_swap_effects(&addrs(2), &[sys(10 * SOL), existing_ata], &enough, &limits).expect("sortie suffisante");
 
-        // USDC -> SOL : le SOL reçu, frais déduits, doit atteindre le minimum.
+        // USDC -> SOL: the SOL received, fees deducted, must reach the minimum.
         let usdc_to_sol = SwapEffectLimits {
             user: USER,
             max_lamport_loss: JUPITER_SWAP_FEE_BUDGET_LAMPORTS,
@@ -6965,9 +6912,9 @@ mod tests {
         verify_swap_effects(&addrs(2), &pre, &fine, &usdc_to_sol).expect("SOL reçu suffisant");
     }
 
-    /// Cas réel reproduit (swap SOL -> USDC mainnet) : le compte wSOL de
-    /// l'utilisateur, fermé par le désenveloppement de Jupiter, revient de la
-    /// simulation comme "0 lamport, programme système", pas `null`.
+    /// A real case reproduced (SOL -> USDC swap on mainnet): the user's wSOL account,
+    /// closed by Jupiter's unwrapping, comes back from the simulation as "0 lamports,
+    /// system program", not `null`.
     #[test]
     fn swap_effects_treat_a_zero_lamport_system_account_as_closed() {
         let wsol = native_mint_bytes();
@@ -6983,12 +6930,8 @@ mod tests {
         assert!(verify_swap_effects(&addresses, &[sys(SOL)], &[sys(SOL)], &sol_to_usdc_limits(SOL)).is_err());
     }
 
-    /// Vérifie contre le réseau réel combien de gas coûte VRAIMENT un
-    /// `depositWithExpiry` sur le routeur THORChain (simulation `eth_estimateGas`
-    /// depuis une adresse publique approvisionnée, lecture seule), comparé au
-    /// Réseaux EVM : identifiants et chaînes uniques, plafond de prix du gas sur
-    /// chaque réseau à fonds réels, frais de publication OP Stack seulement là
-    /// où ils existent.
+    /// EVM networks: unique identifiers and chains, a gas price cap on every real-funds
+    /// network, OP Stack posting fees only where they exist.
     #[test]
     fn evm_networks_are_consistent() {
         let networks = wallet_flow::EVM_NETWORKS;
@@ -7009,14 +6952,13 @@ mod tests {
         assert!(EvmFee { gas_price: u128::MAX, gas_limit: 2, l1_fee: 0 }.max_total().is_err());
     }
 
-    /// Frais lus sur CHAQUE réseau EVM réel pour un virement : prix sous le
-    /// plafond, limite fixe (21 000) ou estimée (Arbitrum), frais de
-    /// publication sur Base. Lecture seule.
+    /// Fees read on EVERY real EVM network for a transfer: price under the cap, fixed
+    /// limit (21,000) or estimated (Arbitrum), posting fees on Base. Read-only.
     /// `cargo test -- --ignored evm_fees_are_read_on_every --nocapture`
     #[test]
     #[ignore]
     fn evm_fees_are_read_on_every_real_network() {
-        let from = "0x28C6c06298d514Db089934071355E5743bf21d60"; // hot wallet public (lecture seule)
+        let from = "0x28C6c06298d514Db089934071355E5743bf21d60"; // public hot wallet (read-only)
         let to = "0x000000000000000000000000000000000000dEaD";
         for net in wallet_flow::EVM_NETWORKS.iter().filter(|n| n.mainnet) {
             let fee = evm_transfer_fee_for_confirmation(net, Some(from), to, "0").unwrap_or_else(|e| panic!("{} : {e:#}", net.id));
@@ -7027,10 +6969,10 @@ mod tests {
         }
     }
 
-    /// Chaque contrat du registre des jetons, relu sur SA blockchain : symbole et
-    /// décimales du contrat ERC-20 ; programme SPL Token et décimales du mint
-    /// Solana. Puis un solde réel lu par le chemin de l'app (USDT d'un
-    /// portefeuille public connu). Lecture seule.
+    /// Every contract in the token registry, reread on ITS blockchain: symbol and
+    /// decimals of the ERC-20 contract; SPL Token program and decimals of the Solana
+    /// mint. Then a real balance read through the app's code path (USDT of a known
+    /// public wallet). Read-only.
     /// `cargo test -- --ignored token_contracts_match --nocapture`
     #[test]
     #[ignore]
@@ -7056,7 +6998,7 @@ mod tests {
                         assert_eq!(decimals[31], d.decimals, "{} sur {}", token.id, d.network);
                     }
                     tokens::TokenKind::Spl { mint } => mints.push((token, d, mint.to_string())),
-                    // Vérifiés à part, métadonnées comprises : tokens::xstocks_match_the_real_mints.
+                    // Checked separately, metadata included: tokens::xstocks_match_the_real_mints.
                     tokens::TokenKind::Spl2022 { .. } => {}
                     tokens::TokenKind::Trc20 { contract } => {
                         let decimals = tron::trc20_decimals(contract).unwrap();
@@ -7079,8 +7021,7 @@ mod tests {
         assert!(usdt > 0, "portefeuille public avec de l'USDT");
     }
 
-    /// Données d'un `transfer` ERC-20 : sélecteur, destinataire et montant en
-    /// mots de 32 octets.
+    /// ERC-20 `transfer` calldata: selector, recipient and amount as 32-byte words.
     #[test]
     fn erc20_transfer_data_is_abi_encoded() {
         let to = [0x11u8; 20];
@@ -7093,7 +7034,7 @@ mod tests {
         assert!(data[36..52].iter().all(|&b| b == 0));
     }
 
-    /// `approve(spender, amount)` : sélecteur 0x095ea7b3, adresse puis montant.
+    /// `approve(spender, amount)`: selector 0x095ea7b3, address then amount.
     #[test]
     fn erc20_approve_data_is_abi_encoded() {
         let spender = [0x22u8; 20];
@@ -7105,18 +7046,17 @@ mod tests {
         assert!(data[36..67].iter().all(|&b| b == 0));
     }
 
-    /// Réseaux RÉELS, sans rien dépenser : le routeur THORChain de BNB Chain et
-    /// d'Avalanche accepte notre dépôt natif (estimation du gas depuis un
-    /// portefeuille public qui détient ces monnaies), et les frais d'un échange
-    /// depuis un jeton de Base comptent l'autorisation et la publication sur
-    /// Ethereum. `cargo test -- --ignored thorchain_new_networks_accept_our_deposits --nocapture`
+    /// REAL networks, without spending anything: the THORChain router on BNB Chain and Avalanche
+    /// accepts our native deposit (gas estimate from a public wallet holding those coins), and
+    /// the fees for a swap from a Base token count the approval and the posting to Ethereum.
+    /// `cargo test -- --ignored thorchain_new_networks_accept_our_deposits --nocapture`
     #[test]
     #[ignore]
     fn thorchain_new_networks_accept_our_deposits() {
         let holder = "0x8894E0a0c962CB723c1976a4421c95949bE2D4E3";
         let btc = thorchain_rpc::asset("btc", "btc_mainnet").unwrap();
-        // Détenteurs de la monnaie native (estimation seulement, rien n'est
-        // signé) : portefeuille public, ou contrat WETH qui détient l'ETH déposé.
+        // Holders of the native coin (estimate only, nothing is signed): a public wallet,
+        // or the WETH contract, which holds the deposited ETH.
         for (coin, network, amount, from_addr) in [
             ("evm", "evm_mainnet", "0.01", "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
             ("evm", "base_mainnet", "0.01", "0x4200000000000000000000000000000000000006"),
@@ -7135,7 +7075,8 @@ mod tests {
             println!("{network} : dépôt {amount} {} vers BTC, routeur {router}, gas estimé {gas}", from.symbol);
             assert!(gas < EVM_SWAP_MAX_GAS_LIMIT);
         }
-        // Maya, Arbitrum : même routeur `depositWithExpiry`, accepté avec le montant envoyé.
+        // Maya, Arbitrum: the same `depositWithExpiry` router, accepted with the amount
+        // sent.
         let arb_eth = thorchain_rpc::MAYA.asset("evm", "arbitrum_mainnet").unwrap();
         let maya_btc = thorchain_rpc::MAYA.asset("btc", "btc_mainnet").unwrap();
         let quote = get_swap_quote(&thorchain_rpc::MAYA, arb_eth, maya_btc, "0.01", "bc1qp0jus87dalh7xku22tx3uhyhlf8cjuc0vvkhjz").unwrap();
@@ -7159,33 +7100,35 @@ mod tests {
         assert!(fees.approvals >= 1, "aucune autorisation accordée au routeur par ce portefeuille");
     }
 
-    /// gas intrinsèque. `cargo test -- --ignored thorchain_router_deposit_gas --nocapture`
+    /// Checks against the real network how much gas a `depositWithExpiry` on the THORChain
+    /// router REALLY costs (an `eth_estimateGas` simulation from a funded public address,
+    /// read-only), compared with the intrinsic gas.
+    /// `cargo test -- --ignored thorchain_router_deposit_gas --nocapture`
     #[test]
     #[ignore]
     fn thorchain_router_deposit_gas_vs_intrinsic_on_the_real_network() {
-        let from = "0x28C6c06298d514Db089934071355E5743bf21d60"; // hot wallet public (lecture seule)
+        let from = "0x28C6c06298d514Db089934071355E5743bf21d60"; // public hot wallet (read-only)
         let quote = thorchain_rpc::quote_swap("ETH.ETH", "BTC.BTC", 1_000_000, "bc1qp0jus87dalh7xku22tx3uhyhlf8cjuc0vvkhjz").unwrap();
         let router = quote.router.clone().unwrap();
         let vault = wallet_flow::parse_evm_address(&quote.inbound_address).unwrap();
         let expiration = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() + 3600;
         let calldata = eth_tx::thorchain_deposit_calldata(&vault, &[0u8; 20], 0, &quote.memo, expiration);
-        let value = 10_000_000_000_000_000u128; // 0,01 ETH
+        let value = 10_000_000_000_000_000u128; // 0.01 ETH
         let rpc = eth_rpc::EthRpc::new(wallet_flow::ETHEREUM_MAINNET.rpc);
         let estimated = rpc.estimate_gas(from, &router, value, &calldata).expect("estimation réelle");
         let intrinsic = eth_tx::intrinsic_gas(&calldata);
         println!("gas intrinsèque = {intrinsic}, gas réellement nécessaire (eth_estimateGas) = {estimated}");
     }
 
-    /// Calibration ET garde-fou contre les faux rejets : vrais swaps Jupiter
-    /// construits pour une adresse publique mainnet très approvisionnée (hot
-    /// wallet Binance, lecture seule — simulation sans signature), passés dans
-    /// le VRAI chemin de production (`check_swap_effects`). Affiche la perte
-    /// réelle mesurée au-delà du montant, pour dimensionner le budget de frais.
-    /// Échec isolé possible sans bug : ce hot wallet reçoit et envoie du SOL en
-    /// continu, son solde peut bouger entre la lecture "avant" et la simulation
-    /// (observé une fois, 3/3 au relancement). Pour un portefeuille personnel,
-    /// seule une réception pourrait s'intercaler — elle gonflerait le gain, et
-    /// un attaquant devrait payer ce qu'il vole : rien d'exploitable.
+    /// Calibration AND a guard against false rejections: real Jupiter swaps built for a
+    /// heavily funded public mainnet address (a Binance hot wallet, read-only: simulation
+    /// without a signature), run through the REAL production code path
+    /// (`check_swap_effects`). Prints the real loss measured beyond the amount, to size the
+    /// fee budget. An isolated failure is possible without a bug: this hot wallet receives
+    /// and sends SOL continuously, so its balance can move between the "before" read and the
+    /// simulation (seen once, 3/3 on rerun). For a personal wallet, only an incoming
+    /// transfer could slip in between; it would inflate the gain, and an attacker would have
+    /// to pay for what they steal: nothing exploitable.
     /// `cargo test -- --ignored jupiter_swap_effects_pass_on_real_mainnet_swaps --nocapture`
     #[test]
     #[ignore]
@@ -7200,7 +7143,7 @@ mod tests {
             ("sol", "eurc", 100_000_000),
             ("sol", "render", 100_000_000),
             ("usdc", "render", 10_000_000),
-            // Actions tokenisées (Token-2022, compte de destination de 179 octets).
+            // Tokenized shares (Token-2022, 179-byte destination account).
             ("usdc", "aaplx", 10_000_000),
             ("sol", "tslax", 100_000_000),
         ] {
@@ -7227,7 +7170,7 @@ mod tests {
             let loss = user_lamports(&pre) - user_lamports(&post_states);
             let sold = if from == "sol" { i128::from(amount) } else { 0 };
             println!("{from}->{to} : {} comptes inscriptibles, perte lamports réelle au-delà du montant = {}", addresses.len(), loss - sold);
-            let min_out = q.out_amount * 9_950 / 10_000; // sortie "affichée" - 0,5 % de glissement
+            let min_out = q.out_amount * 9_950 / 10_000; // "displayed" output - 0.5% slippage
             let limits = swap_effect_limits(owner, from, amount, to, min_out).unwrap();
             if let Err(e) = verify_swap_effects(&addresses, &pre, &post_states, &limits) {
                 for ((a, before), after) in addresses.iter().zip(&pre).zip(&post_states) {
@@ -7248,11 +7191,11 @@ mod tests {
         }
     }
 
-    /// Coefficient d'affichage exact : relu tel que le nœud l'écrit, converti
-    /// sans flottant. Vecteur réel (09/10/2026) : compte MCDx de 22 906 601 081
-    /// unités brutes, coefficient 1.0211807004882871 → le nœud affiche
-    /// 233.91778937 (tronqué). Retour en brut arrondi vers le bas ; tout le
-    /// solde affiché → tout le solde brut, sans reste.
+    /// Exact display multiplier: read as the node writes it, converted without floating
+    /// point. Real vector (2026-10-09): an MCDx account with 22,906,601,081 raw units,
+    /// multiplier 1.0211807004882871 → the node shows 233.91778937 (truncated). Back to
+    /// raw, rounded down; the whole displayed balance → the whole raw balance, with
+    /// nothing left over.
     #[test]
     fn scaled_amounts_are_exact() {
         let one = UiMultiplier::parse("1").unwrap();
@@ -7274,10 +7217,10 @@ mod tests {
         assert_eq!(scale_signed(0, mcd), 0);
     }
 
-    /// Configuration lue sur un vrai mint (AAPLx, `getAccountInfo` jsonParsed du
-    /// 09/10/2026) : coefficient en vigueur selon l'heure, refus d'un mouvement
-    /// si les transferts sont suspendus, si un crochet de transfert est actif,
-    /// ou autour d'un changement de coefficient.
+    /// Configuration read from a real mint (AAPLx, `getAccountInfo` jsonParsed on
+    /// 2026-10-09): multiplier in force depending on the time, a movement refused if
+    /// transfers are paused, if a transfer hook is active, or around a multiplier
+    /// change.
     #[test]
     fn scaled_mint_config_is_read_from_a_real_mint() {
         let info = serde_json::json!({"decimals": 8, "extensions": [
@@ -7299,7 +7242,7 @@ mod tests {
         let steady = ScaledMintConfig { next: config.current, ..config };
         assert!(check_scaled_transfer(&steady, 1_786_149_000).is_ok(), "pas de changement réel : pas de fenêtre");
         assert!(parse_scaled_mint(&serde_json::json!({"extensions": []})).is_err(), "sans coefficient : refus");
-        // Jetons du registre : programme et taille de compte.
+        // Registry tokens: program and account size.
         let tsla = registered_solana_token("tslax").unwrap();
         assert!(tsla.scaled && tsla.program == sol_spl::token_2022_program_id() && tsla.account_size() == 179 && tsla.decimals == 8);
         let usdc = registered_solana_token("usdc").unwrap();
@@ -7307,8 +7250,8 @@ mod tests {
         assert!(registered_spl_mint("tslax").is_err(), "les chemins du programme classique refusent un xStock");
     }
 
-    /// Comptes xStocks réels dont l'adresse est le compte associé de leur
-    /// propriétaire, relevés dans les transactions récentes du mint.
+    /// Real xStocks accounts whose address is their owner's associated account, taken
+    /// from the mint's recent transactions.
     fn real_xstock_holders(rpc: &sol_rpc::SolRpc, token_id: &str) -> Vec<(String, String)> {
         let token = registered_solana_token(token_id).unwrap();
         let signatures = rpc.call("getSignaturesForAddress", serde_json::json!([token.mint_b58, {"limit": 12}])).unwrap();
@@ -7327,8 +7270,8 @@ mod tests {
         holders
     }
 
-    /// Soldes xStocks lus par l'app = soldes affichés par le nœud (coefficient
-    /// ≠ 1 : MCDx), sur de vrais comptes.
+    /// xStocks balances read by the app = balances shown by the node (multiplier ≠ 1:
+    /// MCDx), on real accounts.
     #[test]
     #[ignore]
     fn xstock_balances_match_the_node() {
@@ -7345,7 +7288,7 @@ mod tests {
             compared += 1;
         }
         assert!(compared > 0);
-        // Lecture groupée (une requête) : mêmes soldes.
+        // Batched read (one request): the same balances.
         for (owner, _) in holders.iter().take(2) {
             let grouped = stock_balances(owner).unwrap();
             let single = get_token_balance("mcdx", "sol_mainnet", owner).unwrap().0;
@@ -7353,11 +7296,10 @@ mod tests {
         }
     }
 
-    /// Virement xStocks construit par l'app, simulé sur le réseau réel depuis un
-    /// vrai détenteur (signature non vérifiée par la simulation) vers un
-    /// destinataire neuf : création du compte associé Token-2022 puis
-    /// TransferChecked acceptés, compte créé de `XSTOCK_ACCOUNT_SIZE` octets
-    /// avec exactement le montant brut envoyé.
+    /// xStocks transfer built by the app, simulated on the real network from a real
+    /// holder (signature not verified by the simulation) to a new recipient: creation
+    /// of the Token-2022 associated account then TransferChecked accepted, account
+    /// created with `XSTOCK_ACCOUNT_SIZE` bytes holding exactly the raw amount sent.
     #[test]
     #[ignore]
     fn xstock_transfer_simulates_on_mainnet() {
@@ -7394,9 +7336,9 @@ mod tests {
         panic!("aucun détenteur avec assez de jetons et de SOL");
     }
 
-    /// Devis Jupiter vers un xStock (coefficient ≠ 1 : AAPLx) : sortie montrée
-    /// en unités affichées, cohérente avec le cours par unité affichée
-    /// (100 USDC ≈ 100 / cours, moins frais et impact).
+    /// Jupiter quote to an xStock (multiplier ≠ 1: AAPLx): output shown in displayed
+    /// units, consistent with the price per displayed unit (100 USDC ≈ 100 / price,
+    /// minus fees and impact).
     #[test]
     #[ignore]
     fn jupiter_quotes_xstocks_in_shown_units() {
@@ -7407,10 +7349,10 @@ mod tests {
         let value = shown * price;
         println!("100 USDC → {shown} AAPLx affichés (cours {price} $) = {value} $, frais {:?}", quote.fee_mint.map(|m| bs58::encode(m).into_string()));
         assert!((96.0..=100.5).contains(&value), "valeur {value} $ pour 100 USDC");
-        // À l'achat : frais sur le xStock reçu (compte de frais Token-2022 de
-        // l'affilié) ou aucun — jamais sur l'USDC vendu (route refusée).
+        // When buying: fee on the xStock received (the affiliate's Token-2022 fee account)
+        // or none, never on the USDC sold (route refused).
         assert!(quote.fee_mint.is_none() || quote.fee_mint == Some(token.mint), "frais à l'achat : {:?}", quote.fee_mint);
-        // À la vente : frais sur l'USDC reçu.
+        // When selling: fee on the USDC received.
         let sale = get_jupiter_quote("aaplx", "usdc", "0.1", 50).unwrap();
         assert_eq!(sale.fee_mint, Some(sol_spl::usdc_mint_mainnet()), "frais de vente en USDC");
     }
@@ -7434,11 +7376,10 @@ mod tests {
         assert_eq!(classify_sol_activity(Some(890_880), true), Funded);
     }
 
-    /// Vérification sur de vraies adresses mainnet (lecture seule) des trois
-    /// états, pour chaque réseau — adresses "neuves" tirées au hasard à chaque
-    /// exécution (jamais utilisées, par construction). L'adresse Bitcoin "vide"
-    /// a été trouvée en direct (2 transactions, solde nul) : si quelqu'un y
-    /// envoie un jour de la poussière, elle passera "Funded" (test manuel).
+    /// Check of the three states on real mainnet addresses (read-only), for each network;
+    /// "new" addresses drawn at random on each run (never used, by construction). The "empty"
+    /// Bitcoin address was found live (2 transactions, zero balance): if someone ever sends
+    /// dust to it, it will become "Funded" (manual test).
     /// `cargo test -- --ignored recipient_activity_matches_real_mainnet_addresses --nocapture`
     #[test]
     #[ignore]
@@ -7458,20 +7399,20 @@ mod tests {
         let fresh_sol = bs58::encode(ed25519_dalek::SigningKey::from_bytes(&random).verifying_key().to_bytes()).into_string();
         assert_eq!(sol_recipient_activity(&fresh_sol, &wallet_flow::SOLANA_MAINNET).unwrap(), Unused);
         assert_eq!(sol_recipient_activity("5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9", &wallet_flow::SOLANA_MAINNET).unwrap(), Funded);
-        // Compte wSOL (fermé) du portefeuille public E645Tck… : historique, mais
-        // plus de compte on-chain — le cas "vidé puis purgé" propre à Solana.
+        // The (closed) wSOL account of the public wallet E645Tck…: it has a history, but
+        // no on-chain account any more; the "emptied then purged" case specific to Solana.
         assert_eq!(sol_recipient_activity("DvW59wVbiXr2zCbQNxUnLGS544XoQjpy7YBUC38HtcJ2", &wallet_flow::SOLANA_MAINNET).unwrap(), Empty);
-        // USDC : portefeuille public qui détient de l'USDC (voir
-        // `get_usdc_balance_matches_the_real_network`), et adresse neuve.
+        // USDC: a public wallet holding USDC (see
+        // `get_usdc_balance_matches_the_real_network`), and a new address.
         assert_eq!(usdc_recipient_activity("E645TckHQnDcavVv92Etc6xSWQaq8zzPtPRGBheviRAk", &wallet_flow::SOLANA_MAINNET).unwrap(), Funded);
         assert_eq!(usdc_recipient_activity(&fresh_sol, &wallet_flow::SOLANA_MAINNET).unwrap(), Unused);
         println!("neuves testées : {fresh_evm} / {fresh_btc} / {fresh_sol}");
     }
 
-    /// Signatures de dApps sur un vrai wallet de test : l'adresse RECOUVRÉE
-    /// depuis chaque signature EVM doit être celle du profil, la signature
-    /// Solana doit vérifier contre sa clé publique, et une session liée à un
-    /// autre compte ne doit rien pouvoir signer.
+    /// dApp signatures on a real test wallet: the address RECOVERED from each EVM
+    /// signature must be the profile's, the Solana signature must verify against its
+    /// public key, and a session bound to another account must not be able to sign
+    /// anything.
     #[test]
     fn dapp_signatures_recover_to_the_session_account() {
         use dapp_requests::{Account, Prepared};
@@ -7506,30 +7447,30 @@ mod tests {
             .verify_strict(b"Connexion", &ed25519_dalek::Signature::from_bytes(&sig))
             .expect("signature Solana valide");
 
-        // Session liée à un autre compte (ou profil) : refus avant toute signature.
+        // Session bound to another account (or profile): refused before any signing.
         let other = Account { evm: "0x5555555555555555555555555555555555555555".to_string(), solana: account.solana.clone() };
         assert!(sign_dapp_request(&dir, password, 0, &other, &personal).is_err());
         assert!(matches!(personal, Prepared::EvmPersonalSign { .. }));
-        // Mauvais mot de passe : refus (et compté dans le verrou, comme partout).
+        // Wrong password: refused (and counted toward the lock, as everywhere).
         assert!(sign_dapp_request(&dir, "mauvais mot de passe", 0, &account, &personal).is_err());
 
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// 22ᵉ passage : ce qu'affiche la boîte de confirmation doit être la valeur
-    /// réellement signée, jamais une forme trompeuse de la saisie.
+    /// Audit round 22: what the confirmation dialog shows must be the value actually
+    /// signed, never a misleading form of the input.
     #[test]
     fn canonical_amount_shows_exactly_what_will_be_signed() {
-        // Formes acceptées par le parsing mais trompeuses à l'œil.
+        // Forms the parser accepts but the eye misreads.
         assert_eq!(canonical_amount("btc", "0.+5").unwrap(), "0.05");
         assert_eq!(canonical_amount("btc", "\n\n\n2.5\n").unwrap(), "2.5");
         assert_eq!(canonical_amount("sol", "+1").unwrap(), "1");
-        // Formes normales, zéros de fin retirés, précision complète conservée.
+        // Normal forms, trailing zeros removed, full precision kept.
         assert_eq!(canonical_amount("evm", "0.010").unwrap(), "0.01");
         assert_eq!(canonical_amount("evm", "1.000000000000000001").unwrap(), "1.000000000000000001");
         assert_eq!(canonical_amount("usdc", ".5").unwrap(), "0.5");
         assert_eq!(canonical_amount("sol", "3").unwrap(), "3");
-        // Aller-retour : l'affiché se re-parse en EXACTEMENT la même valeur.
+        // Round trip: the displayed value re-parses to EXACTLY the same value.
         for (coin, raw) in [("btc", "0.+5"), ("evm", "12.3456789"), ("sol", "0.000000001"), ("usdc", "1000000.123456")] {
             let shown = canonical_amount(coin, raw).unwrap();
             assert_eq!(parse_swap_amount_for_coin(coin, &shown).unwrap(), parse_swap_amount_for_coin(coin, raw).unwrap(), "{coin} {raw}");
@@ -7538,9 +7479,9 @@ mod tests {
         assert!(canonical_amount("doge", "1").is_err());
     }
 
-    /// 22ᵉ passage : le coffre lui-même, armuré et collé dans "déchiffrer un
-    /// message" (même clé de l'appareil), doit être refusé explicitement — pas
-    /// seulement par le hasard du contrôle UTF-8. Un vrai message, lui, passe.
+    /// Audit round 22: the vault itself, armored and pasted into "decrypt a message"
+    /// (same device key), must be refused explicitly, not just by the luck of the UTF-8
+    /// check. A real message goes through.
     #[test]
     fn decrypt_incoming_message_refuses_the_wallet_vault_itself() {
         let dir = std::env::temp_dir().join(format!("pgp_wallet_vault_as_message_test_{}", std::process::id()));
@@ -7566,14 +7507,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Chemin jamais exercé par le test précédent (le hot wallet Binance a déjà
-    /// son compte USDC) : un swap SOL -> USDC pour un portefeuille qui n'a PAS
-    /// encore de compte USDC, que la transaction Jupiter doit donc CRÉER — c'est
-    /// la branche "compte qui devient celui de l'utilisateur" de
-    /// `verify_swap_effects`. Identités de validateurs mainnet publiques (SOL
-    /// pour les frais de vote, jamais d'USDC en pratique) : la première sans
-    /// compte USDC et avec assez de SOL est utilisée. Lecture seule, rien n'est
-    /// signé (transaction simulée sans signature, comme en production).
+    /// A path the previous test never exercised (the Binance hot wallet already has its USDC account): a SOL -> USDC
+    /// swap for a wallet that does NOT have a USDC account yet, which the Jupiter transaction must therefore CREATE.
+    /// This is the "account that becomes the user's" branch of `verify_swap_effects`. Public mainnet validator
+    /// identities (SOL for voting fees, never any USDC in practice): the first one with no USDC account and enough
+    /// SOL is used. Read-only, nothing is signed (transaction simulated without a signature, as in production).
     /// `cargo test -- --ignored jupiter_swap_effects_pass_when_the_destination_token_account_is_created --nocapture`
     #[test]
     #[ignore]
@@ -7596,7 +7534,7 @@ mod tests {
             "GnC339vkyXRm1jRX69dt9mapPPu2LbzXfSDoxc91qta6",
         ];
         let rpc = sol_rpc::SolRpc::new(wallet_flow::SOLANA_MAINNET.rpc);
-        let amount = 50_000_000u64; // 0,05 SOL
+        let amount = 50_000_000u64; // 0.05 SOL
         let owner_b58 = CANDIDATES
             .iter()
             .find(|c| {
@@ -7613,8 +7551,8 @@ mod tests {
         let limits = swap_effect_limits(owner, "sol", amount, "usdc", q.out_amount * 9_950 / 10_000).unwrap();
         check_swap_effects(&rpc, &tx, &limits).expect("un vrai swap qui crée le compte USDC de destination ne doit pas être rejeté");
 
-        // Le test ne prouve quelque chose que si la branche "création" a bien
-        // été traversée : compte USDC de l'utilisateur absent avant, présent après.
+        // The test only proves something if the "creation" branch was actually taken: the
+        // user's USDC account absent before, present after.
         let addresses = resolve_writable_addresses(&rpc, &tx).unwrap();
         let pre = rpc.multiple_accounts(&addresses).unwrap();
         let sol_rpc::SimulationOutcome::Succeeded { post_states } = rpc.simulate_with_account_states(&tx, &addresses).unwrap() else {
@@ -7636,10 +7574,10 @@ mod tests {
         assert_eq!(created.len(), 1, "la transaction doit créer exactement un compte USDC pour l'utilisateur");
     }
 
-    /// Garde-fou du 20ᵉ passage : une clé privée injoignable (ici, retirée du
-    /// coffre sans fichier de repli) ne doit JAMAIS compter comme une tentative
-    /// de mot de passe ratée — même avec le BON mot de passe répété bien
-    /// au-delà du seuil, le verrou ne doit pas s'enclencher.
+    /// Guard from audit round 20: an unreachable private key (here, removed from the
+    /// vault with no fallback file) must NEVER count as a failed password attempt; even
+    /// with the RIGHT password repeated well past the threshold, the lock must not kick
+    /// in.
     #[test]
     fn unreachable_key_material_does_not_count_toward_the_password_lockout() {
         let dir = std::env::temp_dir().join(format!("pgp_wallet_key_unreachable_lockout_test_{}", std::process::id()));
@@ -7664,10 +7602,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Wallet d'avant le coffre OS (clé en fichier, rien dans le coffre) : le
-    /// premier déverrouillage réussi déplace la clé dans le coffre et supprime
-    /// le fichier ; le wallet se déverrouille ensuite depuis le coffre. Un
-    /// mauvais mot de passe ne déplace rien.
+    /// A wallet from before the OS vault (key in a file, nothing in the vault): the
+    /// first successful unlock moves the key into the vault and deletes the file; the
+    /// wallet then unlocks from the vault. A wrong password moves nothing.
     #[test]
     fn legacy_file_key_moves_into_the_os_store_after_a_successful_unlock() {
         let dir = std::env::temp_dir().join(format!("pgp_wallet_key_migration_test_{}", std::process::id()));
@@ -7676,7 +7613,7 @@ mod tests {
         let password = "un mot de passe de test bien assez long";
         create_wallet(&dir, password).expect("création du wallet");
         let username = secure_storage::entry_username(&dir);
-        // Simule un wallet créé avant le coffre OS : clé remise en fichier.
+        // Simulates a wallet created before the OS vault: key put back in a file.
         let key = active_key_store().read(&username).unwrap().expect("clé dans le coffre après création");
         std::fs::write(dir.join(DEVICE_PRIVKEY_FILE), key.as_bytes()).unwrap();
         active_key_store().remove(&username).unwrap();
@@ -7694,7 +7631,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Coffre en panne : la clé reste dans son fichier, intacte.
+    /// Vault down: the key stays in its file, intact.
     #[test]
     fn failed_migration_leaves_the_file_key_untouched() {
         let dir = std::env::temp_dir().join(format!("pgp_wallet_key_migration_failure_test_{}", std::process::id()));
@@ -7706,9 +7643,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Vrai Gestionnaire d'identification Windows, dans un dossier temporaire
-    /// (entrée propre à ce dossier, jamais celle d'un vrai wallet) : migration
-    /// d'une clé de wallet réelle (taille réelle), relecture, puis nettoyage.
+    /// The real Windows Credential Manager, in a temporary folder (an entry specific to
+    /// that folder, never a real wallet's): migration of a real wallet key (real size),
+    /// readback, then cleanup.
     /// `cargo test -- --ignored real_os_store_migration --nocapture`
     #[test]
     #[ignore]
@@ -7735,8 +7672,8 @@ mod tests {
         assert!(migrated, "clé dans le vrai coffre, identique, fichier supprimé");
     }
 
-    /// Coffre OS qui tombe en panne à chaque lecture (pas "absent" : une vraie
-    /// erreur) — pour vérifier que le repli fichier reste utilisé dans ce cas.
+    /// An OS vault that fails on every read (not "absent": a real error), to check that
+    /// the file fallback is still used in that case.
     struct FailingKeyStore;
 
     impl secure_storage::KeyStore for FailingKeyStore {
@@ -7768,10 +7705,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Même bug que `reset_wallet_also_cleans_up_the_biometric_enrollment`,
-    /// trouvé dans le même audit : `restore_wallet` remplace l'identité
-    /// "device" sans jamais invalider un enrôlement biométrique qui
-    /// référençait l'ANCIENNE identité (voir la doc de `restore_wallet_with`).
+    /// The same bug as `reset_wallet_also_cleans_up_the_biometric_enrollment`, found in
+    /// the same audit: `restore_wallet` replaces the "device" identity without ever
+    /// invalidating a biometric enrollment that referred to the OLD identity (see the
+    /// docs of `restore_wallet_with`).
     #[test]
     fn restore_wallet_also_cleans_up_a_stale_biometric_enrollment_from_the_old_device_identity() {
         let dir = std::env::temp_dir().join(format!("pgp_wallet_restore_bio_cleanup_test_{}", std::process::id()));
@@ -7803,7 +7740,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Adresses publiques de tous les réseaux, dans l'ordre de `Addresses`.
+    /// Public addresses for every network, in the order of `Addresses`.
     fn all_public_addresses(a: &Addresses) -> Vec<(&'static str, String)> {
         vec![
             ("evm", a.evm.clone()),
@@ -7825,12 +7762,12 @@ mod tests {
         ]
     }
 
-    /// Génère `testdata/backup_kit_v2.json`, kit FIGÉ au format actuel (parts
-    /// marquées) de `frozen_backup_kits_still_restore`. `backup_kit_v1.json`
-    /// (parts sans marque) a été figé par ce même générateur avant les marques.
-    /// Ne se relance que pour figer un NOUVEAU format, dans un NOUVEAU fichier :
-    /// un fichier existant ne se régénère jamais
-    /// (`cargo test --lib export_frozen_backup_kit -- --ignored`).
+    /// Generates `testdata/backup_kit_v2.json`, a FROZEN kit in the current format
+    /// (marked shares) for `frozen_backup_kits_still_restore`. `backup_kit_v1.json`
+    /// (unmarked shares) was frozen by this same generator before marks existed. Only
+    /// rerun it to freeze a NEW format, into a NEW file: an existing file is never
+    /// regenerated.
+    /// `cargo test --lib export_frozen_backup_kit -- --ignored`
     #[test]
     #[ignore]
     fn export_frozen_backup_kit() {
@@ -7856,10 +7793,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Part du kit figé : (part chiffrée, clé privée armurée, mot de passe).
+    /// A share of the frozen kit: (encrypted share, armored private key, password).
     type FrozenPart = (Vec<u8>, Vec<u8>, String);
 
-    /// Kit figé `testdata/backup_kit_v{version}.json` et ses parts.
+    /// Frozen kit `testdata/backup_kit_v{version}.json` and its shares.
     fn frozen_backup_kit(version: u8) -> (serde_json::Value, Vec<FrozenPart>) {
         let path = format!("{}/testdata/backup_kit_v{version}.json", env!("CARGO_MANIFEST_DIR"));
         let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("kit figé {path} : {e}"));
@@ -7879,14 +7816,13 @@ mod tests {
         (kit, parts)
     }
 
-    /// GARANTIE : un kit de sauvegarde fait par une version de l'app se
-    /// restaure avec toutes les suivantes. Kits factices figés
-    /// (`testdata/backup_kit_v1.json` sans marque, `v2` marqué) : chaque paire
-    /// de parts (1+2, 1+3, 2+3) passe par le contrôle puis la vraie
-    /// restauration et redonne le même secret et les mêmes adresses sur tous
-    /// les réseaux. Un échec après une mise à jour (bibliothèque OpenPGP,
-    /// Shamir, dérivation) voudrait dire que de vraies sauvegardes ne
-    /// redonneraient plus les fonds : corriger le code, JAMAIS ces fichiers.
+    /// GUARANTEE: a backup kit made by one version of the app restores with every later
+    /// version. Frozen dummy kits (`testdata/backup_kit_v1.json` unmarked, `v2`
+    /// marked): each pair of shares (1+2, 1+3, 2+3) goes through the check and then the
+    /// real restore, and gives back the same secret and the same addresses on every
+    /// network. A failure after an update (OpenPGP library, Shamir, derivation) would
+    /// mean that real backups would no longer give back the funds: fix the code, NEVER
+    /// these files.
     #[test]
     fn frozen_backup_kits_still_restore() {
         for version in [1u8, 2] {
@@ -7928,11 +7864,10 @@ mod tests {
         }
     }
 
-    /// Parts qui ne vont pas ensemble, refusées AVANT tout changement de
-    /// l'appareil : deux kits du même portefeuille (secret reconstruit faux
-    /// sans la marque), part marquée + part sans marque, et part dont la
-    /// marque dit un autre portefeuille (empreinte). Sans refus, la
-    /// restauration aurait installé un portefeuille vide.
+    /// Shares that do not belong together, refused BEFORE any change to the device: two
+    /// kits of the same wallet (wrong rebuilt secret without the mark), a marked share
+    /// + an unmarked share, and a share whose mark names another wallet (fingerprint).
+    /// Without the refusal, the restore would have installed an empty wallet.
     #[test]
     fn mismatched_backup_shares_are_refused_before_anything_changes() {
         let dir = std::env::temp_dir().join(format!("pgp_wallet_mismatched_shares_{}", std::process::id()));
@@ -7953,15 +7888,15 @@ mod tests {
             }
             (checked.map_err(|e| e.to_string()), restored.is_ok())
         };
-        // Même kit : vérifié.
+        // Same kit: verified.
         assert_eq!(attempt(&part(&kit_a[0]), &part(&kit_a[2])), (Ok(true), true));
-        // Deux kits du même portefeuille.
+        // Two kits of the same wallet.
         assert_eq!(attempt(&part(&kit_a[0]), &part(&kit_b[1])), (Err(KITS_DIFFERENT.to_string()), false));
-        // Part marquée + part sans marque (kit d'avant).
+        // A marked share + an unmarked share (older kit).
         let (_, old) = frozen_backup_kit(1);
         assert_eq!(attempt(&part(&kit_a[0]), &as_ref(&old[1])), (Err(KITS_DIFFERENT.to_string()), false));
-        // Marque d'un autre portefeuille : parts d'un secret S2 portant la marque
-        // (même identifiant de kit) du portefeuille de `secret`.
+        // Another wallet's mark: shares of a secret S2 carrying the mark (same kit
+        // identifier) of `secret`'s wallet.
         let other: Vec<u8> = (0..32u8).map(|i| i.wrapping_mul(3)).collect();
         let shares = shamir::split_secret(&other, 2, 3).unwrap();
         let mark = kit_mark_name("00112233aabbccdd", &kit_check(&secret));
@@ -7977,17 +7912,16 @@ mod tests {
             })
             .collect();
         assert_eq!(attempt(&forged[0], &forged[1]), (Err(KIT_CHECK_FAILED.to_string()), false));
-        // Marque illisible (autre logiciel, autre format) : traitée comme sans marque.
+        // Unreadable mark (other software, other format): treated as unmarked.
         assert_eq!(parse_kit_mark(Some(b"photo.jpg")), None);
         assert_eq!(parse_kit_mark(Some(b"pgpwallet-kit-v1:0011:22")), None);
         assert_eq!(parse_kit_mark(None), None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Les nouveaux kits restent lisibles par les versions précédentes de
-    /// l'app : leur restauration lit la part par `decrypt_share` (contenu seul)
-    /// et la passe à Shamir — exactement ce que fait ce test, qui doit
-    /// redonner le secret.
+    /// New kits stay readable by earlier versions of the app: their restore reads the
+    /// share with `decrypt_share` (content only) and passes it to Shamir, which is
+    /// exactly what this test does, and it must give back the secret.
     #[test]
     fn new_kits_stay_restorable_by_earlier_versions() {
         let dir = std::env::temp_dir().join(format!("pgp_wallet_new_kit_old_reader_{}", std::process::id()));
@@ -8071,9 +8005,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Garde-fou central de toute cette fonctionnalité : le verrou anti-brute-force
-    /// du mot de passe (compteur, délai) doit se comporter EXACTEMENT comme avant
-    /// l'existence de la biométrie, avec ou sans elle activée.
+    /// The central guard for this whole feature: the password's anti-brute-force lock
+    /// (counter, delay) must behave EXACTLY as it did before biometrics existed,
+    /// whether they are enabled or not.
     #[test]
     fn wrong_device_password_lockout_is_unaffected_by_biometric_enrollment() {
         let dir = std::env::temp_dir().join(format!("pgp_wallet_bio_lockout_test_{}", std::process::id()));
@@ -8091,8 +8025,8 @@ mod tests {
             enforce_unlock_lockout(&dir).is_err(),
             "le verrou mot de passe doit se déclencher normalement, biométrie activée ou non"
         );
-        // Le compteur biométrique, lui, ne doit pas avoir bougé : ce sont des
-        // tentatives par mot de passe, jamais comptées sur l'autre chemin.
+        // The biometric counter, on the other hand, must not have moved: these are
+        // password attempts, never counted on the other path.
         assert!(enforce_biometric_unlock_lockout(&dir).is_ok());
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -8166,9 +8100,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Si le scelleur (TPM réel) échoue au moment de l'enrôlement, le coffre doit
-    /// rester strictement identique à avant — motif écrire-vérifier-renommer
-    /// (voir `enroll_biometric_unlock_with`).
+    /// If the sealer (real TPM) fails at enrollment time, the vault must stay strictly
+    /// identical to before (write-verify-rename pattern, see
+    /// `enroll_biometric_unlock_with`).
     #[test]
     fn enroll_biometric_unlock_leaves_the_vault_untouched_when_the_sealer_fails() {
         let dir = std::env::temp_dir().join(format!("pgp_wallet_bio_sealer_fail_test_{}", std::process::id()));
