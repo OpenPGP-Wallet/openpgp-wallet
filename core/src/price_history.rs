@@ -1,30 +1,27 @@
-//! Prix historiques en dollars, pour afficher la valeur d'une transaction AU
-//! MOMENT où elle a eu lieu. Purement informatif : ne joue aucun rôle dans la
-//! construction ou la signature d'une transaction.
+//! Historical prices in dollars, used to show the value of a transaction AT THE
+//! TIME it happened. Purely informational: plays no part in building or signing a
+//! transaction.
 //!
-//! Source : l'API publique de données de marché de Binance
-//! (`data-api.binance.vision`, sans clé), bougies horaires (≈ 41 derniers
-//! jours) et journalières (depuis la cotation de l'actif : août 2017 pour
-//! BTC et ETH), paires en USDT (≈ 1 $).
-//! Crypto absente de Binance (VVV) : l'API publique OHLC de Kraken (sans clé,
-//! en dollars), 720 bougies au plus par intervalle (≈ 2 ans en journalier :
-//! tout l'historique de VVV, coté depuis février 2025).
-//! Actions tokenisées xStocks (absentes de Binance et de l'API publique de
-//! Kraken) : courbes de Jupiter (`datapi.jup.ag`, celles de son site, sans
-//! clé ; non documentées), prix par unité AFFICHÉE — mesuré le 10/10/2026 :
-//! dernière clôture AAPLx = prix par unité affichée de Jupiter, historique
-//! journalier complet depuis la cotation (juin 2025), 25 appels rapides
-//! acceptés. Secours : GeckoTerminal (pool Solana le plus liquide, même
-//! unité), limité à environ 6 appels rapprochés (mesuré).
-//! CoinGecko, déjà utilisé pour le prix courant, a été écarté ici : sa limite
-//! gratuite a refusé le 3ᵉ appel consécutif lors des essais, alors qu'il en
-//! faut plusieurs pour l'historique.
+//! Source: Binance's public market data API (`data-api.binance.vision`, keyless),
+//! hourly candles (≈ the last 41 days) and daily candles (since the asset was
+//! listed: August 2017 for BTC and ETH), USDT pairs (≈ $1). For a crypto Binance
+//! does not list (VVV): Kraken's public OHLC API (keyless, in dollars), at most 720
+//! candles per interval (≈ 2 years of daily candles: all of VVV's history, listed
+//! since February 2025). For xStocks tokenized shares (listed neither on Binance
+//! nor in Kraken's public API): Jupiter's charts (`datapi.jup.ag`, the ones its
+//! website uses, keyless, undocumented), priced per DISPLAYED unit. Measured on
+//! 2026-10-10: the latest AAPLx close = Jupiter's price per displayed unit, full
+//! daily history since listing (June 2025), 25 quick calls accepted. Fallback:
+//! GeckoTerminal (the most liquid Solana pool, same unit), limited to about 6 calls
+//! in quick succession (measured). CoinGecko, already used for the current price,
+//! was ruled out here: its free tier refused the 3rd consecutive call during
+//! testing, and the history needs several.
 //!
-//! Confidentialité : les requêtes demandent des SÉRIES complètes, identiques
-//! pour tout le monde — jamais le prix à l'heure précise d'une transaction,
-//! qui révélerait au fournisseur (avec l'adresse IP) les instants des
-//! transactions de l'utilisateur, et donc les transactions elles-mêmes. La
-//! valeur de chaque transaction est calculée ici, localement.
+//! Privacy: requests ask for complete SERIES, identical for everyone, never the
+//! price at the exact time of a transaction, which would reveal to the provider
+//! (together with the IP address) when the user's transactions happened, and
+//! therefore the transactions themselves. The value of each transaction is computed
+//! here, locally.
 
 use anyhow::{anyhow, ensure, Context, Result};
 use std::collections::HashMap;
@@ -37,7 +34,7 @@ const GECKO_TERMINAL_URL: &str = "https://api.geckoterminal.com/api/v2/networks/
 const JUPITER_CHARTS_URL: &str = "https://datapi.jup.ag/v2/charts";
 const HOUR: i64 = 3600;
 const DAY: i64 = 86_400;
-/// Au-delà, les séries sont relues (la dernière bougie horaire avance).
+/// Beyond this, the series are reread (the latest hourly candle moves on).
 const CACHE_TTL: Duration = Duration::from_secs(600);
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -46,30 +43,28 @@ pub enum Asset {
     Eth,
     Sol,
     Usdc,
-    /// Taux de change : dollars pour 1 euro (paire EUR/USDT, cotée depuis le
-    /// 03/01/2020), pour afficher les montants en euros au taux de chaque date.
+    /// Exchange rate: dollars per euro (EUR/USDT pair, listed since 2020-01-03), used
+    /// to show amounts in euros at each date's rate.
     Eur,
-    /// Autre crypto : paire USDT de Binance (liste blanche, voir `price_asset`).
+    /// Any other crypto: Binance USDT pair (allowlist, see `price_asset`).
     Pair(&'static str),
-    /// Crypto absente de Binance : paire en dollars de Kraken.
+    /// A crypto Binance does not list: Kraken dollar pair.
     Kraken(&'static str),
-    /// Action tokenisée xStocks (mint Solana du registre) : courbes de
-    /// Jupiter, GeckoTerminal en secours.
+    /// xStocks tokenized share (Solana mint from the registry): Jupiter's charts, with
+    /// GeckoTerminal as a fallback.
     Solana(&'static str),
-    /// Dollar stable sans paire de marché (USDT, monnaie de cotation des paires
-    /// Binance ; USDG) : 1 $, pour la valeur d'un solde ou d'une transaction.
-    /// Pas de courbe.
+    /// A dollar stablecoin with no market pair (USDT, the quote currency of Binance
+    /// pairs; USDG): $1, for the value of a balance or a transaction. No chart.
     Usd,
 }
 
-/// Série de prix d'une crypto de l'app, par son symbole (`None` : aucune
-/// source de prix). Actions tokenisées : par leur symbole en majuscules
-/// (« TSLAX »).
+/// Price series for one of the app's cryptos, by its symbol (`None`: no price
+/// source). Tokenized shares: by their uppercase symbol ("TSLAX").
 pub fn price_asset(symbol: &str) -> Option<Asset> {
     listed_asset(symbol).or_else(|| xstock_asset(symbol))
 }
 
-/// Action tokenisée du registre dont le symbole (en majuscules) est `symbol`.
+/// The registry's tokenized share whose (uppercase) symbol is `symbol`.
 fn xstock_asset(symbol: &str) -> Option<Asset> {
     crate::tokens::TOKENS.iter().filter(|t| t.symbol.to_ascii_uppercase() == symbol).flat_map(|t| t.deployments).find_map(|d| match d.kind {
         crate::tokens::TokenKind::Spl2022 { mint } => Some(Asset::Solana(mint)),
@@ -110,22 +105,21 @@ fn listed_asset(symbol: &str) -> Option<Asset> {
         "RENDER" => Asset::Pair("RENDERUSDT"),
         "VVV" => Asset::Kraken("VVVUSD"),
         "JITOSOL" => Asset::Kraken("JITOSOLUSD"),
-        // stETH : absent de Binance et de Kraken ; il suit l'ETH à 1:1 à
-        // quelques dixièmes de pour cent près (rachetable par Lido) — courbe
-        // de l'ETH.
+        // stETH: listed neither on Binance nor on Kraken; it tracks ETH 1:1 to within a
+        // few tenths of a percent (redeemable through Lido), so we use the ETH chart.
         "STETH" => Asset::Eth,
-        // Monero : retiré de Binance en 2024, dont l'API renvoie encore un
-        // cours figé (118,70 $ le 03/10/2026, contre 553 $ chez Kraken).
+        // Monero: delisted from Binance in 2024, whose API still returns a frozen price
+        // ($118.70 on 2026-10-03, versus $553 on Kraken).
         "XMR" => Asset::Kraken("XMRUSD"),
         "USDT" | "USDG" => Asset::Usd,
-        // EURC suit l'euro : sa courbe est celle d'EUR/USDT.
+        // EURC tracks the euro: its chart is EUR/USDT's.
         "EURC" => Asset::Eur,
         _ => return None,
     })
 }
 
 impl Asset {
-    /// Paire Binance (`None` : autre source, ou aucune).
+    /// Binance pair (`None`: another source, or none).
     fn binance_symbol(self) -> Option<&'static str> {
         Some(match self {
             Asset::Btc => "BTCUSDT",
@@ -138,7 +132,7 @@ impl Asset {
         })
     }
 
-    /// Compté à 1 $ là où sa série n'a pas de prix (voir `PriceSeries::stable`).
+    /// Counted at $1 wherever its series has no price (see `PriceSeries::stable`).
     fn is_stable(self) -> bool {
         matches!(self, Asset::Usdc | Asset::Usd)
     }
@@ -146,29 +140,28 @@ impl Asset {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Candle {
-    /// Début de la bougie, en secondes Unix.
+    /// Start of the candle, in Unix seconds.
     open_time: i64,
     open: f64,
     close: f64,
 }
 
-/// Bougies horaires et journalières d'un actif, triées par date.
+/// An asset's hourly and daily candles, sorted by date.
 #[derive(Debug)]
 pub struct PriceSeries {
     hourly: Vec<Candle>,
     daily: Vec<Candle>,
-    /// Stablecoin (USDC) : 1 $ là où la série n'a pas de prix. Binance a
-    /// retiré la paire USDC/USDT du 26/09/2022 au 11/03/2023 (constaté sur
-    /// l'API) ; sans cela, toute valeur de portefeuille contenant de l'USDC
-    /// disparaissait de la courbe sur cette période.
+    /// Stablecoin (USDC): $1 wherever the series has no price. Binance removed the
+    /// USDC/USDT pair from 2022-09-26 to 2023-03-11 (seen on the API); without this,
+    /// any portfolio value containing USDC vanished from the chart over that period.
     stable: bool,
 }
 
 impl PriceSeries {
-    /// Prix en dollars à l'instant `timestamp` (secondes Unix) : bougie
-    /// horaire si l'instant est couvert, sinon journalière, interpolé entre
-    /// ouverture et clôture. `None` (transaction en attente) : dernier prix.
-    /// `None` en retour si l'instant précède toutes les bougies connues.
+    /// Price in dollars at time `timestamp` (Unix seconds): the hourly candle if the
+    /// time is covered, otherwise the daily one, interpolated between open and close.
+    /// `None` (pending transaction): the latest price. Returns `None` if the time is
+    /// before every known candle.
     pub fn usd_at(&self, timestamp: Option<i64>) -> Option<f64> {
         let Some(t) = timestamp else {
             return self.hourly.last().or(self.daily.last()).map(|c| c.close).or(self.stable.then_some(1.0));
@@ -177,9 +170,9 @@ impl PriceSeries {
     }
 }
 
-/// Prix à l'instant `t` dans des bougies de durée `span` : interpolation
-/// linéaire entre l'ouverture et la clôture de la bougie qui contient `t` ;
-/// après la dernière bougie (horloge en avance), sa clôture.
+/// Price at time `t` within candles of duration `span`: linear interpolation
+/// between the open and close of the candle containing `t`; after the last candle
+/// (clock running ahead), its close.
 fn price_in(candles: &[Candle], span: i64, t: i64) -> Option<f64> {
     let first = candles.first()?;
     if t < first.open_time {
@@ -189,15 +182,15 @@ fn price_in(candles: &[Candle], span: i64, t: i64) -> Option<f64> {
     let candle = candles[index];
     let elapsed = t - candle.open_time;
     if elapsed >= span {
-        // Trou dans la série ou instant postérieur à la dernière bougie.
+        // A gap in the series, or a time after the last candle.
         return (index + 1 == candles.len()).then_some(candle.close);
     }
     Some(candle.open + (candle.close - candle.open) * elapsed as f64 / span as f64)
 }
 
-/// Réponse `klines` de Binance : `[[ouverture_ms, "open", "high", "low",
-/// "close", ...], ...]`. Refus de toute série incohérente (dates non
-/// croissantes, prix non positifs) plutôt que d'afficher une valeur fausse.
+/// Binance `klines` response: `[[open_ms, "open", "high", "low", "close", ...],
+/// ...]`. Any inconsistent series (non-increasing dates, non-positive prices) is
+/// refused rather than showing a wrong value.
 fn parse_klines(body: &str) -> Result<Vec<Candle>> {
     let rows: Vec<Vec<serde_json::Value>> = serde_json::from_str(body).context("réponse de prix illisible")?;
     let mut candles = Vec::with_capacity(rows.len());
@@ -218,9 +211,9 @@ fn parse_klines(body: &str) -> Result<Vec<Candle>> {
     Ok(candles)
 }
 
-/// Réponse OHLC de Kraken : `{"error": [], "result": {"<paire>": [[ouverture_s,
-/// "open", "high", "low", "close", "vwap", "volume", nombre], ...], "last": n}}`.
-/// Mêmes refus que `parse_klines`.
+/// Kraken OHLC response: `{"error": [], "result": {"<pair>": [[open_s, "open",
+/// "high", "low", "close", "vwap", "volume", count], ...], "last": n}}`. Same
+/// refusals as `parse_klines`.
 fn parse_kraken_ohlc(body: &str) -> Result<Vec<Candle>> {
     let value: serde_json::Value = serde_json::from_str(body).context("réponse de prix illisible")?;
     if let Some(errors) = value.get("error").and_then(serde_json::Value::as_array) {
@@ -250,9 +243,9 @@ fn parse_kraken_ohlc(body: &str) -> Result<Vec<Candle>> {
     Ok(candles)
 }
 
-/// Réponse OHLCV de GeckoTerminal : `{"data": {"attributes": {"ohlcv_list":
-/// [[ouverture_s, open, high, low, close, volume], ...]}}}`, la plus récente
-/// d'abord — remise dans l'ordre. Mêmes refus que `parse_klines`.
+/// GeckoTerminal OHLCV response: `{"data": {"attributes": {"ohlcv_list": [[open_s,
+/// open, high, low, close, volume], ...]}}}`, newest first, put back in order. Same
+/// refusals as `parse_klines`.
 fn parse_gecko_ohlcv(body: &str) -> Result<Vec<Candle>> {
     let value: serde_json::Value = serde_json::from_str(body).context("réponse de prix illisible")?;
     let rows = value.pointer("/data/attributes/ohlcv_list").and_then(serde_json::Value::as_array).ok_or_else(|| anyhow!("réponse de prix illisible"))?;
@@ -271,9 +264,8 @@ fn parse_gecko_ohlcv(body: &str) -> Result<Vec<Candle>> {
     Ok(candles)
 }
 
-/// Réponse des courbes de Jupiter : `{"candles": [{"time": s, "open": o,
-/// "close": c, ...}, ...]}`, de la plus ancienne à la plus récente. Mêmes
-/// refus que `parse_klines`.
+/// Jupiter chart response: `{"candles": [{"time": s, "open": o, "close": c, ...},
+/// ...]}`, oldest to newest. Same refusals as `parse_klines`.
 fn parse_jupiter_chart(body: &str) -> Result<Vec<Candle>> {
     let value: serde_json::Value = serde_json::from_str(body).context("réponse de prix illisible")?;
     let rows = value.get("candles").and_then(serde_json::Value::as_array).ok_or_else(|| anyhow!("réponse de prix illisible"))?;
@@ -292,7 +284,7 @@ fn parse_jupiter_chart(body: &str) -> Result<Vec<Candle>> {
     Ok(candles)
 }
 
-/// Bougies Jupiter de l'action `mint` (les `limit` dernières, au plus 1000).
+/// Jupiter candles for the share `mint` (the last `limit`, at most 1000).
 fn fetch_jupiter_chart(mint: &str, interval: &str, limit: usize) -> Result<Vec<Candle>> {
     let interval = match interval {
         "15m" => "15_MINUTE",
@@ -311,7 +303,7 @@ fn fetch_jupiter_chart(mint: &str, interval: &str, limit: usize) -> Result<Vec<C
     parse_jupiter_chart(&response.text().context("réponse de prix illisible")?)
 }
 
-/// Bougies d'une action tokenisée : Jupiter, sinon GeckoTerminal.
+/// Candles for a tokenized share: Jupiter, otherwise GeckoTerminal.
 fn fetch_xstock(mint: &str, interval: &str, limit: usize, start: Option<i64>) -> Result<Vec<Candle>> {
     match fetch_jupiter_chart(mint, interval, limit) {
         Ok(candles) => Ok(match start {
@@ -322,8 +314,8 @@ fn fetch_xstock(mint: &str, interval: &str, limit: usize, start: Option<i64>) ->
     }
 }
 
-/// Pool le plus liquide où l'action `mint` est le jeton de base (prix lu pour
-/// elle), choisi une fois par session.
+/// The most liquid pool where the share `mint` is the base token (the price read is
+/// for it), chosen once per session.
 fn gecko_pool(mint: &str) -> Result<String> {
     static POOLS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
     let pools = POOLS.get_or_init(Default::default);
@@ -354,9 +346,8 @@ fn gecko_pool(mint: &str) -> Result<String> {
     Ok(pool)
 }
 
-/// Bougies GeckoTerminal de l'action `mint`, mêmes paramètres que
-/// `fetch_klines` (les `limit` dernières, au plus 1000 ; `start` : celles
-/// d'après, parmi elles).
+/// GeckoTerminal candles for the share `mint`, same parameters as `fetch_klines`
+/// (the last `limit`, at most 1000; `start`: the ones after it, among those).
 fn fetch_gecko(mint: &str, interval: &str, limit: usize, start: Option<i64>) -> Result<Vec<Candle>> {
     let (timeframe, aggregate) = match interval {
         "15m" => ("minute", 15),
@@ -389,8 +380,8 @@ fn shared_client() -> &'static reqwest::blocking::Client {
     })
 }
 
-/// Bougies `interval` de `asset` : les `limit` dernières, ou les `limit`
-/// premières à partir de `start` (secondes Unix). Au plus 1000 par requête.
+/// `interval` candles for `asset`: the last `limit`, or the first `limit` from
+/// `start` (Unix seconds). At most 1000 per request.
 fn fetch_klines(asset: Asset, interval: &str, limit: usize, start: Option<i64>) -> Result<Vec<Candle>> {
     let symbol = match asset {
         Asset::Kraken(pair) => return fetch_kraken(pair, interval, limit, start),
@@ -411,9 +402,9 @@ fn fetch_klines(asset: Asset, interval: &str, limit: usize, start: Option<i64>) 
     parse_klines(&response.text().context("réponse de prix illisible")?)
 }
 
-/// Bougies Kraken de `pair`, mêmes paramètres que `fetch_klines` : Kraken
-/// donne toujours ses 720 dernières bougies (ou moins) ; les `limit`
-/// dernières sont gardées, ou les `limit` premières à partir de `start`.
+/// Kraken candles for `pair`, same parameters as `fetch_klines`: Kraken always
+/// returns its last 720 candles (or fewer); the last `limit` are kept, or the first
+/// `limit` from `start`.
 fn fetch_kraken(pair: &str, interval: &str, limit: usize, start: Option<i64>) -> Result<Vec<Candle>> {
     let minutes = match interval {
         "15m" => 15,
@@ -435,11 +426,11 @@ fn fetch_kraken(pair: &str, interval: &str, limit: usize, start: Option<i64>) ->
     })
 }
 
-/// Toutes les bougies journalières depuis la cotation de `asset` : pages de
-/// 1000 à partir de l'origine (≈ 4 requêtes pour Bitcoin).
+/// Every daily candle since `asset` was listed: pages of 1000 from the origin (≈ 4
+/// requests for Bitcoin).
 fn fetch_daily_history(asset: Asset) -> Result<Vec<Candle>> {
     const PAGE: usize = 1000;
-    // Actions tokenisées : cotées depuis juin 2025, moins de 1000 jours.
+    // Tokenized shares: listed since June 2025, fewer than 1000 days.
     if let Asset::Solana(mint) = asset {
         return fetch_xstock(mint, "1d", PAGE, None);
     }
@@ -449,7 +440,7 @@ fn fetch_daily_history(asset: Asset) -> Result<Vec<Candle>> {
         let page = fetch_klines(asset, "1d", PAGE, Some(start))?;
         let full = page.len() == PAGE;
         candles.extend(page);
-        // 30 pages : plus de 80 ans de bougies, garde-fou contre une boucle sans fin.
+        // 30 pages: over 80 years of candles, a guard against an endless loop.
         if !full || candles.len() >= 30 * PAGE {
             break;
         }
@@ -458,11 +449,10 @@ fn fetch_daily_history(asset: Asset) -> Result<Vec<Candle>> {
     Ok(candles)
 }
 
-/// Séries de prix de `asset` (cache de 10 minutes ; horaire et journalier lus
-/// en parallèle au premier appel). Un échec n'est pas mis en cache : réessayé
-/// au suivant.
+/// Price series for `asset` (10-minute cache; hourly and daily read in parallel on
+/// the first call). A failure is not cached: retried on the next call.
 pub fn series(asset: Asset) -> Result<Arc<PriceSeries>> {
-    /// Séries par actif, avec l'instant où elles ont été lues.
+    /// Series per asset, with the time they were read.
     type Cache = Mutex<HashMap<Asset, (Instant, Arc<PriceSeries>)>>;
     static CACHE: OnceLock<Cache> = OnceLock::new();
     let cache = CACHE.get_or_init(Default::default);
@@ -487,14 +477,14 @@ pub fn series(asset: Asset) -> Result<Arc<PriceSeries>> {
     Ok(series)
 }
 
-/// Période d'un graphique.
+/// A chart's period.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum ChartRange {
     Day,
     Week,
     Month,
     Year,
-    /// Tout l'historique disponible.
+    /// All available history.
     All,
 }
 
@@ -511,7 +501,7 @@ impl ChartRange {
         })
     }
 
-    /// Durée couverte, en secondes ; `None` pour tout l'historique.
+    /// Duration covered, in seconds; `None` for the whole history.
     pub fn span(self) -> Option<i64> {
         match self {
             ChartRange::Day => Some(DAY),
@@ -522,9 +512,8 @@ impl ChartRange {
         }
     }
 
-    /// Pas entre deux points (bougies, ou échantillons d'une valeur de
-    /// portefeuille) ; pour tout l'historique d'un portefeuille, voir
-    /// `step_for_span`.
+    /// Step between two points (candles, or samples of a portfolio value); for a
+    /// portfolio's whole history, see `step_for_span`.
     pub fn step(self) -> i64 {
         match self {
             ChartRange::Day => 15 * 60,
@@ -534,7 +523,7 @@ impl ChartRange {
         }
     }
 
-    /// Intervalle Binance correspondant à `step`.
+    /// Binance interval matching `step`.
     fn interval(self) -> &'static str {
         match self {
             ChartRange::Day => "15m",
@@ -545,8 +534,8 @@ impl ChartRange {
     }
 }
 
-/// Pas d'échantillonnage d'une durée quelconque (période « tout ») : le plus
-/// fin des pas des autres périodes qui donne au plus 800 points, un jour au-delà.
+/// Sampling step for an arbitrary duration (the "all" period): the finest of the
+/// other periods' steps that gives at most 800 points, one day beyond that.
 pub fn step_for_span(span: i64) -> i64 {
     [15 * 60, HOUR, 4 * HOUR].into_iter().find(|step| span / step <= 800).unwrap_or(DAY)
 }
@@ -555,8 +544,8 @@ pub fn unix_now() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
-/// Points d'une courbe : prix d'ouverture de chaque bougie, puis le dernier
-/// prix (clôture courante) à l'instant présent.
+/// Points of a chart: the open price of each candle, then the latest price (current
+/// close) at the present time.
 fn chart_points(candles: &[Candle], now: i64) -> Vec<(i64, f64)> {
     let mut points: Vec<(i64, f64)> = candles.iter().map(|c| (c.open_time, c.open)).collect();
     if let Some(last) = candles.last() {
@@ -565,9 +554,9 @@ fn chart_points(candles: &[Candle], now: i64) -> Vec<(i64, f64)> {
     points
 }
 
-/// Courbe de prix de `asset` sur la période (série identique pour tout le
-/// monde, voir l'en-tête) ; « tout » : les bougies journalières depuis la
-/// cotation. Cache : 2 minutes sur 24 h, 10 minutes sinon.
+/// Price chart of `asset` over the period (a series identical for everyone, see the
+/// header); "all": daily candles since listing. Cache: 2 minutes for 24 h, 10
+/// minutes otherwise.
 pub fn chart(asset: Asset, range: ChartRange) -> Result<Arc<Vec<(i64, f64)>>> {
     ensure!(asset != Asset::Usd, "pas de courbe pour un dollar stable");
     if range == ChartRange::All {
@@ -588,8 +577,8 @@ pub fn chart(asset: Asset, range: ChartRange) -> Result<Arc<Vec<(i64, f64)>>> {
     Ok(points)
 }
 
-/// Valeur absolue en dollars d'un montant signé en plus petite unité
-/// (`decimals` décimales), au prix de l'instant donné.
+/// Absolute dollar value of a signed amount in the smallest unit (`decimals`
+/// decimals), at the price at the given time.
 pub fn usd_value(series: &PriceSeries, amount_minor: i128, decimals: i32, timestamp: Option<i64>) -> Option<f64> {
     let price = series.usd_at(timestamp)?;
     Some(amount_minor.unsigned_abs() as f64 / 10f64.powi(decimals) * price)
@@ -603,9 +592,8 @@ mod tests {
         Candle { open_time, open, close }
     }
 
-    /// Interpolation dans la bougie qui contient l'instant ; horaire avant
-    /// journalier ; avant la série : rien ; après : dernière clôture ; en
-    /// attente : dernier prix.
+    /// Interpolation within the candle containing the time; hourly before daily; before
+    /// the series: nothing; after: last close; pending: latest price.
     #[test]
     fn price_is_read_from_the_candle_containing_the_instant() {
         let series = PriceSeries {
@@ -624,8 +612,8 @@ mod tests {
         assert!((amount - 150.0).abs() < 1e-9, "valeur absolue : {amount}");
     }
 
-    /// Un trou dans la série ne donne pas un prix inventé — sauf pour un
-    /// stablecoin, compté à 1 $.
+    /// A gap in the series does not produce an invented price, except for a stablecoin,
+    /// counted at $1.
     #[test]
     fn gaps_in_a_series_give_no_price() {
         let candles = [candle(0, 1.0, 2.0), candle(3 * HOUR, 3.0, 4.0)];
@@ -637,7 +625,7 @@ mod tests {
         assert_eq!(usdc(false).usd_at(Some(5 * DAY)), None);
     }
 
-    /// « Tout » : pas le plus fin possible sous 800 points, un jour au-delà.
+    /// "All": the finest step possible under 800 points, one day beyond that.
     #[test]
     fn all_history_range_is_parsed_and_sampled() {
         assert_eq!(ChartRange::parse("all"), Some(ChartRange::All));
@@ -650,7 +638,7 @@ mod tests {
         assert_eq!(step_for_span(3000 * DAY), DAY);
     }
 
-    /// Format réel de Binance ; séries incohérentes refusées.
+    /// Real Binance format; inconsistent series refused.
     #[test]
     fn klines_are_parsed_and_checked() {
         let body = r#"[[1758844800000,"84100.00000000","84500.1","83900.0","84163.05000000","1.0",1758848399999,"0",1,"0","0","0"],
@@ -663,11 +651,11 @@ mod tests {
         assert!(parse_klines(r#"{"code":-1121,"msg":"Invalid symbol."}"#).is_err());
     }
 
-    /// Format réel de Kraken (réponse relevée sur l'API, tronquée) ; erreur
-    /// du service et séries incohérentes refusées.
+    /// Real Kraken format (response recorded from the API, truncated); service errors
+    /// and inconsistent series refused.
     #[test]
     fn jupiter_chart_is_parsed_and_checked() {
-        // Extrait réel (AAPLx, 10/10/2026) : de la plus ancienne à la plus récente.
+        // Real excerpt (AAPLx, 2026-10-10): oldest to newest.
         let body = r#"{"candles":[{"time":1791622800,"open":335.5460055405212,"high":336.2,"low":335.2,"close":335.52725591416214,"volume":17859.1},{"time":1791626400,"open":335.52725591416214,"high":336.2,"low":335.2,"close":335.5189133638771,"volume":150.2}]}"#;
         assert_eq!(parse_jupiter_chart(body).unwrap(), vec![candle(1_791_622_800, 335.5460055405212, 335.52725591416214), candle(1_791_626_400, 335.52725591416214, 335.5189133638771)]);
         assert!(parse_jupiter_chart(r#"{"candles":[]}"#).is_err(), "vide");
@@ -678,7 +666,7 @@ mod tests {
 
     #[test]
     fn gecko_ohlcv_is_parsed_and_checked() {
-        // Extrait réel (AAPLx/USDC, 10/10/2026) : la plus récente d'abord.
+        // Real excerpt (AAPLx/USDC, 2026-10-10): newest first.
         let body = r#"{"data":{"attributes":{"ohlcv_list":[[1791590400,340.3661461621266,340.3661461621266,334.9319465990773,335.70110571415927,30710.65],[1791504000,338.644787845157,345.02710016742776,328.74819935392355,340.3661461621266,161181.43]]}}}"#;
         assert_eq!(parse_gecko_ohlcv(body).unwrap(), vec![candle(1_791_504_000, 338.644787845157, 340.3661461621266), candle(1_791_590_400, 340.3661461621266, 335.70110571415927)]);
         assert!(parse_gecko_ohlcv(r#"{"errors":[{"status":"429"}]}"#).is_err());
@@ -690,9 +678,8 @@ mod tests {
         assert_eq!(price_asset("TSLA"), None);
     }
 
-    /// Courbes réelles d'une action tokenisée (GeckoTerminal) : chaque période
-    /// donne une série ordonnée, au dernier prix proche du cours par unité
-    /// affichée de Jupiter.
+    /// Real charts for a tokenized share (GeckoTerminal): each period gives an ordered
+    /// series, with a latest price close to Jupiter's price per displayed unit.
     /// `cargo test -- --ignored real_xstock_charts --nocapture`
     #[test]
     #[ignore]
@@ -721,7 +708,7 @@ mod tests {
         assert!(parse_kraken_ohlc(r#"{"error":[],"result":{"X":[[1,"1","1","1","0"]],"last":0}}"#).is_err());
     }
 
-    /// Dollar stable sans paire : 1 $ à tout instant, aucune requête, pas de courbe.
+    /// Dollar stablecoin with no pair: $1 at all times, no request, no chart.
     #[test]
     fn stable_dollar_is_worth_one_dollar() {
         let usd = series(Asset::Usd).unwrap();
@@ -730,8 +717,8 @@ mod tests {
         assert!(chart(Asset::Usd, ChartRange::Month).is_err());
     }
 
-    /// Kraken réel (VVV) : journalier depuis la cotation (27/02/2025), horaire
-    /// récent, courbes de chaque période, prix cohérent avec CoinGecko.
+    /// Real Kraken (VVV): daily since listing (2025-02-27), recent hourly, charts for
+    /// each period, price consistent with CoinGecko.
     /// `cargo test -- --ignored real_kraken_series --nocapture`
     #[test]
     #[ignore]
@@ -756,10 +743,10 @@ mod tests {
         assert!((now / reference - 1.0).abs() < 0.05);
     }
 
-    /// Service réel : les 4 actifs, séries horaires (~41 j) et journalières
-    /// (depuis la cotation, sans trou ni doublon entre les pages, jusqu'à
-    /// aujourd'hui), prix cohérents avec le prix courant de CoinGecko (autre
-    /// source) à quelques % près ; USDC ≈ 1 $.
+    /// Live service: the 4 assets, hourly series (~41 days) and daily series (since
+    /// listing, with no gaps or duplicates between pages, up to today), prices
+    /// consistent with CoinGecko's current price (another source) to within a few %;
+    /// USDC ≈ $1.
     #[test]
     #[ignore]
     fn real_price_series_match_an_independent_source() {

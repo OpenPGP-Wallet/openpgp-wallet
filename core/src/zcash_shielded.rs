@@ -1,20 +1,21 @@
-//! Zcash protégé (Orchard) : adresse unifiée u1… (récepteur Orchard seul),
-//! réception, solde, puis protection des ZEC transparents et envoi.
+//! Shielded Zcash (Orchard and Ironwood pools): unified address u1… (Orchard
+//! receiver only, which Ironwood shares), receiving, balance, then shielding
+//! transparent ZEC and sending.
 //!
-//! Pile officielle des portefeuilles légers (celle de Zashi) :
-//! - `zcash_client_sqlite` : base de portefeuille locale (notes, arbres de
-//!   commitments). Elle ne contient que des clés de VISUALISATION (UFVK) : la
-//!   clé de dépense est dérivée de la seed (mot de passe) au moment de signer.
-//!   Fuite de cette base = historique protégé visible, jamais de fonds perdus.
-//! - `zcash_client_backend::sync` : synchronisation par les serveurs
-//!   lightwalletd déjà utilisés pour le transparent (blocs compacts, déchiffrement
-//!   par essai), sans rien envoyer d'autre que des demandes de blocs.
+//! The official light wallet stack (the one Zashi uses):
+//! - `zcash_client_sqlite`: local wallet database (notes, commitment trees). It
+//!   only holds VIEWING keys (UFVK): the spending key is derived from the seed
+//!   (password) at signing time. A leak of this database exposes the shielded
+//!   history, never the funds.
+//! - `zcash_client_backend::sync`: sync through the lightwalletd servers already
+//!   used for transparent funds (compact blocks, trial decryption), sending nothing
+//!   but block requests.
 //!
-//! Compte protégé n°p = compte ZIP-32 n°p de la seed (profil n°p). L'adresse
-//! t1 existante du profil (m/44'/133'/0'/0/p) y est importée pour pouvoir la
-//! protéger. Naissance commune à tous les comptes (`BIRTHDAY_HEIGHT`) : aucune
-//! adresse protégée de l'app n'existait avant, donc rien ne peut être manqué, et
-//! une restauration sur un autre appareil retrouve tout sans rescanner la chaîne.
+//! Shielded account no. p = ZIP-32 account no. p of the seed (profile no. p). The
+//! profile's existing t1 address (m/44'/133'/0'/0/p) is imported into it so it can
+//! be shielded. Every account shares the same birthday (`BIRTHDAY_HEIGHT`): no
+//! shielded address from the app existed before it, so nothing can be missed, and a
+//! restore on another device finds everything without rescanning the chain.
 
 use crate::{derivation, history, wallet_birthday, zcash};
 use anyhow::{anyhow, Context, Result};
@@ -31,15 +32,14 @@ use zcash_client_sqlite::{util::SystemClock, wallet::init::init_wallet_db, Accou
 use zcash_keys::keys::{UnifiedAddressRequest, UnifiedFullViewingKey, UnifiedSpendingKey};
 use zcash_protocol::consensus::{BlockHeight, MainNetwork};
 
-/// Hauteur de naissance de tous les comptes protégés : juste avant la
-/// première version de l'app qui affiche une adresse u1 (chaîne à 3 505 105
-/// le 03/10/2026).
+/// Birthday height of every shielded account: just before the first app version
+/// that shows a u1 address (the chain was at 3,505,105 on 2026-10-03).
 pub const BIRTHDAY_HEIGHT: u32 = 3_504_000;
 const WALLET_FILE: &str = "zcash_shielded.sqlite";
-/// Réanalyse depuis la naissance fixe demandée (traitée par la
-/// synchronisation suivante, qui tient la base).
+/// Rescan from the fixed birthday requested (handled by the next sync, which holds
+/// the database).
 const RESCAN_FILE: &str = "zcash_shielded_rescan";
-/// Blocs téléchargés puis analysés par lot.
+/// Blocks downloaded, then scanned, per batch.
 const SYNC_BATCH: u32 = 1_000;
 
 type Db = WalletDb<rusqlite::Connection, MainNetwork, SystemClock, rand_core::OsRng>;
@@ -50,10 +50,10 @@ fn open(data_dir: &Path) -> Result<Db> {
     Ok(db)
 }
 
-/// Base pour une simple lecture (solde, historique, montant maximal) : `None`
-/// si elle n'existe pas — jamais créée ici. Constaté le 07/10/2026 : un solde
-/// demandé juste après l'effacement de la base (réinitialisation) la
-/// recréait aussitôt, vide mais au nom du portefeuille suivant.
+/// Database for a plain read (balance, history, maximum amount): `None` if it does
+/// not exist; it is never created here. Seen on 2026-10-07: a balance requested
+/// right after the database was erased (reset) recreated it immediately, empty but
+/// under the next wallet's name.
 fn open_existing(data_dir: &Path) -> Result<Option<Db>> {
     if !data_dir.join(WALLET_FILE).exists() {
         return Ok(None);
@@ -61,7 +61,7 @@ fn open_existing(data_dir: &Path) -> Result<Option<Db>> {
     open(data_dir).map(Some)
 }
 
-/// Oublie les adresses mémorisées (effacement de l'état, voir `seed_state`).
+/// Forgets the remembered addresses (state wipe, see `seed_state`).
 pub(crate) fn forget_known() {
     *KNOWN.lock().unwrap_or_else(|p| p.into_inner()) = None;
 }
@@ -70,26 +70,25 @@ fn account_index(profile: u32) -> Result<zip32::AccountId> {
     zip32::AccountId::try_from(profile).map_err(|_| anyhow!("profil hors des comptes Zcash possibles"))
 }
 
-/// Clé de visualisation du compte protégé du profil (calcul local, à partir
-/// de la seed).
+/// Viewing key of the profile's shielded account (computed locally from the seed).
 pub fn viewing_key(seed: &[u8], profile: u32) -> Result<UnifiedFullViewingKey> {
     let usk = UnifiedSpendingKey::from_seed(&MainNetwork, seed, account_index(profile)?).map_err(|e| anyhow!("clé Zcash protégée : {e:?}"))?;
     Ok(usk.to_unified_full_viewing_key())
 }
 
-/// Adresse protégée du profil : adresse unifiée au seul récepteur Orchard.
+/// The profile's shielded address: a unified address with only an Orchard receiver.
 pub fn address(ufvk: &UnifiedFullViewingKey) -> Result<String> {
     let (address, _) = ufvk.default_address(UnifiedAddressRequest::ORCHARD).map_err(|e| anyhow!("adresse Zcash protégée : {e:?}"))?;
     Ok(address.encode(&MainNetwork))
 }
 
-/// Compte protégé du profil dans la base, s'il existe.
+/// The profile's shielded account in the database, if it exists.
 fn find_account(db: &Db, profile: u32) -> Result<Option<AccountUuid>> {
     let wanted = account_index(profile)?;
     for id in db.get_account_ids()? {
         if let Some(account) = db.get_account(id)? {
-            // Compte importé par sa clé de visualisation (`AccountSource::Imported`)
-            // ou dérivé : même métadonnée de dérivation ZIP-32.
+            // Account imported from its viewing key (`AccountSource::Imported`) or derived:
+            // same ZIP-32 derivation metadata.
             if account.source().key_derivation().is_some_and(|d| d.account_index() == wanted) {
                 return Ok(Some(id));
             }
@@ -98,12 +97,12 @@ fn find_account(db: &Db, profile: u32) -> Result<Option<AccountUuid>> {
     Ok(None)
 }
 
-// --- lightwalletd ---------------------------------------------------------------
+// --- lightwalletd --------------------------------------------------------------
 
-/// Connexion sans délai par requête (un lot de blocs compacts peut dépasser
-/// les 30 s du client transparent), serveurs essayés dans l'ordre.
-/// `future` abandonné dès qu'un effacement de l'état est demandé (voir
-/// `seed_state`) : `None`. La base ouverte autour se referme aussitôt.
+/// Connection without a per-request timeout (a batch of compact blocks can take
+/// longer than the transparent client's 30 s), servers tried in order. `future` is
+/// dropped as soon as a state wipe is requested (see `seed_state`): `None`. The
+/// database opened around it closes straight away.
 async fn unless_wiped<T>(future: impl std::future::Future<Output = Result<T>>) -> Result<Option<T>> {
     let wiped = async {
         while !crate::seed_state::cancelled() {
@@ -133,10 +132,9 @@ fn runtime() -> Result<tokio::runtime::Runtime> {
     tokio::runtime::Builder::new_current_thread().enable_all().build().context("démarrage du client Zcash impossible")
 }
 
-/// Naissance des comptes : état des arbres de commitments juste avant le
-/// premier bloc à analyser — peu avant la création du portefeuille quand elle
-/// est connue (voir `wallet_birthday`, ~75 s par bloc), sinon
-/// `BIRTHDAY_HEIGHT`.
+/// Account birthday: the state of the commitment trees just before the first block
+/// to scan, shortly before the wallet was created when that is known (see
+/// `wallet_birthday`, ~75 s per block), otherwise `BIRTHDAY_HEIGHT`.
 async fn birthday(data_dir: &Path, client: &mut CompactTxStreamerClient<tonic::transport::Channel>) -> Result<AccountBirthday> {
     let tip = client
         .get_latest_block(zcash_client_backend::proto::service::ChainSpec {})
@@ -153,8 +151,8 @@ async fn birthday(data_dir: &Path, client: &mut CompactTxStreamerClient<tonic::t
     AccountBirthday::from_treestate(state, None).map_err(|_| anyhow!("état de la chaîne Zcash invalide"))
 }
 
-/// Clés d'un profil pour `ensure_accounts`, dérivées de la seed : clé de
-/// visualisation, clé publique de l'adresse t1, empreinte de la seed.
+/// A profile's keys for `ensure_accounts`, derived from the seed: viewing key,
+/// public key of the t1 address, seed fingerprint.
 pub type ProfileKeys = (u32, UnifiedFullViewingKey, [u8; 33], zip32::fingerprint::SeedFingerprint);
 
 pub fn profile_keys(seed: &[u8], profile: u32) -> Result<ProfileKeys> {
@@ -165,14 +163,14 @@ pub fn profile_keys(seed: &[u8], profile: u32) -> Result<ProfileKeys> {
     Ok((profile, ufvk, pubkey, seed_fp))
 }
 
-/// Crée (une fois) le compte protégé de chaque profil — appelé après le
-/// déverrouillage, sans la seed (clés déjà dérivées).
+/// Creates (once) each profile's shielded account. Called after unlocking, without
+/// the seed (keys already derived).
 pub fn ensure_accounts(data_dir: &Path, profiles: &[ProfileKeys]) -> Result<()> {
     let addresses = profiles.iter().map(|keys| Ok((address(&keys.1)?, keys.0))).collect::<Result<_>>()?;
     *KNOWN.lock().unwrap_or_else(|p| p.into_inner()) = Some((data_dir.to_path_buf(), addresses));
     let mut db = open(data_dir)?;
-    // « Réanalyser depuis le début » : comptes supprimés puis recréés
-    // ci-dessous depuis la naissance fixe (date de création oubliée).
+    // "Rescan from the beginning": accounts deleted, then recreated below from the
+    // fixed birthday (creation date forgotten).
     let rescan = data_dir.join(RESCAN_FILE);
     if rescan.exists() {
         for id in db.get_account_ids()? {
@@ -195,8 +193,8 @@ pub fn ensure_accounts(data_dir: &Path, profiles: &[ProfileKeys]) -> Result<()> 
         let account = db
             .import_account_ufvk(&format!("Profil {profile}"), ufvk, &birthday, purpose, Some("openpgp-wallet"))
             .map_err(|e| anyhow!("compte Zcash protégé : création impossible ({e})"))?;
-        // Profil principal : son adresse t1 est déjà la première adresse
-        // transparente du compte 0 ; les autres sont importées.
+        // Main profile: its t1 address is already the first transparent address of account
+        // 0; the others are imported.
         if *profile != 0 {
             let pubkey = secp256k1::PublicKey::from_slice(t1_pubkey).context("clé publique Zcash invalide")?;
             db.import_standalone_transparent_pubkey(account.id(), pubkey).map_err(|e| anyhow!("adresse t1 : import impossible ({e})"))?;
@@ -205,11 +203,10 @@ pub fn ensure_accounts(data_dir: &Path, profiles: &[ProfileKeys]) -> Result<()> 
     Ok(())
 }
 
-/// Supprime de la base les comptes d'un AUTRE portefeuille (autre seed :
-/// réinitialisation puis création ou restauration sur cet appareil) — jamais
-/// leur solde ni leur historique montrés pour celui-ci (les comptes sont
-/// retrouvés par leur seul numéro, voir `find_account`). Appelé au
-/// déverrouillage, avant tout affichage.
+/// Removes from the database the accounts of ANOTHER wallet (another seed: a reset,
+/// then a new wallet or a restore on this device), so their balance and history are
+/// never shown for this one (accounts are found by their number alone, see
+/// `find_account`). Called on unlock, before anything is displayed.
 pub fn forget_other_wallets(data_dir: &Path, seed: &[u8]) -> Result<()> {
     if !data_dir.join(WALLET_FILE).exists() {
         return Ok(());
@@ -225,20 +222,19 @@ pub fn forget_other_wallets(data_dir: &Path, seed: &[u8]) -> Result<()> {
     Ok(())
 }
 
-/// Demande une réanalyse complète (Paramètres) : à la prochaine
-/// synchronisation, comptes recréés depuis la naissance fixe.
+/// Requests a full rescan (Settings): at the next sync, accounts are recreated from
+/// the fixed birthday.
 pub fn request_rescan(data_dir: &Path) -> Result<()> {
     std::fs::write(data_dir.join(RESCAN_FILE), b"1").context("réanalyse Zcash protégée : demande impossible")
 }
 
-/// Synchronise tous les comptes protégés jusqu'au bout de la chaîne.
+/// Syncs every shielded account up to the tip of the chain.
 pub fn sync(data_dir: &Path) -> Result<()> {
     let mut db = open(data_dir)?;
     if db.get_account_ids()?.is_empty() {
         return Ok(());
     }
-    // Réinitialisation ou restauration demandée : passe abandonnée (voir
-    // `unless_wiped`).
+    // Reset or restore requested: this pass is abandoned (see `unless_wiped`).
     runtime()?
         .block_on(unless_wiped(async {
             let mut client = client().await?;
@@ -248,14 +244,14 @@ pub fn sync(data_dir: &Path) -> Result<()> {
         .map(|_| ())
 }
 
-/// Solde du compte protégé du profil (zatoshis).
+/// Balance of the profile's shielded account (zatoshis).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ShieldedBalance {
-    /// Dépensable maintenant (notes Orchard confirmées).
+    /// Spendable now (confirmed Orchard and Ironwood notes).
     pub spendable: u64,
-    /// Reçu mais pas encore dépensable (confirmations en attente).
+    /// Received but not spendable yet (confirmations pending).
     pub pending: u64,
-    /// Hauteur jusqu'où la chaîne a été analysée (`None` : pas encore).
+    /// Height up to which the chain has been scanned (`None`: not yet).
     pub scanned_height: Option<u32>,
     pub chain_height: Option<u32>,
 }
@@ -265,9 +261,9 @@ pub fn balance(data_dir: &Path, profile: u32) -> Result<ShieldedBalance> {
     let Some(account) = find_account(&db, profile)? else { return Ok(ShieldedBalance::default()) };
     let Some(summary) = db.get_wallet_summary(ConfirmationsPolicy::default())? else { return Ok(ShieldedBalance::default()) };
     let Some(balances) = summary.account_balances().get(&account) else { return Ok(ShieldedBalance::default()) };
-    // Since NU6.3 (block 3,428,143) the Orchard pool is sealed and every new
-    // shielded note lands in Ironwood. Both pools are counted so that nothing
-    // the wallet holds is ever left off the balance.
+    // Since NU6.3 (block 3,428,143) the Orchard pool is sealed and every new shielded
+    // note lands in Ironwood. Both pools are counted so that nothing the wallet holds
+    // is ever left off the balance.
     let pools = [balances.orchard_balance(), balances.ironwood_balance()];
     let spendable: u64 = pools.iter().map(|b| u64::from(b.spendable_value())).sum();
     let total: u64 = pools.iter().map(|b| u64::from(b.total())).sum();
@@ -279,14 +275,14 @@ pub fn balance(data_dir: &Path, profile: u32) -> Result<ShieldedBalance> {
     })
 }
 
-// --- Historique (carte « Zcash protégé ») ------------------------------------------
+// --- History ("Shielded Zcash" card) ----------------------------------------------
 
-/// Dossier de la base et adresses protégées connues (adresse u1 → profil),
-/// notés par `ensure_accounts` : la courbe du portefeuille lit solde et
-/// historique par adresse (`balance_of_address`, `history_of_address`).
+/// Database folder and known shielded addresses (u1 address → profile), recorded by
+/// `ensure_accounts`: the portfolio chart reads balance and history by address
+/// (`balance_of_address`, `history_of_address`).
 static KNOWN: Mutex<Option<(std::path::PathBuf, std::collections::BTreeMap<String, u32>)>> = Mutex::new(None);
 
-/// Adresse protégée de l'app (u1… du réseau principal, récepteur Orchard).
+/// A shielded address from the app (mainnet u1…, Orchard receiver).
 pub fn parse_shielded_address(address: &str) -> Result<()> {
     anyhow::ensure!(address.trim().starts_with("u1"), "adresse Zcash protégée invalide (u1… attendue)");
     let parsed = check_recipient(address)?;
@@ -294,10 +290,10 @@ pub fn parse_shielded_address(address: &str) -> Result<()> {
     Ok(())
 }
 
-/// Transactions du compte protégé du profil, la plus récente d'abord :
-/// variation des seuls fonds Orchard (notes reçues moins notes dépensées) —
-/// une protection apparaît reçue ici et envoyée sur la carte transparente ;
-/// un envoi compte ses frais. Lu dans la base locale, aucun appel réseau.
+/// Transactions of the profile's shielded account, newest first: the change in
+/// shielded funds only (notes received minus notes spent). A shielding shows up as
+/// received here and as sent on the transparent card; a send includes its fee. Read
+/// from the local database, no network calls.
 pub fn history(data_dir: &Path, profile: u32) -> Result<Vec<history::TxEntry>> {
     let Some(db) = open_existing(data_dir)? else { return Ok(Vec::new()) };
     let Some(account) = find_account(&db, profile)? else { return Ok(Vec::new()) };
@@ -383,8 +379,7 @@ fn known_profile(address: &str) -> Result<(std::path::PathBuf, u32)> {
     Ok((dir.clone(), *profile))
 }
 
-/// Fonds protégés de l'adresse (dépensables et en attente) : courbe du
-/// portefeuille.
+/// Shielded funds of the address (spendable and pending): portfolio chart.
 pub fn balance_of_address(address: &str) -> Result<u64> {
     let (dir, profile) = known_profile(address)?;
     let b = balance(&dir, profile)?;
@@ -396,11 +391,13 @@ pub fn history_of_address(address: &str) -> Result<Vec<history::TxEntry>> {
     history(&dir, profile)
 }
 
-// --- Dépenses : protéger les ZEC transparents, envoyer depuis Orchard -------------
-// Comme ailleurs dans l'app : la transaction est d'abord PROPOSÉE (entrées,
-// frais ZIP-317, monnaie, sans aucune clé de dépense), son résumé est
-// confirmé dans une boîte native, puis CETTE proposition est signée avec la
-// clé dérivée de la seed (mot de passe) et diffusée par lightwalletd.
+// --- Spending: shielding transparent ZEC, sending shielded funds
+// -------------------
+//
+// As elsewhere in the app, the transaction is first PROPOSED (inputs, ZIP-317 fee,
+// change, without any spending key), its summary is confirmed in a native dialog,
+// then THAT proposal is signed with the key derived from the seed (password) and
+// broadcast through lightwalletd.
 
 use zcash_client_backend::data_api::wallet::input_selection::{GreedyInputSelector, LockedInputPolicy, SpendPolicy};
 use zcash_client_backend::data_api::wallet::{create_proposed_transactions, propose_send_max_transfer, propose_shielding, propose_transfer, SpendingKeys};
@@ -413,11 +410,11 @@ use zcash_client_backend::zip321::{Payment, TransactionRequest};
 use zcash_protocol::value::Zatoshis;
 use zcash_protocol::{PoolType, ShieldedPool};
 
-/// Prouveur Sapling absent : l'app ne dépense ni ne crée jamais de note
-/// Sapling (Orchard seul : destinataires transparents ou Orchard, monnaie vers
-/// Orchard, vérifiés avant la proposition). Une dépense Sapling échouerait à la
-/// préparation du circuit ; une sortie Sapling donnerait une preuve vide que
-/// le réseau refuserait — jamais de fonds engagés.
+/// No Sapling prover: the app never spends or creates a Sapling note (recipients
+/// are transparent or have an Orchard receiver, change goes to Ironwood, all
+/// checked before the proposal). A Sapling spend would fail while preparing the
+/// circuit; a Sapling output would carry an empty proof that the network would
+/// refuse, so funds are never at stake.
 struct NoSapling;
 
 impl sapling_crypto::prover::SpendProver for NoSapling {
@@ -439,7 +436,7 @@ impl sapling_crypto::prover::SpendProver for NoSapling {
     fn create_proof<R: rand_core::RngCore>(&self, _: sapling_crypto::circuit::Spend, _: &mut R) -> Self::Proof {}
 
     fn encode_proof(_: Self::Proof) -> sapling_crypto::bundle::GrothProofBytes {
-        // Taille d'une preuve Groth16 (48 + 96 + 48 octets).
+        // Size of a Groth16 proof (48 + 96 + 48 bytes).
         [0; 192]
     }
 }
@@ -460,31 +457,31 @@ impl sapling_crypto::prover::OutputProver for NoSapling {
     fn create_proof<R: rand_core::RngCore>(&self, _: sapling_crypto::circuit::Output, _: &mut R) -> Self::Proof {}
 
     fn encode_proof(_: Self::Proof) -> sapling_crypto::bundle::GrothProofBytes {
-        // Taille d'une preuve Groth16 (48 + 96 + 48 octets).
+        // Size of a Groth16 proof (48 + 96 + 48 bytes).
         [0; 192]
     }
 }
 
-/// Résumé d'une dépense, montré dans la boîte de confirmation.
+/// Summary of a spend, shown in the confirmation dialog.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SpendSummary {
-    /// Montant qui arrive au destinataire (ou protégé), en zatoshis.
+    /// Amount that reaches the recipient (or gets shielded), in zatoshis.
     pub amount: u64,
-    /// Frais ZIP-317.
+    /// ZIP-317 fee.
     pub fee: u64,
-    /// Destinataire (adresse protégée du profil pour une protection).
+    /// Recipient (the profile's shielded address for a shielding).
     pub recipient: String,
 }
 
-/// Change, and shielded transparent funds, go to Ironwood: the Orchard pool
-/// has been sealed since NU6.3 and refuses new value. (The library would
-/// already redirect an Orchard fallback there; this states it outright.)
+/// Change, and shielded transparent funds, go to Ironwood: the Orchard pool has
+/// been sealed since NU6.3 and refuses new value. (The library would already
+/// redirect an Orchard fallback there; this states it outright.)
 fn change_strategy() -> SingleOutputChangeStrategy<StandardFeeRule, Db> {
     SingleOutputChangeStrategy::new(StandardFeeRule::Zip317, None, ShieldedPool::Ironwood, DustOutputPolicy::default())
 }
 
-/// Clés de dépense du profil : clé unifiée du compte ZIP-32, et clé de
-/// l'adresse t1 importée (profils autres que le principal).
+/// The profile's spending keys: unified key of the ZIP-32 account, and the key of
+/// the imported t1 address (profiles other than the main one).
 fn spending_keys(seed: &[u8], profile: u32) -> Result<SpendingKeys> {
     let usk = UnifiedSpendingKey::from_seed(&MainNetwork, seed, account_index(profile)?).map_err(|e| anyhow!("clé Zcash protégée : {e:?}"))?;
     let mut standalone = std::collections::HashMap::new();
@@ -496,11 +493,10 @@ fn spending_keys(seed: &[u8], profile: u32) -> Result<SpendingKeys> {
     Ok(SpendingKeys::new(usk, standalone))
 }
 
-/// Signe la proposition et diffuse ses transactions ; renvoie le dernier
-/// identifiant.
+/// Signs the proposal and broadcasts its transactions; returns the last identifier.
 fn create_and_broadcast<N: std::fmt::Display>(db: &mut Db, proposal: &Proposal<StandardFeeRule, N>, keys: &SpendingKeys) -> Result<String> {
-    // Types d'erreur de sélection et de monnaie : propres à la proposition,
-    // jamais produits par la construction.
+    // Input selection and change error types: specific to the proposal, never produced
+    // while building.
     let txids = create_proposed_transactions::<_, _, std::convert::Infallible, _, std::convert::Infallible, _>(db, &MainNetwork, &NoSapling, &NoSapling, keys, OvkPolicy::Sender, proposal, None)
         .map_err(|e| anyhow!("transaction Zcash protégée : construction impossible ({e})"))?;
     let mut last = String::new();
@@ -513,10 +509,9 @@ fn create_and_broadcast<N: std::fmt::Display>(db: &mut Db, proposal: &Proposal<S
     Ok(last)
 }
 
-/// Fonds insuffisants, en clair : messages de la bibliothèque relevés en
-/// réel (« Insufficient balance (have 0, need 1010000 including fee) »,
-/// « Insufficient funds: required 10000 zatoshis, but only 0 zatoshis were
-/// available »).
+/// Insufficient funds, in plain words: library messages recorded live
+/// ("Insufficient balance (have 0, need 1010000 including fee)", "Insufficient
+/// funds: required 10000 zatoshis, but only 0 zatoshis were available").
 fn insufficient(message: &str) -> Option<anyhow::Error> {
     let number_after = |marker: &str| -> Option<u64> {
         let rest = &message[message.find(marker)? + marker.len()..];
@@ -533,9 +528,9 @@ fn proposal_fee<N>(proposal: &Proposal<StandardFeeRule, N>) -> u64 {
     proposal.steps().iter().map(|step| u64::from(step.balance().fee_required())).sum()
 }
 
-/// Protège les ZEC de l'adresse t1 `t1` du profil (vers son adresse
-/// Orchard) : propose, fait confirmer le résumé (`confirm`), puis signe avec
-/// la seed (`seed`) et diffuse. `Ok(None)` : confirmation refusée.
+/// Shields the ZEC on the profile's t1 address `t1` (to its shielded address):
+/// proposes, has the summary confirmed (`confirm`), then signs with the seed
+/// (`seed`) and broadcasts. `Ok(None)`: confirmation declined.
 pub fn shield(
     data_dir: &Path,
     profile: u32,
@@ -573,8 +568,8 @@ pub fn shield(
     create_and_broadcast(&mut db, &proposal, &spending_keys(&seed, profile)?).map(Some)
 }
 
-/// Le destinataire peut-il recevoir sans Sapling (transparent, ou adresse
-/// unifiée avec un récepteur Orchard) ?
+/// Can the recipient receive without Sapling (transparent, or a unified address
+/// with an Orchard receiver)?
 pub fn check_recipient(address: &str) -> Result<zcash_address::ZcashAddress> {
     let parsed = zcash_address::ZcashAddress::try_from_encoded(address.trim()).map_err(|_| anyhow!("adresse Zcash invalide"))?;
     anyhow::ensure!(parsed.can_receive_as(PoolType::ORCHARD) || parsed.can_receive_as(PoolType::TRANSPARENT), "adresse Zcash Sapling seule (zs…) pas prise en charge — demandez une adresse u1… ou t1…");
@@ -583,8 +578,8 @@ pub fn check_recipient(address: &str) -> Result<zcash_address::ZcashAddress> {
     Ok(parsed)
 }
 
-/// Envoie `amount` zatoshis depuis les fonds protégés du profil vers `to` :
-/// mêmes étapes que `shield`.
+/// Sends `amount` zatoshis from the profile's shielded funds to `to`: same steps as
+/// `shield`.
 pub fn send(
     data_dir: &Path,
     profile: u32,
@@ -619,16 +614,15 @@ pub fn send(
     create_and_broadcast(&mut db, &proposal, &spending_keys(&seed, profile)?).map(Some)
 }
 
-/// Proposition d'envoi de TOUS les fonds protégés dépensables (frais déduits par
-/// la sélection des entrées de la bibliothèque, seule à les connaître) et le
-/// montant qu'elle envoie.
+/// Proposal to send ALL spendable shielded funds (fee deducted through the
+/// library's input selection, the only part that knows it) and the amount it sends.
 fn max_proposal(db: &mut Db, account: AccountUuid, recipient: zcash_address::ZcashAddress) -> Result<(Proposal<StandardFeeRule, zcash_client_sqlite::ReceivedNoteId>, u64)> {
     let proposal = propose_send_max_transfer::<_, _, _, std::convert::Infallible>(
         db,
         &MainNetwork,
         account,
-        // Ironwood holds every note received since NU6.3; Orchard notes, if
-        // any, may still leave their sealed pool through the turnstile.
+        // Ironwood holds every note received since NU6.3; Orchard notes, if any, may still
+        // leave their sealed pool through the turnstile.
         &[ShieldedPool::Orchard, ShieldedPool::Ironwood],
         &StandardFeeRule::Zip317,
         recipient,
@@ -652,8 +646,8 @@ fn max_proposal(db: &mut Db, account: AccountUuid, recipient: zcash_address::Zca
     Ok((proposal, amount))
 }
 
-/// Montant maximal envoyable depuis les fonds protégés du profil (vers `to`,
-/// ou vers sa propre adresse pour une estimation : mêmes frais Orchard).
+/// Maximum amount that can be sent from the profile's shielded funds (to `to`, or
+/// to its own address for an estimate: same shielded fees).
 pub fn max_amount(data_dir: &Path, profile: u32, to: &str) -> Result<u64> {
     let recipient = check_recipient(to)?;
     let mut db = open_existing(data_dir)?.context("fonds protégés pas encore prêts (synchronisation en cours)")?;
@@ -661,8 +655,8 @@ pub fn max_amount(data_dir: &Path, profile: u32, to: &str) -> Result<u64> {
     Ok(max_proposal(&mut db, account, recipient)?.1)
 }
 
-/// Envoie TOUS les fonds protégés dépensables du profil vers `to`, frais
-/// déduits : mêmes étapes que `send`.
+/// Sends ALL the profile's spendable shielded funds to `to`, fee deducted: same
+/// steps as `send`.
 pub fn send_max(
     data_dir: &Path,
     profile: u32,
@@ -682,7 +676,7 @@ pub fn send_max(
     create_and_broadcast(&mut db, &proposal, &spending_keys(&seed, profile)?).map(Some)
 }
 
-// --- Cache de blocs en mémoire (le temps d'une synchronisation) -------------------
+// --- In-memory block cache (for the duration of one sync) ------------------------
 
 #[derive(Debug)]
 pub struct CacheError(String);
@@ -759,8 +753,8 @@ mod tests {
 
     const SEED: [u8; 64] = [5u8; 64];
 
-    /// Lectures sans base (portefeuille réinitialisé) : vides, et la base
-    /// n'est pas recréée.
+    /// Reads without a database (wallet reset): empty, and the database is not
+    /// recreated.
     #[test]
     fn reads_never_create_the_database() {
         let dir = std::env::temp_dir().join(format!("zec-shielded-absent-{}", std::process::id()));
@@ -773,8 +767,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Requête d'historique exécutée sur une base créée par la bibliothèque
-    /// (schéma réel : tables et colonnes vérifiées) ; vide sans transaction.
+    /// History query run against a database created by the library (real schema: tables
+    /// and columns checked); empty with no transactions.
     #[test]
     fn history_query_matches_the_wallet_schema() {
         let dir = std::env::temp_dir().join(format!("zec-shielded-history-{}", std::process::id()));
@@ -788,10 +782,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Since NU6.3 every shielded note lands in Ironwood: a note received,
-    /// then spent with change, must show up in the history with the right net
-    /// amounts. Rows are written straight into the library's real schema
-    /// (foreign keys off: no account or block rows are needed for the query).
+    /// Since NU6.3 every shielded note lands in Ironwood: a note received, then spent
+    /// with change, must show up in the history with the right net amounts. Rows are
+    /// written straight into the library's real schema (foreign keys off: no account or
+    /// block rows are needed for the query).
     #[test]
     fn history_counts_ironwood_notes() {
         let dir = std::env::temp_dir().join(format!("zec-shielded-ironwood-{}", std::process::id()));
@@ -824,9 +818,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Comptes d'un autre portefeuille (autre seed, même appareil) supprimés
-    /// au déverrouillage ; ceux du portefeuille courant gardés. Hors ligne :
-    /// naissance de compte fabriquée (aucun appel lightwalletd).
+    /// Accounts of another wallet (another seed, same device) are removed on unlock;
+    /// those of the current wallet are kept. Offline: a made-up account birthday (no
+    /// lightwalletd call).
     #[test]
     fn accounts_of_another_wallet_are_forgotten() {
         use zcash_client_backend::data_api::chain::ChainState;
@@ -849,9 +843,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Réel : portefeuille créé à l'instant → naissance des comptes ~3 jours
-    /// avant le dernier bloc (au lieu de BIRTHDAY_HEIGHT) ; restauration →
-    /// naissance fixe. `cargo test -- --ignored real_birthday --nocapture`
+    /// Live: a wallet created just now → account birthday ~3 days before the latest
+    /// block (instead of BIRTHDAY_HEIGHT); a restore → the fixed birthday.
+    /// `cargo test -- --ignored real_birthday --nocapture`
     #[test]
     #[ignore]
     fn real_birthday_follows_wallet_creation() {
@@ -866,7 +860,7 @@ mod tests {
             client().await.unwrap().get_latest_block(zcash_client_backend::proto::service::ChainSpec {}).await.unwrap().into_inner().height
         });
         println!("dernier bloc {tip} ; naissance fixe {} ; portefeuille neuf {}", u32::from(fixed.height()), u32::from(fresh.height()));
-        // 3 jours de marge à ~75 s par bloc, jamais avant la naissance fixe.
+        // 3 days of margin at ~75 s per block, never before the fixed birthday.
         let expected = (tip - 3 * 86_400 / 75).max(u64::from(BIRTHDAY_HEIGHT));
         assert!(u64::from(u32::from(fresh.height())).abs_diff(expected) <= 2, "attendu ~{expected}");
         let _ = std::fs::remove_dir_all(&dir);
@@ -880,8 +874,8 @@ mod tests {
         assert!(parse_shielded_address("u1pasuneadresse").is_err());
     }
 
-    /// Adresse u1 au seul récepteur Orchard, propre à chaque profil, relue
-    /// par la bibliothèque d'adresses officielle.
+    /// A u1 address with only an Orchard receiver, unique to each profile, reread by
+    /// the official address library.
     #[test]
     fn orchard_only_unified_addresses_per_profile() {
         let a0 = address(&viewing_key(&SEED, 0).unwrap()).unwrap();
@@ -893,13 +887,13 @@ mod tests {
         assert!(!parsed.can_receive_as(zcash_protocol::PoolType::SAPLING) && !parsed.can_receive_as(zcash_protocol::PoolType::TRANSPARENT));
     }
 
-    /// Destinataires : t1 et u1 Orchard acceptés ; Sapling seule refusée.
+    /// Recipients: t1 and Orchard u1 accepted; Sapling-only refused.
     #[test]
     fn recipients_without_sapling() {
         let u1 = address(&viewing_key(&SEED, 0).unwrap()).unwrap();
         assert!(check_recipient(&u1).is_ok());
         assert!(check_recipient("t1VtnnhTYhmADh7L2uKU3Sev7GscBHT6HfE").is_ok());
-        // Adresse Sapling seule bien formée (encodage officiel, somme de contrôle valide).
+        // A well-formed Sapling-only address (official encoding, valid checksum).
         let sapling = zcash_address::ZcashAddress::from_sapling(zcash_protocol::consensus::NetworkType::Main, [7u8; 43]).encode();
         assert!(sapling.starts_with("zs1"));
         assert!(check_recipient(&sapling).unwrap_err().to_string().contains("Sapling"), "Sapling seule");
@@ -908,7 +902,7 @@ mod tests {
         assert!(check_recipient("pas une adresse").is_err());
     }
 
-    /// Fonds insuffisants : messages réels de la bibliothèque, en clair.
+    /// Insufficient funds: the library's real messages, in plain words.
     #[test]
     fn insufficient_funds_in_plain_words() {
         let send = insufficient("Insufficient balance (have 0, need 1010000 including fee)").unwrap().to_string();
@@ -918,9 +912,8 @@ mod tests {
         assert!(insufficient("autre erreur").is_none());
     }
 
-    /// Réseau réel (lecture seule) : comptes créés à la naissance commune,
-    /// synchronisés jusqu'au bout de la chaîne, solde nul, puis relus sans
-    /// nouvelle création.
+    /// Real network (read-only): accounts created at the shared birthday, synced up to
+    /// the tip of the chain, zero balance, then reread without being created again.
     /// `cargo test --lib real_shielded_sync -- --ignored --nocapture`
     #[test]
     #[ignore]

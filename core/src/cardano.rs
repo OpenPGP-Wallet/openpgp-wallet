@@ -1,28 +1,27 @@
-//! Cardano (ADA) : adresse de base addr1… (clés BIP32-Ed25519, maître CIP-3
-//! « Icarus » tiré de l'entropie maîtresse — 32 octets, celle d'une phrase
-//! de 24 mots —, chemins CIP-1852 m/1852'/1815'/p'/0/0 et /2/0, comme Yoroi,
-//! Eternl et Lace), solde, envoi d'ADA, historique.
+//! Cardano (ADA): base address addr1… (BIP32-Ed25519 keys, CIP-3 "Icarus" master
+//! key drawn from the master entropy, i.e. 32 bytes, that of a 24-word phrase;
+//! CIP-1852 paths m/1852'/1815'/p'/0/0 and /2/0, like Yoroi, Eternl and Lace),
+//! balance, sending ADA, history.
 //!
-//! Transactions (CBOR, ère Conway) construites et signées ici, identiques
-//! octet pour octet à cardano-serialization-lib (bibliothèque officielle
-//! d'EMURGO) dans les tests ; signature vérifiée par un nœud réel (test réel :
-//! transaction sur une entrée inexistante refusée POUR L'ENTRÉE seulement,
-//! signature altérée refusée pour la signature).
+//! Transactions (CBOR, Conway era) are built and signed here. The tests check they
+//! are byte-for-byte identical to cardano-serialization-lib (EMURGO's official
+//! library); the signature is verified by a real node (live test: a transaction on
+//! a non-existent input is refused FOR THE INPUT only, a tampered signature is
+//! refused for the signature).
 //!
-//! Règles appliquées avant la boîte de confirmation :
-//! - chaque sortie porte un minimum d'ADA (≈ 1 ADA, `coins_per_utxo_size`) ;
-//! - sorties portant des jetons jamais dépensées (les jetons seraient perdus
-//!   ou la transaction refusée) ;
-//! - adresses de contrat (script), de mise en jeu (stake1…), d'un autre
-//!   réseau ou Byron refusées ;
-//! - frais exacts (44 lovelace/octet + 155 381), validité 15 min.
+//! Rules enforced before the confirmation dialog:
+//! - every output carries a minimum amount of ADA (≈ 1 ADA, `coins_per_utxo_size`);
+//! - outputs carrying tokens are never spent (the tokens would be lost or the
+//!   transaction refused);
+//! - contract (script), staking (stake1…), other-network and Byron addresses are
+//!   refused;
+//! - exact fee (44 lovelace/byte + 155,381), 15-minute validity.
 //!
-//! Mise en jeu (délégation à un pool, « Staker » sur la carte Cardano) : les
-//! ADA ne bougent pas et restent dépensables. Certificats de l'ère Conway
-//! signés par la clé de mise en jeu : inscription + délégation au pool +
-//! délégation de vote « abstention » (exigée depuis Conway pour retirer les
-//! récompenses), dépôt de 2 ADA rendu à la désinscription ; retrait des
-//! récompenses. Format vérifié par un nœud réel (test ignoré).
+//! Staking (delegation to a pool, "Stake" on the Cardano card): the ADA does not
+//! move and stays spendable. Conway-era certificates signed by the stake key:
+//! registration + pool delegation + "abstain" vote delegation (required since
+//! Conway to withdraw rewards), with a 2 ADA deposit returned on deregistration;
+//! reward withdrawal. Format verified by a real node (ignored test).
 
 use crate::history;
 use anyhow::{anyhow, bail, ensure, Context, Result};
@@ -36,14 +35,14 @@ use zeroize::Zeroize;
 
 const KOIOS: &str = "https://api.koios.rest/api/v1";
 pub const DECIMALS: u8 = 6;
-/// Validité d'une transaction (créneaux d'une seconde).
+/// Transaction validity (one-second slots).
 const TTL_SLOTS: u64 = 900;
-/// Entrées au plus par transaction (taille maximale 16 384 octets).
+/// Maximum inputs per transaction (maximum size 16,384 bytes).
 const MAX_INPUTS: usize = 100;
-/// Reste trop petit pour une sortie de monnaie : laissé en frais s'il ne
-/// dépasse pas 0,2 ADA (sinon refus, avec la consigne d'envoyer le maximum).
+/// Remainder too small for a change output: left as fee if it does not exceed 0.2
+/// ADA (otherwise refused, with advice to send the maximum).
 const MAX_ABSORBED_CHANGE: u64 = 200_000;
-/// Plafond des frais (2 ADA ; ~0,17 ADA pour un virement simple).
+/// Fee cap (2 ADA; ~0.17 ADA for a simple transfer).
 const MAX_FEE: u64 = 2_000_000;
 
 fn client() -> &'static reqwest::blocking::Client {
@@ -71,7 +70,7 @@ fn koios_post(path: &str, body: Value) -> Result<Value> {
     response.json().context("réponse du service Cardano illisible")
 }
 
-/// Montant en ADA, 6 décimales (« 12.500000 »).
+/// Amount in ADA, 6 decimals ("12.500000").
 pub fn format_ada(lovelace: u64) -> String {
     format!("{}.{:06}", lovelace / 1_000_000, lovelace % 1_000_000)
 }
@@ -84,9 +83,9 @@ fn blake2b(data: &[u8], len: usize) -> Vec<u8> {
     blake2b_simd::Params::new().hash_length(len).hash(data).as_bytes().to_vec()
 }
 
-// --- Clés BIP32-Ed25519 (CIP-3 Icarus, dérivation « V2 ») ------------------------------
+// --- BIP32-Ed25519 keys (CIP-3 Icarus, "V2" derivation) -------------------------------
 
-/// Clé privée étendue : scalaire (kL), préfixe de signature (kR), code de chaîne.
+/// Extended private key: scalar (kL), signing prefix (kR), chain code.
 pub struct XPrv {
     kl: [u8; 32],
     kr: [u8; 32],
@@ -111,7 +110,7 @@ fn hmac(key: &[u8], parts: &[&[u8]]) -> [u8; 64] {
     mac.finalize().into_bytes().into()
 }
 
-/// PBKDF2-HMAC-SHA512, 4096 itérations, 96 octets (mot de passe vide).
+/// PBKDF2-HMAC-SHA512, 4096 iterations, 96 bytes (empty password).
 fn pbkdf2_icarus(entropy: &[u8]) -> [u8; 96] {
     let mut out = [0u8; 96];
     for (block, chunk) in out.chunks_mut(64).enumerate() {
@@ -129,7 +128,7 @@ fn pbkdf2_icarus(entropy: &[u8]) -> [u8; 96] {
 }
 
 impl XPrv {
-    /// Clé maîtresse CIP-3 (Icarus) depuis l'entropie.
+    /// CIP-3 (Icarus) master key from the entropy.
     pub fn master(entropy: &[u8]) -> XPrv {
         let mut out = pbkdf2_icarus(entropy);
         out[0] &= 0b1111_1000;
@@ -144,7 +143,7 @@ impl XPrv {
         EdwardsPoint::mul_base(&Scalar::from_bytes_mod_order(self.kl)).compress().to_bytes()
     }
 
-    /// Enfant n°`index` (durci au-delà de 2³¹).
+    /// Child no. `index` (hardened above 2³¹).
     pub fn derive(&self, index: u32) -> XPrv {
         let idx = index.to_le_bytes();
         let (mut z, i) = if index >= 0x8000_0000 {
@@ -153,11 +152,12 @@ impl XPrv {
             let public = self.public();
             (hmac(&self.chain, &[&[0x02], &public, &idx]), hmac(&self.chain, &[&[0x03], &public, &idx]))
         };
-        // kL' = kL + 8 × ZL (28 premiers octets), kR' = kR + ZR (mod 2²⁵⁶).
+        // kL' = kL + 8 × ZL (first 28 bytes), kR' = kR + ZR (mod 2²⁵⁶).
         let mut kl = [0u8; 32];
         let mut carry = 0u16;
         for k in 0..32 {
-            // Octet k de 8 × ZL : 5 bits bas de ZL[k] décalés, 3 bits hauts de ZL[k-1].
+            // Byte k of 8 × ZL: the low 5 bits of ZL[k] shifted, plus the high 3 bits of
+            // ZL[k-1].
             let low = if k < 28 { (u16::from(z[k]) << 3) & 0xff } else { 0 };
             let high = if k > 0 && k <= 28 { u16::from(z[k - 1]) >> 5 } else { 0 };
             let zl8 = low | high;
@@ -176,7 +176,7 @@ impl XPrv {
         XPrv { kl, kr, chain: i[32..].try_into().expect("32") }
     }
 
-    /// Signature Ed25519 avec la clé étendue (r = H(kR ‖ M)).
+    /// Ed25519 signature with the extended key (r = H(kR ‖ M)).
     pub fn sign(&self, message: &[u8]) -> [u8; 64] {
         let public = self.public();
         let r = Scalar::from_bytes_mod_order_wide(&Sha512::new().chain_update(self.kr).chain_update(message).finalize().into());
@@ -190,15 +190,15 @@ impl XPrv {
     }
 }
 
-/// Clés de paiement et de mise en jeu du compte n°`account` (CIP-1852).
+/// Payment and stake keys of account no. `account` (CIP-1852).
 pub fn account_keys(entropy: &[u8], account: u32) -> (XPrv, XPrv) {
     let acct = XPrv::master(entropy).derive(0x8000_0000 | 1852).derive(0x8000_0000 | 1815).derive(0x8000_0000 | account);
     (acct.derive(0).derive(0), acct.derive(2).derive(0))
 }
 
-// --- Adresses ------------------------------------------------------------------------
+// --- Addresses -----------------------------------------------------------------------
 
-/// Adresse de base (paiement + mise en jeu), réseau principal.
+/// Base address (payment + stake), mainnet.
 pub fn base_address(payment: &[u8; 32], stake: &[u8; 32]) -> String {
     let mut bytes = vec![0x01];
     bytes.extend(blake2b(payment, 28));
@@ -211,8 +211,8 @@ pub fn address_of(entropy: &[u8], account: u32) -> String {
     base_address(&payment.public(), &stake.public())
 }
 
-/// Adresse Shelley du réseau principal, paiement par CLÉ (base, pointeur ou
-/// « entreprise ») ; octets de l'adresse. Le reste est refusé avec la raison.
+/// Shelley mainnet address with KEY payment (base, pointer or "enterprise"); the
+/// address bytes. Anything else is refused with the reason.
 pub fn parse_address(text: &str) -> Result<Vec<u8>> {
     let text = text.trim();
     ensure!(!text.starts_with("stake"), "adresse de mise en jeu Cardano (stake1…), pas une adresse de paiement");
@@ -235,7 +235,7 @@ pub fn parse_address(text: &str) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-// --- CBOR et transaction -------------------------------------------------------------------
+// --- CBOR and transaction ------------------------------------------------------------------
 
 #[derive(Default)]
 struct Cbor(Vec<u8>);
@@ -275,7 +275,7 @@ impl Cbor {
     fn map(&mut self, len: usize) -> &mut Self {
         self.head(5, len as u64)
     }
-    /// Ensemble (étiquette 258), comme cardano-serialization-lib.
+    /// Set (tag 258), like cardano-serialization-lib.
     fn set(&mut self, len: usize) -> &mut Self {
         self.head(6, 258).array(len)
     }
@@ -299,17 +299,16 @@ fn output_cbor(out: &Output) -> Vec<u8> {
     c.0
 }
 
-/// Certificat de mise en jeu (ère Conway), pour la clé de mise en jeu dont
-/// le hachage est `stake`.
+/// Staking certificate (Conway era), for the stake key whose hash is `stake`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Cert {
-    /// Inscription + délégation au pool + vote « abstention », avec dépôt (13).
+    /// Registration + pool delegation + "abstain" vote, with deposit (13).
     RegisterDelegate { stake: [u8; 28], pool: [u8; 28], deposit: u64 },
-    /// Délégation au pool + vote « abstention », clé déjà inscrite (10).
+    /// Pool delegation + "abstain" vote, key already registered (10).
     Delegate { stake: [u8; 28], pool: [u8; 28] },
-    /// Vote « abstention » seul (exigé pour retirer les récompenses) (9).
+    /// "Abstain" vote alone (required to withdraw rewards) (9).
     VoteAbstain { stake: [u8; 28] },
-    /// Désinscription, dépôt rendu (8).
+    /// Deregistration, deposit returned (8).
     Unregister { stake: [u8; 28], deposit: u64 },
 }
 
@@ -317,8 +316,8 @@ fn credential(c: &mut Cbor, key_hash: &[u8; 28]) {
     c.array(2).uint(0).bytes(key_hash);
 }
 
-/// DRep « toujours s'abstenir » : les récompenses deviennent retirables sans
-/// prendre part aux votes de gouvernance.
+/// "Always abstain" DRep: rewards become withdrawable without taking part in
+/// governance votes.
 fn abstain(c: &mut Cbor) {
     c.array(1).uint(2);
 }
@@ -357,7 +356,7 @@ pub struct Body {
     pub fee: u64,
     pub ttl: u64,
     pub certs: Vec<Cert>,
-    /// Retrait de récompenses : (adresse de récompenses, montant).
+    /// Reward withdrawal: (reward address, amount).
     pub withdrawal: Option<(Vec<u8>, u64)>,
 }
 
@@ -385,14 +384,14 @@ impl Body {
         c.0
     }
 
-    /// Identifiant : BLAKE2b-256 du corps.
+    /// Identifier: BLAKE2b-256 of the body.
     fn hash(&self) -> [u8; 32] {
         blake2b(&self.cbor(), 32).try_into().expect("32")
     }
 }
 
-/// Transaction signée (corps, signatures — paiement, et mise en jeu pour un
-/// certificat ou un retrait —, valide, sans métadonnées).
+/// Signed transaction (body, signatures: payment, plus stake for a certificate or a
+/// withdrawal; valid, no metadata).
 fn signed_cbor(body: &Body, witnesses: &[([u8; 32], [u8; 64])]) -> Vec<u8> {
     let mut c = Cbor::default();
     c.array(4);
@@ -414,20 +413,20 @@ pub fn sign(body: &Body, key: &XPrv) -> Signed {
     sign_with(body, &[key])
 }
 
-/// Signée par chacune des clés (paiement, puis mise en jeu).
+/// Signed by each key (payment, then stake).
 pub fn sign_with(body: &Body, keys: &[&XPrv]) -> Signed {
     let hash = body.hash();
     let witnesses: Vec<([u8; 32], [u8; 64])> = keys.iter().map(|key| (key.public(), key.sign(&hash))).collect();
     Signed { cbor: signed_cbor(body, &witnesses), hash: hex::encode(hash) }
 }
 
-// --- Réseau ------------------------------------------------------------------------------
+// --- Network -----------------------------------------------------------------------------
 
 struct Params {
     fee_a: u64,
     fee_b: u64,
     coins_per_byte: u64,
-    /// Dépôt d'inscription d'une clé de mise en jeu (2 ADA).
+    /// Registration deposit for a stake key (2 ADA).
     key_deposit: u64,
 }
 
@@ -447,36 +446,35 @@ fn tip_slot() -> Result<u64> {
 }
 
 impl Params {
-    /// Minimum d'ADA d'une sortie (CIP-55 : 160 octets + taille de la sortie).
+    /// Minimum ADA for an output (CIP-55: 160 bytes + the output's size).
     fn min_output(&self, address: &[u8]) -> u64 {
-        // Taille avec un montant maximal (5 ou 9 octets) : prudent.
+        // Size with a maximum amount (5 or 9 bytes): on the safe side.
         let size = output_cbor(&Output { address: address.to_vec(), lovelace: u64::MAX }).len() as u64;
         self.coins_per_byte * (160 + size)
     }
 
-    /// Frais exacts d'une transaction de cette forme (signature factice de
-    /// même taille).
+    /// Exact fee for a transaction of this shape (dummy signature of the same size).
     fn fee(&self, inputs: &[Input], outputs: &[Output], ttl: u64) -> u64 {
         let body = Body { inputs: inputs.to_vec(), outputs: outputs.to_vec(), fee: MAX_FEE, ttl, certs: Vec::new(), withdrawal: None };
         self.fee_of(&body, 1)
     }
 
-    /// Frais exacts de `body` signé par `signatures` clés (frais au plafond
-    /// dans le corps : taille maximale).
+    /// Exact fee for `body` signed by `signatures` keys (fee set to the cap in the
+    /// body: maximum size).
     fn fee_of(&self, body: &Body, signatures: usize) -> u64 {
         let size = signed_cbor(body, &vec![([0; 32], [0; 64]); signatures]).len() as u64;
         self.fee_a * size + self.fee_b
     }
 }
 
-/// Sortie dépensable de l'adresse (ADA seulement).
+/// A spendable output of the address (ADA only).
 #[derive(Clone, Debug)]
 struct Utxo {
     input: Input,
     lovelace: u64,
 }
 
-/// (sorties d'ADA seul, solde total y compris les sorties à jetons).
+/// (ADA-only outputs, total balance including outputs with tokens).
 fn utxos(address: &str) -> Result<(Vec<Utxo>, u64)> {
     let list = koios_post("/address_utxos", json!({ "_addresses": [address], "_extended": true }))?;
     let mut spendable = Vec::new();
@@ -484,7 +482,7 @@ fn utxos(address: &str) -> Result<(Vec<Utxo>, u64)> {
     for u in list.as_array().map(Vec::as_slice).unwrap_or_default() {
         let value = lovelace(&u["value"])?;
         total += value;
-        // Sorties à jetons ou à donnée : jamais dépensées ici.
+        // Outputs with tokens or datums: never spent here.
         let plain = u["asset_list"].as_array().is_none_or(Vec::is_empty) && u["datum_hash"].is_null() && u["inline_datum"].is_null() && u["reference_script"].is_null();
         if !plain {
             continue;
@@ -497,7 +495,7 @@ fn utxos(address: &str) -> Result<(Vec<Utxo>, u64)> {
     Ok((spendable, total))
 }
 
-/// Solde (lovelace), sorties à jetons comprises.
+/// Balance (lovelace), outputs with tokens included.
 pub fn balance(address: &str) -> Result<u64> {
     parse_address(address)?;
     let info = koios_post("/address_info", json!({ "_addresses": [address.trim()] }))?;
@@ -507,7 +505,7 @@ pub fn balance(address: &str) -> Result<u64> {
     }
 }
 
-/// Activité d'une adresse destinataire : (détient des ADA, a déjà servi).
+/// Activity of a recipient address: (holds ADA, has been used before).
 pub fn address_activity(address: &str) -> Result<(bool, bool)> {
     parse_address(address)?;
     let txs = koios_post("/address_txs", json!({ "_addresses": [address.trim()] }))?;
@@ -515,8 +513,8 @@ pub fn address_activity(address: &str) -> Result<(bool, bool)> {
     Ok((used && balance(address)? > 0, used))
 }
 
-/// Envoi préparé pour la boîte de confirmation : exactement ce qui sera signé
-/// (hors validité, fixée à l'envoi).
+/// A send prepared for the confirmation dialog: exactly what will be signed (except
+/// the validity, set at send time).
 #[derive(Clone, Debug)]
 pub struct AdaPlan {
     pub amount: u64,
@@ -534,7 +532,7 @@ fn plan_with(from: &str, to: &str, amount: Option<u64>) -> Result<AdaPlan> {
     ensure!(!utxos.is_empty(), "aucun ADA envoyable sur cette adresse");
     let min_to = params.min_output(&to_bytes);
     let pay = |lovelace| Output { address: to_bytes.clone(), lovelace };
-    // Max : tout l'ADA dépensable, une seule sortie.
+    // Max: all spendable ADA, a single output.
     let Some(amount) = amount else {
         let inputs: Vec<Input> = utxos.iter().take(MAX_INPUTS).map(|u| u.input.clone()).collect();
         let total: u64 = utxos.iter().take(MAX_INPUTS).map(|u| u.lovelace).sum();
@@ -549,12 +547,12 @@ fn plan_with(from: &str, to: &str, amount: Option<u64>) -> Result<AdaPlan> {
     for utxo in utxos.iter().take(MAX_INPUTS) {
         inputs.push(utxo.input.clone());
         total += utxo.lovelace;
-        // Avec monnaie rendue.
+        // With change returned.
         let fee = params.fee(&inputs, &[pay(amount), Output { address: from_bytes.clone(), lovelace: total }], ttl);
         if let Some(change) = total.checked_sub(amount + fee).filter(|c| *c >= min_change) {
             return Ok(AdaPlan { amount, fee, change, inputs });
         }
-        // Sans monnaie : un reste minime part en frais.
+        // No change: a tiny remainder goes to the fee.
         let fee = params.fee(&inputs, &[pay(amount)], ttl);
         if let Some(rest) = total.checked_sub(amount + fee).filter(|r| *r <= MAX_ABSORBED_CHANGE) {
             return Ok(AdaPlan { amount, fee: fee + rest, change: 0, inputs });
@@ -569,37 +567,37 @@ fn plan_with(from: &str, to: &str, amount: Option<u64>) -> Result<AdaPlan> {
     )
 }
 
-/// Envoi d'un montant précis (monnaie rendue à sa propre adresse).
+/// Sends a precise amount (change returned to our own address).
 pub fn plan(from: &str, to: &str, amount: u64) -> Result<AdaPlan> {
     let plan = plan_with(from, to, Some(amount))?;
     ensure!(plan.fee <= MAX_FEE, "frais Cardano anormalement élevés ({} ADA) — envoi refusé", format_ada(plan.fee));
     Ok(plan)
 }
 
-/// Bouton « Max » : tout l'ADA dépensable, frais déduits.
+/// "Max" button: all spendable ADA, fee deducted.
 pub fn plan_max(from: &str, to: &str) -> Result<AdaPlan> {
     plan_with(from, to, None)
 }
 
-/// Plus grand montant envoyable (vers une adresse de base quelconque).
+/// Largest amount that can be sent (to any base address).
 pub fn max_amount(from: &str) -> Result<u64> {
     Ok(plan_max(from, from_placeholder())?.amount)
 }
 
-/// Adresse de base de référence (taille d'une sortie habituelle) pour le
-/// calcul du maximum quand le destinataire n'est pas encore saisi.
+/// Reference base address (the size of a typical output) used to compute the
+/// maximum when the recipient has not been entered yet.
 fn from_placeholder() -> &'static str {
     "addr1qxgzh24yclh838lhpraz7htsqk3p6p3xvrwex8h7uakx6vv0ufdahf4ccw55my2vr4ck52z9kjv5rneqkehcf23sqm3smxw2mj"
 }
 
-/// Construit, signe et diffuse l'envoi préparé ; renvoie son identifiant.
+/// Builds, signs and broadcasts the prepared send; returns its identifier.
 pub fn send(payment: &XPrv, from: &str, to: &str, plan: &AdaPlan) -> Result<String> {
     let mut outputs = vec![Output { address: parse_address(to)?, lovelace: plan.amount }];
     if plan.change > 0 {
         outputs.push(Output { address: parse_address(from)?, lovelace: plan.change });
     }
     let body = Body { inputs: plan.inputs.clone(), outputs, fee: plan.fee, ttl: tip_slot()? + TTL_SLOTS, certs: Vec::new(), withdrawal: None };
-    // La validité réelle peut changer d'un octet la taille : frais revérifiés.
+    // The real validity can change the size by one byte: fee checked again.
     let params = params()?;
     ensure!(params.fee(&body.inputs, &body.outputs, body.ttl) <= plan.fee, "les frais Cardano ont changé depuis la confirmation — relancez l'envoi");
     submit(&sign(&body, payment))
@@ -612,7 +610,7 @@ pub fn submit(signed: &Signed) -> Result<String> {
     })
 }
 
-/// Diffusion : `Ok(Err(texte complet))` si le nœud refuse la transaction.
+/// Broadcast: `Ok(Err(full text))` if the node refuses the transaction.
 fn submit_full(signed: &Signed) -> Result<std::result::Result<String, String>> {
     let response = client()
         .post(format!("{KOIOS}/submittx"))
@@ -622,66 +620,66 @@ fn submit_full(signed: &Signed) -> Result<std::result::Result<String, String>> {
         .map_err(|e| crate::wallet_flow::broadcast_failure(e, "service Cardano injoignable", &signed.hash))?;
     let status = response.status();
     let text = response.text().unwrap_or_default();
-    // Erreur de passerelle : peut-être partie (voir `wallet_flow::maybe_sent`).
+    // Gateway error: maybe sent (see `wallet_flow::maybe_sent`).
     if crate::wallet_flow::server_error_may_have_sent(status) {
         return Err(crate::wallet_flow::maybe_sent(&signed.hash));
     }
     if !status.is_success() {
         return Ok(Err(text));
     }
-    // Transaction acceptée : un autre identifiant que le nôtre ne doit pas la faire
-    // passer pour refusée — un nouvel envoi la paierait deux fois (32ᵉ passage).
+    // Transaction accepted: an identifier other than ours must not make it look
+    // refused, since sending again would pay twice (audit round 32).
     if text.trim().trim_matches('"') != signed.hash {
         return Err(crate::wallet_flow::maybe_sent(&signed.hash));
     }
     Ok(Ok(signed.hash.clone()))
 }
 
-// --- Mise en jeu (délégation à un pool) --------------------------------------------------
+// --- Staking (delegation to a pool) ------------------------------------------------------
 
-/// Hachage d'une clé publique (28 octets).
+/// Hash of a public key (28 bytes).
 fn key_hash(public: &[u8; 32]) -> [u8; 28] {
     blake2b(public, 28).try_into().expect("28")
 }
 
-/// Hachage de la clé de mise en jeu d'une adresse de base (ses 28 derniers
-/// octets) : c'est elle que l'on délègue.
+/// Hash of the stake key of a base address (its last 28 bytes): this is what gets
+/// delegated.
 pub fn stake_key_hash(address: &str) -> Result<[u8; 28]> {
     let bytes = parse_address(address)?;
     ensure!(bytes.len() == 57 && bytes[0] >> 4 == 0, "adresse Cardano sans clé de mise en jeu : délégation impossible");
     Ok(bytes[29..].try_into().expect("28"))
 }
 
-/// Adresse de récompenses (octets) d'une clé de mise en jeu, réseau principal.
+/// Reward address (bytes) of a stake key, mainnet.
 fn reward_bytes(stake: &[u8; 28]) -> Vec<u8> {
     let mut bytes = vec![0xe1];
     bytes.extend(stake);
     bytes
 }
 
-/// Adresse de récompenses (stake1…) d'une adresse de base.
+/// Reward address (stake1…) of a base address.
 pub fn reward_address(address: &str) -> Result<String> {
     Ok(bech32::encode("stake", reward_bytes(&stake_key_hash(address)?).to_base32(), bech32::Variant::Bech32).expect("adresse Cardano encodable"))
 }
 
-/// Identifiant d'un pool (pool1…) → hachage de 28 octets.
+/// Pool ID (pool1…) → 28-byte hash.
 pub fn parse_pool(text: &str) -> Result<[u8; 28]> {
     let (hrp, data, variant) = bech32::decode(text.trim()).map_err(|_| anyhow!("identifiant de pool Cardano invalide"))?;
     ensure!(hrp == "pool" && variant == bech32::Variant::Bech32, "identifiant de pool Cardano invalide");
     Vec::<u8>::from_base32(&data).ok().and_then(|b| b.try_into().ok()).context("identifiant de pool Cardano invalide")
 }
 
-/// État de la mise en jeu d'une adresse.
+/// Staking state of an address.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct StakeAccount {
     pub registered: bool,
-    /// Pool délégué (pool1…).
+    /// Delegated pool (pool1…).
     pub pool: Option<String>,
-    /// Délégation de vote faite (sans elle, récompenses non retirables).
+    /// Vote delegation done (without it, rewards cannot be withdrawn).
     pub voting: bool,
-    /// Récompenses retirables (lovelace).
+    /// Withdrawable rewards (lovelace).
     pub rewards: u64,
-    /// Dépôt versé à l'inscription (rendu à la désinscription).
+    /// Deposit paid at registration (returned on deregistration).
     pub deposit: u64,
 }
 
@@ -700,8 +698,8 @@ pub fn stake_account(address: &str) -> Result<StakeAccount> {
     stake_account_from(&koios_post("/account_info", json!({ "_stake_addresses": [reward_address(address)?] }))?)
 }
 
-/// Pool proposé : identifiant, nom court, marge, coût fixe par époque,
-/// mise en jeu active (lovelace).
+/// An offered pool: ID, ticker, margin, fixed cost per epoch, active stake
+/// (lovelace).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Pool {
     pub id: String,
@@ -711,10 +709,10 @@ pub struct Pool {
     pub active_stake: u64,
 }
 
-/// Pools proposés : enregistrés, pas en retraite, marge ≤ 2 %, coût fixe ≤
-/// 340 ADA, mise en jeu active entre 10 et 55 millions d'ADA (assez pour
-/// produire des blocs chaque époque, loin de la saturation ~72 M) ; les plus
-/// petites marges d'abord, puis les plus gros. Douze au plus.
+/// Pools offered: registered, not retiring, margin ≤ 2%, fixed cost ≤ 340 ADA,
+/// active stake between 10 and 55 million ADA (enough to produce blocks every
+/// epoch, far from saturation at ~72 M); lowest margins first, then the largest.
+/// Twelve at most.
 fn pick_pools(list: &[Value]) -> Vec<Pool> {
     let mut pools: Vec<Pool> = list
         .iter()
@@ -750,21 +748,21 @@ pub fn pools() -> Result<Vec<Pool>> {
     Ok(pools)
 }
 
-/// Nom court d'un pool (affichage de l'état), `None` s'il est inconnu.
+/// A pool's ticker (state display), `None` if unknown.
 pub fn pool_ticker(pool: &str) -> Option<String> {
     parse_pool(pool).ok()?;
     let rows = koios_get(&format!("/pool_list?pool_id_bech32=eq.{pool}&select=ticker")).ok()?;
     rows[0]["ticker"].as_str().map(|t| t.chars().filter(|c| c.is_ascii_alphanumeric()).take(8).collect())
 }
 
-/// Transaction de mise en jeu préparée : exactement ce qui sera signé (hors
-/// validité, fixée à l'envoi).
+/// A prepared staking transaction: exactly what will be signed (except the
+/// validity, set at send time).
 #[derive(Clone, Debug)]
 pub struct StakePlan {
     pub certs: Vec<Cert>,
-    /// Récompenses retirées (lovelace).
+    /// Rewards withdrawn (lovelace).
     pub withdrawal: u64,
-    /// Dépôt versé (inscription) ou rendu (désinscription).
+    /// Deposit paid (registration) or returned (deregistration).
     pub deposit: u64,
     pub refund: u64,
     pub fee: u64,
@@ -772,8 +770,8 @@ pub struct StakePlan {
     inputs: Vec<Input>,
 }
 
-/// Choisit les entrées : les frais (deux signatures) et le dépôt éventuel
-/// payés, tout le reste rendu à sa propre adresse.
+/// Picks the inputs: the fee (two signatures) and any deposit are paid, and
+/// everything else is returned to our own address.
 fn plan_stake(from: &str, certs: Vec<Cert>, withdrawal: u64, deposit: u64, refund: u64) -> Result<StakePlan> {
     let from_bytes = parse_address(from)?;
     let stake = stake_key_hash(from)?;
@@ -805,7 +803,7 @@ fn plan_stake(from: &str, certs: Vec<Cert>, withdrawal: u64, deposit: u64, refun
     bail!("ADA insuffisants : il faut au moins {} ADA (dépôt et frais du réseau compris)", format_ada(deposit + min_change + 300_000))
 }
 
-/// Déléguer à `pool` : inscription (dépôt) si besoin, vote « abstention ».
+/// Delegate to `pool`: registration (deposit) if needed, "abstain" vote.
 pub fn plan_delegate(from: &str, account: &StakeAccount, pool: &str) -> Result<StakePlan> {
     let (stake, pool_hash) = (stake_key_hash(from)?, parse_pool(pool)?);
     ensure!(!(account.pool.as_deref() == Some(pool.trim()) && account.voting), "vos ADA sont déjà délégués à ce pool");
@@ -817,11 +815,10 @@ pub fn plan_delegate(from: &str, account: &StakeAccount, pool: &str) -> Result<S
     }
 }
 
-/// Sans délégation de vote, des récompenses ne sont pas retirables — et le
-/// réseau vérifie les retraits AVANT les certificats de la même transaction
-/// (constaté sur un nœud réel) : vote « abstention » d'abord, seul ; le
-/// retrait se fait à l'opération suivante. (Les délégations faites par l'app
-/// incluent toujours ce vote.)
+/// Without a vote delegation, rewards cannot be withdrawn, and the network checks
+/// withdrawals BEFORE the certificates in the same transaction (seen on a real
+/// node): the "abstain" vote comes first, on its own; the withdrawal happens in the
+/// next operation. (Delegations made by the app always include this vote.)
 fn vote_first(from: &str, account: &StakeAccount) -> Result<Option<StakePlan>> {
     if account.rewards == 0 || account.voting {
         return Ok(None);
@@ -830,13 +827,13 @@ fn vote_first(from: &str, account: &StakeAccount) -> Result<Option<StakePlan>> {
 }
 
 impl StakePlan {
-    /// Étape préalable seulement (vote « abstention »), voir `vote_first`.
+    /// Preliminary step only ("abstain" vote), see `vote_first`.
     pub fn vote_only(&self) -> bool {
         matches!(self.certs.as_slice(), [Cert::VoteAbstain { .. }]) && self.withdrawal == 0
     }
 }
 
-/// Retirer les récompenses.
+/// Withdraw the rewards.
 pub fn plan_withdraw(from: &str, account: &StakeAccount) -> Result<StakePlan> {
     ensure!(account.registered && account.rewards > 0, "aucune récompense à retirer pour l'instant");
     if let Some(vote) = vote_first(from, account)? {
@@ -845,7 +842,7 @@ pub fn plan_withdraw(from: &str, account: &StakeAccount) -> Result<StakePlan> {
     plan_stake(from, Vec::new(), account.rewards, 0, 0)
 }
 
-/// Arrêter la délégation : récompenses retirées, désinscription, dépôt rendu.
+/// Stop delegating: rewards withdrawn, deregistration, deposit returned.
 pub fn plan_undelegate(from: &str, account: &StakeAccount) -> Result<StakePlan> {
     ensure!(account.registered, "vos ADA ne sont pas délégués");
     if let Some(vote) = vote_first(from, account)? {
@@ -855,7 +852,7 @@ pub fn plan_undelegate(from: &str, account: &StakeAccount) -> Result<StakePlan> 
     plan_stake(from, vec![Cert::Unregister { stake, deposit: account.deposit }], account.rewards, 0, account.deposit)
 }
 
-/// Construit, signe (paiement + mise en jeu) et diffuse ; renvoie l'identifiant.
+/// Builds, signs (payment + stake) and broadcasts; returns the identifier.
 pub fn send_stake(payment: &XPrv, stake: &XPrv, from: &str, plan: &StakePlan) -> Result<String> {
     ensure!(key_hash(&stake.public()) == stake_key_hash(from)?, "clé de mise en jeu d'un autre compte — refusé");
     let body = Body {
@@ -870,10 +867,10 @@ pub fn send_stake(payment: &XPrv, stake: &XPrv, from: &str, plan: &StakePlan) ->
     submit(&sign_with(&body, &[payment, stake]))
 }
 
-// --- Historique ----------------------------------------------------------------------------
+// --- History -------------------------------------------------------------------------------
 
-/// Transactions de l'adresse (net en ADA : sorties reçues − entrées dépensées),
-/// les plus récentes d'abord.
+/// Transactions of the address (net in ADA: outputs received − inputs spent), most
+/// recent first.
 pub fn history(address: &str, limit: usize) -> Result<Vec<history::TxEntry>> {
     parse_address(address)?;
     let address = address.trim();
@@ -929,8 +926,8 @@ mod tests {
         (1..=32).collect()
     }
 
-    /// Vecteurs de cardano-serialization-lib (clé maîtresse, clés de paiement
-    /// et de mise en jeu, adresses de base), indépendants de ce code.
+    /// Vectors from cardano-serialization-lib (master key, payment and stake keys, base
+    /// addresses), independent of this code.
     #[test]
     fn keys_and_addresses_match_the_official_library() {
         let root = XPrv::master(&[0u8; 32]);
@@ -958,9 +955,9 @@ mod tests {
         assert!(parse_address("stake1uyehkck0lajq8gr28t9uxnuvgcqrc6070x3k9r8048z8y5gh6ffgw").unwrap_err().to_string().contains("mise en jeu"));
         assert!(parse_address("addr_test1qz2fxv2umyhttkxyxp8x0dlpdt3k6cwng5pxj3jhsydzer3n0d3vllmyqwsx5wktcd8cc3sq835lu7drv2xwl2wywfgs68faae").unwrap_err().to_string().contains("test"));
         assert!(parse_address("DdzFFzCqrhsrcTVhLygT24QwTnNqQqQ8mZrq5jykUzMveU26sxaH529kMpo7VhPrt5pwW3dXeB2k3EEvKcNBRmzCfcQ7dTkyGzTs658C").unwrap_err().to_string().contains("Byron"));
-        // Adresse « entreprise » (paiement par clé, sans mise en jeu) acceptée.
+        // "Enterprise" address (key payment, no staking) accepted.
         assert_eq!(parse_address("addr1vxlsvgpdqusfhceq0m4tunz4j7vyhd60qlyqglpjm7xu0xswl723x").unwrap().len(), 29);
-        // Contrat (script de paiement, type 1/3/5/7) : refusé.
+        // Contract (payment script, type 1/3/5/7): refused.
         let mut script = parse_address("addr1qxgzh24yclh838lhpraz7htsqk3p6p3xvrwex8h7uakx6vv0ufdahf4ccw55my2vr4ck52z9kjv5rneqkehcf23sqm3smxw2mj").unwrap();
         script[0] = 0x11;
         let text = bech32::encode("addr", script.to_base32(), bech32::Variant::Bech32).unwrap();
@@ -968,9 +965,9 @@ mod tests {
         assert!(parse_address("addr1qxgzh24yclh838lhpraz7htsqk3p6p3xvrwex8h7uakx6vv0ufdahf4ccw55my2vr4ck52z9kjv5rneqkehcf23sqm3smxw2mk").is_err(), "somme de contrôle");
     }
 
-    /// Transaction identique octet pour octet à cardano-serialization-lib
-    /// (corps, identifiant, signature, transaction signée) ; frais et
-    /// minimum d'une sortie identiques à ses calculs.
+    /// Transaction byte-for-byte identical to cardano-serialization-lib (body,
+    /// identifier, signature, signed transaction); fee and output minimum identical to
+    /// its calculations.
     #[test]
     fn transactions_match_the_official_library() {
         let addr = |a| parse_address(&address_of(&seq(), a)).unwrap();
@@ -995,8 +992,8 @@ mod tests {
         assert!(hex::encode(&signed.cbor).ends_with("a100d9010281825820af7875f0a44da469a31e4d27fa46fde45713039279e1c4f3c6269e36aa5ecf2658406d3cc99b37682ca401accb447a7d77dd5d21bae2262afa2d3ac4ffc9077e957072bda7d448c702f25c66f734ca13914c4780be424c16c55d020cd724b001180ff5f6"));
         let params = Params { fee_a: 44, fee_b: 155_381, coins_per_byte: 4310, key_deposit: 2_000_000 };
         assert_eq!(params.fee(&body.inputs, &body.outputs, body.ttl), 169_989);
-        // Minimum d'une sortie vers une adresse de base : 969 750 lovelace pour
-        // un montant à 5 octets ; prudence avec un montant à 9 octets.
+        // Minimum for an output to a base address: 969,750 lovelace for a 5-byte amount;
+        // on the safe side with a 9-byte amount.
         assert_eq!(params.min_output(&addr(1)), 4310 * (160 + 69));
     }
 
@@ -1011,10 +1008,10 @@ mod tests {
         assert_eq!(history_entry(&received, me).unwrap().net_amount_minor, Some(2_000_000));
     }
 
-    /// Réel, réseau principal : lectures, puis transaction bien formée et
-    /// signée qui dépense une entrée INEXISTANTE — le nœud doit la refuser pour
-    /// l'entrée (BadInputs) et PAS pour la signature ; même transaction à la
-    /// signature altérée : refusée pour la signature (InvalidWitnesses).
+    /// Live, mainnet: reads, then a well-formed signed transaction spending a
+    /// NON-EXISTENT input. The node must refuse it for the input (BadInputs) and NOT
+    /// for the signature; the same transaction with a tampered signature is refused for
+    /// the signature (InvalidWitnesses).
     /// `cargo test -- --ignored real_cardano --nocapture`
     #[test]
     #[ignore]
@@ -1027,10 +1024,9 @@ mod tests {
         getrandom::getrandom(&mut entropy).unwrap();
         let (payment, _) = account_keys(&entropy, 0);
         let from = address_of(&entropy, 0);
-        // Sortie EXISTANTE d'un tiers (la réserve de transactions refuse
-        // d'emblée une entrée inexistante, avant les signatures) : le nœud
-        // vérifie les signatures fournies et ne réclame que celle du
-        // propriétaire de l'entrée.
+        // An EXISTING output owned by someone else (the mempool refuses a non-existent
+        // input outright, before the signatures): the node checks the signatures provided
+        // and only asks for the input owner's.
         let (theirs, _) = utxos(rich).unwrap();
         let input = theirs.first().expect("aucune sortie de référence").input.clone();
         let body = Body { inputs: vec![input.clone()], outputs: vec![Output { address: parse_address(rich).unwrap(), lovelace: 1_500_000 }], fee: 200_000, ttl: tip_slot().unwrap() + TTL_SLOTS, certs: Vec::new(), withdrawal: None };
@@ -1042,14 +1038,13 @@ mod tests {
         tampered.cbor[at] ^= 1;
         let error = submit_full(&tampered).unwrap().unwrap_err();
         assert!(error.contains("InvalidWitnessesUTXOW"), "{error}");
-        // Adresse neuve : rien à envoyer.
+        // New address: nothing to send.
         assert!(plan(&from, rich, 2_000_000).unwrap_err().to_string().contains("aucun ADA"));
 
-        // Délégation (inscription + pool + vote) et retrait + désinscription,
-        // signés par les clés de paiement ET de mise en jeu : le nœud lit les
-        // certificats (aucune erreur de décodage), accepte nos deux signatures
-        // et ne réclame que celle du propriétaire de l'entrée. (Retrait sur
-        // une clé jamais inscrite : refus de règles — attendu.)
+        // Delegation (registration + pool + vote) and withdrawal + deregistration, signed
+        // by the payment AND stake keys: the node reads the certificates (no decoding
+        // error), accepts both our signatures and only asks for the input owner's. (A
+        // withdrawal on a key that was never registered: a rules refusal, as expected.)
         let (payment, stake) = account_keys(&entropy, 0);
         let stake_hash = key_hash(&stake.public());
         let pool = pools().unwrap().first().unwrap().id.clone();
@@ -1065,9 +1060,8 @@ mod tests {
         }
     }
 
-    /// Certificats et retrait : encodage CBOR de l'ère Conway (étiquette 258
-    /// pour l'ensemble, identifiants de la spécification) ; adresse de
-    /// récompenses et pool.
+    /// Certificates and withdrawal: Conway-era CBOR encoding (tag 258 for the set, IDs
+    /// from the specification); reward address and pool.
     #[test]
     fn stake_certificates_are_encoded() {
         let stake = [7u8; 28];
@@ -1086,8 +1080,8 @@ mod tests {
         assert!(cbor.starts_with("a6"), "6 champs");
         assert!(cbor.contains(&format!("04d9010281840a8200581c{}581c{}8102", hex::encode(stake), hex::encode(pool))));
         assert!(cbor.ends_with(&format!("05a1581de1{}05", hex::encode(stake))));
-        // Adresse de récompenses de l'adresse de base de référence (vecteur de
-        // cardano-serialization-lib : clé de mise en jeu du compte 0).
+        // Reward address of the reference base address (cardano-serialization-lib vector:
+        // stake key of account 0).
         let address = address_of(&[0u8; 32], 0);
         let (_, stake_key) = account_keys(&[0u8; 32], 0);
         assert_eq!(stake_key_hash(&address).unwrap(), key_hash(&stake_key.public()));
@@ -1097,7 +1091,7 @@ mod tests {
         assert!(parse_pool("stake1uyehkck0lajq8gr28t9uxnuvgcqrc6070x3k9r8048z8y5gh6ffgw").is_err());
     }
 
-    /// État d'un compte (forme réelle de Koios) et choix des pools.
+    /// Account state (Koios's real format) and pool selection.
     #[test]
     fn stake_account_and_pools_are_read() {
         let account = stake_account_from(&json!([{ "status": "registered", "delegated_pool": "pool1pu5jlj4q9w9jlxeu370a3c9myx47md5j5m2str0naunn2q3lkdy", "delegated_drep": null, "rewards_available": "1500000", "deposit": "2000000" }])).unwrap();

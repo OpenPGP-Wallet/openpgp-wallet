@@ -1,26 +1,25 @@
-//! MoonPay Trade (API swaps.xyz, issue de Decent.xyz rachetée par MoonPay) :
-//! un fournisseur d'échanges de plus dans « Convertir », non-custodial (la
-//! transaction est signée par l'app, MoonPay ne détient jamais les fonds).
+//! MoonPay Trade (the swaps.xyz API, from Decent.xyz, acquired by MoonPay): one
+//! more swap provider in "Convert", non-custodial (the transaction is signed by the
+//! app; MoonPay never holds the funds).
 //!
-//! Deux sortes de routes (choix de l'utilisateur du 07/10/2026) :
-//! - **même réseau EVM** : appel du routeur « UTB » (même contrat sur chaque
-//!   réseau : code identique, source vérifiée, non modifiable — relevé le
-//!   07/10/2026), SIMULÉ avant signature : seul le jeton vendu quitte
-//!   l'utilisateur, au montant exact ; le jeton acheté arrive sur SON adresse,
-//!   au moins le minimum garanti. Proposé comme une option de plus ;
-//! - **dépôt** (vers un autre réseau) : virement ordinaire, construit et signé
-//!   par l'app, vers une adresse de dépôt fournie par MoonPay Trade. La suite
-//!   (livraison sur l'autre réseau) est gérée par le fournisseur : le
-//!   destinataire final n'est PAS vérifiable par l'app. Proposé seulement si
-//!   aucun autre fournisseur ne relie la paire, et dit dans la boîte de
-//!   confirmation.
+//! Two kinds of routes (product decision, 2026-10-07):
+//! - **same EVM network**: a call to the "UTB" router (the same contract on every
+//!   network: identical code, verified source, not upgradeable, as recorded on
+//!   2026-10-07), SIMULATED before signing: only the token sold leaves the user,
+//!   for the exact amount; the token bought lands on THEIR address, at least the
+//!   guaranteed minimum. Offered as one more option;
+//! - **deposit** (to another network): an ordinary transfer, built and signed by
+//!   the app, to a deposit address provided by MoonPay Trade. What happens next
+//!   (delivery on the other network) is handled by the provider: the app CANNOT
+//!   verify the final recipient. Only offered if no other provider connects the
+//!   pair, and stated in the confirmation dialog.
 //!
-//! Commission de l'app : 0,80 % (comme LI.FI), demandée dans chaque devis
-//! depuis un réseau EVM ; un devis qui en annonce davantage est refusé.
+//! App commission: 0.80% (like LI.FI), requested in every quote from an EVM
+//! network; a quote announcing more is refused.
 //!
-//! Clé d'API (console.swaps.xyz) lue à la compilation (`partner-keys.env`,
-//! voir build.rs). Une clé du widget MoonPay (`pk_…`, `sk_…`) n'est pas une
-//! clé Trade : ignorée, MoonPay Trade n'est alors pas proposé.
+//! API key (console.swaps.xyz) read at build time (`partner-keys.env`, see
+//! build.rs). A MoonPay widget key (`pk_…`, `sk_…`) is not a Trade key: it is
+//! ignored, and MoonPay Trade is not offered.
 
 use crate::{evm_sign, external_wallets, tokens, wallet_flow};
 use anyhow::{anyhow, bail, ensure, Context, Result};
@@ -28,21 +27,21 @@ use serde_json::Value;
 use std::sync::OnceLock;
 
 const API_BASE: &str = "https://api-v2.swaps.xyz/api";
-/// Clé lue à la compilation ; ne sert que si `enabled()` (clé Trade).
+/// Key read at build time; only used if `enabled()` (Trade key).
 pub const API_KEY: Option<&str> = option_env!("MOONPAY_TRADE_API_KEY");
-/// Commission de l'app (points de base), versée à l'adresse des frais
-/// partenaire de CoW (adresse du développeur, voir `cow`).
+/// The app's commission (basis points), paid to CoW's partner fee address (the
+/// developer's address, see `cow`).
 pub const FEE_BPS: u32 = 80;
 const FEE_RECEIVER: &str = "0xae702daEd4723ac516492Bb1084F50e07e75573C";
-/// Frais propres à MoonPay sur la clé de l'app (relevés le 07/10/2026 :
-/// 0,30 %), en plus de la commission ; affichés dans la liste des
-/// fournisseurs. Le montant exact de chaque devis est lu dans le devis.
+/// MoonPay's own fee on the app's key (recorded on 2026-10-07: 0.30%), on top of
+/// the commission; shown in the list of providers. The exact amount for each quote
+/// is read from the quote.
 pub const PROTOCOL_FEE_BPS: u32 = 30;
-/// Au-delà, le devis est refusé (frais MoonPay anormaux).
+/// Above this, the quote is refused (abnormal MoonPay fees).
 const MAX_PROTOCOL_FEE_BPS: u32 = 100;
-/// Glissement toléré (points de base), garanti par le minimum de réception.
+/// Tolerated slippage (basis points), guaranteed by the minimum amount received.
 const SLIPPAGE_BPS: u32 = 100;
-/// Identifiant des monnaies natives chez MoonPay Trade (tous réseaux).
+/// Identifier for native coins at MoonPay Trade (all networks).
 const NATIVE: &str = "0x0000000000000000000000000000000000000000";
 const SOLANA_CHAIN: u64 = 1_399_811_149;
 
@@ -66,9 +65,8 @@ fn client() -> &'static reqwest::blocking::Client {
 
 // --- Cryptos ------------------------------------------------------------------------------
 
-/// Monnaies natives : (carte, réseau, identifiant de chaîne MoonPay Trade,
-/// décimales, symbole). Identifiants et décimales relevés sur
-/// `getChainList` / `getTokenList` le 07/10/2026.
+/// Native coins: (card, network, MoonPay Trade chain ID, decimals, symbol). IDs and
+/// decimals recorded from `getChainList` / `getTokenList` on 2026-10-07.
 const NATIVES: [(&str, &str, u64, u8, &str); 17] = [
     ("evm", "evm_mainnet", 1, 18, "ETH"),
     ("evm", "arbitrum_mainnet", 42161, 18, "ETH"),
@@ -89,8 +87,8 @@ const NATIVES: [(&str, &str, u64, u8, &str); 17] = [
     ("xmr", "xmr_mainnet", 999_000_343, 12, "XMR"),
 ];
 
-/// Réseaux d'où l'app sait faire un dépôt MoonPay Trade (virement ordinaire,
-/// mémo compris pour XRP) ; les autres sont reçus seulement.
+/// Networks from which the app can make a MoonPay Trade deposit (ordinary transfer,
+/// memo included for XRP); the others are receive-only.
 const DEPOSIT_SOURCES: [&str; 12] = [
     "evm_mainnet",
     "arbitrum_mainnet",
@@ -106,9 +104,9 @@ const DEPOSIT_SOURCES: [&str; 12] = [
     "near_mainnet",
 ];
 
-/// Routeur UTB de MoonPay Trade sur chaque réseau EVM de l'app : relevé dans
-/// de vrais devis le 07/10/2026, même code déployé partout (empreinte du code
-/// identique), source vérifiée « UTB » (Blockscout, Routescan), sans proxy.
+/// MoonPay Trade's UTB router on each of the app's EVM networks: recorded from real
+/// quotes on 2026-10-07, the same code deployed everywhere (identical code hash),
+/// verified "UTB" source (Blockscout, Routescan), no proxy.
 pub fn router(network: &str) -> Option<&'static str> {
     Some(match network {
         "evm_mainnet" => "0x1b6257CAE4192e62B629eFCa21771be3D759183D",
@@ -125,13 +123,13 @@ fn is_evm(network: &str) -> bool {
     router(network).is_some()
 }
 
-/// Crypto de l'app telle que MoonPay Trade la désigne.
+/// One of the app's cryptos, as MoonPay Trade designates it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Asset {
     pub coin: &'static str,
     pub network: &'static str,
     pub chain: u64,
-    /// Contrat (EVM, minuscules), mint (Solana) ou `NATIVE`.
+    /// Contract (EVM, lowercase), mint (Solana) or `NATIVE`.
     pub token: &'static str,
     pub decimals: u8,
     pub symbol: &'static str,
@@ -158,15 +156,15 @@ pub fn tradable() -> Vec<(&'static str, &'static str)> {
     natives.chain(registry).collect()
 }
 
-/// Route au destinataire vérifiable : même réseau EVM (routeur simulé),
-/// sur un réseau dont le nœud sait simuler (pas Avalanche : `eth_simulateV1`
-/// absent, relevé le 08/10/2026 — 32ᵉ passage).
+/// A route with a verifiable recipient: same EVM network (simulated router), on a
+/// network whose node can simulate (not Avalanche: no `eth_simulateV1`, recorded on
+/// 2026-10-08; audit round 32).
 pub fn verifiable(from: (&str, &str), to: (&str, &str)) -> bool {
     from.1 == to.1 && is_evm(from.1) && crate::lifi::simulates(from.1)
 }
 
-/// MoonPay Trade relie-t-il ces deux cryptos (hors activation et hors règle
-/// du dernier recours, appliquée par `swap_routes`) ?
+/// Does MoonPay Trade connect these two cryptos (ignoring activation and the
+/// last-resort rule, which `swap_routes` applies)?
 pub fn links(from: (&str, &str), to: (&str, &str)) -> bool {
     from != to
         && asset(from.0, from.1).is_some()
@@ -174,38 +172,37 @@ pub fn links(from: (&str, &str), to: (&str, &str)) -> bool {
         && (verifiable(from, to) || (from.1 != to.1 && DEPOSIT_SOURCES.contains(&from.1)))
 }
 
-// --- Devis --------------------------------------------------------------------------------
+// --- Quotes -------------------------------------------------------------------------------
 
-/// Transaction d'un devis vérifié.
+/// Transaction from a verified quote.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TradeTx {
-    /// Appel du routeur UTB (même réseau EVM), simulé avant signature
-    /// (`verify_router`). `value` : montant vendu si c'est la monnaie du
-    /// réseau, 0 sinon (le jeton vendu est autorisé au routeur, au montant
-    /// exact).
+    /// A call to the UTB router (same EVM network), simulated before signing
+    /// (`verify_router`). `value`: the amount sold if it is the network's native coin,
+    /// 0 otherwise (the token sold is approved for the router, for the exact amount).
     Router { router: [u8; 20], data: Vec<u8>, value: u128 },
-    /// Dépôt : virement ordinaire du montant exact vers `address` (mémo :
-    /// tag de destination XRP), construit et signé par l'app.
+    /// Deposit: an ordinary transfer of the exact amount to `address` (memo: XRP
+    /// destination tag), built and signed by the app.
     Deposit { address: String, memo: Option<String> },
 }
 
 #[derive(Clone, Debug)]
 pub struct Quote {
-    /// Identifiant MoonPay Trade (enregistrement du dépôt, suivi).
+    /// MoonPay Trade identifier (deposit registration, tracking).
     pub tx_id: String,
     pub amount: u128,
     pub expected_out: u128,
     pub min_out: u128,
     pub duration_secs: u64,
-    /// Frais propres à MoonPay annoncés par le devis (points de base du
-    /// montant vendu, arrondis), en plus de la commission de l'app.
+    /// MoonPay's own fee announced by the quote (basis points of the amount sold,
+    /// rounded), on top of the app's commission.
     pub protocol_fee_bps: u32,
-    /// Dépôt à déclarer après diffusion (`register`).
+    /// Deposit to register after broadcasting (`register`).
     pub register: bool,
     pub tx: TradeTx,
 }
 
-/// Erreur de devis renvoyée par MoonPay Trade, en clair.
+/// Quote error returned by MoonPay Trade, in plain words.
 fn api_error(body: &Value, status: u16) -> anyhow::Error {
     let error = &body["error"];
     let details = &error["details"];
@@ -226,7 +223,7 @@ fn api_error(body: &Value, status: u16) -> anyhow::Error {
     }
 }
 
-/// Paiement (`amountIn`, `amountOut`…) : (chaîne, jeton, montant).
+/// Payment (`amountIn`, `amountOut`…): (chain, token, amount).
 fn payment(value: &Value, what: &str) -> Result<(u64, String, u128)> {
     let chain = value["chainId"].as_u64().with_context(|| format!("devis MoonPay Trade illisible ({what})"))?;
     let token = value["address"].as_str().with_context(|| format!("devis MoonPay Trade illisible ({what})"))?.to_string();
@@ -258,14 +255,14 @@ fn amount_value(value: &Value) -> Option<u128> {
     }
 }
 
-/// `value` est-il l'un des mots de 32 octets des arguments d'un appel ?
+/// Is `value` one of the 32-byte words in a call's arguments?
 fn contains_word(args: &[u8], value: u128) -> bool {
     let mut word = [0u8; 32];
     word[16..].copy_from_slice(&value.to_be_bytes());
     args.as_chunks::<32>().0.contains(&word)
 }
 
-/// Appel ERC-20 `transfer(to, amount)`.
+/// ERC-20 call `transfer(to, amount)`.
 pub fn erc20_transfer_data(to: &[u8; 20], amount: u128) -> Vec<u8> {
     let mut data = vec![0xa9, 0x05, 0x9c, 0xbb];
     data.extend_from_slice(&[0u8; 12]);
@@ -275,9 +272,9 @@ pub fn erc20_transfer_data(to: &[u8; 20], amount: u128) -> Vec<u8> {
     data
 }
 
-/// Frais `field` (`applicationFee`, `protocolFee`) en points de base du
-/// montant vendu : exacts s'ils sont comptés dans la crypto vendue, sinon
-/// d'après les montants en dollars du devis. `None` : frais absents.
+/// Fee `field` (`applicationFee`, `protocolFee`) in basis points of the amount
+/// sold: exact if counted in the crypto sold, otherwise derived from the quote's
+/// dollar amounts. `None`: no fee.
 fn fee_bps(body: &Value, field: &str, from: &Asset, amount: u128) -> Result<Option<f64>> {
     if !body[field].is_object() {
         return Ok(None);
@@ -296,10 +293,10 @@ fn fee_bps(body: &Value, field: &str, from: &Asset, amount: u128) -> Result<Opti
     }
 }
 
-/// Lit et vérifie la réponse de `getAction` pour la demande faite : paire,
-/// montant exact, minimum ≤ attendu, commission ≤ `FEE_BPS`, et transaction
-/// de la forme attendue pour la route (routeur UTB sur un même réseau EVM,
-/// sinon virement de dépôt). Fonction pure.
+/// Reads and checks the `getAction` response against the request made: pair, exact
+/// amount, minimum ≤ expected, commission ≤ `FEE_BPS`, and a transaction of the
+/// expected shape for the route (UTB router on the same EVM network, otherwise a
+/// deposit transfer). Pure function.
 pub fn parse_action(body: &Value, from: &Asset, to: &Asset, amount: u128) -> Result<Quote> {
     let (chain, token, amount_in) = payment(&body["amountIn"], "montant vendu")?;
     ensure!(chain == from.chain && same_token(from, &token), "le devis MoonPay Trade vend une autre crypto — refus");
@@ -309,8 +306,8 @@ pub fn parse_action(body: &Value, from: &Asset, to: &Asset, amount: u128) -> Res
     let (chain, token, min_out) = payment(&body["amountOutMin"], "minimum reçu")?;
     ensure!(chain == to.chain && same_token(to, &token), "le devis MoonPay Trade livre une autre crypto — refus");
     ensure!(min_out > 0 && min_out <= expected_out, "minimum de réception MoonPay Trade incohérent — refus");
-    // Commission de l'app : au plus `FEE_BPS` du montant vendu ; frais propres
-    // à MoonPay : au plus `MAX_PROTOCOL_FEE_BPS` (affichés à l'utilisateur).
+    // App commission: at most `FEE_BPS` of the amount sold; MoonPay's own fee: at most
+    // `MAX_PROTOCOL_FEE_BPS` (shown to the user).
     let app_fee = fee_bps(body, "applicationFee", from, amount)?;
     ensure!(
         app_fee.is_none_or(|bps| bps <= f64::from(FEE_BPS) + 0.5),
@@ -335,9 +332,9 @@ pub fn parse_action(body: &Value, from: &Asset, to: &Asset, amount: u128) -> Res
         ensure!(target.eq_ignore_ascii_case(expected_router), "la transaction MoonPay Trade appelle un autre contrat que son routeur — refus de signer");
         let data = hex_data(tx["data"].as_str().unwrap_or(""))?;
         ensure!(data.len() >= 4, "devis MoonPay Trade sans appel — refus");
-        // Le minimum affiché est celui que le routeur exigera
-        // (`swapParams.amountOut`, relevé le 08/10/2026 dans de vraies
-        // transactions) : sinon, refus (32ᵉ passage).
+        // The minimum shown must be the one the router will enforce
+        // (`swapParams.amountOut`, recorded on 2026-10-08 in real transactions);
+        // otherwise, refused (audit round 32).
         ensure!(contains_word(&data[4..], min_out), "la transaction MoonPay Trade ne garantit pas le minimum affiché — refus de signer");
         let value = amount_value(&tx["value"]).context("devis MoonPay Trade illisible (valeur)")?;
         ensure!(value == if from.native { amount } else { 0 }, "la transaction MoonPay Trade enverrait un autre montant — refus de signer");
@@ -351,7 +348,7 @@ pub fn parse_action(body: &Value, from: &Asset, to: &Asset, amount: u128) -> Res
             ensure!(data.is_empty() && value == amount, "le dépôt MoonPay Trade n'est pas un simple virement du montant exact — refus de signer");
             wallet_flow::parse_evm_address(target)?
         } else {
-            // Virement du jeton : `transfer(dépôt, montant exact)` sur son contrat.
+            // Token transfer: `transfer(deposit, exact amount)` on its contract.
             ensure!(target.eq_ignore_ascii_case(from.token) && value == 0 && data.len() == 68, "le dépôt MoonPay Trade n'est pas un simple virement du jeton — refus de signer");
             let deposit: [u8; 20] = data[16..36].try_into().expect("20 octets");
             ensure!(data == erc20_transfer_data(&deposit, amount), "le dépôt MoonPay Trade n'est pas un simple virement du montant exact — refus de signer");
@@ -364,14 +361,14 @@ pub fn parse_action(body: &Value, from: &Asset, to: &Asset, amount: u128) -> Res
         let value = amount_value(&tx["value"]).context("devis MoonPay Trade illisible (valeur)")?;
         ensure!(value == amount, "le dépôt MoonPay Trade porte sur un autre montant — refus de signer");
         let address = tx["to"].as_str().context("devis MoonPay Trade sans adresse de dépôt")?.trim().to_string();
-        // Adresse d'une forme que l'app ne sait pas payer (autre réseau,
-        // version SegWit future…) : un nouveau devis en donne en général une
-        // autre. Bitcoin : tous les types standard (P2SH 3… compris, donné
-        // parfois par MoonPay Trade, relevé le 07/10/2026).
+        // An address of a shape the app cannot pay (another network, future SegWit
+        // version…): a new quote usually gives a different one. Bitcoin: every standard
+        // type (P2SH 3… included, which MoonPay Trade sometimes gives, recorded on
+        // 2026-10-07).
         external_wallets::validate_address(from.network, &address).map_err(|_| anyhow!("adresse de dépôt MoonPay Trade d'une forme que l'app ne sait pas payer — demandez un nouveau devis"))?;
         let memo = match tx["toExtra"].as_str().map(str::trim).filter(|m| !m.is_empty()) {
             None => None,
-            // XRP : tag de destination (entier 32 bits).
+            // XRP: destination tag (32-bit integer).
             Some(tag) if from.network == "xrp_mainnet" && tag.parse::<u32>().is_ok() => Some(tag.to_string()),
             Some(_) => bail!("mémo de dépôt MoonPay Trade non pris en charge — refus"),
         };
@@ -389,9 +386,9 @@ pub fn parse_action(body: &Value, from: &Asset, to: &Asset, amount: u128) -> Res
     })
 }
 
-/// Paramètres de `getAction`. Commission de l'app demandée sur chaque route,
-/// versée à une adresse EVM (exigé par MoonPay Trade, même pour un dépôt
-/// Bitcoin ou XRP — relevé le 07/10/2026) ; remboursement à l'expéditeur.
+/// `getAction` parameters. The app's commission is requested on every route, paid
+/// to an EVM address (MoonPay Trade requires this even for a Bitcoin or XRP
+/// deposit, recorded on 2026-10-07); refunds go to the sender.
 fn action_params(from: &Asset, to: &Asset, amount: u128, sender: &str, recipient: &str) -> Vec<(&'static str, String)> {
     vec![
         ("actionType", "swap-action".to_string()),
@@ -409,9 +406,9 @@ fn action_params(from: &Asset, to: &Asset, amount: u128, sender: &str, recipient
     ]
 }
 
-/// Devis exécutable de MoonPay Trade (`getAction`) : `sender` vend `amount`
-/// de `from`, `recipient` reçoit `to` ; remboursement à `sender` (dépôt
-/// depuis un réseau non EVM). Vérifié par `parse_action`.
+/// Executable MoonPay Trade quote (`getAction`): `sender` sells `amount` of `from`,
+/// `recipient` receives `to`; refunds to `sender` (deposit from a non-EVM network).
+/// Checked by `parse_action`.
 pub fn quote(from: &Asset, to: &Asset, amount: u128, sender: &str, recipient: &str) -> Result<Quote> {
     let key = key().context("MoonPay Trade indisponible dans cette version de l'app")?;
     ensure!(links((from.coin, from.network), (to.coin, to.network)), "MoonPay Trade ne relie pas ces deux cryptos");
@@ -430,8 +427,8 @@ pub fn quote(from: &Asset, to: &Asset, amount: u128, sender: &str, recipient: &s
     parse_action(&body, from, to, amount)
 }
 
-/// Déclare un dépôt diffusé (exigé pour son suivi par MoonPay Trade quand le
-/// devis le demande).
+/// Registers a broadcast deposit (required for MoonPay Trade to track it when the
+/// quote asks for it).
 pub fn register(tx_id: &str, tx_hash: &str) -> Result<()> {
     let key = key().context("MoonPay Trade indisponible dans cette version de l'app")?;
     let response = client()
@@ -444,15 +441,15 @@ pub fn register(tx_id: &str, tx_hash: &str) -> Result<()> {
     Ok(())
 }
 
-// --- Vérification d'un échange par le routeur ----------------------------------------------
+// --- Verifying a swap through the router ---------------------------------------------------
 
-/// Ce que l'échange doit faire, et rien d'autre.
+/// What the swap must do, and nothing else.
 pub struct Expected {
     pub user: [u8; 20],
-    /// Jeton vendu (`None` : monnaie du réseau).
+    /// Token sold (`None`: the network's native coin).
     pub sell_token: Option<[u8; 20]>,
     pub amount: u128,
-    /// Jeton acheté (`None` : monnaie du réseau).
+    /// Token bought (`None`: the network's native coin).
     pub buy_token: Option<[u8; 20]>,
     pub min_out: u128,
     pub router: [u8; 20],
@@ -470,11 +467,11 @@ fn padded(address: &[u8; 20]) -> [u8; 32] {
     word
 }
 
-/// Vérifie la simulation (autorisation éventuelle, puis appel du routeur,
-/// mouvements de monnaie native tracés) : tout réussit ; seul le jeton vendu
-/// quitte l'utilisateur, au montant exact (autorisation au routeur seulement,
-/// au plus le montant) ; le jeton acheté arrive sur l'adresse de
-/// l'utilisateur, au moins le minimum garanti. Fonction pure.
+/// Checks the simulation (optional approval, then the router call, with native coin
+/// movements traced): everything succeeds; only the token sold leaves the user, for
+/// the exact amount (approval to the router only, at most the amount); the token
+/// bought lands on the user's address, at least the guaranteed minimum. Pure
+/// function.
 pub fn verify_router(calls: &[crate::eth_rpc::SimulatedCall], expected: &Expected) -> Result<u128> {
     ensure!(calls.iter().all(|c| c.success), "l'échange MoonPay Trade échouerait (simulation) — rien n'a été envoyé");
     let transfer = evm_sign::keccak(b"Transfer(address,address,uint256)");
@@ -521,10 +518,9 @@ mod tests {
     use crate::eth_rpc::{SimulatedCall, SimulatedLog};
     use serde_json::json;
 
-    /// Clé de DÉMONSTRATION publiée dans la documentation officielle
-    /// (docs.swaps.xyz, page get-quote : « Limited demo key for API
-    /// Reference ») : tests réels seulement, jamais dans l'app (elle prélève
-    /// 1 % pour un autre intégrateur).
+    /// DEMO key published in the official documentation (docs.swaps.xyz, get-quote
+    /// page: "Limited demo key for API Reference"): live tests only, never in the app
+    /// (it takes 1% for another integrator).
     const DEMO_KEY: &str = "5c951bc81da566bbd030ba8e20724063";
     const USER: &str = "0x9458af2b720ecf1bb18f525d864a28af5c818cfa";
     const USDC: &str = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
@@ -537,8 +533,8 @@ mod tests {
         json!({ "chainId": chain, "address": address, "amount": amount, "usdAmount": 1.0 })
     }
 
-    /// Réponse réelle (07/10/2026, clé de démo) : 0,01 ETH → USDC sur
-    /// Ethereum, routeur UTB ; commission ramenée à 0,80 % (`appFees`).
+    /// Real response (2026-10-07, demo key): 0.01 ETH → USDC on Ethereum, UTB router;
+    /// commission brought down to 0.80% (`appFees`).
     fn eth_usdc() -> Value {
         json!({
             "tx": { "to": "0x1b6257CAE4192e62B629eFCa21771be3D759183D", "chainId": 1, "data": "0x9be111d10000000000000000000000000000000000000000000000000000000000000060000000000000000000000000000000000000000000000000000000000180706b", "value": "10000000000000000" },
@@ -560,22 +556,22 @@ mod tests {
         assert_eq!(a("usdc", "sol_mainnet").token, "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
         assert!(asset("tao", "tao_mainnet").is_none(), "TAO absent de MoonPay Trade");
         assert!(asset("usdt", "tron_mainnet").is_none(), "jetons Tron pas encore pris en charge");
-        // Même réseau EVM : vérifiable.
+        // Same EVM network: verifiable.
         assert!(verifiable(("evm", "evm_mainnet"), ("usdc", "evm_mainnet")) && links(("evm", "evm_mainnet"), ("usdc", "evm_mainnet")));
-        // Dépôt depuis un réseau connu de l'app, vers n'importe quel réseau.
+        // Deposit from a network the app knows, to any network.
         assert!(links(("evm", "evm_mainnet"), ("xmr", "xmr_mainnet")) && !verifiable(("evm", "evm_mainnet"), ("xmr", "xmr_mainnet")));
         assert!(links(("xrp", "xrp_mainnet"), ("evm", "evm_mainnet")));
-        // Pas de dépôt depuis Monero, Solana, Stellar… ; pas d'échange sur un même réseau non EVM.
+        // No deposit from Monero, Solana, Stellar…; no swap on the same non-EVM network.
         assert!(!links(("xmr", "xmr_mainnet"), ("evm", "evm_mainnet")) && !links(("sol", "sol_mainnet"), ("evm", "evm_mainnet")));
         assert!(!links(("sol", "sol_mainnet"), ("usdc", "sol_mainnet")));
-        // Avalanche : nœud sans simulation, routeur invérifiable — pas d'échange
-        // sur ce réseau ; dépôt possible vers un autre.
+        // Avalanche: node without simulation, router unverifiable, so no swap on that
+        // network; deposit to another network possible.
         assert!(!verifiable(("avax", "avax_mainnet"), ("usdc", "avax_mainnet")) && !links(("avax", "avax_mainnet"), ("usdt", "avax_mainnet")));
         assert!(links(("avax", "avax_mainnet"), ("xmr", "xmr_mainnet")));
         assert!(tradable().contains(&("xmr", "xmr_mainnet")) && tradable().contains(&("link", "evm_mainnet")));
     }
 
-    /// Clé du widget MoonPay (publiable ou secrète) : pas une clé Trade.
+    /// MoonPay widget key (publishable or secret): not a Trade key.
     #[test]
     fn widget_keys_are_not_trade_keys() {
         for widget in ["pk_test_x", "pk_live_x", "sk_live_x"] {
@@ -589,7 +585,7 @@ mod tests {
         let quote = parse_action(&eth_usdc(), &eth, &usdc, 10_000_000_000_000_000).unwrap();
         assert_eq!((quote.expected_out, quote.min_out, quote.register, quote.protocol_fee_bps), (25_449_094, 25_194_603, false, 30));
         assert!(matches!(&quote.tx, TradeTx::Router { value, .. } if *value == 10_000_000_000_000_000));
-        // Falsifications : chaque écart est refusé.
+        // Tampering: every discrepancy is refused.
         let refused = |edit: &dyn Fn(&mut Value)| {
             let mut body = eth_usdc();
             edit(&mut body);
@@ -602,10 +598,10 @@ mod tests {
         assert!(refused(&|b| b["amountOutMin"]["amount"] = json!("99999999")).contains("incohérent"));
         assert!(refused(&|b| b["applicationFee"]["amount"] = json!("100000000000000")).contains("commission"));
         assert!(refused(&|b| b["protocolFee"]["amount"] = json!("150000000000000")).contains("frais MoonPay"));
-        // Frais comptés dans une autre crypto : bornés d'après les dollars du devis.
+        // Fees counted in another crypto: bounded using the quote's dollar amounts.
         assert!(refused(&|b| b["applicationFee"] = json!({ "chainId": 1, "address": USDC, "amount": "260000", "usdAmount": 0.26 })).contains("commission"));
         assert!(refused(&|b| b["executionsType"] = json!("GASLESS")).contains("forme"));
-        // Le routeur doit exiger le minimum affiché.
+        // The router must enforce the minimum shown.
         assert!(refused(&|b| b["amountOutMin"]["amount"] = json!("25000000")).contains("minimum affiché"));
         assert!(refused(&|b| b["tx"]["chainId"] = json!(42161)).contains("forme"));
     }
@@ -621,7 +617,7 @@ mod tests {
                 "requiresRegisterTransaction": true
             })
         };
-        // ETH → BTC (réel) : virement simple vers l'adresse de dépôt.
+        // ETH → BTC (real): a plain transfer to the deposit address.
         let eth_btc = body(json!({ "to": "0x3De23013a152628C8ad4a122c77732aa5252ad65", "value": "50000000000000000", "chainId": 1, "data": "0x" }), &eth, "50000000000000000", "evm");
         let quote = parse_action(&eth_btc, &eth, &btc, 50_000_000_000_000_000).unwrap();
         assert_eq!(quote.tx, TradeTx::Deposit { address: "0x3De23013a152628C8ad4a122c77732aa5252ad65".into(), memo: None });
@@ -629,7 +625,7 @@ mod tests {
         let mut with_call = eth_btc.clone();
         with_call["tx"]["data"] = json!("0x12345678");
         assert!(parse_action(&with_call, &eth, &btc, 50_000_000_000_000_000).unwrap_err().to_string().contains("simple virement"));
-        // USDC → BTC (réel) : `transfer(dépôt, montant)` sur le contrat USDC.
+        // USDC → BTC (real): `transfer(deposit, amount)` on the USDC contract.
         let usdc_btc = body(
             json!({ "to": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", "value": "0", "chainId": 1, "data": "0xa9059cbb000000000000000000000000e3cf74a4b0690400a2390683d0e2eef46427c6f70000000000000000000000000000000000000000000000000000000008f0d180" }),
             &usdc,
@@ -641,7 +637,7 @@ mod tests {
         let mut approve = usdc_btc.clone();
         approve["tx"]["data"] = json!("0x095ea7b3000000000000000000000000e3cf74a4b0690400a2390683d0e2eef46427c6f70000000000000000000000000000000000000000000000000000000008f0d180");
         assert!(parse_action(&approve, &usdc, &btc, 150_000_000).is_err(), "autorisation au lieu d'un virement");
-        // XRP → ETH (réel) : dépôt r… avec tag de destination.
+        // XRP → ETH (real): r… deposit with a destination tag.
         let mut xrp_eth = body(json!({ "to": "rKKbNYZRqwPgZYkFWvqNUFBuscEyiFyCE", "toExtra": "962769451", "value": "50000000", "chainId": 999_000_346, "chainKey": "xrp" }), &xrp, "50000000", "alt-vm");
         xrp_eth["amountOut"] = pay(1, NATIVE, "27284700000000000");
         xrp_eth["amountOutMin"] = pay(1, NATIVE, "27284700000000000");
@@ -653,8 +649,8 @@ mod tests {
         let mut bad_address = xrp_eth.clone();
         bad_address["tx"]["to"] = json!("rKKbNYZRqwPgZYkFWvqNUFBuscEyiFyCF");
         assert!(parse_action(&bad_address, &xrp, &eth, 50_000_000).unwrap_err().to_string().contains("ne sait pas payer"));
-        // BTC → ETH (réel) : dépôt P2SH, payable ; adresse de dépôt d'une
-        // version SegWit future : nouveau devis demandé.
+        // BTC → ETH (real): P2SH deposit, payable; a deposit address with a future SegWit
+        // version: a new quote is requested.
         let mut p2sh = body(json!({ "to": "3PFQuK2rjdCSHxCxT7p4jeVB34Fva3qwps", "toExtra": null, "value": "100000", "chainId": 999_000_313, "chainKey": "btc" }), &btc, "100000", "alt-vm");
         p2sh["amountOut"] = pay(1, NATIVE, "31776200000000000");
         p2sh["amountOutMin"] = pay(1, NATIVE, "31776200000000000");
@@ -684,8 +680,8 @@ mod tests {
         padded(&wallet_flow::parse_evm_address(address).unwrap())
     }
 
-    /// Événements de la vraie simulation du 07/10/2026 (0,01 ETH → USDC,
-    /// Ethereum, mouvements d'ETH tracés), réduits à ceux qui comptent.
+    /// Events from the real simulation on 2026-10-07 (0.01 ETH → USDC, Ethereum, ETH
+    /// movements traced), trimmed to the ones that matter.
     #[test]
     fn router_simulation_is_verified() {
         let transfer = evm_sign::keccak(b"Transfer(address,address,uint256)");
@@ -711,24 +707,24 @@ mod tests {
         };
         let ok = |logs: Vec<SimulatedLog>| verify_router(&[SimulatedCall { success: true, logs }], &expected);
         assert_eq!(ok(real()).unwrap(), 25_449_094);
-        // Moins que le minimum à l'adresse de l'utilisateur.
+        // Less than the minimum to the user's address.
         let mut short = real();
         short.pop();
         short[2] = log(USDC, vec![transfer, topic_addr(executor), topic_addr(USER)], 25_000_000);
         assert!(ok(short).unwrap_err().to_string().contains("minimum"));
-        // USDC livrés à quelqu'un d'autre.
+        // USDC delivered to someone else.
         let mut elsewhere = real();
         elsewhere[2] = log(USDC, vec![transfer, topic_addr(executor), topic_addr(router)], 25_194_603);
         elsewhere.pop();
         assert!(ok(elsewhere).is_err());
-        // Plus d'ETH que prévu, ou un jeton de l'utilisateur en plus.
+        // More ETH than expected, or an extra token from the user.
         let mut more = real();
         more.push(log(eth, vec![transfer, topic_addr(USER), topic_addr(router)], 1));
         assert!(ok(more).unwrap_err().to_string().contains("au lieu de"));
         let mut other_token = real();
         other_token.push(log("0xdac17f958d2ee523a2206206994597c13d831ec7", vec![transfer, topic_addr(USER), topic_addr(router)], 5));
         assert!(ok(other_token).unwrap_err().to_string().contains("autre crypto"));
-        // Jeton vendu : autorisation au routeur seulement, au plus le montant.
+        // Token sold: approval to the router only, at most the amount.
         let usdc_sell = Expected { sell_token: Some(wallet_flow::parse_evm_address(USDC).unwrap()), buy_token: None, amount: 50_000_000, min_out: 1, ..expected };
         let approve = |spender: &str, amount: u128| log(USDC, vec![approval, topic_addr(USER), topic_addr(spender)], amount);
         let sell = |approval: SimulatedLog| {
@@ -742,20 +738,20 @@ mod tests {
         assert!(sell(approve(router, 50_000_000)).is_ok());
         assert!(sell(approve(executor, 50_000_000)).unwrap_err().to_string().contains("autre contrat"));
         assert!(sell(approve(router, 50_000_001)).is_err());
-        // Simulation en échec.
+        // Failed simulation.
         assert!(verify_router(&[SimulatedCall { success: false, logs: real() }], &expected).unwrap_err().to_string().contains("échouerait"));
     }
 
-    /// Même requête que l'app (`action_params`), avec la clé de démo.
+    /// Same request as the app (`action_params`), with the demo key.
     fn demo_quote(from: &Asset, to: &Asset, amount: u128, sender: &str, recipient: &str) -> Quote {
         let params = action_params(from, to, amount, sender, recipient);
         let body: Value = client().get(format!("{API_BASE}/getAction")).header("x-api-key", DEMO_KEY).query(&params).send().unwrap().json().unwrap();
         parse_action(&body, from, to, amount).unwrap_or_else(|e| panic!("{e} : {}", body.to_string().chars().take(400).collect::<String>()))
     }
 
-    /// Réel (clé de démo, rien n'est diffusé) : ETH → USDC sur Ethereum ;
-    /// la transaction du routeur, simulée depuis un compte public pourvu
-    /// (Vitalik), passe `verify_router` ; un minimum gonflé est refusé.
+    /// Live (demo key, nothing is broadcast): ETH → USDC on Ethereum; the router
+    /// transaction, simulated from a funded public account (Vitalik's), passes
+    /// `verify_router`; an inflated minimum is refused.
     /// `cargo test -- --ignored real_moonpay_trade_router --nocapture`
     #[test]
     #[ignore]
@@ -781,8 +777,8 @@ mod tests {
         assert!(verify_router(&simulated, &inflated).is_err());
     }
 
-    /// Exploration (clé de démo) : forme des adresses de dépôt par réseau de
-    /// départ, depuis des adresses dérivées d'une graine fictive.
+    /// Exploration (demo key): shape of the deposit addresses per source network, from
+    /// addresses derived from a dummy seed.
     #[test]
     #[ignore]
     fn explore_deposit_address_formats() {
@@ -803,8 +799,8 @@ mod tests {
         }
     }
 
-    /// Réel (clé de démo) : dépôts — ETH → XMR (adresse de don du projet
-    /// Monero), BTC → ETH, XRP → ETH (tag) — lus et vérifiés.
+    /// Live (demo key): deposits (ETH → XMR to the Monero project's donation address,
+    /// BTC → ETH, XRP → ETH with a tag), read and checked.
     /// `cargo test -- --ignored real_moonpay_trade_deposits --nocapture`
     #[test]
     #[ignore]
@@ -822,7 +818,7 @@ mod tests {
                     println!("{} → {} : {:?}, minimum {} (~{} s)", from.symbol, to.symbol, quote.tx, quote.min_out, quote.duration_secs);
                     assert!(matches!(quote.tx, TradeTx::Deposit { .. }));
                 }
-                // Bitcoin : dépôt d'une forme non payable (version SegWit future), refusé proprement.
+                // Bitcoin: a deposit of a non-payable shape (future SegWit version), refused cleanly.
                 Err(e) if from.network == "btc_mainnet" && e.to_string().contains("nouveau devis") => println!("BTC → ETH : {e} ({})", body["tx"]["to"]),
                 Err(e) => panic!("{e}"),
             }

@@ -10,11 +10,11 @@ use zeroize::Zeroize;
 
 type HmacSha512 = Hmac<Sha512>;
 
-/// Dérive une clé privée à partir de la seed maîtresse (BIP32) et d'un chemin de dérivation.
+/// Derives a private key from the master seed (BIP32) and a derivation path.
 ///
-/// ATTENTION : ceci contourne volontairement Shamir/PGP pour l'expérimentation
-/// `wallet_demo`. Dans le flux normal du projet, la seed ne doit jamais exister
-/// en clair hors de la reconstruction à partir des parts déchiffrées.
+/// The caller is responsible for the seed: in the app's normal flow it only exists in the
+/// clear right after being rebuilt from the decrypted shares (the `wallet_demo` examples use
+/// throwaway entropy instead).
 fn derive_key_from_path(seed: &[u8], path: &str) -> Result<SigningKey> {
     let root = XPrv::new(seed).context("dérivation BIP32 racine impossible")?;
     let path: DerivationPath = path.parse().context("chemin de dérivation invalide")?;
@@ -27,39 +27,39 @@ fn derive_key_from_path(seed: &[u8], path: &str) -> Result<SigningKey> {
     Ok(child.private_key().clone())
 }
 
-/// Dérive la clé privée EVM n°`index` (chemin m/44'/60'/0'/0/{index})
-/// et retourne aussi l'adresse EVM correspondante (20 octets).
+/// Derives EVM private key no. `index` (path m/44'/60'/0'/0/{index}) and also
+/// returns the matching EVM address (20 bytes).
 pub fn derive_evm_key(seed: &[u8], index: u32) -> Result<(SigningKey, [u8; 20])> {
     let signing_key = derive_key_from_path(seed, &format!("m/44'/60'/0'/0/{index}"))?;
     let address = evm_address_from_key(&signing_key);
     Ok((signing_key, address))
 }
 
-/// Dérive la clé privée Bitcoin testnet n°`index` (chemin m/44'/1'/0'/0/{index},
-/// coin_type 1' = testnet) et retourne le hash160 (RIPEMD160(SHA256(pubkey compressée)))
-/// utilisé pour construire l'adresse P2WPKH.
+/// Derives Bitcoin testnet private key no. `index` (path m/44'/1'/0'/0/{index},
+/// coin_type 1' = testnet) and returns the hash160 (RIPEMD160(SHA256(compressed
+/// pubkey))) used to build the P2WPKH address.
 pub fn derive_btc_testnet_key(seed: &[u8], index: u32) -> Result<(SigningKey, [u8; 20])> {
     let signing_key = derive_key_from_path(seed, &format!("m/44'/1'/0'/0/{index}"))?;
     let hash160 = btc_hash160_from_key(&signing_key);
     Ok((signing_key, hash160))
 }
 
-/// Dérive la clé privée Bitcoin MAINNET n°`index` (chemin m/44'/0'/0'/0/{index},
-/// coin_type 0' = Bitcoin mainnet — chemin distinct du testnet, donc adresse
-/// distincte pour un même index : jamais interchangeables, contrairement à
-/// EVM/Solana où la même adresse sert sur toutes les variantes du réseau).
+/// Derives Bitcoin MAINNET private key no. `index` (path m/44'/0'/0'/0/{index},
+/// coin_type 0' = Bitcoin mainnet). The path differs from testnet, so the address
+/// differs for the same index: the two are never interchangeable, unlike EVM/Solana
+/// where the same address works on every variant of the network.
 pub fn derive_btc_mainnet_key(seed: &[u8], index: u32) -> Result<(SigningKey, [u8; 20])> {
     let signing_key = derive_key_from_path(seed, &format!("m/44'/0'/0'/0/{index}"))?;
     let hash160 = btc_hash160_from_key(&signing_key);
     Ok((signing_key, hash160))
 }
 
-/// Calcule l'adresse EVM (20 derniers octets du Keccak256 de la clé publique non compressée,
-/// préfixe 0x04 exclu).
+/// Computes the EVM address (last 20 bytes of the Keccak256 of the uncompressed public key,
+/// 0x04 prefix excluded).
 pub fn evm_address_from_key(signing_key: &SigningKey) -> [u8; 20] {
     let verifying_key = signing_key.verifying_key();
     let uncompressed = verifying_key.to_encoded_point(false);
-    let pubkey_bytes = &uncompressed.as_bytes()[1..]; // on retire le préfixe 0x04
+    let pubkey_bytes = &uncompressed.as_bytes()[1..]; // drop the 0x04 prefix
 
     let hash = Keccak256::digest(pubkey_bytes);
     let mut address = [0u8; 20];
@@ -67,10 +67,10 @@ pub fn evm_address_from_key(signing_key: &SigningKey) -> [u8; 20] {
     address
 }
 
-/// Applique la casse de contrôle EIP-55 à une adresse EVM déjà en hexadécimal minuscule :
-/// la casse de chaque lettre encode un checksum de l'adresse elle-même (Keccak256), sans
-/// changer sa valeur. Sert à la fois à l'affichage (`format_address`) et à la validation
-/// d'une adresse saisie par l'utilisateur (`wallet_flow::parse_evm_address`).
+/// Applies EIP-55 checksum casing to an EVM address already in lowercase hex: the case of
+/// each letter encodes a checksum of the address itself (Keccak256) without changing its
+/// value. Used both for display (`format_address`) and to validate an address entered by
+/// the user (`wallet_flow::parse_evm_address`).
 fn eip55_checksum(hex_lower: &str) -> String {
     let hash_hex = hex::encode(Keccak256::digest(hex_lower.as_bytes()));
     hex_lower
@@ -86,60 +86,59 @@ fn eip55_checksum(hex_lower: &str) -> String {
         .collect()
 }
 
-/// Adresse EVM au format EIP-55 (casse de contrôle) : une seule lettre mal recopiée
-/// change la casse attendue à cet endroit, ce qui permet à `parse_evm_address` de
-/// détecter une faute de frappe qui resterait sinon invisible (hex par ailleurs valide).
+/// EVM address in EIP-55 format (checksum casing): a single miscopied letter changes the
+/// expected case at that position, which lets `parse_evm_address` catch a typo that
+/// would otherwise go unnoticed (the hex being otherwise valid).
 pub fn format_address(address: &[u8; 20]) -> String {
     format!("0x{}", eip55_checksum(&hex::encode(address)))
 }
 
-/// hash160 = RIPEMD160(SHA256(clé publique compressée)), tel qu'utilisé par Bitcoin
-/// pour construire une adresse P2WPKH.
-/// Dérive la clé Zcash transparente n°`index` (chemin BIP44
-/// m/44'/133'/0'/0/{index}, coin_type 133' = Zcash dans SLIP-0044 — même chemin
-/// que Ledger et les portefeuilles Zcash pour les adresses transparentes) et
-/// retourne le hash160 de la clé publique compressée (adresse P2PKH t1…, voir
-/// `zcash::p2pkh_address`).
+/// Derives transparent Zcash key no. `index` (BIP44 path m/44'/133'/0'/0/{index},
+/// coin_type 133' = Zcash in SLIP-0044, the same path Ledger and Zcash wallets use
+/// for transparent addresses) and returns the hash160 of the compressed public key
+/// (P2PKH address t1…, see `zcash::p2pkh_address`).
 pub fn derive_zec_key(seed: &[u8], index: u32) -> Result<(SigningKey, [u8; 20])> {
     let signing_key = derive_key_from_path(seed, &format!("m/44'/133'/0'/0/{index}"))?;
     let hash160 = btc_hash160_from_key(&signing_key);
     Ok((signing_key, hash160))
 }
 
-/// Dérive la clé Dogecoin n°`index` (chemin BIP44 m/44'/3'/0'/0/{index},
-/// coin_type 3' = Dogecoin dans SLIP-0044 — celui de Ledger, Trezor et
-/// Dogecoin Core) et retourne le hash160 de la clé publique compressée
-/// (adresse P2PKH D…, voir `doge::p2pkh_address`).
+/// Derives Dogecoin key no. `index` (BIP44 path m/44'/3'/0'/0/{index}, coin_type 3'
+/// = Dogecoin in SLIP-0044, the one Ledger, Trezor and Dogecoin Core use) and
+/// returns the hash160 of the compressed public key (P2PKH address D…, see
+/// `doge::p2pkh_address`).
 pub fn derive_doge_key(seed: &[u8], index: u32) -> Result<(SigningKey, [u8; 20])> {
     let signing_key = derive_key_from_path(seed, &format!("m/44'/3'/0'/0/{index}"))?;
     let hash160 = btc_hash160_from_key(&signing_key);
     Ok((signing_key, hash160))
 }
 
-/// Dérive la clé Tron n°`index` (chemin BIP44 m/44'/195'/0'/0/{index},
-/// coin_type 195' = Tron dans SLIP-0044 — celui de Ledger, Trezor et TronLink)
-/// et retourne l'adresse (21 octets, préfixe 0x41 ; voir `tron::address_of`).
+/// Derives Tron key no. `index` (BIP44 path m/44'/195'/0'/0/{index}, coin_type 195'
+/// = Tron in SLIP-0044, the one Ledger, Trezor and TronLink use) and returns the
+/// address (21 bytes, 0x41 prefix; see `tron::address_of`).
 pub fn derive_tron_key(seed: &[u8], index: u32) -> Result<(SigningKey, crate::tron::Address)> {
     let signing_key = derive_key_from_path(seed, &format!("m/44'/195'/0'/0/{index}"))?;
     let address = crate::tron::address_of(&signing_key);
     Ok((signing_key, address))
 }
 
-/// Dérive la clé Stacks n°`index` (chemin m/44'/5757'/0'/0/{index}, celui de
-/// Leather et Xverse ; adresse SP… : voir `stacks`).
+/// Derives Stacks key no. `index` (path m/44'/5757'/0'/0/{index}, the one Leather
+/// and Xverse use; SP… address: see `stacks`).
 pub fn derive_stacks_key(seed: &[u8], index: u32) -> Result<SigningKey> {
     derive_key_from_path(seed, &format!("m/44'/5757'/0'/0/{index}"))
 }
 
-/// Dérive la clé XRP n°`index` (chemin BIP44 m/44'/144'/0'/0/{index},
-/// coin_type 144' = XRP dans SLIP-0044 — celui de Ledger et Xaman) et retourne
-/// l'identifiant de compte (hash160 de la clé compressée ; voir `xrp`).
+/// Derives XRP key no. `index` (BIP44 path m/44'/144'/0'/0/{index}, coin_type 144'
+/// = XRP in SLIP-0044, the one Ledger and Xaman use) and returns the account ID
+/// (hash160 of the compressed key; see `xrp`).
 pub fn derive_xrp_key(seed: &[u8], index: u32) -> Result<(SigningKey, crate::xrp::AccountId)> {
     let signing_key = derive_key_from_path(seed, &format!("m/44'/144'/0'/0/{index}"))?;
     let account = btc_hash160_from_key(&signing_key);
     Ok((signing_key, account))
 }
 
+/// hash160 = RIPEMD160(SHA256(compressed public key)), as Bitcoin uses it to build a
+/// P2WPKH address.
 fn btc_hash160_from_key(signing_key: &SigningKey) -> [u8; 20] {
     let compressed = signing_key.verifying_key().to_encoded_point(true);
     let sha256 = Sha256::digest(compressed.as_bytes());
@@ -149,53 +148,52 @@ fn btc_hash160_from_key(signing_key: &SigningKey) -> [u8; 20] {
     out
 }
 
-/// Formatte une adresse Bitcoin testnet P2WPKH (bech32, préfixe "tb1q...").
+/// Formats a Bitcoin testnet P2WPKH address (bech32, "tb1q..." prefix).
 pub fn format_btc_testnet_address(hash160: &[u8; 20]) -> Result<String> {
-    let mut data = vec![bech32::u5::try_from_u8(0).unwrap()]; // version témoin 0 (P2WPKH)
+    let mut data = vec![bech32::u5::try_from_u8(0).unwrap()]; // witness version 0 (P2WPKH)
     data.extend(hash160.to_base32());
     bech32::encode("tb", data, Variant::Bech32).context("encodage bech32 impossible")
 }
 
-/// Formatte une adresse Bitcoin MAINNET P2WPKH (bech32, préfixe "bc1q...").
+/// Formats a Bitcoin MAINNET P2WPKH address (bech32, "bc1q..." prefix).
 pub fn format_btc_mainnet_address(hash160: &[u8; 20]) -> Result<String> {
     let mut data = vec![bech32::u5::try_from_u8(0).unwrap()];
     data.extend(hash160.to_base32());
     bech32::encode("bc", data, Variant::Bech32).context("encodage bech32 impossible")
 }
 
-/// Dérive la clé privée THORChain n°`index` (chemin m/44'/931'/0'/0/{index},
-/// coin_type 931' — enregistré officiellement pour RUNE dans SLIP-0044) et
-/// retourne le hash160 correspondant. Même courbe (secp256k1) et même calcul
-/// de hash160 que Bitcoin : THORChain, comme les autres chaînes Cosmos SDK,
-/// réutilise exactement RIPEMD160(SHA256(clé publique compressée)) pour
-/// dériver son adresse. Utilisée uniquement pour recevoir les frais
-/// d'affiliation d'un swap (voir api::swap_quote) — jamais pour envoyer,
-/// aucune construction de transaction RUNE dans cette v1.
+/// Derives THORChain private key no. `index` (path m/44'/931'/0'/0/{index},
+/// coin_type 931', officially registered for RUNE in SLIP-0044) and returns the
+/// matching hash160. Same curve (secp256k1) and same hash160 computation as
+/// Bitcoin: THORChain, like other Cosmos SDK chains, reuses exactly
+/// RIPEMD160(SHA256(compressed public key)) to derive its address. Used to receive
+/// a swap's affiliate fees (see api::swap_quote) and to pay for registering the
+/// affiliate name (see `native_deposit`); never for regular sends.
 pub fn derive_thor_key(seed: &[u8], index: u32) -> Result<(SigningKey, [u8; 20])> {
     let signing_key = derive_key_from_path(seed, &format!("m/44'/931'/0'/0/{index}"))?;
     let hash160 = btc_hash160_from_key(&signing_key);
     Ok((signing_key, hash160))
 }
 
-/// Clé de base Monero n°`index` : clé BIP32 secp256k1 du chemin
-/// m/44'/128'/{index}'/0/0 — même chemin et même usage que l'app Monero de
-/// Ledger (`monero_init_private_key`) ; la clé de dépense en est tirée par
-/// keccak (voir `monero::spend_key`).
+/// Monero base key no. `index`: the secp256k1 BIP32 key at path
+/// m/44'/128'/{index}'/0/0, the same path and use as Ledger's Monero app
+/// (`monero_init_private_key`); the spend key is drawn from it with keccak (see
+/// `monero::spend_key`).
 pub fn derive_monero_base_key(seed: &[u8], index: u32) -> Result<zeroize::Zeroizing<[u8; 32]>> {
     let key = derive_key_from_path(seed, &format!("m/44'/128'/{index}'/0/0"))?;
     Ok(zeroize::Zeroizing::new(key.to_bytes().into()))
 }
 
-/// Formatte une adresse THORChain (bech32, préfixe "thor1...") — comme
-/// Bitcoin mais SANS octet de version témoin (pas de SegWit sur Cosmos SDK) :
-/// le hash160 est encodé directement.
+/// Formats a THORChain address (bech32, "thor1..." prefix), like Bitcoin but
+/// WITHOUT a witness version byte (no SegWit on Cosmos SDK): the hash160 is encoded
+/// directly.
 pub fn format_thor_address(hash160: &[u8; 20]) -> Result<String> {
     bech32::encode("thor", hash160.to_base32(), Variant::Bech32).context("encodage bech32 impossible")
 }
 
-/// Dérivation SLIP-0010 pour ed25519 : contrairement à BIP32/secp256k1, la dérivation
-/// non-durcie n'existe pas sur cette courbe (pas d'arithmétique de point publique
-/// exploitable), donc TOUS les niveaux du chemin sont durcis (indices "'").
+/// SLIP-0010 derivation for ed25519: unlike BIP32/secp256k1, non-hardened derivation
+/// does not exist on this curve (no usable public point arithmetic), so EVERY level
+/// of the path is hardened ("'" indexes).
 fn slip10_ed25519_master(seed: &[u8]) -> ([u8; 32], [u8; 32]) {
     let mut mac = HmacSha512::new_from_slice(b"ed25519 seed").expect("clé HMAC de taille valide");
     mac.update(seed);
@@ -208,7 +206,7 @@ fn slip10_ed25519_master(seed: &[u8]) -> ([u8; 32], [u8; 32]) {
 }
 
 fn slip10_ed25519_child(parent_key: &[u8; 32], parent_chain_code: &[u8; 32], index: u32) -> ([u8; 32], [u8; 32]) {
-    let hardened_index = index | 0x8000_0000; // force le durcissement, quel que soit l'appelant
+    let hardened_index = index | 0x8000_0000; // forces hardening, whatever the caller
     let mut mac = HmacSha512::new_from_slice(parent_chain_code).expect("clé HMAC de taille valide");
     mac.update(&[0x00]);
     mac.update(parent_key);
@@ -221,10 +219,10 @@ fn slip10_ed25519_child(parent_key: &[u8; 32], parent_chain_code: &[u8; 32], ind
     (key, chain_code)
 }
 
-/// Clé ed25519 SLIP-10 pour un chemin quelconque, entièrement durci (indices
-/// donnés sans le bit de durcissement, SLIP-10 n'admettant que des dérivations
-/// durcies sur ed25519). Tests seulement : recouper les clés renvoyées par un
-/// Ledger (chemin Ledger Live m/44'/501'/i') avec une dérivation indépendante.
+/// SLIP-10 ed25519 key for an arbitrary, fully hardened path (indexes given without
+/// the hardening bit, since SLIP-10 only allows hardened derivation on ed25519).
+/// Tests only: cross-check the keys returned by a Ledger (Ledger Live path
+/// m/44'/501'/i') against an independent derivation.
 #[cfg(test)]
 pub(crate) fn derive_ed25519_path(seed: &[u8], path: &[u32]) -> ed25519_dalek::SigningKey {
     let (mut key, mut chain_code) = slip10_ed25519_master(seed);
@@ -236,8 +234,8 @@ pub(crate) fn derive_ed25519_path(seed: &[u8], path: &[u32]) -> ed25519_dalek::S
     ed25519_dalek::SigningKey::from_bytes(&key)
 }
 
-/// Dérive la clé Solana n°`account_index` (chemin m/44'/501'/{account_index}'/0',
-/// convention utilisée par la plupart des wallets Solana) à partir de la seed maîtresse.
+/// Derives Solana key no. `account_index` (path m/44'/501'/{account_index}'/0', the
+/// convention most Solana wallets use) from the master seed.
 pub fn derive_solana_key(seed: &[u8], account_index: u32) -> ed25519_dalek::SigningKey {
     let (mut key, mut chain_code) = slip10_ed25519_master(seed);
     for index in [44u32, 501, account_index, 0] {
@@ -246,16 +244,16 @@ pub fn derive_solana_key(seed: &[u8], account_index: u32) -> ed25519_dalek::Sign
         chain_code = cc;
     }
     let signing_key = ed25519_dalek::SigningKey::from_bytes(&key);
-    // `ed25519_dalek::SigningKey::from_bytes` copie `key` en interne (et s'efface
-    // elle-même à sa destruction) ; on efface aussi cette copie locale, qui sinon
-    // resterait en clair dans la pile de cette fonction sans raison.
+    // `ed25519_dalek::SigningKey::from_bytes` copies `key` internally (and wipes
+    // itself when dropped); we also wipe this local copy, which would otherwise stay
+    // in the clear on this function's stack for no reason.
     key.zeroize();
     chain_code.zeroize();
     signing_key
 }
 
-/// Dérive la clé Stellar n°`account_index` (SEP-0005 : m/44'/148'/{account_index}',
-/// chemin entièrement durci, celui de Ledger, Lobstr et Freighter).
+/// Derives Stellar key no. `account_index` (SEP-0005: m/44'/148'/{account_index}',
+/// a fully hardened path, the one Ledger, Lobstr and Freighter use).
 pub fn derive_stellar_key(seed: &[u8], account_index: u32) -> ed25519_dalek::SigningKey {
     let (mut key, mut chain_code) = slip10_ed25519_master(seed);
     for index in [44u32, 148, account_index] {
@@ -269,9 +267,9 @@ pub fn derive_stellar_key(seed: &[u8], account_index: u32) -> ed25519_dalek::Sig
     signing_key
 }
 
-/// Dérive la clé NEAR n°`account_index` (m/44'/397'/{account_index}', chemin
-/// entièrement durci de near-seed-phrase, celui des portefeuilles NEAR) ; son
-/// compte implicite est la clé publique en hexadécimal (voir `near`).
+/// Derives NEAR key no. `account_index` (m/44'/397'/{account_index}', the fully
+/// hardened path from near-seed-phrase, the one NEAR wallets use); its implicit
+/// account is the public key in hexadecimal (see `near`).
 pub fn derive_near_key(seed: &[u8], account_index: u32) -> ed25519_dalek::SigningKey {
     let (mut key, mut chain_code) = slip10_ed25519_master(seed);
     for index in [44u32, 397, account_index] {
@@ -285,41 +283,40 @@ pub fn derive_near_key(seed: &[u8], account_index: u32) -> ed25519_dalek::Signin
     signing_key
 }
 
-/// Refus d'une adresse Bitcoin de destination, en clair.
+/// Refusal of a Bitcoin destination address, in plain words.
 pub const BTC_ADDRESS_UNSUPPORTED: &str = "type d'adresse Bitcoin pas encore pris en charge (version SegWit future) : demandez une autre adresse au destinataire";
 pub const BTC_ADDRESS_MISCOPIED: &str = "adresse Bitcoin non reconnue : un caractère semble mal recopié";
 pub const BTC_ADDRESS_OTHER_NETWORK: &str = "adresse d'un autre réseau que Bitcoin";
 
-/// Décode une adresse Bitcoin testnet P2WPKH (bech32) en hash160 (20 octets) :
-/// adresse du portefeuille (la seule forme qu'il utilise).
+/// Decodes a Bitcoin testnet P2WPKH address (bech32) into a hash160 (20 bytes): the
+/// wallet's own address (the only form it uses).
 pub fn parse_btc_testnet_address(address: &str) -> Result<[u8; 20]> {
     p2wpkh_hash160(decode_segwit(address, "tb", "testnet")?)
 }
 
-/// Décode une adresse Bitcoin MAINNET P2WPKH (bech32) en hash160 (20 octets) :
-/// adresse du portefeuille, ou adresse d'entrée THORChain/Maya (toujours
-/// P2WPKH). Une adresse de DESTINATION passe par `btc_recipient_script`.
+/// Decodes a Bitcoin MAINNET P2WPKH address (bech32) into a hash160 (20 bytes): the
+/// wallet's own address, or a THORChain/Maya inbound address (always P2WPKH). A
+/// DESTINATION address goes through `btc_recipient_script`.
 pub fn parse_btc_mainnet_address(address: &str) -> Result<[u8; 20]> {
     p2wpkh_hash160(decode_segwit(address, "bc", "mainnet")?)
 }
 
-/// Script de sortie d'une adresse Bitcoin MAINNET de destination (voir
+/// Output script of a Bitcoin MAINNET destination address (see
 /// `btc_recipient_script`).
 pub fn btc_mainnet_recipient_script(address: &str) -> Result<Vec<u8>> {
     btc_recipient_script(address, false)
 }
 
-/// Script de sortie d'une adresse Bitcoin testnet de destination.
+/// Output script of a Bitcoin testnet destination address.
 pub fn btc_testnet_recipient_script(address: &str) -> Result<Vec<u8>> {
     btc_recipient_script(address, true)
 }
 
-/// Script de sortie (scriptPubKey) d'une adresse Bitcoin de destination :
-/// SegWit v0 (P2WPKH bc1q…, ou P2WSH), Taproot (bc1p…, programme de
-/// 32 octets seulement : une version 1 d'une autre taille n'est protégée par
-/// aucune clé), ou ancienne génération (P2PKH 1…, P2SH 3… ; m…/n… et 2… sur
-/// testnet). Version SegWit future refusée. Refus dits en clair : faute de
-/// frappe, adresse d'un autre réseau.
+/// Output script (scriptPubKey) of a Bitcoin destination address: SegWit v0 (P2WPKH
+/// bc1q…, or P2WSH), Taproot (bc1p…, 32-byte program only: a version 1 program of
+/// any other size is not protected by any key), or legacy (P2PKH 1…, P2SH 3…; m…/n…
+/// and 2… on testnet). Future SegWit versions are refused. Refusals are explained
+/// in plain words: typo, address from another network.
 fn btc_recipient_script(address: &str, testnet: bool) -> Result<Vec<u8>> {
     let address = address.trim();
     let (hrp, network, p2pkh, p2sh, legacy_prefixes) =
@@ -332,7 +329,7 @@ fn btc_recipient_script(address: &str, testnet: bool) -> Result<Vec<u8>> {
         };
     }
     match decode_segwit(address, hrp, network) {
-        // Version 0 : programme de 20 ou 32 octets (vérifié au décodage).
+        // Version 0: 20- or 32-byte program (checked while decoding).
         Ok((0, program)) => Ok([&[0x00, program.len() as u8][..], &program].concat()),
         Ok((1, program)) if program.len() == 32 => Ok([&[0x51, 0x20][..], &program].concat()),
         Ok(_) => Err(anyhow!(BTC_ADDRESS_UNSUPPORTED)),
@@ -341,8 +338,8 @@ fn btc_recipient_script(address: &str, testnet: bool) -> Result<Vec<u8>> {
     }
 }
 
-/// Version et hash160 d'une adresse base58check de 25 octets (somme de
-/// contrôle vérifiée), quel qu'en soit le réseau.
+/// Version and hash160 of a 25-byte base58check address (checksum verified),
+/// whatever its network.
 fn base58check_hash160(address: &str) -> Option<(u8, [u8; 20])> {
     let bytes = bs58::decode(address).into_vec().ok()?;
     if bytes.len() != 25 || Sha256::digest(Sha256::digest(&bytes[..21]))[..4] != bytes[21..] {
@@ -351,8 +348,8 @@ fn base58check_hash160(address: &str) -> Option<(u8, [u8; 20])> {
     Some((bytes[0], bytes[1..21].try_into().ok()?))
 }
 
-/// Adresse d'un script de sortie standard (inverse de `btc_recipient_script`,
-/// pour l'affichage sur un Trezor qui attend l'adresse elle-même).
+/// Address of a standard output script (the inverse of `btc_recipient_script`, for
+/// display on a Trezor, which expects the address itself).
 pub fn btc_script_address(script: &[u8], testnet: bool) -> Result<String> {
     let (hrp, p2pkh, p2sh) = if testnet { ("tb", 0x6f, 0xc4) } else { ("bc", 0x00, 0x05) };
     let base58check = |version: u8, hash: &[u8]| {
@@ -376,23 +373,23 @@ pub fn btc_script_address(script: &[u8], testnet: bool) -> Result<String> {
     }
 }
 
-/// Script de sortie (scriptPubKey) d'une adresse Bitcoin MAINNET SegWit
-/// quelconque : v0 (bc1q…, P2WPKH ou P2WSH) ou v1 (bc1p…, Taproot) —
-/// l'adresse de dépôt d'un pont, que l'app paie sans la détenir.
+/// Output script (scriptPubKey) of any Bitcoin MAINNET SegWit address: v0 (bc1q…,
+/// P2WPKH or P2WSH) or v1 (bc1p…, Taproot). This is a bridge's deposit address,
+/// which the app pays without owning it.
 pub fn btc_mainnet_script_pubkey(address: &str) -> Result<Vec<u8>> {
     let (version, program) = decode_segwit(address, "bc", "mainnet")?;
     anyhow::ensure!(version <= 1, "adresse Bitcoin d'une version SegWit future (v{version}) — refusée");
-    // OP_0, ou OP_1 (0x51) ; puis le programme poussé tel quel.
+    // OP_0, or OP_1 (0x51); then the program pushed as is.
     let mut script = vec![if version == 0 { 0x00 } else { 0x51 }, program.len() as u8];
     script.extend_from_slice(&program);
     Ok(script)
 }
 
-/// Version témoin et programme d'une adresse SegWit (BIP173 / BIP350), avec
-/// les règles que le décodage bech32 seul ne vérifie pas : encodage bech32
-/// pour la version 0 et bech32m au-delà, tailles de programme valides. Sans
-/// elles, une adresse Taproot de 20 octets (v1, bech32m) passait pour une
-/// P2WPKH — le paiement partait vers un autre script que celui saisi.
+/// Witness version and program of a SegWit address (BIP173 / BIP350), with the
+/// rules bech32 decoding alone does not check: bech32 encoding for version 0 and
+/// bech32m above it, valid program sizes. Without them, a 20-byte Taproot address
+/// (v1, bech32m) passed as a P2WPKH, and the payment went to a different script
+/// from the one entered.
 fn decode_segwit(address: &str, expected_hrp: &str, network: &str) -> Result<(u8, Vec<u8>)> {
     let (hrp, data, variant) = bech32::decode(address).context("adresse bech32 invalide")?;
     if hrp != expected_hrp {
@@ -420,7 +417,7 @@ fn p2wpkh_hash160((version, program): (u8, Vec<u8>)) -> Result<[u8; 20]> {
 mod tests {
     use super::*;
 
-    // Vecteurs de test officiels de l'EIP-55 : https://eips.ethereum.org/EIPS/eip-55
+    // Official EIP-55 test vectors: https://eips.ethereum.org/EIPS/eip-55
     #[test]
     fn format_address_matches_eip55_test_vectors() {
         let vectors = [
@@ -435,18 +432,17 @@ mod tests {
         }
     }
 
-    // Garde-fou volontairement redondant : mainnet et testnet Bitcoin dérivent des
-    // adresses DIFFÉRENTES pour le même index (contrairement à EVM/Solana), donc une
-    // régression ici enverrait silencieusement des fonds réels vers une adresse
-    // testnet inutilisable, ou l'inverse.
+    // A deliberately redundant guard: Bitcoin mainnet and testnet derive DIFFERENT
+    // addresses for the same index (unlike EVM/Solana), so a regression here would
+    // silently send real funds to an unusable testnet address, or the other way round.
     #[test]
     fn btc_mainnet_and_testnet_derive_different_addresses_for_the_same_seed_and_index() {
         let seed = [7u8; 32];
         let (_mainnet_key, mainnet_hash160) = derive_btc_mainnet_key(&seed, 0).unwrap();
         let (_testnet_key, testnet_hash160) = derive_btc_testnet_key(&seed, 0).unwrap();
 
-        // Chemins de dérivation différents (coin_type 0' vs 1') : même hash160 non
-        // garanti, et en pratique different ici avec cette seed.
+        // Different derivation paths (coin_type 0' vs 1'): the same hash160 is not
+        // guaranteed, and in practice it differs here with this seed.
         assert_ne!(mainnet_hash160, testnet_hash160);
 
         let mainnet_address = format_btc_mainnet_address(&mainnet_hash160).unwrap();
@@ -454,19 +450,17 @@ mod tests {
         assert!(mainnet_address.starts_with("bc1"), "adresse mainnet inattendue : {mainnet_address}");
         assert!(testnet_address.starts_with("tb1"), "adresse testnet inattendue : {testnet_address}");
 
-        // Round-trip : chaque adresse ne doit se décoder qu'avec le parseur de son
-        // propre réseau, jamais avec celui de l'autre.
+        // Round trip: each address must only decode with its own network's parser, never
+        // with the other one.
         assert_eq!(parse_btc_mainnet_address(&mainnet_address).unwrap(), mainnet_hash160);
         assert_eq!(parse_btc_testnet_address(&testnet_address).unwrap(), testnet_hash160);
         assert!(parse_btc_mainnet_address(&testnet_address).is_err());
         assert!(parse_btc_testnet_address(&mainnet_address).is_err());
     }
 
-    // Ne remplace PAS la vérification empirique obligatoire contre un
-    // portefeuille THORChain de référence avant tout usage réel (voir le plan
-    // de la fonctionnalité swap) : garantit seulement la forme (préfixe,
-    // déterminisme, chemin de dérivation distinct de Bitcoin), pas
-    // l'exactitude de l'adresse produite.
+    // Checks the shape only (prefix, determinism, derivation path distinct from
+    // Bitcoin), not that the address produced is exact: that takes a comparison
+    // against a reference THORChain wallet, which this test does not replace.
     #[test]
     fn thor_address_has_the_expected_bech32_shape_and_is_deterministic() {
         let seed = [7u8; 32];
@@ -477,14 +471,14 @@ mod tests {
         let (_key_again, hash160_again) = derive_thor_key(&seed, 0).unwrap();
         assert_eq!(hash160, hash160_again, "la dérivation doit être déterministe");
 
-        // Chemin de dérivation distinct de Bitcoin (coin_type 931' vs 0') :
-        // aucune raison de produire le même hash160 pour la même seed/index.
+        // Derivation path distinct from Bitcoin (coin_type 931' vs 0'): no reason to
+        // produce the same hash160 for the same seed/index.
         let (_btc_key, btc_hash160) = derive_btc_mainnet_key(&seed, 0).unwrap();
         assert_ne!(hash160, btc_hash160);
     }
 
-    /// Vecteurs de BIP173 / BIP350, et le cas qui passait avant : un programme
-    /// de 20 octets en version 1 (bech32m) lu comme une P2WPKH.
+    /// Vectors from BIP173 / BIP350, plus the case that used to slip through: a 20-byte
+    /// version 1 program (bech32m) read as a P2WPKH.
     #[test]
     fn segwit_addresses_follow_bip173_and_bip350() {
         assert_eq!(
@@ -513,9 +507,9 @@ mod tests {
         assert!(parse_btc_mainnet_address("tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx").is_err(), "testnet");
     }
 
-    /// Adresses de destination : chaque forme standard donne son script
-    /// (vecteurs BIP173/BIP350 ; P2PKH = adresse du bloc genèse, P2SH =
-    /// exemple de la documentation Bitcoin), et le script redonne l'adresse.
+    /// Destination addresses: each standard form gives its script (BIP173/BIP350
+    /// vectors; P2PKH = the genesis block address, P2SH = the example from the Bitcoin
+    /// documentation), and the script gives the address back.
     #[test]
     fn recipient_addresses_of_every_standard_type_give_their_script() {
         for (address, script) in [
@@ -542,8 +536,8 @@ mod tests {
         assert!(btc_script_address(&hex::decode("6a0568656c6c6f").unwrap(), false).is_err(), "OP_RETURN");
     }
 
-    /// Refus dits en clair : version SegWit future ou Taproot d'une autre
-    /// taille, faute de frappe, autre réseau.
+    /// Refusals explained in plain words: future SegWit version or Taproot of another
+    /// size, typo, other network.
     #[test]
     fn rejected_bitcoin_recipients_are_explained_plainly() {
         let message = |address: &str| btc_mainnet_recipient_script(address).unwrap_err().to_string();
@@ -560,7 +554,7 @@ mod tests {
         assert_eq!(message("DH5yaieqoZN36fDVciNyRueRGvGLR3mr7L"), BTC_ADDRESS_OTHER_NETWORK);
         assert_eq!(btc_testnet_recipient_script("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa").unwrap_err().to_string(), BTC_ADDRESS_OTHER_NETWORK);
         assert!(message("tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx").contains("non-mainnet"));
-        // Adresse du portefeuille : P2WPKH seulement, inchangé.
+        // The wallet's own address: P2WPKH only, unchanged.
         assert!(parse_btc_mainnet_address("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa").is_err());
         assert!(parse_btc_mainnet_address("bc1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqzk5jj0").is_err());
     }

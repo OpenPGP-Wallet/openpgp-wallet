@@ -1,19 +1,16 @@
-//! Client Jupiter minimal : swap SOL <-> USDC (même chaîne, contrairement au
-//! swap cross-chain via THORChain — voir thorchain_rpc.rs). Jupiter renvoie
-//! une transaction Solana déjà entièrement construite (message v0, avec table
-//! de correspondance d'adresses) plutôt que des instructions à assembler
-//! nous-mêmes : contrairement au reste de ce projet ("from scratch"), on ne
-//! reconstruit pas ce message à la main — le faire correctement demanderait
-//! de résoudre soi-même le contenu des "address lookup tables" (vérifié
-//! empiriquement : même la route la plus simple, un seul market direct, en
-//! utilise une), un nouveau sous-système à part entière et une source
-//! d'erreur au moins aussi risquée que de faire confiance à la transaction
-//! déjà construite par Jupiter.
+//! Minimal Jupiter client: swaps within Solana (unlike cross-chain swaps through
+//! THORChain, see thorchain_rpc.rs). Jupiter returns a fully built Solana
+//! transaction (v0 message, with an address lookup table) rather than instructions
+//! for us to assemble. Unlike the rest of this project, we do not rebuild this
+//! message by hand: doing it properly would mean resolving the contents of the
+//! address lookup tables ourselves (checked empirically: even the simplest route, a
+//! single direct market, uses one), an entire new subsystem and a source of errors
+//! at least as risky as trusting the transaction Jupiter has already built.
 //!
-//! Le seul geste effectué ici sur cette transaction : la signer. Avant ça,
-//! `verify_fee_payer` vérifie que le premier compte du message (le payeur des
-//! frais / premier signataire) est bien NOTRE PROPRE clé — un garde-fou
-//! minimal mais réel contre une réponse malformée ou inattendue.
+//! The only thing done to this transaction here is signing it. Before that,
+//! `verify_fee_payer` checks that the message's first account (the fee payer /
+//! first signer) is indeed OUR OWN key: a minimal but real safeguard against a
+//! malformed or unexpected response.
 
 use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
@@ -30,69 +27,62 @@ fn shared_client() -> &'static reqwest::blocking::Client {
     })
 }
 
-/// Offre gratuite de l'API Jupiter, sans clé requise — vérifiée par un appel
-/// réel avant d'être inscrite ici (quote + swap-instructions/swap testés en
-/// direct, réponses conformes à ce qui suit).
+/// Jupiter API free tier, no key required; checked with a real call before being
+/// written here (quote + swap-instructions/swap tested live, responses matching
+/// what follows).
 const JUPITER_BASE: &str = "https://lite-api.jup.ag";
 
 pub const SOL_MINT: &str = "So11111111111111111111111111111111111111112";
 
-/// Adresse Solana qui reçoit les frais de plateforme de CHAQUE swap Jupiter
-/// effectué depuis cette app, quelle que soit l'installation qui le déclenche
-/// — une seule adresse fixe (celle du développeur), pas une adresse dérivée
-/// par installation (sinon chaque utilisateur se paierait à lui-même), même
-/// principe que `thorchain_rpc::AFFILIATE_ADDRESS`. Fournie par l'utilisateur
-/// lui-même (sa propre adresse Solana, déjà affichée dans l'app) plutôt que
-/// dérivée : contrairement à THORChain, Solana est un réseau que cette app
-/// gère déjà nativement, aucune dérivation supplémentaire n'est nécessaire.
+/// Solana address that receives the platform fees of EVERY Jupiter swap made from
+/// this app, whichever installation triggers it: a single fixed address (the
+/// developer's), not one derived per installation (otherwise every user would be
+/// paying themselves). Same principle as `thorchain_rpc::AFFILIATE_ADDRESS`. It is
+/// the developer's own Solana address rather than a derived one: unlike THORChain,
+/// Solana is a network this app already supports natively, so no extra derivation
+/// is needed.
 pub const AFFILIATE_ADDRESS: &str = "F1YBYFJWBteTwi5eS5BjdSy3xDGGv8bhHBJ54n78nzdc";
 
-/// 80 points de base = 0,80 %. Toujours prélevé en USDC (le compte de frais
-/// est l'ATA USDC de `AFFILIATE_ADDRESS`) — valide dans les deux sens
-/// (SOL->USDC ou USDC->SOL) puisque l'USDC est systématiquement soit l'actif
-/// d'entrée soit celui de sortie, la seule contrainte imposée par Jupiter
-/// pour un swap "ExactIn" (voir sa doc : le compte de frais doit avoir le
-/// mint de l'un des deux actifs du swap).
+/// 80 basis points = 0.80%. Taken in one of the two swapped tokens (see
+/// `fee_mint_candidates`): for an "ExactIn" swap, Jupiter requires the fee account
+/// to hold the mint of one of the swap's two assets.
 pub const AFFILIATE_FEE_BPS: u32 = 80;
 
 pub struct JupiterQuote {
-    /// Réponse de devis brute, à retransmettre TELLE QUELLE à `/swap` (Jupiter
-    /// s'attend à recevoir exactement l'objet qu'il a renvoyé, pas une
-    /// reconstruction) — jamais modifiée ni reconstruite ici.
+    /// Raw quote response, passed AS IS to `/swap` (Jupiter expects to receive exactly
+    /// the object it returned, not a reconstruction); never modified or rebuilt here.
     raw: Value,
-    /// Montant de sortie attendu, dans la plus petite unité de l'actif de
-    /// destination — extrait juste pour l'affichage.
+    /// Expected output amount, in the destination asset's smallest unit; extracted only
+    /// for display.
     pub out_amount: u64,
-    /// Jeton des frais d'affiliation (`None` : échange sans frais, faute de
-    /// compte de frais existant pour l'un des deux jetons, voir `api`).
+    /// Token for the affiliate fee (`None`: fee-free swap, because no fee account
+    /// exists for either token, see `api`).
     pub fee_mint: Option<[u8; 32]>,
 }
 
-/// `amount` dans la plus petite unité de l'actif source (lamports pour SOL,
-/// micro-USDC pour l'USDC). `slippage_bps` : tolérance de glissement de prix,
-/// en points de base (ex: 50 = 0,50 %). `fee_mint` : jeton dont le compte de
-/// frais de l'affilié recevra les 0,80 % (doit exister, voir
-/// `fee_mint_candidates`) ; `None` : sans frais.
-/// Teneurs de marché « prop AMM » exclus des devis : leur prix, tiré d'un
-/// oracle, ne vaut que quelques blocs (« replay: slot window ») — périmé le
-/// temps que l'app simule la transaction sur son propre nœud, l'échange
-/// échouait en glissement (erreur 6001, constaté le 05/10/2026 avec HumidiFi
-/// sur un vrai SOL → USDC). Coût mesuré de l'exclusion sur SOL → USDC :
-/// 0,0003 % (routes Whirlpool, Manifest…). Libellés de Jupiter
-/// (`/swap/v1/program-id-to-label`), espaces encodés.
+/// "Prop AMM" market makers excluded from quotes: their oracle-based price is only
+/// valid for a few blocks ("replay: slot window"). By the time the app had
+/// simulated the transaction on its own node the price was stale, and the swap
+/// failed on slippage (error 6001, seen on 2026-10-05 with HumidiFi on a real SOL →
+/// USDC). Measured cost of the exclusion on SOL → USDC: 0.0003% (Whirlpool,
+/// Manifest… routes). Labels from Jupiter (`/swap/v1/program-id-to-label`), with
+/// spaces encoded.
 const EXCLUDED_DEXES: &str = "HumidiFi,SolFi,SolFi%20V2,TesseraV,ZeroFi,GoonFi%20V2,Obric%20V2,AlphaQ,BisonFi,Aquifer";
 
-/// Plafond des frais de priorité demandé à Jupiter (0,001 SOL) — voir
-/// `build_swap_transaction` ; aussi gardé de côté par le « Max » d'un
-/// échange (`api::swap_max`).
+/// Priority fee cap requested from Jupiter (0.001 SOL), see
+/// `build_swap_transaction`; also set aside by a swap's "Max" (`api::swap_max`).
 pub const PRIORITY_FEE_MAX_LAMPORTS: u64 = 1_000_000;
 
+/// `amount` in the source asset's smallest unit (lamports for SOL, micro-USDC for
+/// USDC). `slippage_bps`: price slippage tolerance, in basis points (e.g. 50 = 0.50%).
+/// `fee_mint`: the token whose affiliate fee account will receive the 0.80% (it must
+/// exist, see `fee_mint_candidates`); `None`: no fee.
 pub fn quote(input_mint: &str, output_mint: &str, amount: u64, slippage_bps: u32, fee_mint: Option<[u8; 32]>) -> Result<JupiterQuote> {
     quote_with_fee(input_mint, output_mint, amount, slippage_bps, fee_mint, AFFILIATE_FEE_BPS)
 }
 
-/// Comme `quote`, au taux `fee_bps` (staking liquide : plus bas, voir
-/// `swap_routes::staking_fee_bps`). Taux nul : aucun compte de frais.
+/// Like `quote`, at the rate `fee_bps` (liquid staking: lower, see
+/// `swap_routes::staking_fee_bps`). A zero rate means no fee account.
 pub fn quote_with_fee(input_mint: &str, output_mint: &str, amount: u64, slippage_bps: u32, fee_mint: Option<[u8; 32]>, fee_bps: u32) -> Result<JupiterQuote> {
     let fee_mint = fee_mint.filter(|_| fee_bps > 0);
     let fee = if fee_mint.is_some() { format!("&platformFeeBps={fee_bps}") } else { String::new() };
@@ -118,11 +108,11 @@ pub fn quote_with_fee(input_mint: &str, output_mint: &str, amount: u64, slippage
     Ok(JupiterQuote { raw, out_amount, fee_mint })
 }
 
-/// Comptes de frais possibles pour un échange, par ordre de préférence : le
-/// jeton reçu, puis le jeton vendu — Jupiter exige un compte de frais de
-/// l'un des deux jetons échangés, EXISTANT (constaté : un compte USDC faisait
-/// échouer SOL → USDT, « Account not associated with this Mint », et un compte
-/// absent échoue en 6025 « InvalidTokenAccount »). Jamais en SOL natif.
+/// Possible fee accounts for a swap, in order of preference: the token received,
+/// then the token sold. Jupiter requires an EXISTING fee account for one of the two
+/// swapped tokens (seen in practice: a USDC account made SOL → USDT fail with
+/// "Account not associated with this Mint", and a missing account fails with 6025
+/// "InvalidTokenAccount"). Never in native SOL.
 pub fn fee_mint_candidates(input_mint: &str, output_mint: &str) -> Vec<[u8; 32]> {
     [output_mint, input_mint]
         .into_iter()
@@ -131,8 +121,8 @@ pub fn fee_mint_candidates(input_mint: &str, output_mint: &str) -> Vec<[u8; 32]>
         .collect()
 }
 
-/// Programme de jetons d'un mint pour son compte de frais : Token-2022 pour
-/// les xStocks du registre, programme classique sinon.
+/// Token program of a mint for its fee account: Token-2022 for the registry's
+/// xStocks, the classic program otherwise.
 pub fn fee_token_program(mint: &[u8; 32]) -> [u8; 32] {
     let token_2022 = crate::tokens::TOKENS.iter().flat_map(|t| t.deployments).any(|d| {
         matches!(d.kind, crate::tokens::TokenKind::Spl2022 { mint: m } if bs58::decode(m).into_vec().ok().as_deref() == Some(mint.as_slice()))
@@ -144,8 +134,8 @@ pub fn fee_token_program(mint: &[u8; 32]) -> [u8; 32] {
     }
 }
 
-/// Compte de frais (compte associé de `AFFILIATE_ADDRESS`, du bon programme)
-/// pour le jeton `mint`.
+/// Fee account (associated account of `AFFILIATE_ADDRESS`, under the right program)
+/// for the token `mint`.
 pub fn fee_account(mint: &[u8; 32]) -> Result<[u8; 32]> {
     let owner: [u8; 32] = bs58::decode(AFFILIATE_ADDRESS)
         .into_vec()
@@ -162,30 +152,28 @@ struct SwapResponseJson {
     error: Option<String>,
 }
 
-/// Construit la transaction de swap (encore NON SIGNÉE, emplacement de
-/// signature à zéro) — voir la doc du module : jamais reconstruite à la main,
-/// seulement signée telle quelle après vérification du payeur de frais.
+/// Builds the swap transaction (still UNSIGNED, signature slot zeroed); see the
+/// module docs: never rebuilt by hand, only signed as is after checking the fee
+/// payer.
 pub fn build_swap_transaction(quote: &JupiterQuote, user_pubkey: &str) -> Result<Vec<u8>> {
-    // Compte de frais : celui du jeton choisi au devis (voir `fee_mint_candidates`) ;
-    // aucun pour un devis sans frais.
+    // Fee account: the one for the token chosen at quote time (see
+    // `fee_mint_candidates`); none for a fee-free quote.
     let mut body = serde_json::json!({
         "quoteResponse": quote.raw,
         "userPublicKey": user_pubkey,
-        // Enveloppe/désenveloppe automatiquement le SOL natif en wSOL le
-        // temps du swap (obligatoire pour swapper depuis/vers du SOL natif,
-        // qui n'est pas lui-même un jeton SPL) — comportement par défaut de
-        // Jupiter, explicité ici pour ne pas dépendre d'une valeur implicite.
+        // Automatically wraps/unwraps native SOL into wSOL for the duration of the swap
+        // (required to swap from/to native SOL, which is not itself an SPL token). This is
+        // Jupiter's default behavior, made explicit here so we do not depend on an
+        // implicit value.
         "wrapAndUnwrapSol": true,
-        // Frais de priorité plafonnés explicitement (1 000 000 lamports, soit
-        // 0,001 SOL) plutôt que laissés au choix automatique de Jupiter : la
-        // vérification des effets avant signature (`api::check_swap_effects`)
-        // refuse toute perte au-delà du montant + un budget de frais fixe —
-        // sans plafond, une congestion réseau pourrait pousser Jupiter
-        // au-delà de ce budget et provoquer des refus légitimes.
+        // Priority fee capped explicitly (1,000,000 lamports, i.e. 0.001 SOL) rather than
+        // left to Jupiter's automatic choice: the effects check before signing
+        // (`api::check_swap_effects`) refuses any loss beyond the amount + a fixed fee
+        // budget, and without a cap, network congestion could push Jupiter past that
+        // budget and cause legitimate refusals.
         "prioritizationFeeLamports": {
-            // "medium" et pas "high" : mesuré en direct, "high" faisait monter
-            // le coût réel à ~915 000 lamports contre ~25 000-105 000 par
-            // défaut — le but est un PLAFOND, pas de payer plus cher.
+            // "medium" and not "high": measured live, "high" pushed the real cost to ~915,000
+            // lamports versus ~25,000-105,000 by default. The goal is a CAP, not paying more.
             "priorityLevelWithMaxLamports": { "maxLamports": PRIORITY_FEE_MAX_LAMPORTS, "priorityLevel": "medium" }
         },
     });
@@ -208,10 +196,10 @@ pub fn build_swap_transaction(quote: &JupiterQuote, user_pubkey: &str) -> Result
         .context("transaction Jupiter illisible (base64 invalide)")
 }
 
-/// Lit un entier "compact-u16" (shortvec) tel qu'utilisé par le format de
-/// message Solana — lecture, symétrique de `sol_tx::write_shortvec_len`
-/// (qui ne fait qu'écrire). Nécessaire ici pour localiser le premier compte
-/// du message (le payeur de frais) sans avoir à tout désérialiser.
+/// Reads a "compact-u16" (shortvec) integer as used by the Solana message format;
+/// the reading counterpart of `sol_tx::write_shortvec_len` (which only writes).
+/// Needed here to locate the message's first account (the fee payer) without
+/// deserializing everything.
 fn read_shortvec_len(bytes: &[u8]) -> Result<(usize, usize)> {
     let mut len = 0usize;
     let mut shift = 0u32;
@@ -225,11 +213,11 @@ fn read_shortvec_len(bytes: &[u8]) -> Result<(usize, usize)> {
     Err(anyhow!("longueur shortvec illisible"))
 }
 
-/// Découpe une transaction Solana brute (non signée, un seul emplacement de
-/// signature) en (offset de début du message, message emprunté). Rejette
-/// toute transaction demandant plus d'un signataire : ce projet ne construit
-/// jamais de swap multi-signataires, une telle réponse serait inattendue et
-/// mieux vaut échouer bruyamment que de deviner quoi faire.
+/// Splits a raw Solana transaction (unsigned, a single signature slot) into
+/// (message start offset, borrowed message). Rejects any transaction asking for
+/// more than one signer: this project never builds multi-signer swaps, such a
+/// response would be unexpected, and failing loudly is better than guessing what to
+/// do.
 pub(crate) fn split_single_signer_transaction(raw_tx: &[u8]) -> Result<(usize, &[u8])> {
     let (sig_count, consumed) = read_shortvec_len(raw_tx)?;
     anyhow::ensure!(sig_count == 1, "transaction Jupiter à {sig_count} signataires, un seul attendu");
@@ -238,14 +226,14 @@ pub(crate) fn split_single_signer_transaction(raw_tx: &[u8]) -> Result<(usize, &
     Ok((message_start, &raw_tx[message_start..]))
 }
 
-/// Premier compte du message = le payeur des frais (et unique signataire
-/// attendu, voir `split_single_signer_transaction`) — vérifié comme devant
-/// être NOTRE PROPRE clé avant toute signature (voir la doc du module).
+/// The message's first account = the fee payer (and the only expected signer, see
+/// `split_single_signer_transaction`), checked to be OUR OWN key before any
+/// signature (see the module docs).
 pub(crate) fn message_fee_payer(message: &[u8]) -> Result<[u8; 32]> {
-    // Message versionné (v0) : le premier octet a son bit de poids fort à 1
-    // (impossible pour un message "legacy", où ce même octet est
-    // `num_required_signatures`, toujours petit). L'en-tête (3 octets) suit
-    // immédiatement, précédé de l'octet de version dans ce cas.
+    // Versioned message (v0): the first byte has its high bit set (impossible for a
+    // "legacy" message, where that same byte is `num_required_signatures`, always
+    // small). The header (3 bytes) follows immediately, preceded by the version byte
+    // in this case.
     let header_start = if message.first().is_some_and(|b| b & 0x80 != 0) { 1 } else { 0 };
     anyhow::ensure!(message.len() > header_start + 3, "message Jupiter tronqué (en-tête)");
     let account_keys_start = header_start + 3;
@@ -257,28 +245,26 @@ pub(crate) fn message_fee_payer(message: &[u8]) -> Result<[u8; 32]> {
     Ok(fee_payer)
 }
 
-/// Comptes qu'un message Solana peut MODIFIER : le runtime interdit à une
-/// transaction (et à tout CPI qu'elle déclenche) de toucher un compte qu'elle
-/// ne déclare pas inscriptible. Connaître cet ensemble suffit donc à borner
-/// tout ce qu'une transaction construite par un tiers pourrait faire aux
-/// comptes de l'utilisateur (voir `api::verify_swap_effects`).
+/// Accounts a Solana message can MODIFY: the runtime forbids a transaction (and any
+/// CPI it triggers) from touching an account it does not declare writable. Knowing
+/// this set is therefore enough to bound everything a transaction built by a third
+/// party could do to the user's accounts (see `api::verify_swap_effects`).
 pub struct WritableAccounts {
-    /// Clés statiques inscriptibles, déjà résolues.
+    /// Writable static keys, already resolved.
     pub static_keys: Vec<[u8; 32]>,
-    /// Tables de correspondance d'adresses (message v0) : adresse de la table
-    /// + index inscriptibles, à résoudre on-chain (jamais en faisant confiance
-    /// au tiers qui a construit la transaction).
+    /// Address lookup tables (v0 message): table address + writable indexes, to be
+    /// resolved on-chain (never by trusting the third party that built the
+    /// transaction).
     pub lookups: Vec<([u8; 32], Vec<u8>)>,
-    /// `true` si la première instruction est `AdvanceNonceAccount` (programme
-    /// système, discriminant 4) : la transaction repose alors sur un "nonce
-    /// durable" au lieu d'un blockhash récent, et reste valide INDÉFINIMENT —
-    /// rejouable bien plus tard, à un cours bien pire. Un vrai swap Jupiter
-    /// n'en utilise jamais.
+    /// `true` if the first instruction is `AdvanceNonceAccount` (system program,
+    /// discriminator 4): the transaction then relies on a "durable nonce" instead of a
+    /// recent blockhash, and stays valid INDEFINITELY, replayable much later at a much
+    /// worse price. A real Jupiter swap never uses one.
     pub advances_durable_nonce: bool,
 }
 
-/// Lecteur borné : un message venant d'un tiers ne doit jamais pouvoir
-/// provoquer de panique par un index hors limites.
+/// Bounded reader: a message coming from a third party must never be able to cause
+/// a panic through an out-of-bounds index.
 struct Reader<'a> {
     bytes: &'a [u8],
     pos: usize,
@@ -307,12 +293,11 @@ impl<'a> Reader<'a> {
     }
 }
 
-/// Parse complet d'un message Solana (legacy ou v0) pour en extraire les
-/// comptes inscriptibles — voir `WritableAccounts`. Règles d'inscriptibilité
-/// des clés statiques d'après l'en-tête du message : parmi les
-/// `num_required_signatures` premières clés, les `num_readonly_signed`
-/// dernières sont en lecture seule ; parmi les suivantes, les
-/// `num_readonly_unsigned` dernières aussi.
+/// Full parse of a Solana message (legacy or v0) to extract its writable accounts;
+/// see `WritableAccounts`. Writability rules for static keys, from the message
+/// header: among the first `num_required_signatures` keys, the last
+/// `num_readonly_signed` are read-only; among the following ones, the last
+/// `num_readonly_unsigned` are too.
 pub fn message_writable_accounts(message: &[u8]) -> Result<WritableAccounts> {
     let mut r = Reader { bytes: message, pos: 0 };
     let versioned = message.first().is_some_and(|b| b & 0x80 != 0);
@@ -346,8 +331,8 @@ pub fn message_writable_accounts(message: &[u8]) -> Result<WritableAccounts> {
     let instruction_count = r.shortvec()?;
     let mut advances_durable_nonce = false;
     for i in 0..instruction_count {
-        // Les identifiants de programme sont TOUJOURS des clés statiques (le
-        // format v0 interdit de les charger depuis une table de correspondance).
+        // Program IDs are ALWAYS static keys (the v0 format forbids loading them from a
+        // lookup table).
         let program_index = r.u8()? as usize;
         let accounts_len = r.shortvec()?;
         r.take(accounts_len)?;
@@ -375,19 +360,19 @@ pub fn message_writable_accounts(message: &[u8]) -> Result<WritableAccounts> {
     Ok(WritableAccounts { static_keys, lookups, advances_durable_nonce })
 }
 
-/// Découpe une transaction brute et renvoie son message (voir
+/// Splits a raw transaction and returns its message (see
 /// `split_single_signer_transaction`).
 pub fn transaction_message(raw_tx: &[u8]) -> Result<&[u8]> {
     split_single_signer_transaction(raw_tx).map(|(_, message)| message)
 }
 
-/// Remplace le blockhash récent d'une transaction à signataire unique par
-/// `blockhash`, lu sur NOTRE nœud juste avant de signer. Celui choisi par le
-/// tiers qui a construit la transaction peut expirer avant l'envoi (mesuré le
-/// 02/10/2026 : ~35 s de validité pour une transaction LI.FI, moins que
-/// déverrouillage + simulation après la confirmation → « BlockhashNotFound »)
-/// ou être inconnu de notre nœud. Sans effet sur les instructions ; refusé
-/// pour un nonce durable (le « blockhash » y est la valeur du nonce).
+/// Replaces the recent blockhash of a single-signer transaction with `blockhash`,
+/// read from OUR node just before signing. The one chosen by the third party that
+/// built the transaction may expire before sending (measured on 2026-10-02: ~35 s
+/// of validity for a LI.FI transaction, less than unlocking + simulating after
+/// confirmation → "BlockhashNotFound") or be unknown to our node. No effect on the
+/// instructions; refused for a durable nonce (where the "blockhash" is the nonce
+/// value).
 pub fn with_recent_blockhash(raw_tx: &[u8], blockhash: &[u8; 32]) -> Result<Vec<u8>> {
     let (message_start, message) = split_single_signer_transaction(raw_tx)?;
     anyhow::ensure!(!message_writable_accounts(message)?.advances_durable_nonce, "transaction à nonce durable : blockhash non remplaçable");
@@ -402,10 +387,9 @@ pub fn with_recent_blockhash(raw_tx: &[u8], blockhash: &[u8; 32]) -> Result<Vec<
     Ok(out)
 }
 
-/// Signe une transaction Jupiter (voir `build_swap_transaction`) après avoir
-/// vérifié que son payeur de frais est bien `expected_signer` — refuse de
-/// signer sinon, plutôt que de faire confiance aveuglément à une transaction
-/// tierce.
+/// Signs a Jupiter transaction (see `build_swap_transaction`) after checking that
+/// its fee payer is indeed `expected_signer`; refuses to sign otherwise, rather
+/// than blindly trusting a third-party transaction.
 pub fn sign_swap_transaction(raw_tx: &[u8], signing_key: &ed25519_dalek::SigningKey, expected_signer: &[u8; 32]) -> Result<Vec<u8>> {
     use ed25519_dalek::Signer;
 
@@ -426,26 +410,25 @@ pub fn sign_swap_transaction(raw_tx: &[u8], signing_key: &ed25519_dalek::Signing
 mod tests {
     use super::*;
 
-    /// Ne garantit pas que l'adresse est correcte (seule une vérification
-    /// contre un portefeuille de référence le garantirait) — garde-fou
-    /// minimal contre une corruption accidentelle de la constante (mauvaise
-    /// longueur, caractères hors alphabet base58).
+    /// Does not guarantee the address is correct (only a check against a reference
+    /// wallet would); a minimal guard against accidental corruption of the constant
+    /// (wrong length, characters outside the base58 alphabet).
     #[test]
     fn affiliate_address_has_the_expected_base58_shape() {
         let bytes = bs58::decode(AFFILIATE_ADDRESS).into_vec().expect("base58 valide");
         assert_eq!(bytes.len(), 32, "une adresse Solana fait 32 octets");
     }
 
-    /// Message legacy minimal : en-tête [1 signataire, 0, 1 lecture seule non
-    /// signée], clés [utilisateur, programme système], blockhash, 1 instruction.
+    /// Minimal legacy message: header [1 signer, 0, 1 unsigned read-only], keys [user,
+    /// system program], blockhash, 1 instruction.
     fn legacy_message_with_first_instruction(data: &[u8]) -> Vec<u8> {
         let mut m = vec![1, 0, 1, 2];
-        m.extend_from_slice(&[7u8; 32]); // utilisateur (inscriptible, signataire)
-        m.extend_from_slice(&[0u8; 32]); // programme système (lecture seule)
+        m.extend_from_slice(&[7u8; 32]); // user (writable, signer)
+        m.extend_from_slice(&[0u8; 32]); // system program (read-only)
         m.extend_from_slice(&[9u8; 32]); // blockhash
         m.push(1); // 1 instruction
-        m.push(1); // programme = clé n°1 (système)
-        m.push(1); // 1 compte
+        m.push(1); // program = key no. 1 (system)
+        m.push(1); // 1 account
         m.push(0);
         m.push(data.len() as u8);
         m.extend_from_slice(data);
@@ -462,14 +445,14 @@ mod tests {
         let transfer = message_writable_accounts(&legacy_message_with_first_instruction(&[2, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0])).unwrap();
         assert!(!transfer.advances_durable_nonce, "un simple transfert n'est pas un nonce durable");
 
-        // Message tronqué : erreur propre, jamais de panique.
+        // Truncated message: a clean error, never a panic.
         let mut truncated = legacy_message_with_first_instruction(&[4, 0, 0, 0]);
         truncated.truncate(truncated.len() - 3);
         assert!(message_writable_accounts(&truncated).is_err());
     }
 
-    /// Blockhash remplacé à sa place exacte (message legacy puis v0), rien
-    /// d'autre ne bouge ; refusé pour un nonce durable.
+    /// Blockhash replaced at its exact position (legacy message, then v0), nothing else
+    /// moves; refused for a durable nonce.
     #[test]
     fn with_recent_blockhash_replaces_only_the_blockhash() {
         let tx = |message: &[u8]| [&[1u8][..], &[0u8; 64], message].concat();
@@ -477,10 +460,10 @@ mod tests {
         let fresh = [5u8; 32];
         let legacy = tx(&transfer);
         let replaced = with_recent_blockhash(&legacy, &fresh).unwrap();
-        let start = 1 + 64 + 4 + 2 * 32; // signature, en-tête + nombre de clés, 2 clés
+        let start = 1 + 64 + 4 + 2 * 32; // signature, header + key count, 2 keys
         assert_eq!(replaced[start..start + 32], fresh);
         assert_eq!((&replaced[..start], &replaced[start + 32..]), (&legacy[..start], &legacy[start + 32..]));
-        // v0 : octet de version en tête, aucune table de correspondance en fin.
+        // v0: version byte first, no lookup table at the end.
         let v0 = tx(&[&[0x80u8][..], &transfer, &[0]].concat());
         let replaced = with_recent_blockhash(&v0, &fresh).unwrap();
         assert_eq!(replaced[start + 1..start + 33], fresh);
@@ -499,14 +482,14 @@ mod tests {
         }
     }
 
-    /// Vérification de bout en bout contre l'API réelle (lecture seule pour le
-    /// devis/la construction ; aucune signature ni diffusion ici). Ignoré par
-    /// défaut : `cargo test -- --ignored jupiter_quote_and_build_match_the_real_network`.
+    /// End-to-end check against the real API (read-only for the quote/build; no signing
+    /// or broadcasting here). Ignored by default:
+    /// `cargo test -- --ignored jupiter_quote_and_build_match_the_real_network`
     #[test]
     #[ignore]
     fn jupiter_quote_and_build_match_the_real_network() {
-        // Wallet public connu (déjà utilisé pour vérifier la dérivation d'ATA
-        // USDC ailleurs dans ce projet) — lecture seule, aucun risque.
+        // A known public wallet (already used to check the USDC ATA derivation elsewhere
+        // in this project): read-only, no risk.
         let owner = "E645TckHQnDcavVv92Etc6xSWQaq8zzPtPRGBheviRAk";
         let usdc_mint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
         let q = quote(SOL_MINT, usdc_mint, 100_000_000, 50, None).expect("devis réel");
