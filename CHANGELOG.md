@@ -5,15 +5,19 @@ links and SHA-256 hashes of each build are on the [releases page](https://github
 
 ## [Unreleased]
 
-### Fixed
-- Shielded Zcash: balance, history, change and "send max" now cover the Ironwood pool introduced by NU6.3
-  (the Orchard pool has been sealed since block 3,428,143).
+## [2.13.2] - 2026-10-13
+
+### Added
+- Shielded Zcash: support for the Ironwood pool introduced by the NU6.3 network upgrade (block 3,428,143, after
+  which the Orchard pool accepts no new funds). Funds received in Ironwood are counted in the balance and the
+  history and can be spent, and change goes to Ironwood.
 
 ### Changed
+- Installer descriptions in English.
 - The repository is prepared for open source: MIT license, security policy, English code comments and
-  documentation, threat model in English.
+  documentation, threat model in English, continuous integration.
 - The core crate is renamed `openpgp-wallet-core`; the command-line demos moved to `core/examples/`.
-- The showcase website moved to its own repository.
+- The showcase website moved to its own repository, and the project to the OpenPGP-Wallet GitHub organization.
 
 ## [2.13.1] - 2026-10-12
 
@@ -192,7 +196,8 @@ The app is renamed "PGP Wallet".
 First working proof of concept: a non-custodial Bitcoin, Ethereum and Solana wallet whose master key is
 protected by 2-of-3 Shamir secret sharing and OpenPGP, with no seed phrase.
 
-[Unreleased]: https://github.com/OpenPGP-Wallet/openpgp-wallet/compare/v2.13.1...HEAD
+[Unreleased]: https://github.com/OpenPGP-Wallet/openpgp-wallet/compare/v2.13.2...HEAD
+[2.13.2]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.13.2
 [2.13.1]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.13.1
 [2.13.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.13.0
 [2.12.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.12.0
