@@ -1,22 +1,22 @@
-//! XRP Ledger : adresse r… (BIP44 m/44'/144'/0'/0/p, clé secp256k1),
-//! solde, envoi de XRP, historique.
+//! XRP Ledger: r... address (BIP44 m/44'/144'/0'/0/p, secp256k1 key), balance,
+//! sending XRP, history.
 //!
-//! Transactions sérialisées et signées ici (format binaire canonique du
-//! XRP Ledger, condensé SHA-512Half préfixé « STX\0 », signature DER low-S),
-//! vérifiées contre les bibliothèques officielles de Ripple
-//! (ripple-binary-codec, ripple-address-codec) dans les tests.
+//! Transactions are serialized and signed here (the XRP Ledger's canonical binary
+//! format, SHA-512Half digest with the "STX\0" prefix, low-S DER signature),
+//! checked against Ripple's official libraries (ripple-binary-codec,
+//! ripple-address-codec) in the tests.
 //!
-//! Règles du réseau appliquées avant la boîte de confirmation :
-//! - réserve : 1 XRP (+ 0,2 par objet possédé) reste bloqué sur le compte,
-//!   jamais envoyable (relevé le 04/10/2026, `server_state`) ;
-//! - un destinataire jamais activé doit recevoir au moins la réserve de
-//!   base, sinon le réseau refuse le paiement ;
-//! - un destinataire qui EXIGE un tag de destination (plateformes
-//!   d'échange, drapeau `lsfRequireDestTag`) ne reçoit rien sans tag ;
-//! - un destinataire « paiements autorisés seulement » (`lsfDepositAuth`)
-//!   qui n'a pas autorisé l'expéditeur ferait échouer le paiement, frais
-//!   perdus : refusé avant ;
-//! - frais : ceux du réseau (`fee`), plafonnés.
+//! Network rules applied before the confirmation dialog:
+//! - reserve: 1 XRP (+ 0.2 per owned entry) stays locked on the account, never
+//!   sendable (read on 2026-10-04, `server_state`);
+//! - a recipient that was never activated must receive at least the base reserve,
+//!   otherwise the network refuses the payment;
+//! - a recipient that REQUIRES a destination tag (exchanges, `lsfRequireDestTag`
+//!   flag) receives nothing without a tag;
+//! - a "deposit-authorized only" recipient (`lsfDepositAuth`) that has not
+//!   authorized the sender would make the payment fail with the fee lost: refused
+//!   beforehand;
+//! - fee: the network's (`fee`), capped.
 
 use crate::{btc_tx, history};
 use anyhow::{anyhow, bail, ensure, Context, Result};
@@ -26,7 +26,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256, Sha512};
 use std::sync::OnceLock;
 
-/// Réseau XRP : nœuds publics (JSON-RPC), dans l'ordre.
+/// XRP network: public nodes (JSON-RPC), in order.
 pub struct Network {
     nodes: &'static [&'static str],
 }
@@ -35,15 +35,16 @@ pub const MAINNET: Network = Network { nodes: &["https://xrplcluster.com", "http
 #[cfg(test)]
 const TESTNET: Network = Network { nodes: &["https://s.altnet.rippletest.net:51234"] };
 pub const DECIMALS: u8 = 6;
-/// Plafond des frais acceptés (0,001 XRP ; 0,00001 au repos).
+/// Cap on the accepted fee (0.001 XRP; 0.00001 when the network is quiet).
 const MAX_FEE_DROPS: u64 = 1_000;
-/// Validité d'une transaction : 20 registres (~1 min) après le dernier validé.
+/// Validity of a transaction: 20 ledgers (about 1 min) after the last validated
+/// one.
 const LEDGER_MARGIN: u32 = 20;
-/// Erreurs d'un nœud qui ne disent rien du compte ni de la transaction.
+/// Node errors that say nothing about the account or the transaction.
 const TRANSIENT_ERRORS: [&str; 6] = ["tooBusy", "slowDown", "noNetwork", "noCurrent", "noClosed", "amendmentBlocked"];
-/// Drapeau de compte « tag de destination exigé ».
+/// "Destination tag required" account flag.
 const LSF_REQUIRE_DEST_TAG: u64 = 0x0002_0000;
-/// Drapeau de compte « paiements autorisés seulement » (DepositAuth).
+/// "Deposit-authorized only" account flag (DepositAuth).
 const LSF_DEPOSIT_AUTH: u64 = 0x0100_0000;
 
 fn client() -> &'static reqwest::blocking::Client {
@@ -66,7 +67,7 @@ fn rpc(net: &Network, method: &str, params: Value) -> Result<Value> {
             ensure!(status.is_success(), "nœud XRP : réponse {status}");
             let value: Value = response.json().context("réponse du nœud XRP illisible")?;
             let result = value["result"].clone();
-            // Nœud surchargé ou pas à jour : on essaie le suivant.
+            // Node overloaded or not up to date: try the next one.
             if let Some(error) = result["error"].as_str().filter(|e| TRANSIENT_ERRORS.contains(e)) {
                 bail!("nœud XRP : réponse {error}");
             }
@@ -80,16 +81,16 @@ fn rpc(net: &Network, method: &str, params: Value) -> Result<Value> {
     Err(last)
 }
 
-/// Montant en XRP, 6 décimales (« 12.500000 »).
+/// Amount in XRP, 6 decimals ("12.500000").
 pub fn format_xrp(drops: u64) -> String {
     format!("{}.{:06}", drops / 1_000_000, drops % 1_000_000)
 }
 
-// --- Adresses ------------------------------------------------------------------------
+// --- Addresses ------------------------------------------------------------------
 
 pub type AccountId = [u8; 20];
 
-/// Identifiant de compte d'une clé : RIPEMD-160(SHA-256(clé publique compressée)).
+/// Account ID of a key: RIPEMD-160(SHA-256(compressed public key)).
 pub fn account_id(key: &SigningKey) -> AccountId {
     use ripemd::Ripemd160;
     Ripemd160::digest(Sha256::digest(key.verifying_key().to_encoded_point(true).as_bytes())).into()
@@ -103,8 +104,8 @@ pub fn encode_address(account: &AccountId) -> String {
     bs58::encode(data).with_alphabet(bs58::Alphabet::RIPPLE).into_string()
 }
 
-/// Adresse classique r…, somme de contrôle vérifiée. Les adresses « X »
-/// (tag intégré) sont refusées avec une consigne.
+/// Classic r... address, checksum checked. "X" addresses (with an embedded tag) are
+/// refused with instructions.
 pub fn parse_address(text: &str) -> Result<AccountId> {
     let text = text.trim();
     ensure!(!text.starts_with('X'), "adresse XRP « X » non prise en charge : demandez l'adresse classique r… et le tag de destination");
@@ -116,7 +117,7 @@ pub fn parse_address(text: &str) -> Result<AccountId> {
     body[1..].try_into().map_err(|_| anyhow!("adresse XRP invalide"))
 }
 
-// --- Sérialisation canonique (Payment) ---------------------------------------------------
+// --- Canonical serialization (Payment) ------------------------------------------
 
 fn field_id(out: &mut Vec<u8>, type_code: u8, field_code: u8) {
     match (type_code < 16, field_code < 16) {
@@ -128,7 +129,7 @@ fn field_id(out: &mut Vec<u8>, type_code: u8, field_code: u8) {
 }
 
 fn vl(out: &mut Vec<u8>, bytes: &[u8]) {
-    // Longueurs utilisées ici : toujours < 193 (un octet).
+    // Lengths used here: always < 193 (one byte).
     out.push(bytes.len() as u8);
     out.extend_from_slice(bytes);
 }
@@ -137,7 +138,7 @@ fn native_amount(drops: u64) -> [u8; 8] {
     (0x4000_0000_0000_0000u64 | drops).to_be_bytes()
 }
 
-/// Paiement de XRP à sérialiser.
+/// XRP payment to serialize.
 #[derive(Clone, Debug)]
 pub struct Payment {
     pub account: AccountId,
@@ -151,7 +152,7 @@ pub struct Payment {
 }
 
 impl Payment {
-    /// Champs triés par (type, champ) ; signature incluse si donnée.
+    /// Fields sorted by (type, field); signature included if given.
     fn serialize(&self, signature: Option<&[u8]>) -> Vec<u8> {
         let mut out = Vec::new();
         field_id(&mut out, 1, 2); // TransactionType
@@ -183,7 +184,7 @@ impl Payment {
         out
     }
 
-    /// Condensé signé : SHA-512Half(« STX\0 » ‖ transaction sans signature).
+    /// Signed digest: SHA-512Half("STX\0" ‖ transaction without signature).
     fn signing_hash(&self) -> [u8; 32] {
         sha512_half(&[b"STX\0".as_slice(), &self.serialize(None)].concat())
     }
@@ -196,7 +197,7 @@ fn sha512_half(data: &[u8]) -> [u8; 32] {
 
 pub struct Signed {
     pub blob: Vec<u8>,
-    /// Identifiant : SHA-512Half(« TXN\0 » ‖ transaction signée), en majuscules.
+    /// Identifier: SHA-512Half("TXN\0" ‖ signed transaction), in upper case.
     pub hash: String,
 }
 
@@ -209,9 +210,9 @@ pub fn sign(payment: &Payment, key: &SigningKey) -> Result<Signed> {
     Ok(Signed { blob, hash })
 }
 
-// --- Compte et réseau ----------------------------------------------------------------------
+// --- Account and network --------------------------------------------------------
 
-/// État d'un compte : `None` s'il n'est pas encore activé.
+/// State of an account: `None` if it is not activated yet.
 struct AccountState {
     balance: u64,
     sequence: u32,
@@ -251,7 +252,7 @@ fn ledger_state(net: &Network) -> Result<LedgerState> {
     })
 }
 
-/// Frais du moment (drops), plafonnés.
+/// Current fee (drops), capped.
 fn current_fee(net: &Network) -> Result<u64> {
     let result = rpc(net, "fee", json!({}))?;
     let fee = result["drops"]["open_ledger_fee"].as_str().and_then(|f| f.parse::<u64>().ok()).context("frais XRP illisibles")?.max(10);
@@ -259,12 +260,12 @@ fn current_fee(net: &Network) -> Result<u64> {
     Ok(fee)
 }
 
-/// Solde total (drops), réserve comprise ; 0 pour un compte non activé.
+/// Total balance (drops), reserve included; 0 for an account that is not activated.
 pub fn balance(net: &Network, address: &str) -> Result<u64> {
     Ok(account_state(net, address)?.map_or(0, |a| a.balance))
 }
 
-/// Activité d'une adresse destinataire : (détient des XRP, a déjà servi).
+/// Activity of a recipient address: (holds XRP, has been used before).
 pub fn address_activity(net: &Network, address: &str) -> Result<(bool, bool)> {
     Ok(match account_state(net, address)? {
         Some(a) => (a.balance > 0, true),
@@ -272,18 +273,18 @@ pub fn address_activity(net: &Network, address: &str) -> Result<(bool, bool)> {
     })
 }
 
-/// Envoi préparé pour la boîte de confirmation.
+/// Send prepared for the confirmation dialog.
 #[derive(Clone, Copy, Debug)]
 pub struct XrpPlan {
     pub amount: u64,
     pub fee: u64,
-    /// XRP bloqués par la réserve sur le compte de départ.
+    /// XRP locked by the reserve on the source account.
     pub reserve: u64,
-    /// Destinataire jamais activé (le paiement l'active).
+    /// Recipient never activated (the payment activates it).
     pub activates: bool,
 }
 
-/// Contrôles du réseau (réserve, activation, tag exigé) et frais.
+/// Network checks (reserve, activation, required tag) and fee.
 pub fn plan_xrp(net: &Network, from: &str, to: &str, amount: u64, destination_tag: Option<u32>) -> Result<XrpPlan> {
     ensure!(amount > 0, "montant nul");
     ensure!(parse_address(from)? != parse_address(to)?, "envoi vers votre propre adresse XRP");
@@ -318,7 +319,7 @@ pub fn plan_xrp(net: &Network, from: &str, to: &str, amount: u64, destination_ta
     Ok(XrpPlan { amount, fee, reserve, activates: destination.is_none() })
 }
 
-/// Plus grand montant envoyable : solde moins la réserve et les frais.
+/// Largest amount that can be sent: balance minus reserve and fee.
 pub fn max_xrp(net: &Network, from: &str) -> Result<u64> {
     let ledger = ledger_state(net)?;
     let sender = account_state(net, from)?.context("compte XRP pas encore activé : il doit d'abord recevoir au moins 1 XRP")?;
@@ -326,7 +327,7 @@ pub fn max_xrp(net: &Network, from: &str) -> Result<u64> {
     sender.balance.saturating_sub(reserve).checked_sub(current_fee(net)?).filter(|m| *m > 0).context("XRP insuffisants : tout le solde est bloqué par la réserve du réseau")
 }
 
-/// Construit, signe et diffuse un paiement ; renvoie son identifiant.
+/// Builds, signs and broadcasts a payment; returns its ID.
 pub fn send_xrp(net: &Network, key: &SigningKey, to: &AccountId, amount: u64, fee: u64, destination_tag: Option<u32>) -> Result<String> {
     ensure!(fee <= MAX_FEE_DROPS, "frais du réseau XRP anormalement élevés — envoi refusé");
     let account = account_id(key);
@@ -346,11 +347,11 @@ pub fn send_xrp(net: &Network, key: &SigningKey, to: &AccountId, amount: u64, fe
     submit(net, &signed)
 }
 
-/// Diffuse (nœud suivant si l'un ne répond pas). Sans réponse nette d'aucun :
-/// « peut-être partie » (voir `wallet_flow::maybe_sent`) ; déjà reçue
-/// (`tefALREADY`, ou séquence consommée par CETTE transaction) : la même,
-/// partie — jamais « refusée », un nouvel envoi prendrait la séquence
-/// suivante et paierait deux fois.
+/// Broadcasts (moving to the next node if one does not answer). Without a clear
+/// answer from any of them, it is "maybe sent" (see `wallet_flow::maybe_sent`);
+/// already received (`tefALREADY`, or a sequence consumed by THIS transaction): the
+/// same transaction, already sent. Never "refused": sending again would take the
+/// next sequence and pay twice.
 pub fn submit(net: &Network, signed: &Signed) -> Result<String> {
     let body = json!({ "method": "submit", "params": [{ "tx_blob": hex::encode_upper(&signed.blob) }] });
     let mut uncertain = false;
@@ -375,7 +376,7 @@ pub fn submit(net: &Network, signed: &Signed) -> Result<String> {
                 continue;
             }
         };
-        // Nœud surchargé ou pas à jour : on essaie le suivant.
+        // Node overloaded or not up to date: try the next one.
         if let Some(error) = result["error"].as_str().filter(|e| TRANSIENT_ERRORS.contains(e)) {
             last = anyhow!("nœud XRP : réponse {error}");
             continue;
@@ -388,31 +389,30 @@ pub fn submit(net: &Network, signed: &Signed) -> Result<String> {
 
 fn submit_outcome(result: &Value, hash: &str, known: impl FnOnce() -> bool) -> Result<String> {
     let engine = result["engine_result"].as_str().unwrap_or("");
-    // Accepté (ou mis en file d'attente) par le réseau, ou déjà reçu.
+    // Accepted (or queued) by the network, or already received.
     if engine == "tesSUCCESS" || engine == "terQUEUED" || engine == "tefALREADY" || (engine == "tefPAST_SEQ" && known()) {
         return Ok(hash.to_string());
     }
-    // ter… (sauf compte source inexistant) : pas encore appliquée, mais peut
-    // l'être dans les registres suivants (avant `LastLedgerSequence`) —
-    // « peut-être partie », jamais « refusée » : un nouvel envoi la paierait
-    // deux fois (33ᵉ passage).
+    // ter... (except a missing source account): not applied yet, but it can be in the
+    // next ledgers (before `LastLedgerSequence`), so "maybe sent", never "refused":
+    // sending again would pay twice (33rd review round).
     if engine.starts_with("ter") && engine != "terNO_ACCOUNT" {
         return Err(crate::wallet_flow::maybe_sent(hash));
     }
     let signed_hash = hash;
     let message = ["engine_result_message", "error_exception", "error_message", "error"].iter().find_map(|k| result[*k].as_str()).unwrap_or("erreur inconnue");
     let detail = [engine, message].iter().filter(|p| !p.is_empty()).copied().collect::<Vec<_>>().join(" ");
-    // tec… : le paiement échoue mais la transaction entre dans le registre et
-    // ses frais sont prélevés (les contrôles d'avant la boîte l'évitent).
+    // tec...: the payment fails, but the transaction goes into the ledger and its fee
+    // is charged (the checks before the dialog prevent this).
     if engine.starts_with("tec") {
         bail!("transaction XRP refusée : {detail} — frais du réseau prélevés (identifiant {signed_hash})");
     }
     bail!("transaction XRP refusée : {detail}")
 }
 
-// --- Historique ----------------------------------------------------------------------------
+// --- History --------------------------------------------------------------------
 
-/// Paiements en XRP de l'adresse, les plus récents d'abord.
+/// XRP payments of the address, newest first.
 pub fn history(net: &Network, address: &str, limit: usize) -> Result<Vec<history::TxEntry>> {
     parse_address(address)?;
     let result = rpc(net, "account_tx", json!({ "account": address.trim(), "limit": limit.clamp(1, 50), "ledger_index_min": -1, "ledger_index_max": -1 }))?;
@@ -426,17 +426,17 @@ pub fn history(net: &Network, address: &str, limit: usize) -> Result<Vec<history
             continue;
         }
         let Some(hash) = tx["hash"].as_str().filter(|h| h.len() == 64 && h.bytes().all(|b| b.is_ascii_hexdigit())) else { continue };
-        // Montant réellement livré, en XRP seulement (jetons ignorés).
+        // Amount actually delivered, in XRP only (tokens ignored).
         let Some(delivered) = item["meta"]["delivered_amount"].as_str().and_then(|d| d.parse::<i128>().ok()) else { continue };
         let fee = tx["Fee"].as_str().and_then(|f| f.parse::<i128>().ok()).unwrap_or(0);
         let outgoing = tx["Account"].as_str() == Some(address.trim());
-        // Paiement d'un tiers qui ne fait que traverser le compte : ignoré.
+        // A third party's payment that only passes through the account: ignored.
         if !outgoing && tx["Destination"].as_str() != Some(address.trim()) {
             continue;
         }
         let net = if outgoing { -(delivered + fee) } else { delivered };
         let success = item["meta"]["TransactionResult"].as_str() == Some("tesSUCCESS");
-        // Date du registre : secondes depuis le 1er janvier 2000 (UTC).
+        // Ledger date: seconds since January 1, 2000 (UTC).
         let timestamp_unix = tx["date"].as_i64().map(|d| d + 946_684_800);
         entries.push(history::TxEntry {
             id: hash.to_string(),
@@ -454,8 +454,8 @@ pub fn history(net: &Network, address: &str, limit: usize) -> Result<Vec<history
 mod tests {
     use super::*;
 
-    /// Déjà reçue (`tefALREADY`, ou séquence prise par CETTE transaction) :
-    /// la même, partie ; séquence prise par une autre : refusée.
+    /// Already received (`tefALREADY`, or a sequence taken by THIS transaction): the
+    /// same one, already sent; a sequence taken by another one: refused.
     #[test]
     fn an_already_received_payment_counts_as_sent() {
         let outcome = |engine: &str, known: bool| submit_outcome(&json!({ "engine_result": engine }), "AB", || known);
@@ -464,8 +464,7 @@ mod tests {
         assert!(outcome("tefPAST_SEQ", true).is_ok());
         assert!(outcome("tefPAST_SEQ", false).unwrap_err().to_string().starts_with("transaction XRP refusée"));
         assert!(outcome("tecUNFUNDED_PAYMENT", false).unwrap_err().to_string().contains("frais du réseau prélevés (identifiant AB)"));
-        // Pas encore appliquée (ter…) : peut-être partie ; compte source
-        // inexistant : refusée.
+        // Not applied yet (ter...): maybe sent; missing source account: refused.
         for engine in ["terPRE_SEQ", "terRETRY", "terINSUF_FEE_B"] {
             assert!(outcome(engine, false).unwrap_err().to_string().contains("peut-être partie"), "{engine}");
         }
@@ -474,8 +473,8 @@ mod tests {
 
     const SEED: &str = "5eb00bbddcf069084889a8ab9155568165f5c453ccb85e70811aaed6f6da5fc19a5ac40b389cd370d086206dec8aa6c43daea6690f20ad3d8d48b2d2ce9e38e4";
 
-    /// Vecteurs calculés avec bip32 + ripple-address-codec / ripple-binary-codec
-    /// (bibliothèques officielles de Ripple), indépendants de ce code.
+    /// Vectors computed with bip32 + ripple-address-codec / ripple-binary-codec
+    /// (Ripple's official libraries), independent of this code.
     #[test]
     fn addresses_and_serialization_match_the_official_libraries() {
         let seed = hex::decode(SEED).unwrap();
@@ -519,7 +518,7 @@ mod tests {
         let (key, account) = crate::derivation::derive_xrp_key(&seed, 0).unwrap();
         let payment = Payment { account, destination: [7; 20], amount: 1, fee: 10, sequence: 1, destination_tag: None, last_ledger_sequence: 1, signing_pub_key: key.verifying_key().to_encoded_point(true).as_bytes().try_into().unwrap() };
         let signed = sign(&payment, &key).unwrap();
-        // TxnSignature : champ 0x74, longueur, DER.
+        // TxnSignature: field 0x74, length, DER.
         let at = signed.blob.windows(2).position(|w| w[0] == 0x74 && (70..=72).contains(&w[1])).unwrap();
         let der = &signed.blob[at + 2..at + 2 + signed.blob[at + 1] as usize];
         let signature = Signature::from_der(der).unwrap();
@@ -528,10 +527,9 @@ mod tests {
         assert_eq!(signed.hash.len(), 64);
     }
 
-    /// Réel : lectures (solde, réserve, frais, historique), règles du réseau
-    /// (tag exigé, activation) et paiement signé
-    /// depuis un compte jamais activé — refusé pour le COMPTE (terNO_ACCOUNT),
-    /// après la vérification de signature du nœud.
+    /// Real network: reads (balance, reserve, fee, history), network rules (required
+    /// tag, activation) and a payment signed from an account that was never activated,
+    /// refused for the ACCOUNT (terNO_ACCOUNT) after the node's signature check.
     /// `cargo test -- --ignored real_xrp --nocapture`
     #[test]
     #[ignore]
@@ -557,7 +555,8 @@ mod tests {
         let error = submit(&MAINNET, &signed).unwrap_err().to_string();
         println!("{error}");
         assert!(error.contains("terNO_ACCOUNT"), "{error}");
-        // Contre-épreuve : même transaction, signature altérée → refusée AVANT.
+        // Counter-check: the same transaction with a tampered signature is refused
+        // EARLIER.
         let mut blob = signed.blob.clone();
         let at = blob.windows(2).position(|w| w[0] == 0x74 && (70..=72).contains(&w[1])).unwrap();
         blob[at + 10] ^= 1;
@@ -565,7 +564,7 @@ mod tests {
         println!("{error}");
         assert!(!error.contains("terNO_ACCOUNT") && error.to_lowercase().contains("signature"), "{error}");
         assert!(plan_xrp(&MAINNET, &encode_address(&account), rich, 1_000_000, None).unwrap_err().to_string().contains("pas encore activé"));
-        // Règles du réseau, depuis un compte pourvu (lecture seule).
+        // Network rules, from a funded account (read-only).
         let funded = "rMQ98K56yXJbDGv49ZSmW51sLn94Xe1mu1";
         let error = plan_xrp(&MAINNET, funded, rich, 1_000_000, None).unwrap_err().to_string();
         assert!(error.contains("exige un tag"), "{error}");
@@ -578,9 +577,10 @@ mod tests {
         assert!(max_xrp(&MAINNET, funded).unwrap() > 0);
     }
 
-    /// Réel, réseau de test (robinet gratuit de Ripple) : paiement qui ACTIVE
-    /// un compte neuf, puis paiement avec tag de destination, signés ici et
-    /// validés par le réseau. `cargo test -- --ignored real_xrp_testnet --nocapture`
+    /// Real network, testnet (Ripple's free faucet): a payment that ACTIVATES a new
+    /// account, then a payment with a destination tag, signed here and validated by the
+    /// network.
+    /// `cargo test -- --ignored real_xrp_testnet --nocapture`
     #[test]
     #[ignore]
     fn real_xrp_testnet_end_to_end() {

@@ -1,18 +1,18 @@
-//! Historique BNB Chain par NodeReal (fournisseur d'infrastructure de BNB
-//! Chain, offre gratuite) : `nr_getAssetTransfers`, les virements d'une
-//! adresse — BNB envoyés et reçus (y compris reçus d'un contrat : sortie
-//! d'un échange, d'un pont), jetons BEP-20.
+//! BNB Chain history through NodeReal (an infrastructure provider for BNB Chain,
+//! free plan): `nr_getAssetTransfers`, an address's transfers: BNB sent and
+//! received (including received from a contract: a swap output, a bridge), BEP-20
+//! tokens.
 //!
-//! Aucun service public sans clé ne fournit cet historique (constaté le
-//! 07/10/2026 : ni Blockscout, ni Routescan, ni l'offre gratuite d'Etherscan ;
-//! CoinGecko et CoinMarketCap n'ont pas d'historique par adresse). Clé lue À
-//! LA COMPILATION (`NODEREAL_API_KEY` dans `partner-keys.env`, voir build.rs) ;
-//! absente : historique indisponible, l'app renvoie vers BscScan. Lecture
-//! seule, purement informatif ; seule l'adresse publique est envoyée.
+//! No public keyless service provides this history (observed on 2026-10-07: not
+//! Blockscout, not Routescan, not Etherscan's free plan; CoinGecko and
+//! CoinMarketCap have no per-address history). The key is read AT BUILD TIME
+//! (`NODEREAL_API_KEY` in `partner-keys.env`, see build.rs); without it, the
+//! history is unavailable and the app points to BscScan. Read-only, purely
+//! informative; only the public address is sent.
 //!
-//! Lecture dans les deux sens, regroupement par transaction et filtrage des
-//! jetons servent aussi à `alchemy` (Base, Polygon) : `nr_getAssetTransfers`
-//! reproduit `alchemy_getAssetTransfers`.
+//! Reading both directions, grouping by transaction and filtering tokens also serve
+//! `alchemy` (Base, Polygon): `nr_getAssetTransfers` mirrors
+//! `alchemy_getAssetTransfers`.
 
 use crate::blockscout::{EvmTx, TokenMove};
 use anyhow::{anyhow, bail, Context, Result};
@@ -20,21 +20,21 @@ use serde_json::{json, Value};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-/// Clé d'API (offre gratuite), intégrée à la compilation.
+/// API key (free plan), built in at compile time.
 pub const API_KEY: Option<&str> = option_env!("NODEREAL_API_KEY");
 const ENDPOINT: &str = "https://bsc-mainnet.nodereal.io/v1/";
-/// Virements demandés par sens et par appel.
+/// Transfers requested per direction and per call.
 const BATCH: usize = 50;
-/// Écart minimal entre deux appels (offre gratuite partagée par tous les
-/// utilisateurs de l'app : pas de rafale).
+/// Minimum gap between two calls (a free plan shared by every user of the app: no
+/// bursts).
 const SPACING: Duration = Duration::from_millis(150);
-/// Contrat d'entrée de LI.FI sur BNB Chain (voir `lifi::diamond`) : un
-/// envoi vers lui, ou des BNB reçus de lui, sont un échange.
+/// LI.FI's entry contract on BNB Chain (see `lifi::diamond`): a send to it, or BNB
+/// received from it, is a swap.
 const LIFI_DIAMOND: &str = "0x1231deb6f5749ef6ce6943a275a1d3e7486f4eae";
 
-/// Historique BNB indisponible : clé absente de cette version de l'app.
+/// BNB history unavailable: key missing from this version of the app.
 pub const KEY_MISSING: &str = "historique BNB Chain indisponible dans cette version de l'app";
-/// Quota ou débit de l'offre gratuite atteint.
+/// Free plan quota or rate reached.
 pub const LIMITED: &str = "historique BNB Chain momentanément indisponible (limite du service atteinte) — réessayez plus tard";
 
 pub fn available() -> bool {
@@ -55,7 +55,7 @@ fn pace() {
     *last = Some(Instant::now());
 }
 
-/// Nombre d'une réponse : chaîne hexadécimale (« 0x1f »), décimale, ou nombre.
+/// Number in a response: hex string ("0x1f"), decimal, or number.
 pub(crate) fn number(value: &Value) -> Option<u128> {
     match value {
         Value::Number(n) => n.as_u64().map(u128::from),
@@ -68,13 +68,13 @@ pub(crate) fn number(value: &Value) -> Option<u128> {
     }
 }
 
-/// Un virement de la réponse, réduit à ce qui sert.
+/// A transfer from the response, reduced to what is needed.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Transfer {
-    /// Identifiant du virement chez NodeReal (un même virement apparaît dans
-    /// les deux sens s'il va de l'adresse vers elle-même).
+    /// The transfer's identifier at NodeReal (the same transfer appears in both
+    /// directions if it goes from the address to itself).
     pub(crate) id: String,
-    /// « external », « internal » ou « 20 ».
+    /// "external", "internal" or "20".
     pub(crate) category: String,
     pub(crate) block: u64,
     pub(crate) from: String,
@@ -83,7 +83,7 @@ pub(crate) struct Transfer {
     pub(crate) hash: String,
     pub(crate) contract: Option<String>,
     pub(crate) timestamp: Option<i64>,
-    /// Frais de la transaction (virement externe seulement), en wei.
+    /// Transaction fee (external transfers only), in wei.
     pub(crate) fee: u128,
     pub(crate) failed: bool,
 }
@@ -111,12 +111,12 @@ fn transfer(value: &Value) -> Result<Transfer> {
     })
 }
 
-/// Un appel `nr_getAssetTransfers` : virements et clé de la page suivante.
+/// One `nr_getAssetTransfers` call: transfers and the key of the next page.
 fn call(params: Value) -> Result<(Vec<Transfer>, Option<String>)> {
     let key = API_KEY.ok_or_else(|| anyhow!(KEY_MISSING))?;
     pace();
     let body = json!({ "jsonrpc": "2.0", "id": 1, "method": "nr_getAssetTransfers", "params": [params] });
-    // La clé voyage dans l'URL : erreurs réseau reformulées SANS l'URL.
+    // The key travels in the URL: network errors are rephrased WITHOUT the URL.
     let response = shared_client().post(format!("{ENDPOINT}{key}")).json(&body).send().map_err(|e| anyhow!("NodeReal injoignable : {}", e.without_url()))?;
     if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
         bail!(LIMITED);
@@ -140,8 +140,8 @@ fn parse_reply(reply: &Value) -> Result<(Vec<Transfer>, Option<String>)> {
     Ok((transfers, next))
 }
 
-/// Un sens de lecture (envois ou réceptions) : virements lus d'avance, et
-/// page suivante chez NodeReal.
+/// One reading direction (sends or receipts): transfers read ahead, and the next
+/// page at NodeReal.
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Stream {
     buffer: Vec<Transfer>,
@@ -149,8 +149,8 @@ struct Stream {
     done: bool,
 }
 
-/// Suite d'un historique : les deux sens, avec ce qui a été lu mais pas
-/// encore rendu (plus ancien que la page rendue).
+/// Continuation of a history: both directions, with what was read but not returned
+/// yet (older than the returned page).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Cursor {
     sent: Stream,
@@ -158,7 +158,7 @@ pub struct Cursor {
 }
 
 impl Stream {
-    /// Complète le tampon jusqu'à une page, si le sens n'est pas épuisé.
+    /// Fills the buffer up to a page, if the direction is not exhausted.
     fn fill(&mut self, mut params: Value, fetch: &mut impl FnMut(Value) -> Result<(Vec<Transfer>, Option<String>)>) -> Result<()> {
         if self.done || self.buffer.len() >= BATCH {
             return Ok(());
@@ -173,8 +173,8 @@ impl Stream {
         Ok(())
     }
 
-    /// Plus ancien bloc lu d'un sens encore ouvert : en deçà, d'autres
-    /// virements de ce sens peuvent encore venir.
+    /// Oldest block read in a direction that is still open: below it, more transfers in
+    /// that direction may still come.
     fn frontier(&self) -> Option<u64> {
         if self.done {
             None
@@ -184,10 +184,10 @@ impl Stream {
     }
 }
 
-/// Page suivante, les deux sens fusionnés du plus récent au plus ancien :
-/// seuls les virements plus récents que la frontière des deux sens sont
-/// rendus (un virement plus ancien d'un sens peut encore manquer de l'autre),
-/// le reste attend la page suivante.
+/// Next page, both directions merged from newest to oldest: only transfers newer
+/// than the frontier of both directions are returned (an older transfer in one
+/// direction may still be missing from the other), and the rest waits for the next
+/// page.
 pub(crate) fn next_page(
     address: &str,
     sent_params: Value,
@@ -205,13 +205,13 @@ pub(crate) fn next_page(
         page.extend(ready);
         stream.buffer = later;
     }
-    // Toute une page dans un même bloc (cas extrême) : rendue telle quelle.
+    // A whole page in a single block (an extreme case): returned as is.
     if page.is_empty() {
         for stream in [&mut state.sent, &mut state.received] {
             page.extend(std::mem::take(&mut stream.buffer));
         }
     }
-    // Un virement de l'adresse vers elle-même figure dans les deux sens.
+    // A transfer from the address to itself appears in both directions.
     let mut seen = std::collections::HashSet::new();
     page.retain(|t| seen.insert(t.id.clone()));
     page.sort_by(|a, b| b.block.cmp(&a.block).then_with(|| a.hash.cmp(&b.hash)));
@@ -228,9 +228,9 @@ fn base_params(categories: &[&str]) -> Value {
     json!({ "category": categories, "order": "desc", "maxCount": format!("0x{BATCH:x}") })
 }
 
-/// Virements BNB de la page regroupés par transaction, du point de vue de
-/// `address` : montant net (reçu moins envoyé, rien pour une transaction
-/// échouée), frais si elle l'a émise.
+/// BNB transfers of the page grouped by transaction, from `address`'s point of
+/// view: net amount (received minus sent, nothing for a failed transaction), and
+/// the fee if it sent the transaction.
 pub(crate) fn transactions(page: &[Transfer], address: &str) -> Vec<EvmTx> {
     let address = address.to_lowercase();
     let mut txs: Vec<EvmTx> = Vec::new();
@@ -269,16 +269,16 @@ pub(crate) fn transactions(page: &[Transfer], address: &str) -> Vec<EvmTx> {
     txs
 }
 
-/// Page d'historique BNB de `address` (transactions émises, BNB reçus, y
-/// compris d'un contrat) et suite.
+/// Page of `address`'s BNB history (transactions sent, BNB received, including from
+/// a contract) and continuation.
 pub fn tx_history_page(address: &str, cursor: Option<&Cursor>) -> Result<(Vec<EvmTx>, Option<Cursor>)> {
     let (page, next) = next_page(address, base_params(&["external"]), base_params(&["external", "internal"]), cursor, &mut call)?;
     Ok((transactions(&page, address), next))
 }
 
-/// Page des virements du jeton BEP-20 `contract` pour `address`, regroupés
-/// par transaction, et suite. Filtré par contrat chez NodeReal ET revérifié
-/// ici : un faux jeton au même symbole n'y entre jamais.
+/// Page of the transfers of BEP-20 token `contract` for `address`, grouped by
+/// transaction, and continuation. Filtered by contract at NodeReal AND checked
+/// again here: a fake token with the same symbol never gets in.
 pub fn token_history_page(address: &str, contract: &str, cursor: Option<&Cursor>) -> Result<(Vec<TokenMove>, Option<Cursor>)> {
     let contract = contract.to_lowercase();
     let mut params = base_params(&["20"]);
@@ -313,8 +313,8 @@ mod tests {
     const ME: &str = "0x59d78c44ac60f09369b544778358704b7b18e6ba";
     const OTHER: &str = "0x8894e0a0c962cb723c1976a4421c95949be2d4e3";
 
-    /// Virement au format réel (champs relevés le 07/10/2026 sur une réponse
-    /// de `nr_getAssetTransfers`).
+    /// Transfer in the real format (fields captured on 2026-10-07 from an
+    /// `nr_getAssetTransfers` response).
     #[allow(clippy::too_many_arguments)]
     fn raw(id: u64, category: &str, block: u64, from: &str, to: &str, value: u128, hash: &str, status: u64) -> Value {
         json!({
@@ -328,8 +328,8 @@ mod tests {
         values.iter().map(|v| transfer(v).unwrap()).collect()
     }
 
-    /// Envoi (frais = gas × prix), réception, BNB reçus d'un contrat, envoi
-    /// échoué (frais seuls), vers soi-même, échange LI.FI ; casse ignorée.
+    /// Send (fee = gas × price), receipt, BNB received from a contract, failed send
+    /// (fee only), to self, LI.FI swap; case ignored.
     #[test]
     fn transfers_become_transactions() {
         let page = parsed(vec![
@@ -357,10 +357,9 @@ mod tests {
         assert_eq!(txs[0].timestamp_unix, Some(1_791_368_343));
     }
 
-    /// Fusion des deux sens : seuls les virements plus récents que la
-    /// frontière sont rendus, le reste à la page suivante ; un virement vers
-    /// soi-même (présent dans les deux sens) une seule fois ; fin quand les
-    /// deux sens sont épuisés.
+    /// Merging both directions: only transfers newer than the frontier are returned,
+    /// the rest goes to the next page; a transfer to self (present in both directions)
+    /// appears only once; it ends when both directions are exhausted.
     #[test]
     fn both_directions_are_merged_by_block() {
         let mut calls = 0;
@@ -369,10 +368,10 @@ mod tests {
             let sent = params.get("fromAddress").is_some();
             let second = params.get("pageKey").is_some();
             Ok(match (sent, second) {
-                // Envois : blocs 100 et 90, puis 50.
+                // Sends: blocks 100 and 90, then 50.
                 (true, false) => (parsed(vec![raw(1, "external", 100, ME, OTHER, 1, "0xa", 1), raw(2, "external", 90, ME, ME, 2, "0xs", 1)]), Some("k1".into())),
                 (true, true) => (parsed(vec![raw(3, "external", 50, ME, OTHER, 3, "0xc", 1)]), None),
-                // Réceptions : blocs 95, 90 (vers soi-même) et 40, puis rien.
+                // Receipts: blocks 95, 90 (to self) and 40, then nothing.
                 (false, _) => (
                     parsed(vec![raw(4, "external", 95, OTHER, ME, 4, "0xd", 1), raw(2, "external", 90, ME, ME, 2, "0xs", 1), raw(5, "external", 40, OTHER, ME, 5, "0xe", 1)]),
                     None,
@@ -380,7 +379,7 @@ mod tests {
             })
         };
         let (first, cursor) = next_page(ME, base_params(&["external"]), base_params(&["external"]), None, &mut fetch).unwrap();
-        // Frontière : bloc 90 (envois encore ouverts) ; rendus : 100 et 95.
+        // Frontier: block 90 (sends still open); returned: 100 and 95.
         assert_eq!(first.iter().map(|t| t.block).collect::<Vec<_>>(), vec![100, 95]);
         let cursor = cursor.expect("suite attendue");
         let (second, cursor) = next_page(ME, base_params(&["external"]), base_params(&["external"]), Some(&cursor), &mut fetch).unwrap();
@@ -389,7 +388,7 @@ mod tests {
         assert_eq!(calls, 3);
     }
 
-    /// Jetons : regroupés par transaction, autre contrat refusé.
+    /// Tokens: grouped by transaction, another contract refused.
     #[test]
     fn token_moves_check_the_contract() {
         let token = "0x000ae314e2a2172a039b26378814c252734f556a";
@@ -418,8 +417,8 @@ mod tests {
         assert!(parse_reply(&json!({ "error": { "code": -32601, "message": "method does not exist" } })).unwrap_err().to_string().contains("refusé"));
     }
 
-    /// Réel (clé requise) : montants nets comparés à la transaction lue sur
-    /// un nœud public de BNB Chain (valeur, émetteur, destinataire, frais).
+    /// Real network (key required): net amounts compared with the transaction read from
+    /// a public BNB Chain node (value, sender, recipient, fee).
     /// `cargo test -- --ignored real_nodereal_amounts --nocapture`
     #[test]
     #[ignore]
@@ -436,9 +435,9 @@ mod tests {
             let value = number(&chain["value"]).unwrap() as i128;
             let from = chain["from"].as_str().unwrap().to_lowercase();
             let to = chain["to"].as_str().unwrap_or_default().to_lowercase();
-            // Virement direct (pas d'un contrat) : le montant net est la valeur de la transaction.
+            // Direct transfer (not from a contract): the net amount is the transaction's value.
             let expected = if from == OTHER { -value } else if to == OTHER { value } else { continue };
-            // Reçu pas (encore) servi par le nœud public : transaction suivante.
+            // Receipt not served (yet) by the public node: next transaction.
             let (Some(gas_used), Some(gas_price)) = (number(&receipt["gasUsed"]), number(&receipt["effectiveGasPrice"])) else { continue };
             let fee = if from == OTHER { (gas_used * gas_price) as i128 } else { 0 };
             println!("{} net {} (nœud {expected}) frais {} (nœud {fee})", &tx.hash[..12], tx.net_wei, tx.fee_wei);
@@ -448,10 +447,9 @@ mod tests {
         assert!(checked > 0, "aucune transaction comparable dans la page");
     }
 
-    /// Diagnostic réel (clé requise) : jusqu'où remontent les pages sans
-    /// bornes de blocs (constaté le 07/10/2026 : au-delà de 210 000 blocs, la
-    /// limite de 100 000 ne vaut qu'avec des bornes), et des bornes trop
-    /// larges refusées.
+    /// Real diagnostic (key required): how far back pages go without block bounds
+    /// (observed on 2026-10-07: beyond 210,000 blocks; the 100,000 limit only applies
+    /// with bounds), and overly wide bounds refused.
     /// `cargo test -- --ignored real_nodereal_range --nocapture`
     #[test]
     #[ignore]
@@ -477,10 +475,10 @@ mod tests {
         println!("bornes 0..latest : {:?}", call(explicit).map(|(t, n)| (t.len(), n.is_some())));
     }
 
-    /// Réel (clé requise) : historique de l'adresse chaude de Binance, pages
-    /// successives sans doublon et de plus en plus anciennes ; une adresse peu
-    /// active lue au-delà de 100 000 blocs (la limite de plage de NodeReal ne
-    /// s'applique pas sans bornes de blocs : historique complet).
+    /// Real network (key required): history of Binance's hot address, successive pages
+    /// without duplicates and getting older; a low-activity address read beyond 100,000
+    /// blocks (NodeReal's range limit does not apply without block bounds: the full
+    /// history).
     /// `cargo test -- --ignored real_nodereal --nocapture`
     #[test]
     #[ignore]
@@ -494,7 +492,7 @@ mod tests {
         assert!(!first.is_empty() && cursor.is_some());
         let (second, _) = tx_history_page(OTHER, cursor.as_ref()).unwrap();
         assert!(second.iter().all(|t| !first.iter().any(|f| f.hash == t.hash)), "pages sans doublon");
-        // Adresse peu active : remonter les pages jusqu'à dépasser 100 000 blocs.
+        // Low-activity address: walk back through the pages until past 100,000 blocks.
         let quiet = "0x000000000000000000000000000000000000dead";
         let mut cursor = None;
         let mut oldest = i64::MAX;
@@ -507,7 +505,7 @@ mod tests {
                 break;
             }
         }
-        // 100 000 blocs ≈ 11,7 h (0,42 s par bloc, mesuré le 07/10/2026).
+        // 100,000 blocks ≈ 11.7 h (0.42 s per block, measured on 2026-10-07).
         println!("adresse peu active : remonté de {} h", (newest - oldest) / 3600);
         assert!(newest - oldest > 15 * 3600, "historique limité à la dernière plage de blocs");
     }

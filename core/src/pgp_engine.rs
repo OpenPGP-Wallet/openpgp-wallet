@@ -11,15 +11,15 @@ use sequoia_openpgp as openpgp;
 use std::io::{Read, Write};
 use std::time::SystemTime;
 
-/// Instant auquel évaluer NOS propres clés (parts de sauvegarde, coffre de
-/// l'appareil, Windows Hello) : l'heure de l'ordinateur, mais jamais avant la
-/// création de la clé. Évaluée à l'heure seule, une clé « pas encore créée »
-/// pour une horloge en retard (pile de la carte mère, PC hors ligne mal
-/// réglé) n'était plus utilisable : ni restauration, ni déverrouillage, tant
-/// que l'horloge n'était pas corrigée — même d'une minute (mesuré). Ces clés
-/// sont créées sans expiration et ne sont jamais révoquées : rien de ce que la
-/// date protège n'est perdu. Les clés d'autres personnes (`messaging.rs`)
-/// restent évaluées à l'heure de l'ordinateur (leur expiration compte).
+/// The moment at which OUR own keys are evaluated (backup shares, device vault,
+/// Windows Hello): the computer's time, but never before the key was created.
+/// Evaluated at the current time alone, a key "not created yet" for a clock running
+/// behind (motherboard battery, an offline PC set wrong) could no longer be used,
+/// neither to restore nor to unlock, until the clock was fixed, even when it was
+/// only one minute behind (measured). These keys are created without an expiry and
+/// are never revoked, so nothing the date protects is lost. Other people's keys
+/// (`messaging.rs`) are still evaluated at the computer's time (their expiry
+/// matters).
 fn own_key_time(cert: &Cert) -> SystemTime {
     let now = SystemTime::now();
     let newest = cert
@@ -37,16 +37,15 @@ fn own_key_time(cert: &Cert) -> SystemTime {
     newest.map_or(now, |newest| newest.max(now))
 }
 
-/// Chiffre une part (bytes) pour le détenteur de la clé publique PGP donnée.
+/// Encrypts a share (bytes) for the holder of the given PGP public key.
 pub fn encrypt_share(share: &[u8], pubkey_path: &str) -> Result<Vec<u8>> {
     encrypt_share_named(share, pubkey_path, None)
 }
 
-/// `encrypt_share` avec un nom porté par le paquet littéral : métadonnée
-/// chiffrée et protégée avec la part (même contrôle d'intégrité), que
-/// `decrypt_share` ignore — les versions de l'app qui ne la connaissent pas
-/// déchiffrent la part exactement comme avant. Sert à la marque de kit
-/// (`api::generate_backup_kit`).
+/// `encrypt_share` with a name carried by the literal packet: metadata encrypted
+/// and protected together with the share (same integrity check), which
+/// `decrypt_share` ignores. Versions of the app that do not know it decrypt the
+/// share exactly as before. Used for the kit mark (`api::generate_backup_kit`).
 pub fn encrypt_share_named(share: &[u8], pubkey_path: &str, name: Option<&str>) -> Result<Vec<u8>> {
     let policy = StandardPolicy::new();
     let cert = Cert::from_file(pubkey_path)
@@ -77,16 +76,15 @@ pub fn encrypt_share_named(share: &[u8], pubkey_path: &str, name: Option<&str>) 
     Ok(sink)
 }
 
-/// Chiffre une part (bytes) pour PLUSIEURS destinataires PGP à la fois (une seule
-/// clé de session, un PKESK indépendant par certificat) — même principe que
-/// `messaging::encrypt_message`, mais sur des octets bruts non armurés (le coffre
-/// de l'appareil reste binaire) et à partir de certificats déjà en mémoire plutôt
-/// que d'un chemin de fichier. N'importe lequel des destinataires peut déchiffrer
-/// indépendamment le résultat avec sa propre clé privée, sans connaître les
-/// autres. Échoue (fail-closed) si UN SEUL des certificats fournis n'a aucune
-/// sous-clé de chiffrement valide, plutôt que de chiffrer silencieusement pour
-/// moins de destinataires que demandé — même garde-fou, pour la même raison, que
-/// `messaging::encrypt_message` (voir son test de régression
+/// Encrypts a share (bytes) for SEVERAL PGP recipients at once (a single session key,
+/// an independent PKESK per certificate). Same principle as
+/// `messaging::encrypt_message`, but on raw, unarmored bytes (the device vault stays
+/// binary) and from certificates already in memory rather than a file path. Any of the
+/// recipients can decrypt the result independently with their own private key, without
+/// knowing the others. Fails closed if even ONE of the given certificates has no valid
+/// encryption subkey, rather than silently encrypting for fewer recipients than
+/// requested: the same guard, for the same reason, as `messaging::encrypt_message`
+/// (see its regression test
 /// `encrypt_message_fails_closed_when_one_recipient_has_no_usable_encryption_subkey`).
 pub fn encrypt_share_multi(share: &[u8], pubkeys_armored: &[&[u8]]) -> Result<Vec<u8>> {
     if pubkeys_armored.is_empty() {
@@ -132,9 +130,9 @@ pub fn encrypt_share_multi(share: &[u8], pubkeys_armored: &[&[u8]]) -> Result<Ve
     Ok(sink)
 }
 
-/// Aide de déchiffrement pour l'API stream de sequoia : fournit la clé privée
-/// déjà déverrouillée (par passphrase) pour ouvrir le paquet de session PGP,
-/// et relève le nom du paquet littéral au passage.
+/// Decryption helper for Sequoia's streaming API: provides the private key, already
+/// unlocked with its passphrase, to open the PGP session packet, and notes the
+/// literal packet's name along the way.
 struct DecryptionKeyHelper {
     keypair: KeyPair,
     literal_name: Option<Vec<u8>>,
@@ -142,7 +140,7 @@ struct DecryptionKeyHelper {
 
 impl VerificationHelper for DecryptionKeyHelper {
     fn get_certs(&mut self, _ids: &[KeyHandle]) -> openpgp::Result<Vec<Cert>> {
-        Ok(Vec::new()) // pas de vérification de signature pour ce PoC
+        Ok(Vec::new()) // no signature to verify: shares are encrypted, not signed
     }
 
     fn check(&mut self, _structure: MessageStructure) -> openpgp::Result<()> {
@@ -178,30 +176,29 @@ impl DecryptionHelper for DecryptionKeyHelper {
     }
 }
 
-/// Déchiffre une part précédemment chiffrée par `encrypt_share`, en déverrouillant
-/// la clé privée correspondante avec une passphrase saisie directement (pas de
-/// gpg-agent ni de YubiKey dans ce PoC).
+/// Decrypts a share previously encrypted by `encrypt_share`, unlocking the matching
+/// private key with a passphrase entered directly (no gpg-agent or hardware key
+/// involved).
 pub fn decrypt_share(encrypted: &[u8], privkey_path: &str, passphrase: &str) -> Result<Vec<u8>> {
     decrypt_share_named(encrypted, privkey_path, passphrase).map(|(share, _)| share)
 }
 
-/// `decrypt_share`, plus le nom porté par le paquet littéral (`None` : part
-/// sans nom, voir `encrypt_share_named`). Rendu seulement une fois tout le
-/// message déchiffré et son intégrité vérifiée : aussi sûr que la part.
+/// `decrypt_share`, plus the name carried by the literal packet (`None`: an unnamed
+/// share, see `encrypt_share_named`). Only returned once the whole message is
+/// decrypted and its integrity verified: as trustworthy as the share.
 pub fn decrypt_share_named(encrypted: &[u8], privkey_path: &str, passphrase: &str) -> Result<(Vec<u8>, Option<Vec<u8>>)> {
     let cert = Cert::from_file(privkey_path)
         .with_context(|| format!("lecture de la clé privée {privkey_path}"))?;
     decrypt_with_cert_at(encrypted, &cert, privkey_path, passphrase, own_key_time(&cert))
 }
 
-/// `decrypt_share_named` avec la clé déjà lue, évaluée (clé et message) à
-/// `time` — séparé pour que les tests puissent juger une part dans plusieurs
-/// décennies.
+/// `decrypt_share_named` with the key already read, evaluated (key and message) at
+/// `time`. Kept separate so the tests can judge a share several decades ahead.
 fn decrypt_with_cert_at(encrypted: &[u8], cert: &Cert, privkey_path: &str, passphrase: &str, time: SystemTime) -> Result<(Vec<u8>, Option<Vec<u8>>)> {
     let policy = StandardPolicy::new();
     let password = Password::from(passphrase);
 
-    // Première sous-clé de chiffrement utilisable.
+    // First usable encryption subkey.
     let key_amalgamation = cert
         .keys()
         .with_policy(&policy, Some(time))
@@ -242,10 +239,9 @@ mod tests {
     use openpgp::cert::prelude::*;
     use openpgp::serialize::Serialize;
 
-    /// Test de bout en bout du moteur PGP (génération de clé, chiffrement,
-    /// déchiffrement) — exerce le vrai backend crypto configuré (`crypto-cng` sur
-    /// Windows), pas seulement la logique applicative autour. Sert aussi de
-    /// garde-fou lors d'un futur changement de backend.
+    /// End-to-end test of the PGP engine (key generation, encryption, decryption):
+    /// exercises the real configured crypto backend (`crypto-cng` on Windows), not just
+    /// the application logic around it. Also a safety net for a future backend change.
     #[test]
     fn encrypt_then_decrypt_round_trip() {
         let dir = std::env::temp_dir().join(format!("pgp_engine_test_{}", std::process::id()));
@@ -283,7 +279,7 @@ mod tests {
             decrypt_share(&encrypted, &privkey_path.to_string_lossy(), passphrase).expect("déchiffrement");
         assert_eq!(decrypted, plaintext);
 
-        // Un mauvais mot de passe doit échouer proprement, pas renvoyer n'importe quoi.
+        // A wrong password must fail cleanly, not return garbage.
         assert!(decrypt_share(&encrypted, &privkey_path.to_string_lossy(), "mauvais mot de passe").is_err());
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -293,8 +289,8 @@ mod tests {
         generate_test_identity_created(passphrase, std::time::SystemTime::now())
     }
 
-    /// Identité générée comme dans l'app (`api::generate_pgp_identity` :
-    /// `CertBuilder::new`, sans durée de validité), datée de `creation`.
+    /// Identity generated as in the app (`api::generate_pgp_identity`:
+    /// `CertBuilder::new`, no validity period), dated `creation`.
     fn generate_test_identity_created(passphrase: &str, creation: std::time::SystemTime) -> (Vec<u8>, Vec<u8>) {
         let (cert, _revocation) = CertBuilder::new()
             .set_creation_time(creation)
@@ -319,10 +315,9 @@ mod tests {
         (pubkey_armored, privkey_armored)
     }
 
-    /// Garantie centrale du déverrouillage biométrique : un coffre chiffré pour
-    /// deux destinataires doit être déchiffrable indépendamment par l'un OU
-    /// l'autre, chacun avec sa propre passphrase, sans que l'un ait besoin de
-    /// connaître ou d'utiliser la clé de l'autre.
+    /// Core guarantee of biometric unlock: a vault encrypted for two recipients must be
+    /// decryptable independently by either one, each with its own passphrase, without
+    /// one needing to know or use the other's key.
     #[test]
     fn encrypt_share_multi_lets_either_recipient_decrypt_independently() {
         let dir = std::env::temp_dir().join(format!("pgp_engine_multi_test_{}", std::process::id()));
@@ -354,15 +349,14 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Régression : sans cette vérification, un certificat sans sous-clé de
-    /// chiffrement utilisable contribuerait silencieusement 0 destinataire au
-    /// lieu de faire échouer l'opération entière (voir la même faille corrigée
-    /// dans `messaging::encrypt_message`).
+    /// Regression: without this check, a certificate without a usable encryption subkey
+    /// would silently contribute 0 recipients instead of failing the whole operation
+    /// (see the same flaw fixed in `messaging::encrypt_message`).
     #[test]
     fn encrypt_share_multi_fails_closed_when_one_recipient_has_no_usable_encryption_subkey() {
         let (pub_a, _priv_a) = generate_test_identity("passphrase du destinataire A");
-        // Un certificat sans sous-clé de chiffrement du tout (seulement une clé de
-        // signature) : aucun `for_transport_encryption()` disponible.
+        // A certificate with no encryption subkey at all (only a signing key): no
+        // `for_transport_encryption()` available.
         let (cert_no_enc, _) = CertBuilder::new()
             .add_userid("Sans chiffrement <no-enc@example.invalid>")
             .generate()
@@ -383,11 +377,10 @@ mod tests {
         assert!(encrypt_share_multi(b"peu importe", &[]).is_err());
     }
 
-    /// Nos clés ne dépendent pas de l'horloge de l'ordinateur : horloge en
-    /// retard d'une minute, d'une heure ou de deux ans sur la création de la
-    /// clé (restauration sur un PC mal réglé), ou clé vieille de 26 ans →
-    /// chiffrement et déchiffrement fonctionnent (avant : « aucune clé de
-    /// déchiffrement trouvée » dès une minute de retard).
+    /// Our keys do not depend on the computer's clock: a clock one minute, one hour or
+    /// two years behind the key's creation (a restore on a PC set wrong), or a key 26
+    /// years old, and encryption and decryption still work (before: "no decryption key
+    /// found" as soon as the clock was one minute behind).
     #[test]
     fn own_keys_work_whatever_the_computer_clock_says() {
         use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -411,10 +404,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Nom de la part (marque de kit) : rendu par `decrypt_share_named` avec
-    /// la part, ignoré par `decrypt_share` (ce que font les anciennes versions
-    /// de l'app : la part déchiffrée est exactement la même) ; part sans nom →
-    /// `None`. Une part dont un octet a changé ne rend ni part ni nom.
+    /// Name of the share (kit mark): returned by `decrypt_share_named` together with
+    /// the share, ignored by `decrypt_share` (which is what older versions of the app
+    /// do: the decrypted share is exactly the same); an unnamed share gives `None`. A
+    /// share with a single changed byte returns neither share nor name.
     #[test]
     fn share_name_is_carried_encrypted_and_ignored_by_plain_decryption() {
         let dir = std::env::temp_dir().join(format!("pgp_engine_named_test_{}", std::process::id()));
@@ -443,10 +436,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Une part chiffrée aujourd'hui se déchiffre encore en 2040, 2070 et
-    /// 2100 avec cette version de la bibliothèque : aucune règle datée de la
-    /// politique de sequoia (algorithmes refusés après une date) ne la rendra
-    /// inutilisable avec le temps.
+    /// A share encrypted today still decrypts in 2040, 2070 and 2100 with this version
+    /// of the library: no dated rule in Sequoia's policy (algorithms refused after a
+    /// given date) will make it unusable over time.
     #[test]
     fn todays_shares_still_decrypt_decades_later() {
         use std::time::{Duration, UNIX_EPOCH};

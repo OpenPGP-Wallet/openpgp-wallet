@@ -1,13 +1,13 @@
-//! Demandes de signature venues de dApps (WalletConnect) : analyse, validation
-//! et PRÉPARATION — tout ce qui sera signé, et tout ce qui sera affiché dans la
-//! boîte de confirmation native, est calculé ici, une seule fois, à partir de
-//! la demande telle que reçue du relais (jamais d'une copie venue du frontend).
+//! Signing requests from dApps (WalletConnect): parsing, validation and
+//! PREPARATION. Everything that will be signed, and everything that will be shown
+//! in the native confirmation dialog, is computed here, once, from the request as
+//! received from the relay (never from a copy coming from the frontend).
 //!
-//! C'est la surface d'attaque n°1 d'un portefeuille connecté à des sites web
-//! (autorisations de dépense illimitées, signatures "permit", transactions
-//! opaques) : chaque demande est soit comprise et affichée en clair, soit
-//! présentée explicitement comme une signature à l'aveugle, soit refusée.
-//! Aucune signature ici : voir `api::sign_dapp_request` (mot de passe exigé).
+//! This is attack surface number one for a wallet connected to websites (unlimited
+//! spending approvals, "permit" signatures, opaque transactions): each request is
+//! either understood and shown in plain terms, explicitly presented as a blind
+//! signature, or refused. No signing here: see `api::sign_dapp_request` (password
+//! required).
 
 use crate::evm_sign::{self, CallKind, TypedData, U256};
 use crate::{api, eth_rpc, jupiter_rpc, sol_rpc, sol_spl, wallet_flow};
@@ -15,20 +15,21 @@ use anyhow::{anyhow, bail, Context, Result};
 use base64::Engine;
 use serde_json::Value;
 
-// --- Réseaux et méthodes pris en charge ---------------------------------------
+// --- Supported networks and methods ---------------------------------------------
 
 pub const EVM_MAINNET: &str = "eip155:1";
 pub const EVM_SEPOLIA: &str = "eip155:11155111";
-/// Identifiants CAIP-2 Solana = 32 premiers caractères du hash de genèse
-/// (namespaces.chainagnostic.org, vérifié contre `getGenesisHash` en réel).
+/// Solana CAIP-2 identifiers = the first 32 characters of the genesis hash
+/// (namespaces.chainagnostic.org, checked against `getGenesisHash` on the real
+/// network).
 pub const SOLANA_MAINNET: &str = "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp";
 pub const SOLANA_DEVNET: &str = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
 
 pub const SOLANA_CHAINS: [&str; 2] = [SOLANA_MAINNET, SOLANA_DEVNET];
 
-/// Réseau EVM de l'app désigné par un identifiant CAIP-2 « eip155:<chainId> »
-/// (forme canonique seulement : « eip155:01 » n'est pas accepté) — tous les
-/// réseaux de `wallet_flow::EVM_NETWORKS`, même adresse partout.
+/// The app's EVM network identified by a CAIP-2 identifier "eip155:<chainId>"
+/// (canonical form only: "eip155:01" is not accepted). Covers every network in
+/// `wallet_flow::EVM_NETWORKS`, with the same address everywhere.
 fn evm_network_for_chain(chain: &str) -> Option<&'static wallet_flow::EvmNetwork> {
     let chain_id: u64 = chain.strip_prefix("eip155:")?.parse().ok()?;
     if format!("eip155:{chain_id}") != chain {
@@ -41,13 +42,13 @@ pub fn evm_chain_supported(chain: &str) -> bool {
     evm_network_for_chain(chain).is_some()
 }
 
-/// Identifiant CAIP-2 d'un réseau EVM de l'app.
+/// CAIP-2 identifier of one of the app's EVM networks.
 pub fn evm_caip2(network: &wallet_flow::EvmNetwork) -> String {
     format!("eip155:{}", network.chain_id)
 }
 
-/// `eth_sign` (signature d'une empreinte brute, à l'aveugle par construction)
-/// est volontairement absent : refusé comme méthode non prise en charge.
+/// `eth_sign` (signing a raw digest, blind by construction) is deliberately
+/// missing: refused as an unsupported method.
 pub const EVM_METHODS: [&str; 3] = ["eth_sendTransaction", "personal_sign", "eth_signTypedData_v4"];
 pub const SOLANA_METHODS: [&str; 5] =
     ["solana_signMessage", "solana_signTransaction", "solana_signAndSendTransaction", "solana_getAccounts", "solana_requestAccounts"];
@@ -66,24 +67,24 @@ pub fn network_for_chain(chain: &str) -> Option<Network> {
     }
 }
 
-/// Adresses du profil connecté à la session (publiques).
+/// Addresses of the profile connected to the session (public).
 pub struct Account {
     pub evm: String,
     pub solana: String,
 }
 
-// --- Ce qui sera affiché -------------------------------------------------------
+// --- What will be shown ---------------------------------------------------------
 
-/// Message à signer, tel qu'il sera montré : texte s'il est lisible, sinon
-/// hexadécimal — et les signaux qui justifient un avertissement.
+/// Message to sign, as it will be shown: text if readable, hex otherwise, plus the
+/// signals that justify a warning.
 pub struct MessageView {
     pub text: Option<String>,
     pub hex: String,
-    /// 32 octets non textuels : a la forme d'une empreinte (hash) — le signer
-    /// peut revenir à signer une transaction ou un ordre à l'aveugle.
+    /// 32 non-text bytes: shaped like a digest (hash). Signing it may amount to blindly
+    /// signing a transaction or an order.
     pub looks_like_hash: bool,
-    /// Domaine annoncé par un message "Sign-In with Ethereum" (EIP-4361), à
-    /// comparer au site qui fait la demande (hameçonnage classique).
+    /// Domain announced by a "Sign-In with Ethereum" message (EIP-4361), to compare
+    /// with the site making the request (classic phishing).
     pub siwe_domain: Option<String>,
 }
 
@@ -102,12 +103,12 @@ fn message_view(bytes: &[u8]) -> MessageView {
 
 pub enum TypedRisk {
     None,
-    /// Autorisation de dépense signée hors chaîne (EIP-2612 "Permit", Permit2
-    /// d'Uniswap…) : quiconque détient cette signature peut ensuite vider
-    /// l'autorisation SANS autre confirmation de l'utilisateur.
+    /// Spending approval signed off chain (EIP-2612 "Permit", Uniswap's Permit2...):
+    /// whoever holds this signature can then drain the allowance WITHOUT any further
+    /// confirmation from the user.
     Permit { spender: Option<String>, amount: Option<String>, unlimited: bool },
-    /// Ordre de place de marché (Seaport/OpenSea…) : peut céder des NFT ou des
-    /// jetons au prix fixé dans le message.
+    /// Marketplace order (Seaport / OpenSea...): can give away NFTs or tokens at the
+    /// price set in the message.
     Order,
 }
 
@@ -117,8 +118,8 @@ pub struct TypedDataView {
     pub domain_chain_id: Option<u64>,
     pub verifying_contract: Option<String>,
     pub risk: TypedRisk,
-    /// Champs du message (chemin, valeur), aplatis dans l'ordre des types —
-    /// seuls les champs déclarés sont signés, donc seuls eux sont montrés.
+    /// Message fields (path, value), flattened in type order. Only declared fields are
+    /// signed, so only they are shown.
     pub fields: Vec<(String, String)>,
     pub hidden_fields: usize,
 }
@@ -128,17 +129,17 @@ pub struct TokenInfo {
     pub decimals: Option<u8>,
 }
 
-/// Variation simulée d'un actif de l'utilisateur (Solana).
+/// Simulated change in one of the user's assets (Solana).
 pub struct AssetDelta {
-    /// "SOL", ou adresse du mint.
+    /// "SOL", or the mint address.
     pub asset: String,
-    /// Nom connu (USDC) quand il y en a un.
+    /// Known name (USDC) when there is one.
     pub label: Option<&'static str>,
     pub delta: i128,
     pub decimals: Option<u8>,
 }
 
-/// Demande prête à signer : ce qui sera signé ET ce qui sera affiché.
+/// Request ready to sign: what will be signed AND what will be shown.
 pub enum Prepared {
     EvmPersonalSign { network: &'static wallet_flow::EvmNetwork, message: Vec<u8>, view: MessageView },
     EvmTypedData { network: &'static wallet_flow::EvmNetwork, digest: [u8; 32], view: TypedDataView },
@@ -149,8 +150,8 @@ pub enum Prepared {
         data: Vec<u8>,
         gas_limit: u64,
         gas_price: u128,
-        /// Réseaux OP Stack (Base) : frais de publication sur Ethereum, en plus
-        /// du gas (voir `api::EvmFee`) ; 0 ailleurs.
+        /// OP Stack networks (Base): publishing fee on Ethereum, on top of gas (see
+        /// `api::EvmFee`); 0 elsewhere.
         l1_fee: u128,
         call: CallKind,
         to_is_contract: bool,
@@ -160,10 +161,10 @@ pub enum Prepared {
     SolanaTransaction { network: &'static wallet_flow::SolNetwork, tx: Vec<u8>, send: bool, effects: Vec<AssetDelta> },
 }
 
-// --- Préparation -----------------------------------------------------------------
+// --- Preparation ----------------------------------------------------------------
 
-/// Plafond de gas d'une transaction de dApp (ce qui est affiché comme frais
-/// MAXIMUM) : très au-delà d'un échange ou d'un dépôt usuels.
+/// Gas cap for a dApp transaction (what is shown as the MAXIMUM fee): far above a
+/// usual swap or deposit.
 pub const DAPP_MAX_GAS_LIMIT: u64 = 2_000_000;
 
 fn same_evm_address(a: &str, b: &str) -> bool {
@@ -184,14 +185,14 @@ fn hex_data(value: Option<&Value>) -> Result<Vec<u8>> {
     }
 }
 
-/// `method`/`params`/`chain` : exactement la demande reçue du relais.
+/// `method`/`params`/`chain`: exactly the request received from the relay.
 pub fn prepare(method: &str, params: &Value, chain: &str, account: &Account) -> Result<Prepared> {
     let network = network_for_chain(chain).ok_or_else(|| anyhow!("réseau non pris en charge : {chain}"))?;
     match (method, network) {
         ("personal_sign", Network::Evm(network)) => {
             let items = params.as_array().ok_or_else(|| anyhow!("personal_sign : paramètres invalides"))?;
             anyhow::ensure!(items.len() >= 2, "personal_sign : paramètres invalides");
-            // Ordre normal [message, adresse] ; certaines dApps l'inversent.
+            // Normal order is [message, address]; some dApps swap them.
             let (message, address) = if items[1].as_str().is_some_and(|a| same_evm_address(a, &account.evm)) {
                 (&items[0], &items[1])
             } else {
@@ -238,8 +239,8 @@ pub fn prepare(method: &str, params: &Value, chain: &str, account: &Account) -> 
             let message = params.get("message").and_then(Value::as_str).ok_or_else(|| anyhow!("solana_signMessage : message absent"))?;
             let bytes = bs58::decode(message).into_vec().context("solana_signMessage : message base58 invalide")?;
             anyhow::ensure!(!bytes.is_empty(), "message vide");
-            // Signer un "message" qui est en réalité une transaction sérialisée
-            // revient à signer cette transaction — attaque connue sur Solana.
+            // Signing a "message" that is really a serialized transaction amounts to signing
+            // that transaction: a known attack on Solana.
             anyhow::ensure!(
                 jupiter_rpc::message_writable_accounts(&bytes).is_err(),
                 "ce « message » est en réalité une TRANSACTION Solana déguisée — refusé"
@@ -269,12 +270,12 @@ fn prepare_evm_transaction(params: &Value, network: &'static wallet_flow::EvmNet
     let data = hex_data(tx.get("data").or_else(|| tx.get("input")))?;
     let to_hex = crate::derivation::format_address(&to);
 
-    // Prix du gas relu ICI (et plafonné sur mainnet), jamais celui proposé par
-    // la dApp : même règle "on signe ce qu'on voit" que les envois normaux.
+    // Gas price read HERE (and capped on mainnet), never the one the dApp proposes:
+    // the same "sign what you see" rule as normal sends.
     let gas_price = api::evm_gas_price_for_confirmation(network)?;
     let rpc = eth_rpc::EthRpc::new(network.rpc);
-    // Exécution à blanc : une transaction qui échouerait est refusée avant
-    // d'être présentée (sinon elle brûlerait des frais pour rien).
+    // Dry run: a transaction that would fail is refused before being presented
+    // (otherwise it would burn fees for nothing).
     rpc.call_contract(&account.evm, &to_hex, value, &data)
         .map_err(|e| anyhow!("la transaction échouerait si elle était envoyée : {e:#}"))?;
     let estimated = rpc.estimate_gas(&account.evm, &to_hex, value, &data)?;
@@ -295,8 +296,8 @@ fn prepare_evm_transaction(params: &Value, network: &'static wallet_flow::EvmNet
     Ok(Prepared::EvmTransaction { network, to, value, data, gas_limit, gas_price, l1_fee, call, to_is_contract, token })
 }
 
-/// Décimales et symbole d'un jeton ERC-20, au mieux (un contrat peut ne pas
-/// les exposer, ou mentir : le symbole est du texte libre, affiché nettoyé).
+/// Decimals and symbol of an ERC-20 token, on a best-effort basis (a contract may
+/// not expose them, or may lie: the symbol is free text, shown sanitized).
 fn token_info(rpc: &eth_rpc::EthRpc, from: &str, token: &str) -> TokenInfo {
     let decimals = rpc
         .call_contract(from, token, 0, &[0x31, 0x3c, 0xe5, 0x67])
@@ -304,7 +305,7 @@ fn token_info(rpc: &eth_rpc::EthRpc, from: &str, token: &str) -> TokenInfo {
         .filter(|r| r.len() == 32 && r[..31].iter().all(|&b| b == 0))
         .map(|r| r[31]);
     let symbol = rpc.call_contract(from, token, 0, &[0x95, 0xd8, 0x9b, 0x41]).ok().and_then(|r| {
-        // Chaîne ABI dynamique : décalage (32), longueur (32), octets.
+        // Dynamic ABI string: offset (32), length (32), bytes.
         let len = usize::try_from(U256(r.get(32..64)?.try_into().ok()?).to_u128()?).ok()?;
         let bytes = r.get(64..64 + len.min(32))?;
         String::from_utf8(bytes.to_vec()).ok()
@@ -331,10 +332,10 @@ fn prepare_solana_transaction(
         "la transaction n'est pas payée par le compte connecté — refusée"
     );
 
-    // Même mécanique que la vérification des swaps Jupiter : comptes
-    // inscriptibles résolus on-chain (tables de correspondance comprises,
-    // nonce durable refusé), état avant, simulation SANS signature avec état
-    // après, refus structurels (Assign, délégué, cession…), puis bilan affiché.
+    // Same mechanics as the Jupiter swap check: writable accounts resolved on chain
+    // (lookup tables included, durable nonce refused), state before, simulation
+    // WITHOUT a signature with state after, structural refusals (Assign, delegate,
+    // authority transfer...), then the summary shown.
     let rpc = sol_rpc::SolRpc::new(network.rpc);
     let addresses = api::resolve_writable_addresses(&rpc, &tx)?;
     let pre = rpc.multiple_accounts(&addresses)?;
@@ -359,7 +360,7 @@ fn describe_effects(rpc: &sol_rpc::SolRpc, effects: &api::UserEffects) -> Vec<As
     mints.sort();
     mints.dedup();
     let mint_addresses: Vec<String> = mints.iter().map(|m| bs58::encode(m).into_string()).collect();
-    // Décimales lues dans le compte du mint (octet 44 de la disposition SPL).
+    // Decimals read from the mint account (byte 44 of the SPL layout).
     let mint_states = rpc.multiple_accounts(&mint_addresses).unwrap_or_default();
     for (i, mint) in mints.iter().enumerate() {
         let before = effects.tokens_pre.get(mint).copied().unwrap_or(0) as i128;
@@ -382,7 +383,7 @@ fn describe_effects(rpc: &sol_rpc::SolRpc, effects: &api::UserEffects) -> Vec<As
     out
 }
 
-// --- Vue des données structurées --------------------------------------------------
+// --- View of structured data ----------------------------------------------------
 
 const MAX_TYPED_FIELDS: usize = 40;
 
@@ -452,10 +453,10 @@ fn typed_risk(typed: &TypedData) -> TypedRisk {
     }
     let m = &typed.message;
     let spender = m.get("spender").and_then(Value::as_str).map(str::to_string);
-    // EIP-2612 : `value` ; Permit2 : `details.amount` ou `permitted.amount`,
-    // et en lot (`PermitBatch`, `PermitBatchTransferFrom`) des LISTES de
-    // montants — une seule illimitée suffit à l'avertissement (33ᵉ passage :
-    // les lots n'étaient pas lus).
+    // EIP-2612: `value`; Permit2: `details.amount` or `permitted.amount`, and in
+    // batches (`PermitBatch`, `PermitBatchTransferFrom`) LISTS of amounts. A single
+    // unlimited one is enough for the warning (33rd review round: batches were not
+    // being read).
     let mut amounts: Vec<&Value> = Vec::new();
     amounts.extend(m.get("value"));
     for key in ["details", "permitted"] {
@@ -539,15 +540,15 @@ mod tests {
             }
             _ => panic!(),
         }
-        // Signature destinée à un autre réseau que celui de la connexion.
+        // Signature meant for a network other than the connection's.
         assert!(prepare("eth_signTypedData_v4", &permit(137, "1"), EVM_MAINNET, &account()).is_err());
-        // Pour un autre compte.
+        // For another account.
         let mut other = permit(1, "1");
         other[0] = json!("0x5555555555555555555555555555555555555555");
         assert!(prepare("eth_signTypedData_v4", &other, EVM_MAINNET, &account()).is_err());
     }
 
-    /// Permit2 en lot : une autorisation illimitée dans la liste est signalée.
+    /// Batched Permit2: an unlimited approval in the list is flagged.
     #[test]
     fn batch_permits_are_flagged_unlimited() {
         let max = "1461501637330902918203684832716283019655932542975";
@@ -589,13 +590,13 @@ mod tests {
         assert!(prepare("solana_signMessage", &json!({"message": "2"}), EVM_MAINNET, &account()).is_err());
     }
 
-    /// Réseau réel, lecture seule, rien n'est signé :
-    /// - identifiants CAIP-2 Solana = 32 premiers caractères du hash de genèse ;
-    /// - `eth_sendTransaction` réel préparé depuis une adresse publique : un
-    ///   `approve` USDC ILLIMITÉ, exécuté à blanc sur mainnet, décodé, avec les
-    ///   décimales et le symbole lus sur le contrat ;
-    /// - `solana_signTransaction` réel : un swap Jupiter construit pour le hot
-    ///   wallet public, simulé, bilan des effets calculé.
+    /// Real network, read-only, nothing is signed:
+    /// - Solana CAIP-2 identifiers = the first 32 characters of the genesis hash;
+    /// - a real `eth_sendTransaction` prepared from a public address: an UNLIMITED USDC
+    ///   `approve`, dry-run on mainnet, decoded, with decimals and symbol read from the
+    ///   contract;
+    /// - a real `solana_signTransaction`: a Jupiter swap built for the public hot
+    ///   wallet, simulated, with the summary of its effects computed.
     /// `cargo test -- --ignored dapp_requests_prepare_real_mainnet_requests --nocapture`
     #[test]
     #[ignore]
@@ -628,8 +629,8 @@ mod tests {
             _ => panic!(),
         }
 
-        // Même demande sur Base (réseau OP Stack) : réseau de la connexion,
-        // contrat USDC de Base, frais de publication sur Ethereum comptés.
+        // The same request on Base (an OP Stack network): the connection's network, Base's
+        // USDC contract, the publishing fee on Ethereum counted.
         let usdc_base = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
         let params = json!([{"from": vitalik.evm, "to": usdc_base, "data": approve, "value": "0x0"}]);
         match prepare("eth_sendTransaction", &params, "eip155:8453", &vitalik).unwrap() {
@@ -663,7 +664,7 @@ mod tests {
 
     #[test]
     fn solana_sign_message_refuses_disguised_transactions() {
-        // Un vrai message de transaction legacy minimal, passé comme "message".
+        // A real, minimal legacy transaction message, passed as a "message".
         let mut tx_message = vec![1, 0, 1, 2];
         tx_message.extend_from_slice(&[7u8; 32]);
         tx_message.extend_from_slice(&[0u8; 32]);

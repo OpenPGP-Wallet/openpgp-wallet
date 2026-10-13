@@ -1,19 +1,16 @@
-//! Comptes de portefeuilles matériels (Ledger, Trezor) : la clé privée ne
-//! quitte jamais l'appareil. Ce module ne conserve que des données PUBLIQUES
-//! (adresse, chemin de dérivation, et pour Bitcoin l'empreinte maîtresse et la
-//! clé publique étendue du compte — même niveau de sensibilité que les
-//! adresses des wallets externes) et orchestre les envois :
-//! 1. construction de la transaction avec les mêmes contrôles qu'un envoi du
-//!    portefeuille logiciel (réseau du nœud, plafond du prix du gas, solde,
-//!    UTXOs revérifiés) ;
-//! 2. vérification que l'appareil branché est bien celui du compte ;
-//! 3. revue et confirmation sur l'écran de l'appareil, signature ;
-//! 4. signature revérifiée ici (voir `ledger`, `trezor`), puis diffusion.
+//! Hardware wallet accounts (Ledger, Trezor): the private key never leaves the
+//! device. This module only keeps PUBLIC data (address, derivation path, and for
+//! Bitcoin the master fingerprint and the account's extended public key, the same
+//! sensitivity as external wallet addresses) and orchestrates sends:
+//! 1. build the transaction with the same checks as a software wallet send (the
+//!    node's network, gas price cap, balance, UTXOs checked again);
+//! 2. check that the connected device really is the account's;
+//! 3. review and confirmation on the device screen, signing;
+//! 4. signature checked again here (see `ledger`, `trezor`), then broadcast.
 //!
-//! Chemins du premier compte, ceux des applications officielles (Ledger Live,
-//! Trezor Suite) : Ethereum m/44'/60'/0'/0/0 ; Solana m/44'/501'/0' (Ledger)
-//! ou m/44'/501'/0'/0' (Trezor) ; Bitcoin natif SegWit m/84'/c'/0'
-//! (réception 0/0, monnaie 1/0).
+//! First-account paths, those of the official apps (Ledger Live, Trezor Suite):
+//! Ethereum m/44'/60'/0'/0/0; Solana m/44'/501'/0' (Ledger) or m/44'/501'/0'/0'
+//! (Trezor); native SegWit Bitcoin m/84'/c'/0' (receive 0/0, change 1/0).
 
 use crate::ledger::{self, Transport};
 use crate::trezor::{self, Trezor};
@@ -26,7 +23,7 @@ const HARDWARE_ACCOUNTS_FILE: &str = "hardware_accounts.json";
 const MAX_ACCOUNTS: usize = 50;
 const EVM_PATH: &str = "44'/60'/0'/0/0";
 const BTC_ACCOUNT: u32 = 0;
-/// Indice des adresses Bitcoin utilisées (réception m/…/0/0, monnaie m/…/1/0).
+/// Index of the Bitcoin addresses used (receive m/.../0/0, change m/.../1/0).
 const BTC_ADDRESS_INDEX: u32 = 0;
 
 fn default_device() -> String {
@@ -37,17 +34,16 @@ fn default_device() -> String {
 pub struct HardwareAccount {
     pub id: u32,
     pub label: String,
-    /// "ledger" ou "trezor" (comptes enregistrés avant l'arrivée du Trezor :
-    /// "ledger").
+    /// "ledger" or "trezor" (accounts saved before Trezor support: "ledger").
     #[serde(default = "default_device")]
     pub device: String,
     /// "evm_mainnet"/"evm_sepolia"/"btc_mainnet"/"btc_testnet"/"sol_mainnet"/"sol_devnet".
     pub network: String,
-    /// Adresse de réception.
+    /// Receive address.
     pub address: String,
-    /// Chemin de dérivation : de l'adresse (EVM, Solana) ou du compte (Bitcoin).
+    /// Derivation path: of the address (EVM, Solana) or of the account (Bitcoin).
     pub path: String,
-    /// Bitcoin : empreinte maîtresse (hex) et clé publique étendue du compte.
+    /// Bitcoin: master fingerprint (hex) and the account's extended public key.
     #[serde(default)]
     pub fingerprint: Option<String>,
     #[serde(default)]
@@ -66,8 +62,8 @@ fn load(data_dir: &Path) -> HardwareAccountsData {
         .unwrap_or_default()
 }
 
-/// Écriture atomique (fichier temporaire puis renommage) : jamais de fichier
-/// à moitié écrit en cas d'interruption.
+/// Atomic write (temporary file, then rename): never a half-written file if
+/// interrupted.
 fn save(data_dir: &Path, data: &HardwareAccountsData) -> Result<()> {
     let content = serde_json::to_string_pretty(data).context("sérialisation des comptes matériels")?;
     let tmp = data_dir.join(format!("{HARDWARE_ACCOUNTS_FILE}.tmp"));
@@ -98,8 +94,8 @@ enum Chain {
 }
 
 fn chain(network: &str) -> Result<Chain> {
-    // Réseaux EVM : tous ceux de l'app (même chemin, même adresse ; la
-    // signature porte l'identifiant de chaîne EIP-155 du réseau).
+    // EVM networks: all of the app's (same path, same address; the signature carries
+    // the network's EIP-155 chain ID).
     if let Some(net) = wallet_flow::evm_network(network) {
         return Ok(Chain::Evm(net));
     }
@@ -149,18 +145,17 @@ impl Device {
     }
 }
 
-/// Communication ouverte avec un appareil.
+/// Open connection to a device.
 enum Session {
     Ledger(Box<dyn Transport>),
     Trezor(Trezor),
 }
 
-/// Appareil branché en USB. En version de développement et en test seulement
-/// (jamais compilé dans l'app livrée), `PGP_WALLET_LEDGER_EMULATOR` (ex.
-/// `127.0.0.1:9999`) et `PGP_WALLET_TREZOR_EMULATOR` (ex. `127.0.0.1:21424`)
-/// désignent les émulateurs officiels à la place, pour tester l'app sans
-/// appareil. (Le profil de test désactive `debug_assertions`, voir
-/// Cargo.toml, d'où `test` en plus.)
+/// Device connected over USB. In development builds and tests only (never compiled
+/// into the shipped app), `PGP_WALLET_LEDGER_EMULATOR` (e.g. `127.0.0.1:9999`) and
+/// `PGP_WALLET_TREZOR_EMULATOR` (e.g. `127.0.0.1:21424`) point to the official
+/// emulators instead, to test the app without a device. (The test profile disables
+/// `debug_assertions`, see Cargo.toml, hence `test` as well.)
 fn open(device: Device) -> Result<Session> {
     match device {
         Device::Ledger => {
@@ -191,7 +186,7 @@ fn trezor_link() -> Result<Box<dyn trezor::Link>> {
     Ok(Box::new(trezor::UsbLink::open_first()?))
 }
 
-/// Compte Bitcoin reconstruit à partir des données enregistrées.
+/// Bitcoin account rebuilt from the saved data.
 fn btc_account(account: &HardwareAccount, testnet: bool) -> Result<ledger::btc::Account> {
     let fingerprint = hex::decode(account.fingerprint.as_deref().unwrap_or_default())
         .ok()
@@ -201,8 +196,8 @@ fn btc_account(account: &HardwareAccount, testnet: bool) -> Result<ledger::btc::
     Ok(ledger::btc::Account { testnet, account: BTC_ACCOUNT, fingerprint, xpub })
 }
 
-/// Lit sur l'appareil (application du réseau ouverte sur un Ledger) le compte
-/// de `network`, sans rien afficher.
+/// Reads `network`'s account from the device (with the network's app open on a
+/// Ledger), without displaying anything.
 fn read_account(session: &mut Session, device: Device, network: &str, label: &str) -> Result<HardwareAccount> {
     let mut account = HardwareAccount {
         id: 0,
@@ -247,8 +242,8 @@ fn read_account(session: &mut Session, device: Device, network: &str, label: &st
     Ok(account)
 }
 
-/// Ajoute le compte de l'appareil branché (`device` : "ledger" ou "trezor")
-/// pour `network` (sur un Ledger, l'application du réseau doit être ouverte).
+/// Adds the connected device's account (`device`: "ledger" or "trezor") for
+/// `network` (on a Ledger, the network's app must be open).
 pub fn connect_device(data_dir: &Path, device: &str, network: &str, label: &str) -> Result<HardwareAccount> {
     let device = Device::parse(device)?;
     let label = label.trim();
@@ -267,9 +262,8 @@ pub fn connect_device(data_dir: &Path, device: &str, network: &str, label: &str)
     Ok(account)
 }
 
-/// Ouvre l'appareil du compte et vérifie que c'est bien le sien (autre
-/// appareil ou autre phrase de récupération : refus clair avant toute
-/// demande de signature).
+/// Opens the account's device and checks that it really is its own (another device
+/// or another recovery phrase: a clear refusal before any signing request).
 fn open_for(account: &HardwareAccount) -> Result<Session> {
     let device = Device::parse(&account.device)?;
     let mut session = open(device)?;
@@ -283,9 +277,9 @@ fn open_for(account: &HardwareAccount) -> Result<Session> {
     Ok(session)
 }
 
-/// Affiche l'adresse de réception sur l'écran de l'appareil (seul moyen de
-/// vérifier qu'elle n'a pas été substituée sur l'ordinateur) ; `Ok` une fois
-/// confirmée par l'utilisateur ET identique à celle enregistrée.
+/// Shows the receive address on the device screen (the only way to check it was not
+/// swapped on the computer); `Ok` once confirmed by the user AND identical to the
+/// saved one.
 pub fn verify_address_on_device(data_dir: &Path, id: u32) -> Result<()> {
     let account = find(data_dir, id)?;
     let mut session = open_for(&account)?;
@@ -301,13 +295,13 @@ pub fn verify_address_on_device(data_dir: &Path, id: u32) -> Result<()> {
     Ok(())
 }
 
-/// Adresses Bitcoin du compte : (réception, monnaie).
+/// The account's Bitcoin addresses: (receive, change).
 fn btc_addresses(account: &ledger::btc::Account) -> Result<(String, String)> {
     Ok((account.address(0, BTC_ADDRESS_INDEX)?, account.address(1, BTC_ADDRESS_INDEX)?))
 }
 
-/// Solde dans la plus petite unité (wei, satoshi, lamport). Bitcoin : UTXOs
-/// confirmés des adresses de réception ET de monnaie.
+/// Balance in the smallest unit (wei, satoshi, lamport). Bitcoin: confirmed UTXOs
+/// of the receive AND change addresses.
 pub fn balance(data_dir: &Path, id: u32) -> Result<u128> {
     let account = find(data_dir, id)?;
     Ok(match chain(&account.network)? {
@@ -320,7 +314,7 @@ pub fn balance(data_dir: &Path, id: u32) -> Result<u128> {
     })
 }
 
-/// Frais rapide/moyen/lent d'un envoi Bitcoin depuis le compte.
+/// Fast/medium/slow fee for a Bitcoin send from the account.
 pub fn estimate_btc_fees(data_dir: &Path, id: u32) -> Result<api::BtcFeeEstimate> {
     let account = find(data_dir, id)?;
     let Chain::Btc(net, testnet) = chain(&account.network)? else { bail!("compte non Bitcoin") };
@@ -328,15 +322,15 @@ pub fn estimate_btc_fees(data_dir: &Path, id: u32) -> Result<api::BtcFeeEstimate
     api::estimate_btc_fees_for(&[&receive, &change], net)
 }
 
-/// Compte et réseau d'un envoi, vérifiés.
+/// Account and network of a send, checked.
 fn account_for(data_dir: &Path, id: u32, network: &str) -> Result<HardwareAccount> {
     let account = find(data_dir, id)?;
     ensure!(account.network == network, "le compte « {} » n'est pas sur ce réseau", account.label);
     Ok(account)
 }
 
-/// Virement ETH signé par l'appareil. `fee` : les frais affichés dans la
-/// boîte de confirmation, utilisés tels quels (voir `api::evm_fee_for_confirmation`).
+/// ETH transfer signed by the device. `fee`: the fee shown in the confirmation
+/// dialog, used as is (see `api::evm_fee_for_confirmation`).
 pub fn send_evm(data_dir: &Path, id: u32, network: &str, to: &str, amount_eth: &str, fee: api::EvmFee) -> Result<String> {
     let account = account_for(data_dir, id, network)?;
     let Chain::Evm(net) = chain(network)? else { bail!("réseau EVM attendu") };
@@ -350,7 +344,7 @@ pub fn send_evm(data_dir: &Path, id: u32, network: &str, to: &str, amount_eth: &
     eth_rpc::EthRpc::new(net.rpc).send_raw_transaction(&raw_tx)
 }
 
-/// Virement SOL signé par l'appareil.
+/// SOL transfer signed by the device.
 pub fn send_sol(data_dir: &Path, id: u32, network: &str, to: &str, amount_sol: &str) -> Result<String> {
     let account = account_for(data_dir, id, network)?;
     let Chain::Sol(net) = chain(network)? else { bail!("réseau Solana attendu") };
@@ -369,9 +363,9 @@ pub fn send_sol(data_dir: &Path, id: u32, network: &str, to: &str, amount_sol: &
     sol_rpc::SolRpc::new(net.rpc).send_transaction(&sol_tx::assemble_transaction(&signature, &message))
 }
 
-/// Virement Bitcoin signé par l'appareil : consomme tous les UTXOs confirmés
-/// des adresses de réception et de monnaie (comme `api::send_btc`), monnaie
-/// renvoyée sur l'adresse de monnaie (reconnue et masquée par l'appareil).
+/// Bitcoin transfer signed by the device: spends all the confirmed UTXOs of the
+/// receive and change addresses (like `api::send_btc`), with change sent back to
+/// the change address (recognized and hidden by the device).
 pub fn send_btc(data_dir: &Path, id: u32, network: &str, to: &str, amount_btc: &str, fee_sat: u64) -> Result<String> {
     let account = account_for(data_dir, id, network)?;
     let Chain::Btc(net, testnet) = chain(network)? else { bail!("réseau Bitcoin attendu") };
@@ -388,8 +382,8 @@ pub fn send_btc(data_dir: &Path, id: u32, network: &str, to: &str, amount_btc: &
     let total_sat = utxos.iter().try_fold(0u64, |sum, (_, u)| sum.checked_add(u.value_sat)).context("total des UTXOs invalide")?;
     let change_sat = api::btc_change(total_sat, amount_sat, fee_sat)?;
 
-    // Transaction complète de chaque UTXO, exigée par l'appareil (txid
-    // recalculé ici puis par l'appareil : un serveur menteur est détecté).
+    // Full transaction of each UTXO, required by the device (txid recomputed here and
+    // then by the device: a lying server is detected).
     let mut previous: std::collections::HashMap<[u8; 32], Vec<u8>> = std::collections::HashMap::new();
     let mut inputs = Vec::new();
     for (change_path, utxo) in utxos {
@@ -437,9 +431,9 @@ mod tests {
         HardwareAccount { id: 0, label: "Ledger".into(), device: "ledger".into(), network: network.into(), address: address.into(), path: EVM_PATH.into(), fingerprint: None, xpub: None }
     }
 
-    /// Enregistrement, suppression, compte d'un autre réseau refusé ; un
-    /// fichier illisible donne une liste vide (jamais d'erreur bloquante) ;
-    /// un compte enregistré avant l'arrivée du Trezor reste un compte Ledger.
+    /// Saving, deleting, refusing an account from another network; an unreadable file
+    /// gives an empty list (never a blocking error); an account saved before Trezor
+    /// support stays a Ledger account.
     #[test]
     fn accounts_are_stored_and_removed() {
         let dir = temp_dir("store");
@@ -468,7 +462,7 @@ mod tests {
         assert!(Device::parse("keepkey").is_err());
     }
 
-    /// Adresse attendue sur la graine de test publique : NOTRE dérivation.
+    /// Expected address on the public test seed: OUR derivation.
     fn expected_address(network: &str, device: Device) -> String {
         let seed = bip39::Mnemonic::parse(crate::ledger::speculos::TEST_MNEMONIC).unwrap().to_seed("");
         match chain(network).unwrap() {
@@ -487,10 +481,8 @@ mod tests {
         }
     }
 
-    /// Parcours complet contre les applications OFFICIELLES dans Speculos
-    /// (graine de test publique), réseau par réseau : ajout du compte,
-    /// adresse vérifiée à l'écran, refus d'un doublon. Lancer Speculos avec
-    /// l'application voulue, puis par exemple :
+    /// Full run against the OFFICIAL apps in Speculos (public test seed), network by network: adding the account, address checked on screen, refusing a
+    /// duplicate. Start Speculos with the app you want, then for example:
     /// `PGP_WALLET_LEDGER_EMULATOR=127.0.0.1:9999 LEDGER_TEST_NETWORK=btc_testnet cargo test -- --ignored hardware_accounts_with_the_official_apps --nocapture`
     #[test]
     #[ignore]
@@ -509,8 +501,7 @@ mod tests {
         speculos::back_to_home();
     }
 
-    /// Même parcours avec le firmware officiel Trezor dans son émulateur, sur
-    /// les trois réseaux (aucune application à ouvrir sur un Trezor).
+    /// Same run with the official Trezor firmware in its emulator, on all three networks (no app to open on a Trezor).
     /// `PGP_WALLET_TREZOR_EMULATOR=127.0.0.1:21424 cargo test -- --ignored hardware_accounts_with_the_official_trezor_firmware --nocapture --test-threads=1`
     #[test]
     #[ignore]
@@ -528,11 +519,9 @@ mod tests {
         }
     }
 
-    /// VRAI envoi sur Bitcoin testnet, signé par l'application officielle
-    /// « Bitcoin Test » dans Speculos : la graine de test publique détient des
-    /// fonds testnet (sans valeur) ; 10 000 sat renvoyés à sa PROPRE adresse de
-    /// réception (seuls les frais quittent ce portefeuille public). Le réseau
-    /// accepte la transaction = validité réelle, au-delà de nos vérifications.
+    /// A REAL send on Bitcoin testnet, signed by the official "Bitcoin Test" app in Speculos: the public test seed holds (worthless)
+    /// testnet funds; 10,000 sats are sent back to its OWN receive address (only the fee leaves this public wallet). The network
+    /// accepting the transaction proves it is really valid, beyond our own checks.
     /// `PGP_WALLET_LEDGER_EMULATOR=127.0.0.1:9999 cargo test -- --ignored hardware_btc_send_on_testnet_with_the_emulator --nocapture`
     #[test]
     #[ignore]
@@ -554,8 +543,7 @@ mod tests {
         speculos::back_to_home();
     }
 
-    /// Même VRAI envoi testnet, signé cette fois par le firmware officiel
-    /// Trezor (même graine publique, mêmes adresses que le Ledger).
+    /// The same REAL testnet send, signed this time by the official Trezor firmware (same public seed, same addresses as the Ledger).
     /// `PGP_WALLET_TREZOR_EMULATOR=127.0.0.1:21424 cargo test -- --ignored hardware_btc_send_on_testnet_with_the_trezor_emulator --nocapture`
     #[test]
     #[ignore]

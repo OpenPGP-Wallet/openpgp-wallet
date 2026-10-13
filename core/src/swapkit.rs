@@ -1,22 +1,21 @@
-//! SwapKit (équipe THORSwap) : agrégateur d'échanges entre réseaux, utilisé
-//! ici pour deux fournisseurs à ADRESSE DE DÉPÔT — NEAR Intents et Chainflip
-//! — en plus des fournisseurs déjà intégrés en direct.
+//! SwapKit (by the THORSwap team): a cross-chain swap aggregator, used here for two
+//! DEPOSIT-ADDRESS providers, NEAR Intents and Chainflip, on top of the providers
+//! already integrated directly.
 //!
-//! SwapKit donne le devis puis ouvre le dépôt (adresse propre à l'échange).
-//! Avant toute signature, l'app fait CONFIRMER ce dépôt par l'API officielle
-//! du fournisseur, indépendante de SwapKit :
-//! - NEAR Intents : devis signé lu par adresse de dépôt (1Click `/v0/status`) ;
-//! - Chainflip : canal lu par identifiant (`chainflip-swap` `/v2/swaps`).
+//! SwapKit gives the quote, then opens the deposit (an address specific to the
+//! swap). Before any signature, the app has the provider's official API,
+//! independent of SwapKit, CONFIRM that deposit:
+//! - NEAR Intents: signed quote read by deposit address (1Click `/v0/status`);
+//! - Chainflip: channel read by identifier (`chainflip-swap` `/v2/swaps`).
 //!
-//! Contrôlés : adresse de dépôt, crypto vendue et reçue, montant (exact pour
-//! NEAR), destination et remboursement = adresses données par l'app, minimum
-//! de réception (celui du fournisseur, affiché dans la boîte de
-//! confirmation), échéance, commissions bornées. Au moindre écart, l'échange
-//! est refusé. Le dépôt lui-même est un virement ordinaire construit et signé
-//! par l'app.
+//! Checked: deposit address, crypto sold and received, amount (exact for NEAR),
+//! destination and refund = addresses given by the app, minimum received (the
+//! provider's, shown in the confirmation dialog), deadline, bounded fees. At the
+//! slightest mismatch, the swap is refused. The deposit itself is an ordinary
+//! transfer built and signed by the app.
 //!
-//! Clé d'API lue à la compilation (`partner-keys.env`, voir `build.rs`) :
-//! absente, SwapKit n'est pas proposé.
+//! API key read at build time (`partner-keys.env`, see `build.rs`): if missing,
+//! SwapKit is not offered.
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -27,19 +26,18 @@ const API_BASE: &str = "https://api.swapkit.dev";
 pub const API_KEY: Option<&str> = option_env!("SWAPKIT_API_KEY");
 const NEAR_STATUS: &str = "https://1click.chaindefuser.com/v0/status";
 const CHAINFLIP_STATUS: &str = "https://chainflip-swap.chainflip.io/v2/swaps";
-/// Glissement toléré demandé à SwapKit (pour cent) : garanti par le
-/// fournisseur (minimum de réception), vérifié auprès de lui.
+/// Slippage tolerance requested from SwapKit (percent): guaranteed by the provider
+/// (minimum received) and checked with it.
 const SLIPPAGE_PERCENT: u32 = 1;
-/// Commission de SwapKit (relevée sur de vrais devis : 15 points de base).
+/// SwapKit's fee (taken from real quotes: 15 basis points).
 pub const SERVICE_FEE_BPS: u32 = 15;
-/// Commission de l'app via SwapKit : 0 tant que les identifiants de réception
-/// par fournisseur ne sont pas configurés sur le tableau de bord (relevé le
-/// 04/10/2026 : `notconfig.near`, `feeBps: 0`).
+/// The app's fee through SwapKit: 0 until the per-provider receiving identifiers
+/// are set up on the dashboard (read on 2026-10-04: `notconfig.near`, `feeBps: 0`).
 pub const AFFILIATE_FEE_BPS: u32 = 0;
-/// Commissions cumulées acceptées dans un dépôt vérifié (SwapKit + app, avec
-/// marge) : au-delà, refus.
+/// Total fees accepted in a checked deposit (SwapKit + app, with a margin): beyond
+/// that, refused.
 const MAX_FEE_BPS: u64 = 100;
-/// Durée de validité minimale restante d'un dépôt au moment de signer.
+/// Minimum validity a deposit must still have when signing.
 const MIN_VALIDITY_SECS: i64 = 20 * 60;
 
 pub fn enabled() -> bool {
@@ -89,9 +87,9 @@ impl Provider {
     }
 }
 
-/// Crypto de l'app échangeable via SwapKit, avec ses identifiants chez
-/// SwapKit, NEAR Intents (1Click `/v0/tokens`) et Chainflip (actif, réseau),
-/// relevés sur les listes officielles le 04/10/2026.
+/// The app's crypto that can be swapped through SwapKit, with its identifiers at
+/// SwapKit, NEAR Intents (1Click `/v0/tokens`) and Chainflip (asset, network),
+/// taken from the official lists on 2026-10-04.
 pub struct Asset {
     pub coin: &'static str,
     pub network: &'static str,
@@ -189,7 +187,7 @@ pub fn find(coin: &str, network: &str) -> Option<&'static Asset> {
     ASSETS.iter().find(|a| a.coin == coin && a.network == network && (a.near.is_some() || a.chainflip.is_some()))
 }
 
-/// Fournisseurs de SwapKit retenus qui relient `from` à `to`.
+/// Selected SwapKit providers that connect `from` to `to`.
 pub fn providers(from: &Asset, to: &Asset) -> Vec<Provider> {
     let mut all = Vec::new();
     if from.near.is_some() && to.near.is_some() {
@@ -201,12 +199,12 @@ pub fn providers(from: &Asset, to: &Asset) -> Vec<Provider> {
     all
 }
 
-/// SwapKit relie-t-il directement ces deux cryptos (clé présente) ?
+/// Does SwapKit connect these two cryptos directly (key present)?
 pub fn links(from: (&str, &str), to: (&str, &str)) -> bool {
     enabled() && from != to && find(from.0, from.1).zip(find(to.0, to.1)).is_some_and(|(f, t)| !providers(f, t).is_empty())
 }
 
-/// Cryptos échangeables via SwapKit (vide sans clé).
+/// Cryptos that can be swapped through SwapKit (empty without a key).
 pub fn tradable() -> Vec<(&'static str, &'static str)> {
     if !enabled() {
         return Vec::new();
@@ -214,9 +212,9 @@ pub fn tradable() -> Vec<(&'static str, &'static str)> {
     ASSETS.iter().filter(|a| a.near.is_some() || a.chainflip.is_some()).map(|a| (a.coin, a.network)).collect()
 }
 
-// --- Montants -------------------------------------------------------------------
+// --- Amounts --------------------------------------------------------------------
 
-/// « 2.217785954 » → unités (tronqué aux `decimals` décimales).
+/// "2.217785954" → units (truncated to `decimals` decimals).
 fn decimal_units(text: &str, decimals: u8) -> Result<u128> {
     let text = text.trim();
     ensure!(!text.is_empty() && text.bytes().all(|b| b.is_ascii_digit() || b == b'.'), "montant SwapKit illisible ({text})");
@@ -229,14 +227,14 @@ fn decimal_units(text: &str, decimals: u8) -> Result<u128> {
     whole.checked_mul(scale).and_then(|w| w.checked_add(fraction)).context("montant SwapKit hors limites")
 }
 
-// --- Devis et dépôt -----------------------------------------------------------------
+// --- Quote and deposit ----------------------------------------------------------
 
-/// Route proposée par un fournisseur, pour l'aperçu.
+/// Route offered by a provider, for the preview.
 #[derive(Clone, Debug)]
 pub struct Route {
     pub provider: Provider,
     pub route_id: String,
-    /// Réception attendue et minimum (unités de la crypto reçue).
+    /// Expected and minimum amount received (units of the received crypto).
     pub expected_out: u128,
     pub min_out: u128,
     pub total_secs: u64,
@@ -247,16 +245,16 @@ fn post(path: &str, body: Value) -> Result<Value> {
     let response = client().post(format!("{API_BASE}{path}")).header("x-api-key", key).json(&body).send().context("SwapKit injoignable")?;
     let status = response.status();
     let text = response.text().unwrap_or_default();
-    // Jamais la clé dans un message (elle n'est pas renvoyée, mais par principe).
+    // Never the key in a message (it is not echoed back, but on principle).
     let text = text.replace(key, "<clé>");
     let value: Value = serde_json::from_str(&text).map_err(|_| anyhow!("réponse SwapKit illisible ({status})"))?;
     ensure!(status.is_success(), "SwapKit a refusé la demande : {}", value["message"].as_str().or(value["error"].as_str()).unwrap_or("erreur inconnue"));
     Ok(value)
 }
 
-/// Devis des fournisseurs retenus pour vendre `amount` (unités) de `from`
-/// contre `to` ; `source` et `destination` sont les adresses de
-/// l'utilisateur (remboursement et arrivée). Les meilleures d'abord.
+/// Quotes from the selected providers for selling `amount` (units) of `from` for
+/// `to`; `source` and `destination` are the user's addresses (refund and arrival).
+/// Best first.
 pub fn quote(from: &Asset, to: &Asset, amount: u128, source: &str, destination: &str) -> Result<Vec<Route>> {
     let wanted = providers(from, to);
     ensure!(!wanted.is_empty(), "échange non disponible via SwapKit entre ces deux cryptos");
@@ -287,7 +285,7 @@ pub fn quote(from: &Asset, to: &Asset, amount: u128, source: &str, destination: 
 fn parse_routes(value: &Value, from: &Asset, to: &Asset) -> Result<Vec<Route>> {
     let mut routes = Vec::new();
     for route in value["routes"].as_array().map(Vec::as_slice).unwrap_or_default() {
-        // Un seul fournisseur, et l'un des deux retenus ; virement simple.
+        // A single provider, one of the two selected; a plain transfer.
         let providers: Vec<&str> = route["providers"].as_array().map(|p| p.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
         let [name] = providers.as_slice() else { continue };
         let Some(provider) = Provider::from_api(name) else { continue };
@@ -308,22 +306,23 @@ fn parse_routes(value: &Value, from: &Asset, to: &Asset) -> Result<Vec<Route>> {
     Ok(routes)
 }
 
-/// Dépôt ouvert pour une route : où envoyer, et la référence de vérification.
+/// Deposit opened for a route: where to send, and the reference used for
+/// verification.
 #[derive(Clone, Debug)]
 pub struct Deposit {
     pub provider: Provider,
     pub address: String,
-    /// Identifiant du canal (Chainflip) ou du devis (NEAR).
+    /// Identifier of the channel (Chainflip) or of the quote (NEAR).
     pub channel_id: String,
     pub expected_out: u128,
     pub min_out: u128,
 }
 
-/// Ouvre le dépôt de la route `route_id` (aucun fonds n'est envoyé ici).
+/// Opens the deposit for route `route_id` (no funds are sent here).
 pub fn open_deposit(route: &Route, from: &Asset, to: &Asset, source: &str, destination: &str) -> Result<Deposit> {
-    // L'app construit et signe elle-même le dépôt (virement ordinaire), et
-    // vérifie le solde avant la boîte : ni transaction ni contrôle de solde
-    // demandés à SwapKit.
+    // The app builds and signs the deposit itself (an ordinary transfer) and checks
+    // the balance before the dialog: neither a transaction nor a balance check is
+    // requested from SwapKit.
     let value = post(
         "/v3/swap",
         json!({ "routeId": route.route_id, "sourceAddress": source, "destinationAddress": destination, "disableBuildTx": true, "disableBalanceCheck": true }),
@@ -365,16 +364,16 @@ fn parse_deposit(value: &Value, provider: Provider, from: &Asset, to: &Asset, so
     })
 }
 
-// --- Vérification auprès du fournisseur ------------------------------------------------
+// --- Verification with the provider ---------------------------------------------
 
-/// Ce que le fournisseur a confirmé, pour la boîte de confirmation.
+/// What the provider confirmed, for the confirmation dialog.
 #[derive(Clone, Debug)]
 pub struct Verified {
-    /// Minimum de réception garanti par le fournisseur (unités).
+    /// Minimum received guaranteed by the provider (units).
     pub min_out: u128,
-    /// Échéance du dépôt (secondes Unix).
+    /// Deposit deadline (Unix seconds).
     pub deadline: i64,
-    /// Commissions cumulées (points de base).
+    /// Total fees (basis points).
     pub fees_bps: u64,
 }
 
@@ -382,7 +381,7 @@ fn now() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
-/// « 2026-10-07T17:01:26.000Z » → secondes Unix (UTC).
+/// "2026-10-07T17:01:26.000Z" → Unix seconds (UTC).
 fn parse_iso(text: &str) -> Option<i64> {
     let (date, time) = text.split_once('T')?;
     let mut d = date.split('-').map(|p| p.parse::<i64>().ok());
@@ -400,7 +399,7 @@ fn parse_iso(text: &str) -> Option<i64> {
     Some((era * 146_097 + doe - 719_468) * 86_400 + hh * 3600 + mm * 60 + ss)
 }
 
-/// Le dépôt, tel que confirmé par le fournisseur lui-même.
+/// The deposit, as confirmed by the provider itself.
 pub fn verify(deposit: &Deposit, from: &Asset, to: &Asset, amount: u128, source: &str, destination: &str) -> Result<Verified> {
     match deposit.provider {
         Provider::Near => {
@@ -409,7 +408,7 @@ pub fn verify(deposit: &Deposit, from: &Asset, to: &Asset, amount: u128, source:
             check_near(&status, deposit, from, to, amount, source, destination, now())
         }
         Provider::Chainflip => {
-            // Le canal tout juste ouvert met quelques secondes à être indexé.
+            // A freshly opened channel takes a few seconds to be indexed.
             let url = format!("{CHAINFLIP_STATUS}/{}", deposit.channel_id);
             for attempt in 0..15 {
                 let status: Value = client().get(&url).send().context("Chainflip injoignable")?.json().context("réponse Chainflip illisible")?;
@@ -426,8 +425,8 @@ pub fn verify(deposit: &Deposit, from: &Asset, to: &Asset, amount: u128, source:
     }
 }
 
-/// Minimum du fournisseur : jamais nettement sous celui annoncé par SwapKit
-/// (0,5 % d'écart d'arrondi toléré).
+/// The provider's minimum: never noticeably below the one SwapKit announced (0.5%
+/// rounding gap tolerated).
 fn min_consistent(provider_min: u128, swapkit_min: u128) -> bool {
     provider_min.saturating_mul(1000) >= swapkit_min.saturating_mul(995)
 }
@@ -445,9 +444,9 @@ fn check_near(status: &Value, deposit: &Deposit, from: &Asset, to: &Asset, amoun
         request["depositType"].as_str() == Some("ORIGIN_CHAIN") && request["recipientType"].as_str() == Some("DESTINATION_CHAIN") && request["refundType"].as_str() == Some("ORIGIN_CHAIN"),
         refused("le type de dépôt")
     );
-    // Dépôt « simple » seulement : en mode memo (adresse partagée, un memo
-    // identifie l'échange), le virement ordinaire de l'app, sans memo, ne
-    // serait attribué à aucun échange — fonds bloqués (31ᵉ passage).
+    // "Simple" deposits only: in memo mode (a shared address where a memo identifies
+    // the swap), the app's ordinary transfer, without a memo, would be attributed to
+    // no swap at all and the funds would be stuck (31st review round).
     ensure!(
         request["depositMode"].as_str().is_none_or(|mode| mode == "SIMPLE") && quote["depositMemo"].as_str().is_none_or(str::is_empty),
         refused("un dépôt simple, sans memo")
@@ -478,7 +477,7 @@ fn check_chainflip(status: &Value, deposit: &Deposit, from: &Asset, to: &Asset, 
     ensure!(status["destAddress"].as_str().is_some_and(|a| same_address(a, destination)), refused("votre adresse d'arrivée"));
     let fill_or_kill = &status["fillOrKillParams"];
     ensure!(fill_or_kill["refundAddress"].as_str().is_some_and(|a| same_address(a, source)), refused("votre adresse de remboursement"));
-    // Prix minimum (crypto reçue par unité vendue) × montant vendu.
+    // Minimum price (crypto received per unit sold) × amount sold.
     let min_price: f64 = fill_or_kill["minPrice"].as_str().and_then(|p| p.parse().ok()).filter(|p: &f64| p.is_finite() && *p > 0.0).ok_or_else(|| refused("le prix minimum"))?;
     let sold = amount as f64 / 10f64.powi(i32::from(from.decimals));
     let min_out = (sold * min_price * 10f64.powi(i32::from(to.decimals))).floor();
@@ -493,9 +492,9 @@ fn check_chainflip(status: &Value, deposit: &Deposit, from: &Asset, to: &Asset, 
     Ok(Verified { min_out, deadline, fees_bps })
 }
 
-// --- Suivi après le dépôt -------------------------------------------------------------
+// --- Tracking after the deposit -------------------------------------------------
 
-/// Étape d'un échange, lue auprès du fournisseur.
+/// Stage of a swap, read from the provider.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SwapState {
@@ -528,8 +527,8 @@ fn chainflip_state(state: &str) -> SwapState {
     }
 }
 
-/// Étape de l'échange dont le dépôt est `deposit_address` (NEAR) ou le canal
-/// `channel_id` (Chainflip), auprès du fournisseur.
+/// Stage of the swap whose deposit is `deposit_address` (NEAR) or whose channel is
+/// `channel_id` (Chainflip), read from the provider.
 pub fn status(provider: Provider, channel_id: &str, deposit_address: &str) -> Result<SwapState> {
     ensure!(deposit_address.len() <= 128 && deposit_address.bytes().all(|b| b.is_ascii_alphanumeric()), "adresse de dépôt SwapKit invalide");
     ensure!(channel_id.len() <= 80 && channel_id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'), "identifiant du dépôt invalide");
@@ -598,7 +597,7 @@ mod tests {
         }
     }
 
-    /// Réponse réelle de NEAR Intents (04/10/2026), ETH → SOL.
+    /// Real NEAR Intents response (2026-10-04), ETH → SOL.
     fn near_status() -> Value {
         serde_json::from_str(r#"{"status":"PENDING_DEPOSIT","quoteResponse":{"quoteRequest":{"swapType":"EXACT_INPUT","depositMode":"SIMPLE","originAsset":"nep141:eth.omft.near","depositType":"ORIGIN_CHAIN","destinationAsset":"nep141:sol.omft.near","amount":"100000000000000000","refundTo":"0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045","refundType":"ORIGIN_CHAIN","recipient":"9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM","recipientType":"DESTINATION_CHAIN","appFees":[{"recipient":"notconfig.near","fee":0},{"recipient":"dde5bb6b","fee":15}]},"quote":{"amountIn":"100000000000000000","amountOut":"2217785954","minAmountOut":"2173430234","depositAddress":"0x343e292d9508A8D3f1C462f9B6C382F3dEAD296E","deadline":"2026-10-07T17:01:26.000Z"}}}"#).unwrap()
     }
@@ -642,7 +641,7 @@ mod tests {
         }
     }
 
-    /// Réponse réelle de Chainflip (04/10/2026), ETH → SOL.
+    /// Real Chainflip response (2026-10-04), ETH → SOL.
     fn chainflip_status() -> Value {
         serde_json::from_str(r#"{"state":"WAITING","srcAsset":"ETH","srcChain":"Ethereum","destAsset":"SOL","destChain":"Solana","destAddress":"9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM","brokers":[{"account":"cFNwtr2m","commissionBps":15}],"depositChannel":{"id":"15103632-Ethereum-49246","depositAddress":"0x0093cc6c716bca51349b6bc6645ae1d064ff3f82","estimatedExpiryTime":1791203700000,"isExpired":false},"fillOrKillParams":{"refundAddress":"0xd8da6bf26964af9d7eed9e03e53415d37aa96045","minPrice":"21.71372851","retryDurationBlocks":150}}"#).unwrap()
     }
@@ -667,7 +666,7 @@ mod tests {
         let mut moved = chainflip_status();
         moved["depositChannel"]["depositAddress"] = json!("0x0000000000000000000000000000000000000003");
         assert!(check_chainflip(&moved, &chainflip_deposit(), eth(), sol(), 100_000_000_000_000_000, EVM, SOL, now).unwrap_err().to_string().contains("dépôt"));
-        // Montant différent de celui du canal : le minimum ne tient plus.
+        // Amount different from the channel's: the minimum no longer holds.
         assert!(check_chainflip(&chainflip_status(), &chainflip_deposit(), eth(), sol(), 50_000_000_000_000_000, EVM, SOL, now).is_err());
     }
 
@@ -688,8 +687,8 @@ mod tests {
         assert!(parse_deposit(&injected, Provider::Near, eth(), sol(), EVM, SOL).is_err());
     }
 
-    /// Réel : devis ETH → SOL, dépôt ouvert, puis confirmé par NEAR Intents et
-    /// par Chainflip (aucun fonds envoyé). Exige la clé SwapKit.
+    /// Real network: ETH → SOL quote, deposit opened, then confirmed by NEAR Intents
+    /// and by Chainflip (no funds sent). Requires the SwapKit key.
     /// `cargo test -- --ignored real_swapkit_deposits --nocapture`
     #[test]
     #[ignore]
@@ -703,13 +702,13 @@ mod tests {
             let verified = verify(&deposit, eth(), sol(), amount, EVM, SOL).unwrap();
             println!("{} : dépôt {} ; minimum {} SOL ; commissions {} pb", provider.name(), deposit.address, verified.min_out as f64 / 1e9, verified.fees_bps);
             assert_eq!(status(provider, &deposit.channel_id, &deposit.address).unwrap(), SwapState::AwaitingDeposit);
-            // Autre adresse d'arrivée que celle du canal : refusé.
+            // Arrival address other than the channel's: refused.
             assert!(verify(&deposit, eth(), sol(), amount, EVM, "So11111111111111111111111111111111111111112").is_err());
         }
     }
 
-    /// Réel : dépôt NEAR → ETH ouvert chez NEAR Intents (aucun fonds envoyé)
-    /// — simple virement vers un compte implicite, confirmé par NEAR.
+    /// Real network: NEAR → ETH deposit opened with NEAR Intents (no funds sent), a
+    /// plain transfer to an implicit account, confirmed by NEAR.
     /// `cargo test -- --ignored real_swapkit_near --nocapture`
     #[test]
     #[ignore]
@@ -725,13 +724,13 @@ mod tests {
         let verified = verify(&deposit, near, eth(), amount, source, EVM).unwrap();
         println!("NEAR → ETH : dépôt {} ; minimum {} ETH ; commissions {} pb", deposit.address, verified.min_out as f64 / 1e18, verified.fees_bps);
         assert_eq!(status(Provider::Near, &deposit.channel_id, &deposit.address).unwrap(), SwapState::AwaitingDeposit);
-        // Sens inverse : arrivée sur le compte implicite.
+        // Reverse direction: arrival on the implicit account.
         let back = quote(eth(), near, 50_000_000_000_000_000, EVM, source).unwrap();
         assert!(back.iter().any(|r| r.provider == Provider::Near));
     }
 
-    /// Réel : dépôt ADA → ETH ouvert chez NEAR Intents (aucun fonds envoyé) —
-    /// adresse de dépôt addr1… à clé de paiement (pas un contrat).
+    /// Real network: ADA → ETH deposit opened with NEAR Intents (no funds sent); an
+    /// addr1... deposit address with a payment key (not a contract).
     /// `cargo test -- --ignored real_swapkit_ada --nocapture`
     #[test]
     #[ignore]
@@ -750,15 +749,15 @@ mod tests {
         assert!(quote(eth(), ada, 50_000_000_000_000_000, EVM, source).unwrap().iter().any(|r| r.provider == Provider::Near));
     }
 
-    /// Réel : dépôt XRP → ETH ouvert chez NEAR Intents (aucun fonds envoyé) —
-    /// adresse r… simple, sans tag ni memo, confirmée par NEAR.
+    /// Real network: XRP → ETH deposit opened with NEAR Intents (no funds sent); a
+    /// plain r... address, without a tag or memo, confirmed by NEAR.
     /// `cargo test -- --ignored real_swapkit_xrp --nocapture`
     #[test]
     #[ignore]
     fn real_swapkit_xrp_deposit() {
         assert!(enabled(), "clé SwapKit absente de partner-keys.env");
         let xrp = find("xrp", "xrp_mainnet").unwrap();
-        // Compte sans tag exigé (NEAR refuse ceux qui en exigent un).
+        // An account that does not require a tag (NEAR refuses those that do).
         let source = "rMQ98K56yXJbDGv49ZSmW51sLn94Xe1mu1";
         let amount = 20_000_000;
         let routes = quote(xrp, eth(), amount, source, EVM).unwrap();
