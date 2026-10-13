@@ -3,28 +3,28 @@ use k256::ecdsa::signature::hazmat::PrehashSigner;
 use k256::ecdsa::{Signature, SigningKey};
 use sha2::{Digest, Sha256};
 
-/// Un UTXO (sortie non dépensée) à consommer comme entrée de transaction.
-/// `txid` est stocké dans l'ordre "affiché" (big-endian), comme le montrent
-/// les explorateurs de blocs ; il est inversé au moment de la sérialisation.
+/// A UTXO (unspent output) to consume as a transaction input. `txid` is stored in
+/// "display" order (big-endian), as block explorers show it; it is reversed at
+/// serialization time.
 pub struct Utxo {
     pub txid: [u8; 32],
     pub vout: u32,
     pub value_sat: u64,
 }
 
-/// Transaction Bitcoin toute simple : un ou plusieurs UTXOs P2WPKH d'une même
-/// adresse vers un destinataire de type quelconque (`to_script`, voir
-/// `derivation::btc_recipient_script`), avec sortie de monnaie optionnelle.
+/// A plain Bitcoin transaction: one or more P2WPKH UTXOs from the same address to a
+/// recipient of any type (`to_script`, see `derivation::btc_recipient_script`),
+/// with an optional change output.
 pub struct BtcTx {
     pub inputs: Vec<Utxo>,
     pub to_script: Vec<u8>,
     pub value_sat: u64,
     pub change_hash160: [u8; 20],
-    /// 0 si la monnaie est sous le seuil de poussière (part alors dans les frais).
+    /// 0 if the change is below the dust threshold (it then goes to the fee).
     pub change_sat: u64,
-    /// Sortie OP_RETURN optionnelle (valeur 0, non dépensable), utilisée pour
-    /// transmettre un memo (ex : memo de swap THORChain). `None` = comportement
-    /// strictement identique à avant cet ajout (aucune régression sur l'envoi normal).
+    /// Optional OP_RETURN output (value 0, unspendable), used to carry a memo (e.g. a
+    /// THORChain swap memo). `None` behaves exactly as before this field was added (no
+    /// regression on regular sends).
     pub op_return_data: Option<Vec<u8>>,
 }
 
@@ -51,18 +51,9 @@ pub(crate) fn push_varint(buf: &mut Vec<u8>, n: u64) {
     }
 }
 
-/// Taille virtuelle (vbytes) approximative d'une transaction P2WPKH pure (pas de
-/// script exotique), utilisée pour estimer les frais AVANT de savoir si la
-/// transaction aura une sortie de monnaie (l'ordre logique est : estimer les
-/// frais → décider s'il reste assez pour une sortie de monnaie → construire la
-/// transaction réelle, voir `api::send_btc`). Formule standard, largement utilisée
-/// pour ce type de transaction : ~10.5 vbytes de frais fixes (version, locktime,
-/// marker/flag segwit, comptes d'entrées/sorties) + ~68 vbytes par entrée P2WPKH
-/// (grâce à la remise de poids segwit sur la signature/clé publique en témoin) +
-/// ~31 vbytes par sortie P2WPKH.
-/// Identifiant (txid, ordre affiché) d'une transaction sérialisée : double
-/// SHA-256 de sa forme SANS témoins (segwit : marqueur, drapeau et témoins
-/// retirés). `None` si la sérialisation est illisible.
+/// Identifier (txid, display order) of a serialized transaction: double SHA-256 of
+/// its form WITHOUT witnesses (segwit: marker, flag and witnesses removed). `None`
+/// if the serialization cannot be read.
 pub fn txid(raw: &[u8]) -> Option<String> {
     fn varint(raw: &[u8], pos: &mut usize) -> Option<usize> {
         let first = *raw.get(*pos)?;
@@ -101,28 +92,35 @@ pub fn txid(raw: &[u8]) -> Option<String> {
     Some(hex::encode(hash))
 }
 
+/// Approximate virtual size (vbytes) of a pure P2WPKH transaction (no exotic script),
+/// used to estimate the fee BEFORE knowing whether the transaction will have a change
+/// output (the logical order is: estimate the fee → decide whether enough is left for
+/// a change output → build the real transaction, see `api::send_btc`). Standard,
+/// widely used formula for this kind of transaction: ~10.5 vbytes of fixed overhead
+/// (version, locktime, segwit marker/flag, input/output counts) + ~68 vbytes per
+/// P2WPKH input (thanks to the segwit weight discount on the witness signature and
+/// public key) + ~31 vbytes per P2WPKH output.
 pub fn estimate_p2wpkh_vsize(num_inputs: usize, num_outputs: usize) -> u64 {
     (10.5 + (num_inputs as f64) * 68.0 + (num_outputs as f64) * 31.0).ceil() as u64
 }
 
-/// Plus grande sortie standard qu'un envoi peut payer (P2WSH, Taproot :
-/// 8 + 1 + 34 octets), contre 31 pour une P2WPKH.
+/// Largest standard output a send can pay to (P2WSH, Taproot: 8 + 1 + 34 bytes),
+/// versus 31 for a P2WPKH.
 const LARGEST_RECIPIENT_OUTPUT_VBYTES: f64 = 43.0;
 
-/// Taille virtuelle d'un envoi (`num_inputs` entrées P2WPKH, destinataire,
-/// monnaie P2WPKH), estimée avant de connaître le destinataire : frais
-/// choisis à l'ouverture de la fenêtre d'envoi, donc comptés pour la plus
-/// grande sortie possible — jamais sous le tarif prévu (au plus 12 vbytes de
-/// trop pour une adresse bc1q…).
+/// Virtual size of a send (`num_inputs` P2WPKH inputs, recipient, P2WPKH change),
+/// estimated before the recipient is known. The fee is chosen when the send window
+/// opens, so it is computed for the largest possible output: never below the
+/// intended rate (at most 12 vbytes too many for a bc1q… address).
 pub fn estimate_send_vsize(num_inputs: usize) -> u64 {
     (10.5 + (num_inputs as f64) * 68.0 + LARGEST_RECIPIENT_OUTPUT_VBYTES + 31.0).ceil() as u64
 }
 
-/// Seuil de poussière de Bitcoin Core (tarif de relais 3 sat/vB) d'une sortie
-/// portant `script` : en dessous, les nœuds refusent la transaction. Taille
-/// de la sortie, plus celle de l'entrée qui la dépenserait (témoin compté au
-/// quart pour un programme SegWit) : 294 sat pour une P2WPKH, 330 pour
-/// P2WSH et Taproot, 540 pour P2SH, 546 pour P2PKH.
+/// Bitcoin Core's dust threshold (3 sat/vB relay rate) for an output carrying
+/// `script`: below it, nodes refuse the transaction. Size of the output, plus that
+/// of the input that would spend it (witness counted at a quarter for a SegWit
+/// program): 294 sat for P2WPKH, 330 for P2WSH and Taproot, 540 for P2SH, 546 for
+/// P2PKH.
 pub fn dust_threshold(script: &[u8]) -> u64 {
     let output = 8 + varint_len(script.len() as u64) + script.len() as u64;
     let witness_program = (4..=42).contains(&script.len()) && (script[0] == 0x00 || (0x51..=0x60).contains(&script[0])) && usize::from(script[1]) + 2 == script.len();
@@ -136,13 +134,13 @@ pub(crate) fn p2wpkh_script_pubkey(hash160: &[u8; 20]) -> Vec<u8> {
     s
 }
 
-/// scriptPubKey OP_RETURN portant `data` en clair (non dépensable, sert
-/// uniquement à ancrer des métadonnées, ex : memo de swap). Limité en pratique
-/// à ~80 octets par la politique de relais standard du réseau Bitcoin.
+/// OP_RETURN scriptPubKey carrying `data` in the clear (unspendable, only used to
+/// anchor metadata, e.g. a swap memo). Limited in practice to ~80 bytes by the
+/// Bitcoin network's standard relay policy.
 fn op_return_script(data: &[u8]) -> Vec<u8> {
     let mut s = vec![0x6a]; // OP_RETURN
     if data.len() <= 75 {
-        s.push(data.len() as u8); // push direct
+        s.push(data.len() as u8); // direct push
     } else {
         s.push(0x4c); // OP_PUSHDATA1
         s.push(data.len() as u8);
@@ -151,37 +149,36 @@ fn op_return_script(data: &[u8]) -> Vec<u8> {
     s
 }
 
-/// Taille (octets, = vbytes : aucune partie témoin) d'une sortie OP_RETURN
-/// portant `len` octets : valeur, longueur du script, script.
+/// Size (bytes, = vbytes: no witness part) of an OP_RETURN output carrying `len`
+/// bytes: value, script length, script.
 pub fn op_return_output_size(len: usize) -> u64 {
     let script = 1 + if len <= 75 { 1 } else { 2 } + len as u64;
     8 + varint_len(script) + script
 }
 
-/// scriptCode utilisé dans le sighash BIP143 pour un input P2WPKH : équivalent
-/// au script P2PKH classique (imposé par la spec, même si l'input n'est pas P2PKH).
+/// scriptCode used in the BIP143 sighash for a P2WPKH input: equivalent to the
+/// classic P2PKH script (required by the spec, even though the input is not P2PKH).
 fn p2wpkh_script_code(hash160: &[u8; 20]) -> Vec<u8> {
-    let mut s = vec![0x19, 0x76, 0xa9, 0x14]; // taille + OP_DUP OP_HASH160 push(20)
+    let mut s = vec![0x19, 0x76, 0xa9, 0x14]; // length + OP_DUP OP_HASH160 push(20)
     s.extend_from_slice(hash160);
     s.extend_from_slice(&[0x88, 0xac]); // OP_EQUALVERIFY OP_CHECKSIG
     s
 }
 
-/// Entrée P2WPKH d'une transaction quelconque (voir `RawTx`).
+/// P2WPKH input of an arbitrary transaction (see `RawTx`).
 #[derive(Debug)]
 pub struct RawInput {
-    /// Ordre "affiché" (big-endian), comme `Utxo::txid`.
+    /// "Display" order (big-endian), like `Utxo::txid`.
     pub txid: [u8; 32],
     pub vout: u32,
     pub sequence: u32,
-    /// Montant de la sortie dépensée, engagé par la signature (BIP143).
+    /// Amount of the output being spent, committed to by the signature (BIP143).
     pub value_sat: u64,
 }
 
-/// Transaction dont toutes les entrées sont des P2WPKH d'une même clé, avec
-/// des sorties quelconques (valeur, script) : celle que l'app construit
-/// (`BtcTx`), ou celle d'une PSBT fournie par un tiers (LI.FI), relue et
-/// re-sérialisée ici avant signature.
+/// A transaction whose inputs are all P2WPKH from the same key, with arbitrary
+/// outputs (value, script): the one the app builds (`BtcTx`), or the one in a PSBT
+/// provided by a third party (LI.FI), reread and re-serialized here before signing.
 #[derive(Debug)]
 pub struct RawTx {
     pub version: u32,
@@ -191,9 +188,9 @@ pub struct RawTx {
 }
 
 impl RawTx {
-    /// Sorties sérialisées SANS le préfixe de compte (varint) : c'est le format attendu
-    /// par le sighash BIP143 pour `hashOutputs` (contrairement à la transaction finale,
-    /// qui elle a besoin de ce préfixe — voir `sign()`).
+    /// Outputs serialized WITHOUT the count prefix (varint): that is the format the
+    /// BIP143 sighash expects for `hashOutputs` (unlike the final transaction, which
+    /// does need the prefix; see `sign()`).
     fn outputs_body(&self) -> Vec<u8> {
         let mut buf = Vec::new();
         for (value, script) in &self.outputs {
@@ -223,7 +220,7 @@ impl RawTx {
         dsha256(&buf)
     }
 
-    /// Sighash BIP143 (SIGHASH_ALL) pour l'input `index`, dont le scriptCode correspond à `input_hash160`.
+    /// BIP143 sighash (SIGHASH_ALL) for input `index`, whose scriptCode matches `input_hash160`.
     fn sighash(&self, index: usize, input_hash160: &[u8; 20]) -> [u8; 32] {
         let mut preimage = Vec::new();
         preimage.extend_from_slice(&self.version.to_le_bytes());
@@ -247,7 +244,7 @@ impl RawTx {
         dsha256(&preimage)
     }
 
-    /// Taille hors témoins (version, entrées, sorties, locktime).
+    /// Size without witnesses (version, inputs, outputs, locktime).
     fn base_size(&self) -> u64 {
         let mut size = 4 + 4 + varint_len(self.inputs.len() as u64) + varint_len(self.outputs.len() as u64);
         size += self.inputs.len() as u64 * (32 + 4 + 1 + 4);
@@ -257,18 +254,18 @@ impl RawTx {
         size
     }
 
-    /// Taille virtuelle une fois signée, au plus (signature DER de 72 octets
-    /// avec son type, clé compressée) : sert à vérifier le tarif de frais
-    /// d'une transaction préparée par un tiers.
+    /// Upper bound on the virtual size once signed (72-byte DER signature with its
+    /// type, compressed key): used to check the fee rate of a transaction prepared by a
+    /// third party.
     pub fn signed_vsize(&self) -> u64 {
-        // Marqueur et drapeau segwit (2), puis par entrée : compte (1) +
-        // signature (1 + 72) + clé (1 + 33).
+        // Segwit marker and flag (2), then per input: count (1) + signature (1 + 72) + key
+        // (1 + 33).
         let witness = 2 + self.inputs.len() as u64 * (1 + 1 + 72 + 1 + 33);
         (self.base_size() * 4 + witness).div_ceil(4)
     }
 
-    /// Construit et signe la transaction. Toutes les entrées doivent appartenir à la
-    /// même clé (`input_hash160`).
+    /// Builds and signs the transaction. Every input must belong to the same key
+    /// (`input_hash160`).
     pub fn sign(&self, key: &SigningKey, input_hash160: &[u8; 20]) -> Result<Vec<u8>> {
         let pubkey_compressed = key.verifying_key().to_encoded_point(true);
 
@@ -287,8 +284,8 @@ impl RawTx {
 
         let mut tx = Vec::new();
         tx.extend_from_slice(&self.version.to_le_bytes());
-        tx.push(0x00); // marker segwit
-        tx.push(0x01); // flag segwit
+        tx.push(0x00); // segwit marker
+        tx.push(0x01); // segwit flag
 
         push_varint(&mut tx, self.inputs.len() as u64);
         for input in &self.inputs {
@@ -296,7 +293,7 @@ impl RawTx {
             txid_le.reverse();
             tx.extend_from_slice(&txid_le);
             tx.extend_from_slice(&input.vout.to_le_bytes());
-            tx.push(0x00); // scriptSig vide (segwit natif)
+            tx.push(0x00); // empty scriptSig (native segwit)
             tx.extend_from_slice(&input.sequence.to_le_bytes());
         }
 
@@ -304,7 +301,7 @@ impl RawTx {
         tx.extend_from_slice(&self.outputs_body());
 
         for (sig, pubkey) in &witnesses {
-            push_varint(&mut tx, 2); // 2 éléments de témoin : signature + clé publique
+            push_varint(&mut tx, 2); // 2 witness items: signature + public key
             push_varint(&mut tx, sig.len() as u64);
             tx.extend_from_slice(sig);
             push_varint(&mut tx, pubkey.len() as u64);
@@ -326,16 +323,15 @@ fn varint_len(n: u64) -> u64 {
 }
 
 impl BtcTx {
-    /// Même transaction sous forme générique : version 1, séquences
-    /// 0xffffffff, locktime 0 ; destinataire, monnaie (si au-dessus de la
-    /// poussière) puis OP_RETURN (si présent), dans cet ordre.
+    /// The same transaction in generic form: version 1, sequences 0xffffffff, locktime
+    /// 0; recipient, change (if above dust) then OP_RETURN (if present), in that order.
     fn to_raw(&self) -> RawTx {
         let mut outputs = vec![(self.value_sat, self.to_script.clone())];
         if self.change_sat > 0 {
             outputs.push((self.change_sat, p2wpkh_script_pubkey(&self.change_hash160)));
         }
         if let Some(data) = &self.op_return_data {
-            outputs.push((0, op_return_script(data))); // valeur 0 : non dépensable
+            outputs.push((0, op_return_script(data))); // value 0: unspendable
         }
         let inputs = self.inputs.iter().map(|u| RawInput { txid: u.txid, vout: u.vout, sequence: 0xffff_ffff, value_sat: u.value_sat }).collect();
         RawTx { version: 1, inputs, outputs, locktime: 0 }
@@ -351,8 +347,9 @@ impl BtcTx {
         self.to_raw().sighash(index, input_hash160)
     }
 
-    /// Construit et signe la transaction. Toutes les entrées doivent appartenir à la
-    /// même clé (`input_hash160`), ce qui est le cas dans cette démo mono-adresse.
+    /// Builds and signs the transaction. Every input must belong to the same key
+    /// (`input_hash160`), which is always the case here (one address per wallet
+    /// profile).
     pub fn sign(&self, key: &SigningKey, input_hash160: &[u8; 20]) -> Result<Vec<u8>> {
         self.to_raw().sign(key, input_hash160)
     }
@@ -364,11 +361,10 @@ mod tests {
     use k256::ecdsa::signature::hazmat::PrehashVerifier;
     use k256::ecdsa::VerifyingKey;
 
-    /// Référence largement citée pour une transaction P2WPKH 1 entrée / 2 sorties :
-    /// ~141-143 vbytes mesurés en pratique. Garde-fou contre une régression de la
-    /// formule (ex: overhead ou coût par entrée/sortie modifié par erreur), pas une
-    /// preuve d'exactitude à l'octet près — l'estimation reste volontairement
-    /// approximative (voir sa documentation).
+    /// Widely quoted reference for a 1-input / 2-output P2WPKH transaction: ~141-143
+    /// vbytes measured in practice. A guard against a regression in the formula (e.g.
+    /// overhead or per-input/output cost changed by mistake), not proof of byte-exact
+    /// accuracy: the estimate stays deliberately approximate (see its documentation).
     #[test]
     fn estimate_p2wpkh_vsize_matches_known_reference_for_one_input_two_outputs() {
         let vsize = estimate_p2wpkh_vsize(1, 2);
@@ -397,11 +393,10 @@ mod tests {
         }
     }
 
-    /// Garde-fou direct contre le bug déjà rencontré : `outputs_body` (utilisé pour
-    /// `hashOutputs` dans le sighash BIP143) ne doit JAMAIS commencer par un octet
-    /// de compte de sorties — seulement par la valeur (8 octets little-endian) de
-    /// la première sortie. C'est exactement l'inversion qui causait des signatures
-    /// invalides précédemment.
+    /// Direct guard against a bug we already hit: `outputs_body` (used for
+    /// `hashOutputs` in the BIP143 sighash) must NEVER start with an output count byte,
+    /// only with the value (8 bytes little-endian) of the first output. That exact
+    /// mix-up used to produce invalid signatures.
     #[test]
     fn outputs_body_never_starts_with_a_count_byte() {
         let hash160 = [0x33u8; 20];
@@ -415,7 +410,7 @@ mod tests {
         };
         let body = tx.outputs_body();
         assert_eq!(&body[0..8], &tx.value_sat.to_le_bytes());
-        // Une seule sortie ici : 8 (valeur) + 1 (longueur script) + 22 (script P2WPKH).
+        // A single output here: 8 (value) + 1 (script length) + 22 (P2WPKH script).
         assert_eq!(body.len(), 8 + 1 + 22);
     }
 
@@ -431,13 +426,13 @@ mod tests {
             op_return_data: None,
         };
         let body = tx.outputs_body();
-        // Deux sorties : 2 * (8 + 1 + 22) = 62 octets.
+        // Two outputs: 2 * (8 + 1 + 22) = 62 bytes.
         assert_eq!(body.len(), 2 * (8 + 1 + 22));
     }
 
-    /// La sortie OP_RETURN doit être présente, non dépensable (valeur 0) et
-    /// porter le memo en clair, sans casser le reste (garde-fou contre une
-    /// régression sur `num_outputs`/`sign` introduite par cet ajout).
+    /// The OP_RETURN output must be present, unspendable (value 0) and carry the memo
+    /// in the clear, without breaking anything else (a guard against a regression in
+    /// `num_outputs`/`sign` introduced by this feature).
     #[test]
     fn outputs_body_includes_op_return_when_present() {
         let hash160 = [0x11u8; 20];
@@ -451,8 +446,8 @@ mod tests {
             op_return_data: Some(memo.clone()),
         };
         let body = tx.outputs_body();
-        // Sortie principale + monnaie (2 * 31 octets) puis OP_RETURN : valeur (8,
-        // nulle) + longueur script (1) + OP_RETURN (1) + push direct (1) + memo.
+        // Main output + change (2 * 31 bytes), then OP_RETURN: value (8, zero) + script
+        // length (1) + OP_RETURN (1) + direct push (1) + memo.
         let expected_len = 2 * (8 + 1 + 22) + 8 + 1 + 1 + 1 + memo.len();
         assert_eq!(body.len(), expected_len);
         let op_return_offset = 2 * (8 + 1 + 22);
@@ -463,16 +458,16 @@ mod tests {
 
         let key = SigningKey::from_slice(&[9u8; 32]).expect("clé de test valide");
         let raw = tx.sign(&key, &hash160).expect("signature réussie avec OP_RETURN");
-        // 3 sorties désormais : le varint de compte doit valoir 3.
-        // (marker+flag = 2 octets après les 4 de version, puis varint d'entrées =
-        // 1 octet ici, 41 octets d'entrée, puis le varint de sorties)
+        // 3 outputs now: the count varint must be 3. (marker+flag = 2 bytes after the 4
+        // version bytes, then the input count varint = 1 byte here, 41 bytes of input,
+        // then the output count varint)
         let outputs_count_offset = 4 + 2 + 1 + 41;
         assert_eq!(raw[outputs_count_offset], 3, "3 sorties attendues (dest + monnaie + OP_RETURN)");
     }
 
-    /// Test de non-régression : le sighash BIP143 recalculé de façon indépendante
-    /// doit être exactement celui contre lequel la signature produite par `sign()`
-    /// est valide — aurait détecté le bug précédent (hashOutputs mal construit).
+    /// Regression test: the BIP143 sighash, recomputed independently, must be exactly
+    /// the one the signature produced by `sign()` is valid against. This would have
+    /// caught the earlier bug (badly built hashOutputs).
     #[test]
     fn signature_verifies_against_recomputed_sighash() {
         let key = SigningKey::from_slice(&[9u8; 32]).expect("clé de test valide");
@@ -487,7 +482,7 @@ mod tests {
             op_return_data: None,
         };
 
-        // sign() doit réussir (valide la mécanique complète : construction, signature, sérialisation).
+        // sign() must succeed (exercises the whole pipeline: building, signing, serializing).
         let raw = tx.sign(&key, &hash160).expect("signature réussie");
         assert_eq!(&raw[4..6], &[0x00, 0x01], "marker + flag segwit attendus");
 
@@ -499,9 +494,9 @@ mod tests {
             .expect("la signature doit vérifier contre le sighash BIP143 recalculé");
     }
 
-    /// Vecteur officiel de BIP143 (« Native P2WPKH ») : version 1, séquence
-    /// 0xffffffee sur la première entrée, locktime 17, sorties P2PKH — les
-    /// champs qu'une PSBT d'un tiers peut fixer autrement que l'app.
+    /// Official BIP143 vector ("Native P2WPKH"): version 1, sequence 0xffffffee on the
+    /// first input, locktime 17, P2PKH outputs. These are the fields a third-party PSBT
+    /// may set differently from the app.
     #[test]
     fn raw_tx_sighash_matches_the_bip143_native_p2wpkh_vector() {
         let display = |le_hex: &str| -> [u8; 32] {
@@ -524,8 +519,8 @@ mod tests {
         let hash160: [u8; 20] = hex::decode("1d0f172a0ecb48aee1be1f2687d2963ae33f71a1").unwrap().try_into().unwrap();
         assert_eq!(hex::encode(tx.sighash(1, &hash160)), "c37af31116d1b27caf68aae9e3ac82f1477929014d5b917657d0eb49478cb670");
 
-        // Signature avec la clé du vecteur : valide pour ce sighash, et taille
-        // réelle sous la borne de `signed_vsize`.
+        // Signature with the vector's key: valid for this sighash, and the real size stays
+        // under the `signed_vsize` bound.
         let key = SigningKey::from_slice(&hex::decode("619c335025c7f4012e556c2a58b2506e30b8511b53ade95ea316fd8c3286feb9").unwrap()).unwrap();
         let raw = tx.sign(&key, &hash160).unwrap();
         let witness_bytes = raw.len() as u64 - (tx.base_size());
@@ -539,7 +534,7 @@ mod tests {
         hex::decode(hex).unwrap()
     }
 
-    /// Scripts de chaque type standard (vecteurs de `derivation`).
+    /// Scripts of every standard type (vectors from `derivation`).
     fn standard_scripts() -> [(&'static str, Vec<u8>); 5] {
         [
             ("P2PKH", script("76a91462e907b15cbf27d5425399ebf6f0fb50ebb88f1888ac")),
@@ -550,8 +545,8 @@ mod tests {
         ]
     }
 
-    /// Seuils de poussière de Bitcoin Core (`GetDustThreshold`, tarif de
-    /// relais 3 sat/vB) pour chaque type de sortie.
+    /// Bitcoin Core dust thresholds (`GetDustThreshold`, 3 sat/vB relay rate) for each
+    /// output type.
     #[test]
     fn dust_thresholds_match_bitcoin_core() {
         let expected = [546, 540, 294, 330, 330];
@@ -560,11 +555,10 @@ mod tests {
         }
     }
 
-    /// Envoi vers chaque type de sortie : la transaction signée porte le
-    /// script du destinataire tel quel, sa signature vérifie contre le
-    /// sighash BIP143 de cette transaction, et sa taille réelle reste sous
-    /// l'estimation faite avant de connaître le destinataire (au plus
-    /// 12 vbytes au-dessus pour la plus petite sortie).
+    /// Sending to every output type: the signed transaction carries the recipient's
+    /// script as is, its signature verifies against that transaction's BIP143 sighash,
+    /// and its real size stays under the estimate made before the recipient was known
+    /// (at most 12 vbytes over for the smallest output).
     #[test]
     fn sends_to_every_standard_output_type_are_signed_and_sized() {
         let key = SigningKey::from_slice(&[9u8; 32]).unwrap();
@@ -584,9 +578,9 @@ mod tests {
                 assert_eq!(parsed.outputs[0], (50_000, to_script.clone()), "{name}");
                 assert_eq!(parsed.outputs[1], (40_000, p2wpkh_script_pubkey(&hash160)), "{name}");
 
-                // Témoins : entre la partie sans témoins (version, entrées,
-                // sorties) et le verrouillage ; par entrée, 2 éléments
-                // (signature DER + type, clé compressée), longueurs < 0xfd.
+                // Witnesses: between the non-witness part (version, inputs, outputs) and the
+                // locktime; per input, 2 items (DER signature + type, compressed key), lengths <
+                // 0xfd.
                 let unsigned = tx.to_raw();
                 let mut pos = 4 + 2 + (parsed.stripped.len() - 8);
                 for index in 0..inputs {
@@ -604,7 +598,7 @@ mod tests {
                 }
                 assert_eq!(pos, raw.len() - 4, "{name} : témoins entièrement lus");
 
-                // Poids = partie sans témoins × 3 + transaction entière.
+                // Weight = non-witness part × 3 + whole transaction.
                 assert_eq!(parsed.stripped.len() as u64, unsigned.base_size(), "{name}");
                 let real_vsize = (parsed.stripped.len() as u64 * 3 + raw.len() as u64).div_ceil(4);
                 let estimate = estimate_send_vsize(inputs);
@@ -614,10 +608,9 @@ mod tests {
         }
     }
 
-    /// Vecteurs pour une vérification par une bibliothèque indépendante
-    /// (embit) : adresses de chaque type (réseau principal et testnet) avec
-    /// leur script, et transactions signées vers chacune. Écrits dans le
-    /// fichier `BTC_VECTORS_OUT`.
+    /// Vectors for verification by an independent library (embit): addresses of every type
+    /// (mainnet and testnet) with their script, and signed transactions to each of them. Written
+    /// to the `BTC_VECTORS_OUT` file.
     /// `BTC_VECTORS_OUT=… cargo test -p openpgp-wallet-core --lib -- --ignored export_btc_vectors`
     #[test]
     #[ignore]

@@ -1,23 +1,22 @@
-//! CoW Protocol : échange entre deux cryptos d'un MÊME réseau EVM par ordre
-//! signé (EIP-712), exécuté ensuite par les « solveurs » du protocole.
-//! Contrairement à une transaction construite par un tiers, l'ordre est un
-//! message structuré construit ICI et entièrement lisible : jeton vendu et
-//! quantité, jeton acheté et MINIMUM reçu, destinataire (l'utilisateur),
-//! validité, frais partenaire (`appData`) — tous vérifiés avant signature.
-//! Vendre un jeton demande une autorisation préalable au « VaultRelayer » de
-//! CoW (au montant exact, voir `api::send_cow_swap`). Un ordre non exécuté
-//! expire sans rien coûter.
+//! CoW Protocol: a swap between two cryptos on the SAME EVM network through a
+//! signed order (EIP-712), then executed by the protocol's "solvers". Unlike a
+//! transaction built by a third party, the order is a structured message built HERE
+//! and fully readable: token sold and quantity, token bought and MINIMUM received,
+//! recipient (the user), validity, partner fee (`appData`), all verified before
+//! signing. Selling a token needs a prior approval for CoW's "VaultRelayer" (for
+//! the exact amount, see `api::send_cow_swap`). An order that is not executed
+//! expires at no cost.
 //!
-//! Vendre la monnaie d'un réseau (ETH, BNB…) passe par le contrat EthFlow de
-//! CoW : une transaction `createOrder` (construite ici) lui confie le montant
-//! et crée l'ordre à sa place ; non exécuté, l'ordre expire et CoW rembourse
-//! (voir `api::send_cow_eth_flow`).
+//! Selling a network's native coin (ETH, BNB…) goes through CoW's EthFlow contract:
+//! a `createOrder` transaction (built here) hands it the amount and creates the
+//! order on its behalf; if not executed, the order expires and CoW refunds (see
+//! `api::send_cow_eth_flow`).
 //!
-//! Montants calculés exactement comme le SDK officiel (`@cowprotocol/cow-sdk`,
-//! `getQuoteAmountsAndCosts`, relu dans son code) : le devis donne la vente
-//! après frais réseau et la réception correspondante ; l'ordre signe la vente
-//! TOTALE (frais réseau compris, `feeAmount` = 0) et une réception minimale =
-//! réception du devis − frais partenaire − glissement.
+//! Amounts are computed exactly like the official SDK (`@cowprotocol/cow-sdk`,
+//! `getQuoteAmountsAndCosts`, read in its code): the quote gives the sell amount
+//! after network fees and the matching buy amount; the order signs the TOTAL sell
+//! amount (network fees included, `feeAmount` = 0) and a minimum buy amount = the
+//! quote's buy amount − partner fee − slippage.
 
 use crate::{evm_sign, tokens, wallet_flow};
 use anyhow::{anyhow, bail, ensure, Context, Result};
@@ -25,35 +24,35 @@ use serde_json::{json, Value};
 use std::sync::OnceLock;
 
 const API_BASE: &str = "https://api.cow.fi";
-/// Contrat de règlement GPv2, même adresse sur tous les réseaux de CoW
-/// (domaine EIP-712 de l'ordre).
+/// GPv2 settlement contract, at the same address on every CoW network (the order's
+/// EIP-712 domain).
 pub const SETTLEMENT: &str = "0x9008D19f58AAbD9eD0D60971565AA8510560ab41";
-/// Contrat qui prélève le jeton vendu au moment du règlement : c'est lui qui
-/// reçoit l'autorisation (`approve`).
+/// Contract that pulls the token sold at settlement time: this is the one that
+/// receives the approval (`approve`).
 pub const VAULT_RELAYER: &str = "0xC92E8bdf79f0507f65a392b0ab4667716BFE0110";
-/// Convention CoW pour la monnaie native ACHETÉE (ETH, BNB…).
+/// CoW convention for a native coin being BOUGHT (ETH, BNB…).
 pub const NATIVE_BUY_TOKEN: &str = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
-/// Contrat EthFlow de CoW (vente de la monnaie d'un réseau), même adresse sur
-/// tous ses réseaux (@cowprotocol/sdk-config, ETH_FLOW_ADDRESSES) ; présence,
-/// monnaie enveloppée et contrat de règlement revérifiés sur chaque réseau
-/// (test `real_eth_flow_contracts`).
+/// CoW's EthFlow contract (selling a network's native coin), at the same address on
+/// all its networks (@cowprotocol/sdk-config, ETH_FLOW_ADDRESSES); presence,
+/// wrapped coin and settlement contract checked again on each network (test
+/// `real_eth_flow_contracts`).
 pub const ETH_FLOW: &str = "0xba3cb449bd2b4adddbc894d8697f5170800eadec";
-/// Frais partenaire : 100 bps = 1 % (plafond du protocole), versés chaque
-/// semaine en WETH sur Ethereum à `PARTNER_FEE_RECIPIENT` (CoW en garde une
-/// part, voir docs.cow.fi/governance/fees/partner-fee).
+/// Partner fee: 100 bps = 1% (the protocol's cap), paid weekly in WETH on Ethereum
+/// to `PARTNER_FEE_RECIPIENT` (CoW keeps a share, see
+/// docs.cow.fi/governance/fees/partner-fee).
 pub const PARTNER_FEE_BPS: u32 = 100;
-/// Adresse Ethereum du développeur qui reçoit les frais partenaire (donnée par
-/// l'utilisateur le 02/10/2026 ; checksum EIP-55 valide, compte ordinaire sur
-/// Ethereum, sans code de contrat). Sans elle (`None`), aucune route CoW.
+/// The developer's Ethereum address that receives the partner fees (provided on
+/// 2026-10-02; valid EIP-55 checksum, an ordinary account on Ethereum with no
+/// contract code). Without it (`None`), there is no CoW route.
 pub const PARTNER_FEE_RECIPIENT: Option<&str> = Some("0xae702daEd4723ac516492Bb1084F50e07e75573C");
-/// Glissement toléré sous la réception attendue (1 %).
+/// Slippage tolerated below the expected buy amount (1%).
 pub const SLIPPAGE_BPS: u32 = 100;
-/// Validité demandée pour un ordre, et maximum accepté d'un devis.
+/// Validity requested for an order, and the maximum accepted from a quote.
 const VALID_FOR_SECS: u64 = 1800;
 const MAX_VALIDITY_SECS: u64 = 3600;
 const APP_CODE: &str = "OpenPGP Wallet";
-/// Version du schéma `appData` (`partnerFee` = { volumeBps, recipient }, schéma
-/// v1.15.0, la dernière du SDK officiel @cowprotocol/sdk-app-data).
+/// Version of the `appData` schema (`partnerFee` = { volumeBps, recipient }, schema
+/// v1.15.0, the latest in the official SDK @cowprotocol/sdk-app-data).
 const APP_DATA_VERSION: &str = "1.15.0";
 
 fn shared_client() -> &'static reqwest::blocking::Client {
@@ -66,7 +65,7 @@ fn shared_client() -> &'static reqwest::blocking::Client {
     })
 }
 
-/// Segment d'URL de l'API CoW pour un réseau de l'app (`None` : pas sur CoW).
+/// CoW API URL segment for one of the app's networks (`None`: not on CoW).
 pub fn api_network(network: &str) -> Option<&'static str> {
     Some(match network {
         "evm_mainnet" => "mainnet",
@@ -79,8 +78,8 @@ pub fn api_network(network: &str) -> Option<&'static str> {
     })
 }
 
-/// Version « jeton ERC-20 » de la monnaie d'un réseau (WETH, WBNB…), celle que
-/// vend un ordre EthFlow (@cowprotocol/sdk-config, WRAPPED_NATIVE_CURRENCIES).
+/// "ERC-20 token" version of a network's native coin (WETH, WBNB…), the one an
+/// EthFlow order sells (@cowprotocol/sdk-config, WRAPPED_NATIVE_CURRENCIES).
 pub fn wrapped_native(network: &str) -> Option<&'static str> {
     Some(match network {
         "evm_mainnet" => "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
@@ -93,7 +92,7 @@ pub fn wrapped_native(network: &str) -> Option<&'static str> {
     })
 }
 
-/// Identifiant de carte de la monnaie native d'un réseau (ETH = « evm »).
+/// Card identifier of a network's native coin (ETH = "evm").
 fn native_coin(network: &wallet_flow::EvmNetwork) -> &'static str {
     match network.native_symbol {
         "ETH" => "evm",
@@ -104,8 +103,8 @@ fn native_coin(network: &wallet_flow::EvmNetwork) -> &'static str {
     }
 }
 
-/// Crypto échangeable sur CoW : jeton ERC-20 du registre, ou monnaie native du
-/// réseau (achetée directement, vendue via le contrat EthFlow).
+/// A crypto that can be swapped on CoW: an ERC-20 token from the registry, or the
+/// network's native coin (bought directly, sold through the EthFlow contract).
 #[derive(Clone, Debug, PartialEq)]
 pub struct CowToken {
     pub address: String,
@@ -126,8 +125,8 @@ pub fn token(coin: &str, network: &str) -> Option<CowToken> {
     (native_coin(net) == coin).then(|| CowToken { address: NATIVE_BUY_TOKEN.to_string(), decimals: 18, symbol: net.native_symbol, native: true })
 }
 
-/// Toutes les cryptos de l'app que CoW sait échanger (identifiant, réseau) :
-/// monnaies natives et jetons ERC-20 du registre.
+/// Every app crypto CoW can swap (identifier, network): native coins and ERC-20
+/// tokens from the registry.
 pub fn tradable() -> Vec<(&'static str, &'static str)> {
     let natives = wallet_flow::EVM_NETWORKS.iter().filter(|n| api_network(n.id).is_some() && !native_coin(n).is_empty()).map(|n| (native_coin(n), n.id));
     let erc20 = tokens::TOKENS.iter().flat_map(|t| {
@@ -139,8 +138,8 @@ pub fn tradable() -> Vec<(&'static str, &'static str)> {
     natives.chain(erc20).collect()
 }
 
-/// Page d'un ordre sur l'explorateur officiel de CoW (préfixes de réseau
-/// relevés dans le code de CoW Swap, libs/common-utils/src/explorer.ts).
+/// An order's page on CoW's official explorer (network prefixes taken from the CoW
+/// Swap code, libs/common-utils/src/explorer.ts).
 pub fn explorer_order_url(network: &str, uid: &str) -> Option<String> {
     let prefix = match network {
         "evm_mainnet" => "",
@@ -154,37 +153,38 @@ pub fn explorer_order_url(network: &str, uid: &str) -> Option<String> {
     Some(format!("https://explorer.cow.fi/{prefix}orders/{uid}"))
 }
 
-/// Document `appData` de l'ordre (clés triées, compact, comme le SDK) : code
-/// de l'app et frais partenaire (`partner_fee_bps` : `PARTNER_FEE_BPS`, ou le
-/// taux du staking liquide, voir `swap_routes::staking_fee_bps`).
+/// The order's `appData` document (sorted keys, compact, like the SDK): the app
+/// code and the partner fee (`partner_fee_bps`: `PARTNER_FEE_BPS`, or the liquid
+/// staking rate, see `swap_routes::staking_fee_bps`).
 pub fn app_data(recipient: &str, partner_fee_bps: u32) -> String {
     format!(r#"{{"appCode":"{APP_CODE}","metadata":{{"partnerFee":{{"recipient":"{recipient}","volumeBps":{partner_fee_bps}}}}},"version":"{APP_DATA_VERSION}"}}"#)
 }
 
-/// Ordre prêt à signer, tel qu'il sera AFFICHÉ puis signé.
+/// An order ready to sign, exactly as it will be SHOWN and then signed.
 #[derive(Clone, Debug)]
 pub struct CowOrder {
     pub network: &'static str,
     pub sell_token: String,
     pub buy_token: String,
     pub receiver: String,
-    /// Vente totale signée (frais réseau compris), unités du jeton vendu.
+    /// Total signed sell amount (network fees included), in units of the token sold.
     pub sell_amount: u128,
-    /// Réception attendue après tous les frais, avant glissement.
+    /// Expected buy amount after all fees, before slippage.
     pub expected_buy: u128,
-    /// Réception minimale signée (attendue − glissement).
+    /// Signed minimum buy amount (expected − slippage).
     pub min_buy: u128,
-    /// Frais réseau estimés par CoW, en jeton vendu (déjà dans `sell_amount`).
+    /// Network fee estimated by CoW, in the token sold (already included in
+    /// `sell_amount`).
     pub network_fee_sell: u128,
-    /// Frais partenaire, en jeton acheté.
+    /// Partner fee, in the token bought.
     pub partner_fee_buy: u128,
-    /// Taux des frais partenaire (points de base), celui de l'appData signée.
+    /// Partner fee rate (basis points), the one in the signed appData.
     pub partner_fee_bps: u32,
     pub valid_to: u32,
     pub app_data: String,
     pub app_data_hash: [u8; 32],
-    /// Vente de la monnaie du réseau via EthFlow (`sell_token` = sa version
-    /// enveloppée) : identifiant du devis, exigé par le contrat.
+    /// Selling the network's native coin through EthFlow (`sell_token` = its wrapped
+    /// version): the quote identifier, required by the contract.
     pub eth_flow_quote_id: Option<i64>,
 }
 
@@ -196,10 +196,10 @@ fn u128_field(value: &Value, field: &str) -> Result<u128> {
         .ok_or_else(|| anyhow!("devis CoW sans « {field} » exploitable"))
 }
 
-/// a × b / c sans dépassement intermédiaire : deux jetons à 18 décimales et
-/// faible prix unitaire (FET, ARB…) donnent des produits au-delà de 2^128
-/// (relevé sur de vrais devis FET ⇄ ARB : ~1,7e39), d'où un refus
-/// « montant hors limites » avant ce calcul en précision étendue.
+/// a × b / c without intermediate overflow: two 18-decimal tokens with a low unit
+/// price (FET, ARB…) produce products above 2^128 (seen on real FET ⇄ ARB quotes:
+/// ~1.7e39), which used to cause an "amount out of range" refusal before this
+/// extended-precision calculation.
 fn mul_div(a: u128, b: u128, c: u128) -> Option<u128> {
     use num_bigint::BigUint;
     if c == 0 {
@@ -208,10 +208,9 @@ fn mul_div(a: u128, b: u128, c: u128) -> Option<u128> {
     u128::try_from(BigUint::from(a) * BigUint::from(b) / BigUint::from(c)).ok()
 }
 
-/// Montants de l'ordre à partir du devis (vente après frais réseau, réception
-/// correspondante, frais réseau en jeton vendu, frais du protocole en bps),
-/// formule du SDK officiel : (vente totale, réception attendue, minimum,
-/// frais partenaire).
+/// Order amounts from the quote (sell amount after network fees, matching buy
+/// amount, network fee in the token sold, protocol fee in bps), using the official
+/// SDK's formula: (total sell amount, expected buy amount, minimum, partner fee).
 pub fn order_amounts(sell: u128, buy: u128, fee: u128, protocol_fee_bps: f64, partner_fee_bps: u32) -> Result<(u128, u128, u128, u128)> {
     ensure!(sell > 0 && buy > 0, "devis CoW vide");
     let cost_in_buy = mul_div(buy, fee, sell).context("montant hors limites")?;
@@ -226,14 +225,14 @@ pub fn order_amounts(sell: u128, buy: u128, fee: u128, protocol_fee_bps: f64, pa
     Ok((sell.checked_add(fee).context("montant hors limites")?, expected, min, partner_fee))
 }
 
-/// Devis CoW pour vendre `amount` (unités) de `sell` contre `buy` sur
-/// `network`, au profit de `owner` (vendeur ET destinataire). La réponse est
-/// revérifiée (jetons, destinataire, sens, montants) avant d'en tirer l'ordre.
+/// CoW quote for selling `amount` (units) of `sell` for `buy` on `network`, on
+/// behalf of `owner` (seller AND recipient). The response is checked again (tokens,
+/// recipient, direction, amounts) before the order is derived from it.
 pub fn quote(network: &'static str, sell: &CowToken, buy: &CowToken, amount: u128, owner: &str, recipient: &str, partner_fee_bps: u32) -> Result<CowOrder> {
     ensure!(sell.address != buy.address, "échange d'une crypto vers elle-même");
     let api = api_network(network).ok_or_else(|| anyhow!("réseau non pris en charge par CoW"))?;
-    // EthFlow : devis sur la version enveloppée, ordre créé on-chain par le
-    // contrat (paramètres du SDK officiel, ETH_FLOW_AUX_QUOTE_PARAMS).
+    // EthFlow: quote on the wrapped version, order created on-chain by the contract
+    // (official SDK parameters, ETH_FLOW_AUX_QUOTE_PARAMS).
     let sell_token = if sell.native { wrapped_native(network).context("réseau sans EthFlow")?.to_string() } else { sell.address.clone() };
     ensure!(!(sell.native && buy.native), "échange d'une crypto vers elle-même");
     let app_data = app_data(recipient, partner_fee_bps);
@@ -306,10 +305,10 @@ pub fn quote(network: &'static str, sell: &CowToken, buy: &CowToken, amount: u12
     })
 }
 
-/// Données de l'appel `createOrder(EthFlowOrder.Data)` du contrat EthFlow
-/// (structure du contrat officiel : buyToken, receiver, sellAmount, buyAmount,
-/// appData, feeAmount, validTo, partiallyFillable, quoteId — que des types
-/// fixes, encodés à la suite). La valeur envoyée doit être `sell_amount`.
+/// Calldata for the EthFlow contract's `createOrder(EthFlowOrder.Data)` (structure
+/// of the official contract: buyToken, receiver, sellAmount, buyAmount, appData,
+/// feeAmount, validTo, partiallyFillable, quoteId; fixed-size types only, encoded
+/// back to back). The value sent must be `sell_amount`.
 pub fn eth_flow_calldata(order: &CowOrder) -> Result<Vec<u8>> {
     let quote_id = order.eth_flow_quote_id.context("ordre CoW sans EthFlow")?;
     let word_address = |address: &str| -> Result<[u8; 32]> {
@@ -341,17 +340,17 @@ pub fn eth_flow_calldata(order: &CowOrder) -> Result<Vec<u8>> {
     Ok(data)
 }
 
-/// Identifiant de l'ordre créé par EthFlow : celui de l'ordre GPv2 dont le
-/// contrat est propriétaire, validité au maximum (la vraie limite est gardée
-/// par le contrat) — comme `calculateUniqueOrderId` du SDK officiel.
+/// Identifier of the order created by EthFlow: that of the GPv2 order owned by the
+/// contract, with maximum validity (the real limit is enforced by the contract),
+/// like the official SDK's `calculateUniqueOrderId`.
 pub fn eth_flow_uid(order: &CowOrder, chain_id: u64) -> Result<String> {
     ensure!(order.eth_flow_quote_id.is_some(), "ordre CoW sans EthFlow");
     let contract_order = CowOrder { valid_to: u32::MAX, ..order.clone() };
     Ok(order_uid(&digest(&contract_order, chain_id)?, &wallet_flow::parse_evm_address(ETH_FLOW)?, u32::MAX))
 }
 
-/// Dépose le document `appData` auprès de CoW : un ordre EthFlow n'en porte
-/// que l'empreinte, et c'est ce document qui déclare les frais partenaire.
+/// Uploads the `appData` document to CoW: an EthFlow order only carries its hash,
+/// and it is this document that declares the partner fee.
 pub fn upload_app_data(order: &CowOrder) -> Result<()> {
     let api = api_network(order.network).ok_or_else(|| anyhow!("réseau non pris en charge par CoW"))?;
     let hash = format!("0x{}", hex::encode(order.app_data_hash));
@@ -366,8 +365,8 @@ pub fn upload_app_data(order: &CowOrder) -> Result<()> {
     Ok(())
 }
 
-/// Données structurées EIP-712 de l'ordre (domaine GPv2Settlement, type
-/// `Order` du contrat officiel), `feeAmount` = 0.
+/// EIP-712 typed data for the order (GPv2Settlement domain, the official contract's
+/// `Order` type), `feeAmount` = 0.
 pub fn typed_data(order: &CowOrder, chain_id: u64) -> Value {
     json!({
         "types": {
@@ -411,19 +410,18 @@ pub fn typed_data(order: &CowOrder, chain_id: u64) -> Value {
     })
 }
 
-/// Empreinte EIP-712 à signer.
+/// EIP-712 digest to sign.
 pub fn digest(order: &CowOrder, chain_id: u64) -> Result<[u8; 32]> {
     evm_sign::parse_typed_data(&typed_data(order, chain_id))?.digest()
 }
 
-/// Identifiant d'un ordre (format du contrat GPv2) : empreinte EIP-712 ‖
-/// propriétaire ‖ validité.
+/// An order's identifier (GPv2 contract format): EIP-712 digest ‖ owner ‖ validity.
 pub fn order_uid(digest: &[u8; 32], owner: &[u8; 20], valid_to: u32) -> String {
     format!("0x{}{}{}", hex::encode(digest), hex::encode(owner), hex::encode(valid_to.to_be_bytes()))
 }
 
-/// Envoie l'ordre signé au carnet d'ordres de CoW ; renvoie son identifiant,
-/// refusé s'il ne correspond pas à l'ordre signé ici (`digest`, `owner`).
+/// Sends the signed order to CoW's order book and returns its identifier; refused
+/// if it does not match the order signed here (`digest`, `owner`).
 pub fn submit(order: &CowOrder, digest: &[u8; 32], signature: &[u8; 65], owner: &str) -> Result<String> {
     let owner_bytes = wallet_flow::parse_evm_address(owner)?;
     let api = api_network(order.network).ok_or_else(|| anyhow!("réseau non pris en charge par CoW"))?;
@@ -462,10 +460,10 @@ pub fn submit(order: &CowOrder, digest: &[u8; 32], signature: &[u8; 65], owner: 
     bail!("ordre CoW refusé : {error} {detail}")
 }
 
-/// État d'un ordre (« open », « fulfilled », « expired », « cancelled »…).
+/// State of an order ("open", "fulfilled", "expired", "cancelled"…).
 pub fn order_status(network: &str, uid: &str) -> Result<String> {
     let api = api_network(network).ok_or_else(|| anyhow!("réseau non pris en charge par CoW"))?;
-    // Venu de l'interface et placé dans l'URL : format exact exigé.
+    // Comes from the UI and goes into the URL: exact format required.
     ensure!(uid.len() == 2 + 112 && uid.starts_with("0x") && uid[2..].bytes().all(|b| b.is_ascii_hexdigit()), "identifiant d'ordre CoW invalide");
     let response: Value = shared_client()
         .get(format!("{API_BASE}/{api}/api/v1/orders/{uid}"))
@@ -500,10 +498,10 @@ mod tests {
         }
     }
 
-    /// EthFlow : données de `createOrder` identiques à l'encodage d'ethers
-    /// avec l'ABI officielle (@cowprotocol/sdk-common, EthFlowAbi), et
-    /// identifiant d'ordre identique à `computeOrderUid` de
-    /// @cowprotocol/contracts (propriétaire = contrat EthFlow, validité max).
+    /// EthFlow: `createOrder` calldata identical to ethers' encoding with the official
+    /// ABI (@cowprotocol/sdk-common, EthFlowAbi), and an order identifier identical to
+    /// `computeOrderUid` from @cowprotocol/contracts (owner = EthFlow contract, max
+    /// validity).
     #[test]
     fn eth_flow_matches_the_official_libraries() {
         let order = eth_flow_order();
@@ -519,8 +517,8 @@ mod tests {
         assert!(eth_flow_calldata(&regular).is_err() && eth_flow_uid(&regular, 1).is_err());
     }
 
-    /// Contrat EthFlow présent sur chaque réseau CoW de l'app (réseau), avec la
-    /// bonne monnaie enveloppée et le bon contrat de règlement.
+    /// EthFlow contract present on each of the app's CoW networks (live), with the
+    /// right wrapped coin and the right settlement contract.
     #[test]
     #[ignore]
     fn real_eth_flow_contracts() {
@@ -537,9 +535,9 @@ mod tests {
         }
     }
 
-    /// Devis EthFlow réel puis `createOrder` SIMULÉ (eth_call, rien n'est
-    /// envoyé) depuis une adresse publique bien pourvue : le contrat accepte
-    /// l'appel et calcule lui-même l'empreinte de l'ordre, identique à la nôtre.
+    /// Real EthFlow quote, then `createOrder` SIMULATED (eth_call, nothing is sent)
+    /// from a well-funded public address: the contract accepts the call and computes
+    /// the order hash itself, identical to ours.
     #[test]
     #[ignore]
     fn real_eth_flow_order_simulated() {
@@ -557,8 +555,8 @@ mod tests {
         }
     }
 
-    /// Dépôt réel de l'appData de test (adresse fictive) : accepté, CoW
-    /// renvoie son empreinte, et le document relu est identique.
+    /// Real upload of the test appData (dummy address): accepted, CoW returns its hash,
+    /// and the document read back is identical.
     #[test]
     #[ignore]
     fn real_app_data_upload() {
@@ -569,10 +567,9 @@ mod tests {
         assert_eq!(stored["fullAppData"], order.app_data);
     }
 
-    /// Valeurs de référence calculées par le SDK officiel
-    /// (`getQuoteAmountsAndCosts` de @cowprotocol/sdk-order-book 9.x, frais
-    /// partenaire 100 bps, glissement 100 bps, frais du protocole 2 bps) pour
-    /// un devis de 10 LINK → USDC.
+    /// Reference values computed by the official SDK (`getQuoteAmountsAndCosts` from
+    /// @cowprotocol/sdk-order-book 9.x, partner fee 100 bps, slippage 100 bps, protocol
+    /// fee 2 bps) for a 10 LINK → USDC quote.
     #[test]
     fn order_amounts_match_the_official_sdk() {
         let (sell, expected, min, partner) = order_amounts(9_776_517_981_337_341_408, 140_645_630, 223_482_018_662_658_592, 2.0, PARTNER_FEE_BPS).unwrap();
@@ -584,8 +581,8 @@ mod tests {
         assert!(order_amounts(100, 50, 10, -1.0, PARTNER_FEE_BPS).is_err());
         assert!(order_amounts(100, 50, 10, f64::NAN, PARTNER_FEE_BPS).is_err());
         assert!(order_amounts(u128::MAX, u128::MAX, 1, 0.0, PARTNER_FEE_BPS).is_err());
-        // Deux jetons à 18 décimales et faible prix (ordres de grandeur d'un
-        // vrai devis FET → ARB) : le produit buy × fee dépasse 2^128.
+        // Two 18-decimal tokens with a low price (orders of magnitude from a real FET →
+        // ARB quote): the product buy × fee exceeds 2^128.
         let (sell, expected, _, partner) = order_amounts(100_000_000_000_000_000_000, 166_000_000_000_000_000_000, 10_000_000_000_000_000_000, 0.0, PARTNER_FEE_BPS).unwrap();
         assert_eq!(sell, 110_000_000_000_000_000_000);
         assert_eq!(partner, (166_000_000_000_000_000_000u128 + 16_600_000_000_000_000_000) / 100);
@@ -594,8 +591,8 @@ mod tests {
         assert_eq!(mul_div(1, 1, 0), None);
     }
 
-    /// Empreinte EIP-712 identique à `hashOrder` de @cowprotocol/contracts
-    /// (domaine GPv2Settlement), sur Ethereum et sur Arbitrum.
+    /// EIP-712 digest identical to `hashOrder` from @cowprotocol/contracts
+    /// (GPv2Settlement domain), on Ethereum and on Arbitrum.
     #[test]
     fn order_digest_matches_the_official_library() {
         let app_data = app_data("0x1111111111111111111111111111111111111111", PARTNER_FEE_BPS);
@@ -619,9 +616,9 @@ mod tests {
         assert_eq!(hex::encode(digest(&order, 42161).unwrap()), "b47e9843046df348f0c34a59b9116f6dfc8143d228fd854f710f89e22d59afac");
     }
 
-    /// Devis réel (réseau) : 10 LINK → USDC sur Ethereum, 20 USDC → ETH sur
-    /// Arbitrum, 100 ASTER → BNB sur BNB Chain — réponse revérifiée et montants
-    /// de l'ordre cohérents.
+    /// Real quote (live): 10 LINK → USDC on Ethereum, 20 USDC → ETH on Arbitrum, 100
+    /// ASTER → BNB on BNB Chain; the response is checked again and the order amounts
+    /// are consistent.
     #[test]
     #[ignore]
     fn real_quotes() {
@@ -641,10 +638,10 @@ mod tests {
         }
     }
 
-    /// Envoi réel d'un ordre signé par une clé de test publique, SANS fonds :
-    /// CoW doit le refuser pour solde insuffisant — preuve que le format, la
-    /// signature EIP-712 et l'`appData` ont passé ses contrôles (ils sont
-    /// vérifiés avant le solde). Rien ne peut être exécuté.
+    /// Real submission of an order signed by a public test key, WITHOUT funds: CoW must
+    /// refuse it for insufficient balance, which proves the format, the EIP-712
+    /// signature and the `appData` passed its checks (they are verified before the
+    /// balance). Nothing can be executed.
     #[test]
     #[ignore]
     fn real_submit_is_rejected_only_for_balance() {
@@ -657,8 +654,8 @@ mod tests {
         let error = submit(&order, &hash, &signature, &owner).unwrap_err().to_string();
         println!("{error}");
         assert!(error.contains("InsufficientBalance") || error.contains("InsufficientAllowance"), "{error}");
-        // Contre-épreuve : la même signature pour un autre montant est refusée
-        // AVANT le solde (signataire ≠ propriétaire déclaré).
+        // Counter-check: the same signature for a different amount is refused BEFORE the
+        // balance check (signer ≠ declared owner).
         let mut other = order.clone();
         other.min_buy -= 1;
         let error = submit(&other, &digest(&other, 1).unwrap(), &signature, &owner).unwrap_err().to_string();
@@ -666,7 +663,7 @@ mod tests {
         assert!(!error.contains("InsufficientBalance"), "{error}");
     }
 
-    /// Adresse des frais partenaire, une fois renseignée : adresse EVM valide.
+    /// Partner fee address, once set: a valid EVM address.
     #[test]
     fn partner_fee_recipient_is_a_valid_address() {
         if let Some(recipient) = PARTNER_FEE_RECIPIENT {
@@ -690,7 +687,7 @@ mod tests {
         assert!(!all.iter().any(|(_, network)| *network == "sol_mainnet" || *network == "hyperevm_mainnet"));
     }
 
-    /// Identifiant d'ordre au format GPv2 (56 octets) et liens d'explorateur.
+    /// Order identifier in GPv2 format (56 bytes) and explorer links.
     #[test]
     fn uid_and_explorer_links() {
         let uid = order_uid(&[0xab; 32], &[0x22; 20], 0x6ab0_0000);
@@ -701,9 +698,8 @@ mod tests {
         assert!(explorer_order_url("hyperevm_mainnet", "0x1").is_none());
     }
 
-    /// `appData` : chaîne IDENTIQUE à celle du SDK officiel
-    /// (`generateAppDataDoc` + `stringifyDeterministic`, validée par son
-    /// schéma) et même empreinte keccak256.
+    /// `appData`: a string IDENTICAL to the official SDK's (`generateAppDataDoc` +
+    /// `stringifyDeterministic`, validated by its schema) and the same keccak256 hash.
     #[test]
     fn app_data_matches_the_official_sdk() {
         let doc = app_data("0x1111111111111111111111111111111111111111", PARTNER_FEE_BPS);

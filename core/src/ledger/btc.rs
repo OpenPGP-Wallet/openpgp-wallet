@@ -1,22 +1,22 @@
-//! Application Bitcoin du Ledger (`app-bitcoin-new`, protocole des versions
-//! ≥ 2.1 ; spécifications `doc/bitcoin.md`, `doc/merkle.md`, `doc/wallet.md`,
-//! client de référence `ledger_bitcoin`, lus directement).
+//! Ledger Bitcoin app (`app-bitcoin-new`, protocol of versions ≥ 2.1;
+//! specifications `doc/bitcoin.md`, `doc/merkle.md`, `doc/wallet.md`, reference
+//! client `ledger_bitcoin`, read directly).
 //!
-//! L'appareil ne reçoit pas la transaction d'un bloc : la première commande
-//! ne transmet que des ENGAGEMENTS (racines de Merkle, empreintes SHA-256) sur
-//! la transaction partiellement signée (PSBT v2, BIP 370) et sur le
-//! portefeuille ; il demande ensuite, morceau par morceau, les données dont il
-//! a besoin (commandes "client" : préimage, preuve de Merkle...) et vérifie
-//! chacune contre ces engagements. Ce module joue ce rôle de client.
+//! The device does not receive the transaction in one piece: the first command only
+//! sends COMMITMENTS (Merkle roots, SHA-256 hashes) to the partially signed
+//! transaction (PSBT v2, BIP 370) and to the wallet; the device then asks, piece by
+//! piece, for the data it needs ("client" commands: preimage, Merkle proof...) and
+//! checks each piece against those commitments. This module plays the client's
+//! role.
 //!
-//! Portefeuille utilisé : le portefeuille « par défaut » natif SegWit (BIP 84,
-//! `wpkh(@0/**)`, clés m/84'/c'/n'/{0,1}/i), reconnu par l'appareil sans
-//! enregistrement préalable. La monnaie part sur une adresse du chemin 1/i,
-//! que l'appareil vérifie lui-même avant de la masquer.
+//! Wallet used: the native SegWit "default" wallet (BIP 84, `wpkh(@0/**)`, keys
+//! m/84'/c'/n'/{0,1}/i), which the device recognizes without prior registration.
+//! Change goes to an address on the 1/i path, which the device checks itself before
+//! hiding it.
 //!
-//! Tout ce que renvoie l'appareil est revérifié ici : adresses recalculées à
-//! partir de la clé publique étendue, et chaque signature contrôlée contre le
-//! condensat BIP 143 de la transaction que NOUS diffuserons.
+//! Everything the device returns is checked again here: addresses recomputed from
+//! the extended public key, and every signature checked against the BIP 143 digest
+//! of the transaction that WE will broadcast.
 
 use super::{send_raw, Transport, HARDENED};
 use crate::btc_tx::{dsha256, p2wpkh_script_pubkey, push_varint};
@@ -35,21 +35,20 @@ const INS_GET_WALLET_ADDRESS: u8 = 0x03;
 const INS_SIGN_PSBT: u8 = 0x04;
 const INS_GET_MASTER_FINGERPRINT: u8 = 0x05;
 const INS_CONTINUE: u8 = 0x01;
-/// P2 = version du protocole (1 depuis l'application 2.1.0).
+/// P2 = protocol version (1 since app 2.1.0).
 const PROTOCOL_VERSION: u8 = 1;
 const SW_INTERRUPTED_EXECUTION: u16 = 0xe000;
-/// Borne du nombre d'allers-retours d'une commande : protège d'un appareil
-/// qui ne terminerait jamais (une signature réelle en demande quelques
-/// centaines à quelques milliers).
+/// Cap on the number of round trips for one command: protects against a device that
+/// never finishes (a real signature takes a few hundred to a few thousand).
 const MAX_ROUNDS: u32 = 200_000;
 
-/// Version de transaction et séquence des entrées (finale, sans RBF), écrites
-/// dans la PSBT et reprises à l'identique pour le condensat BIP 143 local.
+/// Transaction version and input sequence (final, no RBF), written into the PSBT
+/// and reused identically for the local BIP 143 digest.
 const TX_VERSION: u32 = 2;
 const SEQUENCE: u32 = 0xffff_ffff;
 const SIGHASH_ALL: u8 = 0x01;
 
-/// Mots d'état propres à l'application Bitcoin, puis sens génériques.
+/// Status words specific to the Bitcoin app, then generic meanings.
 fn check(sw: u16) -> Result<()> {
     match sw {
         0x9000 => Ok(()),
@@ -61,7 +60,7 @@ fn check(sw: u16) -> Result<()> {
     }
 }
 
-// --- Lecture d'octets bornée -------------------------------------------------
+// --- Bounded byte reading ----------------------------------------------------
 
 struct Reader<'a> {
     data: &'a [u8],
@@ -88,7 +87,7 @@ impl<'a> Reader<'a> {
         Ok(self.take(1)?[0])
     }
 
-    /// Entier de longueur variable au format Bitcoin (« CompactSize »).
+    /// Variable-length integer in Bitcoin format ("CompactSize").
     fn varint(&mut self) -> Result<u64> {
         Ok(match self.u8()? {
             0xfd => u16::from_le_bytes(self.array()?) as u64,
@@ -128,9 +127,9 @@ pub(crate) fn hash160(pubkey: &[u8]) -> [u8; 20] {
     Ripemd160::digest(Sha256::digest(pubkey)).into()
 }
 
-// --- Arbres de Merkle (`doc/merkle.md`, variante de la RFC 6962) --------------
+// --- Merkle trees (`doc/merkle.md`, a variant of RFC 6962) --------------------
 
-/// Feuille : SHA-256(0x00 || élément).
+/// Leaf: SHA-256(0x00 || element).
 fn element_hash(element: &[u8]) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update([0x00]);
@@ -138,7 +137,7 @@ fn element_hash(element: &[u8]) -> [u8; 32] {
     hasher.finalize().into()
 }
 
-/// Nœud interne : SHA-256(0x01 || gauche || droite).
+/// Internal node: SHA-256(0x01 || left || right).
 fn combine(left: &[u8; 32], right: &[u8; 32]) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update([0x01]);
@@ -147,13 +146,13 @@ fn combine(left: &[u8; 32], right: &[u8; 32]) -> [u8; 32] {
     hasher.finalize().into()
 }
 
-/// Taille du sous-arbre gauche d'un arbre de `n` ≥ 2 feuilles : la plus
-/// grande puissance de 2 strictement inférieure à `n`.
+/// Size of the left subtree of a tree with `n` ≥ 2 leaves: the largest power of 2
+/// strictly below `n`.
 fn left_size(n: usize) -> usize {
     1 << (usize::BITS - 1 - (n - 1).leading_zeros())
 }
 
-/// Racine ; 32 octets nuls pour un arbre vide.
+/// Root; 32 zero bytes for an empty tree.
 fn merkle_root(leaves: &[[u8; 32]]) -> [u8; 32] {
     match leaves.len() {
         0 => [0; 32],
@@ -165,8 +164,8 @@ fn merkle_root(leaves: &[[u8; 32]]) -> [u8; 32] {
     }
 }
 
-/// Preuve d'appartenance de la feuille `index` : les frères successifs, de la
-/// feuille vers la racine.
+/// Proof of membership for leaf `index`: the successive siblings, from the leaf up
+/// to the root.
 fn merkle_proof(leaves: &[[u8; 32]], index: usize) -> Vec<[u8; 32]> {
     if leaves.len() <= 1 {
         return Vec::new();
@@ -181,11 +180,11 @@ fn merkle_proof(leaves: &[[u8; 32]], index: usize) -> Vec<[u8; 32]> {
     proof
 }
 
-/// Table clé -> valeur d'une PSBT (clé = type || données de clé), triée par
-/// clé comme l'exige l'engagement.
+/// Key -> value map of a PSBT (key = type || key data), sorted by key as the
+/// commitment requires.
 type Map = BTreeMap<Vec<u8>, Vec<u8>>;
 
-/// Engagement d'une table : nombre d'entrées, racine des clés, racine des valeurs.
+/// Commitment of a map: number of entries, root of the keys, root of the values.
 fn map_commitment(map: &Map) -> Vec<u8> {
     let mut out = varint(map.len());
     out.extend(merkle_root(&map.keys().map(|k| element_hash(k)).collect::<Vec<_>>()));
@@ -193,17 +192,17 @@ fn map_commitment(map: &Map) -> Vec<u8> {
     out
 }
 
-// --- Commandes "client" ---------------------------------------------------------
+// --- "Client" commands ----------------------------------------------------------
 
-/// Répond aux demandes de l'appareil pendant une commande interactive, à
-/// partir des seules données engagées au départ (formats de `client_command.py`).
+/// Answers the device's requests during an interactive command, using only the data
+/// committed at the start (formats from `client_command.py`).
 #[derive(Default)]
 struct Client {
     preimages: HashMap<[u8; 32], Vec<u8>>,
     trees: HashMap<[u8; 32], Vec<[u8; 32]>>,
-    /// Suite d'une réponse trop longue pour une APDU (GET_MORE_ELEMENTS).
+    /// Rest of a response too long for one APDU (GET_MORE_ELEMENTS).
     queue: VecDeque<Vec<u8>>,
-    /// Résultats transmis par l'appareil (YIELD) : les signatures.
+    /// Results sent by the device (YIELD): the signatures.
     yielded: Vec<Vec<u8>>,
 }
 
@@ -212,8 +211,8 @@ impl Client {
         self.preimages.insert(sha256(data), data.to_vec());
     }
 
-    /// Liste engagée par un arbre de Merkle : l'arbre, et chaque feuille
-    /// révélable (préimage 0x00 || élément).
+    /// A list committed by a Merkle tree: the tree, and each revealable leaf (preimage
+    /// 0x00 || element).
     fn add_list<T: AsRef<[u8]>>(&mut self, elements: &[T]) {
         let mut leaves = Vec::with_capacity(elements.len());
         for element in elements {
@@ -234,13 +233,13 @@ impl Client {
         let (&code, body) = request.split_first().ok_or_else(|| anyhow!("demande vide du Ledger"))?;
         let mut r = Reader::new(body);
         match code {
-            // YIELD : un résultat ; réponse vide.
+            // YIELD: one result; empty response.
             0x10 => {
                 self.yielded.push(body.to_vec());
                 Ok(Vec::new())
             }
-            // GET_PREIMAGE : longueur totale, puis le plus grand préfixe possible ;
-            // le reste part octet par octet dans la file.
+            // GET_PREIMAGE: total length, then the largest possible prefix; the rest goes byte
+            // by byte into the queue.
             0x40 => {
                 ensure!(r.u8()? == 0, "demande de préimage non prise en charge");
                 let hash: [u8; 32] = r.array()?;
@@ -253,8 +252,8 @@ impl Client {
                 self.queue.extend(preimage[size..].iter().map(|b| vec![*b]));
                 Ok(out)
             }
-            // GET_MERKLE_LEAF_PROOF : feuille, longueur de la preuve, puis autant
-            // d'éléments que possible (6) ; le reste dans la file.
+            // GET_MERKLE_LEAF_PROOF: leaf, proof length, then as many elements as fit (6); the
+            // rest goes into the queue.
             0x41 => {
                 let root: [u8; 32] = r.array()?;
                 let size = r.length()?;
@@ -272,7 +271,7 @@ impl Client {
                 self.queue.extend(proof[n..].iter().map(|h| h.to_vec()));
                 Ok(out)
             }
-            // GET_MERKLE_LEAF_INDEX : trouvé (0/1) puis indice.
+            // GET_MERKLE_LEAF_INDEX: found (0/1), then index.
             0x42 => {
                 let root: [u8; 32] = r.array()?;
                 let leaf: [u8; 32] = r.array()?;
@@ -283,7 +282,7 @@ impl Client {
                 out.extend(varint(index));
                 Ok(out)
             }
-            // GET_MORE_ELEMENTS : éléments de même taille, au plus 253 octets.
+            // GET_MORE_ELEMENTS: elements of the same size, at most 253 bytes.
             0xa0 => {
                 r.finish()?;
                 let size = self.queue.front().map(Vec::len).ok_or_else(|| anyhow!("le Ledger demande la suite d'une réponse terminée"))?;
@@ -303,8 +302,8 @@ impl Client {
     }
 }
 
-/// Envoie une commande et répond à chaque interruption (0xE000) par CONTINUE
-/// jusqu'à la réponse finale.
+/// Sends a command and answers each interruption (0xE000) with CONTINUE until the
+/// final response.
 fn request(transport: &mut dyn Transport, ins: u8, data: &[u8], client: &mut Client) -> Result<Vec<u8>> {
     let (mut response, mut sw) = send_raw(transport, CLA, ins, 0, PROTOCOL_VERSION, data)?;
     let mut rounds = 0;
@@ -318,7 +317,7 @@ fn request(transport: &mut dyn Transport, ins: u8, data: &[u8], client: &mut Cli
     Ok(response)
 }
 
-// --- Politique de portefeuille (`doc/wallet.md`, version 2) --------------------
+// --- Wallet policy (`doc/wallet.md`, version 2) --------------------------------
 
 struct WalletPolicy {
     name: String,
@@ -327,8 +326,8 @@ struct WalletPolicy {
 }
 
 impl WalletPolicy {
-    /// version | nom | longueur et SHA-256 du modèle | nombre de clés | racine
-    /// de Merkle des clés.
+    /// version | name | length and SHA-256 of the descriptor template | number of keys
+    /// | Merkle root of the keys.
     fn serialize(&self) -> Vec<u8> {
         let mut out = vec![0x02, self.name.len() as u8];
         out.extend_from_slice(self.name.as_bytes());
@@ -343,7 +342,7 @@ impl WalletPolicy {
         sha256(&self.serialize())
     }
 
-    /// Client connaissant la politique (exigé par toutes les commandes qui l'utilisent).
+    /// Client that knows the policy (required by every command that uses it).
     fn client(&self) -> Client {
         let mut client = Client::default();
         client.add_list(&self.keys.iter().map(String::as_bytes).collect::<Vec<_>>());
@@ -353,11 +352,11 @@ impl WalletPolicy {
     }
 }
 
-// --- Compte ---------------------------------------------------------------------
+// --- Account --------------------------------------------------------------------
 
-/// Compte Bitcoin natif SegWit (BIP 84) d'un Ledger : tout ce qu'il faut pour
-/// calculer ses adresses et construire ses transactions, sans l'appareil.
-/// Aucune donnée secrète (clé publique étendue et empreinte maîtresse).
+/// A Ledger's native SegWit (BIP 84) Bitcoin account: everything needed to compute
+/// its addresses and build its transactions without the device. No secret data
+/// (extended public key and master fingerprint).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Account {
     pub testnet: bool,
@@ -371,9 +370,9 @@ impl Account {
         [84 | HARDENED, testnet as u32 | HARDENED, account | HARDENED]
     }
 
-    /// Lit l'empreinte maîtresse et la clé publique étendue du compte
-    /// m/84'/c'/`account`' (chemin standard : aucune confirmation demandée).
-    /// L'application ouverte doit correspondre au réseau (Bitcoin / Bitcoin Test).
+    /// Reads the master fingerprint and the extended public key of account
+    /// m/84'/c'/`account`' (standard path: no confirmation asked). The open app must
+    /// match the network (Bitcoin / Bitcoin Test).
     pub fn load(transport: &mut dyn Transport, testnet: bool, account: u32) -> Result<Self> {
         ensure!(account < HARDENED, "numéro de compte invalide");
         let fingerprint = request(transport, INS_GET_MASTER_FINGERPRINT, &[], &mut Client::default())?
@@ -389,7 +388,7 @@ impl Account {
         Ok(loaded)
     }
 
-    /// Clé étendue validée : publique, du bon réseau, au niveau du compte.
+    /// Validated extended key: public, right network, at account level.
     fn parsed_xpub(&self) -> Result<XPub> {
         let key: ExtendedKey = self.xpub.parse().map_err(|_| anyhow!("clé publique étendue du Ledger illisible"))?;
         let expected = if self.testnet { Prefix::TPUB } else { Prefix::XPUB };
@@ -410,8 +409,8 @@ impl Account {
         WalletPolicy { name: String::new(), template: "wpkh(@0/**)".into(), keys: vec![origin] }
     }
 
-    /// Clé publique compressée de m/84'/c'/n'/`change`/`index`, dérivée
-    /// localement de la clé étendue.
+    /// Compressed public key of m/84'/c'/n'/`change`/`index`, derived locally from the
+    /// extended key.
     pub fn public_key(&self, change: u32, index: u32) -> Result<[u8; 33]> {
         ensure!(change <= 1 && index < HARDENED, "chemin d'adresse invalide");
         let child = self
@@ -434,8 +433,8 @@ impl Account {
         }
     }
 
-    /// Valeur d'un champ de dérivation BIP 32 d'une PSBT : empreinte maîtresse
-    /// puis chaque indice en petit-boutiste.
+    /// Value of a PSBT BIP 32 derivation field: master fingerprint, then each index in
+    /// little-endian.
     fn derivation(&self, change: u32, index: u32) -> Vec<u8> {
         let mut out = self.fingerprint.to_vec();
         for step in Self::path(self.testnet, self.account).into_iter().chain([change, index]) {
@@ -445,14 +444,14 @@ impl Account {
     }
 }
 
-/// Adresse calculée PAR L'APPAREIL (`display` : affichée sur son écran et
-/// confirmée par l'utilisateur), comparée à celle dérivée localement.
+/// Address computed BY THE DEVICE (`display`: shown on its screen and confirmed by
+/// the user), compared with the one derived locally.
 pub fn wallet_address(transport: &mut dyn Transport, account: &Account, change: u32, index: u32, display: bool) -> Result<String> {
     let expected = account.address(change, index)?;
     let policy = account.policy();
     let mut data = vec![display as u8];
     data.extend(policy.id());
-    data.extend([0u8; 32]); // portefeuille par défaut : pas de HMAC
+    data.extend([0u8; 32]); // default wallet: no HMAC
     data.push(change as u8);
     data.extend(index.to_be_bytes());
     let address = String::from_utf8(request(transport, INS_GET_WALLET_ADDRESS, &data, &mut policy.client())?)
@@ -463,11 +462,11 @@ pub fn wallet_address(transport: &mut dyn Transport, account: &Account, change: 
 
 // --- Transactions -------------------------------------------------------------
 
-/// Transaction précédente (celle qui a créé un UTXO) analysée. Partagée avec
-/// le Trezor, qui en demande aussi la version, les entrées et le verrouillage.
+/// A parsed previous transaction (the one that created a UTXO). Shared with the
+/// Trezor code, which also asks for its version, inputs and locktime.
 pub(crate) struct PrevTx {
     pub(crate) txid: [u8; 32],
-    /// Sérialisation sans témoins (celle que couvre le txid).
+    /// Serialization without witnesses (the one the txid covers).
     pub(crate) stripped: Vec<u8>,
     pub(crate) version: u32,
     pub(crate) inputs: Vec<PrevTxIn>,
@@ -476,14 +475,14 @@ pub(crate) struct PrevTx {
 }
 
 pub(crate) struct PrevTxIn {
-    /// Txid dépensé, dans l'ordre de sérialisation.
+    /// Spent txid, in serialization order.
     pub(crate) prevout: [u8; 32],
     pub(crate) vout: u32,
     pub(crate) script_sig: Vec<u8>,
     pub(crate) sequence: u32,
 }
 
-/// Analyse une transaction brute, avec ou sans témoins (format BIP 144).
+/// Parses a raw transaction, with or without witnesses (BIP 144 format).
 pub(crate) fn parse_transaction(raw: &[u8]) -> Result<PrevTx> {
     let mut r = Reader::new(raw);
     let version = r.take(4)?;
@@ -536,7 +535,7 @@ pub(crate) fn parse_transaction(raw: &[u8]) -> Result<PrevTx> {
 }
 
 pub(crate) struct TxIn {
-    /// Txid dans l'ordre de sérialisation (inverse de l'ordre affiché).
+    /// Txid in serialization order (the reverse of display order).
     pub(crate) prevout: [u8; 32],
     pub(crate) vout: u32,
     pub(crate) sequence: u32,
@@ -565,8 +564,8 @@ impl UnsignedTx {
         out
     }
 
-    /// Condensat BIP 143 (SIGHASH_ALL) de l'entrée `index`, qui dépense une
-    /// sortie P2WPKH `hash160` de montant `value`.
+    /// BIP 143 digest (SIGHASH_ALL) of input `index`, which spends a P2WPKH output
+    /// `hash160` worth `value`.
     pub(crate) fn sighash(&self, index: usize, hash160: &[u8; 20], value: u64) -> [u8; 32] {
         let prevouts: Vec<u8> = self.inputs.iter().flat_map(|i| [&i.prevout[..], &i.vout.to_le_bytes()].concat()).collect();
         let sequences: Vec<u8> = self.inputs.iter().flat_map(|i| i.sequence.to_le_bytes()).collect();
@@ -576,7 +575,7 @@ impl UnsignedTx {
         preimage.extend(dsha256(&sequences));
         preimage.extend_from_slice(&input.prevout);
         preimage.extend(input.vout.to_le_bytes());
-        preimage.extend([0x19, 0x76, 0xa9, 0x14]); // scriptCode P2PKH équivalent
+        preimage.extend([0x19, 0x76, 0xa9, 0x14]); // equivalent P2PKH scriptCode
         preimage.extend_from_slice(hash160);
         preimage.extend([0x88, 0xac]);
         preimage.extend(value.to_le_bytes());
@@ -587,15 +586,15 @@ impl UnsignedTx {
         dsha256(&preimage)
     }
 
-    /// Transaction finale : chaque entrée P2WPKH a pour témoin (signature, clé publique).
+    /// Final transaction: each P2WPKH input has (signature, public key) as its witness.
     pub(crate) fn serialize_signed(&self, witnesses: &[(Vec<u8>, [u8; 33])]) -> Vec<u8> {
         let mut out = self.version.to_le_bytes().to_vec();
-        out.extend([0x00, 0x01]); // marqueur et drapeau SegWit
+        out.extend([0x00, 0x01]); // SegWit marker and flag
         out.extend(varint(self.inputs.len()));
         for i in &self.inputs {
             out.extend_from_slice(&i.prevout);
             out.extend(i.vout.to_le_bytes());
-            out.push(0x00); // scriptSig vide
+            out.push(0x00); // empty scriptSig
             out.extend(i.sequence.to_le_bytes());
         }
         out.extend(varint(self.outputs.len()));
@@ -612,11 +611,11 @@ impl UnsignedTx {
     }
 }
 
-/// UTXO à dépenser, sur l'adresse m/84'/c'/n'/`change`/`index` du compte,
-/// avec la transaction brute qui l'a créé (l'appareil en recalcule le txid
-/// pour s'assurer du montant réellement dépensé).
+/// UTXO to spend, on the account's address m/84'/c'/n'/`change`/`index`, with the
+/// raw transaction that created it (the device recomputes its txid to make sure of
+/// the amount actually spent).
 pub struct Input {
-    /// Txid dans l'ordre affiché par les explorateurs.
+    /// Txid in the order block explorers display.
     pub txid: [u8; 32],
     pub vout: u32,
     pub value_sat: u64,
@@ -625,24 +624,23 @@ pub struct Input {
     pub index: u32,
 }
 
-/// Sortie : `change_index` = Some(i) pour la monnaie, envoyée sur
-/// m/84'/c'/n'/1/i (l'appareil la reconnaît, la vérifie et ne l'affiche pas).
+/// Output: `change_index` = Some(i) for change, sent to m/84'/c'/n'/1/i (the device
+/// recognizes it, checks it and does not display it).
 pub struct Output {
     pub value_sat: u64,
     pub script_pubkey: Vec<u8>,
     pub change_index: Option<u32>,
 }
 
-/// PSBT v2 prête à être engagée auprès de l'appareil.
+/// PSBT v2 ready to be committed to the device.
 struct Psbt {
     global: Map,
     inputs: Vec<Map>,
     outputs: Vec<Map>,
 }
 
-/// Construit la PSBT après avoir vérifié localement chaque entrée (txid de la
-/// transaction précédente, montant et script de la sortie dépensée) et chaque
-/// sortie de monnaie.
+/// Builds the PSBT after checking locally each input (txid of the previous
+/// transaction, amount and script of the spent output) and each change output.
 fn build_psbt(account: &Account, inputs: &[Input], outputs: &[Output]) -> Result<Psbt> {
     ensure!(!inputs.is_empty() && !outputs.is_empty(), "transaction vide");
     let mut input_maps = Vec::new();
@@ -693,7 +691,7 @@ fn build_psbt(account: &Account, inputs: &[Input], outputs: &[Output]) -> Result
 }
 
 impl Psbt {
-    /// Données de SIGN_PSBT et client capable de révéler tout ce qu'elles engagent.
+    /// SIGN_PSBT data, and a client able to reveal everything it commits to.
     fn sign_request(&self, policy: &WalletPolicy) -> (Vec<u8>, Client) {
         let mut client = policy.client();
         client.add_map(&self.global);
@@ -709,15 +707,14 @@ impl Psbt {
         data.extend(varint(self.outputs.len()));
         data.extend(merkle_root(&output_commitments.iter().map(|c| element_hash(c)).collect::<Vec<_>>()));
         data.extend(policy.id());
-        data.extend([0u8; 32]); // portefeuille par défaut : pas de HMAC
+        data.extend([0u8; 32]); // default wallet: no HMAC
         (data, client)
     }
 }
 
-/// Fait signer la transaction par l'appareil (qui affiche destinataires,
-/// montants et frais et attend la confirmation physique), vérifie chaque
-/// signature contre le condensat BIP 143 calculé ici, puis renvoie la
-/// transaction finale, prête à diffuser.
+/// Has the device sign the transaction (it displays recipients, amounts and fees
+/// and waits for physical confirmation), checks each signature against the BIP 143
+/// digest computed here, then returns the final transaction, ready to broadcast.
 pub fn sign_transaction(transport: &mut dyn Transport, account: &Account, inputs: &[Input], outputs: &[Output]) -> Result<Vec<u8>> {
     let psbt = build_psbt(account, inputs, outputs)?;
     let (data, mut client) = psbt.sign_request(&account.policy());
@@ -770,9 +767,9 @@ mod tests {
         hex::decode(s).unwrap()
     }
 
-    /// Arbres produits par le client Python OFFICIEL (`ledger_bitcoin.merkle`)
-    /// sur les feuilles b"a", b"bb", b"ccc"... : racines de 0 à 7 feuilles et
-    /// toutes les preuves de l'arbre à 7 feuilles.
+    /// Trees produced by the OFFICIAL Python client (`ledger_bitcoin.merkle`) over the
+    /// leaves b"a", b"bb", b"ccc"...: roots for 0 to 7 leaves and every proof of the
+    /// 7-leaf tree.
     #[test]
     fn merkle_trees_match_the_official_client() {
         let leaves: Vec<[u8; 32]> = (0..7u8).map(|i| element_hash(&vec![0x61 + i; i as usize + 1])).collect();
@@ -804,8 +801,8 @@ mod tests {
         }
     }
 
-    /// Engagement de table et politique de portefeuille : valeurs du client
-    /// Python officiel (`get_merkleized_map_commitment`, `WalletPolicy`).
+    /// Map commitment and wallet policy: values from the official Python client
+    /// (`get_merkleized_map_commitment`, `WalletPolicy`).
     #[test]
     fn map_commitment_and_wallet_policy_match_the_official_client() {
         let map: Map = [(vec![0x04], vec![0x01]), (vec![0x02], h("02000000")), (vec![0x05], vec![0x02]), (vec![0xfb], h("02000000"))].into();
@@ -825,9 +822,9 @@ mod tests {
         assert_eq!(hex::encode(policy.id()), "74e9dad05d709eb46f8cce7378ebafb45a75c7e83e0d2a63e02f492c8adc7293");
     }
 
-    /// Réponses aux commandes de l'appareil identiques, octet par octet, à
-    /// celles du client Python officiel (`ClientCommandInterpreter`) : préimage
-    /// longue découpée, preuve longue découpée, index trouvé / absent, YIELD.
+    /// Answers to the device's commands identical, byte for byte, to those of the
+    /// official Python client (`ClientCommandInterpreter`): long preimage split up,
+    /// long proof split up, index found / not found, YIELD.
     #[test]
     fn client_commands_match_the_official_client() {
         let mut client = Client::default();
@@ -858,7 +855,7 @@ mod tests {
         assert!(client.execute(&[0x10, 0xaa, 0xbb]).unwrap().is_empty());
         assert_eq!(client.yielded, vec![vec![0xaa, 0xbb]]);
 
-        // Demandes invalides : refusées, jamais de réponse inventée.
+        // Invalid requests: refused, never an invented answer.
         assert!(client.execute(&[&[0x40, 0x00][..], &[0x22; 32]].concat()).is_err(), "préimage inconnue");
         assert!(client.execute(&[&[0x41][..], &[0x33; 32], &varint(1), &varint(0)].concat()).is_err(), "arbre inconnu");
         assert!(client.execute(&[&[0x41][..], &root, &varint(100), &varint(100)].concat()).is_err(), "indice hors de l'arbre");
@@ -868,8 +865,8 @@ mod tests {
         assert!(client.execute(&[]).is_err());
     }
 
-    /// Exemple officiel « Native P2WPKH » de la BIP 143 : condensat de la
-    /// seconde entrée (6 BTC, SIGHASH_ALL).
+    /// BIP 143's official "Native P2WPKH" example: digest of the second input (6 BTC,
+    /// SIGHASH_ALL).
     #[test]
     fn bip143_sighash_matches_the_official_example() {
         let tx = UnsignedTx {
@@ -889,22 +886,22 @@ mod tests {
         assert_eq!(hex::encode(tx.sighash(1, &hash160(&pubkey), 600_000_000)), "c37af31116d1b27caf68aae9e3ac82f1477929014d5b917657d0eb49478cb670");
     }
 
-    /// Txid d'une vraie transaction SegWit du réseau principal (bloc 860000,
-    /// telle que servie par Esplora) : témoins retirés correctement, sorties lues.
+    /// Txid of a real mainnet SegWit transaction (block 860000, as served by Esplora):
+    /// witnesses stripped correctly, outputs read.
     #[test]
     fn previous_transactions_are_parsed_like_the_network_does() {
         let raw = h("02000000000101513f69bcd4338d8909cc43a2dc816cbe93b68b271eda3b0b9cbab216292b65a40100000000fdffffff02f05c0300000000001600148df02028a1ea803d3d8303cb7292af093289fed4a4de0e000000000016001432a6e6570e9ca071b44655d0aa032219e0a7cb5d0247304402207216fccd85bfcb893e57b96cd6b46bb66c7be2c60f3e3b138a3503c22240654c022064e6978af86db210d6ec901b590187b4543986c9b9ea6b73b4f8f96be56e2c7701210254732a97053baf09a3d7e1362fb9d57ccadc8e6927f863ee05bf8f6211fad5eb041f0d00");
         let tx = parse_transaction(&raw).unwrap();
         assert_eq!(hex::encode(tx.txid), "e11ed377b312fb737278cd55e1b2d03c38ef0c634493afa158dfa393756840ea");
         assert_eq!(tx.outputs, vec![(220_400, h("00148df02028a1ea803d3d8303cb7292af093289fed4")), (974_500, h("001432a6e6570e9ca071b44655d0aa032219e0a7cb5d"))]);
-        // Sans témoins, la sérialisation est inchangée.
+        // Without witnesses, the serialization is unchanged.
         assert_eq!(parse_transaction(&tx.stripped).unwrap().stripped, tx.stripped);
         for bad in [&raw[..raw.len() - 1], &[&raw[..], &[0]].concat()[..], &raw[..10]] {
             assert!(parse_transaction(bad).is_err());
         }
     }
 
-    /// Compte m/84'/1'/0' calculé localement à partir de la graine de test.
+    /// Account m/84'/1'/0' computed locally from the test seed.
     fn local_test_account() -> (Account, bip32::XPrv) {
         let seed = bip39::Mnemonic::parse(super::super::speculos::TEST_MNEMONIC).unwrap().to_seed("");
         let root = bip32::XPrv::new(seed).unwrap();
@@ -916,7 +913,7 @@ mod tests {
         (local, account)
     }
 
-    /// Transaction précédente (format sans témoins) qui crédite les adresses données.
+    /// Previous transaction (non-witness format) crediting the given addresses.
     fn funding_transaction(outputs: &[(u64, Vec<u8>)]) -> Vec<u8> {
         let mut tx = 2u32.to_le_bytes().to_vec();
         tx.push(1);
@@ -934,8 +931,8 @@ mod tests {
         tx
     }
 
-    /// Transaction de test : UTXO sur 0/0 (50 000 sat) et 1/3 (30 000 sat),
-    /// 60 000 sat vers un tiers, 18 000 sat de monnaie sur 1/4.
+    /// Test transaction: UTXOs on 0/0 (50,000 sat) and 1/3 (30,000 sat), 60,000 sat to
+    /// a third party, 18,000 sat of change on 1/4.
     fn test_transaction(account: &Account) -> (Vec<Input>, Vec<Output>) {
         let script = |change, index| p2wpkh_script_pubkey(&account.hash160(change, index).unwrap());
         let prev = funding_transaction(&[(50_000, script(0, 0)), (30_000, script(1, 3))]);
@@ -951,8 +948,8 @@ mod tests {
         (inputs, outputs)
     }
 
-    /// Sérialisation BIP 174 (« psbt\xff », tables séparées par 0x00), pour
-    /// le client Python officiel.
+    /// BIP 174 serialization ("psbt\xff", maps separated by 0x00), for the official
+    /// Python client.
     fn serialize_psbt(psbt: &Psbt) -> Vec<u8> {
         let mut out = b"psbt\xff".to_vec();
         for map in std::iter::once(&psbt.global).chain(&psbt.inputs).chain(&psbt.outputs) {
@@ -967,10 +964,10 @@ mod tests {
         out
     }
 
-    /// Données de SIGN_PSBT identiques à celles que calcule le client Python
-    /// officiel (`NewClient.sign_psbt` : analyse de notre PSBT, engagements de
-    /// chaque table, racines des entrées et des sorties, politique).
-    /// L'empreinte SHA-256 de notre PSBT fige aussi son contenu exact.
+    /// SIGN_PSBT data identical to what the official Python client computes
+    /// (`NewClient.sign_psbt`: parsing our PSBT, commitments for each map, roots of the
+    /// inputs and outputs, policy). The SHA-256 hash of our PSBT also pins its exact
+    /// content.
     #[test]
     fn sign_psbt_request_matches_the_official_client() {
         let (account, _) = local_test_account();
@@ -988,8 +985,8 @@ mod tests {
         );
     }
 
-    /// Les vérifications locales refusent une entrée ou une monnaie incohérente
-    /// AVANT tout échange avec l'appareil.
+    /// Local checks refuse an inconsistent input or change output BEFORE any exchange
+    /// with the device.
     #[test]
     fn inconsistent_inputs_and_change_are_refused_before_signing() {
         let (account, _) = local_test_account();
@@ -1010,17 +1007,15 @@ mod tests {
         assert!(build_psbt(&account, &inputs, &[]).is_err());
     }
 
-    /// Application Bitcoin OFFICIELLE (« Bitcoin Test » 2.5.1) dans Speculos,
-    /// graine de test publique :
-    /// - empreinte maîtresse et clé étendue m/84'/1'/0' identiques à NOTRE
-    ///   dérivation ; adresses calculées par l'appareil = les nôtres ;
-    /// - adresse affichée à l'écran pour vérification ;
-    /// - vraie transaction (2 entrées sur 0/0 et 1/3, un destinataire, monnaie
-    ///   sur 1/4) signée après revue à l'écran (montant, destinataire, frais ;
-    ///   monnaie non affichée), signatures vérifiées contre NOTRE condensat ;
-    /// - refus -> erreur claire.
+    /// The OFFICIAL Bitcoin app ("Bitcoin Test" 2.5.1) in Speculos, public test seed:
+    /// - master fingerprint and extended key m/84'/1'/0' identical to OUR derivation; addresses computed by
+    ///   the device = ours;
+    /// - address shown on screen for verification;
+    /// - a real transaction (2 inputs on 0/0 and 1/3, one recipient, change on 1/4) signed after on-screen
+    ///   review (amount, recipient, fee; change not shown), signatures checked against OUR digest;
+    /// - refusal -> clear error.
     ///
-    /// Speculos doit tourner avec `bitcoin-nanosp.elf`.
+    /// Speculos must run `bitcoin-nanosp.elf`.
     /// `cargo test -- --ignored ledger_btc_against_the_official_app_in_speculos --nocapture --test-threads=1`
     #[test]
     #[ignore]
@@ -1049,7 +1044,7 @@ mod tests {
         assert!(screens.replace(' ', "").contains(&receive[..20]), "adresse affichée");
         speculos::back_to_home();
 
-        // 2 000 sat de frais.
+        // 2,000 sat fee.
         let (inputs, outputs) = test_transaction(&device);
         let recipient_address = crate::derivation::format_btc_testnet_address(&[0x55; 20]).unwrap();
         let approver = std::thread::spawn(|| speculos::review_and_accept(&["Sign transaction", "Accept and send", "Approve"]));
@@ -1066,9 +1061,8 @@ mod tests {
         assert_eq!(parsed.outputs, outputs.iter().map(|o| (o.value_sat, o.script_pubkey.clone())).collect::<Vec<_>>());
         speculos::back_to_home();
 
-        // Destinataire de chaque autre type standard (P2PKH m…, P2SH 2…,
-        // P2WSH, Taproot tb1p…) : adresse affichée par l'appareil,
-        // transaction signée avec ce script de sortie.
+        // A recipient of each other standard type (P2PKH m…, P2SH 2…, P2WSH, Taproot
+        // tb1p…): address shown by the device, transaction signed with that output script.
         for to_script in [
             "76a91462e907b15cbf27d5425399ebf6f0fb50ebb88f1888ac",
             "a914b472a266d0bd89c13706a4132ccfb16f7c3b9fcb87",

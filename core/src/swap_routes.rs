@@ -1,13 +1,13 @@
-//! Routes d'échange entre les cryptos de l'app : quel protocole relie une
-//! crypto (sur un réseau) à une autre, directement ou en deux étapes via une
-//! crypto intermédiaire. Fonction pure, sans appel réseau : source unique de
-//! ce que l'interface propose (« Convertir ») et de ce que les commandes
-//! d'échange acceptent (chaque étape est une paire directe).
+//! Swap routes between the app's cryptos: which protocol connects one crypto (on a
+//! network) to another, directly or in two steps through an intermediate crypto. A
+//! pure function with no network calls: the single source of truth for what the UI
+//! offers ("Convert") and what the swap commands accept (each step is a direct
+//! pair).
 
 use crate::{cow, lifi, moonpay_trade, swapkit, thorchain_rpc, tokens};
 use serde::{Deserialize, Serialize};
 
-/// Une crypto de l'app sur un réseau (identifiant de carte, réseau).
+/// One of the app's cryptos on a network (card identifier, network).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize)]
 pub struct SwapAsset {
     pub coin: &'static str,
@@ -17,29 +17,28 @@ pub struct SwapAsset {
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Protocol {
-    /// Cross-chain : dépôt sur un coffre THORChain avec un memo vérifié.
+    /// Cross-chain: deposit into a THORChain vault with a verified memo.
     Thorchain,
-    /// Même portefeuille Solana : transaction Jupiter simulée et vérifiée.
+    /// Same Solana wallet: Jupiter transaction, simulated and verified.
     Jupiter,
-    /// Cross-chain, fork de THORChain (même mécanique) : Arbitrum.
+    /// Cross-chain, a THORChain fork (same mechanics): Arbitrum.
     Maya,
-    /// Même réseau EVM : ordre signé (EIP-712) exécuté par CoW Protocol.
+    /// Same EVM network: signed order (EIP-712) executed by CoW Protocol.
     Cow,
-    /// Entre deux écosystèmes : agrégateur LI.FI, transaction construite par
-    /// LI.FI et vérifiée avant signature (voir `core/src/lifi.rs`).
+    /// Between two ecosystems: the LI.FI aggregator, with a transaction built by LI.FI
+    /// and verified before signing (see `core/src/lifi.rs`).
     Lifi,
-    /// Agrégateur SwapKit : NEAR Intents ou Chainflip, dépôt confirmé par le
-    /// fournisseur lui-même avant signature (voir `core/src/swapkit.rs`).
+    /// SwapKit aggregator: NEAR Intents or Chainflip, with the deposit confirmed by the
+    /// provider itself before signing (see `core/src/swapkit.rs`).
     Swapkit,
-    /// MoonPay Trade (swaps.xyz) : routeur simulé sur un même réseau EVM ;
-    /// ailleurs, dépôt au destinataire final invérifiable, proposé en dernier
-    /// recours seulement (voir `core/src/moonpay_trade.rs`).
+    /// MoonPay Trade (swaps.xyz): a simulated router on the same EVM network;
+    /// elsewhere, a deposit whose final recipient cannot be verified, offered only as a
+    /// last resort (see `core/src/moonpay_trade.rs`).
     Moonpay,
 }
 
 impl Protocol {
-    /// Protocole de la famille THORChain correspondant (`None` pour Jupiter
-    /// et CoW).
+    /// The matching THORChain-family protocol (`None` for Jupiter and CoW).
     pub fn cross_chain(self) -> Option<&'static thorchain_rpc::CrossChain> {
         match self {
             Protocol::Thorchain => Some(&thorchain_rpc::THORCHAIN),
@@ -49,19 +48,19 @@ impl Protocol {
     }
 }
 
-/// Cryptos échangeables via Jupiter (voir `api::send_jupiter_swap`).
+/// Cryptos that can be swapped through Jupiter (see `api::send_jupiter_swap`).
 const JUPITER: [SwapAsset; 6] = [
     SwapAsset { coin: "sol", network: "sol_mainnet" },
     SwapAsset { coin: "usdc", network: "sol_mainnet" },
     SwapAsset { coin: "usdt", network: "sol_mainnet" },
     SwapAsset { coin: "eurc", network: "sol_mainnet" },
     SwapAsset { coin: "render", network: "sol_mainnet" },
-    // Staking liquide : SOL ⇄ JitoSOL.
+    // Liquid staking: SOL ⇄ JitoSOL.
     SwapAsset { coin: "jitosol", network: "sol_mainnet" },
 ];
 
-/// Échangeable via Jupiter : la liste ci-dessus, et les actions tokenisées
-/// xStocks du registre (Token-2022, montants convertis par `api`).
+/// Swappable through Jupiter: the list above, plus the tokenized xStocks shares
+/// from the registry (Token-2022, amounts converted by `api`).
 fn jupiter_supports(asset: &SwapAsset) -> bool {
     JUPITER.contains(asset) || (asset.network == "sol_mainnet" && tokens::is_spl2022(asset.coin))
 }
@@ -72,37 +71,33 @@ fn jupiter_assets() -> impl Iterator<Item = SwapAsset> {
     )
 }
 
-/// `protocol` relie-t-il `from` à `to` ? Depuis Bitcoin ou Zcash aussi :
-/// sans nom court d'affiliation, sans frais pour l'app (voir
-/// `thorchain_rpc::CrossChain::charges_affiliate`).
-/// Réseaux reçus par échange mais pas encore vendus : l'app ne construit pas
-/// encore le dépôt depuis ce réseau (Dogecoin : memo en sortie OP_RETURN). Ils
-/// ne servent pas non plus d'intermédiaire.
+/// Networks that can be received through a swap but not sold yet: the app does not
+/// build the deposit from these networks yet (Dogecoin: memo in an OP_RETURN
+/// output). They are not used as intermediates either.
 const BUY_ONLY: [&str; 1] = ["doge_mainnet"];
 
+/// Does `protocol` connect `from` to `to`? From Bitcoin or Zcash too: without an
+/// affiliate short name, there is simply no fee for the app (see
+/// `thorchain_rpc::CrossChain::charges_affiliate`).
 fn links(protocol: &thorchain_rpc::CrossChain, from: SwapAsset, to: SwapAsset) -> bool {
     !BUY_ONLY.contains(&from.network) && protocol.asset(from.coin, from.network).is_some() && protocol.asset(to.coin, to.network).is_some()
 }
 
-/// Frais d'affiliation de l'app (points de base) d'un échange depuis `from`
-/// via `protocol` : 0 depuis Bitcoin ou Zcash par THORChain ou Maya tant que
-/// le nom court n'existe pas. Jupiter : sans compte de frais pour la paire,
-/// l'échange se fait sans frais (dit dans sa boîte de confirmation).
-/// Staking liquide (SOL ⇄ JitoSOL, ETH ⇄ stETH) : frais de l'app alignés sur
-/// la concurrence, qui prélève sur les RÉCOMPENSES (Phantom, PSOL : 4 % des
-/// récompenses + 0,1 % en sortie ; MetaMask : 10 à 15 % des récompenses),
-/// soit ≈ 0,3 % par an. Les récompenses de Jito et de Lido échappent à l'app
-/// (non-custodial) : perçus à l'entrée (0,30 %) et à la sortie (0,10 %, comme
-/// Phantom), au lieu des 0,80 % / 1 % d'un échange ordinaire (06/10/2026).
+/// Liquid staking (SOL ⇄ JitoSOL, ETH ⇄ stETH): the app's fees are in line with
+/// competitors, who take a cut of the REWARDS (Phantom, PSOL: 4% of rewards + 0.1%
+/// on exit; MetaMask: 10 to 15% of rewards), i.e. ≈ 0.3% per year. Jito and Lido
+/// rewards never pass through the app (non-custodial), so the fee is taken on entry
+/// (0.30%) and on exit (0.10%, like Phantom), instead of the 0.80% / 1% of a
+/// regular swap (2026-10-06).
 pub const STAKING_ENTRY_FEE_BPS: u32 = 30;
 pub const STAKING_EXIT_FEE_BPS: u32 = 10;
 
-/// Crypto et réseau.
+/// Crypto and network.
 type CoinOn = (&'static str, &'static str);
 
 const LIQUID_STAKING: [(CoinOn, CoinOn); 2] = [(("sol", "sol_mainnet"), ("jitosol", "sol_mainnet")), (("evm", "evm_mainnet"), ("steth", "evm_mainnet"))];
 
-/// Frais de l'app pour une paire de staking liquide (`None` : autre paire).
+/// The app's fee for a liquid staking pair (`None`: any other pair).
 pub fn staking_fee_bps(from: (&str, &str), to: (&str, &str)) -> Option<u32> {
     LIQUID_STAKING.iter().find_map(|&(base, token)| {
         if (from, to) == (base, token) {
@@ -115,14 +110,19 @@ pub fn staking_fee_bps(from: (&str, &str), to: (&str, &str)) -> Option<u32> {
     })
 }
 
+/// The app's affiliate fee (basis points) for a swap from `from` through `protocol`: 0
+/// from Bitcoin or Zcash through THORChain or Maya as long as the short name does not
+/// exist. Jupiter: without a fee account for the pair, the swap is fee-free (stated in
+/// its confirmation dialog).
 pub fn affiliate_fee_bps(protocol: Protocol, from: SwapAsset, to: SwapAsset) -> u32 {
     if let (Some(bps), Protocol::Jupiter | Protocol::Cow) = (staking_fee_bps((from.coin, from.network), (to.coin, to.network)), protocol) {
         return bps;
     }
-    // Achat d'un xStock via Jupiter : frais pris seulement sur le xStock reçu
-    // (sur le jeton vendu, la route échoue — voir api::jupiter_fee_mint), et
-    // l'affilié n'a pas de compte xStock : échange sans frais. À revoir si ces
-    // comptes sont créés (le devis et la confirmation disent les frais réels).
+    // Buying an xStock through Jupiter: the fee can only be taken on the xStock
+    // received (on the token sold, the route fails; see api::jupiter_fee_mint), and
+    // the affiliate has no xStock account, so the swap is fee-free. To revisit if
+    // those accounts are created (the quote and the confirmation show the actual
+    // fees).
     if protocol == Protocol::Jupiter && tokens::is_spl2022(to.coin) {
         return 0;
     }
@@ -137,41 +137,41 @@ pub fn affiliate_fee_bps(protocol: Protocol, from: SwapAsset, to: SwapAsset) -> 
         Protocol::Jupiter => crate::jupiter_rpc::AFFILIATE_FEE_BPS,
         Protocol::Cow => cow::PARTNER_FEE_BPS,
         Protocol::Lifi => (lifi::FEE * 10_000.0).round() as u32,
-        // Commission de SwapKit (l'app n'en touche pas encore, voir
+        // SwapKit's commission (the app does not take one yet, see
         // `swapkit::AFFILIATE_FEE_BPS`).
         Protocol::Swapkit => swapkit::SERVICE_FEE_BPS + swapkit::AFFILIATE_FEE_BPS,
-        // Frais de MoonPay compris, comme ceux de SwapKit.
+        // MoonPay's fees included, like SwapKit's.
         Protocol::Moonpay => moonpay_trade::FEE_BPS + moonpay_trade::PROTOCOL_FEE_BPS,
     }
 }
 
-/// CoW relie deux cryptos du MÊME réseau EVM qu'il connaît (la monnaie du
-/// réseau se vend via son contrat EthFlow).
+/// CoW connects two cryptos on the SAME EVM network it supports (the network's
+/// native coin is sold through its EthFlow contract).
 fn cow_links(from: SwapAsset, to: SwapAsset) -> bool {
     from.network == to.network
         && matches!(cow::token(from.coin, from.network), Some(t) if !t.native || cow::wrapped_native(from.network).is_some())
         && cow::token(to.coin, to.network).is_some()
 }
 
-/// CoW n'est proposé qu'une fois l'adresse des frais partenaire renseignée.
+/// CoW is only offered once the partner fee address is set.
 fn cow_enabled() -> bool {
     cow::PARTNER_FEE_RECIPIENT.is_some()
 }
 
-/// LI.FI n'est proposé qu'une fois le nom d'intégrateur renseigné.
+/// LI.FI is only offered once the integrator name is set.
 fn lifi_enabled() -> bool {
     lifi::INTEGRATOR.is_some()
 }
 
-/// SwapKit : proposé avec une clé d'API (lue à la compilation). Jamais dans
-/// les tests de ce module, qui ne doivent pas dépendre de sa présence (les
-/// paires SwapKit sont testées dans `swapkit`).
+/// SwapKit: offered when there is an API key (read at build time). Never in this
+/// module's tests, which must not depend on the key being present (SwapKit pairs
+/// are tested in `swapkit`).
 fn swapkit_enabled() -> bool {
     cfg!(not(test)) && swapkit::enabled()
 }
 
-/// MoonPay Trade : proposé avec une clé Trade (lue à la compilation). Même
-/// règle que SwapKit pour les tests de ce module, sauf `MOONPAY_IN_TESTS`.
+/// MoonPay Trade: offered when there is a Trade key (read at build time). Same rule
+/// as SwapKit for this module's tests, except with `MOONPAY_IN_TESTS`.
 fn moonpay_enabled() -> bool {
     #[cfg(test)]
     return tests::MOONPAY_IN_TESTS.with(std::cell::Cell::get);
@@ -179,15 +179,12 @@ fn moonpay_enabled() -> bool {
     moonpay_trade::enabled()
 }
 
-/// Tous les protocoles qui relient directement `from` à `to`, du préféré au
-/// moins préféré : Jupiter (même portefeuille Solana), CoW sur un même réseau
-/// EVM (ordre sans transaction d'échange, meilleurs prix), THORChain (pools
-/// les plus profonds), Maya (Arbitrum), puis LI.FI (agrégateur : transaction
-/// construite par un tiers, vérifiée avant signature). Depuis Bitcoin, tant
-/// que le nom court THORChain n'est pas inscrit et vérifié, LI.FI d'abord :
-/// seule route qui porte les frais de l'app (choix du développeur, 03/10/2026). L'utilisateur peut choisir
-/// n'importe lequel ; les commandes d'échange refusent un protocole absent de
-/// la liste.
+/// Every protocol that directly connects `from` to `to`, from most to least preferred: Jupiter (same
+/// Solana wallet), CoW on the same EVM network (an order with no swap transaction, best prices), THORChain
+/// (deepest pools), Maya (Arbitrum), then LI.FI (aggregator: transaction built by a third party, verified
+/// before signing). From Bitcoin, until the THORChain short name is registered and verified, LI.FI comes
+/// first: it is the only route that carries the app's fee (a deliberate choice, 2026-10-03). The user can
+/// pick any of them; the swap commands refuse a protocol that is not in the list.
 pub fn direct_all(from: SwapAsset, to: SwapAsset) -> Vec<Protocol> {
     let mut all = Vec::new();
     if from == to {
@@ -205,8 +202,7 @@ pub fn direct_all(from: SwapAsset, to: SwapAsset) -> Vec<Protocol> {
     if links(&thorchain_rpc::MAYA, from, to) {
         all.push(Protocol::Maya);
     }
-    // Staking liquide : Jupiter et CoW seuls (frais de staking, voir
-    // `staking_fee_bps`).
+    // Liquid staking: Jupiter and CoW only (staking fee, see `staking_fee_bps`).
     if lifi_enabled() && staking_fee_bps((from.coin, from.network), (to.coin, to.network)).is_none() && lifi::links((from.coin, from.network), (to.coin, to.network)) {
         if from.network == "btc_mainnet" && !thorchain_rpc::THORCHAIN.charges_affiliate("BTC.BTC") {
             all.insert(0, Protocol::Lifi);
@@ -214,13 +210,13 @@ pub fn direct_all(from: SwapAsset, to: SwapAsset) -> Vec<Protocol> {
             all.push(Protocol::Lifi);
         }
     }
-    // En dernier : une option de plus, comparée sur son devis.
+    // Last: one more option, compared on its quote.
     if swapkit_enabled() && swapkit::links((from.coin, from.network), (to.coin, to.network)) {
         all.push(Protocol::Swapkit);
     }
-    // MoonPay Trade : une option de plus quand l'app vérifie le destinataire
-    // (même réseau EVM) ; sinon en dernier recours seulement, si aucun autre
-    // fournisseur ne relie la paire (choix de l'utilisateur, 07/10/2026).
+    // MoonPay Trade: one more option when the app can verify the recipient (same EVM
+    // network); otherwise only as a last resort, if no other provider connects the
+    // pair (product decision, 2026-10-07).
     let (from_pair, to_pair) = ((from.coin, from.network), (to.coin, to.network));
     if moonpay_enabled() && moonpay_trade::links(from_pair, to_pair) && (all.is_empty() || moonpay_trade::verifiable(from_pair, to_pair)) {
         all.push(Protocol::Moonpay);
@@ -228,12 +224,12 @@ pub fn direct_all(from: SwapAsset, to: SwapAsset) -> Vec<Protocol> {
     all
 }
 
-/// Protocole préféré pour relier directement `from` à `to`, s'il en existe un.
+/// Preferred protocol for directly connecting `from` to `to`, if there is one.
 pub fn direct(from: SwapAsset, to: SwapAsset) -> Option<Protocol> {
     direct_all(from, to).first().copied()
 }
 
-/// Toutes les cryptos qu'au moins un protocole sait échanger.
+/// Every crypto that at least one protocol can swap.
 pub fn assets() -> Vec<SwapAsset> {
     let mut all: Vec<SwapAsset> = Vec::new();
     let cross_chain = thorchain_rpc::ASSETS.iter().chain(thorchain_rpc::MAYA_ASSETS.iter()).map(|a| SwapAsset { coin: a.coin, network: a.network });
@@ -249,21 +245,20 @@ pub fn assets() -> Vec<SwapAsset> {
     all
 }
 
-/// Échange en une étape (`via` = `None`) ou en deux : la crypto
-/// intermédiaire arrive d'abord sur le portefeuille de l'utilisateur, puis
-/// une seconde confirmation l'échange contre la cible (rien n'est bloqué si
-/// la seconde étape n'est jamais faite).
+/// A swap in one step (`via` = `None`) or two: the intermediate crypto first lands
+/// in the user's wallet, then a second confirmation swaps it for the target
+/// (nothing is locked if the second step is never done).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Route {
     pub first: Protocol,
     pub via: Option<(SwapAsset, Protocol)>,
 }
 
-/// Préférence d'une crypto intermédiaire (la plus petite d'abord) : la
-/// monnaie d'un réseau, qui paie aussi les frais de la seconde étape (celle du
-/// réseau de départ, puis d'arrivée, puis une autre) ; puis les dollars
-/// numériques ; puis le reste ; Bitcoin et Zcash en dernier recours
-/// (confirmations lentes, frais de la seconde étape plus élevés).
+/// Preference for an intermediate crypto (lowest first): a network's native coin,
+/// which also pays the fee for the second step (the source network's first, then
+/// the destination's, then any other); then digital dollars; then the rest; Bitcoin
+/// and Zcash as a last resort (slow confirmations, higher fees for the second
+/// step).
 fn via_rank(via: SwapAsset, from: SwapAsset, to: SwapAsset) -> u8 {
     let native = tokens::find(via.coin, via.network).is_none();
     if matches!(via.network, "btc_mainnet" | "zec_mainnet") {
@@ -295,20 +290,20 @@ fn route_among(all: &[SwapAsset], from: SwapAsset, to: SwapAsset) -> Option<Rout
         .map(|(_, route)| route)
 }
 
-/// Route de `from` vers `to` : directe si un protocole les relie, sinon en
-/// deux étapes par la crypto intermédiaire préférée (`via_rank`).
+/// Route from `from` to `to`: direct if a protocol connects them, otherwise in two
+/// steps through the preferred intermediate crypto (`via_rank`).
 pub fn route(from: SwapAsset, to: SwapAsset) -> Option<Route> {
     route_among(&assets(), from, to)
 }
 
-/// Toutes les paires possibles, avec leur route.
+/// Every possible pair, with its route.
 pub fn routes() -> Vec<(SwapAsset, SwapAsset, Route)> {
     let all = assets();
     all.iter().flat_map(|&from| all.iter().filter_map(|&to| route_among(&all, from, to).map(|r| (from, to, r))).collect::<Vec<_>>()).collect()
 }
 
-/// Crypto de l'app désignée par l'interface (identifiant et réseau), si elle
-/// est échangeable.
+/// The app crypto designated by the UI (identifier and network), if it can be
+/// swapped.
 pub fn find(coin: &str, network: &str) -> Option<SwapAsset> {
     assets().into_iter().find(|a| a.coin == coin && a.network == network)
 }
@@ -318,13 +313,13 @@ mod tests {
     use super::*;
 
     thread_local! {
-        /// MoonPay Trade activé pour le test en cours (fil de test seul).
+        /// MoonPay Trade enabled for the current test (test thread only).
         pub(super) static MOONPAY_IN_TESTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     }
 
-    /// MoonPay Trade : une option de plus sur un même réseau EVM (routeur
-    /// vérifié) ; ailleurs, seulement si aucun autre fournisseur ne relie la
-    /// paire (dépôt au destinataire invérifiable) ; jamais sans clé.
+    /// MoonPay Trade: one more option on the same EVM network (verified router);
+    /// elsewhere, only if no other provider connects the pair (deposit to an
+    /// unverifiable recipient); never without a key.
     #[test]
     fn moonpay_is_offered_last_or_as_last_resort() {
         let a = |coin, network| find(coin, network).unwrap_or(SwapAsset { coin, network });
@@ -342,8 +337,8 @@ mod tests {
         MOONPAY_IN_TESTS.with(|m| m.set(false));
     }
 
-    /// Staking liquide : 0,30 % à l'entrée, 0,10 % à la sortie, par Jupiter
-    /// et CoW ; LI.FI pas proposé ; ailleurs, les frais habituels.
+    /// Liquid staking: 0.30% on entry, 0.10% on exit, through Jupiter and CoW; LI.FI
+    /// not offered; elsewhere, the usual fees.
     #[test]
     fn liquid_staking_has_its_own_fees() {
         let sol = SwapAsset { coin: "sol", network: "sol_mainnet" };
@@ -365,17 +360,16 @@ mod tests {
         SwapAsset { coin, network }
     }
 
-    /// SOL ⇄ USDC passe par Jupiter (même portefeuille), un même réseau EVM par
-    /// CoW, le reste par THORChain ou Maya ; rien vers soi-même ; USDC Solana
-    /// n'a pas de pool THORChain.
+    /// SOL ⇄ USDC goes through Jupiter (same wallet), the same EVM network through CoW,
+    /// the rest through THORChain or Maya; nothing to oneself; Solana USDC has no
+    /// THORChain pool.
     #[test]
     fn routes_pick_the_right_protocol() {
         assert_eq!(direct(a("sol", "sol_mainnet"), a("usdc", "sol_mainnet")), Some(Protocol::Jupiter));
         assert_eq!(direct(a("usdc", "evm_mainnet"), a("bnb", "bsc_mainnet")), Some(Protocol::Thorchain));
         let same_network = if cow_enabled() { Protocol::Cow } else { Protocol::Thorchain };
         assert_eq!(direct(a("evm", "base_mainnet"), a("vvv", "base_mainnet")), Some(same_network), "même réseau : CoW une fois activé");
-        // Sans route native (pas de pool USDC Solana sur THORChain), LI.FI une
-        // fois activé.
+        // Without a native route (no Solana USDC pool on THORChain), LI.FI once enabled.
         let lifi_or_none = lifi_enabled().then_some(Protocol::Lifi);
         assert_eq!(direct(a("usdc", "sol_mainnet"), a("evm", "evm_mainnet")), lifi_or_none, "pas de pool USDC Solana sur THORChain");
         assert_eq!(direct(a("evm", "evm_mainnet"), a("evm", "evm_mainnet")), None);
@@ -387,10 +381,11 @@ mod tests {
         assert!(find("hype", "hyperevm_mainnet").is_none(), "HyperEVM retiré de l'app");
     }
 
-    /// CoW : même réseau EVM seulement (monnaie du réseau comprise, via
-    /// EthFlow), et seulement une fois l'adresse des frais renseignée.
-    /// Actions tokenisées : échangées via Jupiter seulement (même réseau) ;
-    /// LI.FI, MoonPay et CoW, écrits pour le programme classique, les ignorent.
+    /// CoW: same EVM network only (native coin included, through EthFlow), and only
+    /// once the fee address is set.
+    ///
+    /// Tokenized shares: swapped through Jupiter only (same network); LI.FI, MoonPay
+    /// and CoW, written for the classic token program, ignore them.
     #[test]
     fn xstocks_are_swapped_through_jupiter_only() {
         let (usdc, tsla, sol) = (
@@ -431,9 +426,8 @@ mod tests {
         }
     }
 
-    /// Depuis Bitcoin : LI.FI d'abord (avec les frais de l'app) tant que le
-    /// THORName n'existe pas, puis THORChain et Maya sans frais ; vers
-    /// Bitcoin : THORChain d'abord.
+    /// From Bitcoin: LI.FI first (with the app's fee) as long as the THORName does not
+    /// exist, then THORChain and Maya without a fee; to Bitcoin: THORChain first.
     #[test]
     fn bitcoin_sources_offer_lifi_first_then_fee_free_pools() {
         let btc = a("btc", "btc_mainnet");
@@ -454,17 +448,16 @@ mod tests {
         assert_eq!(affiliate_fee_bps(Protocol::Thorchain, eth, btc), 80);
         assert_eq!(affiliate_fee_bps(Protocol::Lifi, btc, eth), 80);
         assert_eq!(affiliate_fee_bps(Protocol::Cow, eth, a("usdc", "evm_mainnet")), 100);
-        // Toute crypto que l'app échange est joignable depuis Bitcoin.
+        // Every crypto the app swaps can be reached from Bitcoin.
         let all = assets();
         for to in all.iter().filter(|t| **t != btc) {
             assert!(route(btc, *to).is_some(), "aucune route BTC → {to:?}");
         }
     }
 
-    /// LI.FI : entre deux réseaux différents (Bitcoin compris, PSBT vérifiée),
-    /// et depuis un réseau sans simulation (Avalanche) vers un
-    /// réseau EVM seulement ; proposé en dernier (sauf depuis Bitcoin), une
-    /// fois le nom d'intégrateur renseigné.
+    /// LI.FI: between two different networks (Bitcoin included, with a verified PSBT),
+    /// and from a network without simulation (Avalanche) to an EVM network only;
+    /// offered last (except from Bitcoin), once the integrator name is set.
     #[test]
     fn lifi_links_between_ecosystems() {
         assert!(lifi::links(("render", "sol_mainnet"), ("link", "evm_mainnet")), "le cas qui manquait");
@@ -484,9 +477,9 @@ mod tests {
         }
     }
 
-    /// ZEC via Maya, dans les deux sens ; depuis ZEC sans frais pour l'app
-    /// (pas de MAYAName) ; vers une crypto que Maya n'a pas, en deux étapes
-    /// par une monnaie de réseau rapide (ETH), jamais par Bitcoin.
+    /// ZEC through Maya, both ways; from ZEC without an app fee (no MAYAName); to a
+    /// crypto Maya does not have, in two steps through a fast network coin (ETH), never
+    /// through Bitcoin.
     #[test]
     fn doge_is_bought_through_thorchain_but_not_sold_yet() {
         let doge = a("doge", "doge_mainnet");
@@ -514,14 +507,14 @@ mod tests {
         let to_sol = route(zec, a("sol", "sol_mainnet")).expect("ZEC → SOL en deux étapes");
         let (via, _) = to_sol.via.expect("deux étapes");
         assert!(!matches!(via.network, "btc_mainnet" | "zec_mainnet"), "intermédiaire lent : {via:?}");
-        // Actions tokenisées : achetées depuis Solana (Jupiter) — depuis ZEC, il
-        // faudrait trois étapes (ZEC → ETH → SOL → xStock).
+        // Tokenized shares: bought from Solana (Jupiter); from ZEC it would take three
+        // steps (ZEC → ETH → SOL → xStock).
         for to in assets().into_iter().filter(|t| *t != zec && !tokens::is_spl2022(t.coin)) {
             assert!(route(zec, to).is_some(), "aucune route ZEC → {to:?}");
         }
     }
 
-    /// Plusieurs fournisseurs possibles : tous listés, le préféré d'abord.
+    /// Several possible providers: all listed, the preferred one first.
     #[test]
     fn every_provider_of_a_pair_is_listed() {
         let eth = a("evm", "evm_mainnet");
@@ -539,15 +532,15 @@ mod tests {
         assert_eq!(serde_json::from_str::<Protocol>("\"maya\"").unwrap(), Protocol::Maya);
     }
 
-    /// Deux étapes quand rien ne relie directement, par la monnaie d'un réseau
-    /// de préférence ; chaque étape est une paire directe.
+    /// Two steps when nothing connects directly, preferably through a network's native
+    /// coin; each step is a direct pair.
     #[test]
     fn two_step_routes_go_through_a_network_currency() {
         let sol = a("sol", "sol_mainnet");
         let eth = a("evm", "evm_mainnet");
         assert_eq!(route(eth, a("btc", "btc_mainnet")), Some(Route { first: Protocol::Thorchain, via: None }));
         if lifi_enabled() {
-            // Directs via LI.FI.
+            // Direct through LI.FI.
             let lifi = Some(Route { first: Protocol::Lifi, via: None });
             assert_eq!(route(a("render", "sol_mainnet"), eth), lifi);
             assert_eq!(route(a("evm", "arbitrum_mainnet"), a("bnb", "bsc_mainnet")), lifi);

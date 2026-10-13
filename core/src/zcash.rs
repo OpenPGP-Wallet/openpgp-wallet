@@ -1,21 +1,20 @@
-//! Zcash, adresses transparentes (t1…) : solde, réception, envoi, historique.
-//! Comme Bitcoin, une adresse transparente est publique : montants et
-//! échanges visibles sur la chaîne (le mode protégé viendra plus tard).
+//! Zcash transparent addresses (t1…): balance, receiving, sending, history. Like
+//! Bitcoin, a transparent address is public: amounts and transfers are visible
+//! on-chain (shielded funds are handled in `zcash_shielded`).
 //!
-//! - Réseau : serveurs lightwalletd (infrastructure officielle des
-//!   portefeuilles Zcash, ECC LightWalletD sur un nœud Zebra), en gRPC sur
-//!   HTTP/2 (`tonic`) ; messages définis ici, petit runtime tokio par appel
-//!   (le reste du cœur est synchrone). Serveur suivant si l'un ne répond pas.
-//! - Transaction : construite avec les bibliothèques officielles
-//!   (`zcash_transparent`, `zcash_primitives`) — version de transaction de la
-//!   branche de consensus en cours (v5, v6 à partir de NU6.3), empreinte de
-//!   signature ZIP-244 et signature par `apply_signatures`, exactement la
-//!   séquence du constructeur officiel, sans la partie preuves (transparent
-//!   seulement). Frais ZIP-317 (5 000 zatoshis par action, 2 au minimum).
-//! - Garde-fou : la branche de consensus utilisée doit être celle annoncée
-//!   par le serveur, sinon refus (une mise à niveau du réseau inconnue de la
-//!   bibliothèque donnerait une transaction rejetée) : il faut mettre l'app à
-//!   jour.
+//! - Network: lightwalletd servers (the official infrastructure for Zcash wallets,
+//!   ECC LightWalletD on a Zebra node), over gRPC on HTTP/2 (`tonic`); messages are
+//!   defined here, with a small tokio runtime per call (the rest of the core is
+//!   synchronous). Next server if one does not answer.
+//! - Transaction: built with the official libraries (`zcash_transparent`,
+//!   `zcash_primitives`): the transaction version of the current consensus branch
+//!   (v5, v6 from NU6.3 onwards), ZIP-244 signature digest and signing through
+//!   `apply_signatures`, exactly the official builder's sequence, without the
+//!   proving part (transparent only). ZIP-317 fees (5,000 zatoshis per action, 2 at
+//!   minimum).
+//! - Safeguard: the consensus branch used must be the one announced by the server,
+//!   otherwise refusal (a network upgrade the library does not know would produce a
+//!   rejected transaction): the app needs updating.
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use std::time::Duration;
@@ -29,32 +28,31 @@ use zcash_transparent::address::{Script, TransparentAddress};
 use zcash_transparent::builder::{TransparentBuilder, TransparentSigningSet};
 use zcash_transparent::bundle::{OutPoint, TxOut};
 
-/// Serveurs lightwalletd essayés dans l'ordre.
+/// lightwalletd servers, tried in order.
 pub const SERVERS: [&str; 3] = ["https://zec.rocks:443", "https://na.zec.rocks:443", "https://eu.zec.rocks:443"];
 const SERVICE: &str = "/cash.z.wallet.sdk.rpc.CompactTxStreamer";
-/// Frais ZIP-317 : 5 000 zatoshis par action logique, 2 actions au minimum.
+/// ZIP-317 fees: 5,000 zatoshis per logical action, 2 actions at minimum.
 pub const MARGINAL_FEE: u64 = 5_000;
 const GRACE_ACTIONS: u64 = 2;
-/// Monnaie rendue plus petite : ajoutée aux frais plutôt qu'une sortie de
-/// poussière (montrée dans la boîte de confirmation).
+/// Smaller change is added to the fee rather than creating a dust output (shown in
+/// the confirmation dialog).
 const DUST_CHANGE: u64 = 5_000;
-/// Validité d'une transaction : 40 blocs (~50 min) après la hauteur visée.
+/// Transaction validity: 40 blocks (~50 min) after the target height.
 const EXPIRY_DELTA: u32 = 40;
-/// Entrées au plus par transaction : au-delà de ~100 ko, une transaction
-/// n'est plus relayée par les nœuds (148 octets par entrée P2PKH).
+/// Maximum inputs per transaction: beyond ~100 kB, nodes no longer relay a
+/// transaction (148 bytes per P2PKH input).
 const MAX_INPUTS: usize = 600;
-/// Transactions lues au plus pour l'historique.
+/// Maximum number of transactions read for the history.
 pub const HISTORY_LIMIT: usize = 50;
 
-// --- Adresses ------------------------------------------------------------------
+// --- Addresses -----------------------------------------------------------------
 
-/// Adresse transparente P2PKH (t1…) d'un hash160, encodée par la bibliothèque
-/// officielle.
+/// Transparent P2PKH address (t1…) of a hash160, encoded by the official library.
 pub fn p2pkh_address(hash160: &[u8; 20]) -> String {
     ZcashAddress::from_transparent_p2pkh(NetworkType::Main, *hash160).encode()
 }
 
-/// Destinataire transparent d'un envoi.
+/// Transparent recipient of a send.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Recipient {
     P2pkh([u8; 20]),
@@ -93,8 +91,8 @@ impl TryFromAddress for Recipient {
         Ok(Recipient::P2sh(data))
     }
 
-    /// Adresse TEX (ZIP-320, exigée par certaines plateformes d'échange) : un
-    /// P2PKH qui n'accepte que des fonds transparents — ce qu'envoie l'app.
+    /// TEX address (ZIP-320, required by some exchanges): a P2PKH that only accepts
+    /// transparent funds, which is what the app sends.
     fn try_from_tex(_net: NetworkType, data: [u8; 20]) -> Result<Self, ConversionError<Self::Error>> {
         Ok(Recipient::P2pkh(data))
     }
@@ -102,7 +100,7 @@ impl TryFromAddress for Recipient {
 
 const SHIELDED_REFUSED: &str = "envoi vers une adresse Zcash protégée (zs…, u1…) pas encore pris en charge — utilisez une adresse transparente t1…";
 
-/// Destinataire saisi : t1…, t3… ou tex1… du réseau principal.
+/// Recipient entered by the user: a mainnet t1…, t3… or tex1… address.
 pub fn parse_recipient(address: &str) -> Result<Recipient> {
     let parsed = ZcashAddress::try_from_encoded(address.trim()).map_err(|_| anyhow!("adresse Zcash invalide"))?;
     parsed.convert_if_network::<Recipient>(NetworkType::Main).map_err(|e| match e {
@@ -112,7 +110,7 @@ pub fn parse_recipient(address: &str) -> Result<Recipient> {
     })
 }
 
-/// Script de sortie d'une adresse P2PKH (pour reconnaître ses sorties).
+/// Output script of a P2PKH address (to recognize its outputs).
 fn p2pkh_script(hash160: &[u8; 20]) -> Vec<u8> {
     let mut script = vec![0x76, 0xa9, 0x14];
     script.extend_from_slice(hash160);
@@ -124,7 +122,7 @@ fn script_from_bytes(bytes: Vec<u8>) -> Script {
     Script(zcash_script::script::Code(bytes))
 }
 
-// --- lightwalletd (gRPC) ---------------------------------------------------------
+// --- lightwalletd (gRPC) --------------------------------------------------------
 
 mod proto {
     #[derive(Clone, PartialEq, prost::Message)]
@@ -226,7 +224,7 @@ mod proto {
         pub range: Option<BlockRange>,
     }
 
-    /// `CompactBlock` réduit à son horodatage (les autres champs sont ignorés).
+    /// `CompactBlock` reduced to its timestamp (the other fields are ignored).
     #[derive(Clone, PartialEq, prost::Message)]
     pub struct CompactBlockTime {
         #[prost(uint32, tag = "5")]
@@ -285,7 +283,7 @@ where
     Ok(out)
 }
 
-/// Premiers messages seulement d'un flux (le reste n'est pas lu).
+/// Only the first messages of a stream (the rest is not read).
 async fn server_stream_first<Q, R>(channel: tonic::transport::Channel, method: &str, request: Q, count: usize) -> Result<Vec<R>, tonic::Status>
 where
     Q: prost::Message + Send + Sync + 'static,
@@ -306,12 +304,12 @@ where
     Ok(out)
 }
 
-/// Erreur passagère d'un serveur (on essaie le suivant) ou définitive.
+/// A server error, either transient (try the next one) or final.
 fn retryable(status: &tonic::Status) -> bool {
     matches!(status.code(), tonic::Code::Unavailable | tonic::Code::DeadlineExceeded | tonic::Code::Unknown | tonic::Code::Internal | tonic::Code::ResourceExhausted)
 }
 
-/// Appel unaire avec bascule sur le serveur suivant si l'un ne répond pas.
+/// Unary call, failing over to the next server if one does not answer.
 fn call<Q, R>(method: &str, request: Q) -> Result<R>
 where
     Q: prost::Message + Clone + Send + Sync + 'static,
@@ -354,8 +352,8 @@ where
     })
 }
 
-/// Adresse transparente lisible par lightwalletd (t1 / t3 ; une TEX est
-/// interrogée sous sa forme t1).
+/// Transparent address in a form lightwalletd can read (t1 / t3; a TEX address is
+/// queried in its t1 form).
 pub fn transparent_address(recipient: &Recipient) -> String {
     match recipient {
         Recipient::P2pkh(h) => p2pkh_address(h),
@@ -363,7 +361,7 @@ pub fn transparent_address(recipient: &Recipient) -> String {
     }
 }
 
-/// Activité d'une adresse : (détient des fonds, a déjà des transactions).
+/// Activity of an address: (holds funds, already has transactions).
 pub fn address_activity(address: &str) -> Result<(bool, bool)> {
     if balance(address)? > 0 {
         return Ok((true, true));
@@ -392,7 +390,7 @@ pub fn address_activity(address: &str) -> Result<(bool, bool)> {
     Ok((false, !first.is_empty()))
 }
 
-/// Hauteur de la chaîne et branche de consensus annoncées par le serveur.
+/// Chain height and consensus branch announced by the server.
 pub struct ChainInfo {
     pub height: u32,
     pub branch_id: u32,
@@ -405,16 +403,16 @@ pub fn chain_info() -> Result<ChainInfo> {
     Ok(ChainInfo { height: u32::try_from(info.block_height).context("hauteur hors limites")?, branch_id })
 }
 
-/// Solde transparent confirmé de `address`, en zatoshis.
+/// Confirmed transparent balance of `address`, in zatoshis.
 pub fn balance(address: &str) -> Result<u64> {
     let balance: proto::Balance = call("GetTaddressBalance", proto::AddressList { addresses: vec![address.to_string()] })?;
     u64::try_from(balance.value_zat).context("solde Zcash négatif")
 }
 
-/// Sortie non dépensée.
+/// Unspent output.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Utxo {
-    /// Identifiant de la transaction, dans l'ordre des octets de la chaîne.
+    /// Transaction identifier, in on-chain byte order.
     pub txid: [u8; 32],
     pub index: u32,
     pub script: Vec<u8>,
@@ -439,17 +437,17 @@ pub fn utxos(address: &str) -> Result<Vec<Utxo>> {
         .collect()
 }
 
-/// Réponse d'un nœud qui connaît déjà la transaction (déjà en file ou dans
-/// la réserve de transactions) : elle est sur le réseau.
+/// Response from a node that already knows the transaction (already queued or in
+/// the mempool): it is on the network.
 fn already_known(message: &str) -> bool {
     message.to_ascii_lowercase().contains("already")
 }
 
-/// Diffuse une transaction signée ; renvoie son identifiant (affichage).
-/// Serveur suivant seulement si la CONNEXION échoue : une fois connecté, la
-/// transaction a pu être reçue, la renvoyer ailleurs n'apporterait qu'un
-/// « déjà en file » (constaté : Zebra attend les entrées d'une transaction
-/// avant de répondre, et un nouvel essai après le délai tombe sur la même).
+/// Broadcasts a signed transaction and returns its identifier (display form). Moves
+/// to the next server only if the CONNECTION fails: once connected, the transaction
+/// may have been received, and sending it elsewhere would only get an "already
+/// queued" (observed: Zebra waits for a transaction's inputs before answering, and
+/// a retry after the timeout hits the same transaction).
 pub fn broadcast(raw: &[u8], txid: &str) -> Result<String> {
     let request = proto::RawTransaction { data: raw.to_vec(), height: 0 };
     runtime()?.block_on(async {
@@ -468,8 +466,8 @@ pub fn broadcast(raw: &[u8], txid: &str) -> Result<String> {
                 Err(status) if status.code() == tonic::Code::DeadlineExceeded => Err(anyhow!(
                     "transaction Zcash envoyée ({txid}) mais pas encore acceptée par le réseau — vérifiez l'historique dans quelques minutes avant de recommencer"
                 )),
-                // Canal ouvert, requête partie : sans réponse nette, peut-être
-                // diffusée (voir `wallet_flow::maybe_sent`).
+                // Channel open, request sent: without a clear answer, it may have been broadcast
+                // (see `wallet_flow::maybe_sent`).
                 Err(_) => Err(crate::wallet_flow::maybe_sent(txid)),
             };
         }
@@ -477,49 +475,46 @@ pub fn broadcast(raw: &[u8], txid: &str) -> Result<String> {
     })
 }
 
-// --- Envoi ---------------------------------------------------------------------
+// --- Sending -------------------------------------------------------------------
 
-/// Taille sérialisée d'une sortie P2PKH (valeur, longueur, script de 25 octets).
+/// Serialized size of a P2PKH output (value, length, 25-byte script).
 const P2PKH_OUTPUT_SIZE: u64 = 34;
 
-/// Frais ZIP-317 d'une transaction transparente P2PKH : une action par entrée
-/// (150 octets) ou par sortie (34 octets au plus), le plus grand des deux, 2
-/// au minimum.
+/// ZIP-317 fee for a transparent P2PKH transaction: one action per input (150
+/// bytes) or per output (34 bytes at most), whichever is larger, 2 at minimum.
 pub fn zip317_fee(inputs: usize, outputs: usize) -> u64 {
     zip317_fee_with_memo(inputs, outputs, None)
 }
 
-/// Comme `zip317_fee`, avec en plus une sortie OP_RETURN de `memo_len`
-/// octets : ZIP-317 compte les sorties transparentes par TAILLE (34 octets
-/// par action), si bien qu'un memo de 55 octets (66 octets de sortie) pèse
-/// deux actions.
+/// Like `zip317_fee`, plus an OP_RETURN output of `memo_len` bytes: ZIP-317 counts
+/// transparent outputs by SIZE (34 bytes per action), so a 55-byte memo (66-byte
+/// output) weighs two actions.
 pub fn zip317_fee_with_memo(inputs: usize, outputs: usize, memo_len: Option<usize>) -> u64 {
     let output_size = outputs as u64 * P2PKH_OUTPUT_SIZE + memo_len.map_or(0, crate::btc_tx::op_return_output_size);
     MARGINAL_FEE * GRACE_ACTIONS.max((inputs as u64).max(output_size.div_ceil(P2PKH_OUTPUT_SIZE)))
 }
 
-/// Envoi préparé : ce qui est montré dans la boîte de confirmation, puis signé.
+/// A prepared send: what is shown in the confirmation dialog, then signed.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SendPlan {
     pub inputs: Vec<Utxo>,
     pub amount: u64,
     pub fee: u64,
-    /// Rendu à sa propre adresse (0 : pas de sortie de monnaie).
+    /// Change back to our own address (0: no change output).
     pub change: u64,
-    /// Memo d'un dépôt d'échange (Maya), en sortie OP_RETURN sans valeur
-    /// après la monnaie — l'ordre demandé par Maya (coffre, monnaie, memo).
+    /// Memo of a swap deposit (Maya), as a zero-value OP_RETURN output after the
+    /// change, in the order Maya requires (vault, change, memo).
     pub memo: Option<Vec<u8>>,
 }
 
-/// Choisit les sorties à dépenser (les plus grosses d'abord) pour `amount`
-/// zatoshis, frais ZIP-317 compris. Une monnaie inférieure à `DUST_CHANGE` va
-/// aux frais. Fonction pure.
+/// Picks the outputs to spend (largest first) for `amount` zatoshis, including the
+/// ZIP-317 fee. Change below `DUST_CHANGE` goes to the fee. Pure function.
 pub fn plan_send(utxos: Vec<Utxo>, amount: u64) -> Result<SendPlan> {
     plan(utxos, amount, None)
 }
 
-/// Dépôt d'échange : comme `plan_send`, avec le memo (80 octets au plus,
-/// limite d'une sortie OP_RETURN standard) compté dans les frais.
+/// Swap deposit: like `plan_send`, with the memo (80 bytes at most, the limit of a
+/// standard OP_RETURN output) counted in the fee.
 pub fn plan_deposit(utxos: Vec<Utxo>, amount: u64, memo: &[u8]) -> Result<SendPlan> {
     ensure!(memo.len() <= 80, "memo d'échange trop long pour une sortie OP_RETURN ({} octets, 80 au plus)", memo.len());
     plan(utxos, amount, Some(memo.to_vec()))
@@ -541,7 +536,7 @@ fn plan(mut utxos: Vec<Utxo>, amount: u64, memo: Option<Vec<u8>>) -> Result<Send
             return Ok(SendPlan { inputs, amount, fee: fee_with_change, change: total - amount - fee_with_change, memo });
         }
         if total >= amount + fee_without {
-            // Pas de monnaie (ou poussière, ajoutée aux frais).
+            // No change (or dust, added to the fee).
             return Ok(SendPlan { inputs, amount, fee: total - amount, change: 0, memo });
         }
     }
@@ -552,15 +547,15 @@ fn plan(mut utxos: Vec<Utxo>, amount: u64, memo: Option<Vec<u8>>) -> Result<Send
     )
 }
 
-/// Plus grand montant envoyable en une sortie, sans monnaie : meilleur choix
-/// des k plus grosses sorties (chacune ajoute des frais ZIP-317 ; une sortie
-/// plus petite que ce qu'elle coûte est laissée de côté).
+/// Largest amount that can be sent in one output, with no change: the best choice
+/// among the k largest outputs (each one adds ZIP-317 fees; an output smaller than
+/// what it costs is left out).
 pub fn max_amount(utxos: &[Utxo]) -> Result<u64> {
     max_amount_with_memo(utxos, None)
 }
 
-/// Comme `max_amount`, avec une sortie OP_RETURN de `memo_len` octets en plus
-/// (dépôt Maya : le memo peut coûter une action ZIP-317 de plus).
+/// Like `max_amount`, with an extra OP_RETURN output of `memo_len` bytes (Maya
+/// deposit: the memo may cost one more ZIP-317 action).
 pub fn max_amount_with_memo(utxos: &[Utxo], memo_len: Option<usize>) -> Result<u64> {
     let mut values: Vec<u64> = utxos.iter().map(|u| u.value).collect();
     values.sort_unstable_by(|a, b| b.cmp(a));
@@ -577,8 +572,8 @@ pub fn format_zec(zat: u64) -> String {
     format!("{}.{:08}", zat / 100_000_000, zat % 100_000_000)
 }
 
-/// Autorisation d'une transaction transparente non signée (bundles protégés
-/// toujours absents).
+/// Authorization for an unsigned transparent transaction (shielded bundles are
+/// always absent).
 struct TransparentOnly;
 
 impl Authorization for TransparentOnly {
@@ -587,8 +582,8 @@ impl Authorization for TransparentOnly {
     type OrchardAuth = orchard::bundle::Authorized;
 }
 
-/// Branche de consensus visée à `target_height`, refusée si elle diffère de
-/// celle annoncée par le serveur.
+/// Consensus branch targeted at `target_height`, refused if it differs from the one
+/// announced by the server.
 pub fn branch_for(target_height: u32, server_branch: u32) -> Result<BranchId> {
     let branch = BranchId::for_height(&MainNetwork, BlockHeight::from_u32(target_height));
     ensure!(
@@ -599,21 +594,21 @@ pub fn branch_for(target_height: u32, server_branch: u32) -> Result<BranchId> {
     Ok(branch)
 }
 
-/// Transaction signée : octets et identifiant (forme d'affichage).
+/// Signed transaction: bytes and identifier (display form).
 pub struct SignedTx {
     pub raw: Vec<u8>,
     pub txid: String,
 }
 
-/// Construit et signe la transaction d'un envoi préparé, avec la séquence du
-/// constructeur officiel : bundle transparent, données de transaction de la
-/// version de la branche, empreinte ZIP-244 de chaque entrée, signatures.
+/// Builds and signs the transaction for a prepared send, following the official
+/// builder's sequence: transparent bundle, transaction data for the branch's
+/// version, ZIP-244 digest for each input, signatures.
 pub fn build_signed(plan: &SendPlan, key: &k256::ecdsa::SigningKey, own_hash160: &[u8; 20], recipient: &Recipient, target_height: u32, branch: BranchId) -> Result<SignedTx> {
     build_signed_with_sighashes(plan, key, own_hash160, recipient, target_height, branch).map(|(tx, _)| tx)
 }
 
-/// Comme `build_signed`, avec l'empreinte signée de chaque entrée (vérifiée
-/// par l'interpréteur de scripts officiel dans les tests).
+/// Like `build_signed`, with the signed digest of each input (checked by the
+/// official script interpreter in the tests).
 fn build_signed_with_sighashes(
     plan: &SendPlan,
     key: &k256::ecdsa::SigningKey,
@@ -678,9 +673,9 @@ fn build_signed_with_sighashes(
     Ok((SignedTx { raw, txid: tx.txid().to_string() }, sighashes.into_inner()))
 }
 
-// --- Historique ----------------------------------------------------------------
+// --- History -------------------------------------------------------------------
 
-/// Transaction de l'historique : montant net pour l'adresse (positif : reçu).
+/// A history transaction: net amount for the address (positive: received).
 #[derive(Clone, Debug, PartialEq)]
 pub struct HistoryTx {
     pub txid: String,
@@ -689,9 +684,9 @@ pub struct HistoryTx {
     pub time: Option<i64>,
 }
 
-/// Bilan des transactions `raw` (hauteur croissante) pour `hash160` : reçu =
-/// sorties vers l'adresse ; envoyé = entrées qui dépensent une sortie de
-/// l'adresse vue plus tôt dans la même liste. Fonction pure.
+/// Balance sheet of the `raw` transactions (increasing height) for `hash160`:
+/// received = outputs to the address; sent = inputs spending an output of the
+/// address seen earlier in the same list. Pure function.
 pub fn net_amounts(raw: &[(Vec<u8>, u64)], hash160: &[u8; 20]) -> Result<Vec<(String, u64, i128)>> {
     let own_script = p2pkh_script(hash160);
     let mut own_outputs: std::collections::HashMap<([u8; 32], u32), u64> = std::collections::HashMap::new();
@@ -711,7 +706,7 @@ pub fn net_amounts(raw: &[(Vec<u8>, u64)], hash160: &[u8; 20]) -> Result<Vec<(St
             for (n, output) in bundle.vout.iter().enumerate() {
                 let mut script = Vec::new();
                 output.script_pubkey().write(&mut script)?;
-                // `write` préfixe la longueur (un octet pour un script P2PKH).
+                // `write` prefixes the length (one byte for a P2PKH script).
                 if script.get(1..) == Some(own_script.as_slice()) {
                     let value = u64::from(output.value());
                     net += i128::from(value);
@@ -724,8 +719,8 @@ pub fn net_amounts(raw: &[(Vec<u8>, u64)], hash160: &[u8; 20]) -> Result<Vec<(St
     Ok(out)
 }
 
-/// Dernières transactions de l'adresse (au plus `HISTORY_LIMIT`), les plus
-/// récentes d'abord, avec l'heure de leur bloc.
+/// Latest transactions of the address (at most `HISTORY_LIMIT`), newest first, with
+/// their block time.
 pub fn history(address: &str, hash160: &[u8; 20]) -> Result<Vec<HistoryTx>> {
     let tip = chain_info()?.height;
     let filter = proto::TransparentAddressBlockFilter {
@@ -735,8 +730,8 @@ pub fn history(address: &str, hash160: &[u8; 20]) -> Result<Vec<HistoryTx>> {
             end: Some(proto::BlockId { height: u64::from(tip), hash: vec![] }),
         }),
     };
-    // Toute l'histoire est lue (les montants envoyés se retrouvent grâce aux
-    // sorties reçues plus tôt), seules les dernières sont gardées ensuite.
+    // The whole history is read (amounts sent are recovered from outputs received
+    // earlier); only the latest are kept afterwards.
     let raw: Vec<proto::RawTransaction> = call_stream("GetTaddressTxids", filter, usize::MAX - 1)?;
     let mut txs: Vec<(Vec<u8>, u64)> = raw.into_iter().map(|t| (t.data, t.height)).collect();
     txs.sort_by_key(|(_, height)| if *height == 0 || *height == u64::MAX { u64::MAX } else { *height });
@@ -766,7 +761,7 @@ mod tests {
     use zcash_primitives::transaction::fees::FeeRule as _;
     use zcash_transparent::keys::{AccountPrivKey, NonHardenedChildIndex};
 
-    /// Seed de test (aucun fonds) : jamais celle d'un vrai portefeuille.
+    /// Test seed (no funds): never a real wallet's seed.
     const SEED: [u8; 32] = [0x5a; 32];
 
     fn own() -> (k256::ecdsa::SigningKey, [u8; 20]) {
@@ -785,12 +780,12 @@ mod tests {
         assert_eq!(max, 600_000 - zip317_fee(3, 1));
         let plan = plan_send(utxos, max).unwrap();
         assert_eq!((plan.inputs.len(), plan.change, plan.fee), (3, 0, zip317_fee(3, 1)));
-        // Sortie plus petite que les frais qu'elle ajoute : laissée de côté.
+        // An output smaller than the fee it adds: left out.
         let with_dust = vec![utxo(300_000, 1, &h), utxo(200_000, 2, &h), utxo(3_000, 3, &h)];
         assert_eq!(max_amount(&with_dust).unwrap(), 500_000 - zip317_fee(2, 1));
         assert!(max_amount(&[utxo(9_000, 1, &h)]).is_err(), "moins que les frais minimaux");
-        // Dépôt Maya (memo de 80 octets) : le maximum compte l'action du memo
-        // et passe la préparation du dépôt ; celui d'un simple envoi non.
+        // Maya deposit (80-byte memo): the maximum counts the memo's action and passes
+        // deposit preparation; a plain send's maximum does not.
         let two = vec![utxo(300_000, 1, &h), utxo(200_000, 2, &h)];
         let with_memo = max_amount_with_memo(&two, Some(80)).unwrap();
         assert!(with_memo < max_amount(&two).unwrap());
@@ -798,8 +793,8 @@ mod tests {
         assert!(plan_deposit(two.clone(), max_amount(&two).unwrap(), &[0; 80]).is_err());
     }
 
-    /// Notre dérivation (m/44'/133'/0'/0/i) donne la même clé que celle de la
-    /// bibliothèque officielle (`AccountPrivKey`, compte 0, chaîne externe).
+    /// Our derivation (m/44'/133'/0'/0/i) gives the same key as the official library
+    /// (`AccountPrivKey`, account 0, external chain).
     #[test]
     fn derivation_matches_the_official_library() {
         for index in [0, 3] {
@@ -828,7 +823,7 @@ mod tests {
         assert!(parse_recipient("t1notanaddress").is_err());
     }
 
-    /// Frais identiques à la règle ZIP-317 officielle.
+    /// Fees identical to the official ZIP-317 rule.
     #[test]
     fn fees_match_the_official_zip317_rule() {
         let rule = zcash_primitives::transaction::fees::zip317::FeeRule::standard();
@@ -838,7 +833,7 @@ mod tests {
                 .unwrap();
             assert_eq!(zip317_fee(inputs, outputs), u64::from(official), "{inputs} entrées, {outputs} sorties");
         }
-        // Avec un memo OP_RETURN (dépôt Maya), sortie comptée par sa taille.
+        // With an OP_RETURN memo (Maya deposit), the output is counted by its size.
         for (inputs, outputs, memo) in [(1, 2, 55), (1, 1, 54), (2, 2, 65), (1, 2, 80), (3, 2, 10), (1, 2, 76)] {
             let mut sizes = vec![34; outputs];
             sizes.push(crate::btc_tx::op_return_output_size(memo) as usize);
@@ -857,15 +852,15 @@ mod tests {
         assert_eq!((plan.inputs.len(), plan.fee, plan.change), (1, 10_000, 60_000));
         let plan = plan_send(coins.clone(), 95_000).unwrap();
         assert_eq!((plan.inputs.len(), plan.fee, plan.change), (2, 10_000, 45_000));
-        // Monnaie de poussière ajoutée aux frais.
+        // Dust change added to the fee.
         let plan = plan_send(vec![utxo(105_000, 4, &h)], 92_000).unwrap();
         assert_eq!((plan.fee, plan.change), (13_000, 0));
         assert!(plan_send(coins, 200_000).unwrap_err().to_string().contains("insuffisants"));
     }
 
-    /// Transaction construite puis relue par la bibliothèque officielle, et
-    /// chaque signature validée par l'interpréteur de scripts officiel
-    /// (`zcash_script`, celui de Zebra) — une empreinte modifiée est refusée.
+    /// Transaction built and then reread by the official library, with each signature
+    /// validated by the official script interpreter (`zcash_script`, the one Zebra
+    /// uses); a modified digest is refused.
     #[test]
     fn signed_transaction_is_valid_for_the_official_interpreter() {
         let (key, h) = own();
@@ -898,14 +893,14 @@ mod tests {
             let tampered = zcash_script::interpreter::CallbackTransactionSignatureChecker { sighash: &move |_, _| Some(bad), lock_time: 0, is_final: true };
             assert_ne!(script.eval(flags, &tampered), Ok(true));
         }
-        // Une sortie qui n'est pas à cette adresse : refus.
+        // An output that is not at this address: refused.
         let foreign = SendPlan { inputs: vec![utxo(150_000, 1, &[0xee; 20])], amount: 100_000, fee: 10_000, change: 40_000, memo: None };
         assert!(build_signed(&foreign, &key, &h, &recipient, target, branch).is_err());
     }
 
-    /// Dépôt Maya (memo réel d'un devis ZEC → ETH) : sorties coffre, monnaie,
-    /// puis OP_RETURN sans valeur portant le memo ; relu par la bibliothèque
-    /// officielle, sortie memo de la taille comptée dans les frais.
+    /// Maya deposit (real memo from a ZEC → ETH quote): vault and change outputs, then
+    /// a zero-value OP_RETURN carrying the memo; reread by the official library, with
+    /// the memo output's size counted in the fee.
     #[test]
     fn deposit_carries_the_memo_after_the_change() {
         let (key, h) = own();
@@ -928,19 +923,19 @@ mod tests {
         assert_eq!(memo_output[9], 0x6a, "OP_RETURN");
     }
 
-    /// Bilan de l'historique : réception, puis envoi qui dépense cette
-    /// réception (montant envoyé + frais) avec monnaie rendue.
+    /// History balance sheet: a receipt, then a send spending that receipt (amount sent
+    /// + fee) with change returned.
     #[test]
     fn history_net_amounts() {
         let (key, h) = own();
         let target = 3_000_000;
         let branch = BranchId::for_height(&MainNetwork, BlockHeight::from_u32(target));
-        // Réception de 120 000 sur l'adresse (entrée étrangère : clé de test 2).
+        // Receipt of 120,000 on the address (foreign input: test key 2).
         let (other_key, other_h) = crate::derivation::derive_zec_key(&SEED, 9).unwrap();
         let incoming = plan_send(vec![utxo(200_000, 1, &other_h)], 120_000).unwrap();
         let receive = build_signed(&incoming, &other_key, &other_h, &Recipient::P2pkh(h), target, branch).unwrap();
         let receive_tx = Transaction::read(&receive.raw[..], branch).unwrap();
-        // Envoi de 50 000 depuis cette réception.
+        // Send of 50,000 from that receipt.
         let received = Utxo { txid: *receive_tx.txid().as_ref(), index: 0, script: p2pkh_script(&h), value: 120_000, height: 101 };
         let outgoing = plan_send(vec![received], 50_000).unwrap();
         let send = build_signed(&outgoing, &key, &h, &Recipient::P2pkh([9; 20]), target, branch).unwrap();
@@ -949,9 +944,8 @@ mod tests {
         assert_eq!(entries[1].2, -(50_000 + i128::from(outgoing.fee)));
     }
 
-    /// Réseau (lecture seule) : serveur sur le réseau principal, branche de
-    /// consensus connue de la bibliothèque, solde et sorties d'une adresse
-    /// publique pourvue (dépôt Maya).
+    /// Live (read-only): a mainnet server, a consensus branch the library knows,
+    /// balance and outputs of a funded public address (Maya deposit address).
     #[test]
     #[ignore]
     fn real_chain_and_utxos() {
@@ -965,22 +959,22 @@ mod tests {
         assert!(!coins.is_empty());
     }
 
-    /// Diffusion réelle d'une transaction bien formée qui dépense une sortie
-    /// inexistante (clé de test, aucun fonds). Zebra attend l'entrée au lieu de
-    /// refuser (constaté) : la transaction ne doit PAS être refusée d'emblée —
-    /// une transaction mal formée (version, branche, encodage) l'est aussitôt.
+    /// Real broadcast of a well-formed transaction spending an output that does not
+    /// exist (test key, no funds). Zebra waits for the input instead of refusing
+    /// (observed): the transaction must NOT be refused outright, whereas a malformed
+    /// one (version, branch, encoding) is refused immediately.
     #[test]
     #[ignore]
     fn real_broadcast_is_not_rejected_as_malformed() {
         let (key, h) = own();
         let info = chain_info().unwrap();
         let branch = branch_for(info.height + 1, info.branch_id).unwrap();
-        // Sortie inventée différente à chaque essai (sinon le nœud répond que
-        // la même transaction est déjà en file d'attente).
+        // A different made-up output on each attempt (otherwise the node answers that the
+        // same transaction is already queued).
         let tag = (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() % 251) as u8;
         let plan = plan_send(vec![utxo(1_000_000, tag, &h)], 100_000).unwrap();
         let signed = build_signed(&plan, &key, &h, &Recipient::P2pkh([9; 20]), info.height + 1, branch).unwrap();
-        // Dépôt d'échange Maya (memo en sortie OP_RETURN), même épreuve.
+        // Maya swap deposit (memo in an OP_RETURN output), same trial.
         let deposit_plan = plan_deposit(vec![utxo(1_000_000, tag.wrapping_add(1), &h)], 139_440, b"=:e:0x59D78c44ac60F09369b544778358704B7b18E6ba:48048634").unwrap();
         let vault = parse_recipient("t1VtnnhTYhmADh7L2uKU3Sev7GscBHT6HfE").unwrap();
         let deposit = build_signed(&deposit_plan, &key, &h, &vault, info.height + 1, branch).unwrap();
@@ -994,14 +988,14 @@ mod tests {
                 }
             }
         }
-        // Une transaction tronquée, elle, est refusée tout de suite.
+        // A truncated transaction, on the other hand, is refused straight away.
         let truncated = broadcast(&signed.raw[..signed.raw.len() - 10], &signed.txid).unwrap_err().to_string();
         println!("tronquée : {truncated}");
         assert!(truncated.contains("refusée"), "{truncated}");
     }
 
-    /// Activité réelle (lecture seule) : adresse pourvue (dépôt Maya) et
-    /// adresse jamais utilisée (clé de test).
+    /// Real activity (read-only): a funded address (Maya deposit address) and an
+    /// address that has never been used (test key).
     #[test]
     #[ignore]
     fn real_address_activity() {
@@ -1010,7 +1004,7 @@ mod tests {
         assert_eq!(address_activity(&p2pkh_address(&h)).unwrap(), (false, false));
     }
 
-    /// Historique réel (lecture seule) d'une adresse sans transaction.
+    /// Real history (read-only) of an address with no transactions.
     #[test]
     #[ignore]
     fn real_history_of_an_empty_address() {

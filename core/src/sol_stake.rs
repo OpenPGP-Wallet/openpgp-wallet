@@ -1,21 +1,21 @@
-//! Staking natif Solana : vos SOL délégués à un validateur depuis un compte de
-//! mise (« stake account ») dont vous restez la seule autorité (mise et
-//! retrait). Récompenses ajoutées à chaque époque (environ 2 jours) ; pour
-//! arrêter : désactivation, puis retrait à l'époque suivante.
+//! Native Solana staking: your SOL delegated to a validator from a stake account
+//! for which you remain the only authority (staking and withdrawal). Rewards are
+//! added every epoch (about 2 days); to stop: deactivate, then withdraw at the next
+//! epoch.
 //!
-//! Les comptes de mise sont créés à une adresse dérivée de la vôtre
-//! (`CreateAccountWithSeed`, graines « stake:0 », « stake:1 »…) : une seule
-//! signature (la vôtre), aucune clé de plus à garder, retrouvés sans index.
-//! Ceux créés ailleurs avec la même clé sont lus aussi (`getProgramAccounts`,
-//! autorité de retrait = vous).
+//! Stake accounts are created at an address derived from yours
+//! (`CreateAccountWithSeed`, seeds "stake:0", "stake:1"…): a single signature
+//! (yours), no extra key to keep, found again without an index. Accounts created
+//! elsewhere with the same key are read too (`getProgramAccounts`, withdraw
+//! authority = you).
 //!
-//! Chaque opération est simulée par le nœud avant la boîte de confirmation :
-//! l'état du compte de mise APRÈS la transaction est relu et doit être
-//! exactement celui annoncé (montant, validateur, autorités, aucun verrou).
+//! Every operation is simulated by the node before the confirmation dialog: the
+//! state of the stake account AFTER the transaction is reread and must be exactly
+//! what was announced (amount, validator, authorities, no lockup).
 //!
-//! Formats : programme Stake et System Program officiels
-//! (solana-stake-interface, solana-system-interface), vérifiés par simulation
-//! sur mainnet (tests réels ignorés ci-dessous).
+//! Formats: the official Stake program and System Program (solana-stake-interface,
+//! solana-system-interface), verified by simulation on mainnet (ignored live tests
+//! below).
 
 use crate::sol_rpc::{format_lamports, AccountState, SimulationOutcome, SolRpc};
 use crate::sol_spl::decode_pubkey;
@@ -32,25 +32,25 @@ pub const STAKE_PROGRAM: &str = "Stake11111111111111111111111111111111111111";
 const SYSVAR_RENT: &str = "SysvarRent111111111111111111111111111111111";
 const SYSVAR_CLOCK: &str = "SysvarC1ock11111111111111111111111111111111";
 const SYSVAR_STAKE_HISTORY: &str = "SysvarStakeHistory1111111111111111111111111";
-/// Compte de configuration déprécié, toujours attendu par `DelegateStake`
-/// (compatibilité, voir `solana_stake_interface::instruction::delegate_stake`).
+/// Deprecated config account, still expected by `DelegateStake` (for compatibility,
+/// see `solana_stake_interface::instruction::delegate_stake`).
 const STAKE_CONFIG: &str = "StakeConfig11111111111111111111111111111111";
 
-/// Taille d'un compte de mise (`StakeStateV2`).
+/// Size of a stake account (`StakeStateV2`).
 const STAKE_ACCOUNT_SPACE: u64 = 200;
-/// Frais de base d'une transaction à une signature.
+/// Base fee for a single-signature transaction.
 pub const FEE_LAMPORTS: u64 = 5_000;
 const SEED_PREFIX: &str = "stake:";
-/// Graines lues d'un coup pour trouver la prochaine libre.
+/// Seeds read at once to find the next free one.
 const SEED_SCAN: u32 = 32;
-/// Époque de désactivation d'une mise jamais désactivée.
+/// Deactivation epoch of a stake that was never deactivated.
 const NO_DEACTIVATION: u64 = u64::MAX;
-/// Durée moyenne d'un slot, pour estimer la fin de l'époque.
+/// Average slot duration, used to estimate the end of the epoch.
 const SLOT_MILLIS: u64 = 400;
 
-/// Validateurs proposés : commission d'au plus 5 %, hors « superminorité »
-/// (les plus gros, qui détiennent ensemble un tiers de la mise du réseau),
-/// au moins 20 000 SOL de mise (historique), votes parmi les meilleurs.
+/// Validators offered: commission of at most 5%, outside the "superminority" (the
+/// largest ones, which together hold a third of the network's stake), at least
+/// 20,000 SOL staked (track record), votes among the best.
 const MAX_COMMISSION: u64 = 5;
 const MIN_VALIDATOR_STAKE_SOL: u64 = 20_000;
 const MAX_VALIDATORS: usize = 12;
@@ -68,8 +68,8 @@ fn b58(bytes: &[u8; 32]) -> String {
     bs58::encode(bytes).into_string()
 }
 
-/// Adresse d'un compte créé avec graine : sha256(base ‖ graine ‖ programme
-/// propriétaire) (`Pubkey::create_with_seed`).
+/// Address of an account created with a seed: sha256(base ‖ seed ‖ owner program)
+/// (`Pubkey::create_with_seed`).
 pub fn derived_address(base: &[u8; 32], seed: &str) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(base);
@@ -80,8 +80,8 @@ pub fn derived_address(base: &[u8; 32], seed: &str) -> [u8; 32] {
 
 // --- Instructions ------------------------------------------------------------------
 
-/// System Program `CreateAccountWithSeed` (variante 3) : compte de 200 octets
-/// appartenant au programme Stake, payé et « basé » sur `owner`.
+/// System Program `CreateAccountWithSeed` (variant 3): a 200-byte account owned by
+/// the Stake program, paid for by and "based" on `owner`.
 fn create_with_seed(owner: &[u8; 32], stake: &[u8; 32], seed: &str, lamports: u64) -> Instruction {
     let mut data = 3u32.to_le_bytes().to_vec();
     data.extend_from_slice(owner);
@@ -93,8 +93,8 @@ fn create_with_seed(owner: &[u8; 32], stake: &[u8; 32], seed: &str, lamports: u6
     Instruction { program_id: SYSTEM_PROGRAM_ID, accounts: vec![(*owner, true, true), (*stake, false, true), (*owner, true, false)], data }
 }
 
-/// `Initialize` (variante 0) : autorités de mise et de retrait = `owner`,
-/// aucun verrou (horodatage 0, époque 0, gardien nul).
+/// `Initialize` (variant 0): stake and withdraw authorities = `owner`, no lockup
+/// (timestamp 0, epoch 0, null custodian).
 fn initialize(stake: &[u8; 32], owner: &[u8; 32]) -> Instruction {
     let mut data = 0u32.to_le_bytes().to_vec();
     data.extend_from_slice(owner);
@@ -103,7 +103,7 @@ fn initialize(stake: &[u8; 32], owner: &[u8; 32]) -> Instruction {
     Instruction { program_id: decode_pubkey(STAKE_PROGRAM), accounts: vec![(*stake, false, true), (decode_pubkey(SYSVAR_RENT), false, false)], data }
 }
 
-/// `DelegateStake` (variante 2).
+/// `DelegateStake` (variant 2).
 fn delegate(stake: &[u8; 32], vote: &[u8; 32], owner: &[u8; 32]) -> Instruction {
     Instruction {
         program_id: decode_pubkey(STAKE_PROGRAM),
@@ -119,7 +119,7 @@ fn delegate(stake: &[u8; 32], vote: &[u8; 32], owner: &[u8; 32]) -> Instruction 
     }
 }
 
-/// `Deactivate` (variante 5).
+/// `Deactivate` (variant 5).
 fn deactivate(stake: &[u8; 32], owner: &[u8; 32]) -> Instruction {
     Instruction {
         program_id: decode_pubkey(STAKE_PROGRAM),
@@ -128,7 +128,7 @@ fn deactivate(stake: &[u8; 32], owner: &[u8; 32]) -> Instruction {
     }
 }
 
-/// `Withdraw` (variante 4) vers `owner`.
+/// `Withdraw` (variant 4) to `owner`.
 fn withdraw(stake: &[u8; 32], owner: &[u8; 32], lamports: u64) -> Instruction {
     let mut data = 4u32.to_le_bytes().to_vec();
     data.extend_from_slice(&lamports.to_le_bytes());
@@ -145,9 +145,10 @@ fn withdraw(stake: &[u8; 32], owner: &[u8; 32], lamports: u64) -> Instruction {
     }
 }
 
-// --- Lecture des comptes de mise ---------------------------------------------------------
+// --- Reading stake accounts
+// ---------------------------------------------------------------
 
-/// Délégation d'un compte de mise.
+/// Delegation of a stake account.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Delegation {
     voter: [u8; 32],
@@ -156,8 +157,8 @@ struct Delegation {
     deactivation: u64,
 }
 
-/// `StakeStateV2` décodé (bincode) : `Initialized(Meta)` ou
-/// `Stake(Meta, Stake, StakeFlags)`.
+/// Decoded `StakeStateV2` (bincode): `Initialized(Meta)` or `Stake(Meta, Stake,
+/// StakeFlags)`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Parsed {
     rent_reserve: u64,
@@ -192,24 +193,24 @@ fn parse(data: &[u8]) -> Option<Parsed> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StakeStatus {
-    /// Compte initialisé, jamais délégué (créé ailleurs).
+    /// Initialized account, never delegated (created elsewhere).
     Undelegated,
-    /// Délégué pendant l'époque en cours : actif à la suivante.
+    /// Delegated during the current epoch: active from the next one.
     Activating,
     Active,
-    /// Désactivé pendant l'époque en cours : retirable à la suivante.
+    /// Deactivated during the current epoch: withdrawable from the next one.
     Deactivating,
-    /// Retirable.
+    /// Withdrawable.
     Inactive,
 }
 
-/// Statut à l'époque `epoch` (montée et descente en une époque, le cas de
-/// toute mise modeste ; plus longue seulement si une part énorme du réseau
-/// bouge en même temps — le retrait refusé est alors expliqué).
+/// Status at epoch `epoch` (warm-up and cool-down take one epoch, which is the case
+/// for any modest stake; longer only if a huge share of the network moves at the
+/// same time, and the refused withdrawal is then explained).
 fn status(delegation: Option<Delegation>, epoch: u64) -> StakeStatus {
     match delegation {
         None => StakeStatus::Undelegated,
-        // Désactivée pendant son époque d'activation : jamais active.
+        // Deactivated during its activation epoch: never active.
         Some(d) if d.activation == d.deactivation => StakeStatus::Inactive,
         Some(d) if d.deactivation == NO_DEACTIVATION => {
             if epoch <= d.activation {
@@ -228,19 +229,19 @@ pub struct StakeAccount {
     pub address: String,
     pub lamports: u64,
     pub status: StakeStatus,
-    /// Compte de vote du validateur.
+    /// The validator's vote account.
     pub validator: Option<String>,
-    /// Mise déléguée (récompenses comprises), en lamports.
+    /// Delegated stake (rewards included), in lamports.
     pub staked: u64,
-    /// Réserve du compte, rendue au retrait.
+    /// The account's reserve, returned on withdrawal.
     pub rent_reserve: u64,
-    /// Vous êtes l'autorité de mise (désactivation possible).
+    /// You are the stake authority (deactivation possible).
     pub can_deactivate: bool,
-    /// Verrou encore en vigueur : retrait impossible pour l'instant.
+    /// Lockup still in force: withdrawal not possible for now.
     pub locked: bool,
-    /// Nom publié du validateur (stakewiz).
+    /// The validator's published name (stakewiz).
     pub validator_name: Option<String>,
-    /// Validateur signalé depuis (« sandwiching », commission en dents de scie…).
+    /// Validator flagged since ("sandwiching", seesawing commission…).
     pub validator_flagged: bool,
 }
 
@@ -277,7 +278,7 @@ fn stake_account(address: &str, state: &AccountState, owner: &[u8; 32], epoch: u
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub struct EpochInfo {
     pub epoch: u64,
-    /// Fin de l'époque en cours, estimée (0,4 s par slot).
+    /// Estimated end of the current epoch (0.4 s per slot).
     pub ends_in_secs: u64,
 }
 
@@ -292,8 +293,8 @@ fn minimum_delegation(rpc: &SolRpc) -> Result<u64> {
     rpc.call("getStakeMinimumDelegation", json!([{"commitment": "confirmed"}]))?["value"].as_u64().context("réponse getStakeMinimumDelegation inattendue")
 }
 
-/// Comptes de mise dont `owner` est l'autorité de retrait : recherche par
-/// programme ; si le nœud la refuse, lecture des adresses dérivées.
+/// Stake accounts whose withdraw authority is `owner`: search by program; if the
+/// node refuses that, read the derived addresses.
 fn owned_accounts(rpc: &SolRpc, owner: &[u8; 32]) -> Result<Vec<(String, AccountState)>> {
     let search = rpc.call(
         "getProgramAccounts",
@@ -318,21 +319,21 @@ fn owned_accounts(rpc: &SolRpc, owner: &[u8; 32]) -> Result<Vec<(String, Account
     Ok(addresses.into_iter().zip(states).filter_map(|(address, state)| state.map(|s| (address, s))).collect())
 }
 
-/// SOL sur les comptes de mise de `owner` (réserves comprises) : comptés
-/// avec son solde dans la courbe du portefeuille.
+/// SOL in `owner`'s stake accounts (reserves included): counted with its balance in
+/// the portfolio chart.
 pub fn staked_lamports(rpc: &SolRpc, owner: &str) -> Result<u64> {
     let owner = key(owner)?;
     Ok(owned_accounts(rpc, &owner)?.iter().filter(|(_, state)| state.owner == STAKE_PROGRAM && parse(&state.data).is_some_and(|p| p.withdrawer == owner)).map(|(_, state)| state.lamports).sum())
 }
 
-/// Vue d'ensemble pour la fenêtre « Staker » de la carte SOL.
+/// Overview for the SOL card's "Stake" window.
 #[derive(Clone, Debug, Serialize)]
 pub struct Overview {
     pub accounts: Vec<StakeAccount>,
     pub epoch: EpochInfo,
-    /// Mise minimale du réseau (1 SOL constaté le 06/10/2026).
+    /// The network's minimum stake (1 SOL as of 2026-10-06).
     pub min_delegation: u64,
-    /// Réserve d'un compte de mise, versée à la création, rendue au retrait.
+    /// A stake account's reserve, paid at creation and returned on withdrawal.
     pub rent_reserve: u64,
 }
 
@@ -345,7 +346,7 @@ pub fn overview(rpc: &SolRpc, owner: &str) -> Result<Overview> {
         let accounts = owned_accounts(rpc, &owner);
         let epoch = epoch.join().map_err(|_| anyhow!("lecture de l'époque interrompue"))??;
         let mut accounts: Vec<StakeAccount> = accounts?.iter().filter_map(|(address, state)| stake_account(address, state, &owner, epoch.epoch)).collect();
-        // Noms des validateurs (2 Mo, gardés 10 min) : seulement s'il y en a.
+        // Validator names (2 MB, kept for 10 min): only if there are any.
         let wiz = if accounts.iter().any(|a| a.validator.is_some()) { wiz_cached() } else { HashMap::new() };
         for account in &mut accounts {
             if let Some(info) = account.validator.as_ref().and_then(|v| wiz.get(v)) {
@@ -363,18 +364,18 @@ pub fn overview(rpc: &SolRpc, owner: &str) -> Result<Overview> {
     })
 }
 
-// --- Validateurs ----------------------------------------------------------------------
+// --- Validators ----------------------------------------------------------------------
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Validator {
-    /// Compte de vote (celui auquel on délègue).
+    /// Vote account (the one we delegate to).
     pub vote: String,
-    /// Nom publié par le validateur (stakewiz) ; `None` si inconnu.
+    /// Name published by the validator (stakewiz); `None` if unknown.
     pub name: Option<String>,
     pub commission: u8,
-    /// Mise totale reçue, en SOL.
+    /// Total stake received, in SOL.
     pub active_stake_sol: u64,
-    /// Rendement annuel estimé (stakewiz : inflation et MEV), en pour cent.
+    /// Estimated annual yield (stakewiz: inflation and MEV), in percent.
     pub apy: Option<f64>,
 }
 
@@ -386,11 +387,10 @@ struct Candidate {
     credits: u64,
 }
 
-/// Validateurs admissibles d'après `getVoteAccounts` (la chaîne elle-même) :
-/// à jour de leurs votes, commission d'au plus 5 % (et commission
-/// d'inflation, si annoncée), hors superminorité, au moins 20 000 SOL, et
-/// crédits de vote de la dernière époque complète d'au moins 97 % du 90ᵉ
-/// centile.
+/// Eligible validators according to `getVoteAccounts` (the chain itself): up to
+/// date with their votes, commission of at most 5% (and inflation commission, if
+/// announced), outside the superminority, at least 20,000 SOL, and vote credits for
+/// the last complete epoch of at least 97% of the 90th percentile.
 fn eligible(vote_accounts: &Value) -> Result<Vec<Candidate>> {
     let current = vote_accounts["current"].as_array().context("réponse getVoteAccounts inattendue")?;
     let delinquent_stake: u64 = vote_accounts["delinquent"].as_array().map_or(0, |list| list.iter().filter_map(|v| v["activatedStake"].as_u64()).sum());
@@ -403,7 +403,8 @@ fn eligible(vote_accounts: &Value) -> Result<Vec<Candidate>> {
     let mut all: Vec<(&Value, u64)> = current.iter().map(|v| (v, v["activatedStake"].as_u64().unwrap_or(0))).collect();
     let total: u64 = all.iter().map(|(_, s)| s).sum::<u64>() + delinquent_stake;
     all.sort_by_key(|(_, stake)| std::cmp::Reverse(*stake));
-    // Superminorité : les plus gros jusqu'à dépasser un tiers de la mise.
+    // Superminority: the largest validators until their total exceeds a third of the
+    // stake.
     let mut cumulative = 0u64;
     let mut superminority = 0usize;
     for (_, s) in &all {
@@ -438,20 +439,19 @@ fn vote_accounts(rpc: &SolRpc) -> Result<Value> {
     rpc.call("getVoteAccounts", json!([{"commitment": "confirmed", "keepUnstakedDelinquents": false}]))
 }
 
-/// Nom affichable : caractères imprimables, 32 au plus (donnée d'un tiers).
+/// Displayable name: printable characters, 32 at most (third-party data).
 fn display_name(raw: &str) -> Option<String> {
     let cleaned: String = raw.chars().map(|c| if c.is_control() { ' ' } else { c }).filter(|c| !matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')).collect();
     let cleaned = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
-    // Coupé à 32 caractères, sans séparateur orphelin à la fin.
+    // Cut at 32 characters, with no dangling separator at the end.
     let cut: String = cleaned.chars().take(32).collect();
     let cut = cut.trim_end_matches([' ', '-', '|', '·', ',']).to_string();
     (!cut.is_empty()).then_some(cut)
 }
 
-/// Fiche stakewiz d'un validateur (sans clé) : nom publié, rendement estimé,
-/// score de qualité (votes, blocs manqués, ancienneté, concentration…) et
-/// signalement par l'équipe stakewiz (« sandwiching », commission qui alterne
-/// entre 0 et 100 %…).
+/// A validator's stakewiz record (keyless): published name, estimated yield,
+/// quality score (votes, skipped blocks, age, concentration…) and flags raised by
+/// the stakewiz team ("sandwiching", commission alternating between 0 and 100%…).
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Wiz {
     name: Option<String>,
@@ -473,7 +473,7 @@ fn wiz_entry(v: &Value) -> Option<(String, Wiz)> {
     ))
 }
 
-/// Fiches stakewiz par compte de vote (vide si le site ne répond pas).
+/// Stakewiz records by vote account (empty if the site does not answer).
 fn stakewiz() -> HashMap<String, Wiz> {
     let fetch = || -> Option<Value> {
         let client = reqwest::blocking::Client::builder().timeout(Duration::from_secs(10)).user_agent("openpgp-wallet").build().ok()?;
@@ -482,7 +482,7 @@ fn stakewiz() -> HashMap<String, Wiz> {
     fetch().and_then(|v| v.as_array().cloned()).unwrap_or_default().iter().filter_map(wiz_entry).collect()
 }
 
-/// `stakewiz` gardé 10 minutes (2 Mo par lecture).
+/// `stakewiz` kept for 10 minutes (2 MB per read).
 fn wiz_cached() -> HashMap<String, Wiz> {
     static CACHE: Mutex<Option<(Instant, HashMap<String, Wiz>)>> = Mutex::new(None);
     if let Some((at, map)) = CACHE.lock().unwrap_or_else(|p| p.into_inner()).as_ref() {
@@ -497,16 +497,16 @@ fn wiz_cached() -> HashMap<String, Wiz> {
     fresh
 }
 
-/// Nom publié d'un validateur (boîte de confirmation).
+/// A validator's published name (confirmation dialog).
 pub fn validator_name(vote: &str) -> Option<String> {
     wiz_cached().get(vote.trim()).and_then(|info| info.name.clone())
 }
 
-/// Ordre des validateurs admissibles. Avec stakewiz : signalés et inconnus
-/// écartés, meilleur score d'abord — jamais le meilleur rendement annoncé,
-/// que les validateurs douteux gonflent (constaté le 06/10/2026 : le premier
-/// par rendement alternait sa commission entre 0 et 100 %). Sans stakewiz :
-/// les plus établis (mise reçue) d'abord.
+/// Ordering of eligible validators. With stakewiz: flagged and unknown ones
+/// dropped, best score first; never the highest advertised yield, which dubious
+/// validators inflate (seen on 2026-10-06: the top one by yield was alternating its
+/// commission between 0 and 100%). Without stakewiz: the most established (stake
+/// received) first.
 fn ranked(candidates: Vec<Candidate>, wiz: &HashMap<String, Wiz>) -> Vec<Validator> {
     let mut list: Vec<(Validator, f64, u64)> = candidates
         .into_iter()
@@ -530,7 +530,7 @@ fn ranked(candidates: Vec<Candidate>, wiz: &HashMap<String, Wiz>) -> Vec<Validat
     list.into_iter().take(MAX_VALIDATORS).map(|(v, _, _)| v).collect()
 }
 
-/// Validateurs proposés (12 au plus).
+/// Validators offered (12 at most).
 pub fn validators(rpc: &SolRpc) -> Result<Vec<Validator>> {
     let (accounts, names) = std::thread::scope(|scope| {
         let names = scope.spawn(wiz_cached);
@@ -541,7 +541,7 @@ pub fn validators(rpc: &SolRpc) -> Result<Vec<Validator>> {
     Ok(list)
 }
 
-// --- Opérations ------------------------------------------------------------------------
+// --- Operations ------------------------------------------------------------------------
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -551,23 +551,23 @@ pub enum Action {
     Withdraw,
 }
 
-/// Opération préparée : exactement ce qui sera signé et montré.
+/// A prepared operation: exactly what will be signed and shown.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Plan {
     pub action: Action,
     pub stake_account: String,
-    /// Graine du nouveau compte (mise en jeu).
+    /// Seed of the new account (staking).
     pub seed: Option<String>,
     pub validator: Option<String>,
     pub commission: Option<u8>,
-    /// Mis en jeu (mise) ou rendu à votre adresse (retrait), en lamports.
+    /// Amount staked, or returned to your address (withdrawal), in lamports.
     pub lamports: u64,
-    /// Réserve du compte de mise : versée à la création, rendue au retrait.
+    /// The stake account's reserve: paid at creation, returned on withdrawal.
     pub rent_reserve: u64,
     pub fee: u64,
 }
 
-/// Instructions de `plan` signées par `owner` (seul signataire et payeur).
+/// Instructions of `plan` signed by `owner` (the only signer and the payer).
 fn instructions(plan: &Plan, owner: &[u8; 32]) -> Result<Vec<Instruction>> {
     let stake = key(&plan.stake_account)?;
     Ok(match plan.action {
@@ -583,19 +583,19 @@ fn instructions(plan: &Plan, owner: &[u8; 32]) -> Result<Vec<Instruction>> {
     })
 }
 
-/// Message à signer (blockhash récent).
+/// Message to sign (recent blockhash).
 pub fn message(plan: &Plan, owner: &[u8; 32], recent_blockhash: &[u8; 32]) -> Result<Vec<u8>> {
     Ok(build_message(owner, &instructions(plan, owner)?, recent_blockhash))
 }
 
-/// SOL gardé sur votre adresse après une mise en jeu : réserve minimale d'un
-/// compte (imposée par Solana) et frais des deux opérations d'arrêt.
+/// SOL kept on your address after staking: an account's minimum reserve (required
+/// by Solana) and the fees for the two exit operations.
 fn kept_after_delegation(rpc: &SolRpc) -> Result<u64> {
     Ok(rpc.minimum_rent_exempt_balance(0)? + 2 * FEE_LAMPORTS)
 }
 
-/// Mise maximale depuis `owner` (« Max » de la fenêtre) ; sous le minimum
-/// du réseau, une explication plutôt qu'un montant impossible.
+/// Maximum stake from `owner` (the window's "Max"); below the network minimum, an
+/// explanation rather than an impossible amount.
 pub fn max_delegation(rpc: &SolRpc, owner: &str) -> Result<u64> {
     let (balance, rent, kept, min) = std::thread::scope(|scope| {
         let rent = scope.spawn(|| rpc.minimum_rent_exempt_balance(STAKE_ACCOUNT_SPACE));
@@ -615,8 +615,8 @@ pub fn max_delegation(rpc: &SolRpc, owner: &str) -> Result<u64> {
     Ok(max)
 }
 
-/// Première graine libre (aucun compte à cette adresse, pas même des SOL
-/// envoyés par un tiers, qui feraient refuser la création).
+/// First free seed (no account at that address, not even SOL sent by a third party,
+/// which would make the creation fail).
 fn free_seed(rpc: &SolRpc, owner: &[u8; 32]) -> Result<(String, String)> {
     let seeds: Vec<String> = (0..SEED_SCAN).map(|i| format!("{SEED_PREFIX}{i}")).collect();
     let addresses: Vec<String> = seeds.iter().map(|s| b58(&derived_address(owner, s))).collect();
@@ -667,7 +667,7 @@ pub fn plan_delegate(rpc: &SolRpc, owner: &str, lamports: u64, vote: &str) -> Re
     Ok(plan)
 }
 
-/// Compte de mise `stake` de `owner`, relu à l'instant.
+/// `owner`'s stake account `stake`, read just now.
 fn read_own(rpc: &SolRpc, owner: &[u8; 32], stake: &str) -> Result<(AccountState, Parsed, EpochInfo, u64)> {
     let (state, epoch, balance) = std::thread::scope(|scope| {
         let epoch = scope.spawn(|| epoch_info(rpc));
@@ -726,7 +726,7 @@ pub fn plan_withdraw(rpc: &SolRpc, owner: &str, stake: &str) -> Result<Plan> {
     Ok(plan)
 }
 
-/// « 14 h », « 35 min ».
+/// "14 h", "35 min".
 pub fn duration_text(secs: u64) -> String {
     if secs >= 3600 {
         format!("{} h", secs.div_ceil(3600))
@@ -735,8 +735,8 @@ pub fn duration_text(secs: u64) -> String {
     }
 }
 
-/// Simulation par le nœud (signature non vérifiée, blockhash remplacé), puis
-/// état du compte de mise APRÈS la transaction comparé à l'annonce.
+/// Simulation by the node (signature not verified, blockhash replaced), then the
+/// stake account's state AFTER the transaction compared with what was announced.
 fn simulate(rpc: &SolRpc, owner: &[u8; 32], plan: &Plan) -> Result<()> {
     let raw = assemble_transaction(&[0u8; 64], &message(plan, owner, &[0u8; 32])?);
     match rpc.simulate_with_account_states(&raw, std::slice::from_ref(&plan.stake_account))? {
@@ -797,8 +797,8 @@ mod tests {
         data
     }
 
-    /// Encodage bincode des instructions (formats de solana-system-interface
-    /// et solana-stake-interface) ; dérivation d'adresse stable.
+    /// Bincode encoding of the instructions (solana-system-interface and
+    /// solana-stake-interface formats); stable address derivation.
     #[test]
     fn instructions_are_encoded() {
         let owner = [7u8; 32];
@@ -818,7 +818,7 @@ mod tests {
         assert_eq!(deactivate(&stake, &owner).data, 5u32.to_le_bytes());
         let w = withdraw(&stake, &owner, 42);
         assert_eq!(w.data, [4u32.to_le_bytes().as_slice(), 42u64.to_le_bytes().as_slice()].concat());
-        // Une seule signature : la vôtre (payeur, base et autorité).
+        // A single signature: yours (payer, base and authority).
         let plan = Plan {
             action: Action::Delegate,
             stake_account: b58(&stake),
@@ -831,7 +831,7 @@ mod tests {
         };
         let msg = message(&plan, &owner, &[1u8; 32]).unwrap();
         assert_eq!(msg[0], 1);
-        // Graine ne correspondant pas à l'adresse : refus.
+        // Seed that does not match the address: refused.
         let wrong = Plan { seed: Some("stake:1".into()), ..plan };
         assert!(message(&wrong, &owner, &[1u8; 32]).is_err());
     }
@@ -853,12 +853,12 @@ mod tests {
         let state = |data| AccountState { lamports: 1_001_666_240, owner: STAKE_PROGRAM.into(), data };
         let mine = stake_account("A", &state(stake_data(2, owner, owner, d(1000, NO_DEACTIVATION))), &owner, 1001).unwrap();
         assert_eq!((mine.status, mine.can_deactivate, mine.locked), (StakeStatus::Active, true, false));
-        // Autorité de retrait d'un autre : pas le vôtre ; autorité de mise d'un autre : pas de désactivation.
+        // Someone else's withdraw authority: not yours; someone else's stake authority: no deactivation.
         assert!(stake_account("B", &state(stake_data(2, owner, other, d(1000, NO_DEACTIVATION))), &owner, 1001).is_none());
         assert!(!stake_account("C", &state(stake_data(2, other, owner, d(1000, NO_DEACTIVATION))), &owner, 1001).unwrap().can_deactivate);
         assert!(stake_account("D", &AccountState { owner: "11111111111111111111111111111111".into(), ..state(stake_data(1, owner, owner, None)) }, &owner, 1).is_none());
         assert!(parse(&[3, 0, 0, 0]).is_none());
-        // Verrou en vigueur (époque future, gardien tiers).
+        // Lockup in force (future epoch, third-party custodian).
         let mut locked = stake_data(1, owner, owner, None);
         locked[84..92].copy_from_slice(&2000u64.to_le_bytes());
         locked[92..124].copy_from_slice(&other);
@@ -872,17 +872,17 @@ mod tests {
         })
     }
 
-    /// Superminorité, commission, mise minimale et votes en retard écartés.
+    /// Superminority, commission, minimum stake and lagging votes filtered out.
     #[test]
     fn validators_are_filtered() {
         let k = |n: u8| b58(&[n; 32]);
         let accounts = json!({
             "current": [
-                vote(&k(1), 5_000_000, 0, 7000), // superminorité
+                vote(&k(1), 5_000_000, 0, 7000), // superminority
                 vote(&k(2), 900_000, 0, 7000),
                 vote(&k(3), 900_000, 10, 7000), // commission
-                vote(&k(4), 10_000, 0, 7000), // trop petit
-                vote(&k(5), 900_000, 5, 6000), // votes en retard
+                vote(&k(4), 10_000, 0, 7000), // too small
+                vote(&k(5), 900_000, 5, 6000), // lagging votes
                 vote(&k(6), 900_000, 5, 6990),
                 vote(&k(7), 900_000, 0, 7000),
                 vote(&k(8), 900_000, 0, 7000),
@@ -895,11 +895,11 @@ mod tests {
         let votes: Vec<String> = eligible(&accounts).unwrap().into_iter().map(|c| c.vote).collect();
         assert!(!votes.contains(&k(1)) && !votes.contains(&k(3)) && !votes.contains(&k(4)) && !votes.contains(&k(5)));
         assert!(votes.contains(&k(2)) && votes.contains(&k(6)));
-        // Sans stakewiz : tous les admissibles, les plus établis d'abord.
+        // Without stakewiz: every eligible validator, the most established first.
         let all = ranked(eligible(&accounts).unwrap(), &HashMap::new());
         assert_eq!(all.len(), votes.len());
-        // Avec stakewiz : meilleur score d'abord, signalés et inconnus écartés,
-        // quel que soit le rendement annoncé.
+        // With stakewiz: best score first, flagged and unknown ones dropped, whatever the
+        // advertised yield.
         let wiz = |name: &str, apy: f64, score: f64, comment: Value| wiz_entry(&json!({ "vote_identity": "x", "name": name, "total_apy": apy, "wiz_score": score, "admin_comment": comment })).unwrap().1;
         let mut info = HashMap::new();
         info.insert(k(6), wiz("Six", 5.1, 99.0, Value::Null));
@@ -917,8 +917,8 @@ mod tests {
         SolRpc::new(crate::wallet_flow::SOLANA_MAINNET.rpc)
     }
 
-    /// Identité d'un validateur proposé, dont l'adresse a au moins 3 SOL
-    /// (payeur fictif des simulations : signature non vérifiée).
+    /// Identity of an offered validator whose address holds at least 3 SOL (dummy payer
+    /// for the simulations: signature not verified).
     fn funded_payer(rpc: &SolRpc) -> String {
         let accounts = vote_accounts(rpc).unwrap();
         for v in accounts["current"].as_array().unwrap().iter().take(40) {
@@ -930,9 +930,9 @@ mod tests {
         panic!("aucune adresse pourvue trouvée");
     }
 
-    /// Réel : validateurs proposés, vue d'ensemble, mise en jeu de 1 SOL
-    /// simulée par le nœud (création, initialisation, délégation) avec l'état
-    /// du compte de mise vérifié après coup.
+    /// Live: validators offered, overview, staking 1 SOL simulated by the node
+    /// (creation, initialization, delegation) with the stake account's state checked
+    /// afterwards.
     /// `cargo test -- --ignored real_native_staking_simulates --nocapture`
     #[test]
     #[ignore]
@@ -946,16 +946,15 @@ mod tests {
         let plan = plan_delegate(&rpc, &payer, view.min_delegation, &list[0].vote).unwrap();
         println!("{plan:?}");
         assert!(max_delegation(&rpc, &payer).unwrap() > view.min_delegation);
-        // Validateur hors liste (le plus gros : superminorité) : refusé.
+        // Validator outside the list (the largest one: superminority): refused.
         let biggest = vote_accounts(&rpc).unwrap()["current"].as_array().unwrap().iter().max_by_key(|v| v["activatedStake"].as_u64()).unwrap()["votePubkey"].as_str().unwrap().to_string();
         assert!(plan_delegate(&rpc, &payer, view.min_delegation, &biggest).is_err());
     }
 
-    /// Réel : un compte de mise existant (délégué au premier validateur
-    /// proposé) est relu et décodé ; un compte délégué à l'époque en cours a
-    /// pour dernière transaction sa création : « Staking » dans l'historique
-    /// de son payeur, simple réception dans celui du compte de mise (payé par
-    /// un autre).
+    /// Live: an existing stake account (delegated to the first validator offered) is
+    /// reread and decoded. An account delegated during the current epoch has its
+    /// creation as its last transaction: "Staking" in its payer's history, a plain
+    /// receipt in the stake account's own history (paid by someone else).
     /// `cargo test -- --ignored real_stake_account_and_history --nocapture`
     #[test]
     #[ignore]
@@ -987,9 +986,9 @@ mod tests {
         assert!(creation.is_none() || creation.unwrap().kind == crate::history::TxKind::Stake);
     }
 
-    /// Réel : désactivation et retrait simulés dans une même transaction
-    /// (création, initialisation, délégation, désactivation ; puis création,
-    /// initialisation, retrait complet) — formats acceptés par le programme.
+    /// Live: deactivation and withdrawal simulated in a single transaction (creation,
+    /// initialization, delegation, deactivation; then creation, initialization, full
+    /// withdrawal): formats accepted by the program.
     /// `cargo test -- --ignored real_stake_exit_simulates --nocapture`
     #[test]
     #[ignore]
