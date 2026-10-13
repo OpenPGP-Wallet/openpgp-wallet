@@ -11,7 +11,7 @@
 //! vrais fonds.
 
 use anyhow::{Context, Result};
-use pgp_wallet_poc::{entropy, memory_guard, wallet_flow, wallet_flow::SEPOLIA};
+use openpgp_wallet_core::{entropy, memory_guard, wallet_flow, wallet_flow::SEPOLIA};
 use zeroize::Zeroizing;
 
 fn main() -> Result<()> {

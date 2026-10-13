@@ -48,7 +48,7 @@ fn shared_client() -> &'static reqwest::blocking::Client {
             // (probablement filtré comme trafic de bot générique), alors qu'un
             // appel identique avec un User-Agent de navigateur/outil nommé passait.
             .timeout(std::time::Duration::from_secs(15))
-            .user_agent("pgp-wallet-poc/0.1 (+https://github.com/)")
+            .user_agent("openpgp-wallet (+https://github.com/KHADEVS/openpgp-wallet)")
             .build()
             .expect("configuration du client HTTP valide")
     })

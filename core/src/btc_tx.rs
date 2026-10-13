@@ -618,7 +618,7 @@ mod tests {
     /// (embit) : adresses de chaque type (réseau principal et testnet) avec
     /// leur script, et transactions signées vers chacune. Écrits dans le
     /// fichier `BTC_VECTORS_OUT`.
-    /// `BTC_VECTORS_OUT=… cargo test -p pgp-wallet-poc --lib -- --ignored export_btc_vectors`
+    /// `BTC_VECTORS_OUT=… cargo test -p openpgp-wallet-core --lib -- --ignored export_btc_vectors`
     #[test]
     #[ignore]
     fn export_btc_vectors() {

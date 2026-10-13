@@ -35,7 +35,7 @@ fn connect(project_id: &str, client_seed: &[u8; 32]) -> Result<Socket> {
     let mut sub = [0u8; 32];
     getrandom::getrandom(&mut sub).map_err(|e| anyhow!("génération d'aléa impossible : {e}"))?;
     let jwt = auth::sign_jwt(client_seed, &hex::encode(sub), RELAY_URL, super::engine::now());
-    let url = format!("{RELAY_URL}/?auth={jwt}&ua=wc-2/rust-0.1/windows/pgp-wallet-poc&projectId={project_id}");
+    let url = format!("{RELAY_URL}/?auth={jwt}&ua=wc-2/rust-0.1/windows/openpgp-wallet&projectId={project_id}");
 
     let address = (RELAY_HOST, 443)
         .to_socket_addrs()

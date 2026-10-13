@@ -8,7 +8,7 @@
 //! ni logger ces valeurs.
 
 use anyhow::{anyhow, Context, Result};
-use pgp_wallet_poc::{entropy, shamir};
+use openpgp_wallet_core::{entropy, shamir};
 use std::io::{self, Write};
 use zeroize::Zeroizing;
 

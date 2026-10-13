@@ -115,7 +115,7 @@ fn prices(assets: &[SwapAsset]) -> HashMap<&'static str, f64> {
     ids.dedup();
     let url = format!("https://api.coingecko.com/api/v3/simple/price?ids={}&vs_currencies=usd", ids.join(","));
     // User-Agent explicite, comme `price_rpc` (sans lui, CoinGecko refuse).
-    let client = reqwest::blocking::Client::builder().user_agent("pgp-wallet-poc/0.1 (+https://github.com/)").build().unwrap();
+    let client = reqwest::blocking::Client::builder().user_agent("openpgp-wallet (+https://github.com/KHADEVS/openpgp-wallet)").build().unwrap();
     let body: serde_json::Value = client.get(url).send().unwrap().json().unwrap();
     assert!(body.get("bitcoin").is_some(), "prix CoinGecko illisibles : {body}");
     assets

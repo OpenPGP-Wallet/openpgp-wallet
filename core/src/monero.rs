@@ -1167,7 +1167,7 @@ mod tests {
     }
 
     /// Réel : synchronisation depuis la naissance avec les nœuds publics
-    /// (`cargo test -p pgp-wallet-poc monero::tests::real_sync -- --ignored --nocapture`).
+    /// (`cargo test -p openpgp-wallet-core monero::tests::real_sync -- --ignored --nocapture`).
     #[test]
     #[ignore]
     fn real_sync() {

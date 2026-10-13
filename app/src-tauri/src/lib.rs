@@ -1,11 +1,11 @@
 //! Commandes Tauri : la seule porte d'entrée entre le frontend web (non fiable,
-//! ne doit jamais voir de secret) et le worker crypto (`pgp_wallet_poc::api`).
+//! ne doit jamais voir de secret) et le worker crypto (`openpgp_wallet_core::api`).
 //! Aucune donnée sensible (entropie, clé privée, passphrase) ne doit jamais être
 //! journalisée ici ni renvoyée au frontend — seules des adresses publiques et des
 //! confirmations/erreurs le sont.
 
 use base64::Engine;
-use pgp_wallet_poc::{address_book, api, cow, dapp_requests, external_wallets, hardware, history, messaging, price_history, price_rpc, sent_recipients, wallet_flow};
+use openpgp_wallet_core::{address_book, api, cow, dapp_requests, external_wallets, hardware, history, messaging, price_history, price_rpc, sent_recipients, wallet_flow};
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -42,7 +42,7 @@ fn set_ui_language(lang: String) {
 const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     // Solana (core/src/sol_rpc.rs)
     (
-        pgp_wallet_poc::sol_rpc::BLOCKHASH_EXPIRED_ERROR,
+        openpgp_wallet_core::sol_rpc::BLOCKHASH_EXPIRED_ERROR,
         "the transaction expired before being sent (Solana validity window exceeded) — nothing was sent or debited, try again",
     ),
     // Réseaux EVM (core/src/api.rs, history.rs)
@@ -562,11 +562,11 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("adresse bech32 invalide", "invalid bech32 address"),
     ("adresse bech32 vide", "empty bech32 address"),
     (
-        pgp_wallet_poc::derivation::BTC_ADDRESS_UNSUPPORTED,
+        openpgp_wallet_core::derivation::BTC_ADDRESS_UNSUPPORTED,
         "Bitcoin address type not supported yet (future SegWit version): ask the recipient for another address",
     ),
-    (pgp_wallet_poc::derivation::BTC_ADDRESS_MISCOPIED, "Bitcoin address not recognized: a character seems miscopied"),
-    (pgp_wallet_poc::derivation::BTC_ADDRESS_OTHER_NETWORK, "address from another network than Bitcoin"),
+    (openpgp_wallet_core::derivation::BTC_ADDRESS_MISCOPIED, "Bitcoin address not recognized: a character seems miscopied"),
+    (openpgp_wallet_core::derivation::BTC_ADDRESS_OTHER_NETWORK, "address from another network than Bitcoin"),
     // Réseaux ajoutés par l'utilisateur (core/src/custom_networks.rs)
     ("nom du réseau : 1 à 30 caractères (lettres, chiffres, espaces, - _ . ( ))", "network name: 1 to 30 characters (letters, digits, spaces, - _ . ( ))"),
     ("symbole : 1 à 10 lettres ou chiffres (ex. ETH)", "symbol: 1 to 10 letters or digits (e.g. ETH)"),
@@ -655,10 +655,10 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("démarrage du client Monero impossible", "could not start the Monero client"),
     ("envoi Monero non préparé", "Monero transfer not prepared"),
     // Historique BNB Chain (core/src/nodereal.rs)
-    (pgp_wallet_poc::nodereal::KEY_MISSING, "BNB Chain history unavailable in this version of the app"),
-    (pgp_wallet_poc::nodereal::LIMITED, "BNB Chain history temporarily unavailable (service limit reached) — try again later"),
+    (openpgp_wallet_core::nodereal::KEY_MISSING, "BNB Chain history unavailable in this version of the app"),
+    (openpgp_wallet_core::nodereal::LIMITED, "BNB Chain history temporarily unavailable (service limit reached) — try again later"),
     (
-        pgp_wallet_poc::lifi::NO_CONFIRMED_BTC,
+        openpgp_wallet_core::lifi::NO_CONFIRMED_BTC,
         "no confirmed BTC on your address: LI.FI builds the deposit from funds received and confirmed (at least one confirmation)",
     ),
     ("enregistrement de la clé Etherscan impossible", "could not save the Etherscan key"),
@@ -921,7 +921,7 @@ fn translate_dynamic_error(msg: &str) -> Option<String> {
     if let Some(en) = translate_custom_network_error(msg) {
         return Some(en);
     }
-    use pgp_wallet_poc::wallet_flow::{MAYBE_SENT_PREFIX, MAYBE_SENT_SUFFIX};
+    use openpgp_wallet_core::wallet_flow::{MAYBE_SENT_PREFIX, MAYBE_SENT_SUFFIX};
     if let Some(id) = msg.strip_prefix(MAYBE_SENT_PREFIX).and_then(|rest| rest.strip_suffix(MAYBE_SENT_SUFFIX)) {
         return Some(format!("connection lost while sending: transaction {id} may have gone through — check the history before sending again"));
     }
@@ -1783,7 +1783,7 @@ fn external_link_allowed(url: &str) -> bool {
         let rest = n.explorer_tx_prefix.strip_prefix("https://")?;
         Some(&n.explorer_tx_prefix[..8 + rest.find('/')? + 1])
     });
-    let custom_origins: Vec<&str> = pgp_wallet_poc::custom_networks::explorer_origins()
+    let custom_origins: Vec<&str> = openpgp_wallet_core::custom_networks::explorer_origins()
         .into_iter()
         .filter_map(|prefix| {
             let rest = prefix.strip_prefix("https://")?;
@@ -2212,7 +2212,7 @@ struct AffiliateNameDto {
 }
 
 fn native_amount(units: u128, decimals: u32) -> String {
-    pgp_wallet_poc::tokens::format_amount(units, decimals as u8)
+    openpgp_wallet_core::tokens::format_amount(units, decimals as u8)
 }
 
 /// État du nom d'affiliation sur THORChain et Maya (données publiques) ;
@@ -2325,7 +2325,7 @@ fn remember_profiles(app: &tauri::AppHandle, profiles: &[api::ProfileAddresses])
 fn biometric_unlock_available() -> bool {
     #[cfg(windows)]
     {
-        pgp_wallet_poc::windows_hello::is_available()
+        openpgp_wallet_core::windows_hello::is_available()
     }
     #[cfg(not(windows))]
     {
@@ -2550,7 +2550,7 @@ struct BackupDriveDto {
     label: String,
     free_bytes: u64,
     /// Parts déjà présentes (kit, numéro).
-    shares: Vec<pgp_wallet_poc::usb_backup::ShareInfo>,
+    shares: Vec<openpgp_wallet_core::usb_backup::ShareInfo>,
 }
 
 /// Clés USB branchées, et la part de sauvegarde que chacune contient (aucun
@@ -2559,7 +2559,7 @@ struct BackupDriveDto {
 #[tauri::command]
 async fn list_backup_drives() -> Result<Vec<BackupDriveDto>, String> {
     run_blocking(|| {
-        Ok(pgp_wallet_poc::usb_backup::removable_drives()
+        Ok(openpgp_wallet_core::usb_backup::removable_drives()
             .into_iter()
             .map(|d| BackupDriveDto { root: d.root.to_string_lossy().into_owned(), label: d.label, free_bytes: d.free_bytes, shares: d.shares })
             .collect())
@@ -2587,12 +2587,12 @@ async fn save_backup_to_usb(
     run_blocking(move || {
         let dir = data_dir(&app)?;
         let decode = |s: &str| base64::engine::general_purpose::STANDARD.decode(s).t_err();
-        let files = pgp_wallet_poc::usb_backup::ShareFiles {
+        let files = openpgp_wallet_core::usb_backup::ShareFiles {
             encrypted_share: decode(&encrypted_share_b64)?,
             privkey_armored: decode(&privkey_armored_b64)?,
             passphrase: Zeroizing::new(passphrase),
         };
-        let drive = pgp_wallet_poc::usb_backup::write_share(&root, &kit_id, &name, part, &files, |written| {
+        let drive = openpgp_wallet_core::usb_backup::write_share(&root, &kit_id, &name, part, &files, |written| {
             api::verify_backup_share(&dir, &written.encrypted_share, &written.privkey_armored, &written.passphrase)
         })
         .t_err()?;
@@ -2640,19 +2640,19 @@ fn confirm_kit_on_one_drive_window(app: &tauri::AppHandle, drive: &str, name: &s
 #[tauri::command]
 async fn save_kit_to_usb(root: String, kit_id: String, name: String, shares: Vec<KitShareDto>, app: tauri::AppHandle) -> Result<Option<String>, String> {
     run_blocking(move || {
-        let name = pgp_wallet_poc::usb_backup::normalize_name(&name).t_err()?;
+        let name = openpgp_wallet_core::usb_backup::normalize_name(&name).t_err()?;
         let dir = data_dir(&app)?;
         let decode = |s: &str| base64::engine::general_purpose::STANDARD.decode(s).t_err();
         let mut parts = Vec::with_capacity(shares.len());
         for share in shares {
-            let files = pgp_wallet_poc::usb_backup::ShareFiles {
+            let files = openpgp_wallet_core::usb_backup::ShareFiles {
                 encrypted_share: decode(&share.encrypted_share_b64)?,
                 privkey_armored: decode(&share.privkey_armored_b64)?,
                 passphrase: Zeroizing::new(share.passphrase),
             };
             parts.push((share.part, files));
         }
-        let drive_name = pgp_wallet_poc::usb_backup::removable_drives()
+        let drive_name = openpgp_wallet_core::usb_backup::removable_drives()
             .into_iter()
             .find(|d| d.root.to_string_lossy().eq_ignore_ascii_case(root.trim()))
             .map(|d| if d.label.is_empty() { d.root.to_string_lossy().into_owned() } else { format!("{} ({})", d.label, d.root.to_string_lossy().trim_end_matches('\\')) })
@@ -2660,7 +2660,7 @@ async fn save_kit_to_usb(root: String, kit_id: String, name: String, shares: Vec
         if !confirm_kit_on_one_drive_window(&app, &drive_name, &name) {
             return Ok(None);
         }
-        let drive = pgp_wallet_poc::usb_backup::write_kit(&root, &kit_id, &name, &parts, |written| {
+        let drive = openpgp_wallet_core::usb_backup::write_kit(&root, &kit_id, &name, &parts, |written| {
             api::verify_backup_share(&dir, &written.encrypted_share, &written.privkey_armored, &written.passphrase)
         })
         .t_err()?;
@@ -2672,22 +2672,22 @@ async fn save_kit_to_usb(root: String, kit_id: String, name: String, shares: Vec
 /// Parts lues sur des clés USB pour une restauration (gardées ici, jamais
 /// envoyées à l'interface) : les clés peuvent être branchées l'une après l'autre.
 #[derive(Default)]
-struct UsbRestoreState(std::sync::Mutex<Vec<(pgp_wallet_poc::usb_backup::ShareInfo, pgp_wallet_poc::usb_backup::ShareFiles)>>);
+struct UsbRestoreState(std::sync::Mutex<Vec<(openpgp_wallet_core::usb_backup::ShareInfo, openpgp_wallet_core::usb_backup::ShareFiles)>>);
 
 /// Lit toutes les parts de la clé USB `root` (de tous les portefeuilles
 /// qu'elle porte) pour une restauration à venir ; renvoie celles lues (kit,
 /// numéro, nom — aucun secret).
 #[tauri::command]
-async fn usb_restore_load(root: String, app: tauri::AppHandle) -> Result<Vec<pgp_wallet_poc::usb_backup::ShareInfo>, String> {
+async fn usb_restore_load(root: String, app: tauri::AppHandle) -> Result<Vec<openpgp_wallet_core::usb_backup::ShareInfo>, String> {
     run_blocking(move || {
-        let drive_shares = pgp_wallet_poc::usb_backup::removable_drives()
+        let drive_shares = openpgp_wallet_core::usb_backup::removable_drives()
             .into_iter()
             .find(|d| d.root.to_string_lossy().eq_ignore_ascii_case(root.trim()))
             .map(|d| d.shares)
             .ok_or_else(|| translate_error("clé USB introuvable : branchez-la puis réessayez"))?;
         let mut read = Vec::with_capacity(drive_shares.len());
         for info in drive_shares {
-            read.push(pgp_wallet_poc::usb_backup::read_share(&root, &info.kit, info.part).t_err()?);
+            read.push(openpgp_wallet_core::usb_backup::read_share(&root, &info.kit, info.part).t_err()?);
         }
         let state = app.state::<UsbRestoreState>();
         let mut loaded = state.0.lock().unwrap_or_else(|p| p.into_inner());
@@ -2706,10 +2706,10 @@ async fn usb_restore_load(root: String, app: tauri::AppHandle) -> Result<Vec<pgp
 /// la clé USB `root` (clé détectée seulement), sans rien écrire ni restaurer ;
 /// renvoie l'état de chacune (kit, numéro, nom, problème — aucun secret).
 #[tauri::command]
-async fn check_usb_backup(root: String, app: tauri::AppHandle) -> Result<Vec<pgp_wallet_poc::usb_backup::ShareCheck>, String> {
+async fn check_usb_backup(root: String, app: tauri::AppHandle) -> Result<Vec<openpgp_wallet_core::usb_backup::ShareCheck>, String> {
     run_blocking(move || {
         let dir = data_dir(&app)?;
-        pgp_wallet_poc::usb_backup::check_drive(&root, |files| {
+        openpgp_wallet_core::usb_backup::check_drive(&root, |files| {
             api::verify_backup_share(&dir, &files.encrypted_share, &files.privkey_armored, &files.passphrase)
         })
         .t_err()
@@ -2732,7 +2732,7 @@ async fn restore_wallet_from_usb(new_password: String, kit: Option<String>, app:
 }
 
 /// Kits dont au moins deux parts différentes ont été lues, dans l'ordre de lecture.
-fn complete_kits(loaded: &[(pgp_wallet_poc::usb_backup::ShareInfo, pgp_wallet_poc::usb_backup::ShareFiles)]) -> Vec<String> {
+fn complete_kits(loaded: &[(openpgp_wallet_core::usb_backup::ShareInfo, openpgp_wallet_core::usb_backup::ShareFiles)]) -> Vec<String> {
     let mut kits: Vec<String> = Vec::new();
     for (a, _) in loaded {
         if !kits.contains(&a.kit) && loaded.iter().any(|(b, _)| b.kit == a.kit && b.part != a.part) {
@@ -2934,24 +2934,24 @@ async fn get_balance(network: String, address: String, app: tauri::AppHandle) ->
                 let lamports = api::get_sol_balance(&address, net).t_err()?;
                 Ok(format!("{:.9}", lamports as f64 / 1e9))
             }
-            "zec_mainnet" => Ok(pgp_wallet_poc::zcash::format_zec(api::get_zec_balance(&address).t_err()?)),
-            "doge_mainnet" => Ok(pgp_wallet_poc::doge::format_doge(api::get_doge_balance(&address).t_err()?)),
-            "tron_mainnet" => Ok(pgp_wallet_poc::tron::format_trx(api::get_trx_balance(&address).t_err()?)),
-            "xrp_mainnet" => Ok(pgp_wallet_poc::xrp::format_xrp(api::get_xrp_balance(&address).t_err()?)),
-            "xlm_mainnet" => Ok(pgp_wallet_poc::stellar::format_xlm(api::get_xlm_balance(&address).t_err()?)),
-            "near_mainnet" => Ok(pgp_wallet_poc::near::format_near(api::get_near_balance(&address).t_err()?)),
-            "ada_mainnet" => Ok(pgp_wallet_poc::cardano::format_ada(api::get_ada_balance(&address).t_err()?)),
-            "stx_mainnet" => Ok(pgp_wallet_poc::stacks::format_stx(api::get_stx_balance(&address).t_err()?)),
-            "tao_mainnet" => Ok(pgp_wallet_poc::bittensor::format_tao(api::get_tao_balance(&address).t_err()?)),
+            "zec_mainnet" => Ok(openpgp_wallet_core::zcash::format_zec(api::get_zec_balance(&address).t_err()?)),
+            "doge_mainnet" => Ok(openpgp_wallet_core::doge::format_doge(api::get_doge_balance(&address).t_err()?)),
+            "tron_mainnet" => Ok(openpgp_wallet_core::tron::format_trx(api::get_trx_balance(&address).t_err()?)),
+            "xrp_mainnet" => Ok(openpgp_wallet_core::xrp::format_xrp(api::get_xrp_balance(&address).t_err()?)),
+            "xlm_mainnet" => Ok(openpgp_wallet_core::stellar::format_xlm(api::get_xlm_balance(&address).t_err()?)),
+            "near_mainnet" => Ok(openpgp_wallet_core::near::format_near(api::get_near_balance(&address).t_err()?)),
+            "ada_mainnet" => Ok(openpgp_wallet_core::cardano::format_ada(api::get_ada_balance(&address).t_err()?)),
+            "stx_mainnet" => Ok(openpgp_wallet_core::stacks::format_stx(api::get_stx_balance(&address).t_err()?)),
+            "tao_mainnet" => Ok(openpgp_wallet_core::bittensor::format_tao(api::get_tao_balance(&address).t_err()?)),
             // Base locale (synchronisation de fond) : dépensable + en attente.
             "zec_shielded" => {
                 let balance = api::zec_shielded_balance(&data_dir(&app)?, shielded_profile(&app, &address)?).t_err()?;
-                Ok(pgp_wallet_poc::zcash::format_zec(balance.spendable.saturating_add(balance.pending)))
+                Ok(openpgp_wallet_core::zcash::format_zec(balance.spendable.saturating_add(balance.pending)))
             }
             // État local (synchronisation de fond) : dépensable + bloqué.
             "xmr_mainnet" => {
                 let balance = api::xmr_balance(&data_dir(&app)?, monero_profile(&app, &address)?).t_err()?;
-                Ok(pgp_wallet_poc::monero::format_xmr(balance.unlocked.saturating_add(balance.locked)))
+                Ok(openpgp_wallet_core::monero::format_xmr(balance.unlocked.saturating_add(balance.locked)))
             }
             other => Err(translate_error(&format!("réseau inconnu : {other}"))),
         }
@@ -3001,7 +3001,7 @@ struct WatchTargetDto {
 
 /// Surveillance en direct des soldes des cartes affichées.
 #[derive(Default)]
-struct BalanceWatchState(std::sync::Mutex<Option<pgp_wallet_poc::balance_watch::BalanceWatch>>);
+struct BalanceWatchState(std::sync::Mutex<Option<openpgp_wallet_core::balance_watch::BalanceWatch>>);
 
 /// Remplace la surveillance en direct des soldes (voir
 /// `core/src/balance_watch.rs`) : à chaque changement, l'événement
@@ -3014,14 +3014,14 @@ fn watch_balances(targets: Vec<WatchTargetDto>, app: tauri::AppHandle, state: ta
     if targets.is_empty() {
         return Ok(());
     }
-    let notify: pgp_wallet_poc::balance_watch::Notify = std::sync::Arc::new(move |id: &str| {
+    let notify: openpgp_wallet_core::balance_watch::Notify = std::sync::Arc::new(move |id: &str| {
         let _ = app.emit("balance-changed", id);
     });
     let targets = targets
         .into_iter()
-        .map(|t| pgp_wallet_poc::balance_watch::Target { id: t.id, network: t.network, address: t.address, token: t.token })
+        .map(|t| openpgp_wallet_core::balance_watch::Target { id: t.id, network: t.network, address: t.address, token: t.token })
         .collect();
-    *current = Some(pgp_wallet_poc::balance_watch::start(targets, notify).t_err()?);
+    *current = Some(openpgp_wallet_core::balance_watch::start(targets, notify).t_err()?);
     Ok(())
 }
 
@@ -3203,11 +3203,11 @@ impl HistoryDto {
             return Ok(Self { entries: Vec::new(), explorer_url: Some(explorer_url), reason: None });
         }
         match read() {
-            Err(e) if e == translate_error(pgp_wallet_poc::nodereal::LIMITED) || e == translate_error(pgp_wallet_poc::blockscout::BLOCKSCOUT_LIMITED) => {
+            Err(e) if e == translate_error(openpgp_wallet_core::nodereal::LIMITED) || e == translate_error(openpgp_wallet_core::blockscout::BLOCKSCOUT_LIMITED) => {
                 Ok(Self { entries: Vec::new(), explorer_url: Some(explorer_url), reason: Some("limited") })
             }
             // Explorateur bloqué sans clé utilisable : sa page, sans erreur.
-            Err(e) if e == translate_error(pgp_wallet_poc::blockscout::BLOCKSCOUT_BLOCKED) => Ok(Self { entries: Vec::new(), explorer_url: Some(explorer_url), reason: None }),
+            Err(e) if e == translate_error(openpgp_wallet_core::blockscout::BLOCKSCOUT_BLOCKED) => Ok(Self { entries: Vec::new(), explorer_url: Some(explorer_url), reason: None }),
             entries => Self::read(entries),
         }
     }
@@ -3266,60 +3266,60 @@ async fn get_tx_history(network: String, address: String, app: tauri::AppHandle)
             |id| format!("https://blockchair.com/zcash/transaction/{id}"),
         )),
         "doge_mainnet" => HistoryDto::read(history_dtos(
-            || pgp_wallet_poc::doge::history(&address, HISTORY_LIMIT as usize),
+            || openpgp_wallet_core::doge::history(&address, HISTORY_LIMIT as usize),
             Some(price_history::Asset::Pair("DOGEUSDT")),
             8,
             |id| format!("https://blockchair.com/dogecoin/transaction/{id}"),
         )),
         "tron_mainnet" => HistoryDto::read(history_dtos(
-            || pgp_wallet_poc::tron::history(&address, HISTORY_LIMIT as usize),
+            || openpgp_wallet_core::tron::history(&address, HISTORY_LIMIT as usize),
             Some(price_history::Asset::Pair("TRXUSDT")),
             6,
             |id| format!("https://tronscan.org/#/transaction/{id}"),
         )),
         "xrp_mainnet" => HistoryDto::read(history_dtos(
-            || pgp_wallet_poc::xrp::history(&pgp_wallet_poc::xrp::MAINNET, &address, HISTORY_LIMIT as usize),
+            || openpgp_wallet_core::xrp::history(&openpgp_wallet_core::xrp::MAINNET, &address, HISTORY_LIMIT as usize),
             Some(price_history::Asset::Pair("XRPUSDT")),
             6,
             |id| format!("https://livenet.xrpl.org/transactions/{id}"),
         )),
         "xlm_mainnet" => HistoryDto::read(history_dtos(
-            || pgp_wallet_poc::stellar::history(&pgp_wallet_poc::stellar::MAINNET, &address, HISTORY_LIMIT as usize),
+            || openpgp_wallet_core::stellar::history(&openpgp_wallet_core::stellar::MAINNET, &address, HISTORY_LIMIT as usize),
             Some(price_history::Asset::Pair("XLMUSDT")),
             7,
             |id| format!("https://stellar.expert/explorer/public/tx/{id}"),
         )),
         "near_mainnet" => HistoryDto::read(history_dtos(
-            || pgp_wallet_poc::near::history(&pgp_wallet_poc::near::MAINNET, &address, HISTORY_LIMIT as usize),
+            || openpgp_wallet_core::near::history(&openpgp_wallet_core::near::MAINNET, &address, HISTORY_LIMIT as usize),
             Some(price_history::Asset::Pair("NEARUSDT")),
             24,
             |id| format!("https://nearblocks.io/txns/{id}"),
         )),
         "ada_mainnet" => HistoryDto::read(history_dtos(
-            || pgp_wallet_poc::cardano::history(&address, HISTORY_LIMIT as usize),
+            || openpgp_wallet_core::cardano::history(&address, HISTORY_LIMIT as usize),
             Some(price_history::Asset::Pair("ADAUSDT")),
             6,
             |id| format!("https://cardanoscan.io/transaction/{id}"),
         )),
         "stx_mainnet" => HistoryDto::read(history_dtos(
-            || pgp_wallet_poc::stacks::history(&pgp_wallet_poc::stacks::MAINNET, &address, HISTORY_LIMIT as usize),
+            || openpgp_wallet_core::stacks::history(&openpgp_wallet_core::stacks::MAINNET, &address, HISTORY_LIMIT as usize),
             Some(price_history::Asset::Pair("STXUSDT")),
             6,
             |id| format!("https://explorer.hiro.so/txid/0x{id}?chain=mainnet"),
         )),
         "tao_mainnet" => {
-            pgp_wallet_poc::bittensor::parse_address(&address).t_err()?;
-            let explorer = pgp_wallet_poc::bittensor::explorer_address_url(&address);
-            if !pgp_wallet_poc::bittensor::history_available() {
+            openpgp_wallet_core::bittensor::parse_address(&address).t_err()?;
+            let explorer = openpgp_wallet_core::bittensor::explorer_address_url(&address);
+            if !openpgp_wallet_core::bittensor::history_available() {
                 return Ok(HistoryDto { entries: Vec::new(), explorer_url: Some(explorer), reason: None });
             }
             match history_dtos(
-                || pgp_wallet_poc::bittensor::history(&address, HISTORY_LIMIT as usize),
+                || openpgp_wallet_core::bittensor::history(&address, HISTORY_LIMIT as usize),
                 Some(price_history::Asset::Pair("TAOUSDT")),
                 9,
-                pgp_wallet_poc::bittensor::explorer_tx_url,
+                openpgp_wallet_core::bittensor::explorer_tx_url,
             ) {
-                Err(e) if e == translate_error(pgp_wallet_poc::bittensor::HISTORY_LIMITED) => Ok(HistoryDto { entries: Vec::new(), explorer_url: Some(explorer), reason: Some("limited") }),
+                Err(e) if e == translate_error(openpgp_wallet_core::bittensor::HISTORY_LIMITED) => Ok(HistoryDto { entries: Vec::new(), explorer_url: Some(explorer), reason: Some("limited") }),
                 entries => HistoryDto::read(entries),
             }
         }
@@ -3346,11 +3346,11 @@ async fn get_tx_history(network: String, address: String, app: tauri::AppHandle)
 async fn get_token_tx_history(token: String, network: String, address: String) -> Result<HistoryDto, String> {
     run_blocking(move || {
         let (info, deployment) =
-            pgp_wallet_poc::tokens::find(&token, &network).ok_or_else(|| translate_error("jeton non pris en charge sur ce réseau"))?;
+            openpgp_wallet_core::tokens::find(&token, &network).ok_or_else(|| translate_error("jeton non pris en charge sur ce réseau"))?;
         let asset = price_history::price_asset(&info.symbol.to_ascii_uppercase());
         let decimals = i32::from(deployment.decimals);
         match deployment.kind {
-            pgp_wallet_poc::tokens::TokenKind::Erc20 { contract } => {
+            openpgp_wallet_core::tokens::TokenKind::Erc20 { contract } => {
                 let net = evm_network(&network)?;
                 api::validate_evm_recipient(&address).t_err()?;
                 HistoryDto::evm(net, net.explorer_address_url(&address, Some(contract)), || {
@@ -3365,14 +3365,14 @@ async fn get_token_tx_history(token: String, network: String, address: String) -
                     )
                 })
             }
-            pgp_wallet_poc::tokens::TokenKind::Trc20 { contract } => HistoryDto::read(history_dtos(
-                || pgp_wallet_poc::tron::trc20_history(&address, contract, HISTORY_LIMIT as usize),
+            openpgp_wallet_core::tokens::TokenKind::Trc20 { contract } => HistoryDto::read(history_dtos(
+                || openpgp_wallet_core::tron::trc20_history(&address, contract, HISTORY_LIMIT as usize),
                 asset,
                 decimals,
                 |id| format!("https://tronscan.org/#/transaction/{id}"),
             )),
             // xStocks compris : compte associé Token-2022, montants en unités affichées.
-            pgp_wallet_poc::tokens::TokenKind::Spl { .. } | pgp_wallet_poc::tokens::TokenKind::Spl2022 { .. } => {
+            openpgp_wallet_core::tokens::TokenKind::Spl { .. } | openpgp_wallet_core::tokens::TokenKind::Spl2022 { .. } => {
                 let net = sol_network(&network)?;
                 HistoryDto::read(history_dtos(
                     || api::get_registered_spl_tx_history(&token, &address, net, HISTORY_LIMIT),
@@ -3430,11 +3430,11 @@ struct PortfolioHistoryDto {
 #[tauri::command]
 async fn get_portfolio_history(holdings: Vec<HoldingDto>, range: String) -> Result<PortfolioHistoryDto, String> {
     run_blocking(move || {
-        let holdings: Vec<pgp_wallet_poc::portfolio::Holding> = holdings
+        let holdings: Vec<openpgp_wallet_core::portfolio::Holding> = holdings
             .into_iter()
-            .map(|h| pgp_wallet_poc::portfolio::Holding { network: h.network, address: h.address, token: h.token })
+            .map(|h| openpgp_wallet_core::portfolio::Holding { network: h.network, address: h.address, token: h.token })
             .collect();
-        let history = pgp_wallet_poc::portfolio::portfolio_history(&holdings, chart_range(&range)?).t_err()?;
+        let history = openpgp_wallet_core::portfolio::portfolio_history(&holdings, chart_range(&range)?).t_err()?;
         Ok(PortfolioHistoryDto {
             points: history.points,
             since: history.since,
@@ -3562,7 +3562,7 @@ fn dialog_address(value: &str) -> String {
         // 40 chiffres hexadécimaux ASCII vérifiés : découpage et lecture sûrs.
         *byte = u8::from_str_radix(&hex_part[2 * i..2 * i + 2], 16).unwrap_or_default();
     }
-    pgp_wallet_poc::derivation::format_address(&bytes)
+    openpgp_wallet_core::derivation::format_address(&bytes)
 }
 
 /// Adresse saisie : espaces de bord retirés, puis REFUS de tout caractère
@@ -3881,16 +3881,16 @@ fn known_recipients(app: &tauri::AppHandle, dir: &std::path::Path) -> Vec<(Strin
 }
 
 /// `to` presque identique à une adresse connue (voir
-/// `pgp_wallet_poc::recipient_check`) : laquelle, et la différence exacte.
+/// `openpgp_wallet_core::recipient_check`) : laquelle, et la différence exacte.
 fn near_miss_warning(app: &tauri::AppHandle, dir: &std::path::Path, to: &str) -> Option<String> {
     let known = known_recipients(app, dir);
-    let (address, difference) = pgp_wallet_poc::recipient_check::near_miss(known.iter().map(|(_, a)| a.as_str()), to)?;
+    let (address, difference) = openpgp_wallet_core::recipient_check::near_miss(known.iter().map(|(_, a)| a.as_str()), to)?;
     let who = &known.iter().find(|(_, a)| a == address)?.0;
     Some(near_miss_line(who, address, &difference))
 }
 
-fn near_miss_line(who: &str, known: &str, difference: &pgp_wallet_poc::recipient_check::Difference) -> String {
-    use pgp_wallet_poc::recipient_check::Difference;
+fn near_miss_line(who: &str, known: &str, difference: &openpgp_wallet_core::recipient_check::Difference) -> String {
+    use openpgp_wallet_core::recipient_check::Difference;
     let english = UI_LANG_IS_ENGLISH.load(Ordering::Relaxed);
     let chars: Vec<char> = known.trim().chars().collect();
     let short = if chars.len() > 14 {
@@ -3938,19 +3938,19 @@ async fn recipient_warnings(app: tauri::AppHandle, network: String, token: Optio
     run_blocking(move || {
         let dir = data_dir(&app)?;
         let to = canonical_address_input(&to)?;
-        let usdc_solana = token.as_deref() == Some("usdc") && pgp_wallet_poc::tokens::find("usdc", &network).is_none();
+        let usdc_solana = token.as_deref() == Some("usdc") && openpgp_wallet_core::tokens::find("usdc", &network).is_none();
         let network = if usdc_solana { "sol_mainnet".to_string() } else { network };
-        if pgp_wallet_poc::recipient_check::validate(&network, &to).is_err() {
+        if openpgp_wallet_core::recipient_check::validate(&network, &to).is_err() {
             return Ok(Vec::new());
         }
         let (coin, activity) = match token.as_deref() {
             Some(_) if usdc_solana => ("usdc", api::usdc_recipient_activity(&to, sol_network(&network)?).ok()),
             Some(token) => {
-                let (_, deployment) = pgp_wallet_poc::tokens::find(token, &network).ok_or_else(|| translate_error("jeton non pris en charge sur ce réseau"))?;
+                let (_, deployment) = openpgp_wallet_core::tokens::find(token, &network).ok_or_else(|| translate_error("jeton non pris en charge sur ce réseau"))?;
                 match deployment.kind {
-                    pgp_wallet_poc::tokens::TokenKind::Erc20 { .. } => ("evm", api::evm_recipient_activity(&to, evm_network(&network)?).ok()),
-                    pgp_wallet_poc::tokens::TokenKind::Trc20 { .. } => ("trx", api::trx_recipient_activity(&to).ok()),
-                    pgp_wallet_poc::tokens::TokenKind::Spl { .. } | pgp_wallet_poc::tokens::TokenKind::Spl2022 { .. } => ("sol", api::sol_recipient_activity(&to, sol_network(&network)?).ok()),
+                    openpgp_wallet_core::tokens::TokenKind::Erc20 { .. } => ("evm", api::evm_recipient_activity(&to, evm_network(&network)?).ok()),
+                    openpgp_wallet_core::tokens::TokenKind::Trc20 { .. } => ("trx", api::trx_recipient_activity(&to).ok()),
+                    openpgp_wallet_core::tokens::TokenKind::Spl { .. } | openpgp_wallet_core::tokens::TokenKind::Spl2022 { .. } => ("sol", api::sol_recipient_activity(&to, sol_network(&network)?).ok()),
                 }
             }
             None => {
@@ -4352,7 +4352,7 @@ async fn max_send_amount(network: String, token: Option<String>, profile_index: 
             "tao_mainnet" => api::tao_max(&cached(&app.state::<ProfileBittensorCache>().0)?, None).t_err(),
             "xmr_mainnet" => {
                 let keys = app.state::<MoneroKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).map(|(_, keys)| keys.clone()).ok_or_else(unknown)?;
-                Ok(pgp_wallet_poc::monero::format_xmr(api::xmr_send_plan_max(&dir, &keys, None).t_err()?.amount))
+                Ok(openpgp_wallet_core::monero::format_xmr(api::xmr_send_plan_max(&dir, &keys, None).t_err()?.amount))
             }
             "zec_shielded" => {
                 let address = app.state::<ShieldedKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).map(|(address, _)| address.clone()).ok_or_else(unknown)?;
@@ -4391,7 +4391,7 @@ struct ConfirmedSend {
     /// Frais Zcash affichés (plafond à l'envoi).
     zec_fee: Option<u64>,
     /// Envoi Monero préparé (sorties, leurres, frais) : signé tel qu'affiché.
-    xmr_plan: Option<pgp_wallet_poc::monero::SendPlan>,
+    xmr_plan: Option<openpgp_wallet_core::monero::SendPlan>,
     /// Frais Dogecoin affichés (plafond à l'envoi).
     doge_fee: Option<u64>,
     /// Frais Tron maximum affichés (plafond à l'envoi).
@@ -4422,7 +4422,7 @@ enum DestinationNote {
     StacksMemo(String),
 }
 
-use pgp_wallet_poc::stellar::Memo as StellarMemo;
+use openpgp_wallet_core::stellar::Memo as StellarMemo;
 
 impl DestinationNote {
     /// (libellé, valeur) du rappel pendant le délai d'annulation.
@@ -4468,7 +4468,7 @@ struct SendFrom<'a> {
     evm: Option<&'a str>,
     sol: Option<&'a str>,
     zec: Option<&'a str>,
-    xmr: Option<&'a pgp_wallet_poc::monero::ViewKeys>,
+    xmr: Option<&'a openpgp_wallet_core::monero::ViewKeys>,
     doge: Option<&'a str>,
     btc: Option<&'a str>,
     tron: Option<&'a str>,
@@ -4604,7 +4604,7 @@ fn confirm_send(
             "tao" => api::tao_max(from.bittensor.ok_or_else(unknown_profile)?, Some(&to)).t_err()?,
             _ => {
                 let plan = api::xmr_send_plan_max(dir, from.xmr.ok_or_else(unknown_profile)?, Some(&to)).t_err()?;
-                let amount = pgp_wallet_poc::monero::format_xmr(plan.amount);
+                let amount = openpgp_wallet_core::monero::format_xmr(plan.amount);
                 xmr_plan = Some(plan);
                 amount
             }
@@ -4729,12 +4729,12 @@ fn confirm_send(
     let fee_line = match coin {
         "btc" => {
             let fee_sat = fee_sat.ok_or_else(|| lang("frais Bitcoin manquants : choisissez une vitesse d'envoi", "Bitcoin fee missing: choose a sending speed").to_string())?;
-            Some(format!("{} : {} BTC", lang("Frais", "Fee"), pgp_wallet_poc::tokens::format_amount(u128::from(fee_sat), 8)))
+            Some(format!("{} : {} BTC", lang("Frais", "Fee"), openpgp_wallet_core::tokens::format_amount(u128::from(fee_sat), 8)))
         }
         "zec" => zec_plan.as_ref().map(|plan| {
-            let mut line = format!("{} : {} ZEC", lang("Frais", "Fee"), pgp_wallet_poc::zcash::format_zec(plan.fee));
+            let mut line = format!("{} : {} ZEC", lang("Frais", "Fee"), openpgp_wallet_core::zcash::format_zec(plan.fee));
             if plan.change > 0 {
-                let change = pgp_wallet_poc::zcash::format_zec(plan.change);
+                let change = openpgp_wallet_core::zcash::format_zec(plan.change);
                 line.push_str(lang(&format!("
 Monnaie rendue à votre adresse : {change} ZEC"), &format!("
 Change returned to your address: {change} ZEC")));
@@ -4742,15 +4742,15 @@ Change returned to your address: {change} ZEC")));
             line
         }),
         "doge" => doge_plan.as_ref().map(|plan| {
-            let mut line = format!("{} : {} DOGE", lang("Frais", "Fee"), pgp_wallet_poc::doge::format_doge(plan.fee));
+            let mut line = format!("{} : {} DOGE", lang("Frais", "Fee"), openpgp_wallet_core::doge::format_doge(plan.fee));
             if plan.change > 0 {
-                let change = pgp_wallet_poc::doge::format_doge(plan.change);
+                let change = openpgp_wallet_core::doge::format_doge(plan.change);
                 line.push_str(lang(&format!("\nMonnaie rendue à votre adresse : {change} DOGE"), &format!("\nChange returned to your address: {change} DOGE")));
             }
             line
         }),
         "trx" => trx_plan.map(|plan| {
-            let fee = pgp_wallet_poc::tron::format_trx(plan.fee_max);
+            let fee = openpgp_wallet_core::tron::format_trx(plan.fee_max);
             let mut line = lang(&format!("Frais : jusqu'à {fee} TRX"), &format!("Fee: up to {fee} TRX")).to_string();
             if plan.new_account {
                 line.push_str(lang(", dont 1,1 TRX d'activation du compte destinataire (encore jamais utilisé)", ", including 1.1 TRX to activate the recipient account (never used yet)"));
@@ -4758,7 +4758,7 @@ Change returned to your address: {change} ZEC")));
             line
         }),
         "xrp" => xrp_plan.map(|plan| {
-            let (fee, reserve) = (pgp_wallet_poc::xrp::format_xrp(plan.fee), pgp_wallet_poc::xrp::format_xrp(plan.reserve));
+            let (fee, reserve) = (openpgp_wallet_core::xrp::format_xrp(plan.fee), openpgp_wallet_core::xrp::format_xrp(plan.reserve));
             let mut line = lang(
                 &format!("Frais : {fee} XRP\nRéserve du réseau : {reserve} XRP restent bloqués sur votre compte"),
                 &format!("Fee: {fee} XRP\nNetwork reserve: {reserve} XRP stay locked on your account"),
@@ -4770,7 +4770,7 @@ Change returned to your address: {change} ZEC")));
             line
         }),
         "xlm" => xlm_plan.map(|plan| {
-            let (fee, reserve) = (pgp_wallet_poc::stellar::format_xlm(i64::from(plan.fee)), pgp_wallet_poc::stellar::format_xlm(plan.reserve));
+            let (fee, reserve) = (openpgp_wallet_core::stellar::format_xlm(i64::from(plan.fee)), openpgp_wallet_core::stellar::format_xlm(plan.reserve));
             let mut line = lang(
                 &format!("Frais : jusqu'à {fee} XLM (seul le nécessaire est prélevé)\nRéserve du réseau : {reserve} XLM restent bloqués sur votre compte"),
                 &format!("Fee: up to {fee} XLM (only what is needed is charged)\nNetwork reserve: {reserve} XLM stay locked on your account"),
@@ -4782,7 +4782,7 @@ Change returned to your address: {change} ZEC")));
             line
         }),
         "near" => near_plan.map(|plan| {
-            use pgp_wallet_poc::near::format_near_exact;
+            use openpgp_wallet_core::near::format_near_exact;
             let (actual, held, reserved) = (format_near_exact(plan.fee_actual), format_near_exact(plan.fee), format_near_exact(plan.reserved));
             let mut line = lang(
                 &format!("Frais : environ {actual} NEAR (jusqu'à {held} NEAR retenus le temps de l'exécution, le surplus revient en quelques secondes)\nStockage du compte : {reserved} NEAR restent réservés"),
@@ -4794,20 +4794,20 @@ Change returned to your address: {change} ZEC")));
             }
             line
         }),
-        "stx" => stx_plan.map(|plan| format!("{} : {} STX", lang("Frais", "Fee"), pgp_wallet_poc::stacks::format_stx(plan.fee))),
-        "tao" => tao_plan.as_ref().map(|plan| format!("{} : {} TAO", lang("Frais", "Fee"), pgp_wallet_poc::bittensor::format_tao(plan.fee))),
+        "stx" => stx_plan.map(|plan| format!("{} : {} STX", lang("Frais", "Fee"), openpgp_wallet_core::stacks::format_stx(plan.fee))),
+        "tao" => tao_plan.as_ref().map(|plan| format!("{} : {} TAO", lang("Frais", "Fee"), openpgp_wallet_core::bittensor::format_tao(plan.fee))),
         "ada" => ada_plan.as_ref().map(|plan| {
-            let mut line = format!("{} : {} ADA", lang("Frais", "Fee"), pgp_wallet_poc::cardano::format_ada(plan.fee));
+            let mut line = format!("{} : {} ADA", lang("Frais", "Fee"), openpgp_wallet_core::cardano::format_ada(plan.fee));
             if plan.change > 0 {
-                let change = pgp_wallet_poc::cardano::format_ada(plan.change);
+                let change = openpgp_wallet_core::cardano::format_ada(plan.change);
                 line.push_str(lang(&format!("\nMonnaie rendue à votre adresse : {change} ADA"), &format!("\nChange returned to your address: {change} ADA")));
             }
             line
         }),
         "xmr" => xmr_plan.as_ref().map(|plan| {
-            let mut line = format!("{} : {} XMR", lang("Frais", "Fee"), pgp_wallet_poc::monero::format_xmr(plan.fee));
+            let mut line = format!("{} : {} XMR", lang("Frais", "Fee"), openpgp_wallet_core::monero::format_xmr(plan.fee));
             if plan.change > 0 {
-                let change = pgp_wallet_poc::monero::format_xmr(plan.change);
+                let change = openpgp_wallet_core::monero::format_xmr(plan.change);
                 line.push_str(lang(
                     &format!("
 Monnaie rendue à votre adresse : {change} XMR (dépensable après 10 confirmations, ≈ 20 min)"),
@@ -5041,7 +5041,7 @@ async fn get_swap_quote(
     to_network: String,
     amount: String,
     destination: String,
-    protocol: pgp_wallet_poc::swap_routes::Protocol,
+    protocol: openpgp_wallet_core::swap_routes::Protocol,
 ) -> Result<SwapQuoteDto, String> {
     run_blocking(move || {
         let (protocol, from, to) = cross_chain_pair(&from_coin, &from_network, &to_coin, &to_network, protocol)?;
@@ -5057,15 +5057,15 @@ async fn get_swap_quote(
 }
 
 type CrossChainPair = (
-    &'static pgp_wallet_poc::thorchain_rpc::CrossChain,
-    &'static pgp_wallet_poc::thorchain_rpc::ThorAsset,
-    &'static pgp_wallet_poc::thorchain_rpc::ThorAsset,
+    &'static openpgp_wallet_core::thorchain_rpc::CrossChain,
+    &'static openpgp_wallet_core::thorchain_rpc::ThorAsset,
+    &'static openpgp_wallet_core::thorchain_rpc::ThorAsset,
 );
 
 /// Le fournisseur choisi dans l'interface relie-t-il directement ces deux
 /// cryptos (voir `swap_routes::direct_all`) ?
-fn provider_links(protocol: pgp_wallet_poc::swap_routes::Protocol, from_coin: &str, from_network: &str, to_coin: &str, to_network: &str) -> bool {
-    use pgp_wallet_poc::swap_routes;
+fn provider_links(protocol: openpgp_wallet_core::swap_routes::Protocol, from_coin: &str, from_network: &str, to_coin: &str, to_network: &str) -> bool {
+    use openpgp_wallet_core::swap_routes;
     swap_routes::find(from_coin, from_network)
         .zip(swap_routes::find(to_coin, to_network))
         .is_some_and(|(f, t)| swap_routes::direct_all(f, t).contains(&protocol))
@@ -5078,7 +5078,7 @@ fn cross_chain_pair(
     from_network: &str,
     to_coin: &str,
     to_network: &str,
-    protocol: pgp_wallet_poc::swap_routes::Protocol,
+    protocol: openpgp_wallet_core::swap_routes::Protocol,
 ) -> Result<CrossChainPair, String> {
     let protocol = protocol
         .cross_chain()
@@ -5173,16 +5173,16 @@ struct AdaStakeStatusDto {
 async fn cardano_stake_status(app: tauri::AppHandle, profile_index: u32) -> Result<AdaStakeStatusDto, String> {
     run_blocking(move || {
         let from = own_address_on(&app, "ada_mainnet", profile_index)?;
-        let account = pgp_wallet_poc::cardano::stake_account(&from).t_err()?;
+        let account = openpgp_wallet_core::cardano::stake_account(&from).t_err()?;
         Ok(AdaStakeStatusDto {
-            reward_address: pgp_wallet_poc::cardano::reward_address(&from).t_err()?,
+            reward_address: openpgp_wallet_core::cardano::reward_address(&from).t_err()?,
             registered: account.registered,
-            ticker: account.pool.as_deref().and_then(pgp_wallet_poc::cardano::pool_ticker),
+            ticker: account.pool.as_deref().and_then(openpgp_wallet_core::cardano::pool_ticker),
             pool: account.pool,
             voting: account.voting,
-            rewards: pgp_wallet_poc::cardano::format_ada(account.rewards),
+            rewards: openpgp_wallet_core::cardano::format_ada(account.rewards),
             rewards_lovelace: account.rewards,
-            deposit: pgp_wallet_poc::cardano::format_ada(account.deposit),
+            deposit: openpgp_wallet_core::cardano::format_ada(account.deposit),
         })
     })
     .await
@@ -5201,7 +5201,7 @@ struct AdaPoolDto {
 #[tauri::command]
 async fn cardano_pools() -> Result<Vec<AdaPoolDto>, String> {
     run_blocking(|| {
-        Ok(pgp_wallet_poc::cardano::pools()
+        Ok(openpgp_wallet_core::cardano::pools()
             .t_err()?
             .into_iter()
             .map(|p| AdaPoolDto { margin_percent: p.margin * 100.0, fixed_cost_ada: p.fixed_cost / 1_000_000, active_stake_ada: p.active_stake / 1_000_000, id: p.id, ticker: p.ticker })
@@ -5211,8 +5211,8 @@ async fn cardano_pools() -> Result<Vec<AdaPoolDto>, String> {
 }
 
 /// Boîte native d'une opération de mise en jeu Cardano.
-fn confirm_ada_stake_native(app: &tauri::AppHandle, from_label: &str, action: api::AdaStakeAction, plan: &pgp_wallet_poc::cardano::StakePlan, pool: Option<(&str, Option<&str>)>) -> bool {
-    use pgp_wallet_poc::cardano::format_ada;
+fn confirm_ada_stake_native(app: &tauri::AppHandle, from_label: &str, action: api::AdaStakeAction, plan: &openpgp_wallet_core::cardano::StakePlan, pool: Option<(&str, Option<&str>)>) -> bool {
+    use openpgp_wallet_core::cardano::format_ada;
     let from_label = dialog_label(from_label);
     let fee = format_ada(plan.fee);
     let pool_line = pool.map(|(id, ticker)| {
@@ -5343,9 +5343,9 @@ async fn cardano_stake(app: tauri::AppHandle, password: String, action: String, 
         };
         let pool = if action == api::AdaStakeAction::Delegate { pool } else { None };
         let from = own_address_on(&app, "ada_mainnet", profile_index)?;
-        let account = pgp_wallet_poc::cardano::stake_account(&from).t_err()?;
+        let account = openpgp_wallet_core::cardano::stake_account(&from).t_err()?;
         let plan = api::ada_stake_plan(&from, &account, action, pool.as_deref()).t_err()?;
-        let ticker = pool.as_deref().and_then(pgp_wallet_poc::cardano::pool_ticker);
+        let ticker = pool.as_deref().and_then(openpgp_wallet_core::cardano::pool_ticker);
         let from_label = api::list_profiles(&dir).into_iter().find(|p| p.index == profile_index).map(|p| p.label).unwrap_or_else(|| format!("profil #{profile_index}"));
         if !confirm_ada_stake_native(&app, &from_label, action, &plan, pool.as_deref().map(|id| (id, ticker.as_deref()))) {
             return Err(translate_error("Opération annulée (confirmation refusée)."));
@@ -5358,7 +5358,7 @@ async fn cardano_stake(app: tauri::AppHandle, password: String, action: String, 
         };
         let amount = match action {
             api::AdaStakeAction::Delegate => ticker.clone().or_else(|| pool.clone()).unwrap_or_default(),
-            _ => format!("{} ADA", pgp_wallet_poc::cardano::format_ada(plan.withdrawal)),
+            _ => format!("{} ADA", openpgp_wallet_core::cardano::format_ada(plan.withdrawal)),
         };
         grace_period(&app, "Opération annulée pendant le délai d'annulation.", GraceRecap::new(what, amount, from.clone()).on("ada_mainnet"))?;
         api::send_ada_stake(&dir, &password, action, pool.as_deref(), &plan, profile_index).t_err()
@@ -5370,7 +5370,7 @@ async fn cardano_stake(app: tauri::AppHandle, password: String, action: String, 
 #[derive(Serialize)]
 struct SolStakeAccountDto {
     address: String,
-    status: pgp_wallet_poc::sol_stake::StakeStatus,
+    status: openpgp_wallet_core::sol_stake::StakeStatus,
     amount: String,
     lamports: u64,
     validator: Option<String>,
@@ -5393,7 +5393,7 @@ struct SolStakeStatusDto {
 
 #[tauri::command]
 async fn sol_stake_status(app: tauri::AppHandle, profile_index: u32) -> Result<SolStakeStatusDto, String> {
-    use pgp_wallet_poc::sol_rpc::format_lamports;
+    use openpgp_wallet_core::sol_rpc::format_lamports;
     run_blocking(move || {
         let owner = own_address_on(&app, "sol_mainnet", profile_index)?;
         let view = api::sol_stake_overview(&owner).t_err()?;
@@ -5416,7 +5416,7 @@ async fn sol_stake_status(app: tauri::AppHandle, profile_index: u32) -> Result<S
                 .collect(),
             total: format_lamports(total_lamports),
             total_lamports,
-            epoch_ends_in: pgp_wallet_poc::sol_stake::duration_text(view.epoch.ends_in_secs),
+            epoch_ends_in: openpgp_wallet_core::sol_stake::duration_text(view.epoch.ends_in_secs),
             min_delegation: format_lamports(view.min_delegation),
             rent_reserve: format_lamports(view.rent_reserve),
         })
@@ -5437,7 +5437,7 @@ async fn sol_staked_total(app: tauri::AppHandle, profile_index: u32) -> Result<u
 
 /// Validateurs Solana proposés (voir `sol_stake::validators`).
 #[tauri::command]
-async fn sol_validators() -> Result<Vec<pgp_wallet_poc::sol_stake::Validator>, String> {
+async fn sol_validators() -> Result<Vec<openpgp_wallet_core::sol_stake::Validator>, String> {
     run_blocking(|| api::sol_validators().t_err()).await
 }
 
@@ -5452,9 +5452,9 @@ async fn sol_stake_max(app: tauri::AppHandle, profile_index: u32) -> Result<Stri
 }
 
 /// Boîte native d'une opération de staking natif Solana.
-fn confirm_sol_stake_native(app: &tauri::AppHandle, from_label: &str, plan: &pgp_wallet_poc::sol_stake::Plan, validator_name: Option<&str>, epoch_ends_in: &str) -> bool {
-    use pgp_wallet_poc::sol_rpc::format_lamports;
-    use pgp_wallet_poc::sol_stake::Action;
+fn confirm_sol_stake_native(app: &tauri::AppHandle, from_label: &str, plan: &openpgp_wallet_core::sol_stake::Plan, validator_name: Option<&str>, epoch_ends_in: &str) -> bool {
+    use openpgp_wallet_core::sol_rpc::format_lamports;
+    use openpgp_wallet_core::sol_stake::Action;
     let from_label = dialog_label(from_label);
     let fee = format_lamports(plan.fee);
     let amount = format_lamports(plan.lamports);
@@ -5577,7 +5577,7 @@ Confirm?"
 /// native), délai d'annulation, puis signée et diffusée.
 #[tauri::command]
 async fn sol_stake(app: tauri::AppHandle, password: String, action: String, amount: Option<String>, target: String, profile_index: u32) -> Result<String, String> {
-    use pgp_wallet_poc::sol_stake::Action;
+    use openpgp_wallet_core::sol_stake::Action;
     run_blocking(move || {
         let password = Zeroizing::new(password);
         let dir = data_dir(&app)?;
@@ -5593,10 +5593,10 @@ async fn sol_stake(app: tauri::AppHandle, password: String, action: String, amou
         // Nom du validateur et fin d'époque : affichage seulement.
         let view = if action == Action::Delegate { None } else { api::sol_stake_overview(&owner).ok() };
         let validator_name = match action {
-            Action::Delegate => plan.validator.as_deref().and_then(pgp_wallet_poc::sol_stake::validator_name),
+            Action::Delegate => plan.validator.as_deref().and_then(openpgp_wallet_core::sol_stake::validator_name),
             _ => view.as_ref().and_then(|v| v.accounts.iter().find(|a| a.address == plan.stake_account).and_then(|a| a.validator_name.clone())),
         };
-        let epoch_ends_in = view.map(|v| pgp_wallet_poc::sol_stake::duration_text(v.epoch.ends_in_secs)).unwrap_or_else(|| "2 j".into());
+        let epoch_ends_in = view.map(|v| openpgp_wallet_core::sol_stake::duration_text(v.epoch.ends_in_secs)).unwrap_or_else(|| "2 j".into());
         let from_label = api::list_profiles(&dir).into_iter().find(|p| p.index == profile_index).map(|p| p.label).unwrap_or_else(|| format!("profil #{profile_index}"));
         if !confirm_sol_stake_native(&app, &from_label, &plan, validator_name.as_deref(), &epoch_ends_in) {
             return Err(translate_error("Opération annulée (confirmation refusée)."));
@@ -5606,7 +5606,7 @@ async fn sol_stake(app: tauri::AppHandle, password: String, action: String, amou
             Action::Deactivate => lang("Arrêt du staking", "Stop staking"),
             Action::Withdraw => lang("Retrait du staking", "Staking withdrawal"),
         };
-        let amount_text = format!("{} SOL", pgp_wallet_poc::sol_rpc::format_lamports(plan.lamports));
+        let amount_text = format!("{} SOL", openpgp_wallet_core::sol_rpc::format_lamports(plan.lamports));
         grace_period(&app, "Opération annulée pendant le délai d'annulation.", GraceRecap::new(what, amount_text, plan.stake_account.clone()).on("sol_mainnet"))?;
         api::send_sol_stake(&dir, &password, action, amount.as_deref(), &target, &plan, profile_index).t_err()
     })
@@ -5616,20 +5616,20 @@ async fn sol_stake(app: tauri::AppHandle, password: String, action: String, amou
 /// Rendements annuels du staking liquide (JitoSOL, stETH), pour la note de
 /// « Convertir » (voir `core/src/staking.rs`).
 #[tauri::command]
-async fn staking_aprs() -> Result<pgp_wallet_poc::staking::Aprs, String> {
-    run_blocking(|| Ok(pgp_wallet_poc::staking::aprs())).await
+async fn staking_aprs() -> Result<openpgp_wallet_core::staking::Aprs, String> {
+    run_blocking(|| Ok(openpgp_wallet_core::staking::aprs())).await
 }
 
 /// Fournisseurs d'échange qui ne répondent pas en ce moment (messages rouges
 /// de la fenêtre « Convertir », voir `swap_health`).
 #[tauri::command]
-async fn swap_health() -> Result<Vec<pgp_wallet_poc::swap_health::Issue>, String> {
-    run_blocking(|| Ok(pgp_wallet_poc::swap_health::check())).await
+async fn swap_health() -> Result<Vec<openpgp_wallet_core::swap_health::Issue>, String> {
+    run_blocking(|| Ok(openpgp_wallet_core::swap_health::check())).await
 }
 
 #[tauri::command]
 async fn swap_halts() -> Result<SwapHaltsDto, String> {
-    use pgp_wallet_poc::thorchain_rpc::{CrossChain, MAYA, THORCHAIN};
+    use openpgp_wallet_core::thorchain_rpc::{CrossChain, MAYA, THORCHAIN};
     run_blocking(|| {
         let keys = |protocol: &CrossChain| -> Vec<String> {
             match protocol.halted_assets() {
@@ -5657,17 +5657,17 @@ struct SwapPairDto {
     to_coin: &'static str,
     to_network: &'static str,
     /// Protocole de la (première) étape.
-    protocol: pgp_wallet_poc::swap_routes::Protocol,
+    protocol: openpgp_wallet_core::swap_routes::Protocol,
     /// Paire directe : tous les fournisseurs possibles, le préféré d'abord
     /// (vide pour un échange en deux étapes).
-    protocols: Vec<pgp_wallet_poc::swap_routes::Protocol>,
+    protocols: Vec<openpgp_wallet_core::swap_routes::Protocol>,
     /// Frais d'affiliation de l'app pour chacun de `protocols` (points de
     /// base) : 0 depuis Bitcoin ou Zcash via THORChain ou Maya sans nom court.
     fees_bps: Vec<u32>,
     /// Échange en deux étapes : crypto intermédiaire et protocole de la
     /// seconde étape (`None` pour un échange direct).
-    via: Option<pgp_wallet_poc::swap_routes::SwapAsset>,
-    then_protocol: Option<pgp_wallet_poc::swap_routes::Protocol>,
+    via: Option<openpgp_wallet_core::swap_routes::SwapAsset>,
+    then_protocol: Option<openpgp_wallet_core::swap_routes::Protocol>,
 }
 
 /// Paires d'échange possibles, directes ou en deux étapes (voir
@@ -5681,17 +5681,17 @@ async fn swap_pairs() -> Vec<SwapPairDto> {
 }
 
 fn swap_pair_dtos() -> Vec<SwapPairDto> {
-    pgp_wallet_poc::swap_routes::routes()
+    openpgp_wallet_core::swap_routes::routes()
         .into_iter()
         .map(|(from, to, route)| {
-            let protocols = if route.via.is_none() { pgp_wallet_poc::swap_routes::direct_all(from, to) } else { Vec::new() };
+            let protocols = if route.via.is_none() { openpgp_wallet_core::swap_routes::direct_all(from, to) } else { Vec::new() };
             SwapPairDto {
                 from_coin: from.coin,
                 from_network: from.network,
                 to_coin: to.coin,
                 to_network: to.network,
                 protocol: route.first,
-                fees_bps: protocols.iter().map(|p| pgp_wallet_poc::swap_routes::affiliate_fee_bps(*p, from, to)).collect(),
+                fees_bps: protocols.iter().map(|p| openpgp_wallet_core::swap_routes::affiliate_fee_bps(*p, from, to)).collect(),
                 protocols,
                 via: route.via.map(|(via, _)| via),
                 then_protocol: route.via.map(|(_, second)| second),
@@ -5798,7 +5798,7 @@ async fn swap_transaction(
     to_network: String,
     amount: String,
     destination: String,
-    protocol: pgp_wallet_poc::swap_routes::Protocol,
+    protocol: openpgp_wallet_core::swap_routes::Protocol,
     profile_index: u32,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
@@ -5859,7 +5859,7 @@ async fn swap_transaction(
                     .ok_or_else(|| translate_error("adresse du profil inconnue — déverrouillez le portefeuille"))?;
                 let plan = api::zec_swap_plan(&from_zec, &quote, &amount).t_err()?;
                 zec_fee = Some(plan.fee);
-                let fee = pgp_wallet_poc::zcash::format_zec(plan.fee);
+                let fee = openpgp_wallet_core::zcash::format_zec(plan.fee);
                 Some(lang(&format!("Frais réseau Zcash : au plus {fee} ZEC"), &format!("Zcash network fee: at most {fee} ZEC")).to_string())
             }
             _ => Some(
@@ -5934,9 +5934,9 @@ fn swapkit_pair(
     from_network: &str,
     to_coin: &str,
     to_network: &str,
-) -> Result<(&'static pgp_wallet_poc::swapkit::Asset, &'static pgp_wallet_poc::swapkit::Asset), String> {
-    use pgp_wallet_poc::swapkit;
-    if !provider_links(pgp_wallet_poc::swap_routes::Protocol::Swapkit, from_coin, from_network, to_coin, to_network) {
+) -> Result<(&'static openpgp_wallet_core::swapkit::Asset, &'static openpgp_wallet_core::swapkit::Asset), String> {
+    use openpgp_wallet_core::swapkit;
+    if !provider_links(openpgp_wallet_core::swap_routes::Protocol::Swapkit, from_coin, from_network, to_coin, to_network) {
         return Err(translate_error("échange non disponible entre ces deux cryptos"));
     }
     swapkit::find(from_coin, from_network).zip(swapkit::find(to_coin, to_network)).ok_or_else(|| translate_error("échange non disponible entre ces deux cryptos"))
@@ -5986,19 +5986,19 @@ async fn get_swapkit_quote(
 ) -> Result<SwapkitQuoteDto, String> {
     run_blocking(move || {
         let (from, to) = swapkit_pair(&from_coin, &from_network, &to_coin, &to_network)?;
-        let units = pgp_wallet_poc::tokens::parse_amount(&amount, from.decimals).t_err()?;
+        let units = openpgp_wallet_core::tokens::parse_amount(&amount, from.decimals).t_err()?;
         let destination = canonical_address_input(&destination)?;
         let source = own_address_on(&app, from.network, profile_index)?;
-        let routes = pgp_wallet_poc::swapkit::quote(from, to, units, &source, &destination).t_err()?;
+        let routes = openpgp_wallet_core::swapkit::quote(from, to, units, &source, &destination).t_err()?;
         let best = &routes[0];
         Ok(SwapkitQuoteDto {
             provider: best.provider.name(),
             // 8 décimales au plus, TRONQUÉES : le minimum affiché ne dépasse
             // jamais le minimum garanti (NEAR : 24 décimales sur la chaîne).
-            expected_out: pgp_wallet_poc::tokens::format_balance(best.expected_out, to.decimals, 8),
-            min_out: pgp_wallet_poc::tokens::format_balance(best.min_out, to.decimals, 8),
+            expected_out: openpgp_wallet_core::tokens::format_balance(best.expected_out, to.decimals, 8),
+            min_out: openpgp_wallet_core::tokens::format_balance(best.min_out, to.decimals, 8),
             duration_secs: best.total_secs,
-            fee_bps: pgp_wallet_poc::swapkit::SERVICE_FEE_BPS + pgp_wallet_poc::swapkit::AFFILIATE_FEE_BPS,
+            fee_bps: openpgp_wallet_core::swapkit::SERVICE_FEE_BPS + openpgp_wallet_core::swapkit::AFFILIATE_FEE_BPS,
         })
     })
     .await
@@ -6022,7 +6022,7 @@ enum DepositSend {
 
 /// `xrp_tag` : tag de destination d'un dépôt XRP (MoonPay Trade).
 fn prepare_deposit(coin: &str, network: &str, source: &str, deposit: &str, amount: &str, xrp_tag: Option<u32>) -> Result<(DepositSend, String), String> {
-    let native = pgp_wallet_poc::tokens::find(coin, network).is_none();
+    let native = openpgp_wallet_core::tokens::find(coin, network).is_none();
     match network {
         n if is_evm(n) => {
             let net = evm_network(n)?;
@@ -6046,7 +6046,7 @@ fn prepare_deposit(coin: &str, network: &str, source: &str, deposit: &str, amoun
                 Ok((DepositSend::Sol, lang("Frais réseau : 0,000005 SOL", "Network fee: 0.000005 SOL").to_string()))
             } else {
                 api::ensure_token_funds(coin, "sol_mainnet", source, amount).t_err()?;
-                let mint = if coin == "usdc" { Ok(pgp_wallet_poc::sol_spl::usdc_mint_mainnet()) } else { api::registered_spl_mint(coin) };
+                let mint = if coin == "usdc" { Ok(openpgp_wallet_core::sol_spl::usdc_mint_mainnet()) } else { api::registered_spl_mint(coin) };
                 let rent = mint.ok().and_then(|mint| api::spl_ata_rent_lamports_if_missing(deposit, &mint, net).ok().flatten());
                 let line = match rent {
                     Some(lamports) => {
@@ -6067,19 +6067,19 @@ fn prepare_deposit(coin: &str, network: &str, source: &str, deposit: &str, amoun
             api::check_btc_recipient(net, deposit, amount).t_err()?;
             let fee_sat = api::estimate_btc_fees(source, net).t_err()?.medium_sat;
             api::ensure_btc_transfer_funds(net, source, amount, fee_sat).t_err()?;
-            Ok((DepositSend::Btc(fee_sat), format!("{} : {} BTC", lang("Frais réseau", "Network fee"), pgp_wallet_poc::tokens::format_amount(u128::from(fee_sat), 8))))
+            Ok((DepositSend::Btc(fee_sat), format!("{} : {} BTC", lang("Frais réseau", "Network fee"), openpgp_wallet_core::tokens::format_amount(u128::from(fee_sat), 8))))
         }
         "doge_mainnet" => {
             let plan = api::doge_send_plan(source, deposit, amount).t_err()?;
-            Ok((DepositSend::Doge(plan.fee), format!("{} : {} DOGE", lang("Frais réseau", "Network fee"), pgp_wallet_poc::doge::format_doge(plan.fee))))
+            Ok((DepositSend::Doge(plan.fee), format!("{} : {} DOGE", lang("Frais réseau", "Network fee"), openpgp_wallet_core::doge::format_doge(plan.fee))))
         }
         "zec_mainnet" => {
             let plan = api::zec_send_plan(source, deposit, amount).t_err()?;
-            Ok((DepositSend::Zec(plan.fee), format!("{} : {} ZEC", lang("Frais réseau", "Network fee"), pgp_wallet_poc::zcash::format_zec(plan.fee))))
+            Ok((DepositSend::Zec(plan.fee), format!("{} : {} ZEC", lang("Frais réseau", "Network fee"), openpgp_wallet_core::zcash::format_zec(plan.fee))))
         }
         "tron_mainnet" => {
             let plan = api::trx_send_plan(source, deposit, amount).t_err()?;
-            let fee = pgp_wallet_poc::tron::format_trx(plan.fee_max);
+            let fee = openpgp_wallet_core::tron::format_trx(plan.fee_max);
             Ok((DepositSend::Trx(plan.fee_max), lang(&format!("Frais réseau : jusqu'à {fee} TRX"), &format!("Network fee: up to {fee} TRX")).to_string()))
         }
         // Adresse de dépôt r…, avec le tag du fournisseur s'il en donne un ;
@@ -6087,18 +6087,18 @@ fn prepare_deposit(coin: &str, network: &str, source: &str, deposit: &str, amoun
         // (drapeau du compte relu).
         "xrp_mainnet" => {
             let plan = api::xrp_send_plan(source, deposit, amount, xrp_tag).t_err()?;
-            let fee = pgp_wallet_poc::xrp::format_xrp(plan.fee);
+            let fee = openpgp_wallet_core::xrp::format_xrp(plan.fee);
             Ok((DepositSend::Xrp(plan.fee), lang(&format!("Frais réseau : {fee} XRP"), &format!("Network fee: {fee} XRP")).to_string()))
         }
         // Adresse de dépôt à clé de paiement (un contrat serait refusé).
         "ada_mainnet" => {
             let plan = api::ada_send_plan(source, deposit, amount).t_err()?;
-            Ok((DepositSend::Ada(plan.fee), format!("{} : {} ADA", lang("Frais réseau", "Network fee"), pgp_wallet_poc::cardano::format_ada(plan.fee))))
+            Ok((DepositSend::Ada(plan.fee), format!("{} : {} ADA", lang("Frais réseau", "Network fee"), openpgp_wallet_core::cardano::format_ada(plan.fee))))
         }
         // Simple virement vers le compte implicite de dépôt.
         "near_mainnet" => {
             let plan = api::near_send_plan(source, deposit, amount).t_err()?;
-            let (actual, held) = (pgp_wallet_poc::near::format_near_exact(plan.fee_actual), pgp_wallet_poc::near::format_near_exact(plan.fee));
+            let (actual, held) = (openpgp_wallet_core::near::format_near_exact(plan.fee_actual), openpgp_wallet_core::near::format_near_exact(plan.fee));
             Ok((
                 DepositSend::Near(plan.fee),
                 lang(&format!("Frais réseau : environ {actual} NEAR (jusqu'à {held} NEAR retenus un instant)"), &format!("Network fee: about {actual} NEAR (up to {held} NEAR held briefly)")).to_string(),
@@ -6161,7 +6161,7 @@ fn confirm_swapkit_native(
         (None, true) => format!("Funds will arrive at: {destination}\n(verify this is really your own address)"),
         (None, false) => format!("Les fonds arriveront sur : {destination}\n(vérifiez qu'il s'agit bien de votre propre adresse)"),
     };
-    let fee_percent = format!("{:.2}", f64::from(pgp_wallet_poc::swapkit::SERVICE_FEE_BPS + pgp_wallet_poc::swapkit::AFFILIATE_FEE_BPS) / 100.0);
+    let fee_percent = format!("{:.2}", f64::from(openpgp_wallet_core::swapkit::SERVICE_FEE_BPS + openpgp_wallet_core::swapkit::AFFILIATE_FEE_BPS) / 100.0);
     let message = if english {
         format!(
             "Swap via {provider} (through SwapKit — external protocols, not audited by this app)\n\nFrom profile: {from_label}\nSending: {amount_line}\nExpected to receive: ~{expected_line}\nGuaranteed minimum: {min_line} (confirmed by {provider} itself)\nDeposit to: {deposit} ({provider} deposit address, valid ~{minutes_left} min)\n{arrival}\nRefund if the swap fails: {refund}\n{fee_line}\nSwapKit fee {fee_percent}%; {provider}'s own fees are included in the amount received.\nThis is irreversible.\n\nConfirm this swap?"
@@ -6183,7 +6183,7 @@ fn confirm_swapkit_native(
 #[derive(Serialize)]
 struct SwapkitSentDto {
     tx_hash: String,
-    provider: pgp_wallet_poc::swapkit::Provider,
+    provider: openpgp_wallet_core::swapkit::Provider,
     provider_name: &'static str,
     channel_id: String,
     deposit_address: String,
@@ -6193,8 +6193,8 @@ struct SwapkitSentDto {
 /// « completed », « refunded », « failed », « unknown »), suivie par
 /// l'interface après le dépôt.
 #[tauri::command]
-async fn swapkit_status(provider: pgp_wallet_poc::swapkit::Provider, channel_id: String, deposit_address: String) -> Result<pgp_wallet_poc::swapkit::SwapState, String> {
-    run_blocking(move || pgp_wallet_poc::swapkit::status(provider, &channel_id, &deposit_address).t_err()).await
+async fn swapkit_status(provider: openpgp_wallet_core::swapkit::Provider, channel_id: String, deposit_address: String) -> Result<openpgp_wallet_core::swapkit::SwapState, String> {
+    run_blocking(move || openpgp_wallet_core::swapkit::status(provider, &channel_id, &deposit_address).t_err()).await
 }
 
 /// Échange via SwapKit : devis, dépôt ouvert puis CONFIRMÉ par le fournisseur,
@@ -6212,7 +6212,7 @@ async fn swapkit_swap_transaction(
     profile_index: u32,
     app: tauri::AppHandle,
 ) -> Result<SwapkitSentDto, String> {
-    use pgp_wallet_poc::{swapkit, tokens};
+    use openpgp_wallet_core::{swapkit, tokens};
     run_blocking(move || {
         let password = Zeroizing::new(password);
         let dir = data_dir(&app)?;
@@ -6283,8 +6283,8 @@ fn moonpay_pair(
     from_network: &str,
     to_coin: &str,
     to_network: &str,
-) -> Result<(pgp_wallet_poc::moonpay_trade::Asset, pgp_wallet_poc::moonpay_trade::Asset), String> {
-    if !provider_links(pgp_wallet_poc::swap_routes::Protocol::Moonpay, from_coin, from_network, to_coin, to_network) {
+) -> Result<(openpgp_wallet_core::moonpay_trade::Asset, openpgp_wallet_core::moonpay_trade::Asset), String> {
+    if !provider_links(openpgp_wallet_core::swap_routes::Protocol::Moonpay, from_coin, from_network, to_coin, to_network) {
         return Err(translate_error("échange non disponible entre ces deux cryptos"));
     }
     api::moonpay_assets(from_coin, from_network, to_coin, to_network).t_err()
@@ -6292,8 +6292,8 @@ fn moonpay_pair(
 
 /// Destinataire d'un échange MoonPay Trade : l'adresse du profil sur un même
 /// réseau EVM (même portefeuille), sinon celle saisie.
-fn moonpay_destination(from: &pgp_wallet_poc::moonpay_trade::Asset, to: &pgp_wallet_poc::moonpay_trade::Asset, source: &str, destination: &str) -> Result<String, String> {
-    if pgp_wallet_poc::moonpay_trade::verifiable((from.coin, from.network), (to.coin, to.network)) {
+fn moonpay_destination(from: &openpgp_wallet_core::moonpay_trade::Asset, to: &openpgp_wallet_core::moonpay_trade::Asset, source: &str, destination: &str) -> Result<String, String> {
+    if openpgp_wallet_core::moonpay_trade::verifiable((from.coin, from.network), (to.coin, to.network)) {
         Ok(source.to_string())
     } else {
         canonical_address_input(destination)
@@ -6373,7 +6373,7 @@ fn evm_native_coin(network: &wallet_flow::EvmNetwork) -> &'static str {
 /// réseaux de test).
 #[tauri::command]
 async fn estimate_send_fee(network: String, token: Option<String>, to: String, amount: String, profile_index: u32, app: tauri::AppHandle) -> Result<Option<FeeEstimateDto>, String> {
-    use pgp_wallet_poc::tokens::format_amount;
+    use openpgp_wallet_core::tokens::format_amount;
     run_blocking(move || {
         let to = canonical_address_input(&to)?;
         let estimate = |units: u128, decimals: u8, symbol: &'static str, coin: &'static str, up_to: bool| Some(FeeEstimateDto { amount: format_amount(units, decimals), symbol, coin, up_to });
@@ -6422,7 +6422,7 @@ async fn estimate_send_fee(network: String, token: Option<String>, to: String, a
                 None
             }
             ("xmr_mainnet", None) => {
-                pgp_wallet_poc::monero::parse_recipient(&to).t_err()?;
+                openpgp_wallet_core::monero::parse_recipient(&to).t_err()?;
                 None
             }
             _ => None,
@@ -6455,7 +6455,7 @@ async fn get_moonpay_quote(
     profile_index: u32,
     app: tauri::AppHandle,
 ) -> Result<MoonpayQuoteDto, String> {
-    use pgp_wallet_poc::{moonpay_trade, tokens};
+    use openpgp_wallet_core::{moonpay_trade, tokens};
     run_blocking(move || {
         let (from, to) = moonpay_pair(&from_coin, &from_network, &to_coin, &to_network)?;
         let source = own_address_on(&app, from.network, profile_index)?;
@@ -6493,7 +6493,7 @@ fn confirm_moonpay_native(
     let from_label = dialog_label(from_label);
     let english = UI_LANG_IS_ENGLISH.load(Ordering::Relaxed);
     let percent = |bps: u32| format!("{:.2}", f64::from(bps) / 100.0);
-    let (fee, moonpay_fee) = (percent(pgp_wallet_poc::moonpay_trade::FEE_BPS), percent(protocol_fee_bps));
+    let (fee, moonpay_fee) = (percent(openpgp_wallet_core::moonpay_trade::FEE_BPS), percent(protocol_fee_bps));
     let message = match (deposit, english) {
         (None, false) => format!(
             "Échange via MoonPay Trade (protocole externe, non audité par cette app)\n\nDepuis le profil : {from_label}\nEnvoi : {sell_line}\nRéception attendue : ~{expected_line}\nMinimum garanti : {min_line}\nVérifié par simulation : ce qui est acheté arrive sur votre adresse {destination}\n{fee_lines}\nFrais : MoonPay {moonpay_fee} % + commission de l'app {fee} % (compris dans le devis).\nC'est irréversible.\n\nConfirmer cet échange ?"
@@ -6557,7 +6557,7 @@ async fn moonpay_swap_transaction(
     profile_index: u32,
     app: tauri::AppHandle,
 ) -> Result<MoonpaySentDto, String> {
-    use pgp_wallet_poc::{moonpay_trade, tokens};
+    use openpgp_wallet_core::{moonpay_trade, tokens};
     run_blocking(move || {
         let password = Zeroizing::new(password);
         let dir = data_dir(&app)?;
@@ -6598,7 +6598,7 @@ async fn moonpay_swap_transaction(
                 let symbol = net.native_symbol;
                 let mut fee_lines = lang(&format!("Frais réseau maximum : {total:.8} {symbol}"), &format!("Maximum network fee: {total:.8} {symbol}")).to_string();
                 if approvals > 0 {
-                    let router = pgp_wallet_poc::derivation::format_address(router);
+                    let router = openpgp_wallet_core::derivation::format_address(router);
                     fee_lines.push_str(lang(
                         &format!("\nAutorisation préalable (transaction séparée) : le routeur MoonPay Trade {router} pourra prélever exactement {sell_line}, une seule fois."),
                         &format!("\nPrior approval (separate transaction): MoonPay Trade's router {router} will be allowed to take exactly {sell_line}, once."),
@@ -6654,7 +6654,7 @@ const JUPITER_DEFAULT_SLIPPAGE_BPS: u32 = 50; // 0,50 %
 /// Paire Jupiter désignée par l'interface (réseau Solana) : refusée si Jupiter
 /// ne la relie pas (voir `swap_routes::direct_all`).
 fn jupiter_pair(from_coin: &str, to_coin: &str) -> Result<(), String> {
-    if provider_links(pgp_wallet_poc::swap_routes::Protocol::Jupiter, from_coin, "sol_mainnet", to_coin, "sol_mainnet") {
+    if provider_links(openpgp_wallet_core::swap_routes::Protocol::Jupiter, from_coin, "sol_mainnet", to_coin, "sol_mainnet") {
         Ok(())
     } else {
         Err(translate_error("échange non disponible entre ces deux cryptos"))
@@ -6769,7 +6769,7 @@ async fn jupiter_swap_transaction(
 /// Paire CoW désignée par l'interface : refusée si CoW ne la relie pas (voir
 /// `swap_routes::direct_all`).
 fn cow_pair(network: &str, from_coin: &str, to_coin: &str) -> Result<(cow::CowToken, cow::CowToken), String> {
-    if !provider_links(pgp_wallet_poc::swap_routes::Protocol::Cow, from_coin, network, to_coin, network) {
+    if !provider_links(openpgp_wallet_core::swap_routes::Protocol::Cow, from_coin, network, to_coin, network) {
         return Err(translate_error("échange non disponible entre ces deux cryptos"));
     }
     api::cow_tokens(network, from_coin, to_coin).t_err()
@@ -6792,7 +6792,7 @@ fn profile_evm_address(app: &tauri::AppHandle, profile_index: u32) -> Result<Str
 /// jamais affiché au-dessus de sa vraie valeur).
 fn cow_amount(units: u128, token: &cow::CowToken) -> String {
     let cut = 10u128.pow(u32::from(token.decimals.saturating_sub(8)));
-    format!("{} {}", pgp_wallet_poc::tokens::format_amount(units / cut * cut, token.decimals), token.symbol)
+    format!("{} {}", openpgp_wallet_core::tokens::format_amount(units / cut * cut, token.decimals), token.symbol)
 }
 
 #[derive(Serialize)]
@@ -6828,7 +6828,7 @@ async fn get_cow_quote(network: String, from_coin: String, to_coin: String, amou
 /// Frais partenaire CoW de la paire : staking liquide plus bas (voir
 /// `swap_routes::staking_fee_bps`), sinon `cow::PARTNER_FEE_BPS`.
 fn cow_fee_bps(network: &str, from_coin: &str, to_coin: &str) -> u32 {
-    pgp_wallet_poc::swap_routes::staking_fee_bps((from_coin, network), (to_coin, network)).unwrap_or(pgp_wallet_poc::cow::PARTNER_FEE_BPS)
+    openpgp_wallet_core::swap_routes::staking_fee_bps((from_coin, network), (to_coin, network)).unwrap_or(openpgp_wallet_core::cow::PARTNER_FEE_BPS)
 }
 
 /// Taux en pour cent, sans zéros inutiles (« 1 », « 0,3 » ; « 0.3 » en anglais).
@@ -6993,13 +6993,13 @@ async fn cow_swap_transaction(
 // Entre deux écosystèmes : transaction construite par LI.FI, vérifiée avant
 // signature (voir core/src/lifi.rs et api::lifi_verified_quote).
 
-type LifiPair = (&'static str, &'static str, pgp_wallet_poc::lifi::LifiToken, pgp_wallet_poc::lifi::LifiToken);
+type LifiPair = (&'static str, &'static str, openpgp_wallet_core::lifi::LifiToken, openpgp_wallet_core::lifi::LifiToken);
 
 /// Paire LI.FI désignée par l'interface : refusée si LI.FI ne la relie pas
 /// (voir `swap_routes::direct_all`). Renvoie les réseaux (identifiants
 /// statiques) et les jetons LI.FI.
 fn lifi_pair(from_coin: &str, from_network: &str, to_coin: &str, to_network: &str) -> Result<LifiPair, String> {
-    use pgp_wallet_poc::swap_routes;
+    use openpgp_wallet_core::swap_routes;
     let (from, to) = swap_routes::find(from_coin, from_network)
         .zip(swap_routes::find(to_coin, to_network))
         .filter(|(f, t)| swap_routes::direct_all(*f, *t).contains(&swap_routes::Protocol::Lifi))
@@ -7027,9 +7027,9 @@ fn profile_address_on(app: &tauri::AppHandle, profile_index: u32, network: &str)
 }
 
 /// Montant affiché : 8 décimales au plus, TRONQUÉ.
-fn lifi_amount(units: u128, token: &pgp_wallet_poc::lifi::LifiToken) -> String {
+fn lifi_amount(units: u128, token: &openpgp_wallet_core::lifi::LifiToken) -> String {
     let cut = 10u128.pow(u32::from(token.decimals.saturating_sub(8)));
-    format!("{} {}", pgp_wallet_poc::tokens::format_amount(units / cut * cut, token.decimals), token.symbol)
+    format!("{} {}", openpgp_wallet_core::tokens::format_amount(units / cut * cut, token.decimals), token.symbol)
 }
 
 #[derive(Serialize)]
@@ -7168,7 +7168,7 @@ async fn lifi_swap_transaction(
         let fee_lines = match (evm_net, gas_price) {
             _ if from_net == "btc_mainnet" => {
                 let deposit = api::lifi_btc_deposit(&quote).t_err()?;
-                let pgp_wallet_poc::lifi::LifiTx::Bitcoin { deposit: address, .. } = &quote.tx else {
+                let openpgp_wallet_core::lifi::LifiTx::Bitcoin { deposit: address, .. } = &quote.tx else {
                     return Err(translate_error("devis LI.FI non Bitcoin"));
                 };
                 let fee = deposit.network_fee;
@@ -7185,7 +7185,7 @@ async fn lifi_swap_transaction(
                 let (call, approve, approvals) = api::lifi_evm_fees(net, &quote, gas_price).t_err()?;
                 let total = call.max_total().t_err()?.saturating_add(approve.max_total().t_err()?.saturating_mul(approvals as u128)) as f64 / 1e18;
                 let symbol = net.native_symbol;
-                let diamond = pgp_wallet_poc::lifi::diamond(from_net).unwrap_or("?");
+                let diamond = openpgp_wallet_core::lifi::diamond(from_net).unwrap_or("?");
                 let mut lines = lang(
                     &format!("Frais réseau maximum : {total:.8} {symbol}"),
                     &format!("Maximum network fee: {total:.8} {symbol}"),
@@ -7236,7 +7236,7 @@ async fn lifi_swap_transaction(
             _ => api::send_lifi_solana(&dir, &password, &fresh, profile_index).t_err()?,
         };
         Ok(LifiTransferDto {
-            explorer_url: pgp_wallet_poc::lifi::explorer_url(&tx_hash),
+            explorer_url: openpgp_wallet_core::lifi::explorer_url(&tx_hash),
             tx_hash,
             from_chain: fresh.from.chain,
             to_chain: fresh.to.chain,
@@ -7249,7 +7249,7 @@ async fn lifi_swap_transaction(
 /// État d'un transfert LI.FI, suivi par l'interface après l'envoi.
 #[tauri::command]
 async fn lifi_status(tx_hash: String, from_chain: u64, to_chain: u64) -> Result<String, String> {
-    run_blocking(move || pgp_wallet_poc::lifi::status(&tx_hash, from_chain, to_chain).t_err()).await
+    run_blocking(move || openpgp_wallet_core::lifi::status(&tx_hash, from_chain, to_chain).t_err()).await
 }
 
 /// État d'un ordre CoW (« open », « fulfilled », « expired »…), suivi par
@@ -7317,7 +7317,7 @@ async fn send_usdc_transaction(password: String, to: String, amount: String, pro
 async fn get_token_balance(token: String, network: String, address: String) -> Result<String, String> {
     run_blocking(move || {
         let (units, decimals) = api::get_token_balance(&token, &network, &address).t_err()?;
-        Ok(pgp_wallet_poc::tokens::format_balance(units, decimals, 6))
+        Ok(openpgp_wallet_core::tokens::format_balance(units, decimals, 6))
     })
     .await
 }
@@ -7331,7 +7331,7 @@ async fn get_stock_balances(address: String) -> Result<Vec<(String, String)>, St
         Ok(api::stock_balances(&address)
             .t_err()?
             .into_iter()
-            .map(|(id, units)| (id.to_string(), pgp_wallet_poc::tokens::format_balance(units, 8, 6)))
+            .map(|(id, units)| (id.to_string(), openpgp_wallet_core::tokens::format_balance(units, 8, 6)))
             .collect())
     })
     .await
@@ -7350,13 +7350,13 @@ struct StockPriceDto {
 #[tauri::command]
 async fn get_stock_prices() -> Result<Vec<StockPriceDto>, String> {
     run_blocking(move || {
-        let stocks: Vec<(&str, &str)> = pgp_wallet_poc::tokens::TOKENS
+        let stocks: Vec<(&str, &str)> = openpgp_wallet_core::tokens::TOKENS
             .iter()
-            .filter(|t| pgp_wallet_poc::tokens::is_spl2022(t.id))
+            .filter(|t| openpgp_wallet_core::tokens::is_spl2022(t.id))
             .filter_map(|t| api::registered_solana_token(t.id).ok().map(|s| (t.id, s.mint_b58)))
             .collect();
         let mints: Vec<&str> = stocks.iter().map(|(_, mint)| *mint).collect();
-        let prices = pgp_wallet_poc::price_rpc::jupiter_stock_prices(&mints).t_err()?;
+        let prices = openpgp_wallet_core::price_rpc::jupiter_stock_prices(&mints).t_err()?;
         Ok(prices
             .into_iter()
             .filter_map(|p| {
@@ -7386,7 +7386,7 @@ async fn send_token_transaction(
     run_blocking(move || {
         let password = Zeroizing::new(password);
         let dir = data_dir(&app)?;
-        let (info, deployment) = pgp_wallet_poc::tokens::find(&token, &network).ok_or_else(|| translate_error("jeton non pris en charge sur ce réseau"))?;
+        let (info, deployment) = openpgp_wallet_core::tokens::find(&token, &network).ok_or_else(|| translate_error("jeton non pris en charge sur ce réseau"))?;
         let to = canonical_address_input(&to)?;
         // « Max » : tout le solde du jeton (les frais sont payés dans la
         // monnaie du réseau).
@@ -7409,7 +7409,7 @@ async fn send_token_transaction(
             .unwrap_or_else(|| format!("profil #{profile_index}"));
         let amount_line = format!("{amount} {}", info.symbol);
         let result = match deployment.kind {
-            pgp_wallet_poc::tokens::TokenKind::Erc20 { contract } => {
+            openpgp_wallet_core::tokens::TokenKind::Erc20 { contract } => {
                 let net = evm_network(&network)?;
                 api::validate_evm_recipient(&to).t_err()?;
                 let from_evm = app
@@ -7437,7 +7437,7 @@ async fn send_token_transaction(
                 send_grace_period(&app, GraceRecap::new(network_label(&network), amount_line.clone(), to.clone()).on(&network))?;
                 api::send_erc20(&dir, &password, &token, &network, &to, &amount, fee, profile_index).t_err()
             }
-            pgp_wallet_poc::tokens::TokenKind::Trc20 { contract } => {
+            openpgp_wallet_core::tokens::TokenKind::Trc20 { contract } => {
                 let from_tron = app
                     .state::<ProfileTronCache>()
                     .0
@@ -7455,7 +7455,7 @@ async fn send_token_transaction(
                 )
                 .to_string();
                 let warning = send_warnings(&app, &dir, &network, "trx", &to, api::trx_recipient_activity(&to).ok());
-                let (fee, limit) = (pgp_wallet_poc::tron::format_trx(plan.fee_max), pgp_wallet_poc::tron::format_trx(plan.fee_limit));
+                let (fee, limit) = (openpgp_wallet_core::tron::format_trx(plan.fee_max), openpgp_wallet_core::tron::format_trx(plan.fee_limit));
                 let fee_line = lang(
                     &format!("Frais : jusqu'à {fee} TRX (énergie et bande passante ; le réseau ne peut pas brûler plus de {limit} TRX)"),
                     &format!("Fee: up to {fee} TRX (energy and bandwidth; the network cannot burn more than {limit} TRX)"),
@@ -7467,7 +7467,7 @@ async fn send_token_transaction(
                 send_grace_period(&app, GraceRecap::new(network_label(&network), amount_line.clone(), to.clone()).on(&network))?;
                 api::send_trc20(&dir, &password, &token, &to, &amount, plan.fee_max, profile_index).t_err()
             }
-            pgp_wallet_poc::tokens::TokenKind::Spl { mint } | pgp_wallet_poc::tokens::TokenKind::Spl2022 { mint } => {
+            openpgp_wallet_core::tokens::TokenKind::Spl { mint } | openpgp_wallet_core::tokens::TokenKind::Spl2022 { mint } => {
                 let net = sol_network(&network)?;
                 api::check_solana_recipient(&to, net).t_err()?;
                 if let Some(from) = app.state::<ProfileAddressCache>().0.lock().unwrap_or_else(|p| p.into_inner()).get(&profile_index).map(|(_, sol)| sol.clone()) {
@@ -7804,7 +7804,7 @@ struct ProfileBtcCache(std::sync::Mutex<std::collections::HashMap<u32, String>>)
 
 #[derive(Default)]
 struct WcState {
-    client: std::sync::OnceLock<std::sync::Arc<pgp_wallet_poc::walletconnect::WalletConnect>>,
+    client: std::sync::OnceLock<std::sync::Arc<openpgp_wallet_core::walletconnect::WalletConnect>>,
     /// Demandes préparées (ce qui sera signé ET affiché), par identifiant,
     /// avec la connexion (topic) dont elles viennent.
     prepared: std::sync::Mutex<std::collections::HashMap<u64, (String, dapp_requests::Prepared)>>,
@@ -7812,7 +7812,7 @@ struct WcState {
 
 fn remember_addresses(app: &tauri::AppHandle, index: u32, addresses: &api::Addresses) {
     if index == 0 {
-        IS_AFFILIATE_WALLET.store(addresses.thor == pgp_wallet_poc::thorchain_rpc::AFFILIATE_ADDRESS, Ordering::Relaxed);
+        IS_AFFILIATE_WALLET.store(addresses.thor == openpgp_wallet_core::thorchain_rpc::AFFILIATE_ADDRESS, Ordering::Relaxed);
     }
     if let Some(cache) = app.try_state::<ProfileAddressCache>() {
         cache.0.lock().unwrap_or_else(|p| p.into_inner()).insert(index, (addresses.evm.clone(), addresses.solana.clone()));
@@ -7864,7 +7864,7 @@ fn remember_addresses(app: &tauri::AppHandle, index: u32, addresses: &api::Addre
 /// déverrouillage (jamais envoyées à l'interface) : synchronisation de fond
 /// et préparation des envois avant la boîte de confirmation.
 #[derive(Default)]
-struct MoneroKeysCache(std::sync::Mutex<std::collections::HashMap<u32, (String, pgp_wallet_poc::monero::ViewKeys)>>);
+struct MoneroKeysCache(std::sync::Mutex<std::collections::HashMap<u32, (String, openpgp_wallet_core::monero::ViewKeys)>>);
 
 /// Profil de l'adresse Monero `address` (les commandes génériques de la carte
 /// reçoivent une adresse).
@@ -7899,7 +7899,7 @@ fn start_monero_sync(app: &tauri::AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || loop {
         // Génération lue AVANT les clés (voir `seed_state`).
-        let generation = pgp_wallet_poc::seed_state::generation();
+        let generation = openpgp_wallet_core::seed_state::generation();
         let keys: Vec<_> = app.state::<MoneroKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).values().map(|(_, keys)| keys.clone()).collect();
         let wanted = XMR_SYNC_WANTED.load(Ordering::Relaxed) || data_dir(&app).is_ok_and(|dir| api::xmr_has_received(&dir));
         if wanted && !keys.is_empty() {
@@ -7947,8 +7947,8 @@ async fn xmr_status(profile_index: u32, app: tauri::AppHandle) -> Result<MoneroS
     run_blocking(move || {
         let balance = api::xmr_balance(&data_dir(&app)?, profile_index).t_err()?;
         Ok(MoneroStatusDto {
-            unlocked: pgp_wallet_poc::monero::format_xmr(balance.unlocked),
-            locked: pgp_wallet_poc::monero::format_xmr(balance.locked),
+            unlocked: openpgp_wallet_core::monero::format_xmr(balance.unlocked),
+            locked: openpgp_wallet_core::monero::format_xmr(balance.locked),
             synced: balance.synced,
         })
     })
@@ -7967,15 +7967,15 @@ struct CustomNetworkDto {
     explorer: Option<String>,
 }
 
-impl From<pgp_wallet_poc::custom_networks::CustomNetwork> for CustomNetworkDto {
-    fn from(n: pgp_wallet_poc::custom_networks::CustomNetwork) -> Self {
+impl From<openpgp_wallet_core::custom_networks::CustomNetwork> for CustomNetworkDto {
+    fn from(n: openpgp_wallet_core::custom_networks::CustomNetwork) -> Self {
         Self { id: n.id(), chain_id: n.chain_id, name: n.name, rpc: n.rpc, symbol: n.symbol, explorer: n.explorer }
     }
 }
 
 #[tauri::command]
 fn list_custom_networks(app: tauri::AppHandle) -> Result<Vec<CustomNetworkDto>, String> {
-    Ok(pgp_wallet_poc::custom_networks::list(&data_dir(&app)?).into_iter().map(Into::into).collect())
+    Ok(openpgp_wallet_core::custom_networks::list(&data_dir(&app)?).into_iter().map(Into::into).collect())
 }
 
 /// Ajoute un réseau : contrôles, puis identifiant de chaîne vérifié auprès du
@@ -7984,7 +7984,7 @@ fn list_custom_networks(app: tauri::AppHandle) -> Result<Vec<CustomNetworkDto>, 
 async fn add_custom_network(chain_id: u64, name: String, rpc: String, symbol: String, explorer: Option<String>, app: tauri::AppHandle) -> Result<CustomNetworkDto, String> {
     run_blocking(move || {
         let dir = data_dir(&app)?;
-        pgp_wallet_poc::custom_networks::add(&dir, chain_id, &name, &rpc, &symbol, explorer.as_deref()).t_err().map(Into::into)
+        openpgp_wallet_core::custom_networks::add(&dir, chain_id, &name, &rpc, &symbol, explorer.as_deref()).t_err().map(Into::into)
     })
     .await
 }
@@ -7993,7 +7993,7 @@ async fn add_custom_network(chain_id: u64, name: String, rpc: String, symbol: St
 /// chaîne (le réajouter les fait revenir).
 #[tauri::command]
 fn remove_custom_network(chain_id: u64, app: tauri::AppHandle) -> Result<(), String> {
-    pgp_wallet_poc::custom_networks::remove(&data_dir(&app)?, chain_id).t_err()
+    openpgp_wallet_core::custom_networks::remove(&data_dir(&app)?, chain_id).t_err()
 }
 
 /// Nœud Monero choisi dans Paramètres (`None` : nœuds publics par défaut).
@@ -8034,7 +8034,7 @@ fn catch_sync_panic<E: std::fmt::Display>(sync: impl FnOnce() -> Result<(), E>) 
 /// Clés de visualisation des comptes Zcash protégés, mémorisées au
 /// déverrouillage (jamais envoyées à l'interface).
 #[derive(Default)]
-struct ShieldedKeysCache(std::sync::Mutex<std::collections::HashMap<u32, (String, pgp_wallet_poc::zcash_shielded::ProfileKeys)>>);
+struct ShieldedKeysCache(std::sync::Mutex<std::collections::HashMap<u32, (String, openpgp_wallet_core::zcash_shielded::ProfileKeys)>>);
 
 /// Profil de l'adresse Zcash protégée `address` (carte « Zcash protégé »).
 fn shielded_profile(app: &tauri::AppHandle, address: &str) -> Result<u32, String> {
@@ -8063,7 +8063,7 @@ fn start_shielded_sync(app: &tauri::AppHandle) {
     }
     let app = app.clone();
     std::thread::spawn(move || loop {
-        let generation = pgp_wallet_poc::seed_state::generation();
+        let generation = openpgp_wallet_core::seed_state::generation();
         let keys: Vec<_> = app.state::<ShieldedKeysCache>().0.lock().unwrap_or_else(|p| p.into_inner()).values().map(|(_, keys)| keys.clone()).collect();
         if !keys.is_empty() {
             match data_dir(&app) {
@@ -8112,8 +8112,8 @@ async fn zec_shield(password: String, profile_index: u32, app: tauri::AppHandle)
             .get(&profile_index)
             .cloned()
             .ok_or_else(|| translate_error("adresse du profil inconnue — déverrouillez le portefeuille"))?;
-        let confirm = |s: &pgp_wallet_poc::zcash_shielded::SpendSummary| {
-            let (amount, fee) = (pgp_wallet_poc::zcash::format_zec(s.amount), pgp_wallet_poc::zcash::format_zec(s.fee));
+        let confirm = |s: &openpgp_wallet_core::zcash_shielded::SpendSummary| {
+            let (amount, fee) = (openpgp_wallet_core::zcash::format_zec(s.amount), openpgp_wallet_core::zcash::format_zec(s.fee));
             let to = &s.recipient;
             let message = if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
                 format!("Shield your transparent ZEC\n\nFrom: {t1}\nTo your shielded address: {to}\nAmount shielded: {amount} ZEC\nNetwork fee: {fee} ZEC\n\nOnce shielded, amounts and addresses are no longer visible on the blockchain.\n\nConfirm?")
@@ -8159,8 +8159,8 @@ async fn zec_send_shielded(password: String, profile_index: u32, to: String, amo
             send_warnings(&app, &dir, "zec_shielded", "zecs", &to, None)
         };
         let warning = warning.map(|w| format!("{w}\n\n")).unwrap_or_default();
-        let confirm = |s: &pgp_wallet_poc::zcash_shielded::SpendSummary| {
-            let (amount, fee) = (pgp_wallet_poc::zcash::format_zec(s.amount), pgp_wallet_poc::zcash::format_zec(s.fee));
+        let confirm = |s: &openpgp_wallet_core::zcash_shielded::SpendSummary| {
+            let (amount, fee) = (openpgp_wallet_core::zcash::format_zec(s.amount), openpgp_wallet_core::zcash::format_zec(s.fee));
             let to = &s.recipient;
             let max_note = if max { lang(" (maximum, frais déduits)", " (maximum, fees deducted)") } else { "" };
             let message = if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
@@ -8198,15 +8198,15 @@ async fn zec_shielded_balance(profile_index: u32, app: tauri::AppHandle) -> Resu
         let balance = api::zec_shielded_balance(&dir, profile_index).t_err()?;
         let synced = matches!((balance.scanned_height, balance.chain_height), (Some(s), Some(c)) if s + 2 >= c);
         Ok(ShieldedBalanceDto {
-            spendable: pgp_wallet_poc::zcash::format_zec(balance.spendable),
-            pending: pgp_wallet_poc::zcash::format_zec(balance.pending),
+            spendable: openpgp_wallet_core::zcash::format_zec(balance.spendable),
+            pending: openpgp_wallet_core::zcash::format_zec(balance.pending),
             synced,
         })
     })
     .await
 }
 
-fn wc_client(app: &tauri::AppHandle) -> Result<std::sync::Arc<pgp_wallet_poc::walletconnect::WalletConnect>, String> {
+fn wc_client(app: &tauri::AppHandle) -> Result<std::sync::Arc<openpgp_wallet_core::walletconnect::WalletConnect>, String> {
     app.state::<WcState>()
         .client
         .get()
@@ -8267,9 +8267,9 @@ fn host_of(url: &str) -> String {
 /// Texte de la demande préparée — le même dans la modale de l'app et dans la
 /// boîte native (seule cette dernière fait foi). `danger` : au moins un
 /// avertissement grave (autorisation illimitée, appel non décodé…).
-fn describe_prepared(prepared: &dapp_requests::Prepared, peer: &pgp_wallet_poc::walletconnect::engine::PeerMetadata, from_label: &str, account: &str) -> (String, bool) {
+fn describe_prepared(prepared: &dapp_requests::Prepared, peer: &openpgp_wallet_core::walletconnect::engine::PeerMetadata, from_label: &str, account: &str) -> (String, bool) {
     use dapp_requests::{Prepared, TypedRisk};
-    use pgp_wallet_poc::evm_sign::CallKind;
+    use openpgp_wallet_core::evm_sign::CallKind;
     let en = UI_LANG_IS_ENGLISH.load(Ordering::Relaxed);
     let mut danger = false;
     let mut lines: Vec<String> = Vec::new();
@@ -8371,17 +8371,17 @@ fn describe_prepared(prepared: &dapp_requests::Prepared, peer: &pgp_wallet_poc::
             lines.push(quoted_block(field_lines, 12));
         }
         Prepared::EvmTransaction { network, to, value, gas_limit, gas_price, l1_fee, call, to_is_contract, token, data } => {
-            let to = pgp_wallet_poc::derivation::format_address(to);
+            let to = openpgp_wallet_core::derivation::format_address(to);
             let kind = if *to_is_contract { lang("contrat", "contract") } else { lang("adresse ordinaire", "regular address") };
             let symbol = token.as_ref().and_then(|t| t.symbol.as_deref()).map(dialog_label).unwrap_or_else(|| lang("jetons", "tokens").to_string());
             let decimals = token.as_ref().and_then(|t| t.decimals);
-            let tokens = |amount: &pgp_wallet_poc::evm_sign::U256| format!("{} {symbol}", format_units(&amount.to_decimal(), decimals));
+            let tokens = |amount: &openpgp_wallet_core::evm_sign::U256| format!("{} {symbol}", format_units(&amount.to_decimal(), decimals));
             lines.push(if en {
                 format!("TRANSACTION to {to} ({kind})\n{} sent: {}", network.native_symbol, format_units(&value.to_string(), Some(18)))
             } else {
                 format!("TRANSACTION vers {to} ({kind})\n{} envoyé : {}", network.native_symbol, format_units(&value.to_string(), Some(18)))
             });
-            let addr = |a: &[u8; 20]| pgp_wallet_poc::derivation::format_address(a);
+            let addr = |a: &[u8; 20]| openpgp_wallet_core::derivation::format_address(a);
             lines.push(match call {
                 CallKind::PlainTransfer => lang("Simple envoi d'ETH.", "Plain ETH transfer.").to_string(),
                 CallKind::TokenTransfer { to, amount } => {
@@ -8479,7 +8479,7 @@ fn wc_pair(uri: String, app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn wc_sessions(app: tauri::AppHandle) -> Result<Vec<pgp_wallet_poc::walletconnect::SessionView>, String> {
+fn wc_sessions(app: tauri::AppHandle) -> Result<Vec<openpgp_wallet_core::walletconnect::SessionView>, String> {
     Ok(wc_client(&app)?.sessions())
 }
 
@@ -8612,7 +8612,7 @@ async fn wc_approve_request(request_id: u64, password: String, app: tauri::AppHa
                     } else {
                         format!("{} {}", format_units(&value.to_string(), Some(18)), network.native_symbol)
                     };
-                    GraceRecap::new(network.name, amount, pgp_wallet_poc::derivation::format_address(to)).on(network.id)
+                    GraceRecap::new(network.name, amount, openpgp_wallet_core::derivation::format_address(to)).on(network.id)
                 }
                 _ => GraceRecap::new("Solana", lang("selon la demande de l'application", "as requested by the app"), dialog_label(&session.peer.name)).on("sol_mainnet"),
             };
@@ -8714,10 +8714,10 @@ pub fn run() {
                 let _ = std::fs::create_dir_all(&dir);
                 install_panic_hook(dir.clone());
                 // Réseaux compatibles Ethereum ajoutés par l'utilisateur.
-                pgp_wallet_poc::custom_networks::load(&dir);
+                openpgp_wallet_core::custom_networks::load(&dir);
                 // Détails des transactions Solana finalisées déjà lus (données publiques) :
                 // le nœud public n'en accorde qu'environ un par seconde.
-                pgp_wallet_poc::sol_rpc::use_details_cache_file(dir.join("solana_tx_cache.jsonl"));
+                openpgp_wallet_core::sol_rpc::use_details_cache_file(dir.join("solana_tx_cache.jsonl"));
                 // Ancienne clé Etherscan de l'utilisateur (historiques HyperEVM et
                 // BNB Chain, retirés le 07/10/2026 : HyperEVM supprimé, BNB Chain
                 // lu chez NodeReal) : plus rien ne s'en sert, effacée.
@@ -8726,10 +8726,10 @@ pub fn run() {
                 // relayés au frontend ; le contenu des demandes, lui, n'est
                 // jamais relu depuis le frontend (voir `wc_prepare_request`).
                 let handle = app.handle().clone();
-                let sink: pgp_wallet_poc::walletconnect::EventSink = std::sync::Arc::new(move |event| {
+                let sink: openpgp_wallet_core::walletconnect::EventSink = std::sync::Arc::new(move |event| {
                     let _ = handle.emit("wc-event", &event);
                 });
-                match pgp_wallet_poc::walletconnect::WalletConnect::start(&dir, sink) {
+                match openpgp_wallet_core::walletconnect::WalletConnect::start(&dir, sink) {
                     Ok(client) => {
                         let _ = app.state::<WcState>().client.set(std::sync::Arc::new(client));
                     }
@@ -8965,7 +8965,7 @@ mod tests {
     /// exactement quoi et où.
     #[test]
     fn near_miss_line_names_the_exact_slip() {
-        use pgp_wallet_poc::recipient_check::Difference;
+        use openpgp_wallet_core::recipient_check::Difference;
         let known = "F1YBYFJWBteTwi5eS5BjdSy3xDGGv8bhHBJ54n78nzdc";
         assert_eq!(
             near_miss_line("une adresse à qui vous avez déjà envoyé", known, &Difference::Missing { position: 0, expected: 'F' }),
@@ -9083,7 +9083,7 @@ mod tests {
     /// renommé là-bas ferait échouer ce test).
     #[test]
     fn swap_halt_and_rent_errors_are_translated() {
-        use pgp_wallet_poc::{sol_rpc, thorchain_rpc};
+        use openpgp_wallet_core::{sol_rpc, thorchain_rpc};
         assert_eq!(
             translate_dynamic_error(&thorchain_rpc::halted_message("THORChain", &["Solana"])).unwrap(),
             "THORChain has paused swaps on Solana for now (incident or maintenance on their side) — try again later or choose another provider"
@@ -9134,7 +9134,7 @@ mod tests {
     /// « Suivre la transaction » seulement avec un explorateur.
     #[test]
     fn custom_networks_are_labelled_and_their_errors_translated() {
-        use pgp_wallet_poc::custom_networks::validate;
+        use openpgp_wallet_core::custom_networks::validate;
         let refusals = [
             validate(10, "", "https://a.example.com", "ETH", None),
             validate(10, "OP", "https://a.example.com", "E TH", None),
@@ -9165,7 +9165,7 @@ mod tests {
             r#"{"networks":[{"chain_id":888001,"name":"Chaîne A","rpc":"https://a.example.com/","symbol":"ETH","explorer":null},{"chain_id":888002,"name":"Chaîne B","rpc":"https://b.example.com/","symbol":"BBB","explorer":"https://scan.b.example.com"}]}"#,
         )
         .unwrap();
-        pgp_wallet_poc::custom_networks::load(&dir);
+        openpgp_wallet_core::custom_networks::load(&dir);
         let a = wallet_flow::evm_network("custom_888001_mainnet").unwrap();
         assert!(network_label("custom_888001_mainnet").contains("Chaîne A"));
         assert!(network_label("custom_888001_mainnet").contains(lang("réseau ajouté par vous", "network added by you")));
@@ -9174,8 +9174,8 @@ mod tests {
         assert_eq!(sent_tx_explorer_url("custom_888002_mainnet", "0xabc").as_deref(), Some("https://scan.b.example.com/tx/0xabc"));
         assert!(external_link_allowed("https://scan.b.example.com/tx/0xabc"));
         assert!(!external_link_allowed("https://scan.evil.example.com/tx/0xabc"));
-        pgp_wallet_poc::custom_networks::remove(&dir, 888001).unwrap();
-        pgp_wallet_poc::custom_networks::remove(&dir, 888002).unwrap();
+        openpgp_wallet_core::custom_networks::remove(&dir, 888001).unwrap();
+        openpgp_wallet_core::custom_networks::remove(&dir, 888002).unwrap();
         assert!(!external_link_allowed("https://scan.b.example.com/tx/0xabc"), "réseau retiré : lien refusé");
     }
 
@@ -9667,7 +9667,7 @@ mod tests {
     /// ne peut pas désigner un autre contrat que celui des envois.
     #[test]
     fn frontend_token_contracts_match_the_registry() {
-        use pgp_wallet_poc::tokens::{TokenKind, TOKENS};
+        use openpgp_wallet_core::tokens::{TokenKind, TOKENS};
         let main_js = include_str!("../../src/main.js");
         let address_of = |kind: TokenKind| match kind {
             TokenKind::Erc20 { contract } => contract,
@@ -9743,7 +9743,7 @@ mod tests {
     /// l'ordre de lecture.
     #[test]
     fn complete_usb_kits_need_two_different_shares() {
-        use pgp_wallet_poc::usb_backup::{ShareFiles, ShareInfo};
+        use openpgp_wallet_core::usb_backup::{ShareFiles, ShareInfo};
         let share = |kit: &str, part: u8| {
             let files = ShareFiles { encrypted_share: Vec::new(), privkey_armored: Vec::new(), passphrase: Zeroizing::new(String::new()) };
             (ShareInfo { kit: kit.into(), part, name: String::new() }, files)

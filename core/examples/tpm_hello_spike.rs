@@ -29,7 +29,7 @@
 #[cfg(windows)]
 use anyhow::{Context, Result};
 #[cfg(windows)]
-use pgp_wallet_poc::windows_hello;
+use openpgp_wallet_core::windows_hello;
 #[cfg(windows)]
 use serde::{Deserialize, Serialize};
 

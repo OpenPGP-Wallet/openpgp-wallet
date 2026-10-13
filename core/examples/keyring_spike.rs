@@ -26,7 +26,7 @@
 //!                déverrouillable via le repli fichier.
 
 use anyhow::{Context, Result};
-use pgp_wallet_poc::secure_storage::{entry_username, KeyStore, OsKeyStore};
+use openpgp_wallet_core::secure_storage::{entry_username, KeyStore, OsKeyStore};
 
 const SPIKE_USERNAME: &str = "keyring_spike_test_entry";
 const TEST_SECRET: &str = "ceci est un secret de test du spike keyring";
@@ -65,7 +65,7 @@ fn main() -> Result<()> {
             println!("nom d'entrée coffre OS attendu : {username}\n");
 
             println!("1. create_wallet...");
-            pgp_wallet_poc::api::create_wallet(&data_dir, "un mot de passe de test bien assez long").context("create_wallet")?;
+            openpgp_wallet_core::api::create_wallet(&data_dir, "un mot de passe de test bien assez long").context("create_wallet")?;
             let privkey_file_exists = data_dir.join("device_privkey.asc").exists();
             // `Ok(None)` = absent : `.is_ok()` seul répondrait "présent" à tort.
             let in_os_store = matches!(store.read(&username), Ok(Some(_)));
@@ -78,13 +78,13 @@ fn main() -> Result<()> {
             }
 
             println!("2. unlock_wallet (doit relire la clé privée depuis le coffre OS)...");
-            match pgp_wallet_poc::api::unlock_wallet(&data_dir, "un mot de passe de test bien assez long") {
+            match openpgp_wallet_core::api::unlock_wallet(&data_dir, "un mot de passe de test bien assez long") {
                 Ok(profiles) => println!("   OK : {} profil(s) déverrouillé(s).", profiles.len()),
                 Err(e) => println!("PROBLÈME : déverrouillage échoué ({e})."),
             }
 
             println!("3. reset_wallet (doit supprimer l'entrée du coffre OS)...");
-            pgp_wallet_poc::api::reset_wallet(&data_dir).context("reset_wallet")?;
+            openpgp_wallet_core::api::reset_wallet(&data_dir).context("reset_wallet")?;
             let still_in_os_store = matches!(store.read(&username), Ok(Some(_)));
             println!("   entrée encore présente dans le coffre OS après reset : {still_in_os_store} (attendu : false)");
             if still_in_os_store {
@@ -105,7 +105,7 @@ fn main() -> Result<()> {
             let username = entry_username(&data_dir);
 
             println!("1. create_wallet (crée normalement via le coffre OS)...");
-            pgp_wallet_poc::api::create_wallet(&data_dir, "un mot de passe de test bien assez long").context("create_wallet")?;
+            openpgp_wallet_core::api::create_wallet(&data_dir, "un mot de passe de test bien assez long").context("create_wallet")?;
 
             println!("2. simulation d'un ancien wallet : déplacement manuel coffre OS -> fichier...");
             let secret = store
@@ -118,13 +118,13 @@ fn main() -> Result<()> {
             println!("   entrée coffre OS présente : {} (attendu : false)", matches!(store.read(&username), Ok(Some(_))));
 
             println!("3. unlock_wallet (doit réussir via le repli fichier)...");
-            match pgp_wallet_poc::api::unlock_wallet(&data_dir, "un mot de passe de test bien assez long") {
+            match openpgp_wallet_core::api::unlock_wallet(&data_dir, "un mot de passe de test bien assez long") {
                 Ok(profiles) => println!("   OK : {} profil(s) déverrouillé(s) via le fichier legacy.", profiles.len()),
                 Err(e) => println!("PROBLÈME : le repli fichier ne fonctionne pas ({e}) — un wallet existant serait verrouillé."),
             }
 
             println!("4. reset_wallet (doit supprimer le fichier)...");
-            pgp_wallet_poc::api::reset_wallet(&data_dir).context("reset_wallet")?;
+            openpgp_wallet_core::api::reset_wallet(&data_dir).context("reset_wallet")?;
             println!("   fichier encore présent après reset : {} (attendu : false)", data_dir.join("device_privkey.asc").exists());
 
             let _ = std::fs::remove_dir_all(&data_dir);

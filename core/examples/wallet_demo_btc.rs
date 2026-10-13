@@ -7,7 +7,7 @@
 //! Testnet uniquement, jamais de vrais fonds.
 
 use anyhow::Result;
-use pgp_wallet_poc::{entropy, memory_guard, wallet_flow};
+use openpgp_wallet_core::{entropy, memory_guard, wallet_flow};
 use zeroize::Zeroizing;
 
 fn main() -> Result<()> {

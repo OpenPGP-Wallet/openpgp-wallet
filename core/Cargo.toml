@@ -1,8 +1,7 @@
 [package]
-name = "pgp-wallet-poc"
+name = "openpgp-wallet-core"
 version = "0.1.0"
 edition = "2021"
-default-run = "pgp-wallet-poc"
 
 [dependencies]
 # blahaj (pas "sharks") : Shamir's Secret Sharing, seuil configurable. `sharks` a

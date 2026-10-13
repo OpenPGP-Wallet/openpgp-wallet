@@ -18,6 +18,8 @@ use sha2::{Digest, Sha256};
 use std::path::Path;
 use zeroize::Zeroizing;
 
+/// Frozen: existing wallets keep their vault entries under this service name in
+/// the OS credential store. Renaming it would lock their owners out.
 const SERVICE: &str = "pgp-wallet-poc";
 
 /// Identifiant stable et unique par `data_dir`, jamais le chemin en clair

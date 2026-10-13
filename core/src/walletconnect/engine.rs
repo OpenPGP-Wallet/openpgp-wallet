@@ -217,6 +217,7 @@ fn own_metadata() -> Value {
     json!({
         "name": "OpenPGP Wallet",
         "description": "Portefeuille non-custodial (preuve de concept)",
+        // Unchanged until a new URL is tested against a live dApp.
         "url": "https://pgp-wallet-poc.local",
         "icons": []
     })

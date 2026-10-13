@@ -293,6 +293,7 @@ pub struct CreateWalletResult {
 
 fn generate_pgp_identity(label: &str, passphrase: &str) -> Result<(Vec<u8>, Vec<u8>)> {
     let (cert, _revocation) = CertBuilder::new()
+        // Same user ID domain as the keys created by earlier versions.
         .add_userid(format!("{label} <{label}@pgp-wallet-poc.local>"))
         .add_transport_encryption_subkey()
         .set_password(Some(Password::from(passphrase)))

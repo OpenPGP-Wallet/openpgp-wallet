@@ -35,7 +35,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Le worker crypto (Shamir, PGP, dérivation, RPC) : toute la logique sensible reste
 # dans ce crate séparé, jamais dans le frontend web.
-pgp-wallet-poc = { path = "../../core" }
+openpgp-wallet-core = { path = "../../core" }
 base64 = "0.22"
 # Efface les mots de passe reçus du frontend (String) dès qu'ils ne servent plus,
 # y compris sur un retour anticipé/panic — mêmes buffers sensibles que core/, qui

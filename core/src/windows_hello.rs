@@ -35,6 +35,9 @@ const RSA_KEY_BITS: u32 = 2048;
 /// enrôlement après `reset_wallet`) ne doivent jamais entrer en collision avec
 /// une clé TPM orpheline d'un cycle précédent, puisque NCrypt ne scope pas ces
 /// clés persistées au répertoire de données de l'app.
+///
+/// Frozen, like the vault service name: existing Windows Hello keys are found
+/// by this prefix.
 const KEY_NAME_PREFIX: &str = "pgp-wallet-poc-biometric-";
 
 fn oaep_hash_algorithm() -> PCWSTR {

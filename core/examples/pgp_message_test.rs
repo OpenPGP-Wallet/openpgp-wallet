@@ -7,7 +7,7 @@
 use anyhow::{Context, Result};
 use openpgp::parse::Parse;
 use openpgp::Message as OpenpgpMessage;
-use pgp_wallet_poc::pgp_engine;
+use openpgp_wallet_core::pgp_engine;
 use sequoia_openpgp as openpgp;
 use std::io::{self, Write};
 use zeroize::Zeroizing;

@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Context, Result};
-use pgp_wallet_poc::{derivation, entropy, memory_guard, pgp_engine, shamir, wallet_flow};
+use openpgp_wallet_core::{derivation, entropy, memory_guard, pgp_engine, shamir, wallet_flow};
 use std::io::{self, Write};
 use zeroize::Zeroizing;
 

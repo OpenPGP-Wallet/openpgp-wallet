@@ -312,7 +312,7 @@ mod tests {
 
     /// Réel (réseau) : ajout d'OP Mainnet par son RPC public (identifiant de
     /// chaîne vérifié), refus d'un RPC qui répond pour une autre chaîne.
-    /// `cargo test -p pgp-wallet-poc --lib -- --ignored real_custom_network`
+    /// `cargo test -p openpgp-wallet-core --lib -- --ignored real_custom_network`
     #[test]
     #[ignore]
     fn real_custom_network() {
