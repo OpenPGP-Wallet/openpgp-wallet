@@ -1,7 +1,7 @@
 # Threat model: OpenPGP Wallet (Windows application)
 
 Working document, last reviewed on 2026-10-04 (v2.9.0 and later commits); the list of networks was brought up to
-date on 2026-10-13 (Bittensor added, HyperEVM removed). It gives structure to the project's informal threat
+date on 2026-10-13 (Bittensor added). It gives structure to the project's informal threat
 model ("active malware vs. offline file theft") with a professional audit in mind: what is protected, against
 whom, by what means, and what remains at risk. Each countermeasure points to the code that implements it.
 **None of these protections has been verified by an independent auditor yet.**
