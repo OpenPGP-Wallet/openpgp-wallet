@@ -137,7 +137,7 @@ fn prices(assets: &[SwapAsset]) -> HashMap<&'static str, f64> {
     );
     // Explicit User-Agent, as in `price_rpc` (CoinGecko refuses without one).
     let client = reqwest::blocking::Client::builder()
-        .user_agent("openpgp-wallet (+https://github.com/KHADEVS/openpgp-wallet)")
+        .user_agent("openpgp-wallet (+https://github.com/OpenPGP-Wallet/openpgp-wallet)")
         .build()
         .unwrap();
     let body: serde_json::Value = client.get(url).send().unwrap().json().unwrap();

@@ -6,7 +6,7 @@ body:
     attributes:
       value: |
         Thanks for reporting a problem. **Do not report security vulnerabilities here**: follow
-        [SECURITY.md](https://github.com/KHADEVS/openpgp-wallet/blob/master/SECURITY.md) instead.
+        [SECURITY.md](https://github.com/OpenPGP-Wallet/openpgp-wallet/blob/master/SECURITY.md) instead.
 
         Never paste a password, a backup share, a passphrase or a private key in an issue.
   - type: input

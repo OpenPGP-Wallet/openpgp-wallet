@@ -47,7 +47,7 @@ fn shared_client() -> &'static reqwest::blocking::Client {
             // CoinGecko (probably filtered as generic bot traffic), while an identical call
             // with a named browser or tool User-Agent went through.
             .timeout(std::time::Duration::from_secs(15))
-            .user_agent("openpgp-wallet (+https://github.com/KHADEVS/openpgp-wallet)")
+            .user_agent("openpgp-wallet (+https://github.com/OpenPGP-Wallet/openpgp-wallet)")
             .build()
             .expect("configuration du client HTTP valide")
     })

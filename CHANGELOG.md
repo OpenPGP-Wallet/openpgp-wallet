@@ -1,7 +1,7 @@
 # Changelog
 
 All notable changes to OpenPGP Wallet are listed here, newest first. Dates are release dates (UTC). Download
-links and SHA-256 hashes of each build are on the [releases page](https://github.com/KHADEVS/openpgp-wallet/releases).
+links and SHA-256 hashes of each build are on the [releases page](https://github.com/OpenPGP-Wallet/openpgp-wallet/releases).
 
 ## [Unreleased]
 
@@ -192,20 +192,20 @@ The app is renamed "PGP Wallet".
 First working proof of concept: a non-custodial Bitcoin, Ethereum and Solana wallet whose master key is
 protected by 2-of-3 Shamir secret sharing and OpenPGP, with no seed phrase.
 
-[Unreleased]: https://github.com/KHADEVS/openpgp-wallet/compare/v2.13.1...HEAD
-[2.13.1]: https://github.com/KHADEVS/openpgp-wallet/releases/tag/v2.13.1
-[2.13.0]: https://github.com/KHADEVS/openpgp-wallet/releases/tag/v2.13.0
-[2.12.0]: https://github.com/KHADEVS/openpgp-wallet/releases/tag/v2.12.0
-[2.11.0]: https://github.com/KHADEVS/openpgp-wallet/releases/tag/v2.11.0
-[2.10.0]: https://github.com/KHADEVS/openpgp-wallet/releases/tag/v2.10.0
-[2.9.0]: https://github.com/KHADEVS/openpgp-wallet/releases/tag/v2.9.0
-[2.8.0]: https://github.com/KHADEVS/openpgp-wallet/releases/tag/v2.8.0
-[2.7.0]: https://github.com/KHADEVS/openpgp-wallet/releases/tag/v2.7.0
-[2.6.0]: https://github.com/KHADEVS/openpgp-wallet/releases/tag/v2.6.0
-[2.5.0]: https://github.com/KHADEVS/openpgp-wallet/releases/tag/v2.5.0
-[2.4.0]: https://github.com/KHADEVS/openpgp-wallet/releases/tag/v2.4.0
-[2.3.0]: https://github.com/KHADEVS/openpgp-wallet/releases/tag/v2.3.0
-[2.2.0]: https://github.com/KHADEVS/openpgp-wallet/releases/tag/v2.2.0
-[2.1.0]: https://github.com/KHADEVS/openpgp-wallet/releases/tag/v2.1.0
-[2.0.0]: https://github.com/KHADEVS/openpgp-wallet/releases/tag/v2.0.0
-[0.1.0]: https://github.com/KHADEVS/openpgp-wallet/releases/tag/v0.1.0
+[Unreleased]: https://github.com/OpenPGP-Wallet/openpgp-wallet/compare/v2.13.1...HEAD
+[2.13.1]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.13.1
+[2.13.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.13.0
+[2.12.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.12.0
+[2.11.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.11.0
+[2.10.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.10.0
+[2.9.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.9.0
+[2.8.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.8.0
+[2.7.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.7.0
+[2.6.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.6.0
+[2.5.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.5.0
+[2.4.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.4.0
+[2.3.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.3.0
+[2.2.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.2.0
+[2.1.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.1.0
+[2.0.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.0.0
+[0.1.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v0.1.0
