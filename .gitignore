@@ -24,3 +24,7 @@ node_modules/
 # Partner API keys (SwapKit, MoonPay Trade, indexers), read at build time by
 # core/build.rs: never in git history.
 /partner-keys.env
+
+# The showcase website lives in its own repository (openpgp-wallet-site);
+# a local working copy may sit here.
+/site/
