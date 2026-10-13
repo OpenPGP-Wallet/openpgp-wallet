@@ -7,39 +7,38 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-/// Limites des nœuds publics Solana, par adresse IP, sur une fenêtre de 10 s.
-/// La documentation annonce 40 requêtes par méthode, mais le nœud en
-/// accorde bien moins à certaines, et le dit dans ses en-têtes
-/// (`x-ratelimit-method-limit` : 10 pour `getTransaction`, mesuré) ; les
-/// requêtes refusées comptent aussi. D'où : un rythme par méthode appris des
-/// en-têtes (prudent tant qu'il est inconnu), une limite totale, et après un
-/// refus, plus aucun envoi de cette méthode pendant le délai demandé
-/// (`Retry-After`). Sans cela, un graphique qui lit l'historique de plusieurs
-/// adresses (une requête `getTransaction` par transaction) échouait entier.
+/// Limits of the public Solana nodes, per IP address, over a 10 s window. The
+/// documentation announces 40 requests per method, but the node grants far fewer
+/// for some of them, and says so in its headers (`x-ratelimit-method-limit`: 10 for
+/// `getTransaction`, measured); refused requests count too. Hence: a per-method
+/// pace learned from the headers (cautious while unknown), a global limit, and
+/// after a refusal, no more sends of that method for the requested delay
+/// (`Retry-After`). Without this, a chart that reads the history of several
+/// addresses (one `getTransaction` request per transaction) failed entirely.
 const RATE_WINDOW: Duration = Duration::from_secs(10);
-/// Par méthode, tant que le nœud n'a pas annoncé sa limite.
+/// Per method, until the node has announced its limit.
 const DEFAULT_METHOD_CAP: usize = 9;
 const MAX_PER_ENDPOINT: usize = 80;
-/// Délai après un refus quand le nœud n'en précise pas.
+/// Delay after a refusal when the node does not specify one.
 const DEFAULT_RETRY_AFTER: Duration = Duration::from_secs(10);
-/// Nouveaux essais après un refus, chacun après le délai demandé.
+/// Retries after a refusal, each after the requested delay.
 const MAX_RETRIES: u32 = 4;
 pub const RATE_LIMITED_ERROR: &str = "le nœud Solana public limite le nombre de requêtes : réessayez dans un instant";
-/// Détails de transactions finalisées gardés (en mémoire et, si l'app l'a
-/// configuré, sur disque) : ils ne changent plus.
+/// Details of finalized transactions are kept (in memory and, if the app configured
+/// it, on disk): they never change.
 const DETAILS_CACHE_MAX: usize = 20_000;
 
-/// Envois récents d'une méthode et limite connue.
+/// Recent sends of a method and its known limit.
 #[derive(Default)]
 struct MethodWindow {
     sent: VecDeque<Instant>,
-    /// Limite annoncée par le nœud, marge déduite.
+    /// Limit announced by the node, minus a margin.
     cap: Option<usize>,
-    /// Refus reçu : aucun envoi avant cet instant.
+    /// Refusal received: no sends before this time.
     blocked_until: Option<Instant>,
 }
 
-/// Envois récents vers un nœud, au total et par méthode.
+/// Recent sends to a node, in total and per method.
 #[derive(Default)]
 struct RateWindow {
     all: VecDeque<Instant>,
@@ -47,8 +46,8 @@ struct RateWindow {
 }
 
 impl RateWindow {
-    /// Enregistre un envoi à `now` s'il est permis ; sinon, renvoie le délai
-    /// avant qu'il le soit.
+    /// Records a send at `now` if it is allowed; otherwise returns the delay before it
+    /// will be.
     fn try_acquire(&mut self, method: &str, now: Instant) -> Option<Duration> {
         let expire = |queue: &mut VecDeque<Instant>| {
             while queue.front().is_some_and(|t| now.duration_since(*t) >= RATE_WINDOW) {
@@ -70,7 +69,8 @@ impl RateWindow {
         delay
     }
 
-    /// Limite annoncée par le nœud pour `method` (une de marge), et refus éventuel.
+    /// Limit announced by the node for `method` (minus one as a margin), and any
+    /// refusal.
     fn record(&mut self, method: &str, announced_limit: Option<usize>, refused_for: Option<Duration>, now: Instant) {
         let window = self.per_method.entry(method.to_string()).or_default();
         if let Some(limit) = announced_limit {
@@ -87,7 +87,7 @@ fn rate_windows() -> &'static Mutex<HashMap<String, RateWindow>> {
     WINDOWS.get_or_init(Default::default)
 }
 
-/// Attend qu'un envoi de `method` vers `endpoint` soit permis.
+/// Waits until a send of `method` to `endpoint` is allowed.
 fn wait_for_slot(endpoint: &str, method: &str) {
     loop {
         let delay =
@@ -99,8 +99,8 @@ fn wait_for_slot(endpoint: &str, method: &str) {
     }
 }
 
-/// Détails réduits de transactions finalisées (voir `compact_transaction`),
-/// par signature, et fichier où ils sont gardés d'une session à l'autre.
+/// Trimmed details of finalized transactions (see `compact_transaction`), by
+/// signature, and the file where they are kept from one session to the next.
 #[derive(Default)]
 struct DetailsCache {
     entries: HashMap<String, Arc<Value>>,
@@ -109,8 +109,8 @@ struct DetailsCache {
 }
 
 impl DetailsCache {
-    /// Relit le fichier au premier usage. Une ligne illisible (écriture
-    /// interrompue) est ignorée : ce n'est qu'un cache de données publiques.
+    /// Rereads the file on first use. An unreadable line (interrupted write) is
+    /// skipped: this is only a cache of public data.
     fn ensure_loaded(&mut self) {
         if self.loaded {
             return;
@@ -127,7 +127,7 @@ impl DetailsCache {
         }
     }
 
-    /// Ajoute des détails (en mémoire, puis à la fin du fichier).
+    /// Adds details (in memory, then at the end of the file).
     fn insert(&mut self, new: Vec<(String, Arc<Value>)>) {
         let mut lines = String::new();
         for (signature, detail) in new {
@@ -152,10 +152,10 @@ fn details_cache() -> &'static Mutex<DetailsCache> {
     CACHE.get_or_init(Default::default)
 }
 
-/// Garde les détails des transactions finalisées dans `path` (dossier de
-/// l'app) : l'historique d'une adresse déjà lue n'est plus redemandé au nœud
-/// public, qui n'en accorde qu'environ un par seconde. Données publiques de
-/// la chaîne (montants, comptes, memos), aucune clé.
+/// Keeps the details of finalized transactions in `path` (the app's folder): the
+/// history of an address already read is no longer requested from the public node,
+/// which only grants about one per second. Public chain data (amounts, accounts,
+/// memos), no keys.
 pub fn use_details_cache_file(path: PathBuf) {
     let mut cache = details_cache().lock().unwrap_or_else(|p| p.into_inner());
     cache.file = Some(path);
@@ -167,15 +167,15 @@ pub struct SolRpc {
     client: reqwest::blocking::Client,
 }
 
-// Voir eth_rpc::shared_client : un `reqwest::Client` reconstruit à chaque appel de
-// commande jette son pool de connexions keep-alive et repaie une poignée de main
-// TCP+TLS complète à chaque clic. Un seul client partagé, construit une fois.
+// See eth_rpc::shared_client: a `reqwest::Client` rebuilt on every command call
+// throws away its pool of keep-alive connections and pays for a full TCP+TLS
+// handshake on every click. One shared client, built once.
 fn shared_client() -> &'static reqwest::blocking::Client {
     static CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
         reqwest::blocking::Client::builder()
-            // Sans timeout explicite, reqwest attend indéfiniment un nœud qui ne
-            // répond jamais, bloquant l'app entière sur cet appel.
+            // Without an explicit timeout, reqwest waits forever for a node that never
+            // answers, blocking the whole app on that call.
             .timeout(std::time::Duration::from_secs(30))
             .build()
             .expect("configuration du client HTTP valide")
@@ -183,8 +183,8 @@ fn shared_client() -> &'static reqwest::blocking::Client {
 }
 
 impl SolRpc {
-    /// `endpoint` : URL JSON-RPC du cluster ciblé (devnet ou mainnet-beta,
-    /// voir wallet_flow::SOLANA_DEVNET / SOLANA_MAINNET).
+    /// `endpoint`: JSON-RPC URL of the target cluster (devnet or mainnet-beta, see
+    /// wallet_flow::SOLANA_DEVNET / SOLANA_MAINNET).
     pub fn new(endpoint: &str) -> Self {
         Self {
             endpoint: endpoint.to_string(),
@@ -234,10 +234,10 @@ impl SolRpc {
             .ok_or_else(|| anyhow!("réponse RPC {method} sans champ 'result'"))
     }
 
-    /// Solde en lamports (1 SOL = 1_000_000_000 lamports), au niveau
-    /// « confirmed » (~1 s après une transaction) plutôt que « finalized », le
-    /// défaut du nœud (~13 s de retard) : un envoi ou une réception se voit
-    /// aussitôt, comme le signale la surveillance en direct (`balance_watch`).
+    /// Balance in lamports (1 SOL = 1_000_000_000 lamports), at the "confirmed" level
+    /// (~1 s after a transaction) rather than "finalized", the node's default (~13 s
+    /// behind): a send or receipt shows up straight away, as live monitoring
+    /// (`balance_watch`) reports it.
     pub fn balance_lamports(&self, pubkey_b58: &str) -> Result<u64> {
         let result = self.call("getBalance", json!([pubkey_b58, {"commitment": "confirmed"}]))?;
         result
@@ -261,8 +261,8 @@ impl SolRpc {
             .map_err(|_| anyhow!("blockhash de taille inattendue"))
     }
 
-    /// Demande un airdrop devnet (peut échouer si le faucet intégré est rate-limité :
-    /// dans ce cas, utiliser https://faucet.solana.com manuellement).
+    /// Requests a devnet airdrop (may fail if the built-in faucet is rate-limited; in
+    /// that case, use https://faucet.solana.com manually).
     pub fn request_airdrop(&self, pubkey_b58: &str, lamports: u64) -> Result<String> {
         let result = self.call("requestAirdrop", json!([pubkey_b58, lamports]))?;
         result
@@ -271,12 +271,12 @@ impl SolRpc {
             .ok_or_else(|| anyhow!("réponse requestAirdrop inattendue"))
     }
 
-    /// Diffuse une transaction signée ; renvoie sa signature (identifiant,
-    /// lue dans la transaction). Refus net du nœud (simulation préalable,
-    /// débit) : rien n'est parti. Sans réponse nette : « peut-être partie »
-    /// (voir `wallet_flow::maybe_sent`). Déjà traitée : c'est la même.
+    /// Broadcasts a signed transaction and returns its signature (identifier, read from
+    /// the transaction). A flat refusal from the node (preflight simulation, rate
+    /// limit) means nothing went out. Without a clear answer: "maybe sent" (see
+    /// `wallet_flow::maybe_sent`). Already processed: it is the same transaction.
     pub fn send_transaction(&self, raw_tx: &[u8]) -> Result<String> {
-        // Première signature, après le compteur (un octet : moins de 128).
+        // First signature, after the count (one byte: fewer than 128).
         let signature = raw_tx.get(1..65).filter(|_| raw_tx.first().is_some_and(|n| (1..128).contains(n))).map(|s| bs58::encode(s).into_string()).context("transaction Solana sans signature")?;
         let b64 = base64::engine::general_purpose::STANDARD.encode(raw_tx);
         match self.call("sendTransaction", json!([b64, {"encoding": "base64"}])) {
@@ -291,7 +291,8 @@ impl SolRpc {
                     || text == RATE_LIMITED_ERROR
                     || e.chain().find_map(|c| c.downcast_ref::<reqwest::Error>()).is_some_and(crate::wallet_flow::nothing_sent)
                 {
-                    // Refus net du nœud, débit dépassé, ou connexion jamais établie : rien n'est parti.
+                    // Flat refusal from the node, rate limit exceeded, or connection never established:
+                    // nothing went out.
                     Err(e)
                 } else {
                     Err(crate::wallet_flow::maybe_sent(&signature))
@@ -300,9 +301,9 @@ impl SolRpc {
         }
     }
 
-    /// État brut (lamports, programme propriétaire, données) de plusieurs
-    /// comptes à la fois — `None` pour un compte inexistant. Au plus 100 par
-    /// appel (limite de `getMultipleAccounts`), découpé ici en lots.
+    /// Raw state (lamports, owner program, data) of several accounts at once, `None`
+    /// for an account that does not exist. At most 100 per call (the
+    /// `getMultipleAccounts` limit), split into batches here.
     pub fn multiple_accounts(&self, pubkeys: &[String]) -> Result<Vec<Option<AccountState>>> {
         let mut states = Vec::with_capacity(pubkeys.len());
         for chunk in pubkeys.chunks(100) {
@@ -319,12 +320,12 @@ impl SolRpc {
         Ok(states)
     }
 
-    /// Comme `simulate_transaction`, mais renvoie aussi l'état de `addresses`
-    /// APRÈS simulation (config `accounts` de `simulateTransaction`) — permet de
-    /// vérifier ce qu'une transaction construite par un tiers ferait réellement
-    /// aux comptes de l'utilisateur, au lieu de lui faire confiance (voir
-    /// `api::verify_swap_effects`). La simulation est faite par CE nœud RPC, un
-    /// tiers indépendant de celui qui a construit la transaction (Jupiter).
+    /// Like `simulate_transaction`, but also returns the state of `addresses` AFTER the
+    /// simulation (the `accounts` config of `simulateTransaction`). This makes it
+    /// possible to check what a transaction built by a third party would actually do to
+    /// the user's accounts, instead of trusting it (see `api::verify_swap_effects`).
+    /// The simulation is run by THIS RPC node, a party independent of the one that
+    /// built the transaction (Jupiter).
     pub fn simulate_with_account_states(&self, raw_tx: &[u8], addresses: &[String]) -> Result<SimulationOutcome> {
         let b64 = base64::engine::general_purpose::STANDARD.encode(raw_tx);
         let result = self.call(
@@ -354,13 +355,12 @@ impl SolRpc {
         Ok(SimulationOutcome::Succeeded { post_states })
     }
 
-    /// `true` si la transaction la plus récente touchant `pubkey_b58` n'a pas encore
-    /// atteint la finalité (`confirmationStatus` autre que `"finalized"`) — fonds
-    /// entrants ou sortants pas encore définitivement réglés. Un seul appel limité à
-    /// la dernière signature, sans le second appel `getTransaction` que fait
-    /// `signature_history` pour calculer un montant : appelé à chaque
-    /// rafraîchissement automatique du solde (voir main.js::refreshBalance), il doit
-    /// rester léger.
+    /// `true` if the most recent transaction involving `pubkey_b58` has not reached
+    /// finality yet (`confirmationStatus` other than `"finalized"`): incoming or
+    /// outgoing funds not yet definitively settled. A single call limited to the latest
+    /// signature, without the second `getTransaction` call that `signature_history`
+    /// makes to compute an amount. It is called on every automatic balance refresh (see
+    /// main.js::refreshBalance), so it has to stay light.
     pub fn has_unfinalized_tx(&self, pubkey_b58: &str) -> Result<bool> {
         let result = self.call("getSignaturesForAddress", json!([pubkey_b58, {"limit": 1}]))?;
         let entries = result.as_array().cloned().unwrap_or_default();
@@ -371,31 +371,31 @@ impl SolRpc {
             .is_some_and(|status| status != "finalized"))
     }
 
-    /// `true` si au moins une transaction a déjà touché `pubkey_b58` — distingue
-    /// une adresse jamais utilisée d'une adresse vidée (les deux n'ont plus de
-    /// compte on-chain). Une seule signature demandée, aucun détail.
+    /// `true` if at least one transaction has ever involved `pubkey_b58`: tells an
+    /// address that has never been used apart from one that has been emptied (neither
+    /// has an on-chain account any more). A single signature requested, no details.
     pub fn has_any_signature(&self, pubkey_b58: &str) -> Result<bool> {
         let result = self.call("getSignaturesForAddress", json!([pubkey_b58, {"limit": 1}]))?;
         let entries = result.as_array().ok_or_else(|| anyhow!("réponse getSignaturesForAddress inattendue"))?;
         Ok(!entries.is_empty())
     }
 
-    /// Historique des signatures touchant `pubkey_b58`, du plus récent au plus
-    /// ancien (ordre déjà garanti par `getSignaturesForAddress`). Le montant net de
-    /// chaque transaction demande un second appel (`getTransaction`) : contrairement
-    /// à Bitcoin où Esplora inclut déjà les vin/vout dans la même réponse, Solana ne
-    /// donne l'historique des soldes que transaction par transaction.
+    /// History of the signatures involving `pubkey_b58`, newest first (an order
+    /// `getSignaturesForAddress` already guarantees). The net amount of each
+    /// transaction needs a second call (`getTransaction`): unlike Bitcoin, where
+    /// Esplora already includes vin/vout in the same response, Solana only gives
+    /// balance history transaction by transaction.
     pub fn signature_history(&self, pubkey_b58: &str, limit: u32) -> Result<Vec<SolTx>> {
         self.signature_history_before(pubkey_b58, limit, None)
     }
 
-    /// Page suivante de `signature_history` : signatures plus anciennes que `before`.
+    /// Next page of `signature_history`: signatures older than `before`.
     pub fn signature_history_before(&self, pubkey_b58: &str, limit: u32, before: Option<&str>) -> Result<Vec<SolTx>> {
         self.history_with_details(pubkey_b58, limit, before, net_lamports)
     }
 
-    /// Signatures touchant `account` (plus anciennes que `before`), avec pour
-    /// chacune son détail lu (montant par `amount`, détection de swap).
+    /// Signatures involving `account` (older than `before`), each with its details read
+    /// (amount through `amount`, swap detection).
     fn history_with_details(&self, account: &str, limit: u32, before: Option<&str>, amount: fn(&Value, &str) -> Option<i128>) -> Result<Vec<SolTx>> {
         let mut options = json!({"limit": limit});
         if let Some(before) = before {
@@ -433,14 +433,13 @@ impl SolRpc {
             .collect())
     }
 
-    /// Détails (réduits, voir `compact_transaction`) de plusieurs transactions
-    /// `(signature, finalisée)`, par lots de 4 requêtes simultanées, au rythme
-    /// imposé par `wait_for_slot`. Le détail d'une transaction finalisée ne
-    /// change plus : gardé en mémoire, il n'est jamais redemandé. Erreur de
-    /// récupération d'un détail volontairement avalée : une transaction dont le
-    /// montant n'a pas pu être déterminé (nœud qui a purgé une signature
-    /// ancienne, etc.) doit rester affichable sans montant plutôt que de faire
-    /// échouer tout l'historique.
+    /// Details (trimmed, see `compact_transaction`) of several transactions
+    /// `(signature, finalized)`, in batches of 4 concurrent requests, at the pace set
+    /// by `wait_for_slot`. A finalized transaction's details never change: kept in
+    /// memory, they are never requested again. An error fetching a detail is
+    /// deliberately swallowed: a transaction whose amount could not be determined (a
+    /// node that purged an old signature, etc.) must stay displayable without an amount
+    /// rather than failing the whole history.
     fn transactions(&self, signatures: &[(String, bool)]) -> Vec<Option<Arc<Value>>> {
         const PARALLEL: usize = 4;
         let mut details: Vec<Option<Arc<Value>>> = {
@@ -472,13 +471,12 @@ impl SolRpc {
         details
     }
 
-    /// Solde d'un compte de jeton SPL (Associated Token Account), en plus
-    /// petite unité (ex: micro-USDC, 6 décimales). `None` si le compte
-    /// n'existe pas encore (jamais reçu ce jeton) — `getTokenAccountBalance`
-    /// renvoie une erreur JSON-RPC dans ce cas (pas un `value: null` comme
-    /// `getAccountInfo`), détectée ici par le message plutôt qu'un code
-    /// structuré, faute de mieux exposé par ce endpoint. Niveau « confirmed »,
-    /// comme `balance_lamports`.
+    /// Balance of an SPL token account (Associated Token Account), in the smallest unit
+    /// (e.g. micro-USDC, 6 decimals). `None` if the account does not exist yet (this
+    /// token was never received). `getTokenAccountBalance` returns a JSON-RPC error in
+    /// that case (not a `value: null` like `getAccountInfo`), detected here by its
+    /// message rather than by a structured code, for lack of anything better from this
+    /// endpoint. "Confirmed" level, like `balance_lamports`.
     pub fn token_account_balance(&self, ata_b58: &str) -> Result<Option<u64>> {
         match self.call("getTokenAccountBalance", json!([ata_b58, {"commitment": "confirmed"}])) {
             Ok(result) => {
@@ -493,45 +491,42 @@ impl SolRpc {
         }
     }
 
-    /// `true` si un compte (ATA ou autre) existe déjà on-chain — sert à
-    /// savoir si l'instruction CreateIdempotent va réellement créer un
-    /// compte (et donc facturer le rent) avant d'afficher ce coût dans la
-    /// boîte de dialogue de confirmation.
+    /// `true` if an account (ATA or other) already exists on-chain. Used to find out
+    /// whether the CreateIdempotent instruction will actually create an account (and
+    /// therefore charge rent) before showing that cost in the confirmation dialog.
     pub fn account_exists(&self, pubkey_b58: &str) -> Result<bool> {
         let result = self.call("getAccountInfo", json!([pubkey_b58, {"encoding": "base64"}]))?;
         Ok(!result.get("value").map(Value::is_null).unwrap_or(true))
     }
 
-    /// Minimum de lamports pour qu'un compte de `data_len` octets soit
-    /// exempté de rent — interrogé en direct plutôt que codé en dur : ce
-    /// paramètre réseau évolue avec le temps, un chiffre figé deviendrait
-    /// silencieusement trop bas ou trop haut.
+    /// Minimum lamports for an account of `data_len` bytes to be rent-exempt, queried
+    /// live rather than hard-coded: this network parameter changes over time, and a
+    /// fixed figure would silently become too low or too high.
     pub fn minimum_rent_exempt_balance(&self, data_len: u64) -> Result<u64> {
         let result = self.call("getMinimumBalanceForRentExemption", json!([data_len]))?;
         result.as_u64().ok_or_else(|| anyhow!("réponse getMinimumBalanceForRentExemption inattendue"))
     }
 
-    /// Message clair pour une simulation en échec dont la cause est connue :
-    /// SOL manquant relevé dans le journal (`insufficient_lamports_error`), ou
-    /// compte qui finirait sous la réserve minimale de Solana. Ce dernier cas
-    /// n'apparaît PAS dans le journal (le réseau le vérifie après les
-    /// instructions, qui réussissent toutes) : seulement dans `err`, constaté
-    /// le 02/10/2026 sur un échange LI.FI de presque tout le solde.
-    /// `None` : cause inconnue, à l'appelant d'afficher `err` et le journal.
+    /// A clear message for a failed simulation whose cause is known: missing SOL found
+    /// in the log (`insufficient_lamports_error`), or an account that would end up
+    /// below Solana's minimum reserve. The latter does NOT appear in the log (the
+    /// network checks it after the instructions, which all succeed): only in `err`, as
+    /// seen on 2026-10-02 on a LI.FI swap of almost the whole balance. `None`: unknown
+    /// cause, and it is up to the caller to show `err` and the log.
     pub fn explain_simulation_failure(&self, err: &Value, logs: &str) -> Option<anyhow::Error> {
         if let Some(error) = insufficient_lamports_error(logs) {
             return Some(error);
         }
         let index = err.pointer("/InsufficientFundsForRent/account_index").and_then(Value::as_u64)?;
-        // Réserve d'un compte sans données, lue en direct : ce paramètre du
-        // réseau a déjà baissé (0,00089088 SOL auparavant, 0,00065024 constaté
-        // le 02/10/2026) ; cette dernière valeur si la lecture échoue.
+        // Reserve for an account with no data, read live: this network parameter has
+        // already gone down (0.00089088 SOL before, 0.00065024 seen on 2026-10-02); that
+        // last value is used if the read fails.
         let reserve = format_lamports(self.minimum_rent_exempt_balance(0).unwrap_or(650_240));
-        // Compte 0 : le payeur des frais — l'utilisateur dans toute transaction
-        // que l'app accepte de signer (signataire unique et payeur vérifiés,
-        // voir jupiter_rpc::sign_swap_transaction et dapp_requests).
-        // Réduire le montant de SOL envoyé de la réserve suffit toujours : ce
-        // qui resterait est positif, sinon le transfert lui-même aurait échoué.
+        // Account 0: the fee payer, which is the user in every transaction the app agrees
+        // to sign (single signer and payer checked, see jupiter_rpc::sign_swap_transaction
+        // and dapp_requests). Reducing the amount of SOL sent by the reserve is always
+        // enough: what would remain is positive, otherwise the transfer itself would have
+        // failed.
         Some(if index == 0 {
             anyhow!(
                 "solde SOL trop juste : il doit rester au moins {reserve} SOL sur votre compte après l'opération (réserve minimale imposée par Solana) — réduisez le montant de SOL envoyé d'autant, ou ajoutez du SOL"
@@ -541,12 +536,11 @@ impl SolRpc {
         })
     }
 
-    /// Détail d'une transaction (`getTransaction`) ; `None` si le nœud ne l'a
-    /// plus (signature ancienne purgée). Transactions « version 1 » acceptées
-    /// (constaté le 09/10/2026 : demandées en version 0, le nœud les refuse
-    /// — erreur -32015 — et elles restaient sans montant dans l'historique) ;
-    /// en JSON, mêmes clés de comptes et mêmes soldes que les versions
-    /// précédentes (`compact_transaction`).
+    /// Details of a transaction (`getTransaction`); `None` if the node no longer has it
+    /// (old signature purged). "Version 1" transactions are accepted (seen on
+    /// 2026-10-09: requested as version 0, the node refused them with error -32015 and
+    /// they stayed without an amount in the history); in JSON, they have the same
+    /// account keys and balances as earlier versions (`compact_transaction`).
     fn transaction(&self, signature: &str) -> Result<Option<Value>> {
         let result = self.call(
             "getTransaction",
@@ -555,28 +549,28 @@ impl SolRpc {
         Ok((!result.is_null()).then_some(result))
     }
 
-    /// Même principe que `signature_history`, mais pour l'historique d'un jeton SPL
-    /// (ex: USDC) : interroge les signatures touchant directement le compte de
-    /// jetons associé (ATA), pas l'adresse "propriétaire" du wallet — c'est l'ATA,
-    /// pas le compte système du propriétaire, qui reçoit/envoie effectivement le
-    /// jeton. Le champ `net_lamports` du `SolTx` retourné contient en réalité un
-    /// montant en plus petite unité du jeton (ex: micro-USDC), pas des lamports —
-    /// réutilise la même structure plutôt que d'en dupliquer une identique.
+    /// Same principle as `signature_history`, but for the history of an SPL token (e.g.
+    /// USDC): queries the signatures that directly involve the associated token account
+    /// (ATA), not the wallet's "owner" address, since it is the ATA, not the owner's
+    /// system account, that actually receives/sends the token. The `net_lamports` field
+    /// of the returned `SolTx` actually holds an amount in the token's smallest unit
+    /// (e.g. micro-USDC), not lamports; the same struct is reused rather than
+    /// duplicating an identical one.
     pub fn token_signature_history(&self, ata_b58: &str, limit: u32) -> Result<Vec<SolTx>> {
         self.token_signature_history_before(ata_b58, limit, None)
     }
 
-    /// Page suivante de `token_signature_history` : signatures plus anciennes que `before`.
+    /// Next page of `token_signature_history`: signatures older than `before`.
     pub fn token_signature_history_before(&self, ata_b58: &str, limit: u32, before: Option<&str>) -> Result<Vec<SolTx>> {
         self.history_with_details(ata_b58, limit, before, net_token_amount)
     }
 }
 
-/// Détail d'une transaction réduit aux champs lus ici (montants, swap) : clés
-/// de compte — y compris celles chargées depuis des tables d'adresses
-/// (transactions v0), qui suivent les clés statiques dans les tableaux de
-/// soldes, écrivables puis en lecture seule —, soldes avant/après et lignes de
-/// memo du journal. Quelques centaines d'octets au lieu de dizaines de Ko.
+/// A transaction's details trimmed to the fields read here (amounts, swap): account
+/// keys (including those loaded from address tables in v0 transactions, which
+/// follow the static keys in the balance arrays, writable then read-only), balances
+/// before/after and the memo lines of the log. A few hundred bytes instead of tens
+/// of KB.
 fn compact_transaction(tx: &Value) -> Value {
     let mut keys = tx.pointer("/transaction/message/accountKeys").and_then(Value::as_array).cloned().unwrap_or_default();
     for group in ["writable", "readonly"] {
@@ -585,7 +579,7 @@ fn compact_transaction(tx: &Value) -> Value {
         }
     }
     let meta = |field: &str| tx.pointer(&format!("/meta/{field}")).cloned().unwrap_or(Value::Null);
-    // Soldes de jetons : seuls l'index du compte et le montant sont lus.
+    // Token balances: only the account index and the amount are read.
     let token_balances = |field: &str| match tx.pointer(&format!("/meta/{field}")).and_then(Value::as_array) {
         Some(entries) => Value::Array(
             entries
@@ -612,7 +606,8 @@ fn compact_transaction(tx: &Value) -> Value {
     })
 }
 
-/// Variation du solde SOL de `pubkey_b58` dans une transaction (`getTransaction`).
+/// Change in the SOL balance of `pubkey_b58` within a transaction
+/// (`getTransaction`).
 fn net_lamports(tx: &Value, pubkey_b58: &str) -> Option<i128> {
     let account_keys = tx.pointer("/transaction/message/accountKeys")?.as_array()?;
     let index = account_keys.iter().position(|k| k.as_str() == Some(pubkey_b58))?;
@@ -621,13 +616,12 @@ fn net_lamports(tx: &Value, pubkey_b58: &str) -> Option<i128> {
     Some((post - pre) as i128)
 }
 
-/// Équivalent de `net_lamports` pour un compte de jetons SPL : Solana ne
-/// donne pas l'historique des soldes de jetons dans `preBalances`/`postBalances`
-/// (réservés au solde natif SOL), mais dans `preTokenBalances`/`postTokenBalances`,
-/// indexés par la position du compte dans `accountKeys` (même mécanisme
-/// d'indexation). Absence dans `preTokenBalances` traitée comme un solde de 0
-/// avant la transaction (cas d'un ATA tout juste créé par cette même
-/// transaction, via CreateIdempotent).
+/// The equivalent of `net_lamports` for an SPL token account: Solana does not give
+/// token balance history in `preBalances`/`postBalances` (reserved for the native
+/// SOL balance) but in `preTokenBalances`/`postTokenBalances`, indexed by the
+/// account's position in `accountKeys` (the same indexing mechanism). Absence from
+/// `preTokenBalances` is treated as a balance of 0 before the transaction (the case
+/// of an ATA just created by that same transaction, through CreateIdempotent).
 fn net_token_amount(tx: &Value, ata_b58: &str) -> Option<i128> {
     let account_keys = tx.pointer("/transaction/message/accountKeys")?.as_array()?;
     let index = account_keys.iter().position(|k| k.as_str() == Some(ata_b58))?;
@@ -643,23 +637,22 @@ fn net_token_amount(tx: &Value, ata_b58: &str) -> Option<i128> {
     amount_at_index(tx.pointer("/meta/postTokenBalances")?.as_array()?).map(|post| post - pre_amount)
 }
 
-/// Programme d'agrégation de swaps Jupiter (v6), celui qu'utilise l'app.
+/// Jupiter's swap aggregation program (v6), the one the app uses.
 const JUPITER_PROGRAM: &str = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4";
 
-/// Swap : programme Jupiter appelé (toujours parmi les clés statiques du
-/// message, un programme ne pouvant venir d'une table d'adresses), ou memo de
-/// swap THORChain dans le journal du programme Memo
-/// (`Program log: Memo (len N): "…"`).
-/// Opération de staking natif de `account` (mise, arrêt ou retrait, voir
-/// `sol_stake`) : programme Stake parmi les comptes, et `account` payeur des
-/// frais (premier compte). Une transaction d'un tiers qui toucherait aussi le
-/// programme Stake reste une réception ordinaire.
+/// Native staking operation by `account` (stake, unstake or withdraw, see
+/// `sol_stake`): the Stake program among the accounts, and `account` as the fee
+/// payer (first account). A third-party transaction that also touches the Stake
+/// program stays an ordinary receipt.
 fn is_stake_transaction(tx: &Value, account: &str) -> bool {
     tx.pointer("/transaction/message/accountKeys").and_then(Value::as_array).is_some_and(|keys| {
         keys.first().and_then(Value::as_str) == Some(account) && keys.iter().any(|k| k.as_str() == Some(crate::sol_stake::STAKE_PROGRAM))
     })
 }
 
+/// Swap: the Jupiter program is called (always among the message's static keys, since
+/// a program cannot come from an address table), or a THORChain swap memo appears in
+/// the Memo program's log (`Program log: Memo (len N): "…"`).
 fn is_swap_transaction(tx: &Value) -> bool {
     let jupiter = tx
         .pointer("/transaction/message/accountKeys")
@@ -676,23 +669,22 @@ fn is_swap_transaction(tx: &Value) -> bool {
     jupiter || memo_swap
 }
 
-/// Cherche le motif "Transfer: insufficient lamports X, need Y" dans un
-/// journal de simulation (voir `SolRpc::simulate_transaction`) et, si
-/// trouvé, construit un message clair avec le manque exact — beaucoup plus
-/// lisible que le journal brut pour un montant/frais/rent qui ne peut pas
-/// être prédit à l'avance de façon fiable (ex: coût exact d'une route de
-/// swap Jupiter, qui varie d'un appel à l'autre).
-/// Transaction dont le blockhash a expiré (ou est inconnu du nœud) avant
-/// l'envoi : refusée avant toute diffusion.
+/// Transaction whose blockhash expired (or is unknown to the node) before sending:
+/// refused before any broadcast.
 pub const BLOCKHASH_EXPIRED_ERROR: &str =
     "la transaction a expiré avant d'être envoyée (délai de validité de Solana dépassé) — rien n'a été envoyé ni débité, réessayez";
 
-/// Lamports en SOL, sans zéros inutiles (« 0.00065024 »).
+/// Lamports as SOL, without needless zeros ("0.00065024").
 pub fn format_lamports(lamports: u64) -> String {
     let text = format!("{}.{:09}", lamports / 1_000_000_000, lamports % 1_000_000_000);
     text.trim_end_matches('0').trim_end_matches('.').to_string()
 }
 
+/// Looks for the pattern "Transfer: insufficient lamports X, need Y" in a simulation
+/// log (see `SolRpc::simulate_transaction`) and, if found, builds a clear message with
+/// the exact shortfall. Much more readable than the raw log for an amount, fee or rent
+/// that cannot be reliably predicted in advance (e.g. the exact cost of a Jupiter swap
+/// route, which varies from one call to the next).
 pub fn insufficient_lamports_error(logs: &str) -> Option<anyhow::Error> {
     let line = logs.lines().find(|l| l.contains("insufficient lamports"))?;
     let numbers: Vec<u64> = line
@@ -707,11 +699,11 @@ pub fn insufficient_lamports_error(logs: &str) -> Option<anyhow::Error> {
     ))
 }
 
-/// État brut d'un compte Solana tel que renvoyé par le RPC (encodage base64).
+/// Raw state of a Solana account as returned by the RPC (base64 encoding).
 #[derive(Clone, Debug, PartialEq)]
 pub struct AccountState {
     pub lamports: u64,
-    /// Programme propriétaire du compte (base58).
+    /// The account's owner program (base58).
     pub owner: String,
     pub data: Vec<u8>,
 }
@@ -735,8 +727,8 @@ impl AccountState {
 }
 
 pub enum SimulationOutcome {
-    /// `err` : erreur de transaction renvoyée par le nœud (seule trace de
-    /// certaines causes, voir `SolRpc::explain_simulation_failure`).
+    /// `err`: transaction error returned by the node (the only trace of some causes,
+    /// see `SolRpc::explain_simulation_failure`).
     Failed { err: Value, logs: String },
     Succeeded { post_states: Vec<Option<AccountState>> },
 }
@@ -744,16 +736,16 @@ pub enum SimulationOutcome {
 pub struct SolTx {
     pub signature: String,
     pub block_time: Option<i64>,
-    /// `confirmed`/`finalized` (voir `confirmationStatus`) ; `processed` (le niveau
-    /// le moins sûr, pas encore répliqué) est traité comme non confirmé.
+    /// `confirmed`/`finalized` (see `confirmationStatus`); `processed` (the least safe
+    /// level, not replicated yet) is treated as unconfirmed.
     pub confirmed: bool,
     pub failed: bool,
-    /// Positif si reçu net, négatif si envoyé net, en lamports ; `None` si le détail
-    /// n'a pas pu être récupéré.
+    /// Positive if received on net, negative if sent on net, in lamports; `None` if the
+    /// details could not be fetched.
     pub net_lamports: Option<i128>,
-    /// Swap Jupiter ou THORChain (voir `is_swap_transaction`).
+    /// Jupiter or THORChain swap (see `is_swap_transaction`).
     pub swap: bool,
-    /// Staking natif (voir `is_stake_transaction`).
+    /// Native staking (see `is_stake_transaction`).
     pub stake: bool,
 }
 
@@ -761,9 +753,9 @@ pub struct SolTx {
 mod tests {
     use super::*;
 
-    // Ligne de journal réelle observée lors d'un échec de simulation de swap
-    // Jupiter (rent/wrapping SOL<->wSOL sous-estimé) — vérifie que le motif
-    // exact renvoyé par le validateur Solana est bien reconnu.
+    // A real log line seen when a Jupiter swap simulation failed (rent/wrapping
+    // SOL<->wSOL underestimated): checks that the exact pattern returned by the Solana
+    // validator is recognized.
     #[test]
     fn insufficient_lamports_error_extracts_the_real_shortfall() {
         let logs = "Program log: Instruction: Route\nProgram 11111111111111111111111111111111 invoke [2]\nTransfer: insufficient lamports 6460932, need 13045440\nProgram 11111111111111111111111111111111 failed: custom program error: 0x1";
@@ -779,10 +771,10 @@ mod tests {
         assert!(insufficient_lamports_error("Program log: Instruction: Route\nProgram ... success").is_none());
     }
 
-    /// Échec réel du 02/10/2026 (échange LI.FI de presque tout le solde,
-    /// reproduit en simulation) : toutes les instructions réussissent, seule
-    /// l'erreur dit qu'un compte finirait sous la réserve minimale. Nœud
-    /// injoignable ici : réserve par défaut.
+    /// Real failure from 2026-10-02 (a LI.FI swap of almost the whole balance,
+    /// reproduced in simulation): every instruction succeeds, and only the error says
+    /// an account would end up below the minimum reserve. Node unreachable here:
+    /// default reserve.
     #[test]
     fn explains_a_balance_left_under_the_rent_reserve() {
         let rpc = SolRpc::new("http://127.0.0.1:1");
@@ -802,10 +794,9 @@ mod tests {
         assert_eq!(format_lamports(0), "0");
     }
 
-    /// Formats de vraies transactions du réseau principal : swap Jupiter
-    /// (programme parmi les clés statiques d'une transaction v0), dépôt de swap
-    /// THORChain et paiement THORChain (lignes de journal du programme Memo
-    /// recopiées telles quelles), virement ordinaire.
+    /// Formats of real mainnet transactions: a Jupiter swap (program among the static
+    /// keys of a v0 transaction), a THORChain swap deposit and a THORChain payout (Memo
+    /// program log lines copied verbatim), an ordinary transfer.
     #[test]
     fn swaps_are_detected_in_real_transaction_formats() {
         let tx = |keys: &[&str], logs: &[&str]| json!({"transaction": {"message": {"accountKeys": keys}}, "meta": {"logMessages": logs}});
@@ -826,7 +817,7 @@ mod tests {
         assert!(!is_swap_transaction(&json!({})));
     }
 
-    /// Montants nets SOL et jeton, calculés sur le même détail de transaction.
+    /// Net SOL and token amounts, computed from the same transaction details.
     #[test]
     fn net_amounts_are_read_from_transaction_details() {
         let tx = json!({
@@ -842,10 +833,10 @@ mod tests {
         assert_eq!(net_token_amount(&tx, "Other"), None);
     }
 
-    /// Méthode de limite inconnue : 9 envois par 10 s, le 10ᵉ attend que le
-    /// plus ancien sorte de la fenêtre ; une autre méthode n'est pas
-    /// concernée ; limite annoncée par le nœud (une de marge) ; après un
-    /// refus, plus rien pendant le délai demandé ; limite totale de 80.
+    /// Method with an unknown limit: 9 sends per 10 s, the 10th waits for the oldest to
+    /// leave the window; another method is not affected; limit announced by the node
+    /// (minus one as a margin); after a refusal, nothing for the requested delay;
+    /// global limit of 80.
     #[test]
     fn requests_are_paced_under_the_public_node_limits() {
         let mut window = RateWindow::default();
@@ -875,8 +866,8 @@ mod tests {
         assert_eq!(window.try_acquire("autre", t0 + Duration::from_secs(2)), Some(Duration::from_secs(8)), "limite totale");
     }
 
-    /// Cache sur disque : relu d'une session à l'autre, doublons ignorés,
-    /// ligne abîmée (écriture interrompue) sautée.
+    /// Disk cache: reread from one session to the next, duplicates ignored, damaged
+    /// line (interrupted write) skipped.
     #[test]
     fn transaction_details_survive_a_restart() {
         let path = std::env::temp_dir().join(format!("sol_details_{}.jsonl", std::process::id()));
@@ -896,10 +887,10 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
-    /// Détail réduit : clés chargées depuis une table d'adresses ajoutées
-    /// après les clés statiques (écrivables puis lecture seule), comme dans les
-    /// tableaux de soldes ; seules les lignes de memo du journal gardées ;
-    /// montants et détection de swap identiques sur le détail réduit.
+    /// Trimmed details: keys loaded from an address table are added after the static
+    /// keys (writable then read-only), as in the balance arrays; only the memo lines of
+    /// the log are kept; amounts and swap detection are identical on the trimmed
+    /// details.
     #[test]
     fn compact_details_keep_what_amounts_and_swaps_need() {
         let tx = json!({

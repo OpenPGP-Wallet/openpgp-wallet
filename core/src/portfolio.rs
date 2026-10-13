@@ -1,18 +1,18 @@
-//! Valeur en dollars d'un ensemble d'adresses (profil du portefeuille, wallets
-//! externes) au fil du temps, reconstruite à partir des données de la chaîne :
-//! solde actuel, puis à rebours chaque transaction de l'historique (variation
-//! réelle du solde, frais compris), multiplié par le prix de l'actif à chaque
-//! instant (voir `price_history`). Purement informatif, lecture seule.
+//! Dollar value of a set of addresses (the wallet profile, external wallets) over
+//! time, rebuilt from chain data: the current balance, then each history transaction
+//! going backwards (the actual balance change, fees included), multiplied by the
+//! asset's price at each point in time (see `price_history`). Purely informational,
+//! read-only.
 //!
-//! L'historique de chaque adresse est lu page par page, aussi loin que la
-//! période l'exige (« tout » : jusqu'à la première transaction), dans une
-//! limite par adresse. Avant la plus ancienne transaction lue d'une adresse
-//! dont l'historique n'a pas été lu jusqu'au bout, son solde est inconnu : la
-//! courbe commence alors à cet instant (`since`) au lieu d'inventer une valeur.
+//! Each address's history is read page by page, as far back as the period requires
+//! ("all": back to the first transaction), within a per-address limit. Before the
+//! oldest transaction read for an address whose history was not read to the end, its
+//! balance is unknown: the chart then starts at that point (`since`) instead of
+//! inventing a value.
 //!
-//! Réseau sans source d'historique utilisable (BNB Chain sans clé NodeReal) : le solde
-//! actuel est compté sur toute la période, et la crypto est signalée
-//! (`constant`) pour que l'interface le dise.
+//! Network with no usable history source (BNB Chain without a NodeReal key): the
+//! current balance is counted over the whole period, and the crypto is flagged
+//! (`constant`) so the UI can say so.
 
 use crate::history::{self, EvmCursor, TxEntry, TxStatus};
 use crate::price_history::{self, Asset, ChartRange, PriceSeries};
@@ -23,11 +23,11 @@ use std::collections::HashMap;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 
-/// Une adresse, son réseau (identifiants de l'app : "evm_mainnet",
-/// "base_mainnet", "btc_mainnet", "sol_mainnet"… ; "usdc_solana", ancien
-/// identifiant des wallets externes = USDC sur Solana) et, pour un jeton,
-/// son identifiant dans le registre (`tokens`). Les réseaux de test sont
-/// acceptés mais ignorés, leurs fonds n'ayant pas de valeur.
+/// An address, its network (app identifiers: "evm_mainnet", "base_mainnet",
+/// "btc_mainnet", "sol_mainnet"…; "usdc_solana", the legacy external wallet
+/// identifier = USDC on Solana) and, for a token, its identifier in the registry
+/// (`tokens`). Test networks are accepted but ignored, since their funds have no
+/// value.
 pub struct Holding {
     pub network: String,
     pub address: String,
@@ -35,69 +35,67 @@ pub struct Holding {
 }
 
 pub struct PortfolioHistory {
-    /// (instant, valeur en dollars), dans l'ordre chronologique ; le dernier
-    /// point est l'instant présent.
+    /// (time, dollar value), in chronological order; the last point is the present.
     pub points: Vec<(i64, f64)>,
-    /// Début des données exactes, quand l'historique d'une adresse est
-    /// tronqué à l'intérieur de la période demandée.
+    /// Start of the exact data, when an address's history is truncated within the
+    /// requested period.
     pub since: Option<i64>,
-    /// Données incomplètes rencontrées (montant d'une transaction inconnu, ou
-    /// solde reconstruit négatif : mouvement absent de l'historique, comme un
-    /// transfert interne de contrat Ethereum) : courbe seulement indicative.
+    /// Incomplete data encountered (unknown transaction amount, or a negative rebuilt
+    /// balance: a movement missing from the history, such as an internal Ethereum
+    /// contract transfer): the chart is only indicative.
     pub approximate: bool,
-    /// Historique encore en cours de lecture : redemander pour la suite.
+    /// History still being read: ask again for the rest.
     pub loading: bool,
-    /// Transactions lues jusqu'ici, toutes adresses confondues.
+    /// Transactions read so far, across all addresses.
     pub transactions_read: usize,
-    /// Cryptos détenues sur un réseau sans historique, comptées à leur solde
-    /// actuel sur toute la période (symboles, sans doublon).
+    /// Cryptos held on a network with no history, counted at their current balance over
+    /// the whole period (symbols, deduplicated).
     pub constant: Vec<String>,
-    /// Cryptos dont une adresse n'a rien pu lire (service saturé ou en
-    /// panne) : absentes de la courbe, relues au prochain appel (symboles,
-    /// sans doublon).
+    /// Cryptos for which an address could not be read at all (service overloaded or
+    /// down): left out of the chart, read again on the next call (symbols,
+    /// deduplicated).
     pub unavailable: Vec<String>,
 }
 
-/// Transactions lues au plus par adresse : 20 pages Blockscout, 40 pages
-/// Esplora.
+/// Maximum transactions read per address: 20 Blockscout pages, 40 Esplora pages.
 const EVM_MAX: usize = 1000;
 const BTC_MAX: usize = 1000;
-/// Transactions Dogecoin lues pour la courbe (heure de chaque bloc demandée
-/// une fois au service, puis gardée).
+/// Dogecoin transactions read for the chart (each block's time requested once from
+/// the service, then cached).
 const DOGE_MAX: usize = 100;
-/// Virements de TRX lus pour la courbe (une page TronGrid).
+/// TRX transfers read for the chart (one TronGrid page).
 const TRON_MAX: usize = 50;
 const XRP_MAX: usize = 50;
 const XLM_MAX: usize = 50;
 const NEAR_MAX: usize = 25;
 const ADA_MAX: usize = 25;
 const STX_MAX: usize = 50;
-/// Virements de TAO lus pour la courbe (une page Taostats).
+/// TAO transfers read for the chart (one Taostats page).
 const TAO_MAX: usize = 100;
-/// Transactions confirmées par page Esplora.
+/// Confirmed transactions per Esplora page.
 const BTC_PAGE: usize = 25;
-/// Chaque transaction Solana demande une requête de détail, que le nœud
-/// public limite à 35 par 10 s (voir `sol_rpc`) : 300 ≈ 1 min 30 au pire,
-/// beaucoup moins ensuite (détails des transactions finalisées gardés).
+/// Each Solana transaction needs a detail request, which the public node limits to
+/// 35 per 10 s (see `sol_rpc`): 300 ≈ 1 min 30 at worst, much less afterwards
+/// (details of finalized transactions are cached).
 const SOL_MAX: usize = 300;
-/// Première page courte (≈ 10 s de lecture) pour qu'une courbe apparaisse
-/// vite, puis des pages plus longues.
+/// A short first page (≈ 10 s of reading) so that a chart appears quickly, then
+/// longer pages.
 const SOL_FIRST_PAGE: u32 = 10;
 const SOL_PAGE: u32 = 25;
 const MAX_HOLDINGS: usize = 60;
 const CACHE_TTL: Duration = Duration::from_secs(300);
-/// Attente maximale d'un appel avant de rendre une courbe partielle.
+/// Maximum wait for one call before returning a partial chart.
 const WAIT: Duration = Duration::from_secs(6);
-/// Période affichée pour « tout » quand aucune transaction n'est connue.
+/// Period shown for "all" when no transaction is known.
 const DEFAULT_ALL_SPAN: i64 = 365 * 86_400;
 
-/// Suite d'un historique : curseur propre à chaque source.
+/// Continuation of a history: a cursor specific to each source.
 #[derive(Clone)]
 enum Cursor {
     Evm(EvmCursor),
-    /// Dernier txid confirmé vu.
+    /// Last confirmed txid seen.
     Btc(String),
-    /// Dernière signature vue.
+    /// Last signature seen.
     Sol(String),
 }
 
@@ -111,17 +109,17 @@ struct HoldingData {
     asset: Asset,
     decimals: i32,
     symbol: &'static str,
-    /// Aucune source d'historique : solde actuel compté sur toute la période.
+    /// No history source: the current balance is counted over the whole period.
     constant: bool,
-    /// Solde actuel, en plus petite unité.
+    /// Current balance, in the smallest unit.
     balance: i128,
-    /// (instant, variation du solde), du plus récent au plus ancien.
+    /// (time, balance change), newest to oldest.
     changes: Vec<(i64, i128)>,
-    /// Plus ancienne transaction lue.
+    /// Oldest transaction read.
     oldest: Option<i64>,
-    /// Suite de l'historique ; `None` quand il a été lu jusqu'au bout.
+    /// Continuation of the history; `None` once it has been read to the end.
     next: Option<Cursor>,
-    /// Transactions lues.
+    /// Transactions read.
     read: usize,
     approximate: bool,
 }
@@ -129,14 +127,14 @@ struct HoldingData {
 impl HoldingData {
     fn absorb(&mut self, page: Page, now: i64) {
         self.read += page.entries.len();
-        // Page vide : fin de l'historique, même si la source donne un curseur.
+        // Empty page: end of the history, even if the source gives a cursor.
         self.next = if page.entries.is_empty() { None } else { page.next };
         for entry in &page.entries {
             if let Some(t) = entry.timestamp_unix {
                 self.oldest = Some(self.oldest.map_or(t, |o| o.min(t)));
             }
             match entry.balance_change() {
-                // En attente : pas encore d'horodatage, compté à l'instant présent.
+                // Pending: no timestamp yet, counted at the present time.
                 Some(change) => self.changes.push((entry.timestamp_unix.unwrap_or(now), change)),
                 None => self.approximate = true,
             }
@@ -144,23 +142,23 @@ impl HoldingData {
         self.changes.sort_by_key(|change| std::cmp::Reverse(change.0));
     }
 
-    /// Historique suffisant : lu jusqu'au bout, jusqu'à `until`, ou limite atteinte.
+    /// Enough history: read to the end, back to `until`, or the limit reached.
     fn covers(&self, until: Option<i64>, max_read: usize) -> bool {
         self.next.is_none() || self.read >= max_read || matches!((until, self.oldest), (Some(u), Some(o)) if o <= u)
     }
 
-    /// Début des données exactes si l'historique n'a pas été lu jusqu'au bout.
+    /// Start of the exact data if the history was not read to the end.
     fn known_since(&self) -> Option<i64> {
         self.next.as_ref().and(self.oldest)
     }
 }
 
-/// Ce qu'il faut lire pour un avoir.
+/// What needs reading for a holding.
 #[derive(Clone, Copy)]
 struct Spec {
     asset: Asset,
     decimals: i32,
-    /// Transactions lues au plus.
+    /// Maximum transactions read.
     max_read: usize,
     symbol: &'static str,
     source: Source,
@@ -170,48 +168,48 @@ struct Spec {
 enum Source {
     Btc,
     Sol,
-    /// Jeton SPL (mint) : historique de son compte de jetons associé.
+    /// SPL token (mint): history of its associated token account.
     Spl([u8; 32]),
-    /// Monnaie d'un réseau EVM.
+    /// An EVM network's native coin.
     Evm(&'static wallet_flow::EvmNetwork),
-    /// Jeton ERC-20 (adresse du contrat).
+    /// ERC-20 token (contract address).
     Erc20(&'static wallet_flow::EvmNetwork, &'static str),
-    /// Zcash transparent : solde actuel, compté constant sur la période.
+    /// Transparent Zcash: current balance, counted as constant over the period.
     Zec,
-    /// Monero : solde et historique complet de l'état local (voir `monero`).
+    /// Monero: balance and full history from the local state (see `monero`).
     Xmr,
-    /// Zcash protégé : solde et historique de la base locale (voir
+    /// Shielded Zcash: balance and history from the local database (see
     /// `zcash_shielded`).
     ZecShielded,
-    /// Dogecoin : historique récent, en une page (voir `DOGE_MAX`).
+    /// Dogecoin: recent history, in one page (see `DOGE_MAX`).
     Doge,
-    /// Tron : virements de TRX récents, en une page (voir `TRON_MAX`).
+    /// Tron: recent TRX transfers, in one page (see `TRON_MAX`).
     Tron,
-    /// Jeton TRC-20 (contrat) : transferts récents, en une page.
+    /// TRC-20 token (contract): recent transfers, in one page.
     Trc20(&'static str),
-    /// XRP Ledger : paiements récents, en une page (voir `XRP_MAX`).
+    /// XRP Ledger: recent payments, in one page (see `XRP_MAX`).
     Xrp,
-    /// Stellar : paiements récents, en une page (voir `XLM_MAX`).
+    /// Stellar: recent payments, in one page (see `XLM_MAX`).
     Xlm,
-    /// NEAR : virements récents, en une page (voir `NEAR_MAX`).
+    /// NEAR: recent transfers, in one page (see `NEAR_MAX`).
     Near,
-    /// Cardano : transactions récentes, en une page (voir `ADA_MAX`).
+    /// Cardano: recent transactions, in one page (see `ADA_MAX`).
     Ada,
-    /// Stacks : mouvements récents, en une page (voir `STX_MAX`).
+    /// Stacks: recent movements, in one page (see `STX_MAX`).
     Stx,
-    /// Bittensor : virements récents, en une page (voir `TAO_MAX`) ; sans
-    /// clé Taostats dans cette version, solde seul.
+    /// Bittensor: recent transfers, in one page (see `TAO_MAX`); balance only when this
+    /// build has no Taostats key.
     Tao,
 }
 
 impl Spec {
-    /// Historique lu chez NodeReal ou Alchemy (offres gratuites partagées,
-    /// voir `nodereal` et `alchemy`).
+    /// History read from NodeReal or Alchemy (shared free tiers, see `nodereal` and
+    /// `alchemy`).
     fn uses_shared_quota(&self) -> bool {
         matches!(self.source, Source::Evm(net) | Source::Erc20(net, _) if matches!(net.history, Some(wallet_flow::EvmHistory::NodeReal | wallet_flow::EvmHistory::Alchemy)))
     }
 
-    /// Une source d'historique existe pour cet avoir (voir `EvmNetwork::history`).
+    /// A history source exists for this holding (see `EvmNetwork::history`).
     fn has_history(&self) -> bool {
         match self.source {
             Source::Evm(net) | Source::Erc20(net, _) => history::evm_history_available(net),
@@ -222,8 +220,8 @@ impl Spec {
     }
 }
 
-/// Avoir de `token` (ou de la monnaie du réseau) sur `network` ; `Ok(None)` :
-/// sans valeur (réseau de test, ou crypto sans source de prix).
+/// Holding of `token` (or of the network's native coin) on `network`; `Ok(None)`:
+/// no value (test network, or a crypto with no price source).
 fn spec(network: &str, token: Option<&str>) -> Result<Option<Spec>> {
     let (network, token) = if network == "usdc_solana" { ("sol_mainnet", Some("usdc")) } else { (network, token) };
     if let Some(token_id) = token {
@@ -231,8 +229,8 @@ fn spec(network: &str, token: Option<&str>) -> Result<Option<Spec>> {
         let Some(asset) = price_history::price_asset(&token.symbol.to_ascii_uppercase()) else { return Ok(None) };
         let (source, max_read) = match deployment.kind {
             TokenKind::Spl { .. } => (Source::Spl(api::registered_spl_mint(token_id)?), SOL_MAX),
-            // Actions tokenisées : aucun historique de cours, hors de la courbe
-            // (leur valeur actuelle reste comptée au tableau de bord).
+            // Tokenized shares: no price history, left out of the chart (their current value
+            // is still counted on the dashboard).
             TokenKind::Spl2022 { .. } => return Ok(None),
             TokenKind::Erc20 { contract } => {
                 let net = wallet_flow::evm_network(network).ok_or_else(|| anyhow!("réseau inconnu : {network}"))?;
@@ -257,8 +255,8 @@ fn spec(network: &str, token: Option<&str>) -> Result<Option<Spec>> {
         "stx_mainnet" => Spec { asset: Asset::Pair("STXUSDT"), decimals: 6, max_read: STX_MAX, symbol: "STX", source: Source::Stx },
         "tao_mainnet" => Spec { asset: Asset::Pair("TAOUSDT"), decimals: 9, max_read: TAO_MAX, symbol: "TAO", source: Source::Tao },
         other => match wallet_flow::evm_network(other) {
-            // Réseau ajouté par l'utilisateur : aucun cours (son symbole ne dit
-            // rien de sa valeur), hors de la courbe.
+            // Network added by the user: no price (its symbol says nothing about its value),
+            // left out of the chart.
             Some(net) if net.mainnet && !net.custom => {
                 let Some(asset) = price_history::price_asset(net.native_symbol) else { return Ok(None) };
                 Spec { asset, decimals: 18, max_read: EVM_MAX, symbol: net.native_symbol, source: Source::Evm(net) }
@@ -273,12 +271,12 @@ fn fetch_balance(spec: &Spec, address: &str) -> Result<i128> {
     Ok(match spec.source {
         Source::Evm(net) => api::get_evm_balance(address, net)? as i128,
         Source::Erc20(net, contract) => api::get_erc20_balance(net, contract, address)? as i128,
-        // Comme la carte : confirmé moins les envois en attente, SANS les
-        // réceptions non confirmées (annulables par leur émetteur, voir
-        // `api::BtcBalanceView`) — retirées aussi de l'historique (`fetch_page`).
+        // Same as the card: confirmed minus pending sends, WITHOUT unconfirmed receipts
+        // (which their sender can cancel, see `api::BtcBalanceView`); those are also
+        // removed from the history (`fetch_page`).
         Source::Btc => api::get_btc_balance_view(address, &wallet_flow::BTC_MAINNET)?.settled_sat.into(),
-        // SOL stakés compris (staking natif) : ils restent à l'utilisateur.
-        // Lecture impossible : solde seul, plutôt qu'aucune courbe.
+        // Staked SOL included (native staking): it still belongs to the user. If it cannot
+        // be read: balance only, rather than no chart at all.
         Source::Sol => {
             let staked = crate::sol_stake::staked_lamports(&crate::sol_rpc::SolRpc::new(solana.rpc), address).unwrap_or(0);
             i128::from(api::get_sol_balance(address, solana)?) + i128::from(staked)
@@ -299,7 +297,7 @@ fn fetch_balance(spec: &Spec, address: &str) -> Result<i128> {
     })
 }
 
-/// Une page d'historique : la première sans `cursor`, sinon la suivante.
+/// A page of history: the first without `cursor`, the next one otherwise.
 fn fetch_page(spec: &Spec, address: &str, cursor: Option<&Cursor>) -> Result<Page> {
     let solana = &wallet_flow::SOLANA_MAINNET;
     let evm_cursor = match cursor {
@@ -322,9 +320,10 @@ fn fetch_page(spec: &Spec, address: &str, cursor: Option<&Cursor>) -> Result<Pag
             };
             let mut entries = history::btc_history_after(&wallet_flow::BTC_MAINNET, address, after)?;
             let confirmed: Vec<&TxEntry> = entries.iter().filter(|e| matches!(e.status, TxStatus::Confirmed)).collect();
-            // Page de confirmées incomplète : fin de l'historique.
+            // Incomplete page of confirmed transactions: end of the history.
             let next = if confirmed.len() >= BTC_PAGE { confirmed.last().map(|e| Cursor::Btc(e.id.clone())) } else { None };
-            // Réceptions non confirmées : hors du solde (`fetch_balance`), donc hors de l'historique.
+            // Unconfirmed receipts: excluded from the balance (`fetch_balance`), so excluded from the
+            // history.
             entries.retain(|e| !(matches!(e.status, TxStatus::Pending) && e.net_amount_minor.is_some_and(|net| net > 0)));
             Ok(Page { entries, next })
         }
@@ -338,21 +337,21 @@ fn fetch_page(spec: &Spec, address: &str, cursor: Option<&Cursor>) -> Result<Pag
                 Source::Spl(mint) => history::spl_history_before(solana.rpc, &api::spl_token_account(address, &mint)?, size, before)?,
                 _ => history::sol_history_before(solana.rpc, address, size, before)?,
             };
-            // Staking natif : les SOL passent d'un compte à l'autre de
-            // l'utilisateur, tous deux comptés (`fetch_balance`) — seuls les
-            // frais (0,000005 SOL) changent le total, négligés.
+            // Native staking: SOL moves from one of the user's accounts to another, both
+            // counted (`fetch_balance`); only the fee (0.000005 SOL) changes the total, and it
+            // is ignored.
             for entry in entries.iter_mut().filter(|e| e.kind == history::TxKind::Stake) {
                 entry.net_amount_minor = Some(0);
             }
             let next = if entries.len() >= size as usize { entries.last().map(|e| Cursor::Sol(e.id.clone())) } else { None };
             Ok(Page { entries, next })
         }
-        // Solde compté constant (`has_history`) : jamais lu page par page.
+        // Balance counted as constant (`has_history`): never read page by page.
         Source::Zec => Ok(Page { entries: Vec::new(), next: None }),
-        // Tout l'historique est local : une seule page.
+        // The whole history is local: a single page.
         Source::Xmr => Ok(Page { entries: crate::monero::history_of_address(address)?, next: None }),
         Source::ZecShielded => Ok(Page { entries: crate::zcash_shielded::history_of_address(address)?, next: None }),
-        // Une page : les `DOGE_MAX` transactions les plus récentes.
+        // One page: the `DOGE_MAX` most recent transactions.
         Source::Doge => Ok(Page { entries: crate::doge::history(address, DOGE_MAX)?, next: None }),
         Source::Tron => Ok(Page { entries: crate::tron::history(address, TRON_MAX)?, next: None }),
         Source::Trc20(contract) => Ok(Page { entries: crate::tron::trc20_history(address, contract, TRON_MAX)?, next: None }),
@@ -365,8 +364,8 @@ fn fetch_page(spec: &Spec, address: &str, cursor: Option<&Cursor>) -> Result<Pag
     }
 }
 
-/// Solde, puis première page d'historique (sauf réseau sans historique :
-/// solde seul, compté sur toute la période).
+/// Balance, then the first page of history (except on a network with no history:
+/// balance only, counted over the whole period).
 fn fetch_first(spec: &Spec, address: &str) -> Result<HoldingData> {
     let mut data = HoldingData {
         asset: spec.asset,
@@ -392,12 +391,12 @@ fn fetch_first(spec: &Spec, address: &str) -> Result<HoldingData> {
     data.balance = balance?;
     match first {
         Ok(page) => data.absorb(page, price_history::unix_now()),
-        // NodeReal ou Alchemy momentanément indisponible (limite de l'offre gratuite
-        // atteinte…), ou historique Blockscout indisponible (site public
-        // derrière la vérification anti-robots sans clé de l'API officielle
-        // — Arbitrum, Base et Polygon depuis le 10/10/2026 —, ou crédits du
-        // jour épuisés) : solde compté constant plutôt qu'une courbe entière
-        // en échec — l'interface le dit (`constant`) s'il y a un solde.
+        // NodeReal or Alchemy temporarily unavailable (free-tier limit reached…), or
+        // Blockscout history unavailable (public site behind the bot check with no
+        // official API key, which is the case for Arbitrum, Base and Polygon since
+        // 2026-10-10, or daily credits used up): the balance is counted as constant rather
+        // than failing the whole chart, and the UI says so (`constant`) if there is a
+        // balance.
         Err(_) if spec.uses_shared_quota() => data.constant = true,
         Err(e) if crate::blockscout::unavailable(&e) => data.constant = true,
         Err(e) => return Err(e),
@@ -405,18 +404,18 @@ fn fetch_first(spec: &Spec, address: &str) -> Result<HoldingData> {
     Ok(data)
 }
 
-/// Réseau, adresse et jeton éventuel.
+/// Network, address and optional token.
 type Key = (String, String, Option<String>);
 
-/// Lecture d'une adresse : dernières données publiées, lecture en cours.
+/// Reading an address: the latest published data, the read in progress.
 #[derive(Default)]
 struct Slot {
-    /// Données, et instant où leur solde a été lu.
+    /// Data, and when its balance was read.
     data: Option<(Instant, Arc<HoldingData>)>,
-    /// Profondeur voulue par la lecture en cours (`None` : tout l'historique).
+    /// Depth wanted by the read in progress (`None`: the whole history).
     target: Option<i64>,
     running: bool,
-    /// Échec de la dernière lecture, quand elle n'a rien pu lire.
+    /// Failure of the last read, when it could not read anything.
     error: Option<String>,
 }
 
@@ -431,16 +430,15 @@ fn lock_slots() -> MutexGuard<'static, HashMap<Key, Slot>> {
     slots().0.lock().unwrap_or_else(|p| p.into_inner())
 }
 
-/// La plus profonde de deux limites (`None` : tout l'historique).
+/// The deeper of two limits (`None`: the whole history).
 fn deepest(a: Option<i64>, b: Option<i64>) -> Option<i64> {
     Some(a?.min(b?))
 }
 
-/// Demande l'historique de `key` jusqu'à `until` : rien à faire si les
-/// données en cache (5 minutes) le couvrent ; sinon une lecture en
-/// arrière-plan démarre, ou celle en cours est approfondie. Asynchrone : le
-/// nœud Solana public n'accorde qu'environ un détail de transaction par
-/// seconde, un long historique demande des minutes la première fois.
+/// Requests the history of `key` back to `until`: nothing to do if the cached data
+/// (5 minutes) covers it; otherwise a background read starts, or the one in
+/// progress goes deeper. Asynchronous: the public Solana node only allows about one
+/// transaction detail per second, so a long history takes minutes the first time.
 fn request(key: &Key, spec: Spec, until: Option<i64>) {
     let max_read = spec.max_read;
     let mut map = lock_slots();
@@ -453,9 +451,9 @@ fn request(key: &Key, spec: Spec, until: Option<i64>) {
         slot.target = deepest(slot.target, until);
         return;
     }
-    // Suite des données fraîches ; sinon relecture complète (solde compris),
-    // publiée à la fin seulement quand une courbe est déjà affichée, pour ne
-    // pas la raccourcir entre-temps.
+    // Continue from fresh data; otherwise a full reread (balance included), published
+    // only at the end when a chart is already shown, so as not to shorten it in the
+    // meantime.
     let base = fresh.map(|(fetched, data)| (fetched, HoldingData::clone(&data)));
     let publish_each_page = base.is_some() || slot.data.is_none();
     slot.target = until;
@@ -469,12 +467,11 @@ fn request(key: &Key, spec: Spec, until: Option<i64>) {
     });
 }
 
-/// Lecture en arrière-plan de `key` : solde et première page (sauf suite de
-/// `base`), puis pages plus anciennes jusqu'à la profondeur voulue, relue à
-/// chaque page — une demande plus profonde arrivée entre-temps prolonge la
-/// lecture. Une page ancienne en échec arrête la remontée (la courbe
-/// commence alors à la plus ancienne transaction lue) au lieu de tout faire
-/// échouer ; elle sera redemandée plus tard.
+/// Background read of `key`: balance and first page (unless continuing from
+/// `base`), then older pages down to the wanted depth, rechecked on every page, so
+/// a deeper request that arrives in the meantime extends the read. A failed older
+/// page stops the descent (the chart then starts at the oldest transaction read)
+/// instead of failing everything; it will be requested again later.
 fn load(
     key: &Key,
     max_read: usize,
@@ -535,7 +532,7 @@ fn load(
     }
 }
 
-/// Instants échantillonnés : multiples de `step` depuis `start`, puis `now`.
+/// Sampled times: multiples of `step` from `start`, then `now`.
 fn sample_times(start: i64, now: i64, step: i64) -> Vec<i64> {
     let mut t = start.div_euclid(step) * step;
     if t < start {
@@ -550,10 +547,10 @@ fn sample_times(start: i64, now: i64, step: i64) -> Vec<i64> {
     times
 }
 
-/// Valeur totale à chaque instant : solde reconstruit (solde actuel moins les
-/// variations postérieures) × prix de l'instant. Un point sans prix connu
-/// pour un actif détenu est omis. Renvoie aussi si un solde reconstruit est
-/// devenu négatif (historique incomplet).
+/// Total value at each point in time: rebuilt balance (current balance minus later
+/// changes) × price at that time. A point with no known price for a held asset is
+/// skipped. Also reports whether a rebuilt balance went negative (incomplete
+/// history).
 fn values_over_time(holdings: &[&HoldingData], times: &[i64], price: impl Fn(Asset, i64) -> Option<f64>) -> (Vec<(i64, f64)>, bool) {
     let mut negative = false;
     let mut points = Vec::with_capacity(times.len());
@@ -577,9 +574,9 @@ fn values_over_time(holdings: &[&HoldingData], times: &[i64], price: impl Fn(Ass
     (points, negative)
 }
 
-/// Début de la courbe : `range_start` pour une période fixe ; pour « tout »,
-/// la première transaction connue (à défaut, un an) ; plus tard si
-/// l'historique d'une adresse est tronqué (`since`).
+/// Start of the chart: `range_start` for a fixed period; for "all", the first known
+/// transaction (one year if there is none); later if an address's history is
+/// truncated (`since`).
 fn chart_start(data: &[&HoldingData], range_start: Option<i64>, now: i64) -> (i64, Option<i64>) {
     let since = data.iter().filter_map(|d| d.known_since()).max().filter(|s| range_start.is_none_or(|start| *s > start));
     let first_change = data.iter().filter_map(|d| d.changes.last().map(|c| c.0)).min();
@@ -587,9 +584,9 @@ fn chart_start(data: &[&HoldingData], range_start: Option<i64>, now: i64) -> (i6
     (start, since)
 }
 
-/// État des adresses demandées : données publiées ; adresse encore sans
-/// données ni échec (`missing`) ; cryptos dont l'adresse a échoué sans rien
-/// donner (`unavailable`, sans doublon), et la première de ces erreurs.
+/// State of the requested addresses: published data; addresses with neither data
+/// nor a failure yet (`missing`); cryptos whose address failed without returning
+/// anything (`unavailable`, deduplicated), and the first of those errors.
 struct Gathered {
     data: Vec<Arc<HoldingData>>,
     missing: bool,
@@ -617,13 +614,13 @@ fn gather(keys: &[(Key, Spec)], map: &HashMap<Key, Slot>) -> Gathered {
     gathered
 }
 
-/// Valeur de `holdings` sur la période `range`. Attend au plus `WAIT` que
-/// les historiques nécessaires soient lus ; au-delà, la courbe est calculée
-/// avec ce qui l'est déjà (`loading`) et la lecture continue en arrière-plan
-/// — un nouvel appel donne la suite. Tant qu'une adresse n'a encore rien
-/// donné, aucun point (une courbe sans elle serait fausse). Une adresse en
-/// échec est laissée de côté et signalée (`unavailable`) : un seul service
-/// saturé ne prive plus de toute la courbe (Esplora en 429, 05/10/2026).
+/// Value of `holdings` over the period `range`. Waits at most `WAIT` for the needed
+/// histories to be read; after that, the chart is computed from what has already
+/// been read (`loading`) and reading continues in the background, so a new call
+/// returns the rest. As long as an address has not returned anything yet, there are
+/// no points (a chart without it would be wrong). A failing address is left out and
+/// flagged (`unavailable`): a single overloaded service no longer takes down the
+/// whole chart (Esplora returning 429, 2026-10-05).
 pub fn portfolio_history(holdings: &[Holding], range: ChartRange) -> Result<PortfolioHistory> {
     ensure!(holdings.len() <= MAX_HOLDINGS, "trop d'adresses pour un graphique");
     for h in holdings {
@@ -653,7 +650,7 @@ pub fn portfolio_history(holdings: &[Holding], range: ChartRange) -> Result<Port
     let loading = keys.iter().any(|(key, _)| map.get(key).is_some_and(|slot| slot.running));
     let Gathered { data, missing, unavailable, first_error } = gather(&keys, &map);
     drop(map);
-    // Aucune adresse lisible : l'erreur elle-même.
+    // No readable address: the error itself.
     if let (true, false, Some(error)) = (data.is_empty(), missing, first_error) {
         return Err(anyhow!(error));
     }
@@ -695,8 +692,8 @@ mod tests {
         HoldingData { asset, decimals, symbol: "X", constant: false, balance, changes: changes.to_vec(), oldest: changes.last().map(|c| c.0), next: None, read: changes.len(), approximate: false }
     }
 
-    /// Une adresse en échec (Esplora saturé) est laissée de côté et
-    /// signalée, les autres font la courbe ; seule en échec : l'erreur.
+    /// A failing address (Esplora overloaded) is left out and flagged, and the others
+    /// make up the chart; if it is the only one failing: the error.
     #[test]
     fn a_failing_address_is_left_out_and_reported() {
         let btc = spec("btc_mainnet", None).unwrap().unwrap();
@@ -710,7 +707,7 @@ mod tests {
         let alone = gather(&[(key("btc_mainnet"), btc)], &map);
         assert!(alone.data.is_empty() && !alone.missing);
         assert_eq!(alone.first_error.as_deref(), Some("serveurs Bitcoin indisponibles"));
-        // Adresse pas encore lue (ni données ni échec) : en attente.
+        // Address not read yet (neither data nor failure): pending.
         assert!(gather(&[(key("sol_mainnet"), eth)], &map).missing);
     }
 
@@ -721,9 +718,9 @@ mod tests {
         assert_eq!(sample_times(150, 160, 100), vec![160]);
     }
 
-    /// Solde reconstruit à rebours : 2 BTC aujourd'hui, reçu 1,5 à t=300,
-    /// envoyé 0,5 (frais compris) à t=200 -> 1 BTC avant t=200, 0,5 entre 200
-    /// et 300... ; prix variable ; deux actifs additionnés.
+    /// Balance rebuilt backwards: 2 BTC today, 1.5 received at t=300, 0.5 sent (fee
+    /// included) at t=200 -> 1 BTC before t=200, 0.5 between 200 and 300...; varying
+    /// price; two assets added up.
     #[test]
     fn value_is_rebuilt_backwards_from_the_current_balance() {
         let btc = holding_data(Asset::Btc, 8, 200_000_000, &[(300, 150_000_000), (200, -50_000_000)]);
@@ -734,8 +731,8 @@ mod tests {
         assert_eq!(points, vec![(100, 1.0 * 1100.0 + 10.0), (250, 0.5 * 1250.0 + 10.0), (400, 2.0 * 1400.0 + 10.0)]);
     }
 
-    /// Mouvement absent de l'historique : solde reconstruit négatif, ramené à
-    /// 0 et signalé ; point sans prix pour un actif détenu : omis.
+    /// A movement missing from the history: negative rebuilt balance, clamped to 0 and
+    /// flagged; a point with no price for a held asset: skipped.
     #[test]
     fn incomplete_histories_are_flagged_and_unknown_prices_skipped() {
         let eth = holding_data(Asset::Eth, 18, 1_000_000_000_000_000_000, &[(200, 3_000_000_000_000_000_000)]);
@@ -759,11 +756,10 @@ mod tests {
         }
     }
 
-    /// Pages absorbées dans l'ordre : variations triées du plus récent au plus
-    /// ancien, transaction en attente comptée maintenant, montant inconnu
-    /// signalé ; l'historique « couvre » une période quand il remonte assez
-    /// loin, qu'il est lu jusqu'au bout ou que la limite est atteinte ; page
-    /// vide = fin, même avec un curseur.
+    /// Pages absorbed in order: changes sorted newest to oldest, a pending transaction
+    /// counted now, an unknown amount flagged; the history "covers" a period when it
+    /// goes back far enough, has been read to the end, or the limit is reached; an
+    /// empty page = the end, even with a cursor.
     #[test]
     fn pages_are_absorbed_until_the_period_is_covered() {
         let mut data = holding_data(Asset::Sol, 9, 100, &[]);
@@ -785,10 +781,10 @@ mod tests {
         assert_eq!(data.known_since(), None, "lu jusqu'au bout : rien d'inventé ni de tronqué");
     }
 
-    /// Lecture en arrière-plan : chaque page publiée au fur et à mesure ; une
-    /// demande plus profonde arrivée pendant la lecture la prolonge ; fin de
-    /// lecture signalée ; échec de la première page conservé pour l'appelant,
-    /// échec d'une page ancienne : lecture arrêtée, données gardées.
+    /// Background read: each page published as it comes; a deeper request arriving
+    /// during the read extends it; end of read flagged; a failure on the first page
+    /// kept for the caller; a failure on an older page stops the read and the data is
+    /// kept.
     #[test]
     fn background_reads_follow_the_deepest_request() {
         let key: Key = ("test".into(), "adresse-a".into(), None);
@@ -805,7 +801,7 @@ mod tests {
             assert_eq!(published, Some(calls.get()), "page précédente publiée avant la suivante");
             let Cursor::Sol(before) = cursor else { unreachable!() };
             if before == "a" {
-                // Pendant la lecture : on demande tout l'historique.
+                // During the read: ask for the whole history.
                 request(&key, Spec { asset: Asset::Sol, decimals: 9, max_read: 100, symbol: "SOL", source: Source::Sol }, None);
                 return Ok(Page { entries: vec![entry("b", Some(800), Some(5))], next: Some(Cursor::Sol("b".into())) });
             }
@@ -837,9 +833,9 @@ mod tests {
         assert_eq!(slot.data.as_ref().unwrap().1.known_since(), Some(900), "tronqué à la dernière page lue");
     }
 
-    /// Début de la courbe : période fixe, ou première transaction pour
-    /// « tout », repoussé au début des données exactes si un historique est
-    /// tronqué ; sans aucune transaction, un an.
+    /// Start of the chart: a fixed period, or the first transaction for "all", pushed
+    /// back to the start of the exact data if a history is truncated; with no
+    /// transaction at all, one year.
     #[test]
     fn chart_starts_at_the_first_known_data() {
         let a = holding_data(Asset::Btc, 8, 1, &[(800, 1), (300, 2)]);
@@ -854,9 +850,9 @@ mod tests {
         assert_eq!(chart_start(&[&quiet], None, 1000 + DEFAULT_ALL_SPAN), (1000, None));
     }
 
-    /// Avoirs RÉELS sur les nouvelles sources : Avalanche (Routescan), jeton
-    /// ERC-20 (Blockscout), jeton SPL, et BNB Chain sans historique (solde
-    /// constant, signalé). Valeur finale = Σ solde actuel × prix actuel.
+    /// REAL holdings on the new sources: Avalanche (Routescan), an ERC-20 token
+    /// (Blockscout), an SPL token, and BNB Chain without history (constant balance,
+    /// flagged). Final value = Σ current balance × current price.
     /// `cargo test -- --ignored real_portfolio_history_covers_new_sources --nocapture`
     #[test]
     #[ignore]
@@ -893,8 +889,8 @@ mod tests {
         assert!(spec("evm_sepolia", None).unwrap().is_none(), "réseau de test : sans valeur");
     }
 
-    /// Adresses RÉELLES (réseau principal) : la valeur finale reconstruite
-    /// égale solde actuel × prix actuel ; courbe cohérente sur 30 jours.
+    /// REAL addresses (mainnet): the rebuilt final value equals current balance ×
+    /// current price; the chart is consistent over 30 days.
     /// `cargo test -- --ignored real_portfolio_history_is_consistent --nocapture`
     #[test]
     #[ignore]
@@ -905,7 +901,7 @@ mod tests {
             Holding { network: "sol_mainnet".into(), address: "3iUShJYbFX6it5ArcR31Pm6SqqowccAe5NwQrfaG1yvG".into(), token: None },
             Holding { network: "btc_testnet".into(), address: "tb1qzdr7s2sr0dwmkwx033r4nujzk86u0cy6fmzfjk".into(), token: None },
         ];
-        // Appels répétés tant que la lecture continue en arrière-plan, comme l'app.
+        // Repeated calls while the read continues in the background, like the app does.
         let complete = |range| loop {
             let history = portfolio_history(&holdings, range).unwrap();
             println!("{range:?} : {} transactions lues, en cours {}", history.transactions_read, history.loading);
@@ -938,10 +934,10 @@ mod tests {
         assert!(again.elapsed() < Duration::from_secs(2), "changement de période servi par le cache");
     }
 
-    /// Explorateurs derrière une vérification anti-robots (Arbitrum et Base
-    /// sur Blockscout, constaté le 10/10/2026) : solde compté constant, plus
-    /// d'adresse « momentanément illisible » à chaque courbe. Valable aussi
-    /// quand le blocage sera levé (aucune adresse indisponible).
+    /// Explorers behind a bot check (Arbitrum and Base on Blockscout, seen on
+    /// 2026-10-10): balance counted as constant, no more "temporarily unreadable"
+    /// address on every chart. Still valid once the block is lifted (no address
+    /// unavailable).
     /// `cargo test -- --ignored blocked_explorers_do_not_break_the_curve --nocapture`
     #[test]
     #[ignore]

@@ -1,12 +1,11 @@
-//! Client THORChain minimal : uniquement de quoi obtenir un devis de swap
-//! (lecture seule, aucune signature, aucun secret impliqué). THORChain est le
-//! protocole externe qui rend le swap cross-chain possible (BTC/ETH/SOL n'ont
-//! aucun mécanisme natif pour s'échanger entre eux) — voir le plan de la
-//! fonctionnalité swap pour le contexte complet.
+//! Minimal THORChain client: only what is needed to get a swap quote (read-only, no
+//! signing, no secrets involved). THORChain is the external protocol that makes
+//! cross-chain swaps possible (BTC/ETH/SOL have no native way to swap with each
+//! other).
 //!
-//! Le devis renvoie déjà un `memo` tout construit par THORChain lui-même :
-//! ce module ne reconstruit JAMAIS ce format à la main, pour ne pas risquer
-//! une erreur de formatage qui enverrait des fonds réels vers un swap invalide.
+//! The quote already comes with a `memo` built by THORChain itself: this module
+//! NEVER rebuilds that format by hand, so there is no risk of a formatting mistake
+//! sending real funds into an invalid swap.
 
 use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
@@ -22,60 +21,58 @@ fn shared_client() -> &'static reqwest::blocking::Client {
     })
 }
 
-/// Passerelle publique THORChain opérée par Liquify — pas de clé requise pour
-/// un devis, endpoint en lecture seule. Vérifiée par un appel réel avant
-/// d'être inscrite ici : `thornode.ninerealms.com` (souvent cité dans la doc
-/// et d'anciens articles) ne résout plus du tout au moment de l'écriture —
-/// une preuve de plus qu'il ne faut jamais faire confiance à un hostname
-/// tiers sans le tester en direct.
+/// Public THORChain gateway operated by Liquify: no key needed for a quote,
+/// read-only endpoint. Checked with a real call before being written here:
+/// `thornode.ninerealms.com` (often quoted in the docs and older articles) no
+/// longer resolved at all at the time of writing, one more proof that a third-party
+/// hostname should never be trusted without testing it live.
 const THORNODE_BASE: &str = "https://gateway.liquify.com/chain/thorchain_api";
 
-/// Adresse THORChain (RUNE) qui reçoit les frais d'affiliation de CHAQUE swap
-/// effectué depuis cette app, quelle que soit l'installation qui le déclenche
-/// — une seule adresse fixe (celle du développeur), pas une adresse dérivée
-/// par installation (sinon chaque utilisateur se paierait à lui-même). Dérivée
-/// une fois via `api::get_thor_fee_address` (voir Paramètres), vérifiée par
-/// l'utilisateur lui-même avant d'être figée ici.
+/// THORChain (RUNE) address that receives the affiliate fees of EVERY swap made
+/// from this app, whichever installation triggers it: a single fixed address (the
+/// developer's), not one derived per installation (otherwise every user would be
+/// paying themselves). Derived once through `api::get_thor_fee_address` (see
+/// Settings) and checked by the developer before being frozen here.
 pub const AFFILIATE_ADDRESS: &str = "thor12j5rrcflhffxmq0ekwvk0h7g0mdy8gn4fg0w3e";
 
-/// THORName (alias court) de `AFFILIATE_ADDRESS`, inscrit par le développeur
-/// depuis l'app (Paramètres, voir `native_deposit`). Indispensable aux frais
-/// d'affiliation DEPUIS Bitcoin : son memo tient en 80 octets (OP_RETURN), et
-/// l'adresse `thor1…` complète (43 caractères) l'en faisait déborder —
-/// constaté le 01/10/2026 (« generated memo too long for source chain »).
-/// N'est utilisé qu'une fois relu sur le réseau (existe, non expiré, alias THOR
-/// = `AFFILIATE_ADDRESS`, voir `verified_name`) : avant son inscription, ou
-/// s'il expire, l'app retombe d'elle-même sur l'adresse complète (et sans
-/// frais depuis Bitcoin), sans nouvelle version. 2 caractères : la plus
-/// grande marge possible dans les memos (noms d'une lettre tous pris).
+/// THORName (short alias) of `AFFILIATE_ADDRESS`, registered by the developer from
+/// the app (Settings, see `native_deposit`). Essential for affiliate fees FROM
+/// Bitcoin: the memo has to fit in 80 bytes (OP_RETURN), and the full `thor1…`
+/// address (43 characters) made it overflow, as seen on 2026-10-01 ("generated memo
+/// too long for source chain"). Only used once it has been read back from the
+/// network (exists, not expired, THOR alias = `AFFILIATE_ADDRESS`, see
+/// `verified_name`): before it is registered, or if it expires, the app falls back
+/// to the full address on its own (and no fee from Bitcoin), without a new release.
+/// 2 characters: the largest possible margin in memos (all one-letter names are
+/// taken).
 pub const AFFILIATE_NAME: Option<&str> = Some("ow");
 
-/// MAYAName du développeur sur Maya (même nom, même règle), alias MAYA =
-/// `MAYA_AFFILIATE_ADDRESS` : frais d'affiliation depuis Bitcoin et Zcash.
+/// The developer's MAYAName on Maya (same name, same rule), MAYA alias =
+/// `MAYA_AFFILIATE_ADDRESS`: affiliate fees from Bitcoin and Zcash.
 pub const MAYA_AFFILIATE_NAME: Option<&str> = Some("ow");
 
-/// Nombre de blocs par an retenu par les deux protocoles pour la durée d'un
-/// nom (une inscription inclut un an ; relevé sur de vraies inscriptions).
+/// Number of blocks per year both protocols use for a name's lifetime (a
+/// registration includes one year; taken from real registrations).
 pub const NAME_BLOCKS_PER_YEAR: u64 = 5_256_000;
 
-/// 80 points de base = 0,80 %.
+/// 80 basis points = 0.80%.
 pub const AFFILIATE_FEE_BPS: u32 = 80;
 
-/// Crypto de l'app échangeable via THORChain : identifiant de carte, réseau, et
-/// notation THORChain (pools disponibles relevés en direct le 01/10/2026).
+/// An app crypto that can be swapped through THORChain: card identifier, network,
+/// and THORChain notation (available pools checked live on 2026-10-01).
 pub struct ThorAsset {
     pub coin: &'static str,
     pub network: &'static str,
     pub symbol: &'static str,
-    /// `CHAIN.TICKER`, ou `CHAIN.TICKER-0XCONTRAT` pour un jeton.
+    /// `CHAIN.TICKER`, or `CHAIN.TICKER-0XCONTRACT` for a token.
     pub asset: &'static str,
-    /// Code court qu'un memo emploie pour un actif natif (relevé sur de vrais
-    /// devis : « s » désigne BNB, pas SOL).
+    /// Short code a memo uses for a native asset (taken from real quotes: "s" means
+    /// BNB, not SOL).
     pub short_code: Option<&'static str>,
-    /// Décimales natives de l'actif (THORChain compte toujours en 1e8, voir
+    /// The asset's native decimals (THORChain always counts in 1e8, see
     /// `to_thorchain_amount`).
     pub decimals: u32,
-    /// Jeton ERC-20 : contrat (dépôt par `approve` puis `depositWithExpiry`).
+    /// ERC-20 token: contract (deposit through `approve`, then `depositWithExpiry`).
     pub contract: Option<&'static str>,
 }
 
@@ -89,8 +86,8 @@ const fn erc20(coin: &'static str, network: &'static str, symbol: &'static str, 
 
 pub const ASSETS: [ThorAsset; 12] = [
     native("btc", "btc_mainnet", "BTC", "BTC.BTC", "b", 8),
-    // Dogecoin (« d », relevé sur un vrai devis le 04/10/2026 : memo
-    // `=:d:D…`) : en destination seulement (voir `swap_routes::BUY_ONLY`).
+    // Dogecoin ("d", taken from a real quote on 2026-10-04: memo `=:d:D…`): as a
+    // destination only (see `swap_routes::BUY_ONLY`).
     native("doge", "doge_mainnet", "DOGE", "DOGE.DOGE", "d", 8),
     native("evm", "evm_mainnet", "ETH", "ETH.ETH", "e", 18),
     native("evm", "base_mainnet", "ETH", "BASE.ETH", "f", 18),
@@ -104,21 +101,20 @@ pub const ASSETS: [ThorAsset; 12] = [
     erc20("vvv", "base_mainnet", "VVV", "BASE.VVV-0XACFE6019ED1A7DC6F7B508C02D1B04EC88CC21BF", 18, "0xacfe6019ed1a7dc6f7b508c02d1b04ec88cc21bf"),
 ];
 
-/// Actif THORChain d'une crypto de l'app sur un réseau.
+/// THORChain asset for one of the app's cryptos on a network.
 pub fn asset(coin: &str, network: &str) -> Option<&'static ThorAsset> {
     THORCHAIN.asset(coin, network)
 }
 
-/// Adresse d'affiliation sur Maya : la MÊME clé que `AFFILIATE_ADDRESS`
-/// (même hash160, seul le préfixe bech32 change — test
+/// Affiliate address on Maya: the SAME key as `AFFILIATE_ADDRESS` (same hash160,
+/// only the bech32 prefix changes; test
 /// `maya_affiliate_is_the_same_key_as_thorchain`).
 pub const MAYA_AFFILIATE_ADDRESS: &str = "maya12j5rrcflhffxmq0ekwvk0h7g0mdy8gn4fl3z8f";
 
-/// Pools disponibles sur Maya relevés en direct le 01/10/2026. Codes courts
-/// propres à Maya, relevés sur de vrais devis : « a » y désigne l'ETH
-/// d'Arbitrum (sur THORChain, « a » est AVAX). ZEC (« z », relevé dans
-/// `Asset::ShortCode` de Mayanode, pool vérifié le 02/10/2026) : en
-/// destination seulement (voir `swap_routes`).
+/// Pools available on Maya, checked live on 2026-10-01. Maya's own short codes,
+/// taken from real quotes: "a" there means Arbitrum ETH (on THORChain, "a" is
+/// AVAX). ZEC ("z", taken from Mayanode's `Asset::ShortCode`, pool checked on
+/// 2026-10-02): both ways, with no app fee when selling ZEC (see `swap_routes`).
 pub const MAYA_ASSETS: [ThorAsset; 7] = [
     native("btc", "btc_mainnet", "BTC", "BTC.BTC", "b", 8),
     native("evm", "evm_mainnet", "ETH", "ETH.ETH", "e", 18),
@@ -129,22 +125,21 @@ pub const MAYA_ASSETS: [ThorAsset; 7] = [
     native("zec", "zec_mainnet", "ZEC", "ZEC.ZEC", "z", 8),
 ];
 
-/// Protocole d'échange entre réseaux de la famille THORChain : THORChain et
-/// son fork Maya (même API de devis, même format de memo, mêmes routeurs EVM
-/// `depositWithExpiry`) ; chacun a sa passerelle, son affilié, ses pools et
-/// ses codes courts.
+/// A cross-chain swap protocol from the THORChain family: THORChain and its fork
+/// Maya (same quote API, same memo format, same `depositWithExpiry` EVM routers);
+/// each has its own gateway, affiliate, pools and short codes.
 pub struct CrossChain {
     pub name: &'static str,
     node_base: &'static str,
-    /// Préfixe des routes de l'API (« thorchain », « mayachain »).
+    /// API route prefix ("thorchain", "mayachain").
     module: &'static str,
-    /// Chaîne native des alias de nom (« THOR », « MAYA »).
+    /// Native chain for name aliases ("THOR", "MAYA").
     native_chain: &'static str,
-    /// Route de résolution d'un nom (« thorname », « mayaname »).
+    /// Name resolution route ("thorname", "mayaname").
     name_route: &'static str,
     pub affiliate_address: &'static str,
-    /// Nom court de l'affilié, indispensable aux échanges depuis Bitcoin
-    /// (voir `AFFILIATE_NAME`).
+    /// The affiliate's short name, essential for swaps from Bitcoin (see
+    /// `AFFILIATE_NAME`).
     pub affiliate_name: Option<&'static str>,
     pub assets: &'static [ThorAsset],
 }
@@ -162,7 +157,7 @@ pub const THORCHAIN: CrossChain = CrossChain {
 
 pub const MAYA: CrossChain = CrossChain {
     name: "Maya",
-    // Nœud public de Maya (vérifié en direct : devis, adresses d'entrée).
+    // Public Maya node (checked live: quotes, inbound addresses).
     node_base: "https://mayanode.mayachain.info",
     module: "mayachain",
     native_chain: "MAYA",
@@ -172,8 +167,8 @@ pub const MAYA: CrossChain = CrossChain {
     assets: &MAYA_ASSETS,
 };
 
-/// État d'une chaîne dans `inbound_addresses` (champs de pause absents chez
-/// Maya : faux par défaut).
+/// State of a chain in `inbound_addresses` (Maya has no pause fields: false by
+/// default).
 #[derive(Deserialize)]
 struct InboundStatusJson {
     chain: String,
@@ -185,7 +180,7 @@ struct InboundStatusJson {
     global_trading_paused: bool,
 }
 
-/// Suspensions en cours (voir `CrossChain::halts`) ; `all` : pause générale.
+/// Current halts (see `CrossChain::halts`); `all`: global pause.
 struct Halts {
     all: bool,
     chains: Vec<String>,
@@ -204,26 +199,25 @@ impl Halts {
     }
 }
 
-/// « THORChain a suspendu les échanges sur Solana pour le moment… » (réseaux
-/// omis s'ils sont inconnus).
+/// "THORChain has paused swaps on Solana for now…" (networks left out if unknown).
 pub fn halted_message(protocol: &str, networks: &[&str]) -> String {
     let place = if networks.is_empty() { String::new() } else { format!(" sur {}", networks.join(" et ")) };
     format!("{protocol} a suspendu les échanges{place} pour le moment (incident ou maintenance de son côté) — réessayez plus tard ou choisissez un autre fournisseur")
 }
 
-/// Chaîne d'un actif : « SOL » pour `SOL.SOL`, « ETH » pour `ETH.USDC-0X…`.
+/// Chain of an asset: "SOL" for `SOL.SOL`, "ETH" for `ETH.USDC-0X…`.
 fn chain_of(asset: &str) -> &str {
     asset.split('.').next().unwrap_or(asset)
 }
 
-/// Chaînes de départ dont le memo voyage dans une sortie OP_RETURN, limitée
-/// à 80 octets : Bitcoin, Dogecoin, et Zcash sur Maya (relevé le 03/10/2026 :
-/// memo de 102 octets avec l'affilié `maya1…` complet, refusé).
+/// Source chains whose memo travels in an OP_RETURN output, limited to 80 bytes:
+/// Bitcoin, Dogecoin, and Zcash on Maya (recorded on 2026-10-03: a 102-byte memo
+/// with the full `maya1…` affiliate, refused).
 fn memo_in_op_return(asset: &str) -> bool {
     matches!(chain_of(asset), "BTC" | "ZEC" | "DOGE")
 }
 
-/// Nom du réseau d'une chaîne, pour les messages.
+/// Network name of a chain, for messages.
 fn chain_label(chain: &str) -> &str {
     match chain {
         "BTC" => "Bitcoin",
@@ -248,13 +242,13 @@ struct ThorNameJson {
     owner: String,
 }
 
-/// Nom court tel qu'enregistré sur le protocole.
+/// Short name as registered on the protocol.
 #[derive(Clone, Debug, PartialEq)]
 pub struct NameRecord {
     pub owner: String,
     pub expire_height: i64,
     pub current_height: i64,
-    /// Alias de la chaîne native = l'adresse d'affiliation de l'app.
+    /// Alias on the native chain = the app's affiliate address.
     pub points_to_affiliate: bool,
 }
 
@@ -264,9 +258,9 @@ impl NameRecord {
     }
 }
 
-/// Affilié d'un devis depuis `from_asset` : le nom court vérifié, sinon
-/// l'adresse complète — sauf depuis une chaîne à OP_RETURN, où elle ferait
-/// déborder le memo : aucun affilié (échange sans frais pour l'app).
+/// Affiliate for a quote from `from_asset`: the verified short name, otherwise the
+/// full address, except from an OP_RETURN chain, where it would overflow the memo:
+/// no affiliate (fee-free swap for the app).
 fn choose_affiliate(verified_name: Option<&'static str>, address: &'static str, from_asset: &str) -> Option<&'static str> {
     match verified_name {
         Some(name) => Some(name),
@@ -275,8 +269,8 @@ fn choose_affiliate(verified_name: Option<&'static str>, address: &'static str, 
     }
 }
 
-/// Réussite gardée pour la session ; échec (nom pas encore inscrit, réseau
-/// injoignable) relu après ce délai.
+/// A success is kept for the session; a failure (name not registered yet, network
+/// unreachable) is checked again after this delay.
 const NAME_RECHECK: std::time::Duration = std::time::Duration::from_secs(300);
 
 #[derive(Deserialize)]
@@ -285,8 +279,8 @@ struct ThorNameAlias {
     address: String,
 }
 
-/// Réponse de résolution d'un nom (`None` : inexistant) : propriétaire,
-/// expiration, et si l'alias de la chaîne native est l'adresse d'affiliation.
+/// Name resolution response (`None`: does not exist): owner, expiry, and whether
+/// the native chain alias is the affiliate address.
 fn parse_name(body: &str, current_height: i64, native_chain: &str, affiliate_address: &str) -> Result<Option<NameRecord>> {
     if body.contains("doesn't exist") {
         return Ok(None);
@@ -305,28 +299,26 @@ impl CrossChain {
         self.assets.iter().find(|a| a.coin == coin && a.network == network)
     }
 
-    /// Affilié à inscrire dans un devis depuis `from_asset` (voir
-    /// `choose_affiliate`).
+    /// Affiliate to put in a quote from `from_asset` (see `choose_affiliate`).
     pub fn affiliate_for(&self, from_asset: &str) -> Option<&'static str> {
         choose_affiliate(self.verified_name(), self.affiliate_address, from_asset)
     }
 
-    /// Frais d'affiliation prélevés sur un échange depuis `from_asset` ? Oui,
-    /// sauf depuis Bitcoin ou Zcash tant que le nom court n'est pas inscrit et
-    /// vérifié (memo à 4 champs).
+    /// Are affiliate fees taken on a swap from `from_asset`? Yes, except from Bitcoin
+    /// or Zcash as long as the short name is not registered and verified (4-field
+    /// memo).
     pub fn charges_affiliate(&self, from_asset: &str) -> bool {
         self.affiliate_for(from_asset).is_some()
     }
 
-    /// Chaîne native des alias de nom (« THOR », « MAYA »).
+    /// Native chain for name aliases ("THOR", "MAYA").
     pub fn native_chain(&self) -> &'static str {
         self.native_chain
     }
 
-    /// Nom court relu auprès du protocole : il doit exister, ne pas être
-    /// expiré, et pointer vers l'adresse d'affiliation — sinon les frais
-    /// iraient à quelqu'un d'autre (voir `NAME_RECHECK`). Tests unitaires :
-    /// jamais vérifié (aucun appel réseau).
+    /// Short name read back from the protocol: it must exist, not be expired, and point
+    /// to the affiliate address, otherwise the fees would go to someone else (see
+    /// `NAME_RECHECK`). Unit tests: never verified (no network calls).
     fn verified_name(&self) -> Option<&'static str> {
         let name = self.affiliate_name?;
         if cfg!(test) {
@@ -345,8 +337,8 @@ impl CrossChain {
         ok.then_some(name)
     }
 
-    /// Nom `name` sur ce protocole (`None` s'il n'existe pas), avec la
-    /// hauteur actuelle du réseau.
+    /// Name `name` on this protocol (`None` if it does not exist), with the network's
+    /// current height.
     pub fn name_record(&self, name: &str) -> Result<Option<NameRecord>> {
         let label = self.name;
         let body = shared_client()
@@ -368,9 +360,8 @@ impl CrossChain {
         parse_name(&body, current_height, self.native_chain, self.affiliate_address).with_context(|| format!("nom {name} illisible chez {label}"))
     }
 
-    /// Chaînes où les échanges sont suspendus en ce moment (chaîne arrêtée ou
-    /// échanges en pause : incident, maintenance), lues sur
-    /// `inbound_addresses`.
+    /// Chains where swaps are currently halted (chain stopped or trading paused:
+    /// incident, maintenance), read from `inbound_addresses`.
     fn halts(&self) -> Result<Halts> {
         let name = self.name;
         let url = format!("{}/{}/inbound_addresses", self.node_base, self.module);
@@ -383,14 +374,14 @@ impl CrossChain {
         Ok(Halts::from_statuses(chains))
     }
 
-    /// Actifs de ce protocole qu'il n'échange pas en ce moment.
+    /// Assets of this protocol that it is not swapping right now.
     pub fn halted_assets(&self) -> Result<Vec<&'static ThorAsset>> {
         let halts = self.halts()?;
         Ok(self.assets.iter().filter(|a| halts.covers(a.asset)).collect())
     }
 
-    /// Échange refusé parce qu'une chaîne est suspendue : laquelle, en clair
-    /// (lue en direct ; non nommée si la lecture échoue).
+    /// Swap refused because a chain is halted: which one, in plain words (read live;
+    /// not named if the read fails).
     fn halt_message(&self, from_asset: &str, to_asset: &str) -> String {
         let mut networks: Vec<&str> = match self.halts() {
             Ok(halts) => [from_asset, to_asset].into_iter().filter(|a| halts.covers(a)).map(|a| chain_label(chain_of(a))).collect(),
@@ -402,46 +393,44 @@ impl CrossChain {
 
 }
 
-/// Sortie minimale exigée, en points de base SOUS le montant de sortie attendu
-/// (1 % ici). Transmise via `liquidity_tolerance_bps`, PAS `tolerance_bps` —
-/// vérifié en direct : `tolerance_bps` s'applique au prix SANS frais, si bien
-/// qu'avec 100 bps la limite (3 166 856) dépassait déjà la sortie attendue
-/// (3 161 977) une fois les frais déduits, et le swap aurait été
-/// systématiquement remboursé (frais réseau perdus pour rien) ;
-/// `liquidity_tolerance_bps` donne exactement limite = sortie attendue × (1 −
-/// tolérance) (ratios 0,995 / 0,99 / 0,97 mesurés pour 50 / 100 / 300 bps).
-/// Sans aucune tolérance (comportement précédent), le memo avait une limite
-/// VIDE : le swap acceptait n'importe quel taux, exposé à un sandwich ou à
-/// une manipulation de prix pendant les minutes que dure un swap cross-chain.
+/// Minimum required output, in basis points BELOW the expected output (1% here).
+/// Passed through `liquidity_tolerance_bps`, NOT `tolerance_bps`. Checked live:
+/// `tolerance_bps` applies to the price BEFORE fees, so with 100 bps the limit
+/// (3,166,856) was already above the expected output (3,161,977) once fees were
+/// deducted, and the swap would always have been refunded (network fees wasted).
+/// `liquidity_tolerance_bps` gives exactly limit = expected output × (1 −
+/// tolerance) (ratios 0.995 / 0.99 / 0.97 measured for 50 / 100 / 300 bps). With no
+/// tolerance at all (the previous behavior), the memo had an EMPTY limit: the swap
+/// accepted any rate, exposed to a sandwich or price manipulation during the
+/// minutes a cross-chain swap takes.
 pub const SWAP_TOLERANCE_BPS: u32 = 100;
 
 pub struct SwapQuote {
-    /// Adresse de vault à laquelle envoyer l'actif source — TOUJOURS relue en
-    /// direct, jamais mise en cache : ces adresses tournent régulièrement.
+    /// Vault address to send the source asset to: ALWAYS read live, never cached, since
+    /// these addresses rotate regularly.
     pub inbound_address: String,
-    /// Adresse du contrat "THORChain Router" à appeler pour un swap EVM
-    /// (JAMAIS envoyer directement à `inbound_address` sur une chaîne EVM :
-    /// il faut appeler `depositWithExpiry` sur ce contrat, voir
-    /// `eth_tx::thorchain_deposit_calldata`). Absente pour les chaînes non-EVM
-    /// (BTC, SOL...), toujours relue en direct comme `inbound_address` — ces
-    /// contrats sont versionnés et peuvent changer. Vérifié en direct : la
-    /// même valeur est aussi exposée par `/thorchain/inbound_addresses`.
+    /// Address of the "THORChain Router" contract to call for an EVM swap (NEVER send
+    /// directly to `inbound_address` on an EVM chain: `depositWithExpiry` must be
+    /// called on this contract, see `eth_tx::thorchain_deposit_calldata`). Absent for
+    /// non-EVM chains (BTC, SOL...), and always read live like `inbound_address`, since
+    /// these contracts are versioned and can change. Checked live: the same value is
+    /// also exposed by `/thorchain/inbound_addresses`.
     pub router: Option<String>,
-    /// Memo prêt à l'emploi, construit par THORChain : jamais reconstruit à la
-    /// main côté client (voir la doc du module).
+    /// Ready-to-use memo, built by THORChain: never rebuilt by hand on the client side
+    /// (see the module docs).
     pub memo: String,
-    /// Montant de sortie attendu, dans la plus petite unité de l'actif de
-    /// destination (8 décimales pour la plupart des actifs THORChain).
+    /// Expected output amount, in the destination asset's smallest unit (8 decimals for
+    /// most THORChain assets).
     pub expected_amount_out: u64,
-    /// Total des frais THORChain (réseau + liquidité + affiliation),
-    /// purement informatif pour l'affichage — déjà déduit de
-    /// `expected_amount_out`, jamais à soustraire une seconde fois.
+    /// Total THORChain fees (network + liquidity + affiliate), purely informational for
+    /// display; already deducted from `expected_amount_out`, never to be subtracted a
+    /// second time.
     pub total_fees: Option<u64>,
-    /// Tarif de frais conseillé pour le dépôt (sat/vB sur Bitcoin), sous
-    /// lequel le protocole peut tarder à le voir.
+    /// Recommended fee rate for the deposit (sat/vB on Bitcoin), below which the
+    /// protocol may be slow to see it.
     pub recommended_gas_rate: Option<u64>,
-    /// Affilié demandé par l'app pour ce devis (nom court ou adresse), et
-    /// exigé tel quel dans le memo ; `None` : échange sans frais pour l'app.
+    /// Affiliate the app asked for in this quote (short name or address), required as
+    /// is in the memo; `None`: fee-free swap for the app.
     pub affiliate: Option<String>,
 }
 
@@ -453,16 +442,16 @@ struct QuoteResponseJson {
     expected_amount_out: Option<String>,
     fees: Option<FeesJson>,
     recommended_gas_rate: Option<String>,
-    /// Montant sous lequel un dépôt est ignoré (fonds perdus), et minimum
-    /// conseillé (en dessous, un remboursement peut échouer) — en 1e8.
+    /// Amount below which a deposit is ignored (funds lost), and the recommended
+    /// minimum (below it, a refund may fail), in 1e8.
     dust_threshold: Option<String>,
     recommended_min_amount_in: Option<String>,
-    /// Présent (avec `code`) sur une réponse d'erreur réelle — vérifié contre
-    /// un appel en direct : `{"code":3,"message":"...","details":[]}`, PAS un
-    /// champ `error` comme on pourrait le supposer par convention.
+    /// Present (with `code`) on a real error response, checked against a live call:
+    /// `{"code":3,"message":"...","details":[]}`, NOT an `error` field as convention
+    /// might suggest.
     code: Option<i64>,
     message: Option<String>,
-    /// Erreur au format de Maya (champ unique).
+    /// Error in Maya's format (single field).
     error: Option<String>,
 }
 
@@ -471,13 +460,12 @@ struct FeesJson {
     total: Option<String>,
 }
 
-/// THORChain représente TOUS les montants avec une précision fixe de 8
-/// décimales ("1e8"), quelle que soit la précision native de la chaîne
-/// source/destination (9 pour SOL, 18 pour ETH, 8 pour BTC, 6 pour l'USDC) —
-/// documenté dans la spec THORChain. Cette conversion doit TOUJOURS passer
-/// par cette fonction avant d'appeler `quote_swap`, jamais recalculée à la
-/// main ailleurs (une erreur ici fausserait le montant réellement échangé
-/// d'un facteur 10, 100 ou plus).
+/// THORChain represents ALL amounts with a fixed precision of 8 decimals ("1e8"),
+/// whatever the native precision of the source/destination chain (9 for SOL, 18 for
+/// ETH, 8 for BTC, 6 for USDC), as documented in the THORChain spec. This
+/// conversion must ALWAYS go through this function before calling `quote_swap`,
+/// never be recomputed by hand elsewhere (a mistake here would skew the amount
+/// actually swapped by a factor of 10, 100 or more).
 pub fn to_thorchain_amount(native_amount: u128, native_decimals: u32) -> Result<u64> {
     const THORCHAIN_DECIMALS: u32 = 8;
     let converted = if native_decimals >= THORCHAIN_DECIMALS {
@@ -490,29 +478,26 @@ pub fn to_thorchain_amount(native_amount: u128, native_decimals: u32) -> Result<
     u64::try_from(converted).context("montant converti trop grand pour la précision THORChain (1e8)")
 }
 
-/// `from_asset`/`to_asset` au format THORChain (`CHAIN.ASSET`, ex: `BTC.BTC`,
-/// `ETH.ETH`, `SOL.SOL`) — voir la doc THORChain pour la notation exacte des
-/// jetons non natifs (USDC etc.), volontairement pas encore couverte ici (v1
-/// limitée aux actifs natifs BTC/ETH/SOL, voir le plan). `amount` dans la plus
-/// petite unité de l'actif source. `destination` : adresse de l'utilisateur
-/// sur la chaîne de destination (une de ses propres adresses, jamais celle du
-/// développeur).
+/// `from_asset`/`to_asset` in THORChain format (`CHAIN.ASSET`, e.g. `BTC.BTC`,
+/// `ETH.ETH`, `SOL.SOL`, or `CHAIN.TICKER-0XCONTRACT` for a token, see the tables
+/// above). `amount` in the source asset's smallest unit. `destination`: the user's
+/// address on the destination chain (one of their own addresses, never the
+/// developer's).
 pub fn quote_swap(from_asset: &str, to_asset: &str, amount: u64, destination: &str) -> Result<SwapQuote> {
     THORCHAIN.quote_swap(from_asset, to_asset, amount, destination)
 }
 
-/// Voir `CrossChain::verify_swap_memo` (THORChain).
+/// See `CrossChain::verify_swap_memo` (THORChain).
 pub fn verify_swap_memo(memo: &str, to_asset: &str, destination: &str, expected_amount_out: u64) -> Result<()> {
     THORCHAIN.verify_swap_memo(memo, to_asset, destination, expected_amount_out)
 }
 
 impl CrossChain {
-    /// Devis d'échange (voir `quote_swap`), memo vérifié avant tout usage,
-    /// avec l'affilié retenu par `affiliate_for`. Depuis Bitcoin ou Zcash, un
-    /// gros échange découpé par le protocole (memo allongé de « /0/2147 »,
-    /// relevé le 03/10/2026) peut ne plus tenir en 80 octets même avec le nom
-    /// court : nouveau devis sans affilié (sans frais, dit dans la boîte de
-    /// confirmation) plutôt qu'un refus.
+    /// Swap quote (see `quote_swap`), memo verified before any use, with the affiliate
+    /// chosen by `affiliate_for`. From Bitcoin or Zcash, a large swap split up by the
+    /// protocol (memo extended with "/0/2147", recorded on 2026-10-03) may no longer
+    /// fit in 80 bytes even with the short name: a new quote without an affiliate is
+    /// requested (fee-free, stated in the confirmation dialog) rather than refusing.
     pub fn quote_swap(&self, from_asset: &str, to_asset: &str, amount: u64, destination: &str) -> Result<SwapQuote> {
         let affiliate = self.affiliate_for(from_asset);
         match self.quote_swap_as(from_asset, to_asset, amount, destination, affiliate) {
@@ -523,8 +508,8 @@ impl CrossChain {
         }
     }
 
-    /// Devis avec l'affilié `affiliate` imposé (`None` : sans frais) — pour
-    /// relire un devis après la confirmation dans les conditions affichées.
+    /// Quote with the affiliate `affiliate` imposed (`None`: fee-free), to reread a
+    /// quote after confirmation under the conditions shown.
     pub fn quote_swap_as(&self, from_asset: &str, to_asset: &str, amount: u64, destination: &str, affiliate: Option<&str>) -> Result<SwapQuote> {
         let name = self.name;
         let affiliate_query = affiliate.map(|a| format!("&affiliate={a}&affiliate_bps={AFFILIATE_FEE_BPS}")).unwrap_or_default();
@@ -539,12 +524,12 @@ impl CrossChain {
             .json()
             .with_context(|| format!("réponse de devis {name} illisible"))?;
 
-        // Erreur : `code` + `message` chez THORChain, `error` seul chez Maya
-        // (constaté : sans ce champ, le message de Maya était perdu).
+        // Error: `code` + `message` on THORChain, `error` alone on Maya (seen in practice:
+        // without this field, Maya's message was lost).
         if response.code.is_some() || response.error.is_some() {
             let message = response.message.or(response.error).unwrap_or_else(|| "raison inconnue".to_string());
-            // « trading is halted, can't process swap » (constaté le
-            // 02/10/2026 : réseau Solana suspendu chez THORChain).
+            // "trading is halted, can't process swap" (seen on 2026-10-02: Solana halted on
+            // THORChain).
             if message.contains("halted") {
                 anyhow::bail!("{}", self.halt_message(from_asset, to_asset));
             }
@@ -561,8 +546,8 @@ impl CrossChain {
         let total_fees = response.fees.and_then(|f| f.total).and_then(|s| s.parse::<u64>().ok());
         let number = |field: &Option<String>| field.as_deref().and_then(|s| s.parse::<u64>().ok());
 
-        // Sous le seuil de poussière, le dépôt est ignoré : les fonds seraient
-        // perdus (relevé : 10 000 sur Maya pour BTC et ZEC, 1 000 sur THORChain).
+        // Below the dust threshold, the deposit is ignored and the funds would be lost
+        // (recorded: 10,000 on Maya for BTC and ZEC, 1,000 on THORChain).
         let minimum = number(&response.dust_threshold).max(number(&response.recommended_min_amount_in));
         if let Some(minimum) = minimum.filter(|m| amount < *m) {
             anyhow::bail!(
@@ -586,25 +571,24 @@ impl CrossChain {
     }
 }
 
-/// Montant en 1e8 lisible (« 0.0013944 »).
+/// Amount in 1e8, human-readable ("0.0013944").
 fn format_1e8(amount: u64) -> String {
     let text = format!("{}.{:08}", amount / 100_000_000, amount % 100_000_000);
     text.trim_end_matches('0').trim_end_matches('.').to_string()
 }
 
-/// Symbole d'un actif (« BTC », « USDC » pour `ETH.USDC-0X…`).
+/// Symbol of an asset ("BTC", "USDC" for `ETH.USDC-0X…`).
 fn ticker(asset: &str) -> &str {
     let ticker = asset.split_once('.').map_or(asset, |(_, t)| t);
     ticker.split_once('-').map_or(ticker, |(t, _)| t)
 }
 
-/// L'actif d'un memo désigne-t-il `to_asset` ? Formes relevées sur de vrais
-/// devis : notation complète, code court d'un actif natif (« e », « b »,
-/// « s » = BNB, « a », « f » = ETH sur Base ; « o » = SOL, code source de
-/// THORNode), ou `CHAIN.TICKER` sans le contrat pour un jeton (« ETH.USDC »,
-/// « BASE.VVV » : THORChain le résout vers son pool de ce jeton).
-/// Les codes courts sont propres à chaque protocole (« a » = AVAX sur
-/// THORChain, ETH d'Arbitrum sur Maya).
+/// Does a memo's asset designate `to_asset`? Forms seen in real quotes: full
+/// notation, short code for a native asset ("e", "b", "s" = BNB, "a", "f" = ETH on
+/// Base; "o" = SOL, from the THORNode source code), or `CHAIN.TICKER` without the
+/// contract for a token ("ETH.USDC", "BASE.VVV": THORChain resolves it to its pool
+/// for that token). Short codes are specific to each protocol ("a" = AVAX on
+/// THORChain, Arbitrum ETH on Maya).
 fn memo_asset_matches(assets: &[ThorAsset], field: &str, to_asset: &str) -> bool {
     if field.eq_ignore_ascii_case(to_asset) {
         return true;
@@ -615,35 +599,33 @@ fn memo_asset_matches(assets: &[ThorAsset], field: &str, to_asset: &str) -> bool
     to_asset.split_once('-').is_some_and(|(ticker, _)| field.eq_ignore_ascii_case(ticker))
 }
 
-/// Vérifie que le memo renvoyé par la passerelle THORChain fait EXACTEMENT ce
-/// que l'utilisateur a confirmé — trouvé lors de l'audit "failles connues des
-/// hot wallets" (classe "ce qu'on signe diffère de ce qu'on voit", celle des
-/// plus grosses pertes récentes) : la boîte de confirmation affiche la
-/// destination SAISIE par l'utilisateur, mais la transaction transporte le
-/// memo fourni par un tiers, jamais relu. Une passerelle compromise pouvait
-/// donc renvoyer un memo envoyant la sortie du swap à SA propre adresse, ou
-/// gonflant les frais d'affiliation (ex : 5000 bps = 50 % du swap), sans que
-/// rien ne l'empêche. Ce module ne reconstruit toujours jamais le memo à la
-/// main (voir sa doc) : il le LIT et refuse s'il ne correspond pas.
+/// Checks that the memo returned by the THORChain gateway does EXACTLY what the
+/// user confirmed. Found during the "known hot wallet weaknesses" audit (the "what
+/// you sign differs from what you see" class, behind the biggest recent losses):
+/// the confirmation dialog shows the destination ENTERED by the user, but the
+/// transaction carries the memo supplied by a third party, which was never reread.
+/// A compromised gateway could therefore return a memo sending the swap output to
+/// ITS own address, or inflating the affiliate fee (e.g. 5000 bps = 50% of the
+/// swap), with nothing to stop it. This module still never rebuilds the memo by
+/// hand (see its docs): it READS it and refuses it if it does not match.
 ///
-/// Format attendu, vérifié en direct (`=:b:bc1q...:3146167:thor1...:80`) et
-/// dans le code source de THORNode : `TYPE:ACTIF:DESTINATION:LIMITE:AFFILIÉ:BPS`,
-/// exactement 6 champs. Tout champ supplémentaire est refusé : THORChain
-/// accepte des champs d'agrégateur DEX après le 6ᵉ (contrat intermédiaire,
-/// jeton final, sortie minimale) qui redirigeraient la sortie ailleurs.
-/// Sans frais d'affiliation (départ Bitcoin ou Zcash, voir
-/// `choose_affiliate`) : exactement les 4 premiers champs (relevé en direct :
-/// `=:e:0x59D7…E6ba:31290403`) — un affilié inattendu est refusé. Avec : le
-/// 5ᵉ champ doit être EXACTEMENT l'affilié demandé par l'app (adresse, ou nom
-/// court vérifié) — sinon une passerelle pourrait substituer un nom court
-/// inscrit par un autre.
+/// Expected format, checked live (`=:b:bc1q...:3146167:thor1...:80`) and in the
+/// THORNode source code: `TYPE:ASSET:DESTINATION:LIMIT:AFFILIATE:BPS`, exactly 6
+/// fields. Any extra field is refused: THORChain accepts DEX aggregator fields
+/// after the 6th (intermediate contract, final token, minimum output) that would
+/// redirect the output elsewhere. Without an affiliate fee (departure from Bitcoin
+/// or Zcash, see `choose_affiliate`): exactly the first 4 fields (recorded live:
+/// `=:e:0x59D7…E6ba:31290403`), and an unexpected affiliate is refused. With one:
+/// the 5th field must be EXACTLY the affiliate the app asked for (address, or
+/// verified short name), otherwise a gateway could swap in a short name registered
+/// by someone else.
 impl CrossChain {
-/// Memo d'un échange avec nos frais d'affiliation à l'adresse complète.
+/// Memo of a swap with our affiliate fee at the full address.
 pub fn verify_swap_memo(&self, memo: &str, to_asset: &str, destination: &str, expected_amount_out: u64) -> Result<()> {
     self.verify_memo(memo, Some(self.affiliate_address), to_asset, destination, expected_amount_out)
 }
 
-/// Memo d'un échange avec l'affilié `affiliate` demandé (`None` : sans).
+/// Memo of a swap with the requested affiliate `affiliate` (`None`: without).
 pub fn verify_memo(&self, memo: &str, affiliate: Option<&str>, to_asset: &str, destination: &str, expected_amount_out: u64) -> Result<()> {
     let fields: Vec<&str> = memo.split(':').collect();
     let expected_fields = if affiliate.is_some() { 6 } else { 4 };
@@ -653,7 +635,8 @@ pub fn verify_memo(&self, memo: &str, affiliate: Option<&str>, to_asset: &str, d
         fields.len()
     );
 
-    // Alias du type "swap" dans le code source de THORNode (`memo.go`) : "swap", "s", "=".
+    // Aliases of the "swap" type in the THORNode source code (`memo.go`): "swap", "s",
+    // "=".
     anyhow::ensure!(
         matches!(fields[0].to_ascii_lowercase().as_str(), "=" | "s" | "swap"),
         "memo THORChain qui n'est pas un swap : {memo}"
@@ -665,8 +648,8 @@ pub fn verify_memo(&self, memo: &str, affiliate: Option<&str>, to_asset: &str, d
         fields[1]
     );
 
-    // Adresses EVM (hex) insensibles à la casse ; base58 (Solana) SENSIBLE à la
-    // casse, et bech32 (Bitcoin) comparé tel quel (toujours en minuscules ici).
+    // EVM addresses (hex) are case-insensitive; base58 (Solana) is case-SENSITIVE, and
+    // bech32 (Bitcoin) is compared as is (always lowercase here).
     let dest_ok = if destination.starts_with("0x") {
         fields[2].eq_ignore_ascii_case(destination)
     } else {
@@ -678,14 +661,15 @@ pub fn verify_memo(&self, memo: &str, affiliate: Option<&str>, to_asset: &str, d
         fields[2]
     );
 
-    // "LIMITE" ou "LIMITE/INTERVALLE/QUANTITÉ" (swap en streaming).
+    // "LIMIT" or "LIMIT/INTERVAL/QUANTITY" (streaming swap).
     let limit: u64 = fields[3]
         .split('/')
         .next()
         .unwrap_or("")
         .parse()
         .map_err(|_| anyhow!("memo THORChain sans sortie minimale exploitable (« {} ») — swap refusé", fields[3]))?;
-    // Marge de 5 bps pour l'arrondi côté THORChain (ratios mesurés exacts à 1e-5 près).
+    // 5 bps margin for rounding on THORChain's side (ratios measured exact to within
+    // 1e-5).
     let min_acceptable = u128::from(expected_amount_out) * u128::from(10_000 - SWAP_TOLERANCE_BPS - 5) / 10_000;
     anyhow::ensure!(
         limit > 0 && u128::from(limit) >= min_acceptable,
@@ -711,25 +695,25 @@ mod tests {
 
     const DEST_BTC: &str = "bc1qp0jus87dalh7xku22tx3uhyhlf8cjuc0vvkhjz";
 
-    /// Memo réel renvoyé par la passerelle (ETH -> BTC, liquidity_tolerance_bps=50).
+    /// Real memo returned by the gateway (ETH -> BTC, liquidity_tolerance_bps=50).
     fn real_memo() -> String {
         format!("=:b:{DEST_BTC}:3146167:{AFFILIATE_ADDRESS}:80")
     }
 
-    /// Départ Bitcoin ou Zcash sans nom court : devis sans affilié, memo à 4
-    /// champs (formes réelles relevées le 03/10/2026) ; un affilié glissé dans
-    /// un tel memo, même le nôtre, est refusé (frais non affichés).
+    /// Departure from Bitcoin or Zcash without a short name: quote without an
+    /// affiliate, 4-field memo (real forms recorded on 2026-10-03); an affiliate
+    /// slipped into such a memo, even ours, is refused (fee not shown).
     #[test]
     fn op_return_sources_carry_no_affiliate() {
         let evm = "0x59D78c44ac60F09369b544778358704B7b18E6ba";
-        // Choix de l'affilié : nom vérifié partout ; sinon adresse, sauf depuis
-        // Bitcoin / Zcash (aucun).
+        // Affiliate choice: verified name everywhere; otherwise the address, except from
+        // Bitcoin / Zcash (none).
         assert_eq!(choose_affiliate(Some("ow"), AFFILIATE_ADDRESS, "BTC.BTC"), Some("ow"));
         assert_eq!(choose_affiliate(Some("ow"), AFFILIATE_ADDRESS, "ETH.ETH"), Some("ow"));
         assert_eq!(choose_affiliate(None, AFFILIATE_ADDRESS, "BTC.BTC"), None);
         assert_eq!(choose_affiliate(None, MAYA_AFFILIATE_ADDRESS, "ZEC.ZEC"), None);
         assert_eq!(choose_affiliate(None, AFFILIATE_ADDRESS, "ETH.ETH"), Some(AFFILIATE_ADDRESS));
-        // Tests hors réseau : nom jamais vérifié.
+        // Offline tests: name never verified.
         assert!(!THORCHAIN.charges_affiliate("BTC.BTC") && !MAYA.charges_affiliate("ZEC.ZEC"));
         assert!(THORCHAIN.charges_affiliate("ETH.ETH") && MAYA.charges_affiliate("ARB.ETH"));
 
@@ -739,7 +723,7 @@ mod tests {
             .expect("BTC → USDC");
         let with_fee = format!("=:e:{evm}:31290403:{AFFILIATE_ADDRESS}:80");
         assert!(THORCHAIN.verify_memo(&with_fee, None, "ETH.ETH", evm, 31_606_468).is_err(), "affilié inattendu");
-        // Nom court : exigé tel que demandé, jamais substitué.
+        // Short name: required exactly as requested, never substituted.
         let with_name = format!("=:e:{evm}:31290403:ow:80");
         THORCHAIN.verify_memo(&with_name, Some("ow"), "ETH.ETH", evm, 31_606_468).expect("nom court demandé");
         assert!(THORCHAIN.verify_memo(&with_name, Some(AFFILIATE_ADDRESS), "ETH.ETH", evm, 31_606_468).is_err(), "nom substitué à l'adresse demandée");
@@ -759,8 +743,8 @@ mod tests {
         assert_eq!((ticker("ZEC.ZEC"), ticker("ETH.USDC-0XA0B8")), ("ZEC", "USDC"));
     }
 
-    /// Devis réels sans affilié depuis Bitcoin et Zcash (lecture seule), memo
-    /// vérifié, et montant sous le seuil de poussière refusé.
+    /// Real quotes without an affiliate from Bitcoin and Zcash (read-only), memo
+    /// verified, and an amount below the dust threshold refused.
     #[test]
     #[ignore]
     fn real_quotes_from_op_return_sources() {
@@ -770,14 +754,14 @@ mod tests {
             println!("{} {from} : {} ({} octets), gas {:?}", protocol.name, quote.memo, quote.memo.len(), quote.recommended_gas_rate);
             assert!(quote.memo.len() <= 80);
         }
-        // Entre le seuil de poussière (10 000, refusé par Maya lui-même) et le
-        // minimum conseillé (~139 000) : refusé par l'app.
+        // Between the dust threshold (10,000, refused by Maya itself) and the recommended
+        // minimum (~139,000): refused by the app.
         let err = MAYA.quote_swap("ZEC.ZEC", "ETH.ETH", 50_000, evm).err().expect("montant sous le minimum refusé").to_string();
         assert!(err.contains("trop faible"), "{err}");
     }
 
-    /// Réponses réelles de `inbound_addresses` (abrégées) : réseau Solana
-    /// suspendu chez THORChain le 02/10/2026 ; Maya sans champs de pause.
+    /// Real `inbound_addresses` responses (abridged): Solana halted on THORChain on
+    /// 2026-10-02; Maya without pause fields.
     #[test]
     fn reads_halted_chains() {
         let parse = |json: &str| Halts::from_statuses(serde_json::from_str(json).unwrap());
@@ -793,7 +777,7 @@ mod tests {
         assert_eq!((chain_of("BASE.ETH"), chain_label("SOL"), chain_label("XYZ")), ("BASE", "Solana", "XYZ"));
     }
 
-    /// Réseau : état réel des deux protocoles (lecture seule).
+    /// Live: real state of both protocols (read-only).
     #[test]
     #[ignore]
     fn real_halted_assets_are_readable() {
@@ -806,7 +790,7 @@ mod tests {
     #[test]
     fn verify_swap_memo_accepts_the_real_memo_shape() {
         verify_swap_memo(&real_memo().replace("3146167", "3130357"), "BTC.BTC", DEST_BTC, 3_161_977).expect("memo réel (1 %)");
-        // Variante streaming "LIMITE/INTERVALLE/QUANTITÉ" et type "swap" en toutes lettres.
+        // Streaming variant "LIMIT/INTERVAL/QUANTITY" and the "swap" type spelled out.
         let streaming = format!("SWAP:BTC.BTC:{DEST_BTC}:3130357/1/0:{AFFILIATE_ADDRESS}:80");
         verify_swap_memo(&streaming, "BTC.BTC", DEST_BTC, 3_161_977).expect("variante streaming");
     }
@@ -828,7 +812,7 @@ mod tests {
 
     #[test]
     fn verify_swap_memo_rejects_a_missing_or_too_low_minimum_output() {
-        // Limite vide = comportement d'AVANT ce correctif (n'importe quel taux accepté).
+        // Empty limit = the behavior BEFORE this fix (any rate accepted).
         let no_limit = format!("=:b:{DEST_BTC}::{AFFILIATE_ADDRESS}:80");
         assert!(verify_swap_memo(&no_limit, "BTC.BTC", DEST_BTC, 3_161_977).is_err(), "limite vide");
         let too_low = real_memo().replace("3146167", "1");
@@ -839,7 +823,7 @@ mod tests {
     fn verify_swap_memo_rejects_extra_aggregator_fields_and_wrong_assets() {
         let aggregator = format!("{}:0xAggregator:ETH.USDT:1", real_memo());
         assert!(verify_swap_memo(&aggregator, "BTC.BTC", DEST_BTC, 3_161_977).is_err(), "champs d'agrégateur");
-        // "s" = BSC.BNB dans THORNode, pas SOL : ne doit JAMAIS passer pour SOL.SOL.
+        // "s" = BSC.BNB in THORNode, not SOL: must NEVER pass for SOL.SOL.
         let sol_dest = "9waCLiN9G99f1GXMVBQqifbPMwGMYvJZFUHywRCQPG5F";
         let bsc = format!("=:s:{sol_dest}:100:{AFFILIATE_ADDRESS}:80");
         assert!(verify_swap_memo(&bsc, "SOL.SOL", sol_dest, 100).is_err(), "s n'est pas SOL");
@@ -852,40 +836,39 @@ mod tests {
         let evm = "0x0db14a0288f4637f60b46690f1971b756c58a47e";
         let memo = format!("=:e:{}:100:{AFFILIATE_ADDRESS}:80", evm.to_uppercase().replace("0X", "0x"));
         verify_swap_memo(&memo, "ETH.ETH", evm, 100).expect("hex EVM insensible à la casse");
-        // Base58 (Solana) : changer la casse donne une AUTRE adresse, doit être refusé.
+        // Base58 (Solana): changing the case gives a DIFFERENT address, which must be
+        // refused.
         let sol_dest = "9waCLiN9G99f1GXMVBQqifbPMwGMYvJZFUHywRCQPG5F";
         let memo = format!("=:o:{}:100:{AFFILIATE_ADDRESS}:80", sol_dest.to_lowercase());
         assert!(verify_swap_memo(&memo, "SOL.SOL", sol_dest, 100).is_err(), "base58 sensible à la casse");
     }
 
-    /// Ne garantit pas que l'adresse existe/est correcte (seule une
-    /// vérification contre un portefeuille THORChain de référence le
-    /// garantirait, voir le plan) — garde-fou minimal contre une corruption
-    /// accidentelle de la constante (mauvais préfixe, mauvaise longueur).
+    /// Does not guarantee the address exists or is correct (only a check against a
+    /// reference THORChain wallet would); a minimal guard against accidental corruption
+    /// of the constant (wrong prefix, wrong length).
     #[test]
     fn to_thorchain_amount_converts_between_decimal_precisions() {
-        // SOL : 9 décimales natives -> 8 (divise par 10).
+        // SOL: 9 native decimals -> 8 (divide by 10).
         assert_eq!(to_thorchain_amount(1_000_000_000, 9).unwrap(), 100_000_000);
-        // BTC : déjà 8 décimales, identité.
+        // BTC: already 8 decimals, identity.
         assert_eq!(to_thorchain_amount(123_456_789, 8).unwrap(), 123_456_789);
-        // ETH : 18 décimales natives -> 8 (divise par 1e10).
+        // ETH: 18 native decimals -> 8 (divide by 1e10).
         assert_eq!(to_thorchain_amount(1_000_000_000_000_000_000, 18).unwrap(), 100_000_000);
-        // USDC : 6 décimales natives -> 8 (multiplie par 100).
+        // USDC: 6 native decimals -> 8 (multiply by 100).
         assert_eq!(to_thorchain_amount(1_000_000, 6).unwrap(), 100_000_000);
     }
 
-    /// Vérification de bout en bout contre l'API réelle (lecture seule, aucun
-    /// risque) : confirme l'URL de base, le format de réponse réel (types
-    /// exacts des champs) et que l'adresse d'affiliation est bien acceptée.
-    /// Ignoré par défaut (dépend du réseau) : lancer explicitement avec
-    /// `cargo test -- --ignored quote_swap_matches_the_real_network`.
+    /// End-to-end check against the real API (read-only, no risk): confirms the base
+    /// URL, the real response format (exact field types) and that the affiliate address
+    /// is accepted. Ignored by default (depends on the network); run it explicitly
+    /// with:
+    /// `cargo test -- --ignored quote_swap_matches_the_real_network`
     #[test]
     #[ignore]
     fn quote_swap_matches_the_real_network() {
-        // ETH source (marge de memo confortable) vers BTC : SOL est
-        // actuellement en pause côté THORChain (HALTSOLTRADING=1 constaté en
-        // direct au moment de l'écriture de ce test), donc pas utilisable ici
-        // pour une vérification fiable dans la durée.
+        // ETH source (comfortable memo margin) to BTC: SOL was paused on THORChain when
+        // this test was written (HALTSOLTRADING=1 seen live), so it could not be used here
+        // for a check that holds over time.
         let quote = quote_swap(
             "ETH.ETH",
             "BTC.BTC",
@@ -900,9 +883,9 @@ mod tests {
         assert!(router.starts_with("0x") && router.len() == 42, "adresse de routeur EVM attendue : {router}");
     }
 
-    /// Memos RÉELS des nouveaux actifs (devis du 01/10/2026) : jetons en
-    /// `CHAIN.TICKER` sans contrat, codes courts « s » (BNB), « a » (AVAX),
-    /// « f » (ETH sur Base) ; un jeton ne se confond pas avec un autre.
+    /// REAL memos for the new assets (quotes from 2026-10-01): tokens as `CHAIN.TICKER`
+    /// without the contract, short codes "s" (BNB), "a" (AVAX), "f" (ETH on Base); one
+    /// token is never confused with another.
     #[test]
     fn verify_swap_memo_accepts_the_real_shapes_of_the_new_assets() {
         let evm = "0x8894E0a0c962CB723c1976a4421c95949bE2D4E3";
@@ -924,8 +907,8 @@ mod tests {
         assert!(verify_swap_memo(&eth_for_base_eth, "BASE.ETH", evm, 99_130_000).is_err(), "ETH d'Ethereum n'est pas ETH sur Base");
     }
 
-    /// Jetons de la table = contrats et décimales du registre des jetons de
-    /// l'app (core/src/tokens.rs) ; notation THORChain = contrat en majuscules.
+    /// Tokens in the table = contracts and decimals from the app's token registry
+    /// (core/src/tokens.rs); THORChain notation = contract in uppercase.
     #[test]
     fn thorchain_tokens_match_the_token_registry() {
         for a in ASSETS.iter().filter(|a| a.contract.is_some()) {
@@ -939,8 +922,8 @@ mod tests {
         assert!(asset("bnb", "bsc_mainnet").is_some() && asset("bnb", "evm_mainnet").is_none());
     }
 
-    /// THORName : alias THOR = adresse d'affiliation, non expiré (format réel
-    /// de `/thorchain/thorname/{nom}`).
+    /// THORName: THOR alias = affiliate address, not expired (real format of
+    /// `/thorchain/thorname/{name}`).
     #[test]
     fn thornames_must_point_to_the_affiliate_address() {
         let name = |alias: &str, expire: i64| {
@@ -955,7 +938,7 @@ mod tests {
         assert!(!usable(&name(AFFILIATE_ADDRESS, 1000), 999, "MAYA", MAYA_AFFILIATE_ADDRESS), "alias THOR, pas MAYA");
         let record = parse_name(&name(AFFILIATE_ADDRESS, 1000), 999, "THOR", AFFILIATE_ADDRESS).unwrap().unwrap();
         assert_eq!(record.owner, "thor1u7ent5406np9t9u35ls0vxnv8rcmlzudf9zpq0");
-        // Réponse réelle d'un nom inexistant (relevée le 03/10/2026).
+        // Real response for a name that does not exist (recorded on 2026-10-03).
         let missing = r#"{"code":3,"message":"fail to fetch THORName: 2 errors occurred:
 	* internal error
 	* THORName doesn't exist: ow
@@ -964,9 +947,9 @@ mod tests {
         assert_eq!(parse_name(missing, 0, "THOR", AFFILIATE_ADDRESS).unwrap(), None, "inexistant");
     }
 
-    /// Devis RÉELS pour les nouvelles paires (lecture seule) : jeton ERC-20 en
-    /// source (routeur renvoyé), monnaies natives de BNB Chain, Avalanche et
-    /// Base, jeton de Base en destination ; memo vérifié par `quote_swap`.
+    /// REAL quotes for the new pairs (read-only): an ERC-20 token as source (router
+    /// returned), native coins of BNB Chain, Avalanche and Base, a Base token as
+    /// destination; memo verified by `quote_swap`.
     /// `cargo test -- --ignored quote_swap_covers_the_new_assets --nocapture`
     #[test]
     #[ignore]
@@ -985,8 +968,8 @@ mod tests {
         }
     }
 
-    /// L'affilié Maya est la MÊME clé que l'affilié THORChain : même hash160,
-    /// seul le préfixe bech32 change.
+    /// The Maya affiliate is the SAME key as the THORChain affiliate: same hash160,
+    /// only the bech32 prefix changes.
     #[test]
     fn maya_affiliate_is_the_same_key_as_thorchain() {
         let (thor_hrp, thor_data, _) = bech32::decode(AFFILIATE_ADDRESS).unwrap();
@@ -995,9 +978,9 @@ mod tests {
         assert_eq!(thor_data, maya_data);
     }
 
-    /// Memos RÉELS de Maya (devis du 01/10/2026) : « a » = ETH d'Arbitrum sur
-    /// Maya (jamais AVAX, qui n'y existe pas), jeton en `ARB.USDC` ; l'affilié
-    /// THORChain y est refusé, et inversement.
+    /// REAL Maya memos (quotes from 2026-10-01): "a" = Arbitrum ETH on Maya (never
+    /// AVAX, which does not exist there), token as `ARB.USDC`; the THORChain affiliate
+    /// is refused there, and vice versa.
     #[test]
     fn maya_memos_follow_maya_codes_and_affiliate() {
         let evm = "0x8894E0a0c962CB723c1976a4421c95949bE2D4E3";
@@ -1011,7 +994,7 @@ mod tests {
         assert!(MAYA.verify_swap_memo(&thor_affiliate, "ARB.USDC-0XAF88D065E77C8CC2239327C5EDB3A432268E5831", evm, 24_753_000_000).is_err());
     }
 
-    /// Jetons de Maya = registre des jetons de l'app.
+    /// Maya tokens = the app's token registry.
     #[test]
     fn maya_tokens_match_the_token_registry() {
         for a in MAYA_ASSETS.iter().filter(|a| a.contract.is_some()) {
@@ -1022,8 +1005,8 @@ mod tests {
         }
     }
 
-    /// Devis RÉELS sur Maya (lecture seule) : Arbitrum vers Bitcoin et
-    /// Ethereum, jeton Ethereum vers Arbitrum, échange sur Arbitrum même.
+    /// REAL quotes on Maya (read-only): Arbitrum to Bitcoin and Ethereum, an Ethereum
+    /// token to Arbitrum, a swap within Arbitrum.
     /// `cargo test -- --ignored maya_quotes_match_the_real_network --nocapture`
     #[test]
     #[ignore]
@@ -1045,8 +1028,8 @@ mod tests {
         }
     }
 
-    /// Devis RÉELS sur THORChain vers Dogecoin (lecture seule) : memo vérifié
-    /// (code court « d », adresse D… exacte, minimum de sortie).
+    /// REAL quotes on THORChain to Dogecoin (read-only): memo verified (short code "d",
+    /// exact D… address, minimum output).
     /// `cargo test -- --ignored thorchain_quotes_to_dogecoin --nocapture`
     #[test]
     #[ignore]
@@ -1056,9 +1039,9 @@ mod tests {
             let quote = THORCHAIN.quote_swap(from, "DOGE.DOGE", amount, &doge).unwrap_or_else(|e| panic!("{from} -> DOGE : {e:#}"));
             println!("{from} -> DOGE : {} ({} DOGE attendus)", quote.memo, quote.expected_amount_out as f64 / 1e8);
             assert!(quote.memo.contains(&format!(":d:{doge}")), "{}", quote.memo);
-            // Même vérification que l'app : affilié du devis (aucun depuis Bitcoin).
+            // Same check as the app: the quote's affiliate (none from Bitcoin).
             THORCHAIN.verify_memo(&quote.memo, quote.affiliate.as_deref(), "DOGE.DOGE", &doge, quote.expected_amount_out).unwrap_or_else(|e| panic!("memo {from} -> DOGE : {e:#}"));
-            // Une autre adresse Dogecoin dans le memo : refusée.
+            // A different Dogecoin address in the memo: refused.
             let other = crate::doge::p2pkh_address(&[0x22; 20]);
             assert!(THORCHAIN.verify_memo(&quote.memo, quote.affiliate.as_deref(), "DOGE.DOGE", &other, quote.expected_amount_out).is_err());
         }
