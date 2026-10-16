@@ -799,7 +799,13 @@ fn build_signed_with_sighashes(
     );
     let bundle = builder.build().context("transaction Zcash vide")?;
 
-    let expiry = BlockHeight::from_u32(target_height + EXPIRY_DELTA);
+    // `target_height` follows the height announced by the server: an absurd one is
+    // refused here rather than wrapped around into an expiry already in the past.
+    let expiry = BlockHeight::from_u32(
+        target_height
+            .checked_add(EXPIRY_DELTA)
+            .context("hauteur de chaîne Zcash hors limites")?,
+    );
     let version = TxVersion::suggested_for_branch(branch);
     let unauthed: TransactionData<TransparentOnly> = if version == TxVersion::V6 {
         TransactionData::from_parts_v6(branch, 0, expiry, Some(bundle), None, None, None)

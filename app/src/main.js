@@ -671,6 +671,7 @@ const I18N = {
     "restore.share2": "Part n°2",
     "restore.shareFile": "Fichier de part (.asc)",
     "restore.privkeyFile": "Fichier de clé de la part (.asc)",
+    "restore.chooseFile": "Choisir le fichier…",
     "restore.sharePassword": "Mot de passe de cette part",
     "restore.newPasswordLabel": "Nouveau mot de passe pour cet appareil",
     "restore.submit": "Restaurer",
@@ -1411,6 +1412,7 @@ const I18N = {
     "restore.share2": "Share #2",
     "restore.shareFile": "Share file (.asc)",
     "restore.privkeyFile": "Share key file (.asc)",
+    "restore.chooseFile": "Choose the file…",
     "restore.sharePassword": "Password for this share",
     "restore.newPasswordLabel": "New password for this device",
     "restore.submit": "Restore",
@@ -2522,16 +2524,11 @@ onboardingSubmitBtn.addEventListener("click", withBusyButton(onboardingSubmitBtn
   }
 }));
 
-// Regular <a download> links do not work reliably in the Tauri webview (navigation
-// intercepted for security reasons): instead we use a Rust command that opens the
-// native "Save as" dialog itself and writes the file. The path is never chosen on
-// the JS side, so a compromised script cannot force a write to an arbitrary
-// location.
-async function saveBase64ToFile(base64Content, suggestedName) {
-  return await invoke("save_bytes_with_dialog", {
-    suggestedName,
-    contentB64: base64Content,
-  });
+// Saves one file of a share (`kind`: "share" or "privkey"). The UI never holds the
+// share's content: Rust keeps the kit it generated, opens the native "Save as" dialog
+// itself and writes the file. Neither the path nor the content comes from the JS side.
+async function saveBackupFile(backup, kind) {
+  return await invoke("save_backup_file", { kitId: backup.kit_id, part: backup.part, kind });
 }
 
 function renderBackupList(backups, containerId = "backup-list") {
@@ -2551,25 +2548,40 @@ function renderBackupList(backups, containerId = "backup-list") {
   backups.forEach((backup, i) => {
     const item = document.createElement("div");
     item.className = "backup-item";
-    item.innerHTML = `
-      <div class="backup-item-header">
-        <h3>${t("backup.partTitle", { n: i + 1, label: backup.label })}</h3>
-        <span class="backup-status" data-field="status"></span>
-      </div>
-      <p class="muted">${t("backup.partPassword")}</p>
-      <div class="passphrase">${backup.passphrase}</div>
-      <div class="row-buttons">
-        <button class="primary" data-kind="usb">${t("backup.saveUsb")}</button>
-        <button class="secondary" data-kind="share">${t("backup.downloadShare")}</button>
-        <button class="secondary" data-kind="privkey">${t("backup.downloadPrivkey")}</button>
-      </div>
-      <p class="success hidden" data-field="usb-saved"></p>
-    `;
+    // Built node by node: the passphrase and the label go in as text, never as HTML.
+    const header = document.createElement("div");
+    header.className = "backup-item-header";
+    const title = document.createElement("h3");
+    title.textContent = t("backup.partTitle", { n: i + 1, label: backup.label });
+    const statusEl = document.createElement("span");
+    statusEl.className = "backup-status";
+    statusEl.dataset.field = "status";
+    header.append(title, statusEl);
+    const passwordHint = document.createElement("p");
+    passwordHint.className = "muted";
+    passwordHint.textContent = t("backup.partPassword");
+    const passphrase = document.createElement("div");
+    passphrase.className = "passphrase";
+    passphrase.textContent = backup.passphrase;
+    const buttons = document.createElement("div");
+    buttons.className = "row-buttons";
+    for (const [kind, className, label] of [
+      ["usb", "primary", "backup.saveUsb"],
+      ["share", "secondary", "backup.downloadShare"],
+      ["privkey", "secondary", "backup.downloadPrivkey"],
+    ]) {
+      const button = Object.assign(document.createElement("button"), { className, textContent: t(label) });
+      button.dataset.kind = kind;
+      buttons.appendChild(button);
+    }
+    const usbSaved = document.createElement("p");
+    usbSaved.className = "success hidden";
+    usbSaved.dataset.field = "usb-saved";
+    item.append(header, passwordHint, passphrase, buttons, usbSaved);
     // Share saved: written to a USB drive, or BOTH its files downloaded (a share is
     // only useful with its private key). Each change updates the checkmark and
     // notifies the screen ("Continue" button).
     const saved = { usb: false, share: false, privkey: false };
-    const statusEl = item.querySelector('[data-field="status"]');
     const refreshStatus = () => {
       const done = saved.usb || (saved.share && saved.privkey);
       item.dataset.saved = done ? "1" : "";
@@ -2591,7 +2603,7 @@ function renderBackupList(backups, containerId = "backup-list") {
       const button = e.currentTarget;
       try {
         // `false`: "Save as" dialog cancelled, nothing saved.
-        if (await saveBase64ToFile(backup.encrypted_share_b64, `${backup.label}_share.asc`)) markDownloaded(button, "share");
+        if (await saveBackupFile(backup, "share")) markDownloaded(button, "share");
       } catch (err) {
         alert(t("common.saveFailed", { err }));
       }
@@ -2599,7 +2611,7 @@ function renderBackupList(backups, containerId = "backup-list") {
     item.querySelector('[data-kind="privkey"]').addEventListener("click", async (e) => {
       const button = e.currentTarget;
       try {
-        if (await saveBase64ToFile(backup.privkey_armored_b64, `${backup.label}_privkey.asc`)) markDownloaded(button, "privkey");
+        if (await saveBackupFile(backup, "privkey")) markDownloaded(button, "privkey");
       } catch (err) {
         alert(t("common.saveFailed", { err }));
       }
@@ -2644,6 +2656,8 @@ document.getElementById("backup-confirm").addEventListener("change", updateBacku
 
 document.getElementById("backup-continue").addEventListener("click", () => {
   if (pendingCreateResult) {
+    // Every share is saved: Rust can forget the kit.
+    invoke("forget_pending_kit").catch((e) => console.error(e));
     renderDashboardAddresses(singleProfileList(pendingCreateResult.addresses));
     pendingCreateResult = null;
     showView("dashboard");
@@ -2718,6 +2732,7 @@ let restoreOrigin = "unlock";
 
 function openRestore(origin) {
   restoreOrigin = origin;
+  clearRestoreFiles();
   showView("restore");
   startUsbRestore();
 }
@@ -2726,6 +2741,7 @@ document.getElementById("goto-restore").addEventListener("click", () => openRest
 document.getElementById("onboarding-goto-restore").addEventListener("click", () => openRestore("onboarding"));
 document.getElementById("goto-unlock").addEventListener("click", () => {
   stopUsbRestore(true);
+  clearRestoreFiles();
   if (restoreOrigin === "onboarding") showView("onboarding");
   else showUnlockView();
 });
@@ -2890,6 +2906,7 @@ regenerateBackupConfirmBtn.addEventListener("click", withBusyButton(regenerateBa
 document.getElementById("regenerate-backup-close").addEventListener("click", () => {
   document.getElementById("regenerate-backup-result-modal").classList.add("hidden");
   document.getElementById("regenerate-backup-list").innerHTML = "";
+  invoke("forget_pending_kit").catch((e) => console.error(e));
 });
 
 // --- Affiliate name (developer's wallet only) ---------------------------------
@@ -3245,16 +3262,33 @@ document.querySelectorAll(".nav-tab").forEach((tab) => {
 
 // --- Restore ---------------------------------------------------------------
 
-function readFileAsBase64(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const b64 = reader.result.split(",")[1];
-      resolve(b64);
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
+// Restore from files: each file is picked in the native "Open" dialog and loaded on
+// the Rust side, where it stays; the UI only shows its name. "part:kind" of the files
+// chosen.
+const restoreFilesChosen = new Set();
+
+document.querySelectorAll("[data-restore-kind]").forEach((button) => {
+  button.addEventListener("click", async () => {
+    const { restorePart, restoreKind } = button.dataset;
+    const errorEl = document.getElementById("restore-error");
+    hideError(errorEl);
+    try {
+      const name = await invoke("restore_pick_file", { part: Number(restorePart), kind: restoreKind });
+      if (name === null) return; // dialog cancelled: the previous choice stays
+      restoreFilesChosen.add(`${restorePart}:${restoreKind}`);
+      button.parentElement.querySelector("[data-file-name]").textContent = name;
+    } catch (e) {
+      showError(errorEl, String(e));
+    }
   });
+});
+
+function clearRestoreFiles() {
+  restoreFilesChosen.clear();
+  document.querySelectorAll("[data-file-name]").forEach((el) => {
+    el.textContent = "";
+  });
+  invoke("restore_files_clear").catch((e) => console.error(e));
 }
 
 document.getElementById("restore-new-password").addEventListener("input", (e) => {
@@ -3266,15 +3300,11 @@ restoreSubmitBtn.addEventListener("click", withBusyButton(restoreSubmitBtn, asyn
   const errorEl = document.getElementById("restore-error");
   hideError(errorEl);
 
-  const shareFile1 = document.getElementById("restore-share-1").files[0];
-  const privkeyFile1 = document.getElementById("restore-privkey-1").files[0];
-  const shareFile2 = document.getElementById("restore-share-2").files[0];
-  const privkeyFile2 = document.getElementById("restore-privkey-2").files[0];
   const passphrase1 = document.getElementById("restore-passphrase-1").value;
   const passphrase2 = document.getElementById("restore-passphrase-2").value;
   const newPassword = document.getElementById("restore-new-password").value;
 
-  if (!shareFile1 || !privkeyFile1 || !shareFile2 || !privkeyFile2) {
+  if (restoreFilesChosen.size < 4) {
     showError(errorEl, t("restore.filesRequired"));
     return;
   }
@@ -3288,25 +3318,12 @@ restoreSubmitBtn.addEventListener("click", withBusyButton(restoreSubmitBtn, asyn
   }
 
   try {
-    const [backup1_b64, privkey1_armored_b64, backup2_b64, privkey2_armored_b64] = await Promise.all([
-      readFileAsBase64(shareFile1),
-      readFileAsBase64(privkeyFile1),
-      readFileAsBase64(shareFile2),
-      readFileAsBase64(privkeyFile2),
-    ]);
-
-    const addresses = await invoke("restore_wallet", {
-      newPassword,
-      backup1B64: backup1_b64,
-      privkey1ArmoredB64: privkey1_armored_b64,
-      passphrase1,
-      backup2B64: backup2_b64,
-      privkey2ArmoredB64: privkey2_armored_b64,
-      passphrase2,
-    });
+    // The files themselves are already on the Rust side (`restore_pick_file`).
+    const addresses = await invoke("restore_wallet", { newPassword, passphrase1, passphrase2 });
     markBackupChecked();
 
     stopUsbRestore(true);
+    clearRestoreFiles();
     writePendingSwaps([]);
     renderDashboardAddresses(singleProfileList(addresses));
     showView("dashboard");
@@ -3324,10 +3341,10 @@ restoreSubmitBtn.addEventListener("click", withBusyButton(restoreSubmitBtn, asyn
 // --- USB drive backup and restore (core/src/usb_backup.rs) -------------------
 //
 // Drives are detected by polling the list of removable drives at a short interval
-// while the relevant window is open: plugging the drive in is enough. Secrets only
-// pass through on their way to Rust (writing); when restoring, the shares read
-// stay on the Rust side, and the UI only sees the share number, the kit and the
-// backup name. One drive can hold backups of several wallets, each under its own
+// while the relevant window is open: plugging the drive in is enough. The shares
+// never go through here: Rust writes the kit it generated (named by kit and number)
+// and keeps the shares it reads for a restore; the UI only sees the share number,
+// the kit and the backup name. One drive can hold backups of several wallets, each under its own
 // name.
 const USB_POLL_MS = 1500;
 
@@ -3455,15 +3472,9 @@ async function writeToUsb(target, drive, button) {
   button.disabled = true;
   button.textContent = t("usb.writing");
   try {
+    // The shares are named by kit and number: Rust writes the content it holds.
     if (target.mode === "all") {
-      // snake_case fields: nested structure, deserialized as is.
-      const shares = target.backups.map((b) => ({
-        part: b.part,
-        encrypted_share_b64: b.encrypted_share_b64,
-        privkey_armored_b64: b.privkey_armored_b64,
-        passphrase: b.passphrase,
-      }));
-      const label = await invoke("save_kit_to_usb", { root: drive.root, kitId: kit, name: backupName, shares });
+      const label = await invoke("save_kit_to_usb", { root: drive.root, kitId: kit, name: backupName });
       if (label === null) return; // declined in the confirmation dialog
       usbKitNames.set(kit, backupName);
       const name = label || drive.root;
@@ -3483,9 +3494,6 @@ async function writeToUsb(target, drive, button) {
         kitId: backup.kit_id,
         name: backupName,
         part: backup.part,
-        encryptedShareB64: backup.encrypted_share_b64,
-        privkeyArmoredB64: backup.privkey_armored_b64,
-        passphrase: backup.passphrase,
       });
       usbKitNames.set(kit, backupName);
       const name = label || drive.root;

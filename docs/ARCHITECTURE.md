@@ -24,8 +24,10 @@ design protects against, read the [threat model](THREAT_MODEL.md).
 ```
 
 - **Frontend** (`app/src`): plain HTML, CSS and JavaScript, no framework and no runtime dependency. It is treated
-  as untrusted. A strict CSP (`connect-src 'self'`) stops it from reaching the network directly, and it only ever
-  receives public data.
+  as untrusted. A strict CSP (`connect-src 'self'`) stops it from reaching the network directly. It receives public
+  data (addresses, balances, transaction IDs) and, once, the passphrases of a new backup kit, which the user has
+  to note; never the seed, a private key or a backup share. Backup files are saved and opened through native
+  dialogs on the Rust side, which writes and reads their content.
 - **Backend** (`app/src-tauri/src/lib.rs`): the Tauri commands. It validates every input coming from the
   frontend, opens the native OS confirmation dialogs and the secure confirmation window, enforces the
   cancellation delay before signing, and translates errors (French/English).
@@ -68,8 +70,9 @@ to USB drives and reads them back.
    it fetches a fresh quote and verifies it (memo, PSBT, simulation of the effects).
 3. **Native confirmation.** An OS dialog, which the webview cannot fake or skip, shows the network, the source
    profile, the recipient, the amount and the fees.
-4. **Cancellation delay.** Five seconds with a countdown in the interface, enforced in Rust; the user can send
-   now or cancel.
+4. **Cancellation delay.** Five seconds with a countdown in the interface, during which Rust waits; the user
+   can send now or cancel. A guard against the user's own mistakes: the countdown lives in the interface, so
+   the native dialog is the barrier against a compromised one.
 5. **Signing.** Only now is the seed decrypted with the password (rate-limited), the key derived, the
    transaction signed, and the seed wiped.
 6. **Broadcast.** The transaction is sent. If the result is ambiguous (timeout, cut connection), the app reports

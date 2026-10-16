@@ -36,7 +36,6 @@ serde_json = "1"
 # The crypto worker (Shamir, PGP, derivation, RPC): all the sensitive logic stays in
 # this separate crate, never in the web frontend.
 openpgp-wallet-core = { path = "../../core" }
-base64 = "0.22"
 # Wipes the passwords received from the frontend (String) as soon as they are no
 # longer needed, including on an early return/panic; the same sensitive buffers as
 # core/, which already uses zeroize for the entropy/seed.

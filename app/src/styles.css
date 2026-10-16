@@ -1059,6 +1059,29 @@ button.link:hover {
   margin-top: 8px;
 }
 
+/* Backup file picked through the native dialog: the button, then the file's name
+   below it (beside it, a usual name like "backup_a_privkey.asc" would be cut). */
+.file-pick {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.file-pick-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.file-pick-name:empty {
+  display: none;
+}
+
 fieldset {
   border: 1px solid var(--border);
   border-radius: 10px;

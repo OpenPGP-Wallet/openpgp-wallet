@@ -3,7 +3,6 @@
 //! data (entropy, private key, passphrase) is ever logged here or returned to the
 //! frontend; only public addresses and confirmations/errors are.
 
-use base64::Engine;
 use openpgp_wallet_core::{
     address_book, api, cow, dapp_requests, external_wallets, hardware, history, messaging,
     price_history, price_rpc, sent_recipients, wallet_flow,
@@ -78,6 +77,19 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("nom de la sauvegarde : 1 à 30 caractères (lettres, chiffres, espaces, - _)", "backup name: 1 to 30 characters (letters, digits, spaces, - _)"),
     ("un dossier de sauvegarde de ce nom existe déjà sur la clé USB : choisissez un autre nom", "a backup folder with this name already exists on the USB drive: choose another name"),
     ("plusieurs sauvegardes complètes trouvées : choisissez celle à restaurer", "several complete backups found: choose the one to restore"),
+    // core/src/api.rs, new device password
+    ("mot de passe trop court : au moins 12 caractères", "password too short: at least 12 characters"),
+    ("mot de passe trop faible ou trop prévisible : mélangez lettres, chiffres et symboles", "password too weak or too predictable: mix letters, digits and symbols"),
+    // app: backup kit kept on the Rust side, restore from files
+    ("kit de sauvegarde introuvable : générez-en un nouveau", "backup kit not found: create a new one"),
+    ("type de fichier de sauvegarde inconnu", "unknown backup file type"),
+    ("fichier anormalement gros pour une sauvegarde", "file abnormally large for a backup"),
+    ("choisissez les fichiers des deux parts", "choose the files of both shares"),
+    // core/src/zcash.rs, core/src/api.rs: height announced by the server
+    ("hauteur de chaîne Zcash hors limites", "Zcash chain height out of range"),
+    // core: a server chosen by the user, approved in the secure window first
+    ("ajout du réseau annulé", "network not added"),
+    ("nœud Monero non modifié (confirmation refusée)", "Monero node not changed (confirmation declined)"),
     // core/src/blockscout.rs
     ("l'explorateur de ce réseau refuse pour l'instant les requêtes automatiques : historique indisponible", "this network's explorer currently refuses automated requests: history unavailable"),
     ("historique de ce réseau momentanément indisponible (limite du service atteinte) — réessayez plus tard", "this network's history is temporarily unavailable (service limit reached) — try again later"),
@@ -1808,11 +1820,11 @@ fn translate_dynamic_error(msg: &str) -> Option<String> {
     if let Some(rest) = msg.strip_prefix("création du répertoire de données impossible : ") {
         return Some(format!("could not create the data directory: {rest}"));
     }
-    if let Some(rest) = msg.strip_prefix("contenu base64 invalide : ") {
-        return Some(format!("invalid base64 content: {rest}"));
-    }
     if let Some(rest) = msg.strip_prefix("écriture du fichier impossible : ") {
         return Some(format!("could not write the file: {rest}"));
+    }
+    if let Some(rest) = msg.strip_prefix("lecture du fichier impossible : ") {
+        return Some(format!("could not read the file: {rest}"));
     }
     if let Some(rest) = msg.strip_prefix("fonds USDC insuffisants : ") {
         let translated = rest
@@ -2067,37 +2079,115 @@ impl From<api::Profile> for ProfileLabelDto {
     }
 }
 
+/// What the UI gets for each share of a new kit: its label, its number and its
+/// passphrase, which the user has to read to write it down. The encrypted share and
+/// its private key stay on the Rust side (`PendingKitState`): with them, a
+/// compromised frontend could copy a working kit and keep full control of the wallet
+/// for good.
 #[derive(Serialize)]
 struct BackupShareDto {
     label: String,
     passphrase: String,
-    /// Binary PGP, base64-encoded for JSON transport.
-    encrypted_share_b64: String,
-    /// PGP already ASCII-armored, but base64 too for consistency on the frontend side.
-    privkey_armored_b64: String,
     /// Kit identifier (shared by the 3 shares, see `api::backup_kit_id`) and share
-    /// number: for the USB drive backup.
+    /// number: how the save commands (file, USB drive) name the share.
     kit_id: String,
     part: u8,
 }
 
-/// The shares of a kit, with their shared kit identifier and their number.
-fn backup_dtos(backups: Vec<api::BackupShare>) -> Vec<BackupShareDto> {
-    let kit_id = api::backup_kit_id(&backups);
+/// The kit generated last (wallet creation or regeneration), kept here until its
+/// shares are saved. The save commands take a kit identifier and a share number and
+/// write the content themselves, so the encrypted shares and private keys never
+/// reach the UI. Memory only: replaced by the next kit, cleared by
+/// `forget_pending_kit`, gone when the app closes.
+#[derive(Default)]
+struct PendingKitState(std::sync::Mutex<Option<PendingKit>>);
+
+struct PendingKit {
+    kit_id: String,
+    shares: Vec<api::BackupShare>,
+}
+
+impl PendingKit {
+    /// Share `part` (numbered from 1, as shown to the user).
+    fn share(&self, part: u8) -> Result<&api::BackupShare, String> {
+        part.checked_sub(1)
+            .and_then(|index| self.shares.get(usize::from(index)))
+            .ok_or_else(|| translate_error("numéro de part invalide"))
+    }
+}
+
+/// The files written to a USB drive for one share.
+fn share_files(share: &api::BackupShare) -> openpgp_wallet_core::usb_backup::ShareFiles {
+    openpgp_wallet_core::usb_backup::ShareFiles {
+        encrypted_share: share.encrypted_share.clone(),
+        privkey_armored: share.privkey_armored.clone(),
+        passphrase: Zeroizing::new(share.passphrase.clone()),
+    }
+}
+
+impl Drop for PendingKit {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        for share in &mut self.shares {
+            share.passphrase.zeroize();
+            share.encrypted_share.zeroize();
+            share.privkey_armored.zeroize();
+        }
+    }
+}
+
+/// What the UI may show of a kit (see `BackupShareDto`).
+fn backup_share_dtos(kit_id: &str, backups: &[api::BackupShare]) -> Vec<BackupShareDto> {
     backups
-        .into_iter()
+        .iter()
         .enumerate()
         .map(|(i, b)| BackupShareDto {
-            label: b.label,
-            passphrase: b.passphrase,
-            encrypted_share_b64: base64::engine::general_purpose::STANDARD
-                .encode(&b.encrypted_share),
-            privkey_armored_b64: base64::engine::general_purpose::STANDARD
-                .encode(&b.privkey_armored),
-            kit_id: kit_id.clone(),
+            label: b.label.clone(),
+            passphrase: b.passphrase.clone(),
+            kit_id: kit_id.to_owned(),
             part: (i + 1) as u8,
         })
         .collect()
+}
+
+/// Keeps a new kit on the Rust side and returns what the UI may show of it.
+fn keep_pending_kit(app: &tauri::AppHandle, backups: Vec<api::BackupShare>) -> Vec<BackupShareDto> {
+    let kit_id = api::backup_kit_id(&backups);
+    let dtos = backup_share_dtos(&kit_id, &backups);
+    *app.state::<PendingKitState>()
+        .0
+        .lock()
+        .unwrap_or_else(|p| p.into_inner()) = Some(PendingKit {
+        kit_id,
+        shares: backups,
+    });
+    dtos
+}
+
+/// Runs `f` on the pending kit, if it is the kit `kit_id` the UI names. A kit the
+/// screen still shows but that was replaced or forgotten meanwhile is refused rather
+/// than silently swapped for another one.
+fn with_pending_kit<T>(
+    app: &tauri::AppHandle,
+    kit_id: &str,
+    f: impl FnOnce(&PendingKit) -> Result<T, String>,
+) -> Result<T, String> {
+    let state = app.state::<PendingKitState>();
+    let pending = state.0.lock().unwrap_or_else(|p| p.into_inner());
+    let kit = pending
+        .as_ref()
+        .filter(|kit| kit.kit_id == kit_id)
+        .ok_or_else(|| translate_error("kit de sauvegarde introuvable : générez-en un nouveau"))?;
+    f(kit)
+}
+
+/// Forgets the pending kit: its shares are saved, or the screen was left.
+#[tauri::command]
+fn forget_pending_kit(app: tauri::AppHandle) {
+    *app.state::<PendingKitState>()
+        .0
+        .lock()
+        .unwrap_or_else(|p| p.into_inner()) = None;
 }
 
 #[derive(Serialize)]
@@ -2106,22 +2196,35 @@ struct CreateWalletDto {
     backups: Vec<BackupShareDto>,
 }
 
-/// Writes content (supplied in base64 by the frontend) to a file. The path is chosen
-/// HERE, on the Rust side, through the native "Save as" dialog (not passed by the
-/// frontend). An earlier version accepted a `path: String` from JS: a compromised
-/// frontend could then have written any content anywhere on disk (e.g. the Windows
-/// startup folder) without any user interaction. With this design, the user has to go
-/// through the native dialog to choose where to write, which cannot be scripted or
-/// bypassed from the webview.
+/// Saves one file of a pending kit share (`kind`: "share" for the encrypted share,
+/// "privkey" for its private key) where the user chooses. Both the path and the
+/// content are decided HERE, on the Rust side: the path through the native "Save as"
+/// dialog, the content from `PendingKitState`. An earlier version took a `path:
+/// String` from JS (a compromised frontend could write anything anywhere on disk,
+/// e.g. the Windows startup folder), and the next one still took the content in
+/// base64 from JS, which meant the kit had gone through the webview first.
 #[tauri::command]
-fn save_bytes_with_dialog(
-    suggested_name: String,
-    content_b64: String,
+fn save_backup_file(
+    kit_id: String,
+    part: u8,
+    kind: String,
     app: tauri::AppHandle,
 ) -> Result<bool, String> {
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(&content_b64)
-        .map_err(|e| translate_error(&format!("contenu base64 invalide : {e}")))?;
+    // Copied out of the state so the lock isn't held while the dialog is open.
+    let (suggested_name, bytes) = with_pending_kit(&app, &kit_id, |kit| {
+        let share = kit.share(part)?;
+        match kind.as_str() {
+            "share" => Ok((
+                format!("{}_share.asc", share.label),
+                Zeroizing::new(share.encrypted_share.clone()),
+            )),
+            "privkey" => Ok((
+                format!("{}_privkey.asc", share.label),
+                Zeroizing::new(share.privkey_armored.clone()),
+            )),
+            _ => Err(translate_error("type de fichier de sauvegarde inconnu")),
+        }
+    })?;
 
     let chosen = app
         .dialog()
@@ -2132,7 +2235,7 @@ fn save_bytes_with_dialog(
     match chosen {
         Some(file_path) => {
             let path = file_path.into_path().t_err()?;
-            std::fs::write(path, bytes)
+            std::fs::write(path, &*bytes)
                 .map_err(|e| translate_error(&format!("écriture du fichier impossible : {e}")))?;
             Ok(true)
         }
@@ -2190,7 +2293,7 @@ fn external_link_allowed(url: &str) -> bool {
 /// Opens an external link (block explorer) in the system browser: a regular `<a
 /// target="_blank">` does not open reliably in the Tauri webview (navigation
 /// intercepted for security reasons), the same limit already hit for downloads (see
-/// `save_bytes_with_dialog`). `url` comes from the frontend (untrusted, see this
+/// `save_backup_file`). `url` comes from the frontend (untrusted, see this
 /// file's header): restricted to the allowlist above, not just to the https://
 /// scheme.
 #[tauri::command]
@@ -2242,7 +2345,7 @@ const SECURE_CONFIRM_DELAY: std::time::Duration = std::time::Duration::from_mill
 #[derive(Clone, Serialize)]
 struct SecureConfirmDetails {
     lang: &'static str,
-    /// Icon: "trash", "key", "swap", "usb", "fingerprint".
+    /// Icon: "trash", "key", "swap", "usb", "fingerprint", "globe".
     icon: &'static str,
     title: String,
     paragraphs: Vec<String>,
@@ -2603,7 +2706,7 @@ fn create_wallet(password: String, app: tauri::AppHandle) -> Result<CreateWallet
     let result = api::create_wallet(&dir, &password).t_err()?;
     remember_addresses(&app, 0, &result.addresses);
 
-    let backups = backup_dtos(result.backups);
+    let backups = keep_pending_kit(&app, result.backups);
 
     Ok(CreateWalletDto {
         addresses: result.addresses.into(),
@@ -2658,7 +2761,7 @@ async fn regenerate_backup_kit(
             ));
         }
         api::regenerate_backup_kit(&dir, &password)
-            .map(backup_dtos)
+            .map(|backups| keep_pending_kit(&app, backups))
             .t_err()
     })
     .await
@@ -3092,27 +3195,19 @@ async fn list_backup_drives() -> Result<Vec<BackupDriveDto>, String> {
 /// USB drive `root` (only a detected USB drive is accepted, never an arbitrary
 /// path), then rereads it and checks that it decrypts. See `core/src/usb_backup.rs`
 /// (one share per drive; `name`: the backup's name, kept if it is already on the
-/// drive).
+/// drive). The share is taken from the pending kit (`PendingKitState`), never from
+/// the UI.
 #[tauri::command]
-#[allow(clippy::too_many_arguments)]
 async fn save_backup_to_usb(
     root: String,
     kit_id: String,
     name: String,
     part: u8,
-    encrypted_share_b64: String,
-    privkey_armored_b64: String,
-    passphrase: String,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
     run_blocking(move || {
         let dir = data_dir(&app)?;
-        let decode = |s: &str| base64::engine::general_purpose::STANDARD.decode(s).t_err();
-        let files = openpgp_wallet_core::usb_backup::ShareFiles {
-            encrypted_share: decode(&encrypted_share_b64)?,
-            privkey_armored: decode(&privkey_armored_b64)?,
-            passphrase: Zeroizing::new(passphrase),
-        };
+        let files = with_pending_kit(&app, &kit_id, |kit| kit.share(part).map(share_files))?;
         let drive = openpgp_wallet_core::usb_backup::write_share(
             &root,
             &kit_id,
@@ -3132,14 +3227,6 @@ async fn save_backup_to_usb(
         Ok(drive.label)
     })
     .await
-}
-
-#[derive(serde::Deserialize)]
-struct KitShareDto {
-    part: u8,
-    encrypted_share_b64: String,
-    privkey_armored_b64: String,
-    passphrase: String,
 }
 
 /// Confirmation (secure window) before writing the WHOLE kit to a single drive: that drive
@@ -3170,30 +3257,28 @@ fn confirm_kit_on_one_drive_window(app: &tauri::AppHandle, drive: &str, name: &s
     secure_confirm(app, details)
 }
 
-/// Writes the WHOLE kit (the 3 complete shares) to the USB drive `root`, after the
-/// confirmation that states the consequence, then checks every reread share.
-/// Returns the drive's name; `None` if the user declined in the dialog.
+/// Writes the WHOLE kit (the 3 complete shares of the pending kit `kit_id`) to the
+/// USB drive `root`, after the confirmation that states the consequence, then checks
+/// every reread share. Returns the drive's name; `None` if the user declined in the
+/// dialog.
 #[tauri::command]
 async fn save_kit_to_usb(
     root: String,
     kit_id: String,
     name: String,
-    shares: Vec<KitShareDto>,
     app: tauri::AppHandle,
 ) -> Result<Option<String>, String> {
     run_blocking(move || {
         let name = openpgp_wallet_core::usb_backup::normalize_name(&name).t_err()?;
         let dir = data_dir(&app)?;
-        let decode = |s: &str| base64::engine::general_purpose::STANDARD.decode(s).t_err();
-        let mut parts = Vec::with_capacity(shares.len());
-        for share in shares {
-            let files = openpgp_wallet_core::usb_backup::ShareFiles {
-                encrypted_share: decode(&share.encrypted_share_b64)?,
-                privkey_armored: decode(&share.privkey_armored_b64)?,
-                passphrase: Zeroizing::new(share.passphrase),
-            };
-            parts.push((share.part, files));
-        }
+        let parts: Vec<_> = with_pending_kit(&app, &kit_id, |kit| {
+            Ok(kit
+                .shares
+                .iter()
+                .enumerate()
+                .map(|(i, share)| ((i + 1) as u8, share_files(share)))
+                .collect())
+        })?;
         let drive_name = openpgp_wallet_core::usb_backup::removable_drives()
             .into_iter()
             .find(|d| d.root.to_string_lossy().eq_ignore_ascii_case(root.trim()))
@@ -3387,7 +3472,9 @@ fn restore_wallet_from_usb_blocking(
         };
         (copy(i), copy(j))
     };
-    // Shares that do not belong together: refused here, before the confirmation.
+    // A weak new password or shares that do not belong together: refused here, before
+    // the confirmation (`api::restore_wallet` checks the password again).
+    api::check_new_password(&new_password).t_err()?;
     let check = api::check_restore(
         &dir,
         (&first.0, &first.1, &first.2),
@@ -3414,53 +3501,142 @@ fn restore_wallet_from_usb_blocking(
     Ok(addresses.into())
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Backup files chosen for a restore from files (`restore_pick_file`), kept here and
+/// never sent to the UI, like the shares read from USB drives (`UsbRestoreState`).
+/// Slots, in order: share 1, private key 1, share 2, private key 2.
+#[derive(Default)]
+struct FileRestoreState(std::sync::Mutex<[Option<Zeroizing<Vec<u8>>>; 4]>);
+
+/// Same bound as the files of a USB drive backup (`MAX_FILE_BYTES` in
+/// `core/src/usb_backup.rs`): a real share or private key is a few KB, so anything
+/// bigger is not a backup file and is not loaded in memory.
+const BACKUP_FILE_MAX_BYTES: u64 = 1 << 20;
+
+/// Slot of `FileRestoreState` for file `kind` ("share" or "privkey") of share `part`
+/// (1 or 2).
+fn restore_file_slot(part: u8, kind: &str) -> Result<usize, String> {
+    let offset = match kind {
+        "share" => 0,
+        "privkey" => 1,
+        _ => return Err(translate_error("type de fichier de sauvegarde inconnu")),
+    };
+    match part {
+        1 | 2 => Ok(usize::from(part - 1) * 2 + offset),
+        _ => Err(translate_error("numéro de part invalide")),
+    }
+}
+
+/// Opens the native "Open" dialog for one backup file of a restore and loads it here
+/// (see `FileRestoreState`). Returns the file's name to show it, or `None` if the
+/// user cancelled. Until this version the UI read the files itself and sent them in
+/// base64, so the two shares and their private keys went through the webview.
+#[tauri::command]
+fn restore_pick_file(
+    part: u8,
+    kind: String,
+    app: tauri::AppHandle,
+) -> Result<Option<String>, String> {
+    let slot = restore_file_slot(part, &kind)?;
+    let english = UI_LANG_IS_ENGLISH.load(Ordering::Relaxed);
+    let Some(file_path) = app
+        .dialog()
+        .file()
+        .add_filter(
+            if english {
+                "Backup file"
+            } else {
+                "Fichier de sauvegarde"
+            },
+            &["asc"],
+        )
+        .add_filter(
+            if english {
+                "All files"
+            } else {
+                "Tous les fichiers"
+            },
+            &["*"],
+        )
+        .blocking_pick_file()
+    else {
+        return Ok(None); // the user cancelled the dialog
+    };
+    let path = file_path.into_path().t_err()?;
+    let too_big = std::fs::metadata(&path)
+        .map_err(|e| translate_error(&format!("lecture du fichier impossible : {e}")))?
+        .len()
+        > BACKUP_FILE_MAX_BYTES;
+    if too_big {
+        return Err(translate_error(
+            "fichier anormalement gros pour une sauvegarde",
+        ));
+    }
+    let bytes = Zeroizing::new(
+        std::fs::read(&path)
+            .map_err(|e| translate_error(&format!("lecture du fichier impossible : {e}")))?,
+    );
+    app.state::<FileRestoreState>()
+        .0
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())[slot] = Some(bytes);
+    Ok(Some(
+        path.file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+    ))
+}
+
+/// Forgets the backup files chosen (restore abandoned).
+#[tauri::command]
+fn restore_files_clear(app: tauri::AppHandle) {
+    *app.state::<FileRestoreState>()
+        .0
+        .lock()
+        .unwrap_or_else(|p| p.into_inner()) = Default::default();
+}
+
+/// Restore from the backup files chosen with `restore_pick_file`. The UI only sends
+/// the new device password and the passwords of the two shares, typed by the user.
 #[tauri::command]
 async fn restore_wallet(
     new_password: String,
-    backup1_b64: String,
-    privkey1_armored_b64: String,
     passphrase1: String,
-    backup2_b64: String,
-    privkey2_armored_b64: String,
     passphrase2: String,
     app: tauri::AppHandle,
 ) -> Result<AddressesDto, String> {
-    run_blocking(move || {
-        restore_wallet_blocking(
-            new_password,
-            [backup1_b64, privkey1_armored_b64, passphrase1],
-            [backup2_b64, privkey2_armored_b64, passphrase2],
-            &app,
-        )
-    })
-    .await
+    run_blocking(move || restore_wallet_blocking(new_password, passphrase1, passphrase2, &app))
+        .await
 }
 
-/// `part`: [encrypted share (base64), private key (base64), password].
 fn restore_wallet_blocking(
     new_password: String,
-    part1: [String; 3],
-    part2: [String; 3],
+    passphrase1: String,
+    passphrase2: String,
     app: &tauri::AppHandle,
 ) -> Result<AddressesDto, String> {
     let app = app.clone();
-    let [backup1_b64, privkey1_armored_b64, passphrase1] = part1;
-    let [backup2_b64, privkey2_armored_b64, passphrase2] = part2;
     let new_password = Zeroizing::new(new_password);
     let passphrase1 = Zeroizing::new(passphrase1);
     let passphrase2 = Zeroizing::new(passphrase2);
     let dir = data_dir(&app)?;
 
-    let decode = |s: &str| base64::engine::general_purpose::STANDARD.decode(s).t_err();
+    let [share1, priv1, share2, priv2] = {
+        let chosen = app
+            .state::<FileRestoreState>()
+            .0
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
+        match chosen {
+            [Some(a), Some(b), Some(c), Some(d)] => [a, b, c, d],
+            _ => return Err(translate_error("choisissez les fichiers des deux parts")),
+        }
+    };
 
-    let share1 = decode(&backup1_b64)?;
-    let priv1 = decode(&privkey1_armored_b64)?;
-    let share2 = decode(&backup2_b64)?;
-    let priv2 = decode(&privkey2_armored_b64)?;
-
-    // Shares that do not belong together (two different kits): refused here, before
-    // the confirmation; otherwise, the confirmation shows the addresses.
+    // A weak new password or shares that do not belong together (two different kits):
+    // refused here, before the confirmation; otherwise, the confirmation shows the
+    // addresses.
+    api::check_new_password(&new_password).t_err()?;
     let check = api::check_restore(
         &dir,
         (&share1, &priv1, &passphrase1),
@@ -3485,6 +3661,7 @@ fn restore_wallet_blocking(
         (&share2, &priv2, &passphrase2),
     )
     .t_err()?;
+    restore_files_clear(app.clone());
     // New wallet: the old one's connections and addresses no longer apply.
     forget_wallet_connections(&app);
     remember_addresses(&app, 0, &addresses);
@@ -3510,6 +3687,8 @@ fn lock_session(app: tauri::AppHandle) {
 }
 
 fn forget_session(app: &tauri::AppHandle) {
+    // A kit not saved yet is not kept past a lock: it can be regenerated.
+    forget_pending_kit(app.clone());
     // Sends still within their cancellation delay: cancelled.
     for sender in app
         .state::<SendGrace>()
@@ -10454,8 +10633,74 @@ fn list_custom_networks(app: tauri::AppHandle) -> Result<Vec<CustomNetworkDto>, 
         .collect())
 }
 
-/// Adds a network: checks, then the chain ID verified with the RPC (network call,
-/// off the main thread).
+/// A server address for a confirmation window: hazardous characters removed, and,
+/// when too long, its END kept, since that is where the domain that receives the
+/// requests is (`rpc.example.com.attacker.net` must not read as `rpc.example.com…`).
+/// Hosts arrive already in ASCII (punycode for an international name), so a
+/// lookalike letter cannot pass for another one.
+fn dialog_host(host: &str) -> String {
+    const MAX_CHARS: usize = 60;
+    let cleaned: String = host
+        .chars()
+        .filter(|&c| !is_dialog_hazard(c) && !c.is_whitespace())
+        .collect();
+    let count = cleaned.chars().count();
+    if count > MAX_CHARS {
+        format!(
+            "…{}",
+            cleaned.chars().skip(count - MAX_CHARS).collect::<String>()
+        )
+    } else {
+        cleaned
+    }
+}
+
+/// Before an added network's RPC is contacted for the first time (see
+/// `custom_networks::add`): the host the requests will go to, and the explorer the
+/// links will open.
+fn confirm_custom_network_window(
+    app: &tauri::AppHandle,
+    network: &openpgp_wallet_core::custom_networks::CustomNetwork,
+) -> bool {
+    let host = dialog_host(&openpgp_wallet_core::custom_networks::rpc_host(network));
+    let name = dialog_label(&network.name);
+    let mut paragraphs = vec![
+        if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
+            format!("The app will contact \"{host}\" to check \"{name}\", then use it for this network's balances and sends.")
+        } else {
+            format!("L'app va contacter «\u{a0}{host}\u{a0}» pour vérifier «\u{a0}{name}\u{a0}», puis s'en servir pour les soldes et les envois de ce réseau.")
+        },
+        text(
+            "Ce serveur verra votre adresse IP et votre adresse sur ce réseau.",
+            "This server will see your IP address and your address on this network.",
+        ),
+    ];
+    if let Some(explorer) = &network.explorer {
+        let explorer = dialog_host(
+            explorer
+                .strip_prefix("https://")
+                .and_then(|rest| rest.split(['/', ':']).next())
+                .unwrap_or(explorer),
+        );
+        paragraphs.push(if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
+            format!("Explorer links will open \"{explorer}\".")
+        } else {
+            format!("Les liens d'explorateur ouvriront «\u{a0}{explorer}\u{a0}».")
+        });
+    }
+    secure_confirm(
+        app,
+        SecureConfirmDetails::new(
+            "globe",
+            ("Ajouter ce réseau ?", "Add this network?"),
+            paragraphs,
+            ("Ajouter le réseau", "Add the network"),
+        ),
+    )
+}
+
+/// Adds a network: checks, the user's approval of the server (secure window), then
+/// the chain ID verified with the RPC (network call, off the main thread).
 #[tauri::command]
 async fn add_custom_network(
     chain_id: u64,
@@ -10474,6 +10719,7 @@ async fn add_custom_network(
             &rpc,
             &symbol,
             explorer.as_deref(),
+            |network| confirm_custom_network_window(&app, network),
         )
         .t_err()
         .map(Into::into)
@@ -10504,13 +10750,45 @@ fn rescan_private_funds(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Before a Monero node chosen in Settings is saved, and so contacted (see
+/// `monero::set_custom_node`).
+fn confirm_xmr_node_window(app: &tauri::AppHandle, url: &str) -> bool {
+    let node = dialog_host(url.split_once("://").map_or(url, |(_, rest)| rest));
+    secure_confirm(
+        app,
+        SecureConfirmDetails::new(
+            "globe",
+            ("Utiliser ce nœud Monero ?", "Use this Monero node?"),
+            vec![
+                if UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
+                    format!("The app will sync your Monero balance with \"{node}\".")
+                } else {
+                    format!("L'app va synchroniser votre solde Monero avec «\u{a0}{node}\u{a0}».")
+                },
+                text(
+                    "Ce nœud verra votre adresse IP. Choisissez un nœud que vous connaissez.",
+                    "This node will see your IP address. Pick a node you know.",
+                ),
+            ],
+            ("Utiliser ce nœud", "Use this node"),
+        ),
+    )
+}
+
 /// Saves the Monero node (empty: back to the public nodes), used from the next sync
-/// onwards.
+/// onwards, once approved in the secure window. Off the main thread: the window
+/// needs it.
 #[tauri::command]
-fn set_xmr_node(url: String, app: tauri::AppHandle) -> Result<Option<String>, String> {
-    let node = api::set_xmr_node(&data_dir(&app)?, &url).t_err()?;
-    XMR_SYNC_KICK.store(true, Ordering::SeqCst);
-    Ok(node)
+async fn set_xmr_node(url: String, app: tauri::AppHandle) -> Result<Option<String>, String> {
+    run_blocking(move || {
+        let node = api::set_xmr_node(&data_dir(&app)?, &url, |node| {
+            confirm_xmr_node_window(&app, node)
+        })
+        .t_err()?;
+        XMR_SYNC_KICK.store(true, Ordering::SeqCst);
+        Ok(node)
+    })
+    .await
 }
 
 /// A background sync pass protected against a library panic (unexpected data from a
@@ -11486,6 +11764,8 @@ pub fn run() {
         .manage(WcState::default())
         .manage(BalanceWatchState::default())
         .manage(UsbRestoreState::default())
+        .manage(FileRestoreState::default())
+        .manage(PendingKitState::default())
         .setup(|app| {
             // Dark frame from the start (default theme); the UI then applies the chosen theme
             // (`set_window_frame`).
@@ -11529,7 +11809,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             set_ui_language,
             set_window_frame,
-            save_bytes_with_dialog,
+            save_backup_file,
+            forget_pending_kit,
             open_external_link,
             generate_qr_svg,
             wallet_exists,
@@ -11563,6 +11844,8 @@ pub fn run() {
             unarchive_profile,
             list_archived_profiles,
             restore_wallet,
+            restore_pick_file,
+            restore_files_clear,
             get_balance,
             get_usdc_balance,
             get_btc_pending_incoming,
@@ -12979,6 +13262,10 @@ mod tests {
             "nom de la sauvegarde : 1 à 30 caractères (lettres, chiffres, espaces, - _)",
             "un dossier de sauvegarde de ce nom existe déjà sur la clé USB : choisissez un autre nom",
             "plusieurs sauvegardes complètes trouvées : choisissez celle à restaurer",
+            "kit de sauvegarde introuvable : générez-en un nouveau",
+            "type de fichier de sauvegarde inconnu",
+            "fichier anormalement gros pour une sauvegarde",
+            "choisissez les fichiers des deux parts",
             "ces deux parts viennent de deux kits de sauvegarde différents : utilisez deux parts d'un même kit",
             "ces deux parts ne redonnent pas le portefeuille de leur kit : essayez avec une autre part de ce kit",
         ] {
@@ -12997,6 +13284,111 @@ mod tests {
         ] {
             assert!(translate_dynamic_error(message).is_some_and(|en| en.contains(english)), "{message}");
         }
+    }
+
+    /// The UI gets a kit's labels, numbers and passphrases, never the encrypted
+    /// shares nor their private keys: with those, a compromised frontend would hold a
+    /// working 2-of-3 kit, i.e. silent and permanent control of the wallet.
+    #[test]
+    fn backup_kit_dto_carries_no_share_content() {
+        let backups: Vec<api::BackupShare> = (1..=3u8)
+            .map(|i| api::BackupShare {
+                label: format!("backup{i}"),
+                passphrase: format!("passphrase-{i}"),
+                encrypted_share: vec![0xE0 + i; 64],
+                privkey_armored: format!("-----BEGIN PGP PRIVATE KEY BLOCK----- {i}").into_bytes(),
+            })
+            .collect();
+        let json = serde_json::to_value(backup_share_dtos("kit-1", &backups)).unwrap();
+        let dtos = json.as_array().unwrap();
+        assert_eq!(dtos.len(), 3);
+        for (i, dto) in dtos.iter().enumerate() {
+            let mut keys: Vec<&str> = dto
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(String::as_str)
+                .collect();
+            keys.sort_unstable();
+            assert_eq!(keys, ["kit_id", "label", "part", "passphrase"]);
+            assert_eq!(dto["part"], i + 1);
+        }
+        assert!(!json.to_string().contains("PRIVATE KEY"));
+    }
+
+    /// No value serialized for the UI has a field named after a secret. Guard for
+    /// every DTO of this file, not only the backup kit's: a new field
+    /// `privkey_armored_b64` or `seed` on any of them fails here.
+    #[test]
+    fn no_dto_field_is_named_after_a_secret() {
+        const FORBIDDEN: [&str; 8] = [
+            "privkey",
+            "private",
+            "secret",
+            "seed",
+            "mnemonic",
+            "encrypted",
+            "spending",
+            "_b64",
+        ];
+        let source = include_str!("lib.rs");
+        let mut checked = 0;
+        let mut lines = source.lines();
+        while let Some(line) = lines.next() {
+            let line = line.trim_start();
+            if !(line.starts_with("#[derive(") && line.contains("Serialize")) {
+                continue;
+            }
+            for line in lines.by_ref() {
+                // End of the item; a tuple or unit struct ends on its own line.
+                if line.starts_with('}') || line.trim_end().ends_with(';') {
+                    break;
+                }
+                let field = line.trim_start();
+                if field.starts_with("//") || field.starts_with("#[") {
+                    continue;
+                }
+                if let Some((name, _)) = field.split_once(':') {
+                    let name = name.trim_start_matches("pub ").to_lowercase();
+                    assert!(
+                        !FORBIDDEN.iter().any(|word| name.contains(word)),
+                        "champ secret dans un DTO : {field}"
+                    );
+                    checked += 1;
+                }
+            }
+        }
+        assert!(
+            checked > 100,
+            "le parcours des DTO n'a rien trouvé ({checked} champs)"
+        );
+    }
+
+    /// A long server name keeps its end in the confirmation window: the domain that
+    /// really receives the requests stays visible.
+    #[test]
+    fn dialog_host_keeps_the_receiving_domain() {
+        assert_eq!(dialog_host("rpc.example.com"), "rpc.example.com");
+        let long = format!("rpc.example.com.{}.attacker.net", "a".repeat(80));
+        let shown = dialog_host(&long);
+        assert!(
+            shown.starts_with('…') && shown.ends_with(".attacker.net"),
+            "{shown}"
+        );
+        assert_eq!(shown.chars().count(), 61);
+        assert_eq!(dialog_host("rpc.exa\u{202E}mple.com"), "rpc.example.com");
+    }
+
+    /// The four files of a restore from files each have their own slot.
+    #[test]
+    fn restore_file_slots() {
+        assert_eq!(restore_file_slot(1, "share"), Ok(0));
+        assert_eq!(restore_file_slot(1, "privkey"), Ok(1));
+        assert_eq!(restore_file_slot(2, "share"), Ok(2));
+        assert_eq!(restore_file_slot(2, "privkey"), Ok(3));
+        assert!(restore_file_slot(0, "share").is_err());
+        assert!(restore_file_slot(3, "share").is_err());
+        assert!(restore_file_slot(1, "seed").is_err());
     }
 
     /// USB restore: a backup is only complete with two DIFFERENT shares of the same

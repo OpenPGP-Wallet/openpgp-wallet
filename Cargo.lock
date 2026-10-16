@@ -7720,7 +7720,6 @@ dependencies = [
 name = "wallet"
 version = "2.13.2"
 dependencies = [
- "base64 0.22.1",
  "openpgp-wallet-core",
  "qrcode",
  "serde",

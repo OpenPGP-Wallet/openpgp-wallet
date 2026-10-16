@@ -324,8 +324,16 @@ pub fn custom_node(data_dir: &Path) -> Option<String> {
         .and_then(|text| normalize_node(&text).ok())
 }
 
-/// Saves the user's node (empty: back to the public nodes).
-pub fn set_custom_node(data_dir: &Path, url: &str) -> Result<Option<String>> {
+/// Saves the user's node (empty: back to the public nodes). `confirm` gets the
+/// node's address before it is saved, so before the sync ever contacts it: the
+/// address comes from the interface, and a node chosen by a compromised interface
+/// would be an outgoing channel of its choice (a host name can carry data through
+/// DNS alone). `false`: nothing is saved.
+pub fn set_custom_node(
+    data_dir: &Path,
+    url: &str,
+    confirm: impl FnOnce(&str) -> bool,
+) -> Result<Option<String>> {
     let path = data_dir.join(NODE_FILE);
     if url.trim().is_empty() {
         match std::fs::remove_file(&path) {
@@ -336,6 +344,10 @@ pub fn set_custom_node(data_dir: &Path, url: &str) -> Result<Option<String>> {
         }
     }
     let url = normalize_node(url)?;
+    ensure!(
+        confirm(&url),
+        "nœud Monero non modifié (confirmation refusée)"
+    );
     let tmp = path.with_extension("tmp");
     std::fs::write(&tmp, &url).context("enregistrement du nœud Monero impossible")?;
     std::fs::rename(&tmp, &path).context("enregistrement du nœud Monero impossible")?;
@@ -1336,6 +1348,43 @@ mod tests {
         assert!(normalize_node("https://node.example.org/json_rpc").is_err());
         assert!(normalize_node("ftp://node.example.org").is_err());
         assert!(normalize_node("node.example.org").is_err());
+    }
+
+    /// A node is only saved, so only ever contacted, once the user has approved its
+    /// normalized address; going back to the public nodes needs no approval.
+    #[test]
+    fn node_is_saved_only_after_confirmation() {
+        let dir = temp_dir("node_confirm");
+        let mut shown = None;
+        let refused = set_custom_node(&dir, " https://node.example.org:18089/ ", |url| {
+            shown = Some(url.to_string());
+            false
+        });
+        assert!(refused
+            .unwrap_err()
+            .to_string()
+            .contains("confirmation refusée"));
+        assert_eq!(shown.as_deref(), Some("https://node.example.org:18089"));
+        assert_eq!(custom_node(&dir), None);
+        assert_eq!(
+            set_custom_node(&dir, "https://node.example.org:18089", |_| true).unwrap(),
+            Some("https://node.example.org:18089".to_string())
+        );
+        assert_eq!(
+            custom_node(&dir).as_deref(),
+            Some("https://node.example.org:18089")
+        );
+        let asked = std::cell::Cell::new(false);
+        assert_eq!(
+            set_custom_node(&dir, "", |_| {
+                asked.set(true);
+                true
+            })
+            .unwrap(),
+            None
+        );
+        assert!(!asked.get());
+        assert_eq!(custom_node(&dir), None);
     }
 
     fn temp_dir(name: &str) -> std::path::PathBuf {

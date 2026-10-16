@@ -911,10 +911,59 @@ fn remove_device_privkey(data_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Minimum length of a new device password, in characters.
+pub const MIN_PASSWORD_CHARS: usize = 12;
+
+/// Fragments that make a password guessable whatever its length.
+const COMMON_PASSWORD_PATTERNS: [&str; 8] = [
+    "password",
+    "motdepasse",
+    "azerty",
+    "qwerty",
+    "123456",
+    "00000000",
+    "letmein",
+    "admin",
+];
+
+/// The rule for a new device password (wallet creation, restore). It lived only in
+/// the interface until v2.13, which the threat model treats as untrusted: a
+/// compromised frontend could create or restore a vault under "a", and the vault
+/// file, the target of an offline theft (THREAT_MODEL §5.1), would then fall to a
+/// dictionary attack despite the maximum S2K cost. Same heuristic as the
+/// interface's strength hint (`estimatePasswordStrength` in `app/src/main.js`), so
+/// both always agree: at least 12 characters, no common pattern, and some variety
+/// (16 characters or more, mixed case, digits, symbols: at least 3 of the 5 points).
+pub fn check_new_password(password: &str) -> Result<()> {
+    anyhow::ensure!(
+        password.chars().count() >= MIN_PASSWORD_CHARS,
+        "mot de passe trop court : au moins 12 caractères"
+    );
+    let lower = password.to_lowercase();
+    let common = COMMON_PASSWORD_PATTERNS.iter().any(|p| lower.contains(p));
+    let score = [
+        true, // the minimum length, checked above
+        password.chars().count() >= 16,
+        password.chars().any(|c| c.is_ascii_lowercase())
+            && password.chars().any(|c| c.is_ascii_uppercase()),
+        password.chars().any(|c| c.is_ascii_digit()),
+        password.chars().any(|c| !c.is_ascii_alphanumeric()),
+    ]
+    .iter()
+    .filter(|&&point| point)
+    .count();
+    anyhow::ensure!(
+        !common && score > 2,
+        "mot de passe trop faible ou trop prévisible : mélangez lettres, chiffres et symboles"
+    );
+    Ok(())
+}
+
 /// Creates a new wallet in `data_dir`: local vault (device password) + 2-of-3 Shamir
 /// backup kit (3 shares, each with its own automatically generated passphrase). Never
 /// logs or returns the entropy itself.
 pub fn create_wallet(data_dir: &Path, device_password: &str) -> Result<CreateWalletResult> {
+    check_new_password(device_password)?;
     // Without this guard, calling `create_wallet` a second time on a device that already
     // has a vault would silently overwrite `device_vault.asc`/`device_privkey.asc` with a
     // completely different master entropy. No caller checked this invariant on the Rust
@@ -1129,6 +1178,7 @@ fn restore_wallet_with(
     backup_2: (&[u8], &[u8], &str),
     sealer: &dyn SecretSealer,
 ) -> Result<Addresses> {
+    check_new_password(new_device_password)?;
     // Shares that do not belong together: refused BEFORE touching the device's state
     // (see `recover_backup_secret`).
     let (recovered, _verified) = recover_backup_secret(data_dir, backup_1, backup_2)?;
@@ -3819,8 +3869,12 @@ pub fn xmr_node(data_dir: &Path) -> Option<String> {
     monero::custom_node(data_dir)
 }
 
-pub fn set_xmr_node(data_dir: &Path, url: &str) -> Result<Option<String>> {
-    monero::set_custom_node(data_dir, url)
+pub fn set_xmr_node(
+    data_dir: &Path,
+    url: &str,
+    confirm: impl FnOnce(&str) -> bool,
+) -> Result<Option<String>> {
+    monero::set_custom_node(data_dir, url, confirm)
 }
 
 // --- Shielded Zcash (Orchard and Ironwood)
@@ -3957,7 +4011,11 @@ pub fn send_zec(
         zcash::format_zec(shown_fee)
     );
     let chain = zcash::chain_info()?;
-    let target = chain.height + 1;
+    // Height announced by the server: never trusted to leave room for one more block.
+    let target = chain
+        .height
+        .checked_add(1)
+        .context("hauteur de chaîne Zcash hors limites")?;
     let branch = zcash::branch_for(target, chain.branch_id)?;
     let signed = zcash::build_signed(&plan, &key, &hash160, &recipient, target, branch)?;
     zcash::broadcast(&signed.raw, &signed.txid)
@@ -4022,7 +4080,11 @@ pub fn send_swap_zec(
         zcash::format_zec(shown_fee)
     );
     let chain = zcash::chain_info()?;
-    let target = chain.height + 1;
+    // Height announced by the server: never trusted to leave room for one more block.
+    let target = chain
+        .height
+        .checked_add(1)
+        .context("hauteur de chaîne Zcash hors limites")?;
     let branch = zcash::branch_for(target, chain.branch_id)?;
     let signed = zcash::build_signed(&plan, &key, &hash160, &vault, target, branch)?;
     zcash::broadcast(&signed.raw, &signed.txid)
@@ -8194,6 +8256,53 @@ mod tests {
     #[test]
     fn fee_rate_for_target_falls_back_to_1_sat_per_vbyte_when_no_estimates_are_available() {
         assert_eq!(fee_rate_for_target(&[], 6), 1.0);
+    }
+
+    /// The password rule holds in core, whatever the interface checked: 11 characters
+    /// refused, 12 accepted, a common pattern or a single kind of character refused.
+    #[test]
+    fn new_password_rule_is_enforced_in_core() {
+        assert!(check_new_password("Abcdefgh1!x").is_err()); // 11 characters
+        assert!(check_new_password("Abcdefgh1!xy").is_ok()); // 12
+        assert!(check_new_password("abcdefghijkl").is_err()); // one kind only
+        assert!(check_new_password("Password123!").is_err()); // common pattern
+        assert!(check_new_password("Azerty-2026-maison").is_err());
+        assert!(check_new_password("un mot de passe de test bien assez long").is_ok());
+        // Counted in characters, not bytes: 11 accented letters + "1" are 12.
+        assert!(check_new_password("éàèùçÉÀÈÙÇê1").is_ok());
+        assert!(check_new_password("éàèùçÉÀÈÙÇ1").is_err());
+    }
+
+    /// A trivial password is refused before anything is written: no vault is created,
+    /// and a restore leaves the device as it was.
+    #[test]
+    fn create_and_restore_refuse_a_weak_password_before_writing() {
+        let dir = std::env::temp_dir().join(format!(
+            "pgp_wallet_weak_password_test_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(create_wallet(&dir, "a").is_err());
+        assert!(!device_vault_exists(&dir));
+        assert!(!dir.exists());
+
+        let created = create_wallet(&dir, "un mot de passe de test bien assez long").unwrap();
+        let vault = std::fs::read(dir.join(DEVICE_VAULT_FILE)).unwrap();
+        let [b1, b2, _] = &created.backups[..] else {
+            panic!("3 parts attendues")
+        };
+        let refused = restore_wallet_with(
+            &dir,
+            "motdepasse",
+            (&b1.encrypted_share, &b1.privkey_armored, &b1.passphrase),
+            (&b2.encrypted_share, &b2.privkey_armored, &b2.passphrase),
+            &FakeSealer { fail_enroll: false },
+        );
+        assert!(refused
+            .err()
+            .is_some_and(|e| e.to_string().contains("trop court")));
+        assert_eq!(std::fs::read(dir.join(DEVICE_VAULT_FILE)).unwrap(), vault);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

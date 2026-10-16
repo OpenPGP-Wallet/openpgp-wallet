@@ -761,6 +761,8 @@ pub fn shield(
         return Ok(None);
     }
     let seed = seed()?;
+    // Locked in RAM like on every other path that unlocks the seed (no swap to disk).
+    let _seed_lock = crate::memory_guard::lock(&seed);
     create_and_broadcast(&mut db, &proposal, &spending_keys(&seed, profile)?).map(Some)
 }
 
@@ -822,6 +824,8 @@ pub fn send(
         return Ok(None);
     }
     let seed = seed()?;
+    // Locked in RAM like on every other path that unlocks the seed (no swap to disk).
+    let _seed_lock = crate::memory_guard::lock(&seed);
     create_and_broadcast(&mut db, &proposal, &spending_keys(&seed, profile)?).map(Some)
 }
 
@@ -901,6 +905,8 @@ pub fn send_max(
         return Ok(None);
     }
     let seed = seed()?;
+    // Locked in RAM like on every other path that unlocks the seed (no swap to disk).
+    let _seed_lock = crate::memory_guard::lock(&seed);
     create_and_broadcast(&mut db, &proposal, &spending_keys(&seed, profile)?).map(Some)
 }
 

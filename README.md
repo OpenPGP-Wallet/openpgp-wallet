@@ -56,10 +56,14 @@ key and passphrase, to a USB drive and check that it decrypts before saying it i
 
 ## Security model in short
 
-- The web interface is treated as **untrusted**. It never receives a secret, only public addresses, balances and
-  transaction IDs. Everything that is signed is rebuilt and checked in Rust.
+- The web interface is treated as **untrusted**. It never receives the seed, a private key or a backup share:
+  the backup kit is written and read back in Rust, and the interface only shows the share passphrases the user
+  has to note. Everything that is signed is rebuilt and checked in Rust. What the user types in the interface
+  (device password, share passphrases at restore) goes through it on its way to Rust.
 - Every send goes through a **native OS dialog** that shows exactly what will be signed. A compromised frontend
-  can neither fake it nor skip it.
+  can neither fake it nor skip it. Other sensitive actions (reset, new backup kit, restore, added network…) are
+  confirmed in a separate secure window that the interface cannot script.
+- The password rule (12 characters minimum, not guessable) is enforced in the core, not only in the interface.
 - The seed is never cached: it is decrypted for each sensitive operation, kept in locked memory and wiped
   (`zeroize`) right after.
 - Unlock attempts are rate-limited, the device key lives in the Windows Credential Manager, and the password is

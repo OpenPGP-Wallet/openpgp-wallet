@@ -38,7 +38,8 @@ whom, by what means, and what remains at risk. Each countermeasure points to the
 2. **Process ↔ operating system**: Windows vault, Windows Hello, native dialogs.
 3. **Application ↔ network**: public nodes, indexers, swap aggregators, WalletConnect.
 4. **Application ↔ hardware devices**: Ledger, Trezor (USB).
-5. **Application ↔ user**: what they see and confirm (native dialog), what they type.
+5. **Application ↔ user**: what they see and confirm (native dialog for transactions, secure confirmation
+   window for other sensitive actions), what they type.
 
 ## 4. Attackers
 
@@ -59,7 +60,8 @@ whom, by what means, and what remains at risk. Each countermeasure points to the
 - **Encrypted vault** with the device's PGP identity (sequoia-openpgp, `crypto-cng` backend); the device's
   private key is encrypted with the password (S2K) and stored in the Windows vault
   (`core/src/secure_storage.rs`). A copied disk holds no seed in the clear.
-- **Strong password** required at creation (12 characters minimum, strength indicator).
+- **Strong password** required at creation and at restore (12 characters minimum, no common pattern, some
+  variety), enforced in the core (`api::check_new_password`), not only by the interface's strength indicator.
 - **Unlock attempt limiting**: 5 free attempts, then a growing wait from 5 s to 300 s, persisted
   (`api::enforce_unlock_lockout`).
 - **Changing the wallet on the device** (reset, restore): state tied to the old seed (shielded Zcash database,
@@ -84,15 +86,27 @@ whom, by what means, and what remains at risk. Each countermeasure points to the
 - **Hardware wallets** (Ledger, Trezor): the key never leaves the device, with on-screen review.
 - **Balance checked before the confirmation dialog** for every wallet send (Bitcoin included since v2.10): an
   impossible send is never presented for confirmation.
-- **5 s cancellation delay** after the native dialog, before any signing, enforced on the Rust side
-  (`send_grace_period`): the interface can only shorten it or cancel; the seed is only unlocked afterwards; a
-  lock cancels pending sends.
+- **5 s cancellation delay** after the native dialog, before any signing, run on the Rust side
+  (`send_grace_period`): the seed is only unlocked afterwards, and a lock cancels pending sends. It guards
+  against the user's own mistakes, not against a compromised interface: the countdown and its two buttons
+  are in the interface, which can shorten the delay or simply not show it. The barrier against a compromised
+  interface is the native dialog.
+- **Secure confirmation window** (`confirm.html`, a separate Tauri window created by Rust) for the other
+  sensitive actions: reset, new backup kit, whole kit on one USB drive, restore, Windows Hello, added network,
+  Monero node. The main interface can neither script it nor answer for it (the answer is tied to the calling
+  window), and a confirmation is only accepted after a delay. It is not an OS dialog: a WebView2 flaw would
+  reach it too.
 - **Recognized recipient**: when the address belongs to another profile of the wallet (addresses derived at
   unlock, never supplied by the interface), the native dialog names that profile.
 - **"Max"** recomputed on the Rust side when the dialog opens (balance minus current fees), shown as "maximum,
   fees deducted" and then signed as is: a flag forged by the interface only changes the amount shown.
+- **Servers chosen in the interface** (added network's RPC, Monero node): shown in the secure window before
+  the app contacts them for the first time, so a compromised interface cannot use them as an outgoing channel
+  without the user seeing an unexpected request.
 - *Residual risk*: malware able to read memory at signing time, or to capture the password, gets the seed; a
-  clipboard address swap is only detected if it looks like an address already paid. No software wallet fully
+  clipboard address swap is only detected if it looks like an address already paid. Some keys built by the
+  official libraries cannot be wiped (Zcash `UnifiedSpendingKey` and `secp256k1::SecretKey`, a `Copy` type
+  whose own erase is documented as unreliable): they stay in freed memory until it is reused. No software wallet fully
   protects against A2 (which is why hardware wallets exist).
 
 ### 5.3 Malicious network services (A3) and network attacker (A5)
@@ -117,7 +131,11 @@ whom, by what means, and what remains at risk. Each countermeasure points to the
     funds depend on the provider executing the swap (a refund is planned otherwise).
 - **Monero**: blocks scanned locally (the node does not learn which outputs are the user's); decoy selection
   refuses a node that lies about the output being spent; reorganizations are detected.
-- **Shielded Zcash**: compact blocks decrypted locally (lightwalletd only sees block requests).
+- **Shielded Zcash**: compact blocks decrypted locally (lightwalletd only sees block requests). The three
+  lightwalletd servers are fixed in the code and run by a single operator (zec.rocks): if it is down or
+  censors, Zcash is unavailable until an update, and there is no per-request timeout on the shielded client
+  yet (a hung request stalls the sync; a reset or a restore still interrupts it). A timeout on the broadcast itself is not added
+  on purpose: an expired send may still have gone out, and Zebra must never get it a second time.
 - **Dogecoin**: the legacy signature scheme (no SegWit) does not commit to the input amounts, so a service
   lying about an output's value would turn the difference into fees. Each input is reread from its raw source
   transaction, whose recomputed hash must equal the identifier: amount and script are checked before signing
@@ -193,8 +211,13 @@ whom, by what means, and what remains at risk. Each countermeasure points to the
   access from the interface.
 - Text coming from the network inserted with `textContent`, never `innerHTML` (error messages, histories).
 - External links limited to an allowlist enforced on the Rust side (`open_external_link`).
-- *Residual risk*: a flaw in WebView2 or in Tauri would bypass these protections; even then, the interface has
-  no access to any secret or any signature without the native dialog.
+- **Backup kit kept on the Rust side**: the encrypted shares and their private keys are written (file, USB
+  drive) and read back (restore from files or drives) in Rust; the interface only gets each share's label,
+  number and passphrase. A test fails if a value sent to the interface has a field named after a secret.
+- *Residual risk*: a flaw in WebView2 or in Tauri would bypass these protections. Even then, the interface has
+  no access to the seed, the device key or the shares, and no signature without the native dialog. It does
+  see what the user reads or types in it: the device password, and the kit's passphrases (shown once at
+  creation, typed at restore). A passphrase alone is useless without its share file.
 
 ## 6. Assumptions
 - The operating system is not compromised at the kernel level; the Windows vault and Windows Hello do what

@@ -186,8 +186,24 @@ fn is_local_host(host: &str) -> bool {
     }
 }
 
+/// Host of an RPC address already validated by `validate` (shown to the user before
+/// it is contacted).
+pub fn rpc_host(network: &CustomNetwork) -> String {
+    reqwest::Url::parse(&network.rpc)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_owned))
+        .unwrap_or_default()
+}
+
 /// Adds a network: checks, then the chain ID is requested from the RPC (it has to
 /// answer, and for that very chain).
+///
+/// `confirm` runs after the checks and BEFORE the first request: the host and the
+/// path of the RPC come from the interface, so without the user's approval a
+/// compromised interface could make the app send a request to a server of its
+/// choice, with data hidden in the address, even if the network is refused
+/// afterwards (an exfiltration channel the webview's CSP does not cover, since the
+/// request leaves from Rust). `false`: nothing is contacted or saved.
 pub fn add(
     data_dir: &Path,
     chain_id: u64,
@@ -195,6 +211,7 @@ pub fn add(
     rpc: &str,
     symbol: &str,
     explorer: Option<&str>,
+    confirm: impl FnOnce(&CustomNetwork) -> bool,
 ) -> Result<CustomNetwork> {
     let network = validate(chain_id, name, rpc, symbol, explorer)?;
     let mut data = Data {
@@ -208,6 +225,7 @@ pub fn add(
         data.networks.len() < MAX_NETWORKS,
         "{MAX_NETWORKS} réseaux ajoutés au plus"
     );
+    ensure!(confirm(&network), "ajout du réseau annulé");
     let answered = crate::eth_rpc::EthRpc::new(&network.rpc)
         .chain_id()
         .map_err(|e| anyhow!("RPC injoignable ou invalide : {e:#}"))?;
@@ -518,6 +536,34 @@ mod tests {
         assert!(list(&dir).is_empty());
     }
 
+    /// Nothing is contacted before the user approves: the confirmation gets the
+    /// checked network (its host is what the user is shown), and a refusal leaves the
+    /// RPC without a single connection and the file unchanged.
+    #[test]
+    fn rpc_is_not_contacted_before_confirmation() {
+        let dir = temp_dir("confirm");
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let rpc = format!(
+            "http://127.0.0.1:{}/v2/une-cle",
+            listener.local_addr().unwrap().port()
+        );
+        let mut shown = None;
+        let err = add(&dir, 777_002, "Test", &rpc, "TST", None, |network| {
+            shown = Some((rpc_host(network), network.rpc.clone()));
+            false
+        })
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("annulé"), "{err}");
+        assert_eq!(shown, Some(("127.0.0.1".to_string(), rpc)));
+        assert!(
+            matches!(listener.accept(), Err(e) if e.kind() == std::io::ErrorKind::WouldBlock),
+            "le RPC a été contacté avant la confirmation"
+        );
+        assert!(list(&dir).is_empty());
+    }
+
     /// Real network: adding OP Mainnet through its public RPC (chain ID checked), and
     /// refusing an RPC that answers for another chain.
     /// `cargo test -p openpgp-wallet-core --lib -- --ignored real_custom_network`
@@ -532,6 +578,7 @@ mod tests {
             "https://mainnet.optimism.io",
             "ETH",
             Some("https://optimistic.etherscan.io"),
+            |_| true,
         )
         .unwrap();
         assert_eq!(added.id(), "custom_10_mainnet");
@@ -547,6 +594,7 @@ mod tests {
             "https://mainnet.optimism.io",
             "ETH",
             None,
+            |_| true,
         )
         .unwrap_err()
         .to_string();

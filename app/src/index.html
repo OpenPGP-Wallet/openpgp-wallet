@@ -94,18 +94,30 @@
           <fieldset>
             <legend data-i18n="restore.share1">Part n°1</legend>
             <label data-i18n="restore.shareFile">Fichier de part (.asc)</label>
-            <input type="file" id="restore-share-1" accept=".asc" />
+            <div class="file-pick">
+              <button type="button" class="secondary" id="restore-share-1" data-restore-part="1" data-restore-kind="share" data-i18n="restore.chooseFile">Choisir le fichier…</button>
+              <span class="file-pick-name" data-file-name></span>
+            </div>
             <label data-i18n="restore.privkeyFile">Fichier de clé de la part (.asc)</label>
-            <input type="file" id="restore-privkey-1" accept=".asc" />
+            <div class="file-pick">
+              <button type="button" class="secondary" id="restore-privkey-1" data-restore-part="1" data-restore-kind="privkey" data-i18n="restore.chooseFile">Choisir le fichier…</button>
+              <span class="file-pick-name" data-file-name></span>
+            </div>
             <label data-i18n="restore.sharePassword">Mot de passe de cette part</label>
             <input type="password" id="restore-passphrase-1" />
           </fieldset>
           <fieldset>
             <legend data-i18n="restore.share2">Part n°2</legend>
             <label data-i18n="restore.shareFile">Fichier de part (.asc)</label>
-            <input type="file" id="restore-share-2" accept=".asc" />
+            <div class="file-pick">
+              <button type="button" class="secondary" id="restore-share-2" data-restore-part="2" data-restore-kind="share" data-i18n="restore.chooseFile">Choisir le fichier…</button>
+              <span class="file-pick-name" data-file-name></span>
+            </div>
             <label data-i18n="restore.privkeyFile">Fichier de clé de la part (.asc)</label>
-            <input type="file" id="restore-privkey-2" accept=".asc" />
+            <div class="file-pick">
+              <button type="button" class="secondary" id="restore-privkey-2" data-restore-part="2" data-restore-kind="privkey" data-i18n="restore.chooseFile">Choisir le fichier…</button>
+              <span class="file-pick-name" data-file-name></span>
+            </div>
             <label data-i18n="restore.sharePassword">Mot de passe de cette part</label>
             <input type="password" id="restore-passphrase-2" />
           </fieldset>

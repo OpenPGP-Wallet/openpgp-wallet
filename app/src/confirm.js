@@ -24,6 +24,7 @@ const ICONS = {
   key: svg('<circle cx="8" cy="15" r="4" /><path d="M11 12l9-9M16 7l3 3M14 9l2 2" />'),
   swap: svg('<path d="M4 8h13l-3-3M20 16H7l3 3" />'),
   usb: svg('<path d="M9 2h6v6H9zM7 8h10v6a5 5 0 0 1-10 0zM12 19v3" />'),
+  globe: svg('<circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" />'),
   fingerprint: svg(
     '<path d="M12 11v3a8 8 0 0 1-1 4M8 12a4 4 0 0 1 8 0v1a12 12 0 0 1-1 5M5 10a7 7 0 0 1 14 0v2M4 15c.5-1 .8-2 1-3M19 15.5c.3-1 .6-2 .7-3" />'
   ),

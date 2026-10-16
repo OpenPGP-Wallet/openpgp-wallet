@@ -5,6 +5,23 @@ links and SHA-256 hashes of each build are on the [releases page](https://github
 
 ## [Unreleased]
 
+### Security
+- The backup kit no longer goes through the interface. The encrypted shares and their private keys stay in
+  Rust, which writes them to files or USB drives and reads them back for a restore; the interface only shows
+  each share's label, number and passphrase. Restoring from files now opens the native "Open" dialog.
+- The password rule (12 characters minimum, no common pattern, some variety) is enforced in the core at
+  creation and restore, not only by the interface.
+- Adding a network or choosing a Monero node now asks for confirmation in the secure window, showing the
+  server, before the app contacts it for the first time.
+- Shielded Zcash sends lock the seed in memory like every other send; heights announced by the Zcash server
+  can no longer overflow.
+- rustls 0.23.46 (RUSTSEC-2026-0346 to 0349).
+
+### Changed
+- Inter for headings and amounts too (Space Grotesk dropped).
+- Threat model, architecture and README: the cancellation delay is described as a guard against mistakes, the
+  secure confirmation window is documented, and the interface's access to secrets is stated exactly.
+
 ## [2.13.2] - 2026-10-13
 
 ### Added
