@@ -14,7 +14,7 @@ body:
     attributes:
       label: App version
       description: In the installer's file name, or in Windows Settings → Apps.
-      placeholder: "2.13.2"
+      placeholder: "2.14.0"
     validations:
       required: true
   - type: input

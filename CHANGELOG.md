@@ -5,6 +5,8 @@ links and SHA-256 hashes of each build are on the [releases page](https://github
 
 ## [Unreleased]
 
+## [2.14.0] - 2026-10-17
+
 ### Security
 - The backup kit no longer goes through the interface. The encrypted shares and their private keys stay in
   Rust, which writes them to files or USB drives and reads them back for a restore; the interface only shows
