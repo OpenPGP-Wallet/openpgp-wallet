@@ -130,7 +130,7 @@ cargo run -p openpgp-wallet-core --example shamir_pgp_cli  # the full Shamir + P
 
 ## Status and roadmap
 
-The current release is **2.14.0** (see [CHANGELOG.md](CHANGELOG.md)). Before the wallet can be recommended for
+The current release is **2.14.1** (see [CHANGELOG.md](CHANGELOG.md)). Before the wallet can be recommended for
 real funds, it still needs Authenticode code signing, an independent security audit and reproducible builds.
 
 Next on the list is user-friendly threshold signing with FROST for shielded Zcash (2-of-3 between a computer, a

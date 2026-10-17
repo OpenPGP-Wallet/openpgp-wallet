@@ -5,6 +5,8 @@ links and SHA-256 hashes of each build are on the [releases page](https://github
 
 ## [Unreleased]
 
+## [2.14.1] - 2026-10-17
+
 ### Changed
 - Shielded Zcash: the card shows how far the sync has got ("Syncing shielded funds… 48%").
 
