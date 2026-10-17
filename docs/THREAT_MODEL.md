@@ -133,9 +133,10 @@ whom, by what means, and what remains at risk. Each countermeasure points to the
   refuses a node that lies about the output being spent; reorganizations are detected.
 - **Shielded Zcash**: compact blocks decrypted locally (lightwalletd only sees block requests). The three
   lightwalletd servers are fixed in the code and run by a single operator (zec.rocks): if it is down or
-  censors, Zcash is unavailable until an update, and there is no per-request timeout on the shielded client
-  yet (a hung request stalls the sync; a reset or a restore still interrupts it). A timeout on the broadcast itself is not added
-  on purpose: an expired send may still have gone out, and Zebra must never get it a second time.
+  censors, Zcash is unavailable until an update. Each sync pass is bounded (5 minutes) and retried 30 s
+  later, keeping the blocks already scanned, so a hung request no longer stalls the sync. A timeout on the
+  broadcast itself is not added on purpose: an expired send may still have gone out, and Zebra must never get
+  it a second time.
 - **Dogecoin**: the legacy signature scheme (no SegWit) does not commit to the input amounts, so a service
   lying about an output's value would turn the difference into fees. Each input is reread from its raw source
   transaction, whose recomputed hash must equal the identifier: amount and script are checked before signing

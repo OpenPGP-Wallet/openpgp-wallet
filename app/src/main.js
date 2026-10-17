@@ -690,6 +690,7 @@ const I18N = {
     "shielded.sendHint": "Depuis vos fonds protégés, vers une adresse u1… (protégée) ou t1… (transparente). Les adresses Sapling seules (zs…) ne sont pas prises en charge.",
     "shielded.password": "Mot de passe",
     "wallet.shieldedSyncing": "Synchronisation des fonds protégés…",
+    "wallet.shieldedSyncingProgress": "Synchronisation des fonds protégés… {percent} %",
     "wallet.shieldedPending": "dont {amount} ZEC en attente de confirmation",
     "wallet.shieldSuggestion": "Vous avez des ZEC transparents : « Protéger » les déplace ici.",
     "nav.message": "Message",
@@ -1431,6 +1432,7 @@ const I18N = {
     "shielded.sendHint": "From your shielded funds, to a u1… (shielded) or t1… (transparent) address. Sapling-only addresses (zs…) are not supported.",
     "shielded.password": "Password",
     "wallet.shieldedSyncing": "Syncing shielded funds…",
+    "wallet.shieldedSyncingProgress": "Syncing shielded funds… {percent}%",
     "wallet.shieldedPending": "incl. {amount} ZEC awaiting confirmation",
     "wallet.shieldSuggestion": "You have transparent ZEC: “Shield” moves them here.",
     "nav.message": "Message",
@@ -4817,13 +4819,30 @@ window.__TAURI__.event.listen("xmr-synced", () => {
 // Its status line says whether the sync is running, what is waiting for
 // confirmation, or invites the user to shield the ZEC on the transparent card.
 
+// While the sync runs, the status line is reread every 5 s (a local read, no
+// network request): the automatic refresh only comes every 60 s, about as long as
+// a whole sync, so the percentage would barely move otherwise. Not more often:
+// each read slows the sync a little (it shares the database).
+const SHIELDED_POLL_MS = 5000;
+let shieldedPollTimer = null;
+
 async function refreshShieldedStatus(card) {
   const statusEl = card.querySelector('[data-field="coin-status"]');
+  clearTimeout(shieldedPollTimer);
   try {
     const status = await invoke("zec_shielded_balance", { profileIndex: currentProfileIndex });
     const transparent = Number.parseFloat(document.querySelector('.wallet-card[data-coin="zec"] [data-field="balance"]')?.textContent);
+    if (!status.synced) {
+      shieldedPollTimer = setTimeout(() => {
+        if (card.isConnected && dashboardShown() && !card.classList.contains("asset-hidden")) refreshShieldedStatus(card);
+      }, SHIELDED_POLL_MS);
+    }
     statusEl.textContent = !status.synced
-      ? t("wallet.shieldedSyncing")
+      ? // 0 % lasts the first ~20 s (first batch of blocks): plain text, so it never
+        // looks stuck.
+        status.progress
+        ? t("wallet.shieldedSyncingProgress", { percent: status.progress })
+        : t("wallet.shieldedSyncing")
       : Number.parseFloat(status.pending) > 0
         ? t("wallet.shieldedPending", { amount: status.pending })
         : transparent > 0

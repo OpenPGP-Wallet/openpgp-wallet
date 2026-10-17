@@ -45,6 +45,16 @@ const WALLET_FILE: &str = "zcash_shielded.sqlite";
 const RESCAN_FILE: &str = "zcash_shielded_rescan";
 /// Blocks downloaded, then scanned, per batch.
 const SYNC_BATCH: u32 = 1_000;
+/// Longest a sync pass may run. The shielded client has no per-request timeout (a
+/// batch of compact blocks can legitimately take long), so a request that never
+/// completes would otherwise stall the background sync until the app restarts. A
+/// pass cut short loses nothing: each scanned batch is already saved, and the next
+/// pass (30 s later) carries on from there. A full rescan from `BIRTHDAY_HEIGHT`
+/// takes about 45 s (measured 2026-10-17), so only a stuck pass reaches this. Never
+/// used around a broadcast, which must not be cut short and retried.
+const SYNC_PASS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+/// Same bound for the few requests that create an account (chain tip, tree state).
+const SETUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
 type Db = WalletDb<rusqlite::Connection, MainNetwork, SystemClock, rand_core::OsRng>;
 
@@ -236,7 +246,11 @@ pub fn ensure_accounts(data_dir: &Path, profiles: &[ProfileKeys]) -> Result<()> 
         return Ok(());
     }
     let Some(birthday) = runtime()?.block_on(unless_wiped(async {
-        birthday(data_dir, &mut client().await?).await
+        tokio::time::timeout(SETUP_TIMEOUT, async {
+            birthday(data_dir, &mut client().await?).await
+        })
+        .await
+        .map_err(|_| anyhow!("serveur Zcash trop lent : nouvel essai au prochain passage"))?
     }))?
     else {
         return Ok(());
@@ -314,8 +328,16 @@ pub fn sync(data_dir: &Path) -> Result<()> {
         .block_on(unless_wiped(async {
             let mut client = client().await?;
             let cache = MemoryCache::default();
-            zcash_client_backend::sync::run(&mut client, &MainNetwork, &cache, &mut db, SYNC_BATCH)
+            let pass = zcash_client_backend::sync::run(
+                &mut client,
+                &MainNetwork,
+                &cache,
+                &mut db,
+                SYNC_BATCH,
+            );
+            tokio::time::timeout(SYNC_PASS_TIMEOUT, pass)
                 .await
+                .map_err(|_| anyhow!("serveur Zcash trop lent : nouvel essai au prochain passage"))?
                 .map_err(|e| anyhow!("synchronisation Zcash protégée : {e}"))
         }))
         .map(|_| ())
@@ -331,6 +353,9 @@ pub struct ShieldedBalance {
     /// Height up to which the chain has been scanned (`None`: not yet).
     pub scanned_height: Option<u32>,
     pub chain_height: Option<u32>,
+    /// Share of the blocks between the birthday and the tip already scanned, in
+    /// percent (`None`: nothing to measure yet), shown while the sync runs.
+    pub progress: Option<u8>,
 }
 
 pub fn balance(data_dir: &Path, profile: u32) -> Result<ShieldedBalance> {
@@ -357,6 +382,18 @@ pub fn balance(data_dir: &Path, profile: u32) -> Result<ShieldedBalance> {
         pending: total.saturating_sub(spendable),
         scanned_height: Some(u32::from(summary.fully_scanned_height())),
         chain_height: Some(u32::from(summary.chain_tip_height())),
+        progress: scan_percent(summary.progress().scan()),
+    })
+}
+
+/// A scan ratio in whole percent, never above 100 (`None` when there is nothing to
+/// measure yet).
+fn scan_percent(ratio: zcash_client_backend::data_api::Ratio<u64>) -> Option<u8> {
+    let (done, total) = (*ratio.numerator(), *ratio.denominator());
+    (total > 0).then(|| {
+        u8::try_from(done.saturating_mul(100) / total)
+            .unwrap_or(100)
+            .min(100)
     })
 }
 
@@ -1231,6 +1268,19 @@ mod tests {
         .encode();
         assert!(check_recipient(&testnet).is_err(), "réseau de test");
         assert!(check_recipient("pas une adresse").is_err());
+    }
+
+    /// Sync progress in whole percent: nothing to measure gives no figure, and an
+    /// odd ratio from the library never shows more than 100 %.
+    #[test]
+    fn scan_progress_in_percent() {
+        use zcash_client_backend::data_api::Ratio;
+        assert_eq!(scan_percent(Ratio::new(0, 0)), None);
+        assert_eq!(scan_percent(Ratio::new(0, 16_349)), Some(0));
+        assert_eq!(scan_percent(Ratio::new(8_000, 16_349)), Some(48));
+        assert_eq!(scan_percent(Ratio::new(16_349, 16_349)), Some(100));
+        assert_eq!(scan_percent(Ratio::new(20_000, 16_349)), Some(100));
+        assert_eq!(scan_percent(Ratio::new(u64::MAX, 1)), Some(100));
     }
 
     /// Insufficient funds: the library's real messages, in plain words.

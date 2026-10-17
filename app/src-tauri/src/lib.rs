@@ -87,6 +87,7 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("choisissez les fichiers des deux parts", "choose the files of both shares"),
     // core/src/zcash.rs, core/src/api.rs: height announced by the server
     ("hauteur de chaîne Zcash hors limites", "Zcash chain height out of range"),
+    ("serveur Zcash trop lent : nouvel essai au prochain passage", "Zcash server too slow: trying again at the next pass"),
     // core: a server chosen by the user, approved in the secure window first
     ("ajout du réseau annulé", "network not added"),
     ("nœud Monero non modifié (confirmation refusée)", "Monero node not changed (confirmation declined)"),
@@ -10878,6 +10879,8 @@ struct ShieldedBalanceDto {
     pending: String,
     /// Chain fully scanned (the balance is up to date).
     synced: bool,
+    /// While syncing: share of the blocks already scanned, in percent.
+    progress: Option<u8>,
 }
 
 fn shielded_dialog(app: &tauri::AppHandle, title: (&str, &str), message: String) -> bool {
@@ -11008,6 +11011,7 @@ async fn zec_shielded_balance(
             spendable: openpgp_wallet_core::zcash::format_zec(balance.spendable),
             pending: openpgp_wallet_core::zcash::format_zec(balance.pending),
             synced,
+            progress: balance.progress,
         })
     })
     .await

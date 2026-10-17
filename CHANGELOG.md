@@ -5,6 +5,16 @@ links and SHA-256 hashes of each build are on the [releases page](https://github
 
 ## [Unreleased]
 
+### Changed
+- Shielded Zcash: the card shows how far the sync has got ("Syncing shielded funds… 48%").
+
+### Fixed
+- Shielded Zcash: a sync stuck on a server that stops answering now restarts on its own (each pass is bounded
+  to 5 minutes and retried 30 s later, keeping the blocks already scanned). Before, it only restarted with the
+  app.
+- Development build: the Zcash libraries are optimized like the Monero ones, so syncing shielded funds takes
+  about a minute instead of six.
+
 ## [2.14.0] - 2026-10-17
 
 ### Security

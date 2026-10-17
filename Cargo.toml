@@ -53,3 +53,60 @@ opt-level = 3
 opt-level = 3
 [profile.dev.package.monero-primitives]
 opt-level = 3
+
+# Shielded Zcash: syncing from the fixed birthday (16,349 blocks on 2026-10-17)
+# took 355 s without optimization against 45 s optimized, measured with the
+# `real_shielded_sync` test. The development app then looked stuck on "Syncing
+# shielded funds". Same approach as Monero: only the crates that decrypt notes,
+# hash the commitment trees, parse the compact blocks and store them are optimized
+# (halo2 too, for the proofs of a shielded send).
+[profile.dev.package.orchard]
+opt-level = 3
+[profile.dev.package.pasta_curves]
+opt-level = 3
+[profile.dev.package.zcash_note_encryption]
+opt-level = 3
+[profile.dev.package.sinsemilla]
+opt-level = 3
+[profile.dev.package.halo2_gadgets]
+opt-level = 3
+[profile.dev.package.halo2_proofs]
+opt-level = 3
+[profile.dev.package.sapling-crypto]
+opt-level = 3
+[profile.dev.package.jubjub]
+opt-level = 3
+[profile.dev.package.bls12_381]
+opt-level = 3
+[profile.dev.package.group]
+opt-level = 3
+[profile.dev.package.ff]
+opt-level = 3
+[profile.dev.package.subtle]
+opt-level = 3
+[profile.dev.package.blake2b_simd]
+opt-level = 3
+[profile.dev.package.blake2s_simd]
+opt-level = 3
+[profile.dev.package.chacha20]
+opt-level = 3
+[profile.dev.package.chacha20poly1305]
+opt-level = 3
+[profile.dev.package.poly1305]
+opt-level = 3
+[profile.dev.package.bitvec]
+opt-level = 3
+[profile.dev.package.incrementalmerkletree]
+opt-level = 3
+[profile.dev.package.shardtree]
+opt-level = 3
+[profile.dev.package.prost]
+opt-level = 3
+[profile.dev.package.zcash_primitives]
+opt-level = 3
+[profile.dev.package.zcash_client_backend]
+opt-level = 3
+[profile.dev.package.zcash_client_sqlite]
+opt-level = 3
+[profile.dev.package.libsqlite3-sys]
+opt-level = 3
