@@ -9,6 +9,13 @@ links and SHA-256 hashes of each build are on the [releases page](https://github
 - Shielded Zcash: the card shows how far the sync has got ("Syncing shielded funds… 48%").
 
 ### Fixed
+- Shielded Zcash: adding a profile could stop the shielded sync for good. The Zcash library refused to add its
+  account to some existing databases ("Data DB is corrupted: the Ironwood note commitment tree retains
+  checkpoints…"), and every later pass failed before syncing anything. The database, which only holds viewing
+  keys and data read from the chain, is now rebuilt and rescanned instead. "Rescan from the beginning" rebuilds
+  it too.
+- Shielded Zcash: a failing sync is now shown on the card ("Shielded funds sync failed, retrying in 30 s")
+  instead of "Syncing" forever.
 - Shielded Zcash: a sync stuck on a server that stops answering now restarts on its own (each pass is bounded
   to 5 minutes and retried 30 s later, keeping the blocks already scanned). Before, it only restarted with the
   app.

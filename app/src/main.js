@@ -691,6 +691,7 @@ const I18N = {
     "shielded.password": "Mot de passe",
     "wallet.shieldedSyncing": "Synchronisation des fonds protégés…",
     "wallet.shieldedSyncingProgress": "Synchronisation des fonds protégés… {percent} %",
+    "wallet.shieldedSyncFailed": "Synchronisation des fonds protégés en échec, nouvel essai dans 30 s.",
     "wallet.shieldedPending": "dont {amount} ZEC en attente de confirmation",
     "wallet.shieldSuggestion": "Vous avez des ZEC transparents : « Protéger » les déplace ici.",
     "nav.message": "Message",
@@ -1433,6 +1434,7 @@ const I18N = {
     "shielded.password": "Password",
     "wallet.shieldedSyncing": "Syncing shielded funds…",
     "wallet.shieldedSyncingProgress": "Syncing shielded funds… {percent}%",
+    "wallet.shieldedSyncFailed": "Shielded funds sync failed, retrying in 30 s.",
     "wallet.shieldedPending": "incl. {amount} ZEC awaiting confirmation",
     "wallet.shieldSuggestion": "You have transparent ZEC: “Shield” moves them here.",
     "nav.message": "Message",
@@ -4826,6 +4828,15 @@ window.__TAURI__.event.listen("xmr-synced", () => {
 const SHIELDED_POLL_MS = 5000;
 let shieldedPollTimer = null;
 
+// Status line while the sync has not reached the tip of the chain.
+function shieldedSyncText(status) {
+  if (status.failed) return t("wallet.shieldedSyncFailed");
+  // 0 % lasts the first ~20 s (first batch of blocks): plain text, so it never looks
+  // stuck.
+  if (status.progress) return t("wallet.shieldedSyncingProgress", { percent: status.progress });
+  return t("wallet.shieldedSyncing");
+}
+
 async function refreshShieldedStatus(card) {
   const statusEl = card.querySelector('[data-field="coin-status"]');
   clearTimeout(shieldedPollTimer);
@@ -4838,11 +4849,7 @@ async function refreshShieldedStatus(card) {
       }, SHIELDED_POLL_MS);
     }
     statusEl.textContent = !status.synced
-      ? // 0 % lasts the first ~20 s (first batch of blocks): plain text, so it never
-        // looks stuck.
-        status.progress
-        ? t("wallet.shieldedSyncingProgress", { percent: status.progress })
-        : t("wallet.shieldedSyncing")
+      ? shieldedSyncText(status)
       : Number.parseFloat(status.pending) > 0
         ? t("wallet.shieldedPending", { amount: status.pending })
         : transparent > 0

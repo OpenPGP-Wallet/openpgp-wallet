@@ -217,6 +217,70 @@ pub fn profile_keys(seed: &[u8], profile: u32) -> Result<ProfileKeys> {
     Ok((profile, ufvk, pubkey, seed_fp))
 }
 
+/// The database and the files SQLite may keep next to it.
+const DB_FILES: [&str; 4] = [
+    WALLET_FILE,
+    "zcash_shielded.sqlite-journal",
+    "zcash_shielded.sqlite-wal",
+    "zcash_shielded.sqlite-shm",
+];
+
+/// Deletes the database so that it is rebuilt from scratch. It holds only viewing
+/// keys and what the chain says (never the seed), so a rescan finds every note
+/// again. Retries for 3 s: a balance read may hold the file open for a moment, and
+/// Windows refuses to delete an open file.
+fn delete_database(data_dir: &Path) -> Result<()> {
+    for file in DB_FILES {
+        let path = data_dir.join(file);
+        let mut attempts = 0;
+        loop {
+            match std::fs::remove_file(&path) {
+                Ok(()) => break,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => break,
+                Err(e) if attempts >= 30 => {
+                    return Err(e).context("base Zcash protégée : suppression impossible");
+                }
+                Err(_) => {
+                    attempts += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Creates the shielded account of each profile in `profiles`.
+fn import_accounts(
+    db: &mut Db,
+    profiles: &[&ProfileKeys],
+    birthday: &AccountBirthday,
+) -> Result<()> {
+    for (profile, ufvk, t1_pubkey, seed_fp) in profiles.iter().copied() {
+        let purpose = AccountPurpose::Spending {
+            derivation: Some(Zip32Derivation::new(*seed_fp, account_index(*profile)?)),
+        };
+        let account = db
+            .import_account_ufvk(
+                &format!("Profil {profile}"),
+                ufvk,
+                birthday,
+                purpose,
+                Some("openpgp-wallet"),
+            )
+            .map_err(|e| anyhow!("compte Zcash protégé : création impossible ({e})"))?;
+        // Main profile: its t1 address is already the first transparent address of account
+        // 0; the others are imported.
+        if *profile != 0 {
+            let pubkey = secp256k1::PublicKey::from_slice(t1_pubkey)
+                .context("clé publique Zcash invalide")?;
+            db.import_standalone_transparent_pubkey(account.id(), pubkey)
+                .map_err(|e| anyhow!("adresse t1 : import impossible ({e})"))?;
+        }
+    }
+    Ok(())
+}
+
 /// Creates (once) each profile's shielded account. Called after unlocking, without
 /// the seed (keys already derived).
 pub fn ensure_accounts(data_dir: &Path, profiles: &[ProfileKeys]) -> Result<()> {
@@ -225,17 +289,16 @@ pub fn ensure_accounts(data_dir: &Path, profiles: &[ProfileKeys]) -> Result<()> 
         .map(|keys| Ok((address(&keys.1)?, keys.0)))
         .collect::<Result<_>>()?;
     *KNOWN.lock().unwrap_or_else(|p| p.into_inner()) = Some((data_dir.to_path_buf(), addresses));
-    let mut db = open(data_dir)?;
-    // "Rescan from the beginning": accounts deleted, then recreated below from the
-    // fixed birthday (creation date forgotten).
+    // "Rescan from the beginning": the database is rebuilt from scratch, and every
+    // account is recreated below from the fixed birthday (creation date forgotten).
+    // Deleting the accounts alone is not enough: re-adding them rewinds the trees,
+    // which can be refused (see below).
     let rescan = data_dir.join(RESCAN_FILE);
     if rescan.exists() {
-        for id in db.get_account_ids()? {
-            db.delete_account(id)
-                .map_err(|e| anyhow!("réanalyse Zcash protégée : suppression impossible ({e})"))?;
-        }
+        delete_database(data_dir)?;
         std::fs::remove_file(&rescan).context("réanalyse Zcash protégée : demande illisible")?;
     }
+    let mut db = open(data_dir)?;
     let mut missing = Vec::new();
     for keys in profiles {
         if find_account(&db, keys.0)?.is_none() {
@@ -255,29 +318,22 @@ pub fn ensure_accounts(data_dir: &Path, profiles: &[ProfileKeys]) -> Result<()> 
     else {
         return Ok(());
     };
-    for (profile, ufvk, t1_pubkey, seed_fp) in missing {
-        let purpose = AccountPurpose::Spending {
-            derivation: Some(Zip32Derivation::new(*seed_fp, account_index(*profile)?)),
-        };
-        let account = db
-            .import_account_ufvk(
-                &format!("Profil {profile}"),
-                ufvk,
-                &birthday,
-                purpose,
-                Some("openpgp-wallet"),
-            )
-            .map_err(|e| anyhow!("compte Zcash protégé : création impossible ({e})"))?;
-        // Main profile: its t1 address is already the first transparent address of account
-        // 0; the others are imported.
-        if *profile != 0 {
-            let pubkey = secp256k1::PublicKey::from_slice(t1_pubkey)
-                .context("clé publique Zcash invalide")?;
-            db.import_standalone_transparent_pubkey(account.id(), pubkey)
-                .map_err(|e| anyhow!("adresse t1 : import impossible ({e})"))?;
-        }
-    }
-    Ok(())
+    let Err(refused) = import_accounts(&mut db, &missing, &birthday) else {
+        return Ok(());
+    };
+    // Adding an account to a database that has already scanned past its birthday
+    // makes zcash_client_sqlite rewind the commitment trees, and some database states
+    // refuse that. Seen on 2026-10-17 on a real wallet: Ironwood checkpoints no
+    // longer matching the Sapling and Orchard ones ("Data DB is corrupted: the
+    // Ironwood note commitment tree retains checkpoints both above and below …").
+    // Every later pass then failed the same way, before syncing anything, while the
+    // card kept saying "Syncing". The database is only a cache, so it is rebuilt
+    // with every profile's account and rescanned from the birthday instead.
+    drop(db);
+    delete_database(data_dir)?;
+    let mut db = open(data_dir)?;
+    import_accounts(&mut db, &profiles.iter().collect::<Vec<_>>(), &birthday)
+        .map_err(|again| anyhow!("{again:#} (base reconstruite ; refus initial : {refused:#})"))
 }
 
 /// Removes from the database the accounts of ANOTHER wallet (another seed: a reset,
@@ -1328,6 +1384,63 @@ mod tests {
             open(&dir).unwrap().get_account_ids().unwrap().len(),
             2,
             "un compte par profil, une seule fois"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Real network: a profile added to a database the library can no longer rewind
+    /// (seen on 2026-10-17 on a real wallet: "Data DB is corrupted: the Ironwood note
+    /// commitment tree retains checkpoints both above and below height …"). The same
+    /// state is made here the way zcash_client_sqlite's own test makes it, by removing
+    /// the Ironwood checkpoint at the height the rewind targets. The account must
+    /// still be created (the database is rebuilt), the sync must then reach the tip,
+    /// and the first account must still be there.
+    /// `cargo test --lib real_rebuild_after_refused_rewind -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn real_rebuild_after_refused_rewind() {
+        let dir = std::env::temp_dir().join(format!("zec-rewind-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let first = [profile_keys(&SEED, 0).unwrap()];
+        ensure_accounts(&dir, &first).unwrap();
+        sync(&dir).unwrap();
+
+        let conn = rusqlite::Connection::open(dir.join(WALLET_FILE)).unwrap();
+        let max_scanned: u32 = conn
+            .query_row("SELECT MAX(height) FROM blocks", [], |row| row.get(0))
+            .unwrap();
+        // The rewind for a new account targets the first checkpoint the pools retain at
+        // or above the pruning window floor (100 blocks below the last scanned block).
+        // Removing it from the Ironwood tree alone makes the trees diverge as on the
+        // real wallet: Ironwood keeps checkpoints above and below, but not at it.
+        let target: u32 = conn
+            .query_row(
+                "SELECT MIN(checkpoint_id) FROM sapling_tree_checkpoints WHERE checkpoint_id >= ?",
+                [max_scanned - 99],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let removed = conn
+            .execute(
+                "DELETE FROM ironwood_tree_checkpoints WHERE checkpoint_id = ?",
+                [target],
+            )
+            .unwrap();
+        drop(conn);
+        assert_eq!(removed, 1, "no Ironwood checkpoint at {target} to remove");
+
+        let both = [
+            profile_keys(&SEED, 0).unwrap(),
+            profile_keys(&SEED, 1).unwrap(),
+        ];
+        ensure_accounts(&dir, &both).unwrap();
+        sync(&dir).unwrap();
+        let db = open(&dir).unwrap();
+        assert!(find_account(&db, 0).unwrap().is_some() && find_account(&db, 1).unwrap().is_some());
+        let b = balance(&dir, 1).unwrap();
+        assert!(
+            b.scanned_height.unwrap() + 5 >= b.chain_height.unwrap(),
+            "{b:?}"
         );
         std::fs::remove_dir_all(&dir).ok();
     }

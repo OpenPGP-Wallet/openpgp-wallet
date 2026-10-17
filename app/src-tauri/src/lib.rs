@@ -10831,6 +10831,10 @@ fn shielded_profile(app: &tauri::AppHandle, address: &str) -> Result<u32, String
 
 /// A shielded Zcash sync pass requested right away (send or shielding broadcast).
 static ZECS_SYNC_KICK: AtomicBool = AtomicBool::new(false);
+/// The last shielded sync pass failed: the card says so instead of "Syncing" forever.
+/// Until v2.14.0 a failure only reached the log, and a wallet whose every pass failed
+/// (2026-10-17) looked like it was still syncing two days later.
+static ZECS_SYNC_FAILED: AtomicBool = AtomicBool::new(false);
 
 /// Background shielded Zcash sync, one at a time: missing accounts created, chain scanned,
 /// then every 30 s (one block every 75 s) while the app is open. The UI is notified after
@@ -10851,17 +10855,18 @@ fn start_shielded_sync(app: &tauri::AppHandle) {
             .values()
             .map(|(_, keys)| keys.clone())
             .collect();
-        if !keys.is_empty() {
-            match data_dir(&app) {
-                Ok(dir) => {
-                    match catch_sync_panic(|| api::sync_zec_shielded(&dir, &keys, generation)) {
-                        Ok(()) => {
-                            let _ = app.emit("zec-shielded-synced", ());
-                        }
-                        Err(e) => eprintln!("Zcash protégé : {e:#}"),
-                    }
+        if keys.is_empty() {
+            ZECS_SYNC_FAILED.store(false, Ordering::SeqCst);
+        } else {
+            let outcome = data_dir(&app).and_then(|dir| {
+                catch_sync_panic(|| api::sync_zec_shielded(&dir, &keys, generation))
+            });
+            ZECS_SYNC_FAILED.store(outcome.is_err(), Ordering::SeqCst);
+            match outcome {
+                Ok(()) => {
+                    let _ = app.emit("zec-shielded-synced", ());
                 }
-                Err(e) => eprintln!("Zcash protégé : {e}"),
+                Err(e) => eprintln!("Zcash protégé : {e:#}"),
             }
         }
         for _ in 0..30 {
@@ -10881,6 +10886,8 @@ struct ShieldedBalanceDto {
     synced: bool,
     /// While syncing: share of the blocks already scanned, in percent.
     progress: Option<u8>,
+    /// The last sync pass failed (it is retried every 30 s).
+    failed: bool,
 }
 
 fn shielded_dialog(app: &tauri::AppHandle, title: (&str, &str), message: String) -> bool {
@@ -11012,6 +11019,7 @@ async fn zec_shielded_balance(
             pending: openpgp_wallet_core::zcash::format_zec(balance.pending),
             synced,
             progress: balance.progress,
+            failed: ZECS_SYNC_FAILED.load(Ordering::SeqCst),
         })
     })
     .await
