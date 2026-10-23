@@ -2293,6 +2293,37 @@ document.addEventListener("keydown", (e) => {
 document.querySelectorAll(".custom-select").forEach(initCustomSelect);
 document.querySelectorAll(".action-menu").forEach(initActionMenu);
 
+// Give every password field our own reveal eye. The native WebView2 eye only
+// appears on the focused field and disappears after some interactions, so the
+// user could lose the ability to re-check what they typed. Ours stays in place.
+const ICON_EYE_OFF = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 3l18 18" /><path d="M10.6 5.1A10.9 10.9 0 0 1 12 5c6.5 0 10 7 10 7a18.2 18.2 0 0 1-3.2 4.1M6.3 6.3A18.2 18.2 0 0 0 2 12s3.5 7 10 7a10.9 10.9 0 0 0 4-.8" /><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2" /></svg>`;
+
+function enhancePasswordField(input) {
+  if (!input || input.dataset.pwEnhanced) return;
+  input.dataset.pwEnhanced = "1";
+
+  const wrap = document.createElement("div");
+  wrap.className = "pw-wrap";
+  input.parentNode.insertBefore(wrap, input);
+  wrap.appendChild(input);
+
+  const eye = document.createElement("button");
+  eye.type = "button";
+  eye.className = "pw-eye";
+  eye.tabIndex = -1;
+  eye.setAttribute("aria-label", "Afficher ou masquer le mot de passe");
+  eye.innerHTML = ICON_EYE;
+  wrap.appendChild(eye);
+
+  eye.addEventListener("click", () => {
+    const show = input.type === "password";
+    input.type = show ? "text" : "password";
+    eye.innerHTML = show ? ICON_EYE_OFF : ICON_EYE;
+  });
+}
+
+document.querySelectorAll('input[type="password"]').forEach(enhancePasswordField);
+
 // --- "In progress" state of action buttons ----------------------------------
 //
 // No sensitive operation (unlock, send, profile creation...) disabled its button

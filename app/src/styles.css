@@ -392,6 +392,53 @@ textarea::placeholder {
   color: var(--dim);
 }
 
+/* Password reveal: the native WebView2 eye is unreliable (it only shows on the
+   focused field and vanishes after some interactions), so we hide it and add our
+   own, which stays put. See enhancePasswordField() in main.js. */
+input[type="password"]::-ms-reveal,
+input[type="password"]::-ms-clear {
+  display: none;
+}
+
+.pw-wrap {
+  position: relative;
+  width: 100%;
+}
+
+.pw-wrap input[type="password"],
+.pw-wrap input[type="text"] {
+  padding-right: 42px;
+}
+
+.pw-eye {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.pw-eye:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.pw-eye svg {
+  width: 18px;
+  height: 18px;
+  pointer-events: none;
+}
+
 /* Checkboxes: accent color, comfortable size. */
 input[type="checkbox"],
 input[type="radio"] {
