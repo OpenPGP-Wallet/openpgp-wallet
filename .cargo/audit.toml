@@ -1,0 +1,13 @@
+# cargo audit configuration, also read by the CI "Dependency audit" job.
+
+[advisories]
+# RUSTSEC-2026-0387, crypto-bigint < 0.7.6: operations meant to be constant-time
+# (subtraction, division, Montgomery multiplication) could branch on secret data.
+# Ignored only because no fix reaches this dependency tree yet: there is no fixed
+# 0.5 release, and crypto-bigint 0.5.5 comes from k256 0.13 (Bitcoin, EVM and
+# Zcash keys), from Sequoia's cx448 (still on 0.5 in sequoia-openpgp 2.4.2) and
+# from the Monero crates (monero-ed25519). Exploiting it needs an attacker able to
+# measure the timing or microarchitectural behavior of these operations on the
+# device. Listed in the v2.15.0 release notes. Remove this entry once k256,
+# Sequoia and the Monero crates are on crypto-bigint 0.7.6 or later.
+ignore = ["RUSTSEC-2026-0387"]
