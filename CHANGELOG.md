@@ -5,6 +5,24 @@ links and SHA-256 hashes of each build are on the [releases page](https://github
 
 ## [Unreleased]
 
+## [2.15.0] - 2026-10-24
+
+### Changed
+- Zcash: ready for NU7, which activates on mainnet at block 3,543,405 (around November 5), with the Zcash
+  libraries released on 2026-10-21. From NU7, earlier versions refuse every ZEC send and ask for an update; no
+  funds are at risk, but update before then.
+- Zcash: transparent sends stay valid for about 50 minutes after NU7 too (120 blocks of 25 s instead of 40 blocks
+  of 75 s).
+- Zcash: unified addresses in the new format (zu1…, tu1…, ZIP 316 Revision 2) are accepted as recipients. The
+  wallet's own shielded addresses stay u1….
+- Password fields: every field has its own eye to show or hide what was typed. The system one only appeared on
+  the focused field and could disappear.
+
+### Fixed
+- Shielded Zcash: once NU7 is active, a wallet created more than about a day and a half before its shielded
+  account was set up or rebuilt would have started scanning after its creation date, hiding its first shielded
+  funds until a full rescan. The first block to scan now follows the real block spacing (75 s, then 25 s).
+
 ## [2.14.1] - 2026-10-17
 
 ### Changed

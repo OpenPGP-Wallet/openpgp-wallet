@@ -7839,7 +7839,7 @@ dependencies = [
 
 [[package]]
 name = "wallet"
-version = "2.14.1"
+version = "2.15.0"
 dependencies = [
  "openpgp-wallet-core",
  "qrcode",
