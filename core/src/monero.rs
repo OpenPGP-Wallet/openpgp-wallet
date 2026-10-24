@@ -497,9 +497,12 @@ pub fn sync(data_dir: &Path, keys: &[ViewKeys], generation: u64) -> Result<()> {
             // unknown); never beyond the known chain (wrong clock). (A different name from
             // `start`, the first block of THIS batch: mixing them up made the loop spin
             // without doing anything.)
-            let new_profile_start =
-                wallet_birthday::start_height(data_dir, tip as u64, 120, BIRTHDAY_HEIGHT as u64)
-                    as usize;
+            let new_profile_start = wallet_birthday::start_height(
+                data_dir,
+                tip as u64,
+                wallet_birthday::fixed_spacing(tip as u64, 120),
+                BIRTHDAY_HEIGHT as u64,
+            ) as usize;
             for k in keys {
                 bind_profile(&mut state, k.profile, &k.spend_public, new_profile_start);
                 if let Some(p) = state.profiles.get_mut(&k.profile) {

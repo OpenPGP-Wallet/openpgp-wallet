@@ -19,8 +19,8 @@
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use std::time::Duration;
 use zcash_address::{ConversionError, ToAddress, TryFromAddress, ZcashAddress};
-use zcash_primitives::transaction::sighash::{signature_hash, SignableInput};
-use zcash_primitives::transaction::txid::TxIdDigester;
+use zcash_primitives::transaction::builder::default_tx_expiry_delta;
+use zcash_primitives::transaction::sighash::{PrecomputedSighashData, SignableInput};
 use zcash_primitives::transaction::{
     Authorization, Authorized, Transaction, TransactionData, TxVersion,
 };
@@ -43,8 +43,6 @@ const GRACE_ACTIONS: u64 = 2;
 /// Smaller change is added to the fee rather than creating a dust output (shown in
 /// the confirmation dialog).
 const DUST_CHANGE: u64 = 5_000;
-/// Transaction validity: 40 blocks (~50 min) after the target height.
-const EXPIRY_DELTA: u32 = 40;
 /// Maximum inputs per transaction: beyond ~100 kB, nodes no longer relay a
 /// transaction (148 bytes per P2PKH input).
 const MAX_INPUTS: usize = 600;
@@ -757,7 +755,8 @@ fn build_signed_with_sighashes(
     branch: BranchId,
 ) -> Result<(SignedTx, Vec<[u8; 32]>)> {
     let mut signing = TransparentSigningSet::new();
-    let secret = secp256k1::SecretKey::from_slice(&key.to_bytes()).context("clé Zcash invalide")?;
+    let secret = secp256k1::SecretKey::from_secret_bytes(key.to_bytes().into())
+        .context("clé Zcash invalide")?;
     let pubkey = signing.add_key(secret);
     let own_script = p2pkh_script(own_hash160);
 
@@ -799,11 +798,13 @@ fn build_signed_with_sighashes(
     );
     let bundle = builder.build().context("transaction Zcash vide")?;
 
-    // `target_height` follows the height announced by the server: an absurd one is
-    // refused here rather than wrapped around into an expiry already in the past.
+    // Validity: the official builder's default delta for the branch, about 50 minutes
+    // (40 blocks of 75 s, 120 blocks of 25 s from NU7). `target_height` follows the
+    // height announced by the server: an absurd one is refused here rather than
+    // wrapped around into an expiry already in the past.
     let expiry = BlockHeight::from_u32(
         target_height
-            .checked_add(EXPIRY_DELTA)
+            .checked_add(default_tx_expiry_delta(branch))
             .context("hauteur de chaîne Zcash hors limites")?,
     );
     let version = TxVersion::suggested_for_branch(branch);
@@ -812,17 +813,18 @@ fn build_signed_with_sighashes(
     } else {
         TransactionData::from_parts(version, branch, 0, expiry, Some(bundle), None, None, None)
     };
-    let txid_parts = unauthed.digest(TxIdDigester);
-    let sighashes = std::cell::RefCell::new(Vec::new());
-    let authorized = unauthed
+    let unsigned = unauthed
         .transparent_bundle()
         .context("transaction Zcash sans entrées")?
-        .clone()
+        .clone();
+    let precomputed = PrecomputedSighashData::new(unauthed);
+    let sighashes = std::cell::RefCell::new(Vec::new());
+    let authorized = unsigned
         .apply_signatures(
             |input| {
-                let sighash =
-                    *signature_hash(&unauthed, &SignableInput::Transparent(input), &txid_parts)
-                        .as_ref();
+                let sighash = *precomputed
+                    .signature_hash(&SignableInput::Transparent(input))
+                    .as_ref();
                 sighashes.borrow_mut().push(sighash);
                 sighash
             },
@@ -1040,7 +1042,7 @@ mod tests {
             let official = account
                 .derive_external_secret_key(NonHardenedChildIndex::from_index(index).unwrap())
                 .unwrap();
-            assert_eq!(ours.to_bytes()[..], official.secret_bytes()[..]);
+            assert_eq!(ours.to_bytes()[..], official.to_secret_bytes()[..]);
             assert!(p2pkh_address(&hash160).starts_with("t1"));
         }
     }
@@ -1157,10 +1159,16 @@ mod tests {
     /// uses); a modified digest is refused.
     #[test]
     fn signed_transaction_is_valid_for_the_official_interpreter() {
+        // v5 (NU6) and v6 (NU7, mainnet activation at 3,543,405).
+        for target in [3_000_000, 3_543_405] {
+            check_with_the_official_interpreter(target);
+        }
+    }
+
+    fn check_with_the_official_interpreter(target: u32) {
         let (key, h) = own();
         let plan = plan_send(vec![utxo(150_000, 7, &h), utxo(40_000, 8, &h)], 160_000).unwrap();
         assert_eq!(plan.inputs.len(), 2);
-        let target = 3_000_000;
         let branch = BranchId::for_height(&MainNetwork, BlockHeight::from_u32(target));
         let recipient = Recipient::P2pkh([9; 20]);
         let (signed, sighashes) =
@@ -1206,6 +1214,29 @@ mod tests {
             memo: None,
         };
         assert!(build_signed(&foreign, &key, &h, &recipient, target, branch).is_err());
+    }
+
+    /// NU7 on mainnet (height 3,543,405, branch 0x77190ad9): a v6 transaction valid for
+    /// 120 blocks of 25 s, the same ~50 minutes as 40 blocks of 75 s just before it.
+    /// A server announcing NU7 before the app expects it: refused.
+    #[test]
+    fn nu7_transaction_is_v6_and_valid_for_120_blocks() {
+        let (key, h) = own();
+        let plan = plan_send(vec![utxo(150_000, 7, &h)], 100_000).unwrap();
+        let recipient = Recipient::P2pkh([9; 20]);
+        for (target, delta) in [(3_543_404, 40), (3_543_405, 120)] {
+            let branch = BranchId::for_height(&MainNetwork, BlockHeight::from_u32(target));
+            let signed = build_signed(&plan, &key, &h, &recipient, target, branch).unwrap();
+            let tx = Transaction::read(&signed.raw[..], branch).unwrap();
+            assert_eq!(tx.version(), TxVersion::V6);
+            assert_eq!(u32::from(tx.expiry_height()), target + delta);
+            assert_eq!(tx.txid().to_string(), signed.txid);
+        }
+        assert_eq!(
+            u32::from(branch_for(3_543_405, 0x77190ad9).unwrap()),
+            0x77190ad9
+        );
+        assert!(branch_for(3_543_404, 0x77190ad9).is_err());
     }
 
     /// Maya deposit (real memo from a ZEC → ETH quote): vault and change outputs, then

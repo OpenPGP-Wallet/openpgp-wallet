@@ -52,19 +52,34 @@ fn created_unix(data_dir: &Path) -> Option<u64> {
         .map(|c| c.unix)
 }
 
-/// First block to scan on a chain whose tip is `tip` (`block_secs` seconds per
-/// block): shortly before the wallet was created, never before `fixed` (the app's
-/// fixed birthday), never after `tip`.
-pub fn start_height(data_dir: &Path, tip: u64, block_secs: u64, fixed: u64) -> u64 {
-    start_height_at(created_unix(data_dir), now(), tip, block_secs, fixed)
+/// First block to scan on a chain whose tip is `tip`: shortly before the wallet was
+/// created, never before `fixed` (the app's fixed birthday), never after `tip`.
+/// `height_before(secs)` is the height `secs` seconds before the tip, at the chain's
+/// own block spacing (which a network upgrade can change, as Zcash's NU7 did).
+pub fn start_height(
+    data_dir: &Path,
+    tip: u64,
+    height_before: impl Fn(u64) -> u64,
+    fixed: u64,
+) -> u64 {
+    start_height_at(created_unix(data_dir), now(), tip, height_before, fixed)
 }
 
-fn start_height_at(created: Option<u64>, now: u64, tip: u64, block_secs: u64, fixed: u64) -> u64 {
+/// `height_before` for a chain whose blocks are always `block_secs` seconds apart.
+pub fn fixed_spacing(tip: u64, block_secs: u64) -> impl Fn(u64) -> u64 {
+    move |secs| tip.saturating_sub(secs / block_secs.max(1))
+}
+
+fn start_height_at(
+    created: Option<u64>,
+    now: u64,
+    tip: u64,
+    height_before: impl Fn(u64) -> u64,
+    fixed: u64,
+) -> u64 {
     let Some(created) = created else { return fixed };
     let elapsed = now.saturating_sub(created).saturating_add(MARGIN_SECS);
-    tip.saturating_sub(elapsed / block_secs.max(1))
-        .max(fixed)
-        .min(tip.max(fixed))
+    height_before(elapsed).max(fixed).min(tip.max(fixed))
 }
 
 #[cfg(test)]
@@ -75,24 +90,42 @@ mod tests {
     fn start_is_shortly_before_creation_and_never_before_the_fixed_birthday() {
         let (tip, fixed) = (3_900_000u64, 3_776_000u64);
         // Restore (date unknown): fixed birthday.
-        assert_eq!(start_height_at(None, 1_000_000, tip, 120, fixed), fixed);
+        assert_eq!(
+            start_height_at(None, 1_000_000, tip, fixed_spacing(tip, 120), fixed),
+            fixed
+        );
         // Created 10 days ago: 10 + 3 days of Monero blocks back.
         let now = 2_000_000_000;
         assert_eq!(
-            start_height_at(Some(now - 10 * 86_400), now, tip, 120, fixed),
+            start_height_at(
+                Some(now - 10 * 86_400),
+                now,
+                tip,
+                fixed_spacing(tip, 120),
+                fixed
+            ),
             tip - 13 * 720
         );
         // Created a very long time ago: never before the fixed birthday.
-        assert_eq!(start_height_at(Some(0), now, tip, 120, fixed), fixed);
+        assert_eq!(
+            start_height_at(Some(0), now, tip, fixed_spacing(tip, 120), fixed),
+            fixed
+        );
         // Clock moved back since creation: margin only (3 days).
         assert_eq!(
-            start_height_at(Some(now + 86_400), now, tip, 120, fixed),
+            start_height_at(Some(now + 86_400), now, tip, fixed_spacing(tip, 120), fixed),
             tip - 3 * 720
         );
         // Chain still below the fixed birthday (lagging node): never past the last known block... and never before the
         // birthday.
         assert_eq!(
-            start_height_at(Some(now), now, fixed - 5, 120, fixed),
+            start_height_at(
+                Some(now),
+                now,
+                fixed - 5,
+                fixed_spacing(fixed - 5, 120),
+                fixed
+            ),
             fixed
         );
     }
@@ -102,14 +135,20 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("pgp_wallet_birthday_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        assert_eq!(start_height(&dir, 3_900_000, 120, 3_776_000), 3_776_000);
+        assert_eq!(
+            start_height(&dir, 3_900_000, fixed_spacing(3_900_000, 120), 3_776_000),
+            3_776_000
+        );
         record_created(&dir).unwrap();
         assert_eq!(
-            start_height(&dir, 3_900_000, 120, 3_776_000),
+            start_height(&dir, 3_900_000, fixed_spacing(3_900_000, 120), 3_776_000),
             3_900_000 - 3 * 720
         );
         forget(&dir);
-        assert_eq!(start_height(&dir, 3_900_000, 120, 3_776_000), 3_776_000);
+        assert_eq!(
+            start_height(&dir, 3_900_000, fixed_spacing(3_900_000, 120), 3_776_000),
+            3_776_000
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

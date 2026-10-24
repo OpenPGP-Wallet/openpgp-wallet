@@ -10837,8 +10837,9 @@ static ZECS_SYNC_KICK: AtomicBool = AtomicBool::new(false);
 static ZECS_SYNC_FAILED: AtomicBool = AtomicBool::new(false);
 
 /// Background shielded Zcash sync, one at a time: missing accounts created, chain scanned,
-/// then every 30 s (one block every 75 s) while the app is open. The UI is notified after
-/// each pass (`zec-shielded-synced`); a network failure is retried at the next pass.
+/// then every 30 s (one block every 75 s, every 25 s from NU7) while the app is open. The
+/// UI is notified after each pass (`zec-shielded-synced`); a network failure is retried at
+/// the next pass.
 fn start_shielded_sync(app: &tauri::AppHandle) {
     static RUNNING: AtomicBool = AtomicBool::new(false);
     if RUNNING.swap(true, Ordering::SeqCst) {

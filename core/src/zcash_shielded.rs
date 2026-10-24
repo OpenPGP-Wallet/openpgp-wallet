@@ -20,6 +20,7 @@
 use crate::{derivation, history, wallet_birthday, zcash};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
+use rand::{rand_core::UnwrapErr, rngs::SysRng};
 use std::path::Path;
 use std::sync::Mutex;
 use zcash_client_backend::data_api::chain::{error as chain_error, BlockCache, BlockSource};
@@ -34,7 +35,7 @@ use zcash_client_backend::proto::service::{
 };
 use zcash_client_sqlite::{util::SystemClock, wallet::init::init_wallet_db, AccountUuid, WalletDb};
 use zcash_keys::keys::{UnifiedAddressRequest, UnifiedFullViewingKey, UnifiedSpendingKey};
-use zcash_protocol::consensus::{BlockHeight, MainNetwork};
+use zcash_protocol::consensus::{target_time_between, BlockHeight, MainNetwork};
 
 /// Birthday height of every shielded account: just before the first app version
 /// that shows a u1 address (the chain was at 3,505,105 on 2026-10-03).
@@ -56,14 +57,14 @@ const SYNC_PASS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30
 /// Same bound for the few requests that create an account (chain tip, tree state).
 const SETUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
-type Db = WalletDb<rusqlite::Connection, MainNetwork, SystemClock, rand_core::OsRng>;
+type Db = WalletDb<rusqlite::Connection, MainNetwork, SystemClock, UnwrapErr<SysRng>>;
 
 fn open(data_dir: &Path) -> Result<Db> {
     let mut db = WalletDb::for_path(
         data_dir.join(WALLET_FILE),
         MainNetwork,
         SystemClock,
-        rand_core::OsRng,
+        UnwrapErr(SysRng),
     )
     .context("base Zcash protégée illisible")?;
     init_wallet_db(&mut db, None)
@@ -168,9 +169,40 @@ fn runtime() -> Result<tokio::runtime::Runtime> {
         .context("démarrage du client Zcash impossible")
 }
 
+/// Height `secs` seconds of target block time before `tip`: the highest height from
+/// which the official target time to the tip reaches `secs` (75 s per block, 25 s
+/// from NU7 activation, `target_time_between`). A single spacing would start too
+/// late across NU7 (75 s for 25-s blocks: a third of the blocks back), and the notes
+/// received in between would stay invisible until a full rescan.
+fn height_before(tip: u32, secs: u64) -> u32 {
+    let reaches = |height: u32| {
+        target_time_between(
+            &MainNetwork,
+            BlockHeight::from_u32(height),
+            BlockHeight::from_u32(tip),
+        )
+        .as_secs()
+            >= secs
+    };
+    if !reaches(0) {
+        return 0;
+    }
+    // `reaches(low)` always holds; `reaches` holds below a height and fails above it.
+    let (mut low, mut high) = (0, tip);
+    while low < high {
+        let mid = low + (high - low).div_ceil(2);
+        if reaches(mid) {
+            low = mid;
+        } else {
+            high = mid - 1;
+        }
+    }
+    low
+}
+
 /// Account birthday: the state of the commitment trees just before the first block
 /// to scan, shortly before the wallet was created when that is known (see
-/// `wallet_birthday`, ~75 s per block), otherwise `BIRTHDAY_HEIGHT`.
+/// `wallet_birthday` and `height_before`), otherwise `BIRTHDAY_HEIGHT`.
 async fn birthday(
     data_dir: &Path,
     client: &mut CompactTxStreamerClient<tonic::transport::Channel>,
@@ -181,7 +213,13 @@ async fn birthday(
         .map_err(|e| anyhow!("hauteur de la chaîne Zcash illisible : {}", e.message()))?
         .into_inner()
         .height;
-    let start = wallet_birthday::start_height(data_dir, tip, 75, u64::from(BIRTHDAY_HEIGHT));
+    let tip32 = u32::try_from(tip).context("hauteur de la chaîne Zcash hors limites")?;
+    let start = wallet_birthday::start_height(
+        data_dir,
+        tip,
+        |secs| u64::from(height_before(tip32, secs)),
+        u64::from(BIRTHDAY_HEIGHT),
+    );
     let state = client
         .get_tree_state(BlockId {
             height: start - 1,
@@ -645,7 +683,7 @@ impl sapling_crypto::prover::SpendProver for NoSapling {
         None
     }
 
-    fn create_proof<R: rand_core::RngCore>(
+    fn create_proof<R: rand::rand_core::Rng>(
         &self,
         _: sapling_crypto::circuit::Spend,
         _: &mut R,
@@ -676,7 +714,7 @@ impl sapling_crypto::prover::OutputProver for NoSapling {
         }
     }
 
-    fn create_proof<R: rand_core::RngCore>(
+    fn create_proof<R: rand::rand_core::Rng>(
         &self,
         _: sapling_crypto::circuit::Output,
         _: &mut R,
@@ -720,8 +758,8 @@ fn spending_keys(seed: &[u8], profile: u32) -> Result<SpendingKeys> {
     let mut standalone = std::collections::HashMap::new();
     if profile != 0 {
         let (key, hash160) = derivation::derive_zec_key(seed, profile)?;
-        let secret =
-            secp256k1::SecretKey::from_slice(&key.to_bytes()).context("clé Zcash invalide")?;
+        let secret = secp256k1::SecretKey::from_secret_bytes(key.to_bytes().into())
+            .context("clé Zcash invalide")?;
         standalone.insert(
             zcash_transparent::address::TransparentAddress::PublicKeyHash(hash160),
             vec![secret],
@@ -748,6 +786,8 @@ fn create_and_broadcast<N: std::fmt::Display>(
     >(
         db,
         &MainNetwork,
+        &SystemClock,
+        &mut UnwrapErr(SysRng),
         &NoSapling,
         &NoSapling,
         keys,
@@ -868,7 +908,9 @@ pub fn check_recipient(address: &str) -> Result<zcash_address::ZcashAddress> {
         parsed.can_receive_as(PoolType::ORCHARD) || parsed.can_receive_as(PoolType::TRANSPARENT),
         "adresse Zcash Sapling seule (zs…) pas prise en charge — demandez une adresse u1… ou t1…"
     );
-    let mainnet = ["u1", "t1", "t3", "tex1"]
+    // zu1 / tu1: unified addresses of ZIP 316 Revision 2 (shielded only / with a
+    // transparent receiver), which other wallets may hand out; the app's own stay u1.
+    let mainnet = ["u1", "zu1", "tu1", "t1", "t3", "tex1"]
         .iter()
         .any(|prefix| address.trim().starts_with(prefix));
     anyhow::ensure!(mainnet, "adresse Zcash d'un autre réseau (test) — refusée");
@@ -1260,13 +1302,36 @@ mod tests {
             u32::from(fixed.height()),
             u32::from(fresh.height())
         );
-        // 3 days of margin at ~75 s per block, never before the fixed birthday.
-        let expected = (tip - 3 * 86_400 / 75).max(u64::from(BIRTHDAY_HEIGHT));
+        // 3 days of margin (75-s blocks, 25-s from NU7), never before the fixed birthday.
+        let expected =
+            u64::from(height_before(tip as u32, 3 * 86_400)).max(u64::from(BIRTHDAY_HEIGHT));
         assert!(
             u64::from(u32::from(fresh.height())).abs_diff(expected) <= 2,
             "attendu ~{expected}"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Height a given time before the tip: 75 s per block before NU7 (mainnet
+    /// 3,543,405), 25 s from it, and both across it.
+    #[test]
+    fn height_before_follows_the_nu7_spacing() {
+        const NU7: u32 = 3_543_405;
+        // Before NU7: 100 blocks of 75 s.
+        assert_eq!(height_before(NU7 - 1, 100 * 75), NU7 - 101);
+        // After NU7: 1,000 blocks of 25 s.
+        assert_eq!(height_before(NU7 + 2_000, 1_000 * 25), NU7 + 1_000);
+        // Across: the 1,001 blocks NU7..=NU7 + 1,000 at 25 s, then 10 blocks at 75 s.
+        assert_eq!(height_before(NU7 + 1_000, 1_001 * 25 + 10 * 75), NU7 - 11);
+        // A wallet created 10 days after NU7, plus the 3-day margin: 13 days of 25-s
+        // blocks (3,456 a day), not the third of them that 75 s would give.
+        let tip = NU7 + 20 * 3_456;
+        assert_eq!(height_before(tip, 13 * 86_400), tip - 13 * 3_456);
+        // Part of a block counts as a whole one (earlier, never later); no time: the
+        // tip; more time than the chain holds: 0.
+        assert_eq!(height_before(NU7, 10), NU7 - 1);
+        assert_eq!(height_before(NU7, 0), NU7);
+        assert_eq!(height_before(100, u64::MAX), 0);
     }
 
     #[test]
@@ -1303,6 +1368,33 @@ mod tests {
         let u1 = address(&viewing_key(&SEED, 0).unwrap()).unwrap();
         assert!(check_recipient(&u1).is_ok());
         assert!(check_recipient("t1VtnnhTYhmADh7L2uKU3Sev7GscBHT6HfE").is_ok());
+        // ZIP 316 Revision 2 (an expiry height makes the library encode at that
+        // revision): zu1 shielded only, tu1 with a transparent receiver.
+        let (ua, _) = viewing_key(&SEED, 0)
+            .unwrap()
+            .default_address(UnifiedAddressRequest::ORCHARD)
+            .unwrap();
+        let expiry = Some(BlockHeight::from_u32(4_000_000));
+        let r2 = |transparent| {
+            zcash_keys::address::UnifiedAddress::from_receivers(
+                ua.orchard().copied(),
+                None,
+                transparent,
+                expiry,
+                None,
+            )
+            .unwrap()
+            .encode(&MainNetwork)
+        };
+        let zu1 = r2(None);
+        let tu1 = r2(Some(
+            zcash_transparent::address::TransparentAddress::PublicKeyHash([7; 20]),
+        ));
+        assert!(
+            zu1.starts_with("zu1") && tu1.starts_with("tu1"),
+            "{zu1} {tu1}"
+        );
+        assert!(check_recipient(&zu1).is_ok() && check_recipient(&tu1).is_ok());
         // A well-formed Sapling-only address (official encoding, valid checksum).
         let sapling = zcash_address::ZcashAddress::from_sapling(
             zcash_protocol::consensus::NetworkType::Main,
