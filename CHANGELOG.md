@@ -7,6 +7,10 @@ links and SHA-256 hashes of each build are on the [releases page](https://github
 
 ## [2.15.0] - 2026-10-24
 
+### Security
+- rustls-webpki 0.103.16 (RUSTSEC-2026-0382: distrusted intermediates could be accepted) and webpki-roots 1.0.11
+  (RUSTSEC-2026-0381: distrusted emSign intermediates).
+
 ### Changed
 - Zcash: ready for NU7, which activates on mainnet at block 3,543,405 (around November 5), with the Zcash
   libraries released on 2026-10-21. From NU7, earlier versions refuse every ZEC send and ask for an update; no
