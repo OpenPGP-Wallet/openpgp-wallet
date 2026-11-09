@@ -64,4 +64,5 @@ pub mod walletconnect;
 pub mod windows_hello;
 pub mod xrp;
 pub mod zcash;
+pub mod zcash_frost;
 pub mod zcash_shielded;
