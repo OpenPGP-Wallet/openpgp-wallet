@@ -18,7 +18,8 @@ use crate::{
     bittensor, btc_rpc, cardano, cow, dapp_requests, derivation, doge, entropy, eth_rpc, eth_tx,
     evm_sign, history, jupiter_rpc, lifi, memory_guard, monero, moonpay_trade, native_deposit,
     near, pgp_engine, secure_storage, shamir, sol_rpc, sol_spl, sol_stake, sol_tx, stacks, stellar,
-    thorchain_rpc, tokens, tron, wallet_birthday, wallet_flow, xrp, zcash, zcash_frost, zcash_shielded,
+    thorchain_rpc, tokens, tron, wallet_birthday, wallet_flow, xrp, zcash, zcash_frost,
+    zcash_shielded,
 };
 use anyhow::{Context, Result};
 use openpgp::armor;
@@ -3972,7 +3973,11 @@ pub fn frost_send_request(
     device_password: &str,
     prepared: &zcash_frost::PreparedSend,
     commitments: &[u8],
-) -> Result<(zcash_frost::PendingSignature, Vec<u8>, frost_zec::check::Report)> {
+) -> Result<(
+    zcash_frost::PendingSignature,
+    Vec<u8>,
+    frost_zec::check::Report,
+)> {
     let seed = unlock_seed(data_dir, device_password)?;
     let _seed_lock = crate::memory_guard::lock(&seed);
     zcash_frost::send_request(data_dir, prepared, commitments, &seed)

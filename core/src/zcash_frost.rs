@@ -34,9 +34,13 @@ use zcash_client_backend::data_api::wallet::{
     ConfirmationsPolicy,
 };
 use zcash_client_backend::data_api::{AccountBirthday, AccountPurpose, WalletRead, WalletWrite};
-use zcash_client_backend::fees::{zip317::SingleOutputChangeStrategy, DustOutputPolicy, StandardFeeRule};
+use zcash_client_backend::fees::{
+    zip317::SingleOutputChangeStrategy, DustOutputPolicy, StandardFeeRule,
+};
 use zcash_client_backend::proposal::Proposal;
-use zcash_client_backend::proto::service::{compact_tx_streamer_client::CompactTxStreamerClient, BlockId, ChainSpec};
+use zcash_client_backend::proto::service::{
+    compact_tx_streamer_client::CompactTxStreamerClient, BlockId, ChainSpec,
+};
 use zcash_client_backend::wallet::OvkPolicy;
 use zcash_client_backend::zip321::{Payment, TransactionRequest};
 use zcash_client_sqlite::{util::SystemClock, wallet::init::init_wallet_db, AccountUuid, WalletDb};
@@ -103,9 +107,15 @@ impl Net {
 type Db = WalletDb<rusqlite::Connection, Network, SystemClock, UnwrapErr<SysRng>>;
 
 fn open(data_dir: &Path, net: Net) -> Result<Db> {
-    let mut db = WalletDb::for_path(net.file(data_dir, "sqlite"), net.params(), SystemClock, UnwrapErr(SysRng))
-        .context("base du compte FROST illisible")?;
-    init_wallet_db(&mut db, None).map_err(|e| anyhow!("base du compte FROST : migration impossible ({e})"))?;
+    let mut db = WalletDb::for_path(
+        net.file(data_dir, "sqlite"),
+        net.params(),
+        SystemClock,
+        UnwrapErr(SysRng),
+    )
+    .context("base du compte FROST illisible")?;
+    init_wallet_db(&mut db, None)
+        .map_err(|e| anyhow!("base du compte FROST : migration impossible ({e})"))?;
     Ok(db)
 }
 
@@ -130,7 +140,9 @@ pub struct FrostAccount {
 /// The FROST account on `net`, if one was set up.
 pub fn account(data_dir: &Path, net: Net) -> Result<Option<FrostAccount>> {
     match std::fs::read(net.file(data_dir, "json")) {
-        Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes).context("compte FROST illisible")?)),
+        Ok(bytes) => Ok(Some(
+            serde_json::from_slice(&bytes).context("compte FROST illisible")?,
+        )),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(e).context("compte FROST illisible"),
     }
@@ -167,7 +179,13 @@ fn save_seat(data_dir: &Path, net: Net, seed: &[u8], seat: &Seat) -> Result<()> 
     let mut aad = SEAT_AAD.to_vec();
     aad.extend_from_slice(net.tag().as_bytes());
     let ciphertext = XChaCha20Poly1305::new(&(*key).into())
-        .encrypt(&XNonce::from(nonce), Payload { msg: &plaintext, aad: &aad })
+        .encrypt(
+            &XNonce::from(nonce),
+            Payload {
+                msg: &plaintext,
+                aad: &aad,
+            },
+        )
         .map_err(|_| anyhow!("chiffrement du siège FROST impossible"))?;
     let mut file = vec![SEAT_VERSION];
     file.extend_from_slice(&nonce);
@@ -191,17 +209,30 @@ fn load_seat(data_dir: &Path, net: Net, seed: &[u8]) -> Result<(Pairing, Member)
     aad.extend_from_slice(net.tag().as_bytes());
     let plaintext = Zeroizing::new(
         XChaCha20Poly1305::new(&(*key).into())
-            .decrypt(&XNonce::from(nonce), Payload { msg: &file[25..], aad: &aad })
-            .map_err(|_| anyhow!("siège FROST : déchiffrement impossible (autre portefeuille ?)"))?,
+            .decrypt(
+                &XNonce::from(nonce),
+                Payload {
+                    msg: &file[25..],
+                    aad: &aad,
+                },
+            )
+            .map_err(|_| {
+                anyhow!("siège FROST : déchiffrement impossible (autre portefeuille ?)")
+            })?,
     );
     let seat: Seat = serde_json::from_slice(&plaintext).context("siège FROST illisible")?;
     let pairing = Pairing::from_bytes(&hex::decode(&seat.pairing)?).map_err(|e| anyhow!("{e}"))?;
-    let public_key_package = frost_zec::redpallas::keys::PublicKeyPackage::deserialize(&hex::decode(&seat.public_key_package)?)
-        .map_err(|e| anyhow!("siège FROST : {e}"))?;
-    let key_package = frost_zec::redpallas::keys::KeyPackage::deserialize(&hex::decode(&seat.key_package)?)
-        .map_err(|e| anyhow!("siège FROST : {e}"))?;
+    let public_key_package = frost_zec::redpallas::keys::PublicKeyPackage::deserialize(
+        &hex::decode(&seat.public_key_package)?,
+    )
+    .map_err(|e| anyhow!("siège FROST : {e}"))?;
+    let key_package =
+        frost_zec::redpallas::keys::KeyPackage::deserialize(&hex::decode(&seat.key_package)?)
+            .map_err(|e| anyhow!("siège FROST : {e}"))?;
     let sk: Zeroizing<[u8; 32]> = Zeroizing::new(
-        hex::decode(&seat.sk)?.try_into().map_err(|_| anyhow!("siège FROST : sk invalide"))?,
+        hex::decode(&seat.sk)?
+            .try_into()
+            .map_err(|_| anyhow!("siège FROST : sk invalide"))?,
     );
     let ak = signing::group_ak(&public_key_package).map_err(|e| anyhow!("{e}"))?;
     let fvk = keys::derive(&sk, &ak).map_err(|e| anyhow!("{e}"))?.fvk;
@@ -258,7 +289,9 @@ pub fn chain_birthday(net: Net) -> Result<AccountBirthday> {
     Err(last)
 }
 
-async fn birthday_now(client: &mut CompactTxStreamerClient<tonic::transport::Channel>) -> Result<AccountBirthday> {
+async fn birthday_now(
+    client: &mut CompactTxStreamerClient<tonic::transport::Channel>,
+) -> Result<AccountBirthday> {
     let tip = client
         .get_latest_block(ChainSpec {})
         .await
@@ -266,11 +299,15 @@ async fn birthday_now(client: &mut CompactTxStreamerClient<tonic::transport::Cha
         .into_inner()
         .height;
     let state = client
-        .get_tree_state(BlockId { height: tip.saturating_sub(1), hash: vec![] })
+        .get_tree_state(BlockId {
+            height: tip.saturating_sub(1),
+            hash: vec![],
+        })
         .await
         .map_err(|e| anyhow!("état de la chaîne Zcash illisible : {}", e.message()))?
         .into_inner();
-    AccountBirthday::from_treestate(state, None).map_err(|_| anyhow!("état de la chaîne Zcash invalide"))
+    AccountBirthday::from_treestate(state, None)
+        .map_err(|_| anyhow!("état de la chaîne Zcash invalide"))
 }
 
 /// Syncs the FROST account on `net` up to the tip (nothing if there is none).
@@ -322,11 +359,19 @@ pub fn balance(data_dir: &Path, net: Net) -> Result<ShieldedBalance> {
 /// show next.
 pub enum SetupStep {
     /// pair-init is on screen; scan the co-signer's pair-response.
-    AwaitingResponse { net: Net, initiator: Initiator },
+    AwaitingResponse { net: Net, initiator: Box<Initiator> },
     /// pair-confirm and round 1 are on screen; the user compares the code.
-    AwaitingCode { net: Net, pending: PendingPairing, setup: CoordinatorSetup },
+    AwaitingCode {
+        net: Net,
+        pending: PendingPairing,
+        setup: CoordinatorSetup,
+    },
     /// The code matched; scan the co-signer's keys.
-    AwaitingKeys { net: Net, pairing: Pairing, setup: CoordinatorSetup },
+    AwaitingKeys {
+        net: Net,
+        pairing: Pairing,
+        setup: CoordinatorSetup,
+    },
 }
 
 impl SetupStep {
@@ -346,7 +391,10 @@ pub fn setup_start(data_dir: &Path, net: Net) -> Result<(SetupStep, Vec<u8>)> {
     }
     let (initiator, init) = Initiator::start(&mut UnwrapErr(SysRng));
     Ok((
-        SetupStep::AwaitingResponse { net, initiator },
+        SetupStep::AwaitingResponse {
+            net,
+            initiator: Box::new(initiator),
+        },
         wire::encode_payload(&[Message::pair_init(&init)]),
     ))
 }
@@ -360,21 +408,45 @@ pub fn setup_response(step: SetupStep, payload: &[u8]) -> Result<(SetupStep, Vec
     let messages = wire::decode_payload(payload)?;
     let response = messages.first().context("QR vide")?.to_pair_response()?;
     let (pending, confirm) = initiator.finish(&response)?;
-    let (setup, round1) = CoordinatorSetup::start(net.network_type()).map_err(|e| anyhow!("{e}"))?;
+    let (setup, round1) =
+        CoordinatorSetup::start(net.network_type()).map_err(|e| anyhow!("{e}"))?;
     let shown = wire::encode_payload(&[
         Message::pair_confirm(&confirm),
-        Message::seal_public(&pending, kind::DKG_ROUND1, b"dkg", &round1.to_bytes(), &mut UnwrapErr(SysRng))?,
+        Message::seal_public(
+            &pending,
+            kind::DKG_ROUND1,
+            b"dkg",
+            &round1.to_bytes(),
+            &mut UnwrapErr(SysRng),
+        )?,
     ]);
     let code = pending.code();
-    Ok((SetupStep::AwaitingCode { net, pending, setup }, shown, code))
+    Ok((
+        SetupStep::AwaitingCode {
+            net,
+            pending,
+            setup,
+        },
+        shown,
+        code,
+    ))
 }
 
 /// The user confirmed that both devices show the same code.
 pub fn setup_code_confirmed(step: SetupStep) -> Result<SetupStep> {
-    let SetupStep::AwaitingCode { net, pending, setup } = step else {
+    let SetupStep::AwaitingCode {
+        net,
+        pending,
+        setup,
+    } = step
+    else {
         bail!("étape de configuration inattendue");
     };
-    Ok(SetupStep::AwaitingKeys { net, pairing: pending.confirm(), setup })
+    Ok(SetupStep::AwaitingKeys {
+        net,
+        pairing: pending.confirm(),
+        setup,
+    })
 }
 
 /// Takes the co-signer's keys; returns the last payload to show, and the
@@ -387,7 +459,12 @@ pub fn setup_finish(
     seed: &[u8],
     birthday: &AccountBirthday,
 ) -> Result<(Vec<u8>, FrostAccount)> {
-    let SetupStep::AwaitingKeys { net, pairing, setup } = step else {
+    let SetupStep::AwaitingKeys {
+        net,
+        pairing,
+        setup,
+    } = step
+    else {
         bail!("étape de configuration inattendue");
     };
     let messages = wire::decode_payload(payload)?;
@@ -424,16 +501,34 @@ fn store(
     let ufvk = UnifiedFullViewingKey::decode(&net.params(), &group.ufvk)
         .map_err(|e| anyhow!("clé de visualisation du groupe illisible : {e}"))?;
     let mut db = open(data_dir, net)?;
-    db.import_account_ufvk("FROST 2-of-3", &ufvk, birthday, AccountPurpose::ViewOnly, None)
-        .map_err(|e| anyhow!("compte FROST : import impossible ({e})"))?;
+    db.import_account_ufvk(
+        "FROST 2-of-3",
+        &ufvk,
+        birthday,
+        AccountPurpose::ViewOnly,
+        None,
+    )
+    .map_err(|e| anyhow!("compte FROST : import impossible ({e})"))?;
     save_seat(
         data_dir,
         net,
         seed,
         &Seat {
             pairing: hex::encode(pairing.to_bytes()),
-            key_package: hex::encode(group.member.key_package.serialize().map_err(|e| anyhow!("{e}"))?),
-            public_key_package: hex::encode(group.member.public_key_package.serialize().map_err(|e| anyhow!("{e}"))?),
+            key_package: hex::encode(
+                group
+                    .member
+                    .key_package
+                    .serialize()
+                    .map_err(|e| anyhow!("{e}"))?,
+            ),
+            public_key_package: hex::encode(
+                group
+                    .member
+                    .public_key_package
+                    .serialize()
+                    .map_err(|e| anyhow!("{e}"))?,
+            ),
             sk: hex::encode(group.sk),
         },
     )?;
@@ -443,8 +538,11 @@ fn store(
         address: group.address.clone(),
         birthday: u32::from(birthday.height()),
     };
-    std::fs::write(net.file(data_dir, "json"), serde_json::to_vec_pretty(&account)?)
-        .context("compte FROST : écriture impossible")?;
+    std::fs::write(
+        net.file(data_dir, "json"),
+        serde_json::to_vec_pretty(&account)?,
+    )
+    .context("compte FROST : écriture impossible")?;
     Ok(account)
 }
 
@@ -461,7 +559,12 @@ pub struct PreparedSend {
 }
 
 fn change_strategy() -> SingleOutputChangeStrategy<StandardFeeRule, Db> {
-    SingleOutputChangeStrategy::new(StandardFeeRule::Zip317, None, ShieldedPool::Ironwood, DustOutputPolicy::default())
+    SingleOutputChangeStrategy::new(
+        StandardFeeRule::Zip317,
+        None,
+        ShieldedPool::Ironwood,
+        DustOutputPolicy::default(),
+    )
 }
 
 fn proposal_fee<N>(proposal: &Proposal<StandardFeeRule, N>) -> u64 {
@@ -473,7 +576,13 @@ fn proposal_fee<N>(proposal: &Proposal<StandardFeeRule, N>) -> u64 {
 }
 
 /// Proposes a payment from the FROST account and turns it into a PCZT.
-pub fn send_prepare(data_dir: &Path, net: Net, to: &str, amount: u64, memo: Option<&str>) -> Result<PreparedSend> {
+pub fn send_prepare(
+    data_dir: &Path,
+    net: Net,
+    to: &str,
+    amount: u64,
+    memo: Option<&str>,
+) -> Result<PreparedSend> {
     let recipient = zcash_address::ZcashAddress::try_from_encoded(to.trim())
         .map_err(|_| anyhow!("adresse Zcash invalide"))?;
     if zcash_keys::address::Address::decode(&net.params(), to.trim()).is_none() {
@@ -481,12 +590,16 @@ pub fn send_prepare(data_dir: &Path, net: Net, to: &str, amount: u64, memo: Opti
     }
     let memo = memo
         .filter(|text| !text.is_empty())
-        .map(|text| MemoBytes::from_bytes(text.as_bytes()).map_err(|_| anyhow!("mémo trop long (512 octets au plus)")))
+        .map(|text| {
+            MemoBytes::from_bytes(text.as_bytes())
+                .map_err(|_| anyhow!("mémo trop long (512 octets au plus)"))
+        })
         .transpose()?;
     let value = Zatoshis::from_u64(amount).map_err(|_| anyhow!("montant hors limites"))?;
     let payment = Payment::new(recipient, Some(value), memo, None, None, vec![])
         .map_err(|e| anyhow!("paiement invalide ({e:?})"))?;
-    let request = TransactionRequest::new(vec![payment]).map_err(|e| anyhow!("demande de paiement invalide ({e:?})"))?;
+    let request = TransactionRequest::new(vec![payment])
+        .map_err(|e| anyhow!("demande de paiement invalide ({e:?})"))?;
     let mut db = open(data_dir, net)?;
     let account = the_account(&db)?;
     let proposal = propose_transfer::<_, _, _, _, std::convert::Infallible>(
@@ -512,7 +625,14 @@ pub fn send_prepare(data_dir: &Path, net: Net, to: &str, amount: u64, memo: Opti
     let fee = proposal_fee(&proposal);
     // Payments use the group's outgoing viewing key, which the co-signer needs
     // to read them back (frost-zec docs/spec.md § 6).
-    let pczt = create_pczt_from_proposal::<_, _, std::convert::Infallible, _, std::convert::Infallible, _>(
+    let pczt = create_pczt_from_proposal::<
+        _,
+        _,
+        std::convert::Infallible,
+        _,
+        std::convert::Infallible,
+        _,
+    >(
         &mut db,
         &net.params(),
         &SystemClock,
@@ -527,7 +647,11 @@ pub fn send_prepare(data_dir: &Path, net: Net, to: &str, amount: u64, memo: Opti
     Ok(PreparedSend {
         net,
         pczt: pczt.serialize().map_err(|e| anyhow!("PCZT : {e:?}"))?,
-        summary: SpendSummary { amount, fee, recipient: to.trim().to_string() },
+        summary: SpendSummary {
+            amount,
+            fee,
+            recipient: to.trim().to_string(),
+        },
     })
 }
 
@@ -548,13 +672,16 @@ pub fn send_request(
 ) -> Result<(PendingSignature, Vec<u8>, check::Report)> {
     let (pairing, member) = load_seat(data_dir, prepared.net, seed)?;
     let messages = wire::decode_payload(commitments)?;
-    let (bound, bytes) = messages.first().context("QR vide")?.open(&pairing, kind::SIGN_COMMITMENTS)?;
+    let (bound, bytes) = messages
+        .first()
+        .context("QR vide")?
+        .open(&pairing, kind::SIGN_COMMITMENTS)?;
     let opening = Commitments::from_bytes(&bytes).map_err(|e| anyhow!("{e}"))?;
     if bound != opening.session {
         bail!("QR incohérent : deux sessions différentes");
     }
-    let (session, request, report) =
-        CoordinatorSession::request(&member, &prepared.pczt, &opening).map_err(|e| anyhow!("{e}"))?;
+    let (session, request, report) = CoordinatorSession::request(&member, &prepared.pczt, &opening)
+        .map_err(|e| anyhow!("{e}"))?;
     let shown = wire::encode_payload(&[Message::seal(
         &pairing,
         kind::SIGN_REQUEST,
@@ -562,14 +689,25 @@ pub fn send_request(
         &request.to_bytes().map_err(|e| anyhow!("{e}"))?,
         &mut UnwrapErr(SysRng),
     )?]);
-    Ok((PendingSignature { net: prepared.net, pairing, session }, shown, report))
+    Ok((
+        PendingSignature {
+            net: prepared.net,
+            pairing,
+            session,
+        },
+        shown,
+        report,
+    ))
 }
 
 /// Takes the co-signer's reply: aggregates, proves, stores and broadcasts.
 /// Returns the transaction id.
 pub fn send_finish(data_dir: &Path, pending: PendingSignature, reply: &[u8]) -> Result<String> {
     let messages = wire::decode_payload(reply)?;
-    let (_, bytes) = messages.first().context("QR vide")?.open(&pending.pairing, kind::SIGN_REPLY)?;
+    let (_, bytes) = messages
+        .first()
+        .context("QR vide")?
+        .open(&pending.pairing, kind::SIGN_REPLY)?;
     let reply = Reply::from_bytes(&bytes).map_err(|e| anyhow!("{e}"))?;
     let signed = pending.session.finish(&reply).map_err(|e| anyhow!("{e}"))?;
     let proved = prove(signed)?;
@@ -587,7 +725,8 @@ pub fn send_finish(data_dir: &Path, pending: PendingSignature, reply: &[u8]) -> 
         .get_transaction(txid)?
         .context("transaction FROST introuvable après sa construction")?;
     let mut raw = Vec::new();
-    tx.write(&mut raw).context("sérialisation de la transaction impossible")?;
+    tx.write(&mut raw)
+        .context("sérialisation de la transaction impossible")?;
     broadcast(pending.net, raw)?;
     Ok(txid.to_string())
 }
@@ -595,15 +734,17 @@ pub fn send_finish(data_dir: &Path, pending: PendingSignature, reply: &[u8]) -> 
 /// Orchard-protocol proofs for the Ironwood bundle, with the circuit of the
 /// PCZT's consensus branch.
 fn prove(pczt: pczt::Pczt) -> Result<pczt::Pczt> {
-    let branch = zcash_protocol::consensus::BranchId::try_from(*pczt.global().consensus_branch_id())
-        .map_err(|_| anyhow!("PCZT : branche de consensus inconnue"))?;
+    let branch =
+        zcash_protocol::consensus::BranchId::try_from(*pczt.global().consensus_branch_id())
+            .map_err(|_| anyhow!("PCZT : branche de consensus inconnue"))?;
     let mut prover = pczt::roles::prover::Prover::new(pczt);
     if prover.requires_ironwood_proof() || prover.requires_orchard_proof() {
-        let version = zcash_primitives::transaction::components::orchard::bundle_version_for_branch(
-            branch,
-            orchard::ValuePool::Orchard,
-        )
-        .context("PCZT : branche sans Orchard")?;
+        let version =
+            zcash_primitives::transaction::components::orchard::bundle_version_for_branch(
+                branch,
+                orchard::ValuePool::Orchard,
+            )
+            .context("PCZT : branche sans Orchard")?;
         let key = orchard::circuit::ProvingKey::build(version.circuit_version());
         if prover.requires_orchard_proof() {
             prover = prover
@@ -623,12 +764,18 @@ fn broadcast(net: Net, raw: Vec<u8>) -> Result<()> {
     runtime()?.block_on(async {
         let mut client = client(net).await?;
         let response = client
-            .send_transaction(zcash_client_backend::proto::service::RawTransaction { data: raw, height: 0 })
+            .send_transaction(zcash_client_backend::proto::service::RawTransaction {
+                data: raw,
+                height: 0,
+            })
             .await
             .map_err(|e| anyhow!("diffusion impossible : {}", e.message()))?
             .into_inner();
         if response.error_code != 0 {
-            bail!("transaction refusée par le serveur : {}", response.error_message);
+            bail!(
+                "transaction refusée par le serveur : {}",
+                response.error_message
+            );
         }
         Ok(())
     })

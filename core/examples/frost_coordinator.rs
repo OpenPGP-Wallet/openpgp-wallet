@@ -20,7 +20,10 @@ use frost_zec::wire;
 use openpgp_wallet_core::zcash_frost::{self, Net};
 
 fn option<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
-    args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).map(String::as_str)
+    args.iter()
+        .position(|a| a == name)
+        .and_then(|i| args.get(i + 1))
+        .map(String::as_str)
 }
 
 fn required<'a>(args: &'a [String], name: &str) -> Result<&'a str> {

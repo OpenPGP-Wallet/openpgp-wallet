@@ -16,7 +16,9 @@ use openpgp_wallet_core::zcash_frost::{self, Net, PendingSignature, PreparedSend
 use serde::Serialize;
 use tauri::{Emitter, Manager};
 
-use crate::{data_dir, lang, run_blocking, send_grace_period, shielded_dialog, GraceRecap, TranslatedResult};
+use crate::{
+    data_dir, lang, run_blocking, send_grace_period, shielded_dialog, GraceRecap, TranslatedResult,
+};
 
 /// Bytes per QR fragment: dense enough to keep a PCZT to a few dozen codes,
 /// sparse enough for a laptop camera to read on a screen.
@@ -31,7 +33,9 @@ pub struct FrostState {
 }
 
 fn locked<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn net(network: &str) -> Result<Net, String> {
@@ -143,13 +147,22 @@ pub async fn frost_scan(app: tauri::AppHandle) -> Result<String, String> {
     run_blocking(move || {
         let found = frost_zec::camera::scan(&cancel, |progress| {
             let event = match progress {
-                frost_zec::camera::Progress::Camera(name) => ScanProgress { camera: Some(name), done: 0, total: 0 },
-                frost_zec::camera::Progress::Fragments(done, total) => ScanProgress { camera: None, done, total },
+                frost_zec::camera::Progress::Camera(name) => ScanProgress {
+                    camera: Some(name),
+                    done: 0,
+                    total: 0,
+                },
+                frost_zec::camera::Progress::Fragments(done, total) => ScanProgress {
+                    camera: None,
+                    done,
+                    total,
+                },
             };
             let _ = app.emit("frost-scan-progress", event);
         })
         .map_err(|e| e.to_string())?;
-        let payload = found.ok_or_else(|| lang("Lecture annulée.", "Scan cancelled.").to_string())?;
+        let payload =
+            found.ok_or_else(|| lang("Lecture annulée.", "Scan cancelled.").to_string())?;
         wire::single_part(&payload).map_err(|e| e.to_string())
     })
     .await
@@ -190,13 +203,19 @@ pub struct CodeDto {
 
 /// Takes the co-signer's pair-response: shows pair-confirm, and the code.
 #[tauri::command]
-pub fn frost_setup_response(ur: String, state: tauri::State<'_, FrostState>) -> Result<CodeDto, String> {
-    let step = locked(&state.setup)
-        .take()
-        .ok_or_else(|| lang("Aucune configuration en cours.", "No setup in progress.").to_string())?;
+pub fn frost_setup_response(
+    ur: String,
+    state: tauri::State<'_, FrostState>,
+) -> Result<CodeDto, String> {
+    let step = locked(&state.setup).take().ok_or_else(|| {
+        lang("Aucune configuration en cours.", "No setup in progress.").to_string()
+    })?;
     let (step, shown, code) = zcash_frost::setup_response(step, &payload(&ur)?).t_err()?;
     *locked(&state.setup) = Some(step);
-    Ok(CodeDto { qr: qr(&shown)?, code })
+    Ok(CodeDto {
+        qr: qr(&shown)?,
+        code,
+    })
 }
 
 /// Asks the user, in a native window the web page cannot draw or click, whether
@@ -242,7 +261,11 @@ pub struct SetupDoneDto {
 /// Takes the co-signer's keys: finishes the group and stores member 1 (the
 /// device password encrypts its seat). Shows the last QR code.
 #[tauri::command]
-pub async fn frost_setup_finish(ur: String, password: String, app: tauri::AppHandle) -> Result<SetupDoneDto, String> {
+pub async fn frost_setup_finish(
+    ur: String,
+    password: String,
+    app: tauri::AppHandle,
+) -> Result<SetupDoneDto, String> {
     let password = zeroize::Zeroizing::new(password);
     run_blocking(move || {
         let state = app.state::<FrostState>();
@@ -252,15 +275,20 @@ pub async fn frost_setup_finish(ur: String, password: String, app: tauri::AppHan
         let net = locked(&state.setup)
             .as_ref()
             .map(SetupStep::net)
-            .ok_or_else(|| lang("Aucune configuration en cours.", "No setup in progress.").to_string())?;
+            .ok_or_else(|| {
+                lang("Aucune configuration en cours.", "No setup in progress.").to_string()
+            })?;
         let birthday = zcash_frost::chain_birthday(net).t_err()?;
         api::check_device_password(&data_dir(&app)?, &password).t_err()?;
-        let step = locked(&state.setup)
-            .take()
-            .ok_or_else(|| lang("Aucune configuration en cours.", "No setup in progress.").to_string())?;
+        let step = locked(&state.setup).take().ok_or_else(|| {
+            lang("Aucune configuration en cours.", "No setup in progress.").to_string()
+        })?;
         let (shown, account) =
             api::frost_setup_finish(&data_dir(&app)?, &password, step, &keys, &birthday).t_err()?;
-        Ok(SetupDoneDto { qr: qr(&shown)?, address: account.address })
+        Ok(SetupDoneDto {
+            qr: qr(&shown)?,
+            address: account.address,
+        })
     })
     .await
 }
@@ -332,7 +360,11 @@ pub struct RequestDto {
 
 /// Takes the co-signer's commitments; shows the signing request.
 #[tauri::command]
-pub async fn frost_send_request(ur: String, password: String, app: tauri::AppHandle) -> Result<RequestDto, String> {
+pub async fn frost_send_request(
+    ur: String,
+    password: String,
+    app: tauri::AppHandle,
+) -> Result<RequestDto, String> {
     let password = zeroize::Zeroizing::new(password);
     run_blocking(move || {
         let state = app.state::<FrostState>();
@@ -342,9 +374,13 @@ pub async fn frost_send_request(ur: String, password: String, app: tauri::AppHan
             .take()
             .ok_or_else(|| lang("Aucun envoi en cours.", "No transfer in progress.").to_string())?;
         let (pending, shown, report) =
-            api::frost_send_request(&data_dir(&app)?, &password, &prepared, &commitments).t_err()?;
+            api::frost_send_request(&data_dir(&app)?, &password, &prepared, &commitments)
+                .t_err()?;
         *locked(&state.pending) = Some(pending);
-        Ok(RequestDto { qr: qr(&shown)?, lines: report.lines })
+        Ok(RequestDto {
+            qr: qr(&shown)?,
+            lines: report.lines,
+        })
     })
     .await
 }
@@ -356,9 +392,9 @@ pub async fn frost_send_finish(ur: String, app: tauri::AppHandle) -> Result<Stri
     run_blocking(move || {
         let state = app.state::<FrostState>();
         let reply = payload(&ur)?;
-        let pending = locked(&state.pending)
-            .take()
-            .ok_or_else(|| lang("Aucune signature en cours.", "No signature in progress.").to_string())?;
+        let pending = locked(&state.pending).take().ok_or_else(|| {
+            lang("Aucune signature en cours.", "No signature in progress.").to_string()
+        })?;
         zcash_frost::send_finish(&data_dir(&app)?, pending, &reply).t_err()
     })
     .await

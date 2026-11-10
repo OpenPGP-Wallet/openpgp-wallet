@@ -958,7 +958,10 @@ fn translate_dynamic_error(msg: &str) -> Option<String> {
         ("synchronisation du compte FROST : ", "FROST account sync: "),
         ("envoi FROST impossible (", "FROST transfer impossible ("),
         ("serveur Zcash ", "Zcash server "),
-        ("transaction refusée par le serveur : ", "transaction refused by the server: "),
+        (
+            "transaction refusée par le serveur : ",
+            "transaction refused by the server: ",
+        ),
         ("diffusion impossible : ", "broadcast impossible: "),
     ] {
         if let Some(rest) = msg.strip_prefix(fr) {
