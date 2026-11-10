@@ -10,4 +10,14 @@
 # measure the timing or microarchitectural behavior of these operations on the
 # device. Listed in the v2.15.0 release notes. Remove this entry once k256,
 # Sequoia and the Monero crates are on crypto-bigint 0.7.6 or later.
-ignore = ["RUSTSEC-2026-0387"]
+#
+# RUSTSEC-2026-0459, libsqlite3-sys < 0.39 (bundled SQLite < 3.54.0): opening a
+# database together with a crafted -wal file of another page size can return
+# uninitialized page-cache memory. Ignored because no fix reaches this tree yet:
+# the fix is rusqlite 0.41, and zcash_client_sqlite 0.23 (the latest) requires
+# rusqlite 0.37; only one SQLite can be linked. The app opens only its own
+# databases (zcash_shielded.sqlite, zcash_frost_*.sqlite) in its data folder,
+# so an attacker would need to write that folder, i.e. already control the
+# user's account. Remove this entry once zcash_client_sqlite moves to rusqlite
+# 0.41 or later.
+ignore = ["RUSTSEC-2026-0387", "RUSTSEC-2026-0459"]
