@@ -5118,6 +5118,12 @@ textarea:focus {
 .frost-address-box button {
   margin-top: 0;
 }
+/* The QR codes of the FROST window, centred like the code and the links. */
+#frost-qr.qr-container {
+  display: block;
+  width: max-content;
+  margin: 12px auto;
+}
 .frost-code {
   font-family: "IBM Plex Mono", monospace;
   font-size: 34px;
