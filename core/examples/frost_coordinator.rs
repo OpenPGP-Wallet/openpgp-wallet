@@ -83,7 +83,8 @@ fn main() -> Result<()> {
             println!("  pairing code: {code} (compare it with the co-signer)");
             let step = zcash_frost::setup_code_confirmed(step)?;
             let keys = read(&via, "4-cosigner-keys.ur")?;
-            let (payload, account) = zcash_frost::setup_finish(&dir, step, &keys, &seed(&dir)?)?;
+            let birthday = zcash_frost::chain_birthday(net)?;
+            let (payload, account) = zcash_frost::setup_finish(&dir, step, &keys, &seed(&dir)?, &birthday)?;
             write(&via, "5-coordinator-keys.ur", &payload)?;
             println!("  address:  {}\n  birthday: {}", account.address, account.birthday);
         }

@@ -44,6 +44,19 @@ fn set_ui_language(lang: String) {
 /// Messages with no interpolated value: an exact match on the French text as
 /// written in `core/` and in this file.
 const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
+    // FROST account (core/src/zcash_frost.rs, src-tauri/src/frost.rs)
+    (openpgp_wallet_core::zcash_frost::NOT_SYNCED, "FROST account not synced yet: sync it first"),
+    ("un compte FROST existe déjà sur ce réseau", "a FROST account already exists on this network"),
+    ("compte FROST pas encore prêt", "FROST account not ready yet"),
+    ("cette adresse est sur un autre réseau Zcash", "this address is on another Zcash network"),
+    ("adresse Zcash invalide", "invalid Zcash address"),
+    ("mémo trop long (512 octets au plus)", "memo too long (512 bytes at most)"),
+    ("siège FROST introuvable", "FROST seat not found"),
+    ("siège FROST : déchiffrement impossible (autre portefeuille ?)", "FROST seat: cannot decrypt it (another wallet?)"),
+    ("QR inattendu : les clés du co-signataire étaient attendues", "unexpected QR code: the co-signer's keys were expected"),
+    ("QR incohérent : deux sessions différentes", "inconsistent QR code: two different sessions"),
+    ("étape de configuration inattendue", "unexpected setup step"),
+    ("QR vide", "empty QR code"),
     // Solana (core/src/sol_rpc.rs)
     (
         openpgp_wallet_core::sol_rpc::BLOCKHASH_EXPIRED_ERROR,
@@ -941,6 +954,17 @@ fn translate_custom_network_error(msg: &str) -> Option<String> {
 /// Messages with an interpolated value (index, RPC method, amount...): an exact match
 /// cannot work, so they are rebuilt by splitting around the fixed part of the message.
 fn translate_dynamic_error(msg: &str) -> Option<String> {
+    for (fr, en) in [
+        ("synchronisation du compte FROST : ", "FROST account sync: "),
+        ("envoi FROST impossible (", "FROST transfer impossible ("),
+        ("serveur Zcash ", "Zcash server "),
+        ("transaction refusée par le serveur : ", "transaction refused by the server: "),
+        ("diffusion impossible : ", "broadcast impossible: "),
+    ] {
+        if let Some(rest) = msg.strip_prefix(fr) {
+            return Some(format!("{en}{rest}"));
+        }
+    }
     if let Some(amount) = msg
         .strip_prefix("ADA insuffisants : il faut au moins ")
         .and_then(|r| r.strip_suffix(" ADA (dépôt et frais du réseau compris)"))

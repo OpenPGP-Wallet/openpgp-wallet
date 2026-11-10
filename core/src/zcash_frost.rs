@@ -240,8 +240,24 @@ async fn client(net: Net) -> Result<CompactTxStreamerClient<tonic::transport::Ch
     Err(last)
 }
 
-/// The tree state just before the current tip: the group's address did not
-/// exist before, so nothing earlier can belong to it.
+/// The account birthday for a new FROST account on `net`: the tree state just
+/// before the current tip (the group's address did not exist before, so nothing
+/// earlier can belong to it). Fetched before the last setup step consumes
+/// anything, with a few retries, so that a network error can simply be retried.
+pub fn chain_birthday(net: Net) -> Result<AccountBirthday> {
+    let mut last = anyhow!("serveur Zcash injoignable");
+    for attempt in 0..3 {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        }
+        match runtime()?.block_on(async { birthday_now(&mut client(net).await?).await }) {
+            Ok(birthday) => return Ok(birthday),
+            Err(e) => last = e,
+        }
+    }
+    Err(last)
+}
+
 async fn birthday_now(client: &mut CompactTxStreamerClient<tonic::transport::Channel>) -> Result<AccountBirthday> {
     let tip = client
         .get_latest_block(ChainSpec {})
@@ -313,6 +329,16 @@ pub enum SetupStep {
     AwaitingKeys { net: Net, pairing: Pairing, setup: CoordinatorSetup },
 }
 
+impl SetupStep {
+    pub fn net(&self) -> Net {
+        match self {
+            SetupStep::AwaitingResponse { net, .. }
+            | SetupStep::AwaitingCode { net, .. }
+            | SetupStep::AwaitingKeys { net, .. } => *net,
+        }
+    }
+}
+
 /// Starts the setup on `net`: the pair-init payload to show.
 pub fn setup_start(data_dir: &Path, net: Net) -> Result<(SetupStep, Vec<u8>)> {
     if account(data_dir, net)?.is_some() {
@@ -352,12 +378,14 @@ pub fn setup_code_confirmed(step: SetupStep) -> Result<SetupStep> {
 }
 
 /// Takes the co-signer's keys; returns the last payload to show, and the
-/// account once stored. `seed` encrypts the seat.
+/// account once stored. `seed` encrypts the seat; `birthday` comes from
+/// [`chain_birthday`].
 pub fn setup_finish(
     data_dir: &Path,
     step: SetupStep,
     payload: &[u8],
     seed: &[u8],
+    birthday: &AccountBirthday,
 ) -> Result<(Vec<u8>, FrostAccount)> {
     let SetupStep::AwaitingKeys { net, pairing, setup } = step else {
         bail!("étape de configuration inattendue");
@@ -381,16 +409,22 @@ pub fn setup_finish(
         &round2.to_bytes(),
         &mut UnwrapErr(SysRng),
     )?]);
-    let account = store(data_dir, net, &pairing, &group, seed)?;
+    let account = store(data_dir, net, &pairing, &group, seed, birthday)?;
     Ok((shown, account))
 }
 
-fn store(data_dir: &Path, net: Net, pairing: &Pairing, group: &Group, seed: &[u8]) -> Result<FrostAccount> {
+fn store(
+    data_dir: &Path,
+    net: Net,
+    pairing: &Pairing,
+    group: &Group,
+    seed: &[u8],
+    birthday: &AccountBirthday,
+) -> Result<FrostAccount> {
     let ufvk = UnifiedFullViewingKey::decode(&net.params(), &group.ufvk)
         .map_err(|e| anyhow!("clé de visualisation du groupe illisible : {e}"))?;
-    let birthday = runtime()?.block_on(async { birthday_now(&mut client(net).await?).await })?;
     let mut db = open(data_dir, net)?;
-    db.import_account_ufvk("FROST 2-of-3", &ufvk, &birthday, AccountPurpose::ViewOnly, None)
+    db.import_account_ufvk("FROST 2-of-3", &ufvk, birthday, AccountPurpose::ViewOnly, None)
         .map_err(|e| anyhow!("compte FROST : import impossible ({e})"))?;
     save_seat(
         data_dir,
@@ -415,6 +449,9 @@ fn store(data_dir: &Path, net: Net, pairing: &Pairing, group: &Group, seed: &[u8
 }
 
 // --- Sending ------------------------------------------------------------------------
+
+/// Shown when a send is tried before the account was ever synced.
+pub const NOT_SYNCED: &str = "compte FROST pas encore synchronisé : synchronisez-le d'abord";
 
 /// A send waiting for the co-signer: the PCZT and what the user confirmed.
 pub struct PreparedSend {
@@ -464,7 +501,14 @@ pub fn send_prepare(data_dir: &Path, net: Net, to: &str, amount: u64, memo: Opti
         None,
         None,
     )
-    .map_err(|e| anyhow!("envoi FROST impossible ({e})"))?;
+    .map_err(|e| {
+        let detail = e.to_string();
+        if detail.contains("Must scan blocks first") {
+            anyhow!("{NOT_SYNCED}")
+        } else {
+            anyhow!("envoi FROST impossible ({detail})")
+        }
+    })?;
     let fee = proposal_fee(&proposal);
     // Payments use the group's outgoing viewing key, which the co-signer needs
     // to read them back (frost-zec docs/spec.md § 6).

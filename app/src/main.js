@@ -1224,6 +1224,7 @@ const I18N = {
     "frost.balance": "Disponible : {spendable} ZEC · en attente : {pending} ZEC",
     "frost.synced": "Synchronisé jusqu'au bloc {scanned} (chaîne : {tip})",
     "frost.notSynced": "Pas encore synchronisé",
+    "frost.syncFailed": "Synchronisation impossible pour l'instant : {error}",
     "frost.receive": "Recevoir",
     "frost.receiveTitle": "Adresse du compte FROST",
     "frost.send": "Envoyer",
@@ -1234,6 +1235,7 @@ const I18N = {
     "frost.scanProgress": "{done} / {total} parties lues",
     "frost.pasteSummary": "Pas de caméra ? Coller le texte du co-signataire",
     "frost.pasteUse": "Utiliser ce texte",
+    "frost.copyText": "Copier en texte (co-signataire sans caméra)",
     "frost.qrCaption": "QR code animé ({n} / {total}) : laissez-le défiler devant le co-signataire.",
     "frost.codeSame": "Les codes sont identiques",
     "frost.codeDifferent": "Ils sont différents",
@@ -2006,6 +2008,7 @@ const I18N = {
     "frost.balance": "Available: {spendable} ZEC · pending: {pending} ZEC",
     "frost.synced": "Synced up to block {scanned} (chain: {tip})",
     "frost.notSynced": "Not synced yet",
+    "frost.syncFailed": "Cannot sync right now: {error}",
     "frost.receive": "Receive",
     "frost.receiveTitle": "FROST account address",
     "frost.send": "Send",
@@ -2016,6 +2019,7 @@ const I18N = {
     "frost.scanProgress": "{done} / {total} parts read",
     "frost.pasteSummary": "No camera? Paste the co-signer's text",
     "frost.pasteUse": "Use this text",
+    "frost.copyText": "Copy as text (co-signer without a camera)",
     "frost.qrCaption": "Animated QR code ({n} / {total}): let it run in front of the co-signer.",
     "frost.codeSame": "The codes match",
     "frost.codeDifferent": "They differ",
@@ -10178,6 +10182,8 @@ const FROST_FRAME_MS = 250;
 let frostQrTimer = null;
 let frostQrToken = 0;
 let frostFlow = null;
+// The last sync error of each network, shown under its account.
+const frostSyncErrors = {};
 
 function frostEl(id) {
   return document.getElementById(id);
@@ -10237,6 +10243,11 @@ function frostAccountRow(account) {
     account.scanned_height != null && account.chain_height != null
       ? t("frost.synced", { scanned: account.scanned_height, tip: account.chain_height })
       : t("frost.notSynced");
+  const syncError = frostSyncErrors[account.network];
+  if (syncError) {
+    sync.className = "error";
+    sync.textContent = t("frost.syncFailed", { error: syncError });
+  }
   const address = document.createElement("code");
   address.className = "frost-address";
   address.textContent = account.address;
@@ -10254,7 +10265,12 @@ function frostAccountRow(account) {
 async function syncFrostAccounts() {
   const accounts = await loadFrostAccounts();
   for (const account of accounts) {
-    await invoke("frost_sync", { network: account.network }).catch((e) => console.error(e));
+    try {
+      await invoke("frost_sync", { network: account.network });
+      delete frostSyncErrors[account.network];
+    } catch (e) {
+      frostSyncErrors[account.network] = String(e);
+    }
   }
   if (accounts.length) await loadFrostAccounts();
 }
@@ -10322,8 +10338,12 @@ function frostNext(label, action) {
 }
 
 // An animated QR code: the UR parts in a loop, each drawn once by the backend.
-function startFrostQr(parts) {
+// The same payload as one text is kept for "Copy as text".
+function startFrostQr(qr) {
   stopFrostQr();
+  const parts = qr.parts;
+  frostEl("frost-qr").dataset.text = qr.text;
+  frostEl("frost-copy-text").classList.remove("hidden");
   const token = ++frostQrToken;
   const cache = new Map();
   let index = 0;
@@ -10347,6 +10367,7 @@ function startFrostQr(parts) {
 }
 
 function stopFrostQr() {
+  frostEl("frost-copy-text").classList.add("hidden");
   frostQrToken += 1;
   if (frostQrTimer) clearTimeout(frostQrTimer);
   frostQrTimer = null;
@@ -10372,17 +10393,17 @@ async function openFrostSetup(network) {
   frostOpen(t(network === "main" ? "frost.setupTitleMain" : "frost.setupTitleTest"));
   frostFlow = { kind: "setup", network };
   try {
-    const parts = await invoke("frost_setup_start", { network });
+    const shown = await invoke("frost_setup_start", { network });
     frostShow(["frost-qr", "frost-qr-caption", "frost-scan-box"]);
     frostStep(t("frost.setupStep1"));
-    startFrostQr(parts);
+    startFrostQr(shown);
     frostFlow.onScanned = async (ur) => {
       const answer = await invoke("frost_setup_response", { ur });
       frostFlow.onScanned = null;
       frostShow(["frost-qr", "frost-qr-caption", "frost-code-box"]);
       frostStep(t("frost.setupStep2"));
       frostEl("frost-code").textContent = answer.code;
-      startFrostQr(answer.parts);
+      startFrostQr(answer.qr);
     };
   } catch (e) {
     frostFail(e);
@@ -10409,7 +10430,7 @@ async function openFrostSend(network) {
       frostShow(["frost-qr", "frost-qr-caption", "frost-report", "frost-scan-box"]);
       frostEl("frost-report").textContent = request.lines.join("\n");
       frostStep(t("frost.sendStep3"));
-      startFrostQr(request.parts);
+      startFrostQr(request.qr);
       frostFlow.onScanned = async (reply) => {
         frostFlow.onScanned = null;
         stopFrostQr();
@@ -10429,6 +10450,7 @@ async function openFrostSend(network) {
 
 async function openFrostReceive(account) {
   frostOpen(t("frost.receiveTitle"));
+  frostEl("frost-qr").dataset.text = "";
   frostFlow = null;
   frostStep(account.address);
   frostShow(["frost-qr"]);
@@ -10452,6 +10474,7 @@ frostEl("frost-scan").addEventListener("click", async () => {
   }
 });
 frostEl("frost-paste-use").addEventListener("click", () => frostReceived(frostEl("frost-paste").value.trim()));
+frostEl("frost-copy-text").addEventListener("click", () => copyText(frostEl("frost-qr").dataset.text || ""));
 frostEl("frost-code-same").addEventListener("click", async () => {
   try {
     await invoke("frost_setup_code_confirmed");
@@ -10464,8 +10487,11 @@ frostEl("frost-code-same").addEventListener("click", async () => {
       frostEl("frost-password").value = "";
       frostShow(["frost-qr", "frost-qr-caption", "frost-next"]);
       frostStep(t("frost.setupStep4", { address: done.address }));
-      startFrostQr(done.parts);
-      frostNext(t("frost.done"), frostClose);
+      startFrostQr(done.qr);
+      frostNext(t("frost.done"), async () => {
+        await frostClose();
+        await syncFrostAccounts();
+      });
     };
   } catch (e) {
     frostFail(e);

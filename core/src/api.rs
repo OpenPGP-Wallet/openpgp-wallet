@@ -3958,10 +3958,11 @@ pub fn frost_setup_finish(
     device_password: &str,
     step: zcash_frost::SetupStep,
     cosigner_keys: &[u8],
+    birthday: &zcash_client_backend::data_api::AccountBirthday,
 ) -> Result<(Vec<u8>, zcash_frost::FrostAccount)> {
     let seed = unlock_seed(data_dir, device_password)?;
     let _seed_lock = crate::memory_guard::lock(&seed);
-    zcash_frost::setup_finish(data_dir, step, cosigner_keys, &seed)
+    zcash_frost::setup_finish(data_dir, step, cosigner_keys, &seed, birthday)
 }
 
 /// Answers the co-signer's commitments for a confirmed send: the seed (device
