@@ -50,7 +50,7 @@ use zcash_protocol::consensus::{Network, NetworkType};
 use zcash_protocol::memo::MemoBytes;
 use zcash_protocol::value::Zatoshis;
 use zcash_protocol::ShieldedPool;
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::zcash_shielded::{ShieldedBalance, SpendSummary};
 
@@ -148,13 +148,21 @@ pub fn account(data_dir: &Path, net: Net) -> Result<Option<FrostAccount>> {
     }
 }
 
-/// Member 1's secrets. Encrypted on disk.
+/// Member 1's secrets. Encrypted on disk, wiped from memory when dropped.
 #[derive(Serialize, Deserialize)]
 struct Seat {
     pairing: String,
     key_package: String,
     public_key_package: String,
     sk: String,
+}
+
+impl Drop for Seat {
+    fn drop(&mut self) {
+        self.pairing.zeroize();
+        self.key_package.zeroize();
+        self.sk.zeroize();
+    }
 }
 
 const SEAT_VERSION: u8 = 1;
@@ -221,16 +229,20 @@ fn load_seat(data_dir: &Path, net: Net, seed: &[u8]) -> Result<(Pairing, Member)
             })?,
     );
     let seat: Seat = serde_json::from_slice(&plaintext).context("siège FROST illisible")?;
-    let pairing = Pairing::from_bytes(&hex::decode(&seat.pairing)?).map_err(|e| anyhow!("{e}"))?;
+    let pairing = Pairing::from_bytes(&Zeroizing::new(hex::decode(&seat.pairing)?))
+        .map_err(|e| anyhow!("{e}"))?;
     let public_key_package = frost_zec::redpallas::keys::PublicKeyPackage::deserialize(
         &hex::decode(&seat.public_key_package)?,
     )
     .map_err(|e| anyhow!("siège FROST : {e}"))?;
-    let key_package =
-        frost_zec::redpallas::keys::KeyPackage::deserialize(&hex::decode(&seat.key_package)?)
-            .map_err(|e| anyhow!("siège FROST : {e}"))?;
+    let key_package = frost_zec::redpallas::keys::KeyPackage::deserialize(&Zeroizing::new(
+        hex::decode(&seat.key_package)?,
+    ))
+    .map_err(|e| anyhow!("siège FROST : {e}"))?;
+    let sk_bytes = Zeroizing::new(hex::decode(&seat.sk)?);
     let sk: Zeroizing<[u8; 32]> = Zeroizing::new(
-        hex::decode(&seat.sk)?
+        sk_bytes
+            .as_slice()
             .try_into()
             .map_err(|_| anyhow!("siège FROST : sk invalide"))?,
     );
@@ -515,13 +527,13 @@ fn store(
         seed,
         &Seat {
             pairing: hex::encode(pairing.to_bytes()),
-            key_package: hex::encode(
+            key_package: hex::encode(Zeroizing::new(
                 group
                     .member
                     .key_package
                     .serialize()
                     .map_err(|e| anyhow!("{e}"))?,
-            ),
+            )),
             public_key_package: hex::encode(
                 group
                     .member
