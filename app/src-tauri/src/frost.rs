@@ -199,14 +199,38 @@ pub fn frost_setup_response(ur: String, state: tauri::State<'_, FrostState>) -> 
     Ok(CodeDto { qr: qr(&shown)?, code })
 }
 
-/// The user confirmed that both devices show the same code.
+/// Asks the user, in a native window the web page cannot draw or click, whether
+/// the co-signer shows the same code. The frontend is untrusted: if a
+/// compromised one could confirm the code itself, it could pair the wallet with
+/// an attacker's co-signer, who would then hold members 2 and 3, two of three.
 #[tauri::command]
-pub fn frost_setup_code_confirmed(state: tauri::State<'_, FrostState>) -> Result<(), String> {
-    let step = locked(&state.setup)
-        .take()
-        .ok_or_else(|| lang("Aucune configuration en cours.", "No setup in progress.").to_string())?;
-    *locked(&state.setup) = Some(zcash_frost::setup_code_confirmed(step).t_err()?);
-    Ok(())
+pub async fn frost_setup_code_confirmed(app: tauri::AppHandle) -> Result<(), String> {
+    run_blocking(move || {
+        let state = app.state::<FrostState>();
+        let code = match locked(&state.setup).as_ref() {
+            Some(SetupStep::AwaitingCode { pending, .. }) => pending.code(),
+            _ => return Err(lang("Aucune configuration en cours.", "No setup in progress.").to_string()),
+        };
+        let message = if crate::UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
+            format!("Pairing code: {code}\n\nDoes your co-signer show exactly this code?\n\nIf it shows another code, choose Cancel: another device may be reading or changing the QR codes.")
+        } else {
+            format!("Code de jumelage : {code}\n\nVotre co-signataire affiche-t-il exactement ce code ?\n\nS'il affiche un autre code, choisissez Annuler : un autre appareil lit ou modifie peut-être les QR codes.")
+        };
+        if !shielded_dialog(&app, ("Comparer le code", "Compare the code"), message) {
+            *locked(&state.setup) = None;
+            return Err(lang(
+                "Codes différents : configuration annulée.",
+                "The codes differ: setup cancelled.",
+            )
+            .to_string());
+        }
+        let step = locked(&state.setup)
+            .take()
+            .ok_or_else(|| lang("Aucune configuration en cours.", "No setup in progress.").to_string())?;
+        *locked(&state.setup) = Some(zcash_frost::setup_code_confirmed(step).t_err()?);
+        Ok(())
+    })
+    .await
 }
 
 #[derive(Serialize)]

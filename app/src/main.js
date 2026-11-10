@@ -1237,7 +1237,7 @@ const I18N = {
     "frost.pasteUse": "Utiliser ce texte",
     "frost.copyText": "Copier en texte (co-signataire sans caméra)",
     "frost.qrCaption": "QR code animé ({n} / {total}) : laissez-le défiler devant le co-signataire.",
-    "frost.codeSame": "Les codes sont identiques",
+    "frost.codeSame": "Confirmer les codes…",
     "frost.codeDifferent": "Ils sont différents",
     "frost.codesDiffer": "Codes différents : la configuration est annulée. Recommencez, et vérifiez qu'aucun autre appareil ne lit les QR codes.",
     "frost.passwordNeeded": "Entrez d'abord votre mot de passe.",
@@ -1245,7 +1245,7 @@ const I18N = {
     "frost.setupTitleMain": "Créer un compte FROST (Mainnet)",
     "frost.setupTitleTest": "Créer un compte FROST (réseau de test)",
     "frost.setupStep1": "1/4 · Sur le co-signataire, lancez la création d'un compte et lisez ce QR code. Lisez ensuite sa réponse.",
-    "frost.setupStep2": "2/4 · Laissez le co-signataire lire ce QR code, puis comparez les deux codes à 6 chiffres.",
+    "frost.setupStep2": "2/4 · Laissez le co-signataire lire ce QR code, puis comparez les deux codes à 6 chiffres. Vous confirmerez dans une fenêtre de Windows.",
     "frost.setupStep3": "3/4 · Entrez votre mot de passe, puis lisez le QR code des clés du co-signataire.",
     "frost.setupStep4": "4/4 · Laissez le co-signataire lire ce dernier QR code. Vérifiez qu'il affiche la même adresse : {address}",
     "frost.sendTitleMain": "Envoyer depuis le compte FROST (Mainnet)",
@@ -2021,7 +2021,7 @@ const I18N = {
     "frost.pasteUse": "Use this text",
     "frost.copyText": "Copy as text (co-signer without a camera)",
     "frost.qrCaption": "Animated QR code ({n} / {total}): let it run in front of the co-signer.",
-    "frost.codeSame": "The codes match",
+    "frost.codeSame": "Confirm the codes…",
     "frost.codeDifferent": "They differ",
     "frost.codesDiffer": "The codes differ: setup cancelled. Start again, and make sure no other device is reading the QR codes.",
     "frost.passwordNeeded": "Enter your password first.",
@@ -2029,7 +2029,7 @@ const I18N = {
     "frost.setupTitleMain": "Create a FROST account (Mainnet)",
     "frost.setupTitleTest": "Create a FROST account (testnet)",
     "frost.setupStep1": "1/4 · On the co-signer, start creating an account and read this QR code. Then read its answer.",
-    "frost.setupStep2": "2/4 · Let the co-signer read this QR code, then compare the two 6-digit codes.",
+    "frost.setupStep2": "2/4 · Let the co-signer read this QR code, then compare the two 6-digit codes. You will confirm in a Windows window.",
     "frost.setupStep3": "3/4 · Enter your password, then read the co-signer's keys QR code.",
     "frost.setupStep4": "4/4 · Let the co-signer read this last QR code. Check that it shows the same address: {address}",
     "frost.sendTitleMain": "Send from the FROST account (Mainnet)",
@@ -10494,6 +10494,9 @@ frostEl("frost-code-same").addEventListener("click", async () => {
       });
     };
   } catch (e) {
+    // Cancelled in the native window, or no setup left: nothing more to show.
+    stopFrostQr();
+    frostShow([]);
     frostFail(e);
   }
 });
