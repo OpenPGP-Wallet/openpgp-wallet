@@ -87,11 +87,12 @@ fn payload(text: &str) -> Result<Vec<u8>, String> {
     .to_string())
 }
 
+/// What the card shows. The group's viewing key stays in the backend: the page
+/// does not need it, and it would reveal the account's whole history.
 #[derive(Serialize)]
 pub struct FrostAccountDto {
     network: String,
     address: String,
-    ufvk: String,
     birthday: u32,
     spendable: u64,
     pending: u64,
@@ -111,7 +112,6 @@ pub async fn frost_accounts(app: tauri::AppHandle) -> Result<Vec<FrostAccountDto
                 accounts.push(FrostAccountDto {
                     network: network.to_string(),
                     address: account.address,
-                    ufvk: account.ufvk,
                     birthday: account.birthday,
                     spendable: balance.spendable,
                     pending: balance.pending,
@@ -226,27 +226,24 @@ pub fn frost_setup_response(
 pub async fn frost_setup_code_confirmed(app: tauri::AppHandle) -> Result<(), String> {
     run_blocking(move || {
         let state = app.state::<FrostState>();
-        let code = match locked(&state.setup).as_ref() {
-            Some(SetupStep::AwaitingCode { pending, .. }) => pending.code(),
-            _ => return Err(lang("Aucune configuration en cours.", "No setup in progress.").to_string()),
-        };
-        let message = if crate::UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
-            format!("Pairing code: {code}\n\nDoes your co-signer show exactly this code?\n\nIf it shows another code, choose Cancel: another device may be reading or changing the QR codes.")
-        } else {
-            format!("Code de jumelage : {code}\n\nVotre co-signataire affiche-t-il exactement ce code ?\n\nS'il affiche un autre code, choisissez Annuler : un autre appareil lit ou modifie peut-être les QR codes.")
-        };
-        if !shielded_dialog(&app, ("Comparer le code", "Compare the code"), message) {
-            *locked(&state.setup) = None;
+        // The step leaves the state before the window opens, so the pairing
+        // confirmed is the one whose code the window shows.
+        let confirmed = zcash_frost::confirm_code(&state.setup, |code| {
+            let message = if crate::UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
+                format!("Pairing code: {code}\n\nDoes your co-signer show exactly this code?\n\nIf it shows another code, choose Cancel: another device may be reading or changing the QR codes.")
+            } else {
+                format!("Code de jumelage : {code}\n\nVotre co-signataire affiche-t-il exactement ce code ?\n\nS'il affiche un autre code, choisissez Annuler : un autre appareil lit ou modifie peut-être les QR codes.")
+            };
+            shielded_dialog(&app, ("Comparer le code", "Compare the code"), message)
+        })
+        .t_err()?;
+        if !confirmed {
             return Err(lang(
                 "Codes différents : configuration annulée.",
                 "The codes differ: setup cancelled.",
             )
             .to_string());
         }
-        let step = locked(&state.setup)
-            .take()
-            .ok_or_else(|| lang("Aucune configuration en cours.", "No setup in progress.").to_string())?;
-        *locked(&state.setup) = Some(zcash_frost::setup_code_confirmed(step).t_err()?);
         Ok(())
     })
     .await
@@ -283,6 +280,14 @@ pub async fn frost_setup_finish(
         let step = locked(&state.setup).take().ok_or_else(|| {
             lang("Aucune configuration en cours.", "No setup in progress.").to_string()
         })?;
+        // Another setup may have replaced this one meanwhile.
+        if step.net() != net {
+            return Err(lang(
+                "Étape de configuration inattendue.",
+                "Unexpected setup step.",
+            )
+            .to_string());
+        }
         let (shown, account) =
             api::frost_setup_finish(&data_dir(&app)?, &password, step, &keys, &birthday).t_err()?;
         Ok(SetupDoneDto {
@@ -328,10 +333,18 @@ pub async fn frost_send_prepare(
             Net::Main => "Zcash",
             Net::Test => lang("Zcash (réseau de test)", "Zcash (testnet)"),
         };
+        // Escaped as the co-signer shows it: new lines or direction marks in a
+        // memo cannot draw fake lines in the window.
         let memo_line = memo
             .as_deref()
             .filter(|m| !m.is_empty())
-            .map(|m| format!("\n{} {m}", lang("Mémo :", "Memo:")))
+            .map(|m| {
+                format!(
+                    "\n{} {}",
+                    lang("Mémo :", "Memo:"),
+                    frost_zec::check::printable(m)
+                )
+            })
             .unwrap_or_default();
         let message = if crate::UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
             format!("Send from your FROST 2-of-3 account ({network_name})\n\nTo: {recipient}\nAmount: {amount} ZEC\nNetwork fee: {fee} ZEC{memo_line}\n\nYour co-signer will check and approve it too.\nThis is irreversible once signed.\n\nConfirm this transfer?")
@@ -374,8 +387,15 @@ pub async fn frost_send_request(
             .take()
             .ok_or_else(|| lang("Aucun envoi en cours.", "No transfer in progress.").to_string())?;
         let (pending, shown, report) =
-            api::frost_send_request(&data_dir(&app)?, &password, &prepared, &commitments)
-                .t_err()?;
+            match api::frost_send_request(&data_dir(&app)?, &password, &prepared, &commitments) {
+                Ok(result) => result,
+                Err(e) => {
+                    // The user approved this send: keep it for another scan,
+                    // unless another send was approved meanwhile.
+                    locked(&state.prepared).get_or_insert(prepared);
+                    return Err(e).t_err();
+                }
+            };
         *locked(&state.pending) = Some(pending);
         Ok(RequestDto {
             qr: qr(&shown)?,

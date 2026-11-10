@@ -56,6 +56,7 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("QR inattendu : les clés du co-signataire étaient attendues", "unexpected QR code: the co-signer's keys were expected"),
     ("QR incohérent : deux sessions différentes", "inconsistent QR code: two different sessions"),
     ("étape de configuration inattendue", "unexpected setup step"),
+    ("Aucune configuration en cours.", "No setup in progress."),
     ("QR vide", "empty QR code"),
     // Solana (core/src/sol_rpc.rs)
     (

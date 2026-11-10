@@ -28,6 +28,7 @@ use frost_zec::{check, keys, signing};
 use rand::{rand_core::UnwrapErr, rngs::SysRng};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, PoisonError};
 use zcash_client_backend::data_api::wallet::input_selection::{GreedyInputSelector, SpendPolicy};
 use zcash_client_backend::data_api::wallet::{
     create_pczt_from_proposal, extract_and_store_transaction_from_pczt, propose_transfer,
@@ -461,6 +462,35 @@ pub fn setup_code_confirmed(step: SetupStep) -> Result<SetupStep> {
     })
 }
 
+/// Asks the user to compare the pairing code (`ask` shows it in a native
+/// window and returns the answer), then confirms the step whose code was shown.
+/// The step leaves `slot` before the question: while the window is open, a
+/// compromised frontend could put another pairing, with an attacker's
+/// co-signer, in the slot, and confirming whatever the slot holds afterwards
+/// would pair the wallet with it. Returns false if the user refused.
+pub fn confirm_code(
+    slot: &Mutex<Option<SetupStep>>,
+    ask: impl FnOnce(&str) -> bool,
+) -> Result<bool> {
+    let step = {
+        let mut guard = slot.lock().unwrap_or_else(PoisonError::into_inner);
+        if !matches!(*guard, Some(SetupStep::AwaitingCode { .. })) {
+            bail!("Aucune configuration en cours.");
+        }
+        guard.take().context("Aucune configuration en cours.")?
+    };
+    let code = match &step {
+        SetupStep::AwaitingCode { pending, .. } => pending.code(),
+        _ => bail!("étape de configuration inattendue"),
+    };
+    if !ask(&code) {
+        return Ok(false);
+    }
+    let confirmed = setup_code_confirmed(step)?;
+    *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(confirmed);
+    Ok(true)
+}
+
 /// Takes the co-signer's keys; returns the last payload to show, and the
 /// account once stored. `seed` encrypts the seat; `birthday` comes from
 /// [`chain_birthday`].
@@ -479,6 +509,10 @@ pub fn setup_finish(
     else {
         bail!("étape de configuration inattendue");
     };
+    // Checked again here: another setup may have finished since this one began.
+    if account(data_dir, net)?.is_some() {
+        bail!("un compte FROST existe déjà sur ce réseau");
+    }
     let messages = wire::decode_payload(payload)?;
     if messages.len() != 2 {
         bail!("QR inattendu : les clés du co-signataire étaient attendues");
@@ -512,6 +546,20 @@ fn store(
 ) -> Result<FrostAccount> {
     let ufvk = UnifiedFullViewingKey::decode(&net.params(), &group.ufvk)
         .map_err(|e| anyhow!("clé de visualisation du groupe illisible : {e}"))?;
+    // The account file is written last, so an account already in the database
+    // was left there by a setup that failed before the end: nobody was shown
+    // its address. The database only holds scan data; start from an empty one,
+    // or the account picked later would be that one.
+    if !open(data_dir, net)?.get_account_ids()?.is_empty() {
+        for extension in ["sqlite", "sqlite-wal", "sqlite-shm"] {
+            match std::fs::remove_file(net.file(data_dir, extension)) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                    return Err(e).context("base du compte FROST : nettoyage impossible");
+                }
+                _ => {}
+            }
+        }
+    }
     let mut db = open(data_dir, net)?;
     db.import_account_ufvk(
         "FROST 2-of-3",
@@ -827,6 +875,53 @@ mod tests {
         assert!(load_seat(&dir, Net::Test, &[2u8; 64]).is_err());
         std::fs::rename(Net::Test.file(&dir, "seat"), Net::Main.file(&dir, "seat")).unwrap();
         assert!(load_seat(&dir, Net::Main, &seed).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A setup up to the code comparison, against a co-signer's pair-response.
+    fn awaiting_code(dir: &Path) -> SetupStep {
+        let (step, shown) = setup_start(dir, Net::Test).unwrap();
+        let init = wire::decode_payload(&shown).unwrap()[0]
+            .to_pair_init()
+            .unwrap();
+        let (_, response) =
+            frost_zec::channel::Responder::respond(&init, &mut UnwrapErr(SysRng)).unwrap();
+        let payload = wire::encode_payload(&[Message::pair_response(&response)]);
+        setup_response(step, &payload).unwrap().0
+    }
+
+    fn pairing_id(step: &SetupStep) -> [u8; 16] {
+        match step {
+            SetupStep::AwaitingCode { pending, .. } => pending.id(),
+            SetupStep::AwaitingKeys { pairing, .. } => pairing.id(),
+            SetupStep::AwaitingResponse { .. } => panic!("no pairing yet"),
+        }
+    }
+
+    #[test]
+    fn the_pairing_confirmed_is_the_one_whose_code_was_shown() {
+        let dir = std::env::temp_dir().join(format!("zcash-frost-code-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let shown = awaiting_code(&dir);
+        let shown_id = pairing_id(&shown);
+        let slot = Mutex::new(Some(shown));
+        // While the native window is open, a compromised frontend puts another
+        // pairing in the slot; the user confirms the code they were shown.
+        let confirmed = confirm_code(&slot, |_code| {
+            *slot.lock().unwrap() = Some(awaiting_code(&dir));
+            true
+        })
+        .unwrap();
+        assert!(confirmed);
+        let step = slot.lock().unwrap().take().unwrap();
+        assert!(matches!(step, SetupStep::AwaitingKeys { .. }));
+        assert_eq!(pairing_id(&step), shown_id);
+
+        // Refused: nothing is confirmed. No setup waiting: an error.
+        let slot = Mutex::new(Some(awaiting_code(&dir)));
+        assert!(!confirm_code(&slot, |_| false).unwrap());
+        assert!(slot.lock().unwrap().is_none());
+        assert!(confirm_code(&slot, |_| true).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
