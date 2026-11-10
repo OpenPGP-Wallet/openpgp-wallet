@@ -5096,6 +5096,28 @@ textarea:focus {
 #frost-step {
   overflow-wrap: anywhere;
 }
+/* The account address in the window: one line, shortened, with its copy button. */
+.frost-address-box {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0 12px;
+}
+.frost-address-short {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.frost-address-box button {
+  margin-top: 0;
+}
 .frost-code {
   font-family: "IBM Plex Mono", monospace;
   font-size: 34px;

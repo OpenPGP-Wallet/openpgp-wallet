@@ -1201,7 +1201,7 @@
         <input id="shielded-password" type="password" autocomplete="current-password" />
         <p id="shielded-error" class="error hidden"></p>
         <p id="shielded-success" class="success hidden"></p>
-        <div class="modal-actions">
+        <div class="row-buttons">
           <button id="shielded-confirm" class="primary" data-i18n="send.previewConfirm">Continuer</button>
           <button id="shielded-cancel" class="link" data-i18n="common.cancel">Annuler</button>
         </div>
@@ -1213,6 +1213,11 @@
       <div class="modal">
         <h2 id="frost-modal-title"></h2>
         <p id="frost-step" class="muted"></p>
+        <!-- The account address: shortened, the whole of it in the title and on copy. -->
+        <div id="frost-address-box" class="frost-address-box hidden">
+          <code id="frost-address-short" class="frost-address-short"></code>
+          <button id="frost-address-copy" type="button" class="secondary" data-i18n="wallet.copyAddress">Copier l'adresse</button>
+        </div>
         <div id="frost-send-fields" class="hidden">
           <label for="frost-to" data-i18n="send.toAddress">Adresse destinataire</label>
           <input id="frost-to" type="text" spellcheck="false" autocomplete="off" />
@@ -1226,7 +1231,7 @@
         <button id="frost-copy-text" type="button" class="link hidden" data-i18n="frost.copyText">Copier en texte (co-signataire sans caméra)</button>
         <div id="frost-code-box" class="hidden">
           <p class="frost-code" id="frost-code"></p>
-          <div class="modal-actions">
+          <div class="row-buttons">
             <button id="frost-code-same" class="primary" data-i18n="frost.codeSame">Confirmer les codes…</button>
             <button id="frost-code-different" class="secondary" data-i18n="frost.codeDifferent">Ils sont différents</button>
           </div>
@@ -1247,7 +1252,7 @@
         </div>
         <p id="frost-error" class="error hidden"></p>
         <p id="frost-success" class="success hidden"></p>
-        <div class="modal-actions">
+        <div class="row-buttons">
           <button id="frost-next" class="primary hidden"></button>
           <button id="frost-close" class="link" data-i18n="common.cancel">Annuler</button>
         </div>

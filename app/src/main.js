@@ -1227,6 +1227,7 @@ const I18N = {
     "frost.syncFailed": "Synchronisation impossible pour l'instant : {error}",
     "frost.receive": "Recevoir",
     "frost.receiveTitle": "Adresse du compte FROST",
+    "frost.receiveHint": "Envoyez des ZEC à cette adresse : ils iront au compte FROST 2-of-3.",
     "frost.send": "Envoyer",
     "frost.memo": "Mémo (facultatif)",
     "frost.scan": "Lire le QR code du co-signataire",
@@ -1247,7 +1248,7 @@ const I18N = {
     "frost.setupStep1": "1/4 · Sur le co-signataire, lancez la création d'un compte et lisez ce QR code. Lisez ensuite sa réponse.",
     "frost.setupStep2": "2/4 · Laissez le co-signataire lire ce QR code, puis comparez les deux codes à 6 chiffres. Vous confirmerez dans une fenêtre de Windows.",
     "frost.setupStep3": "3/4 · Entrez votre mot de passe, puis lisez le QR code des clés du co-signataire.",
-    "frost.setupStep4": "4/4 · Laissez le co-signataire lire ce dernier QR code. Vérifiez qu'il affiche la même adresse : {address}",
+    "frost.setupStep4": "4/4 · Laissez le co-signataire lire ce dernier QR code. Vérifiez qu'il affiche la même adresse que celle-ci (début et fin) :",
     "frost.sendTitleMain": "Envoyer depuis le compte FROST (Mainnet)",
     "frost.sendTitleTest": "Envoyer depuis le compte FROST (réseau de test)",
     "frost.sendStep1": "Indiquez le destinataire et le montant. Vous confirmerez dans une fenêtre de Windows.",
@@ -2011,6 +2012,7 @@ const I18N = {
     "frost.syncFailed": "Cannot sync right now: {error}",
     "frost.receive": "Receive",
     "frost.receiveTitle": "FROST account address",
+    "frost.receiveHint": "Send ZEC to this address: it goes to the FROST 2-of-3 account.",
     "frost.send": "Send",
     "frost.memo": "Memo (optional)",
     "frost.scan": "Read the co-signer's QR code",
@@ -2031,7 +2033,7 @@ const I18N = {
     "frost.setupStep1": "1/4 · On the co-signer, start creating an account and read this QR code. Then read its answer.",
     "frost.setupStep2": "2/4 · Let the co-signer read this QR code, then compare the two 6-digit codes. You will confirm in a Windows window.",
     "frost.setupStep3": "3/4 · Enter your password, then read the co-signer's keys QR code.",
-    "frost.setupStep4": "4/4 · Let the co-signer read this last QR code. Check that it shows the same address: {address}",
+    "frost.setupStep4": "4/4 · Let the co-signer read this last QR code. Check that it shows the same address as this one (start and end):",
     "frost.sendTitleMain": "Send from the FROST account (Mainnet)",
     "frost.sendTitleTest": "Send from the FROST account (testnet)",
     "frost.sendStep1": "Enter the recipient and the amount. You will confirm in a Windows window.",
@@ -10250,7 +10252,8 @@ function frostAccountRow(account) {
   }
   const address = document.createElement("code");
   address.className = "frost-address";
-  address.textContent = account.address;
+  address.textContent = frostShortAddress(account.address);
+  address.title = account.address;
   const actions = document.createElement("div");
   actions.className = "row-buttons";
   actions.append(
@@ -10275,9 +10278,25 @@ async function syncFrostAccounts() {
   if (accounts.length) await loadFrostAccounts();
 }
 
+// A unified address is over 100 characters: its start and end are enough to
+// recognize it (F4Jumble makes every character depend on the whole address).
+function frostShortAddress(address) {
+  return address.length > 40 ? `${address.slice(0, 16)}…${address.slice(-12)}` : address;
+}
+
+// The account address in the window: shortened, the whole of it on hover and
+// on copy. Shown by listing "frost-address-box" in frostShow.
+function frostSetAddress(address) {
+  const shown = frostEl("frost-address-short");
+  shown.textContent = frostShortAddress(address);
+  shown.title = address;
+  shown.dataset.address = address;
+}
+
 // Shows only the given optional parts of the window.
 function frostShow(ids) {
   for (const id of [
+    "frost-address-box",
     "frost-send-fields",
     "frost-qr",
     "frost-qr-caption",
@@ -10452,8 +10471,9 @@ async function openFrostReceive(account) {
   frostOpen(t("frost.receiveTitle"));
   frostEl("frost-qr").dataset.text = "";
   frostFlow = null;
-  frostStep(account.address);
-  frostShow(["frost-qr"]);
+  frostStep(t("frost.receiveHint"));
+  frostSetAddress(account.address);
+  frostShow(["frost-address-box", "frost-qr"]);
   frostEl("frost-qr").innerHTML = await invoke("generate_qr_svg", { text: account.address });
 }
 
@@ -10475,6 +10495,9 @@ frostEl("frost-scan").addEventListener("click", async () => {
 });
 frostEl("frost-paste-use").addEventListener("click", () => frostReceived(frostEl("frost-paste").value.trim()));
 frostEl("frost-copy-text").addEventListener("click", () => copyText(frostEl("frost-qr").dataset.text || ""));
+frostEl("frost-address-copy").addEventListener("click", () =>
+  copyText(frostEl("frost-address-short").dataset.address || ""),
+);
 frostEl("frost-code-same").addEventListener("click", async () => {
   try {
     await invoke("frost_setup_code_confirmed");
@@ -10485,8 +10508,9 @@ frostEl("frost-code-same").addEventListener("click", async () => {
       const done = await invoke("frost_setup_finish", { ur, password: frostPassword() });
       frostFlow.onScanned = null;
       frostEl("frost-password").value = "";
-      frostShow(["frost-qr", "frost-qr-caption", "frost-next"]);
-      frostStep(t("frost.setupStep4", { address: done.address }));
+      frostSetAddress(done.address);
+      frostShow(["frost-address-box", "frost-qr", "frost-qr-caption", "frost-next"]);
+      frostStep(t("frost.setupStep4"));
       startFrostQr(done.qr);
       frostNext(t("frost.done"), async () => {
         await frostClose();
