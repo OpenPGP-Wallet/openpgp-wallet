@@ -1234,7 +1234,7 @@ const I18N = {
     "frost.scanStarting": "Ouverture de la caméra…",
     "frost.scanCamera": "Lecture avec {camera}…",
     "frost.scanProgress": "{done} / {total} parties lues",
-    "frost.pasteSummary": "Pas de caméra ? Coller le texte du co-signataire",
+    "frost.pasteSummary": "Pas de caméra ? Collez ici le texte du co-signataire (Ctrl+V)",
     "frost.pasteUse": "Utiliser ce texte",
     "frost.copyText": "Copier en texte (co-signataire sans caméra)",
     "frost.qrCaption": "QR code animé ({n} / {total}) : laissez-le défiler devant le co-signataire.",
@@ -2019,7 +2019,7 @@ const I18N = {
     "frost.scanStarting": "Opening the camera…",
     "frost.scanCamera": "Reading with {camera}…",
     "frost.scanProgress": "{done} / {total} parts read",
-    "frost.pasteSummary": "No camera? Paste the co-signer's text",
+    "frost.pasteSummary": "No camera? Paste the co-signer's text here (Ctrl+V)",
     "frost.pasteUse": "Use this text",
     "frost.copyText": "Copy as text (co-signer without a camera)",
     "frost.qrCaption": "Animated QR code ({n} / {total}): let it run in front of the co-signer.",
@@ -10310,6 +10310,14 @@ function frostShow(ids) {
   }
   frostEl("frost-paste").value = "";
   frostEl("frost-scan-progress").textContent = "";
+  // Waiting for the co-signer: ready for its text, so that Ctrl+V is enough
+  // (the password first, when it is asked and still empty).
+  if (ids.includes("frost-scan-box")) {
+    frostEl("frost-scan-box").querySelector("details").open = true;
+    const asksPassword = ids.includes("frost-password-box") && !frostEl("frost-password").value;
+    const target = frostEl(asksPassword ? "frost-password" : "frost-paste");
+    requestAnimationFrame(() => target.focus({ preventScroll: true }));
+  }
 }
 
 function frostOpen(title) {
@@ -10393,12 +10401,17 @@ function stopFrostQr() {
 }
 
 async function frostReceived(ur) {
-  if (!frostFlow || !frostFlow.onScanned) return;
+  // `busy`: a second paste while the first is handled must not run the step twice.
+  if (!frostFlow || !frostFlow.onScanned || frostFlow.busy) return;
+  const flow = frostFlow;
   hideError(frostEl("frost-error"));
+  flow.busy = true;
   try {
-    await frostFlow.onScanned(ur);
+    await flow.onScanned(ur);
   } catch (e) {
     frostFail(e);
+  } finally {
+    flow.busy = false;
   }
 }
 
@@ -10494,6 +10507,24 @@ frostEl("frost-scan").addEventListener("click", async () => {
   }
 });
 frostEl("frost-paste-use").addEventListener("click", () => frostReceived(frostEl("frost-paste").value.trim()));
+// While the FROST window waits for the co-signer, a pasted co-signer message is
+// used at once, wherever the focus is in the window (the paste box, the password
+// field, the button just clicked): Ctrl+V is enough. Other fields keep their
+// paste, and anything that is not a ur:zcash-frost text (a password from a
+// password manager, say) pastes normally.
+document.addEventListener("paste", (event) => {
+  if (frostEl("frost-modal").classList.contains("hidden")) return;
+  if (frostEl("frost-scan-box").classList.contains("hidden")) return;
+  const target = event.target;
+  const editable =
+    target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target?.isContentEditable;
+  if (editable && target.id !== "frost-paste" && target.id !== "frost-password") return;
+  const text = (event.clipboardData?.getData("text") || "").trim();
+  if (!/^ur:zcash-frost\//i.test(text)) return;
+  event.preventDefault();
+  frostEl("frost-paste").value = text;
+  frostReceived(text);
+});
 frostEl("frost-copy-text").addEventListener("click", () => copyText(frostEl("frost-qr").dataset.text || ""));
 frostEl("frost-address-copy").addEventListener("click", () =>
   copyText(frostEl("frost-address-short").dataset.address || ""),
