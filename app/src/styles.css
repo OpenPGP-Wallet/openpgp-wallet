@@ -5092,6 +5092,10 @@ textarea:focus {
   font-size: 12px;
   margin: 6px 0 10px;
 }
+/* The step text can hold the whole address: wrap it inside the window. */
+#frost-step {
+  overflow-wrap: anywhere;
+}
 .frost-code {
   font-family: "IBM Plex Mono", monospace;
   font-size: 34px;
