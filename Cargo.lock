@@ -2421,6 +2421,7 @@ dependencies = [
 [[package]]
 name = "frost-zec"
 version = "0.1.0"
+source = "git+https://github.com/OpenPGP-Wallet/frost-zec?rev=2b9dc19d7976f0de92275384f91e7ba0d32cce26#2b9dc19d7976f0de92275384f91e7ba0d32cce26"
 dependencies = [
  "bech32 0.11.1",
  "blake2b_simd",

@@ -36,8 +36,9 @@ serde_json = "1"
 # The crypto worker (Shamir, PGP, derivation, RPC): all the sensitive logic stays in
 # this separate crate, never in the web frontend.
 openpgp-wallet-core = { path = "../../core" }
-# The FROST tab draws and reads the co-signer's QR codes (frost-zec, path for now).
-frost-zec = { path = "../../../Projet-Frost-zcash", default-features = false, features = ["camera"] }
+# The FROST tab draws and reads the co-signer's QR codes (frost-zec, same
+# revision as the core).
+frost-zec = { git = "https://github.com/OpenPGP-Wallet/frost-zec", rev = "2b9dc19d7976f0de92275384f91e7ba0d32cce26", default-features = false, features = ["camera"] }
 # Wipes the passwords received from the frontend (String) as soon as they are no
 # longer needed, including on an early return/panic; the same sensitive buffers as
 # core/, which already uses zeroize for the entropy/seed.
