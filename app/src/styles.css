@@ -5080,3 +5080,32 @@ textarea:focus {
 :root[data-wallet-list-view="true"] .coin-status {
   display: none;
 }
+
+/* FROST tab */
+.frost-account h3 {
+  margin: 0 0 6px;
+}
+.frost-address {
+  display: block;
+  word-break: break-all;
+  font-size: 12px;
+  margin: 6px 0 10px;
+}
+.frost-code {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 34px;
+  letter-spacing: 6px;
+  text-align: center;
+  margin: 12px 0;
+}
+.frost-report {
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 12px;
+  max-height: 180px;
+  overflow: auto;
+}
+#frost-paste {
+  width: 100%;
+  margin: 6px 0;
+}

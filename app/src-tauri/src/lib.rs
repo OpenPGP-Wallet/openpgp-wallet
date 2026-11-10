@@ -3,6 +3,8 @@
 //! data (entropy, private key, passphrase) is ever logged here or returned to the
 //! frontend; only public addresses and confirmations/errors are.
 
+mod frost;
+
 use openpgp_wallet_core::{
     address_book, api, cow, dapp_requests, external_wallets, hardware, history, messaging,
     price_history, price_rpc, sent_recipients, wallet_flow,
@@ -11778,6 +11780,7 @@ pub fn run() {
         .manage(BalanceWatchState::default())
         .manage(UsbRestoreState::default())
         .manage(FileRestoreState::default())
+        .manage(frost::FrostState::default())
         .manage(PendingKitState::default())
         .setup(|app| {
             // Dark frame from the start (default theme); the UI then applies the chosen theme
@@ -11820,6 +11823,18 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            frost::frost_accounts,
+            frost::frost_sync,
+            frost::frost_scan,
+            frost::frost_scan_cancel,
+            frost::frost_cancel,
+            frost::frost_setup_start,
+            frost::frost_setup_response,
+            frost::frost_setup_code_confirmed,
+            frost::frost_setup_finish,
+            frost::frost_send_prepare,
+            frost::frost_send_request,
+            frost::frost_send_finish,
             set_ui_language,
             set_window_frame,
             save_backup_file,

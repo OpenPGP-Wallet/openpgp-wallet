@@ -1211,6 +1211,48 @@ const I18N = {
       "<strong>2 des 3 suffisent</strong> à tout récupérer. Le plus simple : chaque part sur sa propre clé USB (rien à noter), rangées à des endroits différents. Sinon, téléchargez les fichiers et notez les mots de passe, séparément.",
     "regenBackup.resultClose": "J'ai sauvegardé mes 3 nouvelles parts",
     "nav.ledger": "Ledger / Trezor",
+    "nav.frost": "FROST",
+    "frost.title": "Compte FROST 2-of-3 (Zcash protégé)",
+    "frost.subtitle": "Vos ZEC protégés sur un compte que deux de trois appareils doivent signer : cet ordinateur, un co-signataire et une sauvegarde. Le co-signataire vérifie chaque transaction lui-même avant de signer.",
+    "frost.prototype": "Prototype non audité : petits montants uniquement.",
+    "frost.createMain": "+ Créer sur Mainnet",
+    "frost.createTest": "+ Créer sur le réseau de test",
+    "frost.refresh": "Synchroniser",
+    "frost.none": "Aucun compte FROST pour l'instant.",
+    "frost.mainnet": "Mainnet",
+    "frost.testnet": "Réseau de test",
+    "frost.balance": "Disponible : {spendable} ZEC · en attente : {pending} ZEC",
+    "frost.synced": "Synchronisé jusqu'au bloc {scanned} (chaîne : {tip})",
+    "frost.notSynced": "Pas encore synchronisé",
+    "frost.receive": "Recevoir",
+    "frost.receiveTitle": "Adresse du compte FROST",
+    "frost.send": "Envoyer",
+    "frost.memo": "Mémo (facultatif)",
+    "frost.scan": "Lire le QR code du co-signataire",
+    "frost.scanStarting": "Ouverture de la caméra…",
+    "frost.scanCamera": "Lecture avec {camera}…",
+    "frost.scanProgress": "{done} / {total} parties lues",
+    "frost.pasteSummary": "Pas de caméra ? Coller le texte du co-signataire",
+    "frost.pasteUse": "Utiliser ce texte",
+    "frost.qrCaption": "QR code animé ({n} / {total}) : laissez-le défiler devant le co-signataire.",
+    "frost.codeSame": "Les codes sont identiques",
+    "frost.codeDifferent": "Ils sont différents",
+    "frost.codesDiffer": "Codes différents : la configuration est annulée. Recommencez, et vérifiez qu'aucun autre appareil ne lit les QR codes.",
+    "frost.passwordNeeded": "Entrez d'abord votre mot de passe.",
+    "frost.done": "Terminé",
+    "frost.setupTitleMain": "Créer un compte FROST (Mainnet)",
+    "frost.setupTitleTest": "Créer un compte FROST (réseau de test)",
+    "frost.setupStep1": "1/4 · Sur le co-signataire, lancez la création d'un compte et lisez ce QR code. Lisez ensuite sa réponse.",
+    "frost.setupStep2": "2/4 · Laissez le co-signataire lire ce QR code, puis comparez les deux codes à 6 chiffres.",
+    "frost.setupStep3": "3/4 · Entrez votre mot de passe, puis lisez le QR code des clés du co-signataire.",
+    "frost.setupStep4": "4/4 · Laissez le co-signataire lire ce dernier QR code. Vérifiez qu'il affiche la même adresse : {address}",
+    "frost.sendTitleMain": "Envoyer depuis le compte FROST (Mainnet)",
+    "frost.sendTitleTest": "Envoyer depuis le compte FROST (réseau de test)",
+    "frost.sendStep1": "Indiquez le destinataire et le montant. Vous confirmerez dans une fenêtre de Windows.",
+    "frost.sendStep2": "{amount} ZEC vers {recipient} (frais {fee} ZEC). Entrez votre mot de passe, puis lisez le QR code de signature du co-signataire.",
+    "frost.sendStep3": "Laissez le co-signataire lire ce QR code : il vous montrera la transaction pour que vous l'approuviez. Lisez ensuite sa réponse.",
+    "frost.sendProving": "Signature reçue : preuve et envoi de la transaction…",
+    "frost.sent": "Transaction envoyée : {txid}",
     "ledger.title": "Portefeuille matériel (Ledger, Trezor)",
     "ledger.subtitle":
       "Les clés d'un portefeuille matériel ne quittent jamais l'appareil : chaque envoi s'affiche sur son écran et doit y être confirmé. Avant chaque opération, branchez-le et déverrouillez-le ; sur un Ledger, ouvrez aussi l'application du réseau (Ethereum, Bitcoin ou Solana) ; sur un Trezor, fermez Trezor Suite.",
@@ -1951,6 +1993,48 @@ const I18N = {
       "<strong>2 out of 3 are enough</strong> to recover everything. Simplest: each share on its own USB drive (nothing to write down), kept in different places. Otherwise, download the files and write down the passwords, separately.",
     "regenBackup.resultClose": "I have saved my 3 new shares",
     "nav.ledger": "Ledger / Trezor",
+    "nav.frost": "FROST",
+    "frost.title": "FROST 2-of-3 account (shielded Zcash)",
+    "frost.subtitle": "Your shielded ZEC on an account that two of three devices must sign: this computer, a co-signer and a backup. The co-signer checks every transaction itself before signing.",
+    "frost.prototype": "Unaudited prototype: small amounts only.",
+    "frost.createMain": "+ Create on Mainnet",
+    "frost.createTest": "+ Create on testnet",
+    "frost.refresh": "Sync",
+    "frost.none": "No FROST account yet.",
+    "frost.mainnet": "Mainnet",
+    "frost.testnet": "Testnet",
+    "frost.balance": "Available: {spendable} ZEC · pending: {pending} ZEC",
+    "frost.synced": "Synced up to block {scanned} (chain: {tip})",
+    "frost.notSynced": "Not synced yet",
+    "frost.receive": "Receive",
+    "frost.receiveTitle": "FROST account address",
+    "frost.send": "Send",
+    "frost.memo": "Memo (optional)",
+    "frost.scan": "Read the co-signer's QR code",
+    "frost.scanStarting": "Opening the camera…",
+    "frost.scanCamera": "Reading with {camera}…",
+    "frost.scanProgress": "{done} / {total} parts read",
+    "frost.pasteSummary": "No camera? Paste the co-signer's text",
+    "frost.pasteUse": "Use this text",
+    "frost.qrCaption": "Animated QR code ({n} / {total}): let it run in front of the co-signer.",
+    "frost.codeSame": "The codes match",
+    "frost.codeDifferent": "They differ",
+    "frost.codesDiffer": "The codes differ: setup cancelled. Start again, and make sure no other device is reading the QR codes.",
+    "frost.passwordNeeded": "Enter your password first.",
+    "frost.done": "Done",
+    "frost.setupTitleMain": "Create a FROST account (Mainnet)",
+    "frost.setupTitleTest": "Create a FROST account (testnet)",
+    "frost.setupStep1": "1/4 · On the co-signer, start creating an account and read this QR code. Then read its answer.",
+    "frost.setupStep2": "2/4 · Let the co-signer read this QR code, then compare the two 6-digit codes.",
+    "frost.setupStep3": "3/4 · Enter your password, then read the co-signer's keys QR code.",
+    "frost.setupStep4": "4/4 · Let the co-signer read this last QR code. Check that it shows the same address: {address}",
+    "frost.sendTitleMain": "Send from the FROST account (Mainnet)",
+    "frost.sendTitleTest": "Send from the FROST account (testnet)",
+    "frost.sendStep1": "Enter the recipient and the amount. You will confirm in a Windows window.",
+    "frost.sendStep2": "{amount} ZEC to {recipient} (fee {fee} ZEC). Enter your password, then read the co-signer's signing QR code.",
+    "frost.sendStep3": "Let the co-signer read this QR code: it will show you the transaction to approve. Then read its answer.",
+    "frost.sendProving": "Signature received: proving and sending the transaction…",
+    "frost.sent": "Transaction sent: {txid}",
     "ledger.title": "Hardware wallet (Ledger, Trezor)",
     "ledger.subtitle":
       "A hardware wallet's keys never leave the device: every transfer is shown on its screen and must be confirmed there. Before each operation, plug it in and unlock it; on a Ledger, also open the network's app (Ethereum, Bitcoin or Solana); on a Trezor, close Trezor Suite.",
@@ -3286,6 +3370,7 @@ document.querySelectorAll(".nav-tab").forEach((tab) => {
     if (target === "addressbook") loadAddressBook();
     if (target === "walletconnect") loadWcSessions();
     if (target === "ledger") loadLedgerAccounts();
+    if (target === "frost") syncFrostAccounts();
     if (target === "settings") {
       loadArchivedProfiles();
       loadBiometricSettings();
@@ -10080,3 +10165,322 @@ externalChartSection.querySelector(".chart-expand").addEventListener("click", ()
     deltaMode: externalChartView.deltaMode,
   })
 );
+
+// --- FROST 2-of-3 account (Zcash, shielded) -------------------------------------
+// This app is member 1, the coordinator; the co-signer (a phone, or the frost-zec
+// test co-signer) holds member 2. Messages to it are animated QR codes; its
+// answers are read with the camera or pasted as ur:zcash-frost/... text. The
+// backend keeps a setup or a send between two scans (src-tauri/src/frost.rs) and
+// asks for the native confirmation and the cancellation delay before anything is
+// signed.
+
+const FROST_FRAME_MS = 250;
+let frostQrTimer = null;
+let frostQrToken = 0;
+let frostFlow = null;
+
+function frostEl(id) {
+  return document.getElementById(id);
+}
+
+function frostZec(zatoshis) {
+  const value = BigInt(zatoshis);
+  return `${value / 100000000n}.${(value % 100000000n).toString().padStart(8, "0")}`;
+}
+
+function frostButton(className, label, onClick) {
+  const button = document.createElement("button");
+  button.className = className;
+  button.textContent = label;
+  button.addEventListener("click", onClick);
+  return button;
+}
+
+async function loadFrostAccounts() {
+  const list = frostEl("frost-accounts");
+  try {
+    const accounts = await invoke("frost_accounts");
+    if (accounts.length) {
+      list.replaceChildren(...accounts.map(frostAccountRow));
+    } else {
+      const empty = document.createElement("p");
+      empty.className = "muted";
+      empty.textContent = t("frost.none");
+      list.replaceChildren(empty);
+    }
+    frostEl("frost-create-main").classList.toggle("hidden", accounts.some((a) => a.network === "main"));
+    frostEl("frost-create-test").classList.toggle("hidden", accounts.some((a) => a.network === "test"));
+    frostEl("frost-refresh").classList.toggle("hidden", !accounts.length);
+    return accounts;
+  } catch (e) {
+    const error = document.createElement("p");
+    error.className = "error";
+    error.textContent = String(e);
+    list.replaceChildren(error);
+    return [];
+  }
+}
+
+function frostAccountRow(account) {
+  const row = document.createElement("div");
+  row.className = "card frost-account";
+  const title = document.createElement("h3");
+  title.textContent = account.network === "main" ? t("frost.mainnet") : t("frost.testnet");
+  const balance = document.createElement("p");
+  balance.textContent = t("frost.balance", {
+    spendable: frostZec(account.spendable),
+    pending: frostZec(account.pending),
+  });
+  const sync = document.createElement("p");
+  sync.className = "muted";
+  sync.textContent =
+    account.scanned_height != null && account.chain_height != null
+      ? t("frost.synced", { scanned: account.scanned_height, tip: account.chain_height })
+      : t("frost.notSynced");
+  const address = document.createElement("code");
+  address.className = "frost-address";
+  address.textContent = account.address;
+  const actions = document.createElement("div");
+  actions.className = "row-buttons";
+  actions.append(
+    frostButton("secondary", t("wallet.copyAddress"), () => copyText(account.address)),
+    frostButton("secondary", t("frost.receive"), () => openFrostReceive(account)),
+    frostButton("primary", t("frost.send"), () => openFrostSend(account.network)),
+  );
+  row.append(title, balance, sync, address, actions);
+  return row;
+}
+
+async function syncFrostAccounts() {
+  const accounts = await loadFrostAccounts();
+  for (const account of accounts) {
+    await invoke("frost_sync", { network: account.network }).catch((e) => console.error(e));
+  }
+  if (accounts.length) await loadFrostAccounts();
+}
+
+// Shows only the given optional parts of the window.
+function frostShow(ids) {
+  for (const id of [
+    "frost-send-fields",
+    "frost-qr",
+    "frost-qr-caption",
+    "frost-code-box",
+    "frost-report",
+    "frost-scan-box",
+    "frost-password-box",
+    "frost-next",
+  ]) {
+    frostEl(id).classList.toggle("hidden", !ids.includes(id));
+  }
+  frostEl("frost-paste").value = "";
+  frostEl("frost-scan-progress").textContent = "";
+}
+
+function frostOpen(title) {
+  stopFrostQr();
+  hideError(frostEl("frost-error"));
+  frostEl("frost-success").classList.add("hidden");
+  frostEl("frost-password").value = "";
+  frostEl("frost-modal-title").textContent = title;
+  frostEl("frost-step").textContent = "";
+  frostShow([]);
+  frostEl("frost-modal").classList.remove("hidden");
+}
+
+async function frostClose() {
+  stopFrostQr();
+  frostFlow = null;
+  await invoke("frost_cancel").catch((e) => console.error(e));
+  frostEl("frost-password").value = "";
+  frostEl("frost-modal").classList.add("hidden");
+  loadFrostAccounts();
+}
+
+function frostStep(text) {
+  frostEl("frost-step").textContent = text;
+}
+
+function frostFail(e) {
+  showError(frostEl("frost-error"), String(e));
+}
+
+function frostNext(label, action) {
+  const next = frostEl("frost-next");
+  next.textContent = label;
+  next.onclick = async () => {
+    hideError(frostEl("frost-error"));
+    next.disabled = true;
+    try {
+      await action();
+    } catch (e) {
+      frostFail(e);
+    } finally {
+      next.disabled = false;
+    }
+  };
+}
+
+// An animated QR code: the UR parts in a loop, each drawn once by the backend.
+function startFrostQr(parts) {
+  stopFrostQr();
+  const token = ++frostQrToken;
+  const cache = new Map();
+  let index = 0;
+  frostEl("frost-qr").classList.remove("hidden");
+  frostEl("frost-qr-caption").classList.remove("hidden");
+  const tick = async () => {
+    if (token !== frostQrToken) return;
+    const part = index % parts.length;
+    index += 1;
+    let svg = cache.get(part);
+    if (!svg) {
+      svg = await invoke("generate_qr_svg", { text: parts[part] });
+      cache.set(part, svg);
+    }
+    if (token !== frostQrToken) return;
+    frostEl("frost-qr").innerHTML = svg;
+    frostEl("frost-qr-caption").textContent = t("frost.qrCaption", { n: part + 1, total: parts.length });
+    frostQrTimer = setTimeout(tick, FROST_FRAME_MS);
+  };
+  tick();
+}
+
+function stopFrostQr() {
+  frostQrToken += 1;
+  if (frostQrTimer) clearTimeout(frostQrTimer);
+  frostQrTimer = null;
+}
+
+async function frostReceived(ur) {
+  if (!frostFlow || !frostFlow.onScanned) return;
+  hideError(frostEl("frost-error"));
+  try {
+    await frostFlow.onScanned(ur);
+  } catch (e) {
+    frostFail(e);
+  }
+}
+
+function frostPassword() {
+  const password = frostEl("frost-password").value;
+  if (!password) throw t("frost.passwordNeeded");
+  return password;
+}
+
+async function openFrostSetup(network) {
+  frostOpen(t(network === "main" ? "frost.setupTitleMain" : "frost.setupTitleTest"));
+  frostFlow = { kind: "setup", network };
+  try {
+    const parts = await invoke("frost_setup_start", { network });
+    frostShow(["frost-qr", "frost-qr-caption", "frost-scan-box"]);
+    frostStep(t("frost.setupStep1"));
+    startFrostQr(parts);
+    frostFlow.onScanned = async (ur) => {
+      const answer = await invoke("frost_setup_response", { ur });
+      frostFlow.onScanned = null;
+      frostShow(["frost-qr", "frost-qr-caption", "frost-code-box"]);
+      frostStep(t("frost.setupStep2"));
+      frostEl("frost-code").textContent = answer.code;
+      startFrostQr(answer.parts);
+    };
+  } catch (e) {
+    frostFail(e);
+  }
+}
+
+async function openFrostSend(network) {
+  frostOpen(t(network === "main" ? "frost.sendTitleMain" : "frost.sendTitleTest"));
+  frostFlow = { kind: "send", network };
+  frostShow(["frost-send-fields", "frost-next"]);
+  frostStep(t("frost.sendStep1"));
+  frostNext(t("send.previewConfirm"), async () => {
+    const summary = await invoke("frost_send_prepare", {
+      network,
+      to: frostEl("frost-to").value.trim(),
+      amount: frostEl("frost-amount").value.trim(),
+      memo: frostEl("frost-memo").value || null,
+    });
+    frostShow(["frost-scan-box", "frost-password-box"]);
+    frostStep(t("frost.sendStep2", summary));
+    frostFlow.onScanned = async (ur) => {
+      const request = await invoke("frost_send_request", { ur, password: frostPassword() });
+      frostEl("frost-password").value = "";
+      frostShow(["frost-qr", "frost-qr-caption", "frost-report", "frost-scan-box"]);
+      frostEl("frost-report").textContent = request.lines.join("\n");
+      frostStep(t("frost.sendStep3"));
+      startFrostQr(request.parts);
+      frostFlow.onScanned = async (reply) => {
+        frostFlow.onScanned = null;
+        stopFrostQr();
+        frostShow([]);
+        frostStep(t("frost.sendProving"));
+        const txid = await invoke("frost_send_finish", { ur: reply });
+        frostStep("");
+        const success = frostEl("frost-success");
+        success.textContent = t("frost.sent", { txid });
+        success.classList.remove("hidden");
+        frostShow(["frost-next"]);
+        frostNext(t("frost.done"), frostClose);
+      };
+    };
+  });
+}
+
+async function openFrostReceive(account) {
+  frostOpen(t("frost.receiveTitle"));
+  frostFlow = null;
+  frostStep(account.address);
+  frostShow(["frost-qr"]);
+  frostEl("frost-qr").innerHTML = await invoke("generate_qr_svg", { text: account.address });
+}
+
+frostEl("frost-create-main").addEventListener("click", () => openFrostSetup("main"));
+frostEl("frost-create-test").addEventListener("click", () => openFrostSetup("test"));
+frostEl("frost-refresh").addEventListener("click", () => syncFrostAccounts());
+frostEl("frost-close").addEventListener("click", () => frostClose());
+frostEl("frost-scan").addEventListener("click", async () => {
+  const button = frostEl("frost-scan");
+  button.disabled = true;
+  frostEl("frost-scan-progress").textContent = t("frost.scanStarting");
+  try {
+    await frostReceived(await invoke("frost_scan"));
+  } catch (e) {
+    frostFail(e);
+  } finally {
+    button.disabled = false;
+  }
+});
+frostEl("frost-paste-use").addEventListener("click", () => frostReceived(frostEl("frost-paste").value.trim()));
+frostEl("frost-code-same").addEventListener("click", async () => {
+  try {
+    await invoke("frost_setup_code_confirmed");
+    stopFrostQr();
+    frostShow(["frost-scan-box", "frost-password-box"]);
+    frostStep(t("frost.setupStep3"));
+    frostFlow.onScanned = async (ur) => {
+      const done = await invoke("frost_setup_finish", { ur, password: frostPassword() });
+      frostFlow.onScanned = null;
+      frostEl("frost-password").value = "";
+      frostShow(["frost-qr", "frost-qr-caption", "frost-next"]);
+      frostStep(t("frost.setupStep4", { address: done.address }));
+      startFrostQr(done.parts);
+      frostNext(t("frost.done"), frostClose);
+    };
+  } catch (e) {
+    frostFail(e);
+  }
+});
+frostEl("frost-code-different").addEventListener("click", async () => {
+  stopFrostQr();
+  frostFlow = null;
+  await invoke("frost_cancel").catch((e) => console.error(e));
+  frostShow([]);
+  frostFail(t("frost.codesDiffer"));
+});
+window.__TAURI__.event.listen("frost-scan-progress", (event) => {
+  const { camera, done, total } = event.payload;
+  frostEl("frost-scan-progress").textContent = camera
+    ? t("frost.scanCamera", { camera })
+    : t("frost.scanProgress", { done, total });
+});

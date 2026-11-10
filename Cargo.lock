@@ -8629,6 +8629,7 @@ dependencies = [
 name = "wallet"
 version = "2.15.0"
 dependencies = [
+ "frost-zec",
  "openpgp-wallet-core",
  "qrcode",
  "serde",
