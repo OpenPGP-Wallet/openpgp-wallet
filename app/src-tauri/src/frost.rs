@@ -20,9 +20,10 @@ use crate::{
     data_dir, lang, run_blocking, send_grace_period, shielded_dialog, GraceRecap, TranslatedResult,
 };
 
-/// Bytes per QR fragment: dense enough to keep a PCZT to a few dozen codes,
-/// sparse enough for a laptop camera to read on a screen.
-const FRAGMENT: usize = 200;
+/// Bytes per QR fragment, as in the frost-zec co-signer: sparse enough for a
+/// 640×480 camera (a phone used as a webcam) to read on a screen. 200 was too
+/// dense for one.
+const FRAGMENT: usize = 120;
 
 #[derive(Default)]
 pub struct FrostState {
