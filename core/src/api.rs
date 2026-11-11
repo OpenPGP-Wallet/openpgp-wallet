@@ -18,7 +18,8 @@ use crate::{
     bittensor, btc_rpc, cardano, cow, dapp_requests, derivation, doge, entropy, eth_rpc, eth_tx,
     evm_sign, history, jupiter_rpc, lifi, memory_guard, monero, moonpay_trade, native_deposit,
     near, pgp_engine, secure_storage, shamir, sol_rpc, sol_spl, sol_stake, sol_tx, stacks, stellar,
-    thorchain_rpc, tokens, tron, wallet_birthday, wallet_flow, xrp, zcash, zcash_shielded,
+    thorchain_rpc, tokens, tron, wallet_birthday, wallet_flow, xrp, zcash, zcash_frost,
+    zcash_shielded,
 };
 use anyhow::{Context, Result};
 use openpgp::armor;
@@ -3947,6 +3948,39 @@ pub fn send_zec_shielded_max(
     zcash_shielded::send_max(data_dir, profile_index, to, confirm, || {
         unlock_seed(data_dir, device_password)
     })
+}
+
+// --- FROST 2-of-3 shielded account (zcash_frost) --------------------------------
+
+/// Ends the FROST account setup: the seed (device password) encrypts member 1's
+/// seat. Returns the last QR payload to show and the account.
+pub fn frost_setup_finish(
+    data_dir: &Path,
+    device_password: &str,
+    step: zcash_frost::SetupStep,
+    cosigner_keys: &[u8],
+    birthday: &zcash_client_backend::data_api::AccountBirthday,
+) -> Result<(Vec<u8>, zcash_frost::FrostAccount)> {
+    let seed = unlock_seed(data_dir, device_password)?;
+    let _seed_lock = crate::memory_guard::lock(&seed);
+    zcash_frost::setup_finish(data_dir, step, cosigner_keys, &seed, birthday)
+}
+
+/// Answers the co-signer's commitments for a confirmed send: the seed (device
+/// password) unlocks member 1's seat.
+pub fn frost_send_request(
+    data_dir: &Path,
+    device_password: &str,
+    prepared: &zcash_frost::PreparedSend,
+    commitments: &[u8],
+) -> Result<(
+    zcash_frost::PendingSignature,
+    Vec<u8>,
+    frost_zec::check::Report,
+)> {
+    let seed = unlock_seed(data_dir, device_password)?;
+    let _seed_lock = crate::memory_guard::lock(&seed);
+    zcash_frost::send_request(data_dir, prepared, commitments, &seed)
 }
 
 // --- Zcash (transparent addresses) ---------------------------------------------

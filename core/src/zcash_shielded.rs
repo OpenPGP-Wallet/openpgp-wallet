@@ -1059,7 +1059,7 @@ impl std::fmt::Display for CacheError {
 impl std::error::Error for CacheError {}
 
 #[derive(Default)]
-struct MemoryCache {
+pub(crate) struct MemoryCache {
     blocks: Mutex<Vec<CompactBlock>>,
 }
 

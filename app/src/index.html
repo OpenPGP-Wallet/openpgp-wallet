@@ -148,6 +148,7 @@
           <button class="nav-tab" data-tab="addressbook" data-i18n="nav.addressBook">Carnet d'adresses</button>
           <button class="nav-tab" data-tab="walletconnect" data-i18n="nav.walletconnect">WalletConnect</button>
           <button class="nav-tab" data-tab="ledger" data-i18n="nav.ledger">Ledger / Trezor</button>
+          <button class="nav-tab" data-tab="frost" data-i18n="nav.frost">FROST</button>
           <button class="nav-tab" data-tab="settings" data-i18n="nav.settings">Paramètres</button>
         </div>
         <div class="navbar-right">
@@ -965,6 +966,23 @@
         </div>
       </section>
 
+      <section class="tab-panel hidden" data-panel="frost">
+        <div class="card wide">
+          <h1 data-i18n="frost.title">Compte FROST 2-of-3 (Zcash protégé)</h1>
+          <p class="muted" data-i18n="frost.subtitle">
+            Vos ZEC protégés sur un compte que deux de trois appareils doivent signer : cet ordinateur,
+            un co-signataire et une sauvegarde. Le co-signataire vérifie chaque transaction lui-même avant de signer.
+          </p>
+          <p class="error" data-i18n="frost.prototype">Prototype non audité : petits montants uniquement.</p>
+          <div class="row-buttons">
+            <button id="frost-create-main" class="primary" data-i18n="frost.createMain">+ Créer sur Mainnet</button>
+            <button id="frost-create-test" class="secondary" data-i18n="frost.createTest">+ Créer sur le réseau de test</button>
+            <button id="frost-refresh" class="secondary" data-i18n="frost.refresh">Synchroniser</button>
+          </div>
+          <div id="frost-accounts" class="recipient-list"></div>
+        </div>
+      </section>
+
       <section class="tab-panel hidden" data-panel="settings">
         <div class="card wide">
           <h1 data-i18n="nav.settings">Paramètres</h1>
@@ -1183,9 +1201,60 @@
         <input id="shielded-password" type="password" autocomplete="current-password" />
         <p id="shielded-error" class="error hidden"></p>
         <p id="shielded-success" class="success hidden"></p>
-        <div class="modal-actions">
+        <div class="row-buttons">
           <button id="shielded-confirm" class="primary" data-i18n="send.previewConfirm">Continuer</button>
           <button id="shielded-cancel" class="link" data-i18n="common.cancel">Annuler</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- FROST tab: setup and send, step by step, with the co-signer's QR codes -->
+    <div id="frost-modal" class="modal-overlay hidden">
+      <div class="modal">
+        <h2 id="frost-modal-title"></h2>
+        <p id="frost-step" class="muted"></p>
+        <!-- The account address: shortened, the whole of it in the title and on copy. -->
+        <div id="frost-address-box" class="frost-address-box hidden">
+          <code id="frost-address-short" class="frost-address-short"></code>
+          <button id="frost-address-copy" type="button" class="secondary" data-i18n="wallet.copyAddress">Copier l'adresse</button>
+        </div>
+        <div id="frost-send-fields" class="hidden">
+          <label for="frost-to" data-i18n="send.toAddress">Adresse destinataire</label>
+          <input id="frost-to" type="text" spellcheck="false" autocomplete="off" />
+          <label for="frost-amount" data-i18n="send.amount">Montant</label>
+          <input id="frost-amount" type="text" inputmode="decimal" autocomplete="off" placeholder="0.001" />
+          <label for="frost-memo" data-i18n="frost.memo">Mémo (facultatif)</label>
+          <input id="frost-memo" type="text" autocomplete="off" maxlength="512" />
+        </div>
+        <div id="frost-qr" class="qr-container hidden"></div>
+        <p id="frost-qr-caption" class="muted hidden"></p>
+        <button id="frost-copy-text" type="button" class="link hidden" data-i18n="frost.copyText">Copier en texte (co-signataire sans caméra)</button>
+        <div id="frost-code-box" class="hidden">
+          <p class="frost-code" id="frost-code"></p>
+          <div class="row-buttons">
+            <button id="frost-code-same" class="primary" data-i18n="frost.codeSame">Confirmer les codes…</button>
+            <button id="frost-code-different" class="secondary" data-i18n="frost.codeDifferent">Ils sont différents</button>
+          </div>
+        </div>
+        <pre id="frost-report" class="frost-report hidden"></pre>
+        <div id="frost-scan-box" class="hidden">
+          <button id="frost-scan" class="primary" data-i18n="frost.scan">Lire le QR code du co-signataire</button>
+          <p id="frost-scan-progress" class="muted"></p>
+          <details open>
+            <summary data-i18n="frost.pasteSummary">Pas de caméra ? Collez ici le texte du co-signataire (Ctrl+V)</summary>
+            <textarea id="frost-paste" rows="3" spellcheck="false" placeholder="ur:zcash-frost/..."></textarea>
+            <button id="frost-paste-use" class="secondary" data-i18n="frost.pasteUse">Utiliser ce texte</button>
+          </details>
+        </div>
+        <div id="frost-password-box" class="hidden">
+          <label for="frost-password" data-i18n="shielded.password">Mot de passe</label>
+          <input id="frost-password" type="password" autocomplete="current-password" />
+        </div>
+        <p id="frost-error" class="error hidden"></p>
+        <p id="frost-success" class="success hidden"></p>
+        <div class="row-buttons">
+          <button id="frost-next" class="primary hidden"></button>
+          <button id="frost-close" class="link" data-i18n="common.cancel">Annuler</button>
         </div>
       </div>
     </div>

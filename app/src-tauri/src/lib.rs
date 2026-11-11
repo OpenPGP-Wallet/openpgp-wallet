@@ -3,6 +3,8 @@
 //! data (entropy, private key, passphrase) is ever logged here or returned to the
 //! frontend; only public addresses and confirmations/errors are.
 
+mod frost;
+
 use openpgp_wallet_core::{
     address_book, api, cow, dapp_requests, external_wallets, hardware, history, messaging,
     price_history, price_rpc, sent_recipients, wallet_flow,
@@ -42,6 +44,20 @@ fn set_ui_language(lang: String) {
 /// Messages with no interpolated value: an exact match on the French text as
 /// written in `core/` and in this file.
 const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
+    // FROST account (core/src/zcash_frost.rs, src-tauri/src/frost.rs)
+    (openpgp_wallet_core::zcash_frost::NOT_SYNCED, "FROST account not synced yet: sync it first"),
+    ("un compte FROST existe déjà sur ce réseau", "a FROST account already exists on this network"),
+    ("compte FROST pas encore prêt", "FROST account not ready yet"),
+    ("cette adresse est sur un autre réseau Zcash", "this address is on another Zcash network"),
+    ("adresse Zcash invalide", "invalid Zcash address"),
+    ("mémo trop long (512 octets au plus)", "memo too long (512 bytes at most)"),
+    ("siège FROST introuvable", "FROST seat not found"),
+    ("siège FROST : déchiffrement impossible (autre portefeuille ?)", "FROST seat: cannot decrypt it (another wallet?)"),
+    ("QR inattendu : les clés du co-signataire étaient attendues", "unexpected QR code: the co-signer's keys were expected"),
+    ("QR incohérent : deux sessions différentes", "inconsistent QR code: two different sessions"),
+    ("étape de configuration inattendue", "unexpected setup step"),
+    ("Aucune configuration en cours.", "No setup in progress."),
+    ("QR vide", "empty QR code"),
     // Solana (core/src/sol_rpc.rs)
     (
         openpgp_wallet_core::sol_rpc::BLOCKHASH_EXPIRED_ERROR,
@@ -939,6 +955,20 @@ fn translate_custom_network_error(msg: &str) -> Option<String> {
 /// Messages with an interpolated value (index, RPC method, amount...): an exact match
 /// cannot work, so they are rebuilt by splitting around the fixed part of the message.
 fn translate_dynamic_error(msg: &str) -> Option<String> {
+    for (fr, en) in [
+        ("synchronisation du compte FROST : ", "FROST account sync: "),
+        ("envoi FROST impossible (", "FROST transfer impossible ("),
+        ("serveur Zcash ", "Zcash server "),
+        (
+            "transaction refusée par le serveur : ",
+            "transaction refused by the server: ",
+        ),
+        ("diffusion impossible : ", "broadcast impossible: "),
+    ] {
+        if let Some(rest) = msg.strip_prefix(fr) {
+            return Some(format!("{en}{rest}"));
+        }
+    }
     if let Some(amount) = msg
         .strip_prefix("ADA insuffisants : il faut au moins ")
         .and_then(|r| r.strip_suffix(" ADA (dépôt et frais du réseau compris)"))
@@ -11778,6 +11808,7 @@ pub fn run() {
         .manage(BalanceWatchState::default())
         .manage(UsbRestoreState::default())
         .manage(FileRestoreState::default())
+        .manage(frost::FrostState::default())
         .manage(PendingKitState::default())
         .setup(|app| {
             // Dark frame from the start (default theme); the UI then applies the chosen theme
@@ -11820,6 +11851,18 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            frost::frost_accounts,
+            frost::frost_sync,
+            frost::frost_scan,
+            frost::frost_scan_cancel,
+            frost::frost_cancel,
+            frost::frost_setup_start,
+            frost::frost_setup_response,
+            frost::frost_setup_code_confirmed,
+            frost::frost_setup_finish,
+            frost::frost_send_prepare,
+            frost::frost_send_request,
+            frost::frost_send_finish,
             set_ui_language,
             set_window_frame,
             save_backup_file,

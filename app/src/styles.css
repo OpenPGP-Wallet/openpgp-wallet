@@ -4203,6 +4203,7 @@ h2 .coin-icon-inline,
 .nav-tab[data-tab="addressbook"] { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M6%203h12a2%202%200%200%201%202%202v14a2%202%200%200%201-2%202H6z'%2F%3E%3Ccircle%20cx%3D'13'%20cy%3D'10'%20r%3D'2.5'%2F%3E%3Cpath%20d%3D'M9.5%2016.5a3.5%203.5%200%200%201%207%200'%2F%3E%3Cpath%20d%3D'M4%207h4M4%2012h4M4%2017h4'%2F%3E%3C%2Fsvg%3E"); }
 .nav-tab[data-tab="walletconnect"] { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M10%2013.5a4.5%204.5%200%200%200%206.8.5l2.7-2.7a4.5%204.5%200%200%200-6.4-6.4l-1.5%201.5'%2F%3E%3Cpath%20d%3D'M14%2010.5a4.5%204.5%200%200%200-6.8-.5l-2.7%202.7a4.5%204.5%200%200%200%206.4%206.4l1.5-1.5'%2F%3E%3C%2Fsvg%3E"); }
 .nav-tab[data-tab="ledger"] { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Crect%20x%3D'7'%20y%3D'2.5'%20width%3D'10'%20height%3D'13'%20rx%3D'2'%2F%3E%3Cpath%20d%3D'M10%2015.5V19a2%202%200%200%200%204%200v-3.5'%2F%3E%3Cpath%20d%3D'M10%206.5h4'%2F%3E%3C%2Fsvg%3E"); }
+.nav-tab[data-tab="frost"] { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Ccircle%20cx%3D'6'%20cy%3D'7'%20r%3D'2.5'%2F%3E%3Ccircle%20cx%3D'18'%20cy%3D'7'%20r%3D'2.5'%2F%3E%3Ccircle%20cx%3D'12'%20cy%3D'18'%20r%3D'2.5'%2F%3E%3Cpath%20d%3D'M8.5%207h7M7.3%209.2l3.4%206.6M16.7%209.2l-3.4%206.6'%2F%3E%3C%2Fsvg%3E"); }
 .nav-tab[data-tab="settings"] { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M4%207h9M17%207h3M4%2012h3M11%2012h9M4%2017h11M19%2017h1'%2F%3E%3Ccircle%20cx%3D'15'%20cy%3D'7'%20r%3D'2'%2F%3E%3Ccircle%20cx%3D'9'%20cy%3D'12'%20r%3D'2'%2F%3E%3Ccircle%20cx%3D'17'%20cy%3D'17'%20r%3D'2'%2F%3E%3C%2Fsvg%3E"); }
 .navbar button#lock-wallet { --icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2024%2024'%20fill%3D'none'%20stroke%3D'black'%20stroke-width%3D'1.8'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Crect%20x%3D'5'%20y%3D'11'%20width%3D'14'%20height%3D'10'%20rx%3D'2.5'%2F%3E%3Cpath%20d%3D'M8%2011V8a4%204%200%200%201%208%200v3'%2F%3E%3C%2Fsvg%3E"); }
 
@@ -5079,4 +5080,65 @@ textarea:focus {
 .coin-status:empty,
 :root[data-wallet-list-view="true"] .coin-status {
   display: none;
+}
+
+/* FROST tab */
+.frost-account h3 {
+  margin: 0 0 6px;
+}
+.frost-address {
+  display: block;
+  word-break: break-all;
+  font-size: 12px;
+  margin: 6px 0 10px;
+}
+/* The step text can hold the whole address: wrap it inside the window. */
+#frost-step {
+  overflow-wrap: anywhere;
+}
+/* The account address in the window: one line, shortened, with its copy button. */
+.frost-address-box {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0 12px;
+}
+.frost-address-short {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.frost-address-box button {
+  margin-top: 0;
+}
+/* The QR codes of the FROST window, centred like the code and the links. */
+#frost-qr.qr-container {
+  display: block;
+  width: max-content;
+  margin: 12px auto;
+}
+.frost-code {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 34px;
+  letter-spacing: 6px;
+  text-align: center;
+  margin: 12px 0;
+}
+.frost-report {
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 12px;
+  max-height: 180px;
+  overflow: auto;
+}
+#frost-paste {
+  width: 100%;
+  margin: 6px 0;
 }
