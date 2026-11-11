@@ -5,6 +5,21 @@ links and SHA-256 hashes of each build are on the [releases page](https://github
 
 ## [Unreleased]
 
+## [2.16.0] - 2026-11-11
+
+### Added
+- FROST tab: a FROST 2-of-3 shielded Zcash account (Ironwood pool, mainnet and testnet). The wallet is member 1;
+  a co-signer ([frost-zec](https://github.com/OpenPGP-Wallet/frost-zec)) creates members 2 and 3 and approves each
+  send. The devices talk through animated QR codes, or the same messages as text (camera, or Ctrl+V). The pairing
+  code is compared in a native window, every send is confirmed in a native window first, and member 1's keys are
+  stored encrypted with a key derived from the wallet's master key.
+- The co-signer checks every transaction on its own before it signs, and shows the address the user was given,
+  once it has checked that the payment really goes there.
+
+### Security
+- RUSTSEC-2026-0459 (libsqlite3-sys < 0.39) is listed as open: the fix needs rusqlite 0.41, and the Zcash wallet
+  library still requires 0.37. The app opens only its own databases in its data folder.
+
 ## [2.15.0] - 2026-10-24
 
 ### Security
@@ -256,7 +271,11 @@ The app is renamed "PGP Wallet".
 First working proof of concept: a non-custodial Bitcoin, Ethereum and Solana wallet whose master key is
 protected by 2-of-3 Shamir secret sharing and OpenPGP, with no seed phrase.
 
-[Unreleased]: https://github.com/OpenPGP-Wallet/openpgp-wallet/compare/v2.13.2...HEAD
+[Unreleased]: https://github.com/OpenPGP-Wallet/openpgp-wallet/compare/v2.16.0...HEAD
+[2.16.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.16.0
+[2.15.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.15.0
+[2.14.1]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.14.1
+[2.14.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.14.0
 [2.13.2]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.13.2
 [2.13.1]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.13.1
 [2.13.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.13.0

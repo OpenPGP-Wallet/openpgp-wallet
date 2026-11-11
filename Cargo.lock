@@ -8628,7 +8628,7 @@ dependencies = [
 
 [[package]]
 name = "wallet"
-version = "2.15.0"
+version = "2.16.0"
 dependencies = [
  "frost-zec",
  "openpgp-wallet-core",
