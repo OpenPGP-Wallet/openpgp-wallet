@@ -114,7 +114,7 @@ zcash_client_sqlite = { version = "0.23", default-features = false, features = [
 # FROST 2-of-3 shielded account (ZCG grant #490): the protocol, the co-signer's
 # checks and camera scanning come from frost-zec. The PCZT path of
 # zcash_client_backend builds, proves and extracts the group's transactions.
-frost-zec = { git = "https://github.com/OpenPGP-Wallet/frost-zec", rev = "2b9dc19d7976f0de92275384f91e7ba0d32cce26", default-features = false, features = ["camera"] }
+frost-zec = { git = "https://github.com/OpenPGP-Wallet/frost-zec", rev = "cbe0ef3bb26c5bfc6395d92c42dde3790fbeef05", default-features = false, features = ["camera"] }
 pczt = { version = "0.10", default-features = false, features = ["orchard", "prover", "tx-extractor"] }
 zcash_keys = { version = "0.17", features = ["orchard", "transparent-inputs"] }
 rusqlite = { version = "0.37", features = ["bundled"] }
