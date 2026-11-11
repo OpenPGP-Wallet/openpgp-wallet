@@ -5153,3 +5153,11 @@ textarea:focus {
   width: 100%;
   margin: 6px 0;
 }
+/* The copy buttons of the FROST window are full buttons, not grey links:
+   without a camera, "Copy as text" is the way forward at each step, and the
+   txid is what a tester sends on at the end. */
+#frost-copy-text,
+#frost-txid-copy {
+  width: 100%;
+  margin-top: 10px;
+}

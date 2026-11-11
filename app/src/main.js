@@ -1256,6 +1256,7 @@ const I18N = {
     "frost.sendStep3": "Laissez le co-signataire lire ce QR code : il vous montrera la transaction pour que vous l'approuviez. Lisez ensuite sa réponse.",
     "frost.sendProving": "Signature reçue : preuve et envoi de la transaction…",
     "frost.sent": "Transaction envoyée : {txid}",
+    "frost.copyTxid": "Copier l'identifiant de la transaction (txid)",
     "ledger.title": "Portefeuille matériel (Ledger, Trezor)",
     "ledger.subtitle":
       "Les clés d'un portefeuille matériel ne quittent jamais l'appareil : chaque envoi s'affiche sur son écran et doit y être confirmé. Avant chaque opération, branchez-le et déverrouillez-le ; sur un Ledger, ouvrez aussi l'application du réseau (Ethereum, Bitcoin ou Solana) ; sur un Trezor, fermez Trezor Suite.",
@@ -2041,6 +2042,7 @@ const I18N = {
     "frost.sendStep3": "Let the co-signer read this QR code: it will show you the transaction to approve. Then read its answer.",
     "frost.sendProving": "Signature received: proving and sending the transaction…",
     "frost.sent": "Transaction sent: {txid}",
+    "frost.copyTxid": "Copy the transaction ID (txid)",
     "ledger.title": "Hardware wallet (Ledger, Trezor)",
     "ledger.subtitle":
       "A hardware wallet's keys never leave the device: every transfer is shown on its screen and must be confirmed there. Before each operation, plug it in and unlock it; on a Ledger, also open the network's app (Ethereum, Bitcoin or Solana); on a Trezor, close Trezor Suite.",
@@ -10324,6 +10326,7 @@ function frostOpen(title) {
   stopFrostQr();
   hideError(frostEl("frost-error"));
   frostEl("frost-success").classList.add("hidden");
+  frostEl("frost-txid-copy").classList.add("hidden");
   frostEl("frost-password").value = "";
   frostEl("frost-modal-title").textContent = title;
   frostEl("frost-step").textContent = "";
@@ -10473,6 +10476,9 @@ async function openFrostSend(network) {
         const success = frostEl("frost-success");
         success.textContent = t("frost.sent", { txid });
         success.classList.remove("hidden");
+        // The tester sends the txid on: one click, not a selection by hand.
+        frostEl("frost-txid-copy").dataset.txid = txid;
+        frostEl("frost-txid-copy").classList.remove("hidden");
         frostShow(["frost-next"]);
         frostNext(t("frost.done"), frostClose);
       };
@@ -10526,6 +10532,7 @@ document.addEventListener("paste", (event) => {
   frostReceived(text);
 });
 frostEl("frost-copy-text").addEventListener("click", () => copyText(frostEl("frost-qr").dataset.text || ""));
+frostEl("frost-txid-copy").addEventListener("click", () => copyText(frostEl("frost-txid-copy").dataset.txid || ""));
 frostEl("frost-address-copy").addEventListener("click", () =>
   copyText(frostEl("frost-address-short").dataset.address || ""),
 );
