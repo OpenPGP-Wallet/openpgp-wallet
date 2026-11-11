@@ -5118,11 +5118,22 @@ textarea:focus {
 .frost-address-box button {
   margin-top: 0;
 }
-/* The QR codes of the FROST window, centred like the code and the links. */
+/* The QR codes of the FROST window, centred like the code and the links.
+   Drawn large: a code of about 65 modules at 220 px gave a phone used as a
+   640x480 webcam one or two pixels per module, which no reader decodes. The
+   window widens to hold it, and the code shrinks with a short window. */
+#frost-modal .modal {
+  max-width: 620px;
+}
 #frost-qr.qr-container {
   display: block;
   width: max-content;
   margin: 12px auto;
+}
+#frost-qr.qr-container svg {
+  width: min(520px, 58vh);
+  height: auto;
+  shape-rendering: crispEdges;
 }
 .frost-code {
   font-family: "IBM Plex Mono", monospace;
