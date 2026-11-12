@@ -1229,12 +1229,17 @@ const I18N = {
     "frost.receiveTitle": "Adresse du compte FROST",
     "frost.receiveHint": "Envoyez des ZEC à cette adresse : ils iront au compte FROST 2-of-3.",
     "frost.send": "Envoyer",
+    "frost.remove": "Retirer ce compte du portefeuille",
     "frost.memo": "Mémo (facultatif)",
     "frost.scan": "Lire le QR code du co-signataire",
     "frost.scanStarting": "Ouverture de la caméra…",
     "frost.scanCamera": "Lecture avec {camera}…",
     "frost.scanProgress": "{done} / {total} parties lues",
-    "frost.pasteSummary": "Pas de caméra ? Collez ici le texte du co-signataire (Ctrl+V)",
+    "frost.pasteSummary": "Coller un texte à la main",
+    "frost.pasteHint": "Sans caméra : quand la fenêtre du co-signataire bipe, son message est copié. Cliquez « Coller le message du co-signataire », ou faites Ctrl+V.",
+    "frost.pasteClipboard": "Coller le message du co-signataire",
+    "frost.pasteNothing": "Pas de message du co-signataire dans le presse-papiers. Attendez son bip ; si vous avez copié autre chose entre-temps, recopiez son message (co-signataire de test : touche Entrée dans sa fenêtre).",
+    "frost.pasteOwn": "Le presse-papiers contient encore le message du portefeuille, pas la réponse du co-signataire : attendez son bip.",
     "frost.pasteUse": "Utiliser ce texte",
     "frost.copyText": "Copier en texte (co-signataire sans caméra)",
     "frost.qrCaption": "QR code animé ({n} / {total}) : laissez-le défiler devant le co-signataire.",
@@ -1245,15 +1250,15 @@ const I18N = {
     "frost.done": "Terminé",
     "frost.setupTitleMain": "Créer un compte FROST (Mainnet)",
     "frost.setupTitleTest": "Créer un compte FROST (réseau de test)",
-    "frost.setupStep1": "1/4 · Sur le co-signataire, lancez la création d'un compte et lisez ce QR code. Lisez ensuite sa réponse.",
-    "frost.setupStep2": "2/4 · Laissez le co-signataire lire ce QR code, puis comparez les deux codes à 6 chiffres. Vous confirmerez dans une fenêtre de Windows.",
-    "frost.setupStep3": "3/4 · Entrez votre mot de passe, puis lisez le QR code des clés du co-signataire.",
-    "frost.setupStep4": "4/4 · Laissez le co-signataire lire ce dernier QR code. Vérifiez qu'il affiche la même adresse que celle-ci (début et fin) :",
+    "frost.setupStep1": "1/4 · Lancez la création d'un compte sur le co-signataire, puis donnez-lui ce message : « Copier en texte », ou ce QR code s'il a une caméra. Récupérez ensuite sa réponse.",
+    "frost.setupStep2": "2/4 · Donnez ce message au co-signataire (« Copier en texte » ou QR code), puis comparez les deux codes à 6 chiffres. Vous confirmerez dans une fenêtre de Windows.",
+    "frost.setupStep3": "3/4 · Entrez votre mot de passe, puis récupérez les clés du co-signataire.",
+    "frost.setupStep4": "4/4 · Donnez ce dernier message au co-signataire (« Copier en texte » ou QR code). Vérifiez qu'il affiche la même adresse que celle-ci (début et fin) :",
     "frost.sendTitleMain": "Envoyer depuis le compte FROST (Mainnet)",
     "frost.sendTitleTest": "Envoyer depuis le compte FROST (réseau de test)",
     "frost.sendStep1": "Indiquez le destinataire et le montant. Vous confirmerez dans une fenêtre de Windows.",
-    "frost.sendStep2": "{amount} ZEC vers {recipient} (frais {fee} ZEC). Entrez votre mot de passe, puis lisez le QR code de signature du co-signataire.",
-    "frost.sendStep3": "Laissez le co-signataire lire ce QR code : il vous montrera la transaction pour que vous l'approuviez. Lisez ensuite sa réponse.",
+    "frost.sendStep2": "{amount} ZEC vers {recipient} (frais {fee} ZEC). Lancez la signature sur le co-signataire, entrez votre mot de passe, puis récupérez son message.",
+    "frost.sendStep3": "Donnez ce message au co-signataire (« Copier en texte » ou QR code) : il vous montrera la transaction pour que vous l'approuviez. Récupérez ensuite sa réponse.",
     "frost.sendProving": "Signature reçue : preuve et envoi de la transaction…",
     "frost.sent": "Transaction envoyée : {txid}",
     "frost.copyTxid": "Copier l'identifiant de la transaction (txid)",
@@ -2015,12 +2020,17 @@ const I18N = {
     "frost.receiveTitle": "FROST account address",
     "frost.receiveHint": "Send ZEC to this address: it goes to the FROST 2-of-3 account.",
     "frost.send": "Send",
+    "frost.remove": "Remove this account from the wallet",
     "frost.memo": "Memo (optional)",
     "frost.scan": "Read the co-signer's QR code",
     "frost.scanStarting": "Opening the camera…",
     "frost.scanCamera": "Reading with {camera}…",
     "frost.scanProgress": "{done} / {total} parts read",
-    "frost.pasteSummary": "No camera? Paste the co-signer's text here (Ctrl+V)",
+    "frost.pasteSummary": "Paste a text by hand",
+    "frost.pasteHint": "No camera: when the co-signer's window beeps, its message has been copied. Click “Paste the co-signer's message”, or press Ctrl+V.",
+    "frost.pasteClipboard": "Paste the co-signer's message",
+    "frost.pasteNothing": "No co-signer message on the clipboard. Wait for its beep; if you copied something else in between, copy its message again (test co-signer: Enter in its window).",
+    "frost.pasteOwn": "The clipboard still holds the wallet's own message, not the co-signer's answer: wait for its beep.",
     "frost.pasteUse": "Use this text",
     "frost.copyText": "Copy as text (co-signer without a camera)",
     "frost.qrCaption": "Animated QR code ({n} / {total}): let it run in front of the co-signer.",
@@ -2031,15 +2041,15 @@ const I18N = {
     "frost.done": "Done",
     "frost.setupTitleMain": "Create a FROST account (Mainnet)",
     "frost.setupTitleTest": "Create a FROST account (testnet)",
-    "frost.setupStep1": "1/4 · On the co-signer, start creating an account and read this QR code. Then read its answer.",
-    "frost.setupStep2": "2/4 · Let the co-signer read this QR code, then compare the two 6-digit codes. You will confirm in a Windows window.",
-    "frost.setupStep3": "3/4 · Enter your password, then read the co-signer's keys QR code.",
-    "frost.setupStep4": "4/4 · Let the co-signer read this last QR code. Check that it shows the same address as this one (start and end):",
+    "frost.setupStep1": "1/4 · Start creating an account on the co-signer, then give it this message: “Copy as text”, or this QR code if it has a camera. Then get its answer.",
+    "frost.setupStep2": "2/4 · Give this message to the co-signer (“Copy as text” or QR code), then compare the two 6-digit codes. You will confirm in a Windows window.",
+    "frost.setupStep3": "3/4 · Enter your password, then get the co-signer's keys.",
+    "frost.setupStep4": "4/4 · Give this last message to the co-signer (“Copy as text” or QR code). Check that it shows the same address as this one (start and end):",
     "frost.sendTitleMain": "Send from the FROST account (Mainnet)",
     "frost.sendTitleTest": "Send from the FROST account (testnet)",
     "frost.sendStep1": "Enter the recipient and the amount. You will confirm in a Windows window.",
-    "frost.sendStep2": "{amount} ZEC to {recipient} (fee {fee} ZEC). Enter your password, then read the co-signer's signing QR code.",
-    "frost.sendStep3": "Let the co-signer read this QR code: it will show you the transaction to approve. Then read its answer.",
+    "frost.sendStep2": "{amount} ZEC to {recipient} (fee {fee} ZEC). Start signing on the co-signer, enter your password, then get its message.",
+    "frost.sendStep3": "Give this message to the co-signer (“Copy as text” or QR code): it will show you the transaction to approve. Then get its answer.",
     "frost.sendProving": "Signature received: proving and sending the transaction…",
     "frost.sent": "Transaction sent: {txid}",
     "frost.copyTxid": "Copy the transaction ID (txid)",
@@ -10263,8 +10273,20 @@ function frostAccountRow(account) {
     frostButton("secondary", t("frost.receive"), () => openFrostReceive(account)),
     frostButton("primary", t("frost.send"), () => openFrostSend(account.network)),
   );
-  row.append(title, balance, sync, address, actions);
+  const remove = frostButton("link", t("frost.remove"), () => removeFrostAccount(account.network));
+  row.append(title, balance, sync, address, actions, remove);
   return row;
+}
+
+// Asked in a native window by the backend, which sets the account's files
+// aside (nothing is deleted); a new account can then be created on that network.
+async function removeFrostAccount(network) {
+  try {
+    if (await invoke("frost_remove", { network })) delete frostSyncErrors[network];
+  } catch (e) {
+    alert(t("common.error", { err: e }));
+  }
+  await loadFrostAccounts();
 }
 
 async function syncFrostAccounts() {
@@ -10312,12 +10334,13 @@ function frostShow(ids) {
   }
   frostEl("frost-paste").value = "";
   frostEl("frost-scan-progress").textContent = "";
-  // Waiting for the co-signer: ready for its text, so that Ctrl+V is enough
-  // (the password first, when it is asked and still empty).
+  // Waiting for the co-signer: ready for its text, so that Ctrl+V or Enter on
+  // the Paste button is enough (the password first, when it is asked and still
+  // empty). The paste box by hand stays folded.
   if (ids.includes("frost-scan-box")) {
-    frostEl("frost-scan-box").querySelector("details").open = true;
+    frostEl("frost-scan-box").querySelector("details").open = false;
     const asksPassword = ids.includes("frost-password-box") && !frostEl("frost-password").value;
-    const target = frostEl(asksPassword ? "frost-password" : "frost-paste");
+    const target = frostEl(asksPassword ? "frost-password" : "frost-paste-clipboard");
     requestAnimationFrame(() => target.focus({ preventScroll: true }));
   }
 }
@@ -10528,9 +10551,35 @@ document.addEventListener("paste", (event) => {
   const text = (event.clipboardData?.getData("text") || "").trim();
   if (!/^ur:zcash-frost\//i.test(text)) return;
   event.preventDefault();
+  frostUsePasted(text);
+});
+// The "Paste" button: the backend reads the clipboard and returns only a
+// ur:zcash-frost text, so nothing else copied ever reaches the page.
+frostEl("frost-paste-clipboard").addEventListener("click", async () => {
+  hideError(frostEl("frost-error"));
+  try {
+    const text = await invoke("frost_clipboard");
+    if (!text) {
+      frostFail(t("frost.pasteNothing"));
+      return;
+    }
+    frostUsePasted(text);
+  } catch (e) {
+    frostFail(e);
+  }
+});
+
+// A co-signer message, pasted or read from the clipboard. The wallet's own
+// message, still on the clipboard after "Copy as text", is not the answer: say
+// so, rather than let the backend refuse it in its own words.
+function frostUsePasted(text) {
+  if (text === frostEl("frost-qr").dataset.text) {
+    frostFail(t("frost.pasteOwn"));
+    return;
+  }
   frostEl("frost-paste").value = text;
   frostReceived(text);
-});
+}
 frostEl("frost-copy-text").addEventListener("click", () => copyText(frostEl("frost-qr").dataset.text || ""));
 frostEl("frost-txid-copy").addEventListener("click", () => copyText(frostEl("frost-txid-copy").dataset.txid || ""));
 frostEl("frost-address-copy").addEventListener("click", () =>

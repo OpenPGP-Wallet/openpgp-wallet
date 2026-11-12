@@ -5161,3 +5161,22 @@ textarea:focus {
   width: 100%;
   margin-top: 10px;
 }
+/* What to do without a camera, next to the Paste button: an accent bar, so
+   that it reads as the instruction of the step, not as fine print. */
+.frost-paste-hint {
+  margin: 14px 0 0;
+  padding: 8px 12px;
+  border-left: 3px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  font-size: 0.88rem;
+}
+/* Paste first, then the camera, one under the other: side by side, both labels
+   broke across two lines. */
+#frost-scan-box .row-buttons {
+  flex-direction: column;
+  margin-top: 10px;
+}
+#frost-scan-box details {
+  margin-top: 8px;
+}

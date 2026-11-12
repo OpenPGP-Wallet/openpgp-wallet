@@ -47,6 +47,12 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     // FROST account (core/src/zcash_frost.rs, src-tauri/src/frost.rs)
     (openpgp_wallet_core::zcash_frost::NOT_SYNCED, "FROST account not synced yet: sync it first"),
     ("un compte FROST existe déjà sur ce réseau", "a FROST account already exists on this network"),
+    ("aucun compte FROST sur ce réseau", "no FROST account on this network"),
+    ("compte FROST : mise de côté impossible", "FROST account: cannot set it aside"),
+    (
+        "compte FROST : mise de côté impossible, réessayez dans un instant",
+        "FROST account: cannot set it aside, try again in a moment",
+    ),
     ("compte FROST pas encore prêt", "FROST account not ready yet"),
     ("cette adresse est sur un autre réseau Zcash", "this address is on another Zcash network"),
     ("adresse Zcash invalide", "invalid Zcash address"),
@@ -11856,6 +11862,8 @@ pub fn run() {
             frost::frost_scan,
             frost::frost_scan_cancel,
             frost::frost_cancel,
+            frost::frost_remove,
+            frost::frost_clipboard,
             frost::frost_setup_start,
             frost::frost_setup_response,
             frost::frost_setup_code_confirmed,
