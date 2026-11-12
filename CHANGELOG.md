@@ -16,6 +16,8 @@ links and SHA-256 hashes of each build are on the [releases page](https://github
     address in a Windows window. An account whose setup was left before that step is finished from its card,
     with the co-signer's acknowledgement (`frost-zec qr done` shows it again).
   - Until the acknowledgement, the page is not given the account's address at all.
+- FROST tab, testnet: the details of a signing request, as the wallet and the co-signer show them, are in TAZ
+  instead of ZEC.
 
 ## [2.16.3] - 2026-11-12
 
