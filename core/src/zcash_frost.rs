@@ -952,6 +952,7 @@ mod tests {
 
     #[test]
     fn only_unified_addresses_with_an_orchard_receiver_can_be_paid() {
+        use zcash_address::ToAddress;
         // A testnet FROST group's address (frost-zec keygen): unified, Orchard.
         let unified = "utest14z46743rm6rdlnev2za09q5vftu7gn5phg9nfk9yjxgmgtmrfc8w0r8gp328tl63pdaee4th50h6qjjkqxnaf63m0dap4a2ytu2kaess";
         assert!(check_recipient(Net::Test, unified).is_ok());
