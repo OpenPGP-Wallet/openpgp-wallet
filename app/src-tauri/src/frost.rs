@@ -99,6 +99,17 @@ pub struct FrostAccountDto {
     pending: u64,
     scanned_height: Option<u32>,
     chain_height: Option<u32>,
+    /// False until the user confirmed that the co-signer shows the address
+    /// (`frost_confirm_address`): the page then offers no way to receive.
+    confirmed: bool,
+}
+
+/// The unit amounts are shown in: testnet coins are not ZEC.
+fn unit(net: Net) -> &'static str {
+    match net {
+        Net::Main => "ZEC",
+        Net::Test => "TAZ",
+    }
 }
 
 /// The FROST accounts that exist, with their balances (local database only).
@@ -118,6 +129,7 @@ pub async fn frost_accounts(app: tauri::AppHandle) -> Result<Vec<FrostAccountDto
                     pending: balance.pending,
                     scanned_height: balance.scanned_height,
                     chain_height: balance.chain_height,
+                    confirmed: account.confirmed,
                 });
             }
         }
@@ -232,11 +244,12 @@ pub async fn frost_remove(network: String, app: tauri::AppHandle) -> Result<bool
         let funds = match held {
             Some(0) => String::new(),
             Some(zats) => {
-                let zec = openpgp_wallet_core::zcash::format_zec(zats);
+                let amount = openpgp_wallet_core::zcash::format_zec(zats);
+                let unit = unit(net);
                 if english {
-                    format!("\n\nIt still holds {zec} ZEC.")
+                    format!("\n\nIt still holds {amount} {unit}.")
                 } else {
-                    format!("\n\nIl contient encore {zec} ZEC.")
+                    format!("\n\nIl contient encore {amount} {unit}.")
                 }
             }
             None => lang(
@@ -260,6 +273,50 @@ pub async fn frost_remove(network: String, app: tauri::AppHandle) -> Result<bool
         // A setup or a send left half-way goes with the account.
         frost_cancel(app.state::<FrostState>());
         zcash_frost::remove(&dir, net).t_err()?;
+        Ok(true)
+    })
+    .await
+}
+
+/// Whether the recipient typed in the send form can be paid from the FROST
+/// account on `network` (core: `zcash_frost::check_recipient`), for the line
+/// under the field as it is typed. No I/O, so a plain synchronous command.
+#[tauri::command]
+pub fn frost_check_recipient(network: String, to: String) -> Result<(), String> {
+    zcash_frost::check_recipient(net(&network)?, &to).t_err()
+}
+
+/// Asks, in a native window showing the whole address, whether the co-signer
+/// shows the same one; if so, the account is confirmed and can receive (core:
+/// `zcash_frost::confirm`). The co-signer shows the address only once it has
+/// taken the last setup message and computed its share and the backup's:
+/// before that, the account can never sign. Returns false if the user said no.
+#[tauri::command]
+pub async fn frost_confirm_address(network: String, app: tauri::AppHandle) -> Result<bool, String> {
+    let net = net(&network)?;
+    run_blocking(move || {
+        let dir = data_dir(&app)?;
+        let account = zcash_frost::account(&dir, net).t_err()?.ok_or_else(|| {
+            lang(
+                "Aucun compte FROST sur ce réseau.",
+                "No FROST account on this network.",
+            )
+            .to_string()
+        })?;
+        let address = &account.address;
+        let message = if crate::UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
+            format!("Account address:\n\n{address}\n\nDoes your co-signer show exactly this address?\n\nIt shows it only once it has the last message (\"Copy as text\" on this step). If it shows nothing or another address, choose Cancel and send nothing to this account: without that message, it can never sign.")
+        } else {
+            format!("Adresse du compte :\n\n{address}\n\nVotre co-signataire affiche-t-il exactement cette adresse ?\n\nIl ne l'affiche qu'une fois le dernier message reçu (« Copier en texte » à cette étape). S'il n'affiche rien ou une autre adresse, choisissez Annuler et n'envoyez rien à ce compte : sans ce message, il ne pourra jamais signer.")
+        };
+        if !shielded_dialog(
+            &app,
+            ("Comparer l'adresse", "Compare the address"),
+            message,
+        ) {
+            return Ok(false);
+        }
+        zcash_frost::confirm(&dir, net).t_err()?;
         Ok(true)
     })
     .await
@@ -429,17 +486,18 @@ pub async fn frost_send_prepare(
                 )
             })
             .unwrap_or_default();
+        let unit = unit(net);
         let message = if crate::UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
-            format!("Send from your FROST 2-of-3 account ({network_name})\n\nTo: {recipient}\nAmount: {amount} ZEC\nNetwork fee: {fee} ZEC{memo_line}\n\nYour co-signer will check and approve it too.\nThis is irreversible once signed.\n\nConfirm this transfer?")
+            format!("Send from your FROST 2-of-3 account ({network_name})\n\nTo: {recipient}\nAmount: {amount} {unit}\nNetwork fee: {fee} {unit}{memo_line}\n\nYour co-signer will check and approve it too.\nThis is irreversible once signed.\n\nConfirm this transfer?")
         } else {
-            format!("Envoi depuis votre compte FROST 2-of-3 ({network_name})\n\nVers : {recipient}\nMontant : {amount} ZEC\nFrais réseau : {fee} ZEC{memo_line}\n\nVotre co-signataire le vérifiera et l'approuvera aussi.\nC'est irréversible une fois signé.\n\nConfirmer cet envoi ?")
+            format!("Envoi depuis votre compte FROST 2-of-3 ({network_name})\n\nVers : {recipient}\nMontant : {amount} {unit}\nFrais réseau : {fee} {unit}{memo_line}\n\nVotre co-signataire le vérifiera et l'approuvera aussi.\nC'est irréversible une fois signé.\n\nConfirmer cet envoi ?")
         };
         if !shielded_dialog(&app, ("Confirmer l'envoi", "Confirm the transfer"), message) {
             return Err(lang("Envoi annulé (confirmation refusée).", "Transfer cancelled (confirmation refused).").to_string());
         }
         send_grace_period(
             &app,
-            GraceRecap::new(network_name, format!("{amount} ZEC"), recipient.clone()).on("zec_shielded"),
+            GraceRecap::new(network_name, format!("{amount} {unit}"), recipient.clone()).on("zec_shielded"),
         )?;
         *locked(&app.state::<FrostState>().prepared) = Some(prepared);
         Ok(SummaryDto { amount, fee, recipient })

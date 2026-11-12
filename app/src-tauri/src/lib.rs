@@ -46,6 +46,23 @@ fn set_ui_language(lang: String) {
 const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     // FROST account (core/src/zcash_frost.rs, src-tauri/src/frost.rs)
     (openpgp_wallet_core::zcash_frost::NOT_SYNCED, "FROST account not synced yet: sync it first"),
+    (
+        openpgp_wallet_core::zcash_frost::NOT_CONFIRMED,
+        "FROST account setup not confirmed: check that the co-signer shows its address",
+    ),
+    (
+        openpgp_wallet_core::zcash_frost::RECIPIENT_TRANSPARENT,
+        "transparent address: the co-signer only accepts unified shielded addresses",
+    ),
+    (
+        openpgp_wallet_core::zcash_frost::RECIPIENT_SAPLING,
+        "Sapling address: the co-signer only accepts unified shielded addresses",
+    ),
+    (
+        openpgp_wallet_core::zcash_frost::RECIPIENT_NO_ORCHARD,
+        "unified address without an Orchard receiver: the co-signer could not pay it",
+    ),
+    ("compte FROST : écriture impossible", "FROST account: cannot write it"),
     ("un compte FROST existe déjà sur ce réseau", "a FROST account already exists on this network"),
     ("aucun compte FROST sur ce réseau", "no FROST account on this network"),
     ("compte FROST : mise de côté impossible", "FROST account: cannot set it aside"),
@@ -11864,6 +11881,8 @@ pub fn run() {
             frost::frost_cancel,
             frost::frost_remove,
             frost::frost_clipboard,
+            frost::frost_confirm_address,
+            frost::frost_check_recipient,
             frost::frost_setup_start,
             frost::frost_setup_response,
             frost::frost_setup_code_confirmed,

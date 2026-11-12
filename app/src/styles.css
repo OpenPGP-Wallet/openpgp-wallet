@@ -5161,6 +5161,17 @@ textarea:focus {
   width: 100%;
   margin-top: 10px;
 }
+/* The recipient check under the field, and the card's "address confirmed"
+   line: close to what they are about, and the field's line keeps its height
+   while empty so the form does not jump as it fills. */
+.frost-to-check {
+  min-height: 1.2em;
+  margin: 4px 0 8px;
+  font-size: 0.85rem;
+}
+.frost-account .frost-verified {
+  margin-top: 6px;
+}
 /* What to do without a camera, next to the Paste button: an accent bar, so
    that it reads as the instruction of the step, not as fine print. */
 .frost-paste-hint {

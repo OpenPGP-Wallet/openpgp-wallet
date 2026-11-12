@@ -5,6 +5,29 @@ links and SHA-256 hashes of each build are on the [releases page](https://github
 
 ## [Unreleased]
 
+## [2.16.2] - 2026-11-12
+
+### Fixed
+- FROST tab: an account could be funded before its co-signer had finished. At the last setup step the wallet
+  already holds the account and shows its address, but the co-signer computes its share and the backup's only
+  from that step's message: if the message never reached it, the account could never sign and funds sent to it
+  were lost. A new account now stays "setup not finished", with no address on its card and no way to send, until
+  the user confirms in a native window, showing the whole address, that the co-signer shows the same one. The
+  last step's button says so instead of "Done", and comes before the QR code. Accounts set up before keep
+  working as they are.
+- FROST tab: recipients the co-signer refuses (transparent, TEX or Sapling addresses, or a unified address with no
+  Orchard receiver) are refused before anything is built, instead of at the co-signer after every confirmation.
+
+### Added
+- FROST tab: a line under the recipient field says, as it is typed, whether the address is valid, on the
+  account's network, and accepted by the co-signer. The card of a confirmed account says "Address confirmed with
+  the co-signer".
+
+### Changed
+- FROST tab: amounts on testnet are shown in TAZ, not ZEC, on the card, in the send steps and in the native
+  windows.
+- FROST tab: the red "Unaudited prototype: small amounts only" line at the top of the tab is removed.
+
 ## [2.16.1] - 2026-11-12
 
 ### Added
@@ -290,7 +313,8 @@ The app is renamed "PGP Wallet".
 First working proof of concept: a non-custodial Bitcoin, Ethereum and Solana wallet whose master key is
 protected by 2-of-3 Shamir secret sharing and OpenPGP, with no seed phrase.
 
-[Unreleased]: https://github.com/OpenPGP-Wallet/openpgp-wallet/compare/v2.16.1...HEAD
+[Unreleased]: https://github.com/OpenPGP-Wallet/openpgp-wallet/compare/v2.16.2...HEAD
+[2.16.2]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.16.2
 [2.16.1]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.16.1
 [2.16.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.16.0
 [2.15.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.15.0

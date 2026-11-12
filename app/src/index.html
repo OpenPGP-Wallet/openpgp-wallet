@@ -973,7 +973,6 @@
             Vos ZEC protégés sur un compte que deux de trois appareils doivent signer : cet ordinateur,
             un co-signataire et une sauvegarde. Le co-signataire vérifie chaque transaction lui-même avant de signer.
           </p>
-          <p class="error" data-i18n="frost.prototype">Prototype non audité : petits montants uniquement.</p>
           <div class="row-buttons">
             <button id="frost-create-main" class="primary" data-i18n="frost.createMain">+ Créer sur Mainnet</button>
             <button id="frost-create-test" class="secondary" data-i18n="frost.createTest">+ Créer sur le réseau de test</button>
@@ -1225,6 +1224,8 @@
         <div id="frost-send-fields" class="hidden">
           <label for="frost-to" data-i18n="send.toAddress">Adresse destinataire</label>
           <input id="frost-to" type="text" spellcheck="false" autocomplete="off" />
+          <!-- Whether the co-signer will accept it, said as it is typed. -->
+          <p id="frost-to-check" class="frost-to-check" aria-live="polite"></p>
           <label for="frost-amount" data-i18n="send.amount">Montant</label>
           <input id="frost-amount" type="text" inputmode="decimal" autocomplete="off" placeholder="0.001" />
           <label for="frost-memo" data-i18n="frost.memo">Mémo (facultatif)</label>
@@ -1258,12 +1259,14 @@
             <button id="frost-paste-use" class="secondary" data-i18n="frost.pasteUse">Utiliser ce texte</button>
           </details>
         </div>
-        <div id="frost-qr" class="qr-container hidden"></div>
-        <p id="frost-qr-caption" class="muted hidden"></p>
+        <!-- Before the large QR code too: at the last setup step, the address
+             confirmation must show without scrolling. -->
         <div class="row-buttons">
           <button id="frost-next" class="primary hidden"></button>
           <button id="frost-close" class="link" data-i18n="common.cancel">Annuler</button>
         </div>
+        <div id="frost-qr" class="qr-container hidden"></div>
+        <p id="frost-qr-caption" class="muted hidden"></p>
       </div>
     </div>
 
