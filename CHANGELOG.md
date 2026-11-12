@@ -5,6 +5,14 @@ links and SHA-256 hashes of each build are on the [releases page](https://github
 
 ## [Unreleased]
 
+## [2.16.3] - 2026-11-12
+
+### Fixed
+- FROST tab: the wallet checks the transaction with the co-signer's own rules before it sends the signing request,
+  and these are stricter now (frost-zec 5fc6b6e). A fee above ZIP 317 for the actions the payment needs, zero-value
+  padding, an expiry far beyond the current height, and a zero-value note to another address are refused. The lower
+  fee of ZIP 2009 passes. Reported by Daniel Gorgonha (DeegaLabs).
+
 ## [2.16.2] - 2026-11-12
 
 ### Fixed
@@ -313,7 +321,8 @@ The app is renamed "PGP Wallet".
 First working proof of concept: a non-custodial Bitcoin, Ethereum and Solana wallet whose master key is
 protected by 2-of-3 Shamir secret sharing and OpenPGP, with no seed phrase.
 
-[Unreleased]: https://github.com/OpenPGP-Wallet/openpgp-wallet/compare/v2.16.2...HEAD
+[Unreleased]: https://github.com/OpenPGP-Wallet/openpgp-wallet/compare/v2.16.3...HEAD
+[2.16.3]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.16.3
 [2.16.2]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.16.2
 [2.16.1]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.16.1
 [2.16.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.16.0
