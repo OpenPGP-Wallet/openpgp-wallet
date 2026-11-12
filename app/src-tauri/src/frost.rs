@@ -183,6 +183,88 @@ pub fn frost_cancel(state: tauri::State<'_, FrostState>) {
     *locked(&state.pending) = None;
 }
 
+/// The co-signer's message on the clipboard, for the "Paste" button. Only a
+/// `ur:zcash-frost/...` text is returned: anything else copied (a password,
+/// say) never reaches the page.
+#[tauri::command]
+pub async fn frost_clipboard() -> Result<Option<String>, String> {
+    run_blocking(|| {
+        let copied = arboard::Clipboard::new()
+            .and_then(|mut board| board.get_text())
+            .unwrap_or_default();
+        let text = copied.trim();
+        let prefix = format!("ur:{}/", wire::UR_TYPE);
+        let ours = text
+            .get(..prefix.len())
+            .is_some_and(|start| start.eq_ignore_ascii_case(&prefix));
+        Ok(ours.then(|| text.to_string()))
+    })
+    .await
+}
+
+/// Takes the FROST account on `network` out of the wallet, so that a new one
+/// can be set up there (core: `zcash_frost::remove`, which sets its files
+/// aside and deletes nothing). Asked in a native window the web page cannot
+/// draw or click. Returns false if the user said no.
+#[tauri::command]
+pub async fn frost_remove(network: String, app: tauri::AppHandle) -> Result<bool, String> {
+    let net = net(&network)?;
+    run_blocking(move || {
+        let dir = data_dir(&app)?;
+        if zcash_frost::account(&dir, net).t_err()?.is_none() {
+            return Err(lang(
+                "Aucun compte FROST sur ce réseau.",
+                "No FROST account on this network.",
+            )
+            .to_string());
+        }
+        // A broken account must stay removable: an unreadable balance is said
+        // as such, it does not block.
+        let held = zcash_frost::balance(&dir, net)
+            .ok()
+            .map(|balance| balance.spendable.saturating_add(balance.pending));
+        let english = crate::UI_LANG_IS_ENGLISH.load(Ordering::Relaxed);
+        let network_name = match (net, english) {
+            (Net::Main, _) => "Mainnet",
+            (Net::Test, true) => "testnet",
+            (Net::Test, false) => "réseau de test",
+        };
+        let funds = match held {
+            Some(0) => String::new(),
+            Some(zats) => {
+                let zec = openpgp_wallet_core::zcash::format_zec(zats);
+                if english {
+                    format!("\n\nIt still holds {zec} ZEC.")
+                } else {
+                    format!("\n\nIl contient encore {zec} ZEC.")
+                }
+            }
+            None => lang(
+                "\n\nSon solde n'a pas pu être lu.",
+                "\n\nIts balance could not be read.",
+            )
+            .to_string(),
+        };
+        let message = if english {
+            format!("Remove the FROST account ({network_name}) from this wallet?{funds}\n\nNothing is deleted: its files are set aside in the wallet's data folder ({}). Putting them back restores the account and its funds.\n\nYou can then create a new FROST account on this network.", zcash_frost::REMOVED_DIR)
+        } else {
+            format!("Retirer le compte FROST ({network_name}) de ce portefeuille ?{funds}\n\nRien n'est effacé : ses fichiers sont mis de côté dans le dossier de données du portefeuille ({}). Les remettre en place rend le compte et ses fonds.\n\nVous pourrez ensuite créer un nouveau compte FROST sur ce réseau.", zcash_frost::REMOVED_DIR)
+        };
+        if !shielded_dialog(
+            &app,
+            ("Retirer le compte FROST", "Remove the FROST account"),
+            message,
+        ) {
+            return Ok(false);
+        }
+        // A setup or a send left half-way goes with the account.
+        frost_cancel(app.state::<FrostState>());
+        zcash_frost::remove(&dir, net).t_err()?;
+        Ok(true)
+    })
+    .await
+}
+
 // --- Setup --------------------------------------------------------------------------
 
 #[tauri::command]

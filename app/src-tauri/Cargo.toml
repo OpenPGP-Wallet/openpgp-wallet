@@ -1,6 +1,6 @@
 [package]
 name = "wallet"
-version = "2.16.0"
+version = "2.16.1"
 description = "Non-custodial, multi-network crypto wallet whose master key is protected by OpenPGP instead of a plaintext seed phrase"
 authors = ["Khadim"]
 edition = "2021"
@@ -39,6 +39,10 @@ openpgp-wallet-core = { path = "../../core" }
 # The FROST tab draws and reads the co-signer's QR codes (frost-zec, same
 # revision as the core).
 frost-zec = { git = "https://github.com/OpenPGP-Wallet/frost-zec", rev = "cbe0ef3bb26c5bfc6395d92c42dde3790fbeef05", default-features = false, features = ["camera"] }
+# The FROST tab's "Paste" button reads the co-signer's message from the
+# clipboard in the backend, which returns only a ur:zcash-frost text to the page
+# (the same crate as the frost-zec co-signer's clipboard).
+arboard = { version = "3", default-features = false }
 # Wipes the passwords received from the frontend (String) as soon as they are no
 # longer needed, including on an early return/panic; the same sensitive buffers as
 # core/, which already uses zeroize for the entropy/seed.

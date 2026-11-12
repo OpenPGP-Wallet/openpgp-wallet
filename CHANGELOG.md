@@ -5,6 +5,25 @@ links and SHA-256 hashes of each build are on the [releases page](https://github
 
 ## [Unreleased]
 
+## [2.16.1] - 2026-11-12
+
+### Added
+- FROST tab: "Remove this account from the wallet", to set up a new FROST account on the same network. It asks
+  in a native window, says how much the account still holds, and deletes nothing: the account's files are set
+  aside in the `zcash_frost_removed` folder of the wallet's data, and putting them back restores the account and
+  its funds.
+- FROST tab: a button copies the transaction ID after a send.
+- FROST tab: "Paste the co-signer's message" takes the co-signer's answer from the clipboard in one click, next to
+  a short note on what to do without a camera. The clipboard is read by the backend, which passes on only a
+  `ur:zcash-frost` message: nothing else copied reaches the page. If the clipboard still holds the wallet's own
+  message, or no message at all, the window says so.
+
+### Changed
+- FROST tab: "Copy as text" is a full button instead of a grey link, and it comes before the QR code with the
+  paste button and the password, so that a co-signer on the same computer needs no scrolling. Errors show under the
+  step. The animated QR codes are drawn larger (up to 520 px), so that a phone used as a webcam can read them.
+- FROST tab: each step says how to give the message to the co-signer and get its answer with or without a camera.
+
 ## [2.16.0] - 2026-11-11
 
 ### Added
@@ -271,7 +290,8 @@ The app is renamed "PGP Wallet".
 First working proof of concept: a non-custodial Bitcoin, Ethereum and Solana wallet whose master key is
 protected by 2-of-3 Shamir secret sharing and OpenPGP, with no seed phrase.
 
-[Unreleased]: https://github.com/OpenPGP-Wallet/openpgp-wallet/compare/v2.16.0...HEAD
+[Unreleased]: https://github.com/OpenPGP-Wallet/openpgp-wallet/compare/v2.16.1...HEAD
+[2.16.1]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.16.1
 [2.16.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.16.0
 [2.15.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.15.0
 [2.14.1]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.14.1

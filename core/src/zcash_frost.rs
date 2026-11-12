@@ -149,6 +149,44 @@ pub fn account(data_dir: &Path, net: Net) -> Result<Option<FrostAccount>> {
     }
 }
 
+/// Where removed accounts go, inside the data directory.
+pub const REMOVED_DIR: &str = "zcash_frost_removed";
+
+/// Takes the FROST account on `net` out of the app, so that a new one can be
+/// set up on that network. Nothing is deleted: the account's files move to
+/// `zcash_frost_removed/<network>-<seconds>/`, the seat still encrypted as
+/// before, and moving them back gives the account, and any funds left on it,
+/// back to this wallet. Returns that folder.
+///
+/// The database moves first, since an open one (a sync running) is what can
+/// refuse to move, and the account file last: if a move fails, the account is
+/// still listed, and removing it again moves what is left.
+pub fn remove(data_dir: &Path, net: Net) -> Result<PathBuf> {
+    if account(data_dir, net)?.is_none() {
+        bail!("aucun compte FROST sur ce réseau");
+    }
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or_default();
+    let folder = data_dir
+        .join(REMOVED_DIR)
+        .join(format!("{}-{seconds}", net.tag()));
+    std::fs::create_dir_all(&folder).context("compte FROST : mise de côté impossible")?;
+    for extension in ["sqlite", "sqlite-wal", "sqlite-shm", "seat", "json"] {
+        let from = net.file(data_dir, extension);
+        let to = folder.join(from.file_name().context("nom de fichier")?);
+        match std::fs::rename(&from, &to) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                return Err(e)
+                    .context("compte FROST : mise de côté impossible, réessayez dans un instant");
+            }
+            _ => {}
+        }
+    }
+    Ok(folder)
+}
+
 /// Member 1's secrets. Encrypted on disk, wiped from memory when dropped.
 #[derive(Serialize, Deserialize)]
 struct Seat {
@@ -844,6 +882,53 @@ fn broadcast(net: Net, raw: Vec<u8>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_removed_account_is_set_aside_not_deleted() {
+        let dir = std::env::temp_dir().join(format!("zcash-frost-remove-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let main = FrostAccount {
+            network: Net::Main,
+            ufvk: "uview1-main".into(),
+            address: "u1-main".into(),
+            birthday: 3_500_000,
+        };
+        let test = FrostAccount {
+            network: Net::Test,
+            ..main.clone()
+        };
+        std::fs::write(
+            Net::Main.file(&dir, "json"),
+            serde_json::to_vec(&main).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(Net::Main.file(&dir, "seat"), b"sealed seat").unwrap();
+        std::fs::write(Net::Main.file(&dir, "sqlite"), b"scan data").unwrap();
+        std::fs::write(
+            Net::Test.file(&dir, "json"),
+            serde_json::to_vec(&test).unwrap(),
+        )
+        .unwrap();
+
+        let folder = remove(&dir, Net::Main).unwrap();
+
+        assert!(account(&dir, Net::Main).unwrap().is_none());
+        assert_eq!(account(&dir, Net::Test).unwrap(), Some(test));
+        for (name, bytes) in [
+            ("zcash_frost_main.seat", &b"sealed seat"[..]),
+            ("zcash_frost_main.sqlite", &b"scan data"[..]),
+        ] {
+            assert_eq!(std::fs::read(folder.join(name)).unwrap(), bytes);
+            assert!(!dir.join(name).exists());
+        }
+        let kept: FrostAccount =
+            serde_json::from_slice(&std::fs::read(folder.join("zcash_frost_main.json")).unwrap())
+                .unwrap();
+        assert_eq!(kept, main);
+        assert!(remove(&dir, Net::Main).is_err(), "nothing left to remove");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn a_seat_round_trips_only_with_its_seed_and_network() {

@@ -1213,6 +1213,10 @@
       <div class="modal">
         <h2 id="frost-modal-title"></h2>
         <p id="frost-step" class="muted"></p>
+        <!-- Right under the step, so that they show without scrolling past the QR code. -->
+        <p id="frost-error" class="error hidden"></p>
+        <p id="frost-success" class="success hidden"></p>
+        <button id="frost-txid-copy" type="button" class="secondary hidden" data-i18n="frost.copyTxid">Copier l'identifiant de la transaction (txid)</button>
         <!-- The account address: shortened, the whole of it in the title and on copy. -->
         <div id="frost-address-box" class="frost-address-box hidden">
           <code id="frost-address-short" class="frost-address-short"></code>
@@ -1226,9 +1230,10 @@
           <label for="frost-memo" data-i18n="frost.memo">Mémo (facultatif)</label>
           <input id="frost-memo" type="text" autocomplete="off" maxlength="512" />
         </div>
-        <div id="frost-qr" class="qr-container hidden"></div>
-        <p id="frost-qr-caption" class="muted hidden"></p>
-        <button id="frost-copy-text" type="button" class="link hidden" data-i18n="frost.copyText">Copier en texte (co-signataire sans caméra)</button>
+        <pre id="frost-report" class="frost-report hidden"></pre>
+        <!-- Without a camera, the way forward at each step: above the large QR
+             code, so that a co-signer on the same computer needs no scrolling. -->
+        <button id="frost-copy-text" type="button" class="secondary hidden" data-i18n="frost.copyText">Copier en texte (co-signataire sans caméra)</button>
         <div id="frost-code-box" class="hidden">
           <p class="frost-code" id="frost-code"></p>
           <div class="row-buttons">
@@ -1236,22 +1241,25 @@
             <button id="frost-code-different" class="secondary" data-i18n="frost.codeDifferent">Ils sont différents</button>
           </div>
         </div>
-        <pre id="frost-report" class="frost-report hidden"></pre>
-        <div id="frost-scan-box" class="hidden">
-          <button id="frost-scan" class="primary" data-i18n="frost.scan">Lire le QR code du co-signataire</button>
-          <p id="frost-scan-progress" class="muted"></p>
-          <details open>
-            <summary data-i18n="frost.pasteSummary">Pas de caméra ? Collez ici le texte du co-signataire (Ctrl+V)</summary>
-            <textarea id="frost-paste" rows="3" spellcheck="false" placeholder="ur:zcash-frost/..."></textarea>
-            <button id="frost-paste-use" class="secondary" data-i18n="frost.pasteUse">Utiliser ce texte</button>
-          </details>
-        </div>
         <div id="frost-password-box" class="hidden">
           <label for="frost-password" data-i18n="shielded.password">Mot de passe</label>
           <input id="frost-password" type="password" autocomplete="current-password" />
         </div>
-        <p id="frost-error" class="error hidden"></p>
-        <p id="frost-success" class="success hidden"></p>
+        <div id="frost-scan-box" class="hidden">
+          <p class="frost-paste-hint" data-i18n="frost.pasteHint">Sans caméra : quand la fenêtre du co-signataire bipe, son message est copié. Cliquez « Coller le message du co-signataire », ou faites Ctrl+V.</p>
+          <div class="row-buttons">
+            <button id="frost-paste-clipboard" type="button" class="primary" data-i18n="frost.pasteClipboard">Coller le message du co-signataire</button>
+            <button id="frost-scan" type="button" class="secondary" data-i18n="frost.scan">Lire le QR code du co-signataire</button>
+          </div>
+          <p id="frost-scan-progress" class="muted"></p>
+          <details>
+            <summary data-i18n="frost.pasteSummary">Coller un texte à la main</summary>
+            <textarea id="frost-paste" rows="3" spellcheck="false" placeholder="ur:zcash-frost/..."></textarea>
+            <button id="frost-paste-use" class="secondary" data-i18n="frost.pasteUse">Utiliser ce texte</button>
+          </details>
+        </div>
+        <div id="frost-qr" class="qr-container hidden"></div>
+        <p id="frost-qr-caption" class="muted hidden"></p>
         <div class="row-buttons">
           <button id="frost-next" class="primary hidden"></button>
           <button id="frost-close" class="link" data-i18n="common.cancel">Annuler</button>
