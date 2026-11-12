@@ -5,6 +5,11 @@ links and SHA-256 hashes of each build are on the [releases page](https://github
 
 ## [Unreleased]
 
+## [2.16.2] - 2026-11-12
+
+### Changed
+- FROST tab: the red "Unaudited prototype: small amounts only" line at the top of the tab is removed.
+
 ## [2.16.1] - 2026-11-12
 
 ### Added
@@ -290,7 +295,8 @@ The app is renamed "PGP Wallet".
 First working proof of concept: a non-custodial Bitcoin, Ethereum and Solana wallet whose master key is
 protected by 2-of-3 Shamir secret sharing and OpenPGP, with no seed phrase.
 
-[Unreleased]: https://github.com/OpenPGP-Wallet/openpgp-wallet/compare/v2.16.1...HEAD
+[Unreleased]: https://github.com/OpenPGP-Wallet/openpgp-wallet/compare/v2.16.2...HEAD
+[2.16.2]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.16.2
 [2.16.1]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.16.1
 [2.16.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.16.0
 [2.15.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.15.0
