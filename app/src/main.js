@@ -1249,22 +1249,25 @@ const I18N = {
     "frost.done": "Terminé",
     "frost.setupTitleMain": "Créer un compte FROST (Mainnet)",
     "frost.setupTitleTest": "Créer un compte FROST (réseau de test)",
-    "frost.setupStep1": "1/4 · Lancez la création d'un compte sur le co-signataire, puis donnez-lui ce message : « Copier en texte », ou ce QR code s'il a une caméra. Récupérez ensuite sa réponse.",
-    "frost.setupStep2": "2/4 · Donnez ce message au co-signataire (« Copier en texte » ou QR code), puis comparez les deux codes à 6 chiffres. Vous confirmerez dans une fenêtre de Windows.",
-    "frost.setupStep3": "3/4 · Entrez votre mot de passe, puis récupérez les clés du co-signataire.",
-    "frost.setupStep4": "4/4 · Donnez ce dernier message au co-signataire (« Copier en texte » ou QR code) : c'est avec lui qu'il termine sa part. Attendez qu'il affiche l'adresse du compte, puis confirmez qu'elle est la même que celle-ci. N'envoyez rien avant.",
+    "frost.setupStep1": "1/5 · Lancez la création d'un compte sur le co-signataire, puis donnez-lui ce message : « Copier en texte », ou ce QR code s'il a une caméra. Récupérez ensuite sa réponse.",
+    "frost.setupStep2": "2/5 · Donnez ce message au co-signataire (« Copier en texte » ou QR code), puis comparez les deux codes à 6 chiffres. Vous confirmerez dans une fenêtre de Windows.",
+    "frost.setupStep3": "3/5 · Entrez votre mot de passe, puis récupérez les clés du co-signataire.",
+    "frost.setupStep4": "4/5 · Donnez ce message au co-signataire (« Copier en texte » ou QR code) : c'est avec lui qu'il termine sa part et la sauvegarde. Récupérez ensuite sa dernière réponse, qui confirme qu'il a tout enregistré.",
+    "frost.setupStep5": "5/5 · Le co-signataire a confirmé : le compte est prêt. Voici son adresse, que le co-signataire affiche aussi.",
     "frost.sendTitleMain": "Envoyer depuis le compte FROST (Mainnet)",
     "frost.sendTitleTest": "Envoyer depuis le compte FROST (réseau de test)",
     "frost.sendStep1": "Indiquez le destinataire et le montant. Vous confirmerez dans une fenêtre de Windows.",
-    "frost.sendStep2": "{amount} {unit} vers {recipient} (frais {fee} {unit}). Lancez la signature sur le co-signataire, entrez votre mot de passe, puis récupérez son message.",
+    "frost.sendStep2": "{amount} {unit} vers {recipient} (frais {fee} {unit}). Entrez votre mot de passe pour créer la demande de signature.",
+    "frost.makeRequest": "Créer la demande",
     "frost.sendStep3": "Donnez ce message au co-signataire (« Copier en texte » ou QR code) : il vous montrera la transaction pour que vous l'approuviez. Récupérez ensuite sa réponse.",
     "frost.sendProving": "Signature reçue : preuve et envoi de la transaction…",
     "frost.sent": "Transaction envoyée : {txid}",
     "frost.copyTxid": "Copier l'identifiant de la transaction (txid)",
-    "frost.confirmAddress": "Le co-signataire affiche la même adresse…",
-    "frost.addressNotConfirmed": "Adresse non confirmée : cliquez « Copier en texte », attendez que le co-signataire affiche l'adresse, puis confirmez. N'envoyez rien à ce compte avant.",
-    "frost.unconfirmed": "Création pas terminée : le co-signataire n'a peut-être pas reçu le dernier message, et sans lui le compte ne pourra jamais signer. N'y envoyez rien. Si le co-signataire affiche l'adresse du compte, confirmez-la ; sinon, retirez ce compte et recommencez la création.",
-    "frost.verified": "Adresse confirmée avec le co-signataire",
+    "frost.unconfirmed": "Création pas terminée : le co-signataire n'a pas encore confirmé avoir enregistré sa part, et sans elle le compte ne pourra jamais signer. Son adresse reste cachée d'ici là. Récupérez la dernière réponse du co-signataire (« frost-zec qr done » la réaffiche). S'il n'a jamais reçu le dernier message du portefeuille, retirez ce compte et recommencez la création.",
+    "frost.finishSetup": "Terminer la création…",
+    "frost.finishTitle": "Terminer la création du compte FROST",
+    "frost.finishStep": "Entrez votre mot de passe, puis récupérez la dernière réponse du co-signataire. Si elle n'est plus affichée, lancez « frost-zec qr done » sur le co-signataire.",
+    "frost.verified": "Confirmé par le co-signataire",
     "frost.recipientOk": "Adresse valide : protégée, réseau principal, acceptée par le co-signataire.",
     "frost.recipientOkTest": "Adresse valide : protégée, réseau de test, acceptée par le co-signataire.",
     "ledger.title": "Portefeuille matériel (Ledger, Trezor)",
@@ -2045,22 +2048,25 @@ const I18N = {
     "frost.done": "Done",
     "frost.setupTitleMain": "Create a FROST account (Mainnet)",
     "frost.setupTitleTest": "Create a FROST account (testnet)",
-    "frost.setupStep1": "1/4 · Start creating an account on the co-signer, then give it this message: “Copy as text”, or this QR code if it has a camera. Then get its answer.",
-    "frost.setupStep2": "2/4 · Give this message to the co-signer (“Copy as text” or QR code), then compare the two 6-digit codes. You will confirm in a Windows window.",
-    "frost.setupStep3": "3/4 · Enter your password, then get the co-signer's keys.",
-    "frost.setupStep4": "4/4 · Give this last message to the co-signer (“Copy as text” or QR code): it finishes its share with it. Wait until it shows the account's address, then confirm it is the same as this one. Send nothing before.",
+    "frost.setupStep1": "1/5 · Start creating an account on the co-signer, then give it this message: “Copy as text”, or this QR code if it has a camera. Then get its answer.",
+    "frost.setupStep2": "2/5 · Give this message to the co-signer (“Copy as text” or QR code), then compare the two 6-digit codes. You will confirm in a Windows window.",
+    "frost.setupStep3": "3/5 · Enter your password, then get the co-signer's keys.",
+    "frost.setupStep4": "4/5 · Give this message to the co-signer (“Copy as text” or QR code): it finishes its share and the backup with it. Then get its last answer, which confirms it saved everything.",
+    "frost.setupStep5": "5/5 · The co-signer confirmed: the account is ready. Here is its address, which the co-signer shows too.",
     "frost.sendTitleMain": "Send from the FROST account (Mainnet)",
     "frost.sendTitleTest": "Send from the FROST account (testnet)",
     "frost.sendStep1": "Enter the recipient and the amount. You will confirm in a Windows window.",
-    "frost.sendStep2": "{amount} {unit} to {recipient} (fee {fee} {unit}). Start signing on the co-signer, enter your password, then get its message.",
+    "frost.sendStep2": "{amount} {unit} to {recipient} (fee {fee} {unit}). Enter your password to create the signing request.",
+    "frost.makeRequest": "Create the request",
     "frost.sendStep3": "Give this message to the co-signer (“Copy as text” or QR code): it will show you the transaction to approve. Then get its answer.",
     "frost.sendProving": "Signature received: proving and sending the transaction…",
     "frost.sent": "Transaction sent: {txid}",
     "frost.copyTxid": "Copy the transaction ID (txid)",
-    "frost.confirmAddress": "The co-signer shows the same address…",
-    "frost.addressNotConfirmed": "Address not confirmed: click “Copy as text”, wait until the co-signer shows the address, then confirm. Send nothing to this account before.",
-    "frost.unconfirmed": "Setup not finished: the co-signer may not have received the last message, and without it the account can never sign. Send nothing to it. If the co-signer shows the account's address, confirm it; otherwise remove this account and set it up again.",
-    "frost.verified": "Address confirmed with the co-signer",
+    "frost.unconfirmed": "Setup not finished: the co-signer has not confirmed yet that it saved its share, and without it the account can never sign. Its address stays hidden until then. Get the co-signer's last answer (“frost-zec qr done” shows it again). If it never got the wallet's last message, remove this account and set it up again.",
+    "frost.finishSetup": "Finish the setup…",
+    "frost.finishTitle": "Finish the FROST account setup",
+    "frost.finishStep": "Enter your password, then get the co-signer's last answer. If it is no longer shown, run “frost-zec qr done” on the co-signer.",
+    "frost.verified": "Confirmed by the co-signer",
     "frost.recipientOk": "Valid address: shielded, mainnet, accepted by the co-signer.",
     "frost.recipientOkTest": "Valid address: shielded, testnet, accepted by the co-signer.",
     "ledger.title": "Hardware wallet (Ledger, Trezor)",
@@ -10289,7 +10295,7 @@ function frostAccountRow(account) {
     warning.className = "error";
     warning.textContent = t("frost.unconfirmed");
     actions.append(
-      frostButton("primary", t("frost.confirmAddress"), () => confirmFrostAddress(account.network)),
+      frostButton("primary", t("frost.finishSetup"), () => openFrostFinish(account.network)),
     );
     row.append(title, warning, balance, sync, actions, remove);
     return row;
@@ -10310,15 +10316,21 @@ function frostAccountRow(account) {
   return row;
 }
 
-// The native window of the backend shows the whole address; the account can
-// receive only once the user says the co-signer shows the same one.
-async function confirmFrostAddress(network) {
-  try {
-    await invoke("frost_confirm_address", { network });
-  } catch (e) {
-    alert(t("common.error", { err: e }));
-  }
-  await loadFrostAccounts();
+// An account whose setup was left before the co-signer's acknowledgement (the
+// app closed): the backend checks it against the encrypted seat, and only then
+// does the card get the address.
+function openFrostFinish(network) {
+  frostOpen(t("frost.finishTitle"));
+  frostFlow = { kind: "finish", network };
+  frostShow(["frost-scan-box", "frost-password-box"]);
+  frostStep(t("frost.finishStep"));
+  frostFlow.onScanned = async (ur) => {
+    await invoke("frost_setup_done_later", { network, ur, password: frostPassword() });
+    frostFlow.onScanned = null;
+    frostEl("frost-password").value = "";
+    await frostClose();
+    await syncFrostAccounts();
+  };
 }
 
 // Asked in a native window by the backend, which sets the account's files
@@ -10552,21 +10564,33 @@ async function openFrostSend(network) {
       amount: frostEl("frost-amount").value.trim(),
       memo: frostEl("frost-memo").value || null,
     });
-    frostShow(["frost-scan-box", "frost-password-box"]);
+    frostShow(["frost-password-box", "frost-next"]);
     frostStep(t("frost.sendStep2", { ...summary, unit: frostUnit(network) }));
-    frostFlow.onScanned = async (ur) => {
-      const request = await invoke("frost_send_request", { ur, password: frostPassword() });
+    requestAnimationFrame(() => frostEl("frost-password").focus({ preventScroll: true }));
+    frostNext(t("frost.makeRequest"), async () => {
+      const request = await invoke("frost_send_request", { password: frostPassword() });
       frostEl("frost-password").value = "";
-      frostShow(["frost-qr", "frost-qr-caption", "frost-report", "frost-scan-box"]);
-      frostEl("frost-report").textContent = request.lines.join("\n");
-      frostStep(t("frost.sendStep3"));
-      startFrostQr(request.qr);
+      const showRequest = () => {
+        frostShow(["frost-qr", "frost-qr-caption", "frost-report", "frost-scan-box"]);
+        frostEl("frost-report").textContent = request.lines.join("\n");
+        frostStep(t("frost.sendStep3"));
+        startFrostQr(request.qr);
+      };
+      showRequest();
       frostFlow.onScanned = async (reply) => {
-        frostFlow.onScanned = null;
         stopFrostQr();
         frostShow([]);
         frostStep(t("frost.sendProving"));
-        const txid = await invoke("frost_send_finish", { ur: reply });
+        let txid;
+        try {
+          txid = await invoke("frost_send_finish", { ur: reply });
+        } catch (e) {
+          // A paste that is not this request's answer leaves the request
+          // waiting: show it again with the error.
+          showRequest();
+          throw e;
+        }
+        frostFlow.onScanned = null;
         frostStep("");
         const success = frostEl("frost-success");
         success.textContent = t("frost.sent", { txid });
@@ -10577,7 +10601,7 @@ async function openFrostSend(network) {
         frostShow(["frost-next"]);
         frostNext(t("frost.done"), frostClose);
       };
-    };
+    });
   });
 }
 
@@ -10658,32 +10682,33 @@ frostEl("frost-address-copy").addEventListener("click", () =>
   copyText(frostEl("frost-address-short").dataset.address || ""),
 );
 frostEl("frost-code-same").addEventListener("click", async () => {
-  const network = frostFlow?.network;
   try {
     await invoke("frost_setup_code_confirmed");
     stopFrostQr();
     frostShow(["frost-scan-box", "frost-password-box"]);
     frostStep(t("frost.setupStep3"));
     frostFlow.onScanned = async (ur) => {
-      const done = await invoke("frost_setup_finish", { ur, password: frostPassword() });
-      frostFlow.onScanned = null;
+      const last = await invoke("frost_setup_finish", { ur, password: frostPassword() });
       frostEl("frost-password").value = "";
-      frostSetAddress(done.address);
-      frostShow(["frost-address-box", "frost-qr", "frost-qr-caption", "frost-next"]);
+      frostShow(["frost-qr", "frost-qr-caption", "frost-scan-box"]);
       frostStep(t("frost.setupStep4"));
-      startFrostQr(done.qr);
-      // No plain "Done": the wallet has the account now, but the co-signer
-      // computes its share and the backup's only from this last message. The
-      // account is kept unconfirmed (no address on its card) until the user
-      // says, in the backend's native window, that the co-signer shows it.
-      frostNext(t("frost.confirmAddress"), async () => {
-        if (!(await invoke("frost_confirm_address", { network }))) {
-          frostFail(t("frost.addressNotConfirmed"));
-          return;
-        }
-        await frostClose();
-        await syncFrostAccounts();
-      });
+      startFrostQr(last);
+      // The wallet has the account now, unconfirmed, but the co-signer computes
+      // its share and the backup's only from this last message. Its answer, the
+      // acknowledgement, is what confirms the account; the address comes with
+      // it, never before.
+      frostFlow.onScanned = async (acknowledgement) => {
+        const address = await invoke("frost_setup_done", { ur: acknowledgement });
+        frostFlow.onScanned = null;
+        stopFrostQr();
+        frostSetAddress(address);
+        frostShow(["frost-address-box", "frost-next"]);
+        frostStep(t("frost.setupStep5"));
+        frostNext(t("frost.done"), async () => {
+          await frostClose();
+          await syncFrostAccounts();
+        });
+      };
     };
   } catch (e) {
     // Cancelled in the native window, or no setup left: nothing more to show.

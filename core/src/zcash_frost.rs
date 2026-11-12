@@ -21,9 +21,9 @@ use anyhow::{anyhow, bail, Context, Result};
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use frost_zec::channel::{Initiator, Pairing, PendingPairing};
-use frost_zec::cosigning::{Commitments, CoordinatorSession, Member, Reply};
-use frost_zec::setup::{CoordinatorSetup, Group, Round1, Round2};
-use frost_zec::wire::{self, kind, Message};
+use frost_zec::cosigning::{CoordinatorSession, Member, Reply};
+use frost_zec::setup::{self as frost_setup, CoordinatorSetup, Done, Group, Round1, Round2};
+use frost_zec::wire::{self, kind, Message, WireError};
 use frost_zec::{check, keys, signing};
 use rand::{rand_core::UnwrapErr, rngs::SysRng};
 use serde::{Deserialize, Serialize};
@@ -136,13 +136,13 @@ pub struct FrostAccount {
     pub ufvk: String,
     pub address: String,
     pub birthday: u32,
-    /// Whether the user confirmed that the co-signer shows this address. The
-    /// wallet has the account once it holds the co-signer's keys, but the
-    /// co-signer only computes its own share and the backup's from the last
-    /// message: if that message never reaches it, the account can never sign,
-    /// and funds sent to it are lost. Until confirmed, the account is neither
-    /// shown for receiving nor spent from. Accounts from before this field
-    /// were all finished by hand, hence true when it is absent.
+    /// Whether the co-signer acknowledged the end of the setup (frost-zec spec
+    /// § 4.1). The wallet has the account once it holds the co-signer's keys,
+    /// but the co-signer only computes its own share and the backup's from the
+    /// last message: if that message never reaches it, the account can never
+    /// sign, and funds sent to it are lost. Until confirmed, the account is
+    /// neither shown for receiving nor spent from. Accounts from before this
+    /// field were all finished by hand, hence true when it is absent.
     #[serde(default = "confirmed_when_absent")]
     pub confirmed: bool,
 }
@@ -154,12 +154,18 @@ fn confirmed_when_absent() -> bool {
 /// Shown when the address of an account the co-signer may not have finished is
 /// asked for a send.
 pub const NOT_CONFIRMED: &str =
-    "création du compte FROST pas confirmée : vérifiez que le co-signataire affiche son adresse";
+    "création du compte FROST pas terminée : il manque le dernier message du co-signataire";
 
-/// Records that the co-signer shows the account's address (see
+/// Shown when the co-signer acknowledges another group than this device's.
+pub const DIFFERENT_GROUP: &str = "le co-signataire a terminé la création avec un autre groupe que ce portefeuille : n'utilisez pas ce compte, retirez-le et recommencez la création";
+
+/// Shown for a message from a co-signer that speaks draft v0.1 of the protocol.
+pub const OLD_COSIGNER: &str = "ce message vient d'un co-signataire d'une version précédente : mettez à jour le co-signataire (frost-zec)";
+
+/// Records that the co-signer acknowledged the end of the setup (see
 /// [`FrostAccount::confirmed`]). Written to a temporary file then renamed, so
 /// the account file is never left half-written.
-pub fn confirm(data_dir: &Path, net: Net) -> Result<FrostAccount> {
+fn confirm(data_dir: &Path, net: Net) -> Result<FrostAccount> {
     let mut account = account(data_dir, net)?.context("aucun compte FROST sur ce réseau")?;
     account.confirmed = true;
     let path = net.file(data_dir, "json");
@@ -455,6 +461,14 @@ pub enum SetupStep {
         pairing: Pairing,
         setup: CoordinatorSetup,
     },
+    /// The account is stored, unconfirmed, and the last message is on screen;
+    /// scan the co-signer's acknowledgement. `digest` is this device's digest
+    /// of the group, which the co-signer's must equal.
+    AwaitingDone {
+        net: Net,
+        pairing: Pairing,
+        digest: [u8; 32],
+    },
 }
 
 impl SetupStep {
@@ -462,7 +476,8 @@ impl SetupStep {
         match self {
             SetupStep::AwaitingResponse { net, .. }
             | SetupStep::AwaitingCode { net, .. }
-            | SetupStep::AwaitingKeys { net, .. } => *net,
+            | SetupStep::AwaitingKeys { net, .. }
+            | SetupStep::AwaitingDone { net, .. } => *net,
         }
     }
 }
@@ -561,16 +576,17 @@ pub fn confirm_code(
     Ok(true)
 }
 
-/// Takes the co-signer's keys; returns the last payload to show, and the
-/// account once stored. `seed` encrypts the seat; `birthday` comes from
-/// [`chain_birthday`].
+/// Takes the co-signer's keys; stores the account, unconfirmed, and returns
+/// the last payload to show with the next step, which waits for the
+/// co-signer's acknowledgement. `seed` encrypts the seat; `birthday` comes
+/// from [`chain_birthday`].
 pub fn setup_finish(
     data_dir: &Path,
     step: SetupStep,
     payload: &[u8],
     seed: &[u8],
     birthday: &AccountBirthday,
-) -> Result<(Vec<u8>, FrostAccount)> {
+) -> Result<(Vec<u8>, SetupStep)> {
     let SetupStep::AwaitingKeys {
         net,
         pairing,
@@ -602,8 +618,82 @@ pub fn setup_finish(
         &round2.to_bytes(),
         &mut UnwrapErr(SysRng),
     )?]);
-    let account = store(data_dir, net, &pairing, &group, seed, birthday)?;
-    Ok((shown, account))
+    let digest = group.digest().map_err(|e| anyhow!("{e}"))?;
+    store(data_dir, net, &pairing, &group, seed, birthday)?;
+    Ok((
+        shown,
+        SetupStep::AwaitingDone {
+            net,
+            pairing,
+            digest,
+        },
+    ))
+}
+
+/// Opens the one sealed message of `payload` as `expected`, in the user's
+/// words when it is another message (an older co-signer's, or the wrong one
+/// pasted). Returns the session it is bound to and its plaintext.
+fn open_one(pairing: &Pairing, payload: &[u8], expected: u8) -> Result<(Vec<u8>, Vec<u8>)> {
+    let messages = wire::decode_payload(payload)?;
+    let message = messages.first().context("QR vide")?;
+    match message.open(pairing, expected) {
+        Ok((session, plaintext)) => Ok((session, plaintext.to_vec())),
+        Err(WireError::UnexpectedKind(48..=50)) => bail!(OLD_COSIGNER),
+        Err(WireError::UnexpectedKind(_)) => {
+            bail!(
+                "ce n'est pas le message attendu du co-signataire : récupérez son dernier message"
+            )
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Takes the co-signer's acknowledgement (frost-zec spec § 4.1): once its
+/// digest of the group equals this device's, the account is confirmed and its
+/// address can be shown. The step is only read, so a wrong paste can be
+/// followed by the right one.
+pub fn setup_done(data_dir: &Path, step: &SetupStep, payload: &[u8]) -> Result<FrostAccount> {
+    let SetupStep::AwaitingDone {
+        net,
+        pairing,
+        digest,
+    } = step
+    else {
+        bail!("étape de configuration inattendue");
+    };
+    let (_, bytes) = open_one(pairing, payload, kind::DKG_DONE)?;
+    let done = Done::from_bytes(&bytes).map_err(|e| anyhow!("{e}"))?;
+    if done.digest != *digest {
+        bail!(DIFFERENT_GROUP);
+    }
+    confirm(data_dir, *net)
+}
+
+/// The co-signer's acknowledgement for an account left unconfirmed, after the
+/// app was closed during the setup (the co-signer shows it again with
+/// `frost-zec qr done`). `seed` unlocks the seat, from which the digest is
+/// computed again.
+pub fn setup_done_later(
+    data_dir: &Path,
+    net: Net,
+    seed: &[u8],
+    payload: &[u8],
+) -> Result<FrostAccount> {
+    let account = account(data_dir, net)?.context("aucun compte FROST sur ce réseau")?;
+    if account.confirmed {
+        return Ok(account);
+    }
+    let (pairing, member) = load_seat(data_dir, net, seed)?;
+    // The viewing key comes from the encrypted seat; the account file is
+    // public, and must agree with it.
+    let ufvk = keys::ufvk(&member.fvk, member.network).map_err(|e| anyhow!("{e}"))?;
+    if ufvk != account.ufvk {
+        bail!("compte FROST incohérent : le fichier du compte ne correspond pas à son siège");
+    }
+    let (_, bytes) = open_one(&pairing, payload, kind::DKG_DONE)?;
+    let done = Done::from_bytes(&bytes).map_err(|e| anyhow!("{e}"))?;
+    frost_setup::check_done(&member, &ufvk, &done).map_err(|_| anyhow!(DIFFERENT_GROUP))?;
+    confirm(data_dir, net)
 }
 
 fn store(
@@ -827,26 +917,18 @@ pub struct PendingSignature {
     session: CoordinatorSession,
 }
 
-/// Takes the co-signer's commitments; returns the request payload to show and
-/// the coordinator's own check of the PCZT. `seed` unlocks the seat.
+/// Opens a signing session for a confirmed send: returns the request payload
+/// to show and the coordinator's own check of the PCZT. `seed` unlocks the
+/// seat. Every call draws fresh nonces, so each request is a new session.
 pub fn send_request(
     data_dir: &Path,
     prepared: &PreparedSend,
-    commitments: &[u8],
     seed: &[u8],
 ) -> Result<(PendingSignature, Vec<u8>, check::Report)> {
     let (pairing, member) = load_seat(data_dir, prepared.net, seed)?;
-    let messages = wire::decode_payload(commitments)?;
-    let (bound, bytes) = messages
-        .first()
-        .context("QR vide")?
-        .open(&pairing, kind::SIGN_COMMITMENTS)?;
-    let opening = Commitments::from_bytes(&bytes).map_err(|e| anyhow!("{e}"))?;
-    if bound != opening.session {
-        bail!("QR incohérent : deux sessions différentes");
-    }
-    let (session, request, report) = CoordinatorSession::request(&member, &prepared.pczt, &opening)
-        .map_err(|e| anyhow!("{e}"))?;
+    let (session, request, report) =
+        CoordinatorSession::request(&member, &prepared.pczt, &mut UnwrapErr(SysRng))
+            .map_err(|e| anyhow!("{e}"))?;
     let shown = wire::encode_payload(&[Message::seal(
         &pairing,
         kind::SIGN_REQUEST,
@@ -865,16 +947,23 @@ pub fn send_request(
     ))
 }
 
-/// Takes the co-signer's reply: aggregates, proves, stores and broadcasts.
-/// Returns the transaction id.
-pub fn send_finish(data_dir: &Path, pending: PendingSignature, reply: &[u8]) -> Result<String> {
-    let messages = wire::decode_payload(reply)?;
-    let (_, bytes) = messages
-        .first()
-        .context("QR vide")?
-        .open(&pending.pairing, kind::SIGN_REPLY)?;
+/// Reads the co-signer's reply to this session without using it: a wrong
+/// paste, or a reply to an earlier request, leaves the session as it was.
+pub fn read_reply(pending: &PendingSignature, payload: &[u8]) -> Result<Reply> {
+    let (bound, bytes) = open_one(&pending.pairing, payload, kind::SIGN_REPLY)?;
     let reply = Reply::from_bytes(&bytes).map_err(|e| anyhow!("{e}"))?;
-    let signed = pending.session.finish(&reply).map_err(|e| anyhow!("{e}"))?;
+    let session = pending.session.session();
+    if bound != session || reply.session() != session {
+        bail!("cette réponse du co-signataire est celle d'une autre demande de signature");
+    }
+    Ok(reply)
+}
+
+/// Takes the co-signer's reply (from [`read_reply`]): signs this member's
+/// part, aggregates, proves, stores and broadcasts. Consumes the session and
+/// its nonces, whatever happens. Returns the transaction id.
+pub fn send_finish(data_dir: &Path, pending: PendingSignature, reply: &Reply) -> Result<String> {
+    let signed = pending.session.finish(reply).map_err(|e| anyhow!("{e}"))?;
     let proved = prove(signed)?;
     let mut db = open(data_dir, pending.net)?;
     let txid = extract_and_store_transaction_from_pczt::<_, ()>(
@@ -1128,7 +1217,9 @@ mod tests {
     fn pairing_id(step: &SetupStep) -> [u8; 16] {
         match step {
             SetupStep::AwaitingCode { pending, .. } => pending.id(),
-            SetupStep::AwaitingKeys { pairing, .. } => pairing.id(),
+            SetupStep::AwaitingKeys { pairing, .. } | SetupStep::AwaitingDone { pairing, .. } => {
+                pairing.id()
+            }
             SetupStep::AwaitingResponse { .. } => panic!("no pairing yet"),
         }
     }
@@ -1157,6 +1248,143 @@ mod tests {
         assert!(!confirm_code(&slot, |_| false).unwrap());
         assert!(slot.lock().unwrap().is_none());
         assert!(confirm_code(&slot, |_| true).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    /// The co-signer's side of a whole setup, played by frost-zec's own code
+    /// against this module, up to the stored account waiting for dkg-done.
+    struct Cosigner {
+        pairing: Pairing,
+        group: Group,
+    }
+
+    fn setup_until_done(dir: &Path) -> (SetupStep, Cosigner) {
+        use frost_zec::setup::CosignerSetup;
+        use zcash_client_backend::data_api::chain::ChainState;
+        let mut rng = UnwrapErr(SysRng);
+        let (step, shown) = setup_start(dir, Net::Test).unwrap();
+        let init = wire::decode_payload(&shown).unwrap()[0]
+            .to_pair_init()
+            .unwrap();
+        let (responder, response) =
+            frost_zec::channel::Responder::respond(&init, &mut rng).unwrap();
+        let (step, shown, _) = setup_response(
+            step,
+            &wire::encode_payload(&[Message::pair_response(&response)]),
+        )
+        .unwrap();
+        let step = setup_code_confirmed(step).unwrap();
+        let messages = wire::decode_payload(&shown).unwrap();
+        let pairing = responder
+            .finish(&messages[0].to_pair_confirm().unwrap())
+            .unwrap()
+            .confirm();
+        let (_, theirs1) = messages[1].open(&pairing, kind::DKG_ROUND1).unwrap();
+        let (cosigner_setup, round1, round2) =
+            CosignerSetup::respond(NetworkType::Test, &Round1::from_bytes(&theirs1).unwrap())
+                .unwrap();
+        let keys = wire::encode_payload(&[
+            Message::seal(
+                &pairing,
+                kind::DKG_ROUND1,
+                b"dkg",
+                &round1.to_bytes(),
+                &mut rng,
+            )
+            .unwrap(),
+            Message::seal(
+                &pairing,
+                kind::DKG_ROUND2,
+                b"dkg",
+                &round2.to_bytes(),
+                &mut rng,
+            )
+            .unwrap(),
+        ]);
+        let birthday = AccountBirthday::from_parts(
+            ChainState::empty(
+                zcash_protocol::consensus::BlockHeight::from_u32(4_600_000),
+                zcash_primitives::block::BlockHash([0; 32]),
+            ),
+            None,
+        );
+        let (last, step) = setup_finish(dir, step, &keys, &[3u8; 64], &birthday).unwrap();
+        let (_, theirs2) = wire::decode_payload(&last).unwrap()[0]
+            .open(&pairing, kind::DKG_ROUND2)
+            .unwrap();
+        let (group, backup) = cosigner_setup
+            .finish(&Round2::from_bytes(&theirs2).unwrap())
+            .unwrap();
+        frost_setup::check_backup(&backup.backup_string().unwrap(), &group).unwrap();
+        (step, Cosigner { pairing, group })
+    }
+
+    fn acknowledgement(cosigner: &Cosigner, group: &Group) -> Vec<u8> {
+        wire::encode_payload(&[Message::seal(
+            &cosigner.pairing,
+            kind::DKG_DONE,
+            b"dkg",
+            &group.done().unwrap().to_bytes(),
+            &mut UnwrapErr(SysRng),
+        )
+        .unwrap()])
+    }
+
+    #[test]
+    fn a_setup_ends_only_with_the_cosigners_acknowledgement() {
+        let dir = std::env::temp_dir().join(format!("zcash-frost-done-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (step, cosigner) = setup_until_done(&dir);
+        // Stored, but no address to fund and no send before the acknowledgement.
+        assert!(!account(&dir, Net::Test).unwrap().unwrap().confirmed);
+
+        // Another group's acknowledgement, under this pairing, is refused, and
+        // the setup still waits.
+        let other = {
+            let other_dir = dir.join("other");
+            std::fs::create_dir_all(&other_dir).unwrap();
+            setup_until_done(&other_dir).1.group
+        };
+        let refused = setup_done(&dir, &step, &acknowledgement(&cosigner, &other))
+            .unwrap_err()
+            .to_string();
+        assert_eq!(refused, DIFFERENT_GROUP);
+        // A message of another kind is refused in the user's words.
+        let wrong = wire::encode_payload(&[Message::seal(
+            &cosigner.pairing,
+            kind::SIGN_REPLY,
+            b"dkg",
+            b"x",
+            &mut UnwrapErr(SysRng),
+        )
+        .unwrap()]);
+        assert!(setup_done(&dir, &step, &wrong)
+            .unwrap_err()
+            .to_string()
+            .contains("pas le message attendu"));
+        assert!(!account(&dir, Net::Test).unwrap().unwrap().confirmed);
+
+        // The co-signer's own acknowledgement confirms the account.
+        let confirmed =
+            setup_done(&dir, &step, &acknowledgement(&cosigner, &cosigner.group)).unwrap();
+        assert!(confirmed.confirmed);
+        assert_eq!(confirmed.address, cosigner.group.address);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_unfinished_setup_is_finished_later_from_the_seat() {
+        let dir = std::env::temp_dir().join(format!("zcash-frost-later-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // The app closed before the acknowledgement came: the step is gone.
+        let (_, cosigner) = setup_until_done(&dir);
+        let payload = acknowledgement(&cosigner, &cosigner.group);
+        // Another seed cannot open the seat.
+        assert!(setup_done_later(&dir, Net::Test, &[4u8; 64], &payload).is_err());
+        let account = setup_done_later(&dir, Net::Test, &[3u8; 64], &payload).unwrap();
+        assert!(account.confirmed);
+        assert_eq!(account.address, cosigner.group.address);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

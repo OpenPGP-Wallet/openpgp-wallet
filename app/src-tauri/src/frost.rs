@@ -99,8 +99,9 @@ pub struct FrostAccountDto {
     pending: u64,
     scanned_height: Option<u32>,
     chain_height: Option<u32>,
-    /// False until the user confirmed that the co-signer shows the address
-    /// (`frost_confirm_address`): the page then offers no way to receive.
+    /// False until the co-signer acknowledged the end of the setup
+    /// (`frost_setup_done`): the page then gets no address and offers no way
+    /// to receive.
     confirmed: bool,
 }
 
@@ -123,7 +124,13 @@ pub async fn frost_accounts(app: tauri::AppHandle) -> Result<Vec<FrostAccountDto
                 let balance = zcash_frost::balance(&dir, net).t_err()?;
                 accounts.push(FrostAccountDto {
                     network: network.to_string(),
-                    address: account.address,
+                    // No address before the co-signer acknowledged: funds sent
+                    // to an account it may not hold would be stuck.
+                    address: if account.confirmed {
+                        account.address
+                    } else {
+                        String::new()
+                    },
                     birthday: account.birthday,
                     spendable: balance.spendable,
                     pending: balance.pending,
@@ -286,42 +293,6 @@ pub fn frost_check_recipient(network: String, to: String) -> Result<(), String> 
     zcash_frost::check_recipient(net(&network)?, &to).t_err()
 }
 
-/// Asks, in a native window showing the whole address, whether the co-signer
-/// shows the same one; if so, the account is confirmed and can receive (core:
-/// `zcash_frost::confirm`). The co-signer shows the address only once it has
-/// taken the last setup message and computed its share and the backup's:
-/// before that, the account can never sign. Returns false if the user said no.
-#[tauri::command]
-pub async fn frost_confirm_address(network: String, app: tauri::AppHandle) -> Result<bool, String> {
-    let net = net(&network)?;
-    run_blocking(move || {
-        let dir = data_dir(&app)?;
-        let account = zcash_frost::account(&dir, net).t_err()?.ok_or_else(|| {
-            lang(
-                "Aucun compte FROST sur ce réseau.",
-                "No FROST account on this network.",
-            )
-            .to_string()
-        })?;
-        let address = &account.address;
-        let message = if crate::UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
-            format!("Account address:\n\n{address}\n\nDoes your co-signer show exactly this address?\n\nIt shows it only once it has the last message (\"Copy as text\" on this step). If it shows nothing or another address, choose Cancel and send nothing to this account: without that message, it can never sign.")
-        } else {
-            format!("Adresse du compte :\n\n{address}\n\nVotre co-signataire affiche-t-il exactement cette adresse ?\n\nIl ne l'affiche qu'une fois le dernier message reçu (« Copier en texte » à cette étape). S'il n'affiche rien ou une autre adresse, choisissez Annuler et n'envoyez rien à ce compte : sans ce message, il ne pourra jamais signer.")
-        };
-        if !shielded_dialog(
-            &app,
-            ("Comparer l'adresse", "Compare the address"),
-            message,
-        ) {
-            return Ok(false);
-        }
-        zcash_frost::confirm(&dir, net).t_err()?;
-        Ok(true)
-    })
-    .await
-}
-
 // --- Setup --------------------------------------------------------------------------
 
 #[tauri::command]
@@ -389,20 +360,15 @@ pub async fn frost_setup_code_confirmed(app: tauri::AppHandle) -> Result<(), Str
     .await
 }
 
-#[derive(Serialize)]
-pub struct SetupDoneDto {
-    qr: QrDto,
-    address: String,
-}
-
 /// Takes the co-signer's keys: finishes the group and stores member 1 (the
-/// device password encrypts its seat). Shows the last QR code.
+/// device password encrypts its seat), unconfirmed. Shows the last QR code;
+/// the co-signer's acknowledgement comes next (`frost_setup_done`).
 #[tauri::command]
 pub async fn frost_setup_finish(
     ur: String,
     password: String,
     app: tauri::AppHandle,
-) -> Result<SetupDoneDto, String> {
+) -> Result<QrDto, String> {
     let password = zeroize::Zeroizing::new(password);
     run_blocking(move || {
         let state = app.state::<FrostState>();
@@ -428,12 +394,52 @@ pub async fn frost_setup_finish(
             )
             .to_string());
         }
-        let (shown, account) =
+        let (shown, step) =
             api::frost_setup_finish(&data_dir(&app)?, &password, step, &keys, &birthday).t_err()?;
-        Ok(SetupDoneDto {
-            qr: qr(&shown)?,
-            address: account.address,
-        })
+        *locked(&state.setup) = Some(step);
+        qr(&shown)
+    })
+    .await
+}
+
+/// Takes the co-signer's acknowledgement: once it matches, the account is
+/// confirmed and its address is returned, the first time the page gets it. A
+/// wrong paste leaves the setup waiting for the right one.
+#[tauri::command]
+pub async fn frost_setup_done(ur: String, app: tauri::AppHandle) -> Result<String, String> {
+    run_blocking(move || {
+        let state = app.state::<FrostState>();
+        let acknowledgement = payload(&ur)?;
+        let dir = data_dir(&app)?;
+        let mut slot = locked(&state.setup);
+        let step = slot.as_ref().ok_or_else(|| {
+            lang("Aucune configuration en cours.", "No setup in progress.").to_string()
+        })?;
+        let account = zcash_frost::setup_done(&dir, step, &acknowledgement).t_err()?;
+        *slot = None;
+        Ok(account.address)
+    })
+    .await
+}
+
+/// Takes the co-signer's acknowledgement for an account whose setup was left
+/// unfinished (the app was closed before it came): the device password unlocks
+/// the seat, from which the wallet checks it.
+#[tauri::command]
+pub async fn frost_setup_done_later(
+    network: String,
+    ur: String,
+    password: String,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let net = net(&network)?;
+    let password = zeroize::Zeroizing::new(password);
+    run_blocking(move || {
+        let acknowledgement = payload(&ur)?;
+        let dir = data_dir(&app)?;
+        api::check_device_password(&dir, &password).t_err()?;
+        api::frost_setup_done_later(&dir, &password, net, &acknowledgement).t_err()?;
+        Ok(())
     })
     .await
 }
@@ -512,26 +518,26 @@ pub struct RequestDto {
     lines: Vec<String>,
 }
 
-/// Takes the co-signer's commitments; shows the signing request.
+/// Opens the signing session for the send the user approved: shows the
+/// request. One request per approval: the approved send is taken, and put
+/// back only if the request could not be made.
 #[tauri::command]
 pub async fn frost_send_request(
-    ur: String,
     password: String,
     app: tauri::AppHandle,
 ) -> Result<RequestDto, String> {
     let password = zeroize::Zeroizing::new(password);
     run_blocking(move || {
         let state = app.state::<FrostState>();
-        let commitments = payload(&ur)?;
         api::check_device_password(&data_dir(&app)?, &password).t_err()?;
         let prepared = locked(&state.prepared)
             .take()
             .ok_or_else(|| lang("Aucun envoi en cours.", "No transfer in progress.").to_string())?;
         let (pending, shown, report) =
-            match api::frost_send_request(&data_dir(&app)?, &password, &prepared, &commitments) {
+            match api::frost_send_request(&data_dir(&app)?, &password, &prepared) {
                 Ok(result) => result,
                 Err(e) => {
-                    // The user approved this send: keep it for another scan,
+                    // The user approved this send: keep it for another try,
                     // unless another send was approved meanwhile.
                     locked(&state.prepared).get_or_insert(prepared);
                     return Err(e).t_err();
@@ -546,16 +552,22 @@ pub async fn frost_send_request(
     .await
 }
 
-/// Takes the co-signer's reply: aggregates, proves and broadcasts. Returns the
-/// transaction id.
+/// Takes the co-signer's reply: signs this member's part, aggregates, proves
+/// and broadcasts. Returns the transaction id. A paste that is not this
+/// session's reply leaves the session waiting; a reply for it ends the session,
+/// whatever happens next, since its nonces are then used.
 #[tauri::command]
 pub async fn frost_send_finish(ur: String, app: tauri::AppHandle) -> Result<String, String> {
     run_blocking(move || {
         let state = app.state::<FrostState>();
         let reply = payload(&ur)?;
-        let pending = locked(&state.pending).take().ok_or_else(|| {
-            lang("Aucune signature en cours.", "No signature in progress.").to_string()
-        })?;
+        let no_session =
+            || lang("Aucune signature en cours.", "No signature in progress.").to_string();
+        let reply = {
+            let pending = locked(&state.pending);
+            zcash_frost::read_reply(pending.as_ref().ok_or_else(no_session)?, &reply).t_err()?
+        };
+        let pending = locked(&state.pending).take().ok_or_else(no_session)?;
         zcash_frost::send_finish(&data_dir(&app)?, pending, &reply).t_err()
     })
     .await

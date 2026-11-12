@@ -87,8 +87,9 @@ fn main() -> Result<()> {
             let step = zcash_frost::setup_code_confirmed(step)?;
             let keys = read(&via, "4-cosigner-keys.ur")?;
             let birthday = zcash_frost::chain_birthday(net)?;
-            let (payload, account) = zcash_frost::setup_finish(&dir, step, &keys, &seed(&dir)?, &birthday)?;
+            let (payload, step) = zcash_frost::setup_finish(&dir, step, &keys, &seed(&dir)?, &birthday)?;
             write(&via, "5-coordinator-keys.ur", &payload)?;
+            let account = zcash_frost::setup_done(&dir, &step, &read(&via, "6-cosigner-done.ur")?)?;
             println!("  address:  {}\n  birthday: {}", account.address, account.birthday);
         }
         "sync" => {
@@ -111,13 +112,12 @@ fn main() -> Result<()> {
                 "  prepared: {} zat to {}, fee {} zat",
                 prepared.summary.amount, prepared.summary.recipient, prepared.summary.fee
             );
-            let commitments = read(&via, "sign-1-commitments.ur")?;
-            let (pending, payload, report) = zcash_frost::send_request(&dir, &prepared, &commitments, &seed(&dir)?)?;
+            let (pending, payload, report) = zcash_frost::send_request(&dir, &prepared, &seed(&dir)?)?;
             for line in &report.lines {
                 println!("  coordinator's check: {line}");
             }
-            write(&via, "sign-2-request.ur", &payload)?;
-            let reply = read(&via, "sign-3-reply.ur")?;
+            write(&via, "sign-1-request.ur", &payload)?;
+            let reply = zcash_frost::read_reply(&pending, &read(&via, "sign-2-reply.ur")?)?;
             println!("  proving and broadcasting…");
             let txid = zcash_frost::send_finish(&dir, pending, &reply)?;
             println!("  broadcast: {txid}");

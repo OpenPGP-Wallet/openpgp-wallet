@@ -5,6 +5,18 @@ links and SHA-256 hashes of each build are on the [releases page](https://github
 
 ## [Unreleased]
 
+### Changed
+- FROST tab: the wallet speaks version 1.0 of the co-signing protocol (frost-zec spec v1.0), after the review of
+  version 0.1 by @danielgorgonha from @deegalabs. It needs a co-signer of the same version; with an older one,
+  the wallet says to update it. Accounts already set up keep their keys.
+  - A send takes two messages instead of three: the wallet sends its signing request first, and the co-signer
+    answers once. A pasted message that is not the answer to this request leaves the request waiting.
+  - A new account ends with the co-signer's acknowledgement: the co-signer confirms it saved its share and checked
+    the backup, and only then does the wallet show the account's address. This replaces the comparison of the
+    address in a Windows window. An account whose setup was left before that step is finished from its card,
+    with the co-signer's acknowledgement (`frost-zec qr done` shows it again).
+  - Until the acknowledgement, the page is not given the account's address at all.
+
 ## [2.16.3] - 2026-11-12
 
 ### Fixed
