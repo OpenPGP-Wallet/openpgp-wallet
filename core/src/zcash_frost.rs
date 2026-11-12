@@ -136,6 +136,38 @@ pub struct FrostAccount {
     pub ufvk: String,
     pub address: String,
     pub birthday: u32,
+    /// Whether the user confirmed that the co-signer shows this address. The
+    /// wallet has the account once it holds the co-signer's keys, but the
+    /// co-signer only computes its own share and the backup's from the last
+    /// message: if that message never reaches it, the account can never sign,
+    /// and funds sent to it are lost. Until confirmed, the account is neither
+    /// shown for receiving nor spent from. Accounts from before this field
+    /// were all finished by hand, hence true when it is absent.
+    #[serde(default = "confirmed_when_absent")]
+    pub confirmed: bool,
+}
+
+fn confirmed_when_absent() -> bool {
+    true
+}
+
+/// Shown when the address of an account the co-signer may not have finished is
+/// asked for a send.
+pub const NOT_CONFIRMED: &str =
+    "création du compte FROST pas confirmée : vérifiez que le co-signataire affiche son adresse";
+
+/// Records that the co-signer shows the account's address (see
+/// [`FrostAccount::confirmed`]). Written to a temporary file then renamed, so
+/// the account file is never left half-written.
+pub fn confirm(data_dir: &Path, net: Net) -> Result<FrostAccount> {
+    let mut account = account(data_dir, net)?.context("aucun compte FROST sur ce réseau")?;
+    account.confirmed = true;
+    let path = net.file(data_dir, "json");
+    let temporary = path.with_extension("json.tmp");
+    std::fs::write(&temporary, serde_json::to_vec_pretty(&account)?)
+        .context("compte FROST : écriture impossible")?;
+    std::fs::rename(&temporary, &path).context("compte FROST : écriture impossible")?;
+    Ok(account)
 }
 
 /// The FROST account on `net`, if one was set up.
@@ -635,6 +667,8 @@ fn store(
         ufvk: group.ufvk.clone(),
         address: group.address.clone(),
         birthday: u32::from(birthday.height()),
+        // The co-signer has not seen the last message yet.
+        confirmed: false,
     };
     std::fs::write(
         net.file(data_dir, "json"),
@@ -673,6 +707,35 @@ fn proposal_fee<N>(proposal: &Proposal<StandardFeeRule, N>) -> u64 {
         .sum()
 }
 
+/// A recipient the co-signer would refuse: it signs only transactions whose
+/// every part it decodes, which here means Ironwood alone, so the payment must
+/// go to a unified address with an Orchard receiver (Ironwood notes are paid to
+/// Orchard receivers).
+pub const RECIPIENT_TRANSPARENT: &str =
+    "adresse transparente : le co-signataire n'accepte que les adresses protégées unifiées";
+pub const RECIPIENT_SAPLING: &str =
+    "adresse Sapling : le co-signataire n'accepte que les adresses protégées unifiées";
+pub const RECIPIENT_NO_ORCHARD: &str =
+    "adresse unifiée sans récepteur Orchard : le co-signataire ne pourrait pas la payer";
+
+/// Checks a recipient before anything is built: a valid address, on `net`,
+/// that a FROST account can pay. Shown live under the field as it is typed,
+/// and checked again here before every send.
+pub fn check_recipient(net: Net, to: &str) -> Result<()> {
+    let to = to.trim();
+    zcash_address::ZcashAddress::try_from_encoded(to)
+        .map_err(|_| anyhow!("adresse Zcash invalide"))?;
+    match zcash_keys::address::Address::decode(&net.params(), to) {
+        None => bail!("cette adresse est sur un autre réseau Zcash"),
+        Some(zcash_keys::address::Address::Unified(address)) if address.has_orchard() => Ok(()),
+        Some(zcash_keys::address::Address::Unified(_)) => bail!(RECIPIENT_NO_ORCHARD),
+        Some(
+            zcash_keys::address::Address::Transparent(_) | zcash_keys::address::Address::Tex(_),
+        ) => bail!(RECIPIENT_TRANSPARENT),
+        Some(_) => bail!(RECIPIENT_SAPLING),
+    }
+}
+
 /// Proposes a payment from the FROST account and turns it into a PCZT.
 pub fn send_prepare(
     data_dir: &Path,
@@ -681,11 +744,15 @@ pub fn send_prepare(
     amount: u64,
     memo: Option<&str>,
 ) -> Result<PreparedSend> {
+    if !account(data_dir, net)?
+        .context("aucun compte FROST sur ce réseau")?
+        .confirmed
+    {
+        bail!(NOT_CONFIRMED);
+    }
+    check_recipient(net, to)?;
     let recipient = zcash_address::ZcashAddress::try_from_encoded(to.trim())
         .map_err(|_| anyhow!("adresse Zcash invalide"))?;
-    if zcash_keys::address::Address::decode(&net.params(), to.trim()).is_none() {
-        bail!("cette adresse est sur un autre réseau Zcash");
-    }
     let memo = memo
         .filter(|text| !text.is_empty())
         .map(|text| {
@@ -884,6 +951,87 @@ mod tests {
     use super::*;
 
     #[test]
+    fn only_unified_addresses_with_an_orchard_receiver_can_be_paid() {
+        // A testnet FROST group's address (frost-zec keygen): unified, Orchard.
+        let unified = "utest14z46743rm6rdlnev2za09q5vftu7gn5phg9nfk9yjxgmgtmrfc8w0r8gp328tl63pdaee4th50h6qjjkqxnaf63m0dap4a2ytu2kaess";
+        assert!(check_recipient(Net::Test, unified).is_ok());
+        assert!(check_recipient(Net::Test, &format!("  {unified}\n")).is_ok());
+        assert_eq!(
+            check_recipient(Net::Main, unified).unwrap_err().to_string(),
+            "cette adresse est sur un autre réseau Zcash"
+        );
+        let transparent =
+            zcash_address::ZcashAddress::from_transparent_p2pkh(NetworkType::Test, [7; 20])
+                .encode();
+        assert_eq!(
+            check_recipient(Net::Test, &transparent)
+                .unwrap_err()
+                .to_string(),
+            RECIPIENT_TRANSPARENT
+        );
+        let tex = zcash_address::ZcashAddress::from_tex(NetworkType::Test, [7; 20]).encode();
+        assert_eq!(
+            check_recipient(Net::Test, &tex).unwrap_err().to_string(),
+            RECIPIENT_TRANSPARENT
+        );
+        assert_eq!(
+            check_recipient(Net::Test, "utest1notanaddress")
+                .unwrap_err()
+                .to_string(),
+            "adresse Zcash invalide"
+        );
+    }
+
+    #[test]
+    fn an_account_is_spent_from_only_once_its_address_is_confirmed() {
+        let dir = std::env::temp_dir().join(format!("zcash-frost-confirm-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // An account from before the field: finished by hand, so confirmed.
+        std::fs::write(
+            Net::Test.file(&dir, "json"),
+            br#"{"network":"test","ufvk":"uviewtest1-x","address":"utest1-x","birthday":1}"#,
+        )
+        .unwrap();
+        assert!(account(&dir, Net::Test).unwrap().unwrap().confirmed);
+
+        // A new account starts unconfirmed: no send, whatever it is asked.
+        let fresh = FrostAccount {
+            network: Net::Main,
+            ufvk: "uview1-y".into(),
+            address: "u1-y".into(),
+            birthday: 2,
+            confirmed: false,
+        };
+        std::fs::write(
+            Net::Main.file(&dir, "json"),
+            serde_json::to_vec(&fresh).unwrap(),
+        )
+        .unwrap();
+        let refused = send_prepare(&dir, Net::Main, "u1-anything", 1_000, None)
+            .err()
+            .unwrap();
+        assert_eq!(refused.to_string(), NOT_CONFIRMED);
+
+        let confirmed = confirm(&dir, Net::Main).unwrap();
+        assert!(confirmed.confirmed);
+        assert_eq!(
+            account(&dir, Net::Main).unwrap(),
+            Some(FrostAccount {
+                confirmed: true,
+                ..fresh
+            })
+        );
+        assert!(!Net::Main.file(&dir, "json.tmp").exists());
+        // Past the check, the send now fails on the address instead.
+        let after = send_prepare(&dir, Net::Main, "u1-anything", 1_000, None)
+            .err()
+            .unwrap();
+        assert_ne!(after.to_string(), NOT_CONFIRMED);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn a_removed_account_is_set_aside_not_deleted() {
         let dir = std::env::temp_dir().join(format!("zcash-frost-remove-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -893,6 +1041,7 @@ mod tests {
             ufvk: "uview1-main".into(),
             address: "u1-main".into(),
             birthday: 3_500_000,
+            confirmed: true,
         };
         let test = FrostAccount {
             network: Net::Test,
