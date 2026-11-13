@@ -1030,6 +1030,10 @@ pub fn recovery_birthday(net: Net, input: &RecoveryInput) -> Result<AccountBirth
     })
 }
 
+/// Shown when the old account has nothing spendable yet: a sync in progress,
+/// or funds still short of their confirmations.
+pub const SWEEP_NOT_SPENDABLE: &str = "rien à transférer pour l'instant : les fonds de l'ancien compte ne sont pas encore dépensables (synchronisation en cours ou confirmations manquantes), réessayez dans un instant";
+
 /// Shown when a sweep is asked for without an old account.
 pub const NO_OLD_ACCOUNT: &str = "aucun ancien compte à vider sur ce réseau";
 
@@ -1064,6 +1068,8 @@ pub fn sweep_prepare(data_dir: &Path, net: Net) -> Result<PreparedSend> {
         let detail = e.to_string();
         if detail.contains("Must scan blocks first") {
             anyhow!("{NOT_SYNCED}")
+        } else if detail.contains("Insufficient balance") {
+            anyhow!("{SWEEP_NOT_SPENDABLE}")
         } else {
             anyhow!("transfert de l'ancien compte impossible ({detail})")
         }

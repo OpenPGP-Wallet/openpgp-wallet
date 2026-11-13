@@ -15,6 +15,10 @@ links and SHA-256 hashes of each build are on the [releases page](https://github
   card: once synced, “Move everything to the new account…” sends all its funds there, signed by member 3 restored
   and the co-signer, after a Windows confirmation and the cancellation delay; it is then removed (set aside).
 
+### Fixed
+- FROST tab: a send or a transfer prepared while the tab's sync was still running could find no spendable funds
+  and say "insufficient balance". It now waits for the sync in progress. Found in the recovery drill on testnet.
+
 ## [2.17.0] - 2026-11-13
 
 ### Changed

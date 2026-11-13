@@ -1287,6 +1287,7 @@ const I18N = {
     "frost.sweepTitle": "Transférer l'ancien compte",
     "frost.sweepStep2": "{amount} {unit} vers le nouveau compte (frais {fee} {unit}). Entrez votre mot de passe pour créer la demande de signature.",
     "frost.removeOld": "Retirer l'ancien compte du portefeuille",
+    "frost.waitSync": "Synchronisation en cours : un instant…",
     "frost.recipientOk": "Adresse valide : protégée, réseau principal, acceptée par le co-signataire.",
     "frost.recipientOkTest": "Adresse valide : protégée, réseau de test, acceptée par le co-signataire.",
     "ledger.title": "Portefeuille matériel (Ledger, Trezor)",
@@ -2105,6 +2106,7 @@ const I18N = {
     "frost.sweepTitle": "Move the old account",
     "frost.sweepStep2": "{amount} {unit} to the new account (fee {fee} {unit}). Enter your password to create the signing request.",
     "frost.removeOld": "Remove the old account from the wallet",
+    "frost.waitSync": "Syncing: one moment…",
     "frost.recipientOk": "Valid address: shielded, mainnet, accepted by the co-signer.",
     "frost.recipientOkTest": "Valid address: shielded, testnet, accepted by the co-signer.",
     "ledger.title": "Hardware wallet (Ledger, Trezor)",
@@ -10431,17 +10433,39 @@ async function removeFrostAccount(network) {
   await loadFrostAccounts();
 }
 
+// The sync in progress, if any: a send or a sweep prepared while it scans
+// would see no spendable note (the chain tip moved, its blocks not scanned
+// yet), so they wait for it first.
+let frostSyncing = null;
+
 async function syncFrostAccounts() {
-  const accounts = await loadFrostAccounts();
-  for (const account of accounts) {
-    try {
-      await invoke("frost_sync", { network: account.network });
-      delete frostSyncErrors[account.network];
-    } catch (e) {
-      frostSyncErrors[account.network] = String(e);
+  if (frostSyncing) return frostSyncing;
+  frostSyncing = (async () => {
+    const accounts = await loadFrostAccounts();
+    // One sync per network: it covers the account and an old one to sweep.
+    for (const network of [...new Set(accounts.map((a) => a.network))]) {
+      try {
+        await invoke("frost_sync", { network });
+        delete frostSyncErrors[network];
+      } catch (e) {
+        frostSyncErrors[network] = String(e);
+      }
     }
+    if (accounts.length) await loadFrostAccounts();
+    return accounts;
+  })();
+  try {
+    return await frostSyncing;
+  } finally {
+    frostSyncing = null;
   }
-  if (accounts.length) await loadFrostAccounts();
+}
+
+// Waits for the sync in progress, saying so in the window.
+async function frostWaitForSync() {
+  if (!frostSyncing) return;
+  frostStep(t("frost.waitSync"));
+  await frostSyncing.catch(() => {});
 }
 
 // A unified address is over 100 characters: its start and end are enough to
@@ -10672,6 +10696,7 @@ async function openFrostSend(network) {
   frostEl("frost-to").oninput = () => frostCheckRecipient(network);
   frostCheckRecipient(network);
   frostNext(t("send.previewConfirm"), async () => {
+    await frostWaitForSync();
     const summary = await invoke("frost_send_prepare", {
       network,
       to: frostEl("frost-to").value.trim(),
@@ -10688,6 +10713,7 @@ async function openFrostSweep(network) {
   frostOpen(t("frost.sweepTitle"));
   frostFlow = { kind: "sweep", network };
   try {
+    await frostWaitForSync();
     const summary = await invoke("frost_sweep_prepare", { network });
     frostSigning(t("frost.sweepStep2", { ...summary, unit: frostUnit(network) }));
   } catch (e) {

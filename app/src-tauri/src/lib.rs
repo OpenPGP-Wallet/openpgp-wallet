@@ -59,6 +59,10 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
         "an old account to sweep already exists on this network: sweep and remove it first",
     ),
     (
+        openpgp_wallet_core::zcash_frost::SWEEP_NOT_SPENDABLE,
+        "nothing to move yet: the old account's funds are not spendable yet (a sync in progress, or confirmations missing); try again in a moment",
+    ),
+    (
         openpgp_wallet_core::zcash_frost::NO_OLD_ACCOUNT,
         "no old account to sweep on this network",
     ),
