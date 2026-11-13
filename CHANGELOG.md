@@ -5,6 +5,8 @@ links and SHA-256 hashes of each build are on the [releases page](https://github
 
 ## [Unreleased]
 
+## [2.17.0] - 2026-11-13
+
 ### Changed
 - FROST tab: the wallet speaks version 1.0 of the co-signing protocol (frost-zec spec v1.0), after the review of
   version 0.1 by @danielgorgonha from @deegalabs. It needs a co-signer of the same version; with an older one,
@@ -335,7 +337,8 @@ The app is renamed "PGP Wallet".
 First working proof of concept: a non-custodial Bitcoin, Ethereum and Solana wallet whose master key is
 protected by 2-of-3 Shamir secret sharing and OpenPGP, with no seed phrase.
 
-[Unreleased]: https://github.com/OpenPGP-Wallet/openpgp-wallet/compare/v2.16.3...HEAD
+[Unreleased]: https://github.com/OpenPGP-Wallet/openpgp-wallet/compare/v2.17.0...HEAD
+[2.17.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.17.0
 [2.16.3]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.16.3
 [2.16.2]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.16.2
 [2.16.1]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.16.1
