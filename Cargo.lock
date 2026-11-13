@@ -2453,8 +2453,10 @@ dependencies = [
 [[package]]
 name = "frost-zec"
 version = "0.1.0"
-source = "git+https://github.com/OpenPGP-Wallet/frost-zec?rev=7bb362621f39d4b2aa2c66acee81b778c91e633b#7bb362621f39d4b2aa2c66acee81b778c91e633b"
+source = "git+https://github.com/OpenPGP-Wallet/frost-zec?rev=b699a8ba41407cb0f805b66cc4630aff7bf2fe94#b699a8ba41407cb0f805b66cc4630aff7bf2fe94"
 dependencies = [
+ "argon2",
+ "base64ct",
  "bech32 0.11.1",
  "blake2b_simd",
  "blake3",
@@ -2474,6 +2476,7 @@ dependencies = [
  "rqrr",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "ur",
  "x-wing",
  "zcash_address",
