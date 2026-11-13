@@ -29,12 +29,16 @@ use rand::{rand_core::UnwrapErr, rngs::SysRng};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
-use zcash_client_backend::data_api::wallet::input_selection::{GreedyInputSelector, SpendPolicy};
-use zcash_client_backend::data_api::wallet::{
-    create_pczt_from_proposal, extract_and_store_transaction_from_pczt, propose_transfer,
-    ConfirmationsPolicy,
+use zcash_client_backend::data_api::wallet::input_selection::{
+    GreedyInputSelector, LockedInputPolicy, SpendPolicy,
 };
-use zcash_client_backend::data_api::{AccountBirthday, AccountPurpose, WalletRead, WalletWrite};
+use zcash_client_backend::data_api::wallet::{
+    create_pczt_from_proposal, extract_and_store_transaction_from_pczt, propose_send_max_transfer,
+    propose_transfer, ConfirmationsPolicy,
+};
+use zcash_client_backend::data_api::{
+    AccountBirthday, AccountPurpose, MaxSpendMode, WalletRead, WalletWrite,
+};
 use zcash_client_backend::fees::{
     zip317::SingleOutputChangeStrategy, DustOutputPolicy, StandardFeeRule,
 };
@@ -47,7 +51,7 @@ use zcash_client_backend::zip321::{Payment, TransactionRequest};
 use zcash_client_sqlite::{util::SystemClock, wallet::init::init_wallet_db, AccountUuid, WalletDb};
 use zcash_keys::keys::UnifiedFullViewingKey;
 use zcash_primitives::transaction::builder::BundlePadding;
-use zcash_protocol::consensus::{Network, NetworkType};
+use zcash_protocol::consensus::{Network, NetworkType, NetworkUpgrade, Parameters};
 use zcash_protocol::memo::MemoBytes;
 use zcash_protocol::value::Zatoshis;
 use zcash_protocol::ShieldedPool;
@@ -101,15 +105,37 @@ impl Net {
     }
 
     fn file(self, data_dir: &Path, extension: &str) -> PathBuf {
-        data_dir.join(format!("zcash_frost_{}.{extension}", self.tag()))
+        self.slot_file(data_dir, Slot::Current, extension)
     }
+
+    fn slot_file(self, data_dir: &Path, slot: Slot, extension: &str) -> PathBuf {
+        let suffix = match slot {
+            Slot::Current => "",
+            Slot::Old => "_old",
+        };
+        data_dir.join(format!("zcash_frost_{}{suffix}.{extension}", self.tag()))
+    }
+}
+
+/// Which of a network's FROST accounts: the one the wallet uses, or the old
+/// one a recovery sweeps to it (frost-zec spec § 7.2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Slot {
+    /// The account the wallet uses.
+    Current,
+    /// An account recovered after a lost wallet, kept only until it is swept.
+    Old,
 }
 
 type Db = WalletDb<rusqlite::Connection, Network, SystemClock, UnwrapErr<SysRng>>;
 
 fn open(data_dir: &Path, net: Net) -> Result<Db> {
+    open_slot(data_dir, net, Slot::Current)
+}
+
+fn open_slot(data_dir: &Path, net: Net, slot: Slot) -> Result<Db> {
     let mut db = WalletDb::for_path(
-        net.file(data_dir, "sqlite"),
+        net.slot_file(data_dir, slot, "sqlite"),
         net.params(),
         SystemClock,
         UnwrapErr(SysRng),
@@ -178,7 +204,16 @@ fn confirm(data_dir: &Path, net: Net) -> Result<FrostAccount> {
 
 /// The FROST account on `net`, if one was set up.
 pub fn account(data_dir: &Path, net: Net) -> Result<Option<FrostAccount>> {
-    match std::fs::read(net.file(data_dir, "json")) {
+    account_slot(data_dir, net, Slot::Current)
+}
+
+/// The old account on `net` that a recovery is sweeping, if any.
+pub fn old_account(data_dir: &Path, net: Net) -> Result<Option<FrostAccount>> {
+    account_slot(data_dir, net, Slot::Old)
+}
+
+fn account_slot(data_dir: &Path, net: Net, slot: Slot) -> Result<Option<FrostAccount>> {
+    match std::fs::read(net.slot_file(data_dir, slot, "json")) {
         Ok(bytes) => Ok(Some(
             serde_json::from_slice(&bytes).context("compte FROST illisible")?,
         )),
@@ -200,19 +235,31 @@ pub const REMOVED_DIR: &str = "zcash_frost_removed";
 /// refuse to move, and the account file last: if a move fails, the account is
 /// still listed, and removing it again moves what is left.
 pub fn remove(data_dir: &Path, net: Net) -> Result<PathBuf> {
-    if account(data_dir, net)?.is_none() {
+    remove_slot(data_dir, net, Slot::Current)
+}
+
+/// Sets the old account of a recovery aside, once it is swept, as [`remove`]
+/// does: nothing is deleted.
+pub fn remove_old(data_dir: &Path, net: Net) -> Result<PathBuf> {
+    remove_slot(data_dir, net, Slot::Old)
+}
+
+fn remove_slot(data_dir: &Path, net: Net, slot: Slot) -> Result<PathBuf> {
+    if account_slot(data_dir, net, slot)?.is_none() {
         bail!("aucun compte FROST sur ce réseau");
     }
     let seconds = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|elapsed| elapsed.as_secs())
         .unwrap_or_default();
-    let folder = data_dir
-        .join(REMOVED_DIR)
-        .join(format!("{}-{seconds}", net.tag()));
+    let folder = data_dir.join(REMOVED_DIR).join(format!(
+        "{}{}-{seconds}",
+        net.tag(),
+        if slot == Slot::Old { "-old" } else { "" }
+    ));
     std::fs::create_dir_all(&folder).context("compte FROST : mise de côté impossible")?;
     for extension in ["sqlite", "sqlite-wal", "sqlite-shm", "seat", "json"] {
-        let from = net.file(data_dir, extension);
+        let from = net.slot_file(data_dir, slot, extension);
         let to = folder.join(from.file_name().context("nom de fichier")?);
         match std::fs::rename(&from, &to) {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
@@ -256,13 +303,27 @@ fn seat_key(seed: &[u8], net: Net) -> Zeroizing<[u8; 32]> {
     Zeroizing::new(digest.as_bytes().try_into().expect("32-byte hash"))
 }
 
+/// The associated data of a seat: its network, and whether it is an old
+/// account's, so that neither file can stand in for another.
+fn seat_aad(net: Net, slot: Slot) -> Vec<u8> {
+    let mut aad: Vec<u8> = [SEAT_AAD, net.tag().as_bytes()].concat();
+    if slot == Slot::Old {
+        aad.extend_from_slice(b"-old");
+    }
+    aad
+}
+
+#[cfg(test)]
 fn save_seat(data_dir: &Path, net: Net, seed: &[u8], seat: &Seat) -> Result<()> {
+    save_seat_slot(data_dir, net, Slot::Current, seed, seat)
+}
+
+fn save_seat_slot(data_dir: &Path, net: Net, slot: Slot, seed: &[u8], seat: &Seat) -> Result<()> {
     let plaintext = Zeroizing::new(serde_json::to_vec(seat)?);
     let mut nonce = [0u8; 24];
     getrandom::getrandom(&mut nonce).map_err(|e| anyhow!("aléa indisponible : {e}"))?;
     let key = seat_key(seed, net);
-    let mut aad = SEAT_AAD.to_vec();
-    aad.extend_from_slice(net.tag().as_bytes());
+    let aad = seat_aad(net, slot);
     let ciphertext = XChaCha20Poly1305::new(&(*key).into())
         .encrypt(
             &XNonce::from(nonce),
@@ -275,7 +336,7 @@ fn save_seat(data_dir: &Path, net: Net, seed: &[u8], seat: &Seat) -> Result<()> 
     let mut file = vec![SEAT_VERSION];
     file.extend_from_slice(&nonce);
     file.extend_from_slice(&ciphertext);
-    let path = net.file(data_dir, "seat");
+    let path = net.slot_file(data_dir, slot, "seat");
     let temporary = path.with_extension("seat.tmp");
     std::fs::write(&temporary, file).context("siège FROST : écriture impossible")?;
     std::fs::rename(&temporary, &path).context("siège FROST : écriture impossible")?;
@@ -284,14 +345,18 @@ fn save_seat(data_dir: &Path, net: Net, seed: &[u8], seat: &Seat) -> Result<()> 
 
 /// Member 1, ready to sign, with the pairing to the co-signer.
 fn load_seat(data_dir: &Path, net: Net, seed: &[u8]) -> Result<(Pairing, Member)> {
-    let file = std::fs::read(net.file(data_dir, "seat")).context("siège FROST introuvable")?;
+    load_seat_slot(data_dir, net, Slot::Current, seed)
+}
+
+fn load_seat_slot(data_dir: &Path, net: Net, slot: Slot, seed: &[u8]) -> Result<(Pairing, Member)> {
+    let file =
+        std::fs::read(net.slot_file(data_dir, slot, "seat")).context("siège FROST introuvable")?;
     if file.len() < 25 || file[0] != SEAT_VERSION {
         bail!("siège FROST illisible");
     }
     let nonce: [u8; 24] = file[1..25].try_into().expect("24 bytes");
     let key = seat_key(seed, net);
-    let mut aad = SEAT_AAD.to_vec();
-    aad.extend_from_slice(net.tag().as_bytes());
+    let aad = seat_aad(net, slot);
     let plaintext = Zeroizing::new(
         XChaCha20Poly1305::new(&(*key).into())
             .decrypt(
@@ -401,10 +466,19 @@ async fn birthday_now(
 
 /// Syncs the FROST account on `net` up to the tip (nothing if there is none).
 pub fn sync(data_dir: &Path, net: Net) -> Result<()> {
-    if account(data_dir, net)?.is_none() {
+    sync_slot(data_dir, net, Slot::Current)
+}
+
+/// Syncs the old account a recovery sweeps on `net` (nothing if there is none).
+pub fn sync_old(data_dir: &Path, net: Net) -> Result<()> {
+    sync_slot(data_dir, net, Slot::Old)
+}
+
+fn sync_slot(data_dir: &Path, net: Net, slot: Slot) -> Result<()> {
+    if account_slot(data_dir, net, slot)?.is_none() {
         return Ok(());
     }
-    let mut db = open(data_dir, net)?;
+    let mut db = open_slot(data_dir, net, slot)?;
     runtime()?.block_on(async {
         let mut client = client(net).await?;
         let cache = crate::zcash_shielded::MemoryCache::default();
@@ -419,10 +493,19 @@ pub fn sync(data_dir: &Path, net: Net) -> Result<()> {
 
 /// Balance of the FROST account on `net`.
 pub fn balance(data_dir: &Path, net: Net) -> Result<ShieldedBalance> {
-    if account(data_dir, net)?.is_none() {
+    balance_slot(data_dir, net, Slot::Current)
+}
+
+/// Balance of the old account a recovery sweeps on `net`.
+pub fn balance_old(data_dir: &Path, net: Net) -> Result<ShieldedBalance> {
+    balance_slot(data_dir, net, Slot::Old)
+}
+
+fn balance_slot(data_dir: &Path, net: Net, slot: Slot) -> Result<ShieldedBalance> {
+    if account_slot(data_dir, net, slot)?.is_none() {
         return Ok(ShieldedBalance::default());
     }
-    let db = open(data_dir, net)?;
+    let db = open_slot(data_dir, net, slot)?;
     let account = the_account(&db)?;
     let Some(summary) = db.get_wallet_summary(ConfirmationsPolicy::default())? else {
         return Ok(ShieldedBalance::default());
@@ -586,6 +669,7 @@ pub fn setup_finish(
     payload: &[u8],
     seed: &[u8],
     birthday: &AccountBirthday,
+    recovery: Option<(&RecoveryInput, &AccountBirthday)>,
 ) -> Result<(Vec<u8>, SetupStep)> {
     let SetupStep::AwaitingKeys {
         net,
@@ -600,11 +684,40 @@ pub fn setup_finish(
         bail!("un compte FROST existe déjà sur ce réseau");
     }
     let messages = wire::decode_payload(payload)?;
-    if messages.len() != 2 {
-        bail!("QR inattendu : les clés du co-signataire étaient attendues");
-    }
-    let (_, theirs1) = messages[0].open(&pairing, kind::DKG_ROUND1)?;
-    let (_, theirs2) = messages[1].open(&pairing, kind::DKG_ROUND2)?;
+    // In a recovery, the co-signer's keys come after its description of the
+    // old account, which member 3 must match before anything else is done.
+    let restored = match recovery {
+        Some((input, _)) => {
+            if old_account(data_dir, net)?.is_some() {
+                bail!(OLD_EXISTS);
+            }
+            if messages.len() != 3 {
+                bail!("QR inattendu : la description de l'ancien compte et les clés du co-signataire étaient attendues");
+            }
+            let (_, info) = open_one_message(&messages[0], &pairing, kind::GROUP_INFO)?;
+            let info =
+                frost_zec::recovery::GroupInfo::from_bytes(&info).map_err(|e| anyhow!("{e}"))?;
+            let restored = frost_zec::recovery::restore_member(
+                &input.backup,
+                &info,
+                input.kit_ufvk.as_deref(),
+            )
+            .map_err(|e| anyhow!("sauvegarde du membre 3 : {e}"))?;
+            if restored.member.network != net.network_type() {
+                bail!("l'ancien compte est sur un autre réseau que celui choisi");
+            }
+            Some(restored)
+        }
+        None => {
+            if messages.len() != 2 {
+                bail!("QR inattendu : les clés du co-signataire étaient attendues");
+            }
+            None
+        }
+    };
+    let keys_at = messages.len() - 2;
+    let (_, theirs1) = messages[keys_at].open(&pairing, kind::DKG_ROUND1)?;
+    let (_, theirs2) = messages[keys_at + 1].open(&pairing, kind::DKG_ROUND2)?;
     let (round2, group) = setup
         .finish(
             &Round1::from_bytes(&theirs1).map_err(|e| anyhow!("{e}"))?,
@@ -619,7 +732,30 @@ pub fn setup_finish(
         &mut UnwrapErr(SysRng),
     )?]);
     let digest = group.digest().map_err(|e| anyhow!("{e}"))?;
-    store(data_dir, net, &pairing, &group, seed, birthday)?;
+    store(
+        data_dir,
+        net,
+        Slot::Current,
+        &pairing,
+        &group,
+        seed,
+        birthday,
+        false,
+    )?;
+    if let (Some(restored), Some((_, old_birthday))) = (restored, recovery) {
+        // The old account answers through the new pairing; its member is
+        // member 3, restored, encrypted under the seed like any seat.
+        store(
+            data_dir,
+            net,
+            Slot::Old,
+            &pairing,
+            &restored,
+            seed,
+            old_birthday,
+            true,
+        )?;
+    }
     Ok((
         shown,
         SetupStep::AwaitingDone {
@@ -628,6 +764,25 @@ pub fn setup_finish(
             digest,
         },
     ))
+}
+
+/// Opens one sealed message as `expected`, in the user's words when it is
+/// another message (see [`open_one`]).
+fn open_one_message(
+    message: &Message,
+    pairing: &Pairing,
+    expected: u8,
+) -> Result<(Vec<u8>, Vec<u8>)> {
+    match message.open(pairing, expected) {
+        Ok((session, plaintext)) => Ok((session, plaintext.to_vec())),
+        Err(WireError::UnexpectedKind(48..=50)) => bail!(OLD_COSIGNER),
+        Err(WireError::UnexpectedKind(_)) => {
+            bail!(
+                "ce n'est pas le message attendu du co-signataire : récupérez son dernier message"
+            )
+        }
+        Err(e) => Err(e.into()),
+    }
 }
 
 /// Opens the one sealed message of `payload` as `expected`, in the user's
@@ -696,13 +851,16 @@ pub fn setup_done_later(
     confirm(data_dir, net)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn store(
     data_dir: &Path,
     net: Net,
+    slot: Slot,
     pairing: &Pairing,
     group: &Group,
     seed: &[u8],
     birthday: &AccountBirthday,
+    confirmed: bool,
 ) -> Result<FrostAccount> {
     let ufvk = UnifiedFullViewingKey::decode(&net.params(), &group.ufvk)
         .map_err(|e| anyhow!("clé de visualisation du groupe illisible : {e}"))?;
@@ -710,9 +868,12 @@ fn store(
     // was left there by a setup that failed before the end: nobody was shown
     // its address. The database only holds scan data; start from an empty one,
     // or the account picked later would be that one.
-    if !open(data_dir, net)?.get_account_ids()?.is_empty() {
+    if !open_slot(data_dir, net, slot)?
+        .get_account_ids()?
+        .is_empty()
+    {
         for extension in ["sqlite", "sqlite-wal", "sqlite-shm"] {
-            match std::fs::remove_file(net.file(data_dir, extension)) {
+            match std::fs::remove_file(net.slot_file(data_dir, slot, extension)) {
                 Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
                     return Err(e).context("base du compte FROST : nettoyage impossible");
                 }
@@ -720,7 +881,7 @@ fn store(
             }
         }
     }
-    let mut db = open(data_dir, net)?;
+    let mut db = open_slot(data_dir, net, slot)?;
     db.import_account_ufvk(
         "FROST 2-of-3",
         &ufvk,
@@ -729,9 +890,10 @@ fn store(
         None,
     )
     .map_err(|e| anyhow!("compte FROST : import impossible ({e})"))?;
-    save_seat(
+    save_seat_slot(
         data_dir,
         net,
+        slot,
         seed,
         &Seat {
             pairing: hex::encode(pairing.to_bytes()),
@@ -757,15 +919,192 @@ fn store(
         ufvk: group.ufvk.clone(),
         address: group.address.clone(),
         birthday: u32::from(birthday.height()),
-        // The co-signer has not seen the last message yet.
-        confirmed: false,
+        // A new account waits for the co-signer's acknowledgement; an old
+        // one being recovered existed already.
+        confirmed,
     };
     std::fs::write(
-        net.file(data_dir, "json"),
+        net.slot_file(data_dir, slot, "json"),
         serde_json::to_vec_pretty(&account)?,
     )
     .context("compte FROST : écriture impossible")?;
     Ok(account)
+}
+
+// --- Recovery: the wallet as a new coordinator (frost-zec spec § 7.2) --------------
+
+/// Shown when a recovery would replace an old account still to sweep.
+pub const OLD_EXISTS: &str =
+    "un ancien compte à vider existe déjà sur ce réseau : videz-le et retirez-le d'abord";
+
+/// Member 3's backup, read and checked before a recovery pairs with the
+/// co-signer. Secret: wiped when dropped.
+pub struct RecoveryInput {
+    backup: Zeroizing<String>,
+    kit_ufvk: Option<String>,
+    birthday: Option<u32>,
+}
+
+impl std::fmt::Debug for RecoveryInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RecoveryInput")
+            .field("backup", &"<redacted>")
+            .field("kit_ufvk", &self.kit_ufvk.is_some())
+            .field("birthday", &self.birthday)
+            .finish()
+    }
+}
+
+impl RecoveryInput {
+    /// The old account's viewing key, when the backup file holds it.
+    pub fn kit_ufvk(&self) -> Option<&str> {
+        self.kit_ufvk.as_deref()
+    }
+}
+
+/// The largest backup file a recovery reads.
+pub const BACKUP_FILE_MAX: usize = 16 * 1024;
+
+/// Reads member 3's backup: a backup file (frost-zec profile 1, binary or its
+/// `zkfrost-file-1:` text) under its passphrase, or a bare member backup
+/// string. The file is decrypted and checked here, so a wrong passphrase is
+/// said before any pairing.
+pub fn recovery_input(bytes: &[u8], passphrase: &str) -> Result<RecoveryInput> {
+    if bytes.len() > BACKUP_FILE_MAX {
+        bail!("fichier anormalement gros pour une sauvegarde du membre 3");
+    }
+    let text = std::str::from_utf8(bytes).ok().map(str::trim);
+    if let Some(text) = text.filter(|t| t.starts_with("zkfrost1")) {
+        frost_zec::backup::Backup::decode(text)
+            .map_err(|e| anyhow!("sauvegarde du membre 3 : {e}"))?;
+        return Ok(RecoveryInput {
+            backup: Zeroizing::new(text.to_string()),
+            kit_ufvk: None,
+            birthday: None,
+        });
+    }
+    let file = match text.filter(|t| t.starts_with(frost_zec::profiles::TEXT_PREFIX)) {
+        Some(text) => frost_zec::profiles::from_text(text).map_err(|e| anyhow!("{e}"))?,
+        None => bytes.to_vec(),
+    };
+    frost_zec::profiles::file_cost(&file).map_err(|e| anyhow!("sauvegarde du membre 3 : {e}"))?;
+    if passphrase.is_empty() {
+        bail!("entrez la phrase de passe du fichier de sauvegarde");
+    }
+    let contents = frost_zec::profiles::decrypt(&file, passphrase).map_err(|e| {
+        if e.to_string().contains("wrong passphrase") {
+            anyhow!("phrase de passe incorrecte, ou fichier de sauvegarde abîmé")
+        } else {
+            anyhow!("sauvegarde du membre 3 : {e}")
+        }
+    })?;
+    Ok(RecoveryInput {
+        backup: contents.backup.clone(),
+        kit_ufvk: Some(contents.ufvk.clone()),
+        birthday: contents.birthday,
+    })
+}
+
+/// The old account's birthday for its scan: the backup's when it holds one,
+/// otherwise Ironwood's activation, before which no FROST account existed.
+/// Fetched before the setup's last step consumes anything.
+pub fn recovery_birthday(net: Net, input: &RecoveryInput) -> Result<AccountBirthday> {
+    let activation = net
+        .params()
+        .activation_height(NetworkUpgrade::Nu7)
+        .map(u32::from)
+        .context("hauteur d'activation d'Ironwood inconnue")?;
+    let height = input.birthday.unwrap_or(activation).max(activation);
+    runtime()?.block_on(async {
+        let mut client = client(net).await?;
+        let state = client
+            .get_tree_state(BlockId {
+                height: u64::from(height.saturating_sub(1)),
+                hash: vec![],
+            })
+            .await
+            .map_err(|e| anyhow!("état de la chaîne Zcash illisible : {}", e.message()))?
+            .into_inner();
+        AccountBirthday::from_treestate(state, None)
+            .map_err(|_| anyhow!("état de la chaîne Zcash invalide"))
+    })
+}
+
+/// Shown when a sweep is asked for without an old account.
+pub const NO_OLD_ACCOUNT: &str = "aucun ancien compte à vider sur ce réseau";
+
+/// The sweep of a recovery: every spendable note of the old account, less the
+/// fee, to the new account's address. Signed like any send, by the restored
+/// member 3 and the co-signer.
+pub fn sweep_prepare(data_dir: &Path, net: Net) -> Result<PreparedSend> {
+    let current = account(data_dir, net)?.context("aucun compte FROST sur ce réseau")?;
+    if !current.confirmed {
+        bail!(NOT_CONFIRMED);
+    }
+    old_account(data_dir, net)?.context(NO_OLD_ACCOUNT)?;
+    let recipient = zcash_address::ZcashAddress::try_from_encoded(&current.address)
+        .map_err(|_| anyhow!("adresse du nouveau compte illisible"))?;
+    let memo = MemoBytes::from_bytes(b"FROST recovery").expect("a short memo");
+    let mut db = open_slot(data_dir, net, Slot::Old)?;
+    let account = the_account(&db)?;
+    let proposal = propose_send_max_transfer::<_, _, _, std::convert::Infallible>(
+        &mut db,
+        &net.params(),
+        account,
+        &[ShieldedPool::Ironwood],
+        &StandardFeeRule::Zip317,
+        recipient,
+        Some(memo),
+        MaxSpendMode::MaxSpendable,
+        ConfirmationsPolicy::default(),
+        &LockedInputPolicy::Exclude,
+        None,
+    )
+    .map_err(|e| {
+        let detail = e.to_string();
+        if detail.contains("Must scan blocks first") {
+            anyhow!("{NOT_SYNCED}")
+        } else {
+            anyhow!("transfert de l'ancien compte impossible ({detail})")
+        }
+    })?;
+    let fee = proposal_fee(&proposal);
+    let amount: u64 = proposal
+        .steps()
+        .iter()
+        .flat_map(|step| step.transaction_request().payments().values())
+        .filter_map(|payment| payment.amount())
+        .map(u64::from)
+        .sum();
+    let pczt = create_pczt_from_proposal::<
+        _,
+        _,
+        std::convert::Infallible,
+        _,
+        std::convert::Infallible,
+        _,
+    >(
+        &mut db,
+        &net.params(),
+        &SystemClock,
+        &mut UnwrapErr(SysRng),
+        account,
+        OvkPolicy::Sender,
+        &proposal,
+        None,
+        BundlePadding::DEFAULT,
+    )
+    .map_err(|e| anyhow!("PCZT impossible ({e})"))?;
+    Ok(PreparedSend {
+        net,
+        slot: Slot::Old,
+        pczt: pczt.serialize().map_err(|e| anyhow!("PCZT : {e:?}"))?,
+        summary: SpendSummary {
+            amount,
+            fee,
+            recipient: current.address,
+        },
+    })
 }
 
 // --- Sending ------------------------------------------------------------------------
@@ -776,6 +1115,8 @@ pub const NOT_SYNCED: &str = "compte FROST pas encore synchronisé : synchronise
 /// A send waiting for the co-signer: the PCZT and what the user confirmed.
 pub struct PreparedSend {
     pub net: Net,
+    /// The account it spends from: the current one, or an old one swept.
+    pub slot: Slot,
     pub pczt: Vec<u8>,
     pub summary: SpendSummary,
 }
@@ -901,6 +1242,7 @@ pub fn send_prepare(
     .map_err(|e| anyhow!("PCZT impossible ({e})"))?;
     Ok(PreparedSend {
         net,
+        slot: Slot::Current,
         pczt: pczt.serialize().map_err(|e| anyhow!("PCZT : {e:?}"))?,
         summary: SpendSummary {
             amount,
@@ -913,6 +1255,7 @@ pub fn send_prepare(
 /// A signing session waiting for the co-signer's reply.
 pub struct PendingSignature {
     net: Net,
+    slot: Slot,
     pairing: Pairing,
     session: CoordinatorSession,
 }
@@ -925,7 +1268,7 @@ pub fn send_request(
     prepared: &PreparedSend,
     seed: &[u8],
 ) -> Result<(PendingSignature, Vec<u8>, check::Report)> {
-    let (pairing, member) = load_seat(data_dir, prepared.net, seed)?;
+    let (pairing, member) = load_seat_slot(data_dir, prepared.net, prepared.slot, seed)?;
     let (session, request, report) =
         CoordinatorSession::request(&member, &prepared.pczt, &mut UnwrapErr(SysRng))
             .map_err(|e| anyhow!("{e}"))?;
@@ -939,6 +1282,7 @@ pub fn send_request(
     Ok((
         PendingSignature {
             net: prepared.net,
+            slot: prepared.slot,
             pairing,
             session,
         },
@@ -965,7 +1309,7 @@ pub fn read_reply(pending: &PendingSignature, payload: &[u8]) -> Result<Reply> {
 pub fn send_finish(data_dir: &Path, pending: PendingSignature, reply: &Reply) -> Result<String> {
     let signed = pending.session.finish(reply).map_err(|e| anyhow!("{e}"))?;
     let proved = prove(signed)?;
-    let mut db = open(data_dir, pending.net)?;
+    let mut db = open_slot(data_dir, pending.net, pending.slot)?;
     let txid = extract_and_store_transaction_from_pczt::<_, ()>(
         &mut db,
         &SystemClock,
@@ -1258,8 +1602,28 @@ mod tests {
     }
 
     fn setup_until_done(dir: &Path) -> (SetupStep, Cosigner) {
-        use frost_zec::setup::CosignerSetup;
+        setup_with(dir, None).unwrap()
+    }
+
+    fn test_birthday(height: u32) -> AccountBirthday {
         use zcash_client_backend::data_api::chain::ChainState;
+        AccountBirthday::from_parts(
+            ChainState::empty(
+                zcash_protocol::consensus::BlockHeight::from_u32(height - 1),
+                zcash_primitives::block::BlockHash([0; 32]),
+            ),
+            None,
+        )
+    }
+
+    /// A setup to the stored account waiting for dkg-done; with `recovery`,
+    /// the co-signer first describes the old group (`info`) and the wallet
+    /// restores member 3 from `input`.
+    fn setup_with(
+        dir: &Path,
+        recovery: Option<(&RecoveryInput, frost_zec::recovery::GroupInfo)>,
+    ) -> Result<(SetupStep, Cosigner)> {
+        use frost_zec::setup::CosignerSetup;
         let mut rng = UnwrapErr(SysRng);
         let (step, shown) = setup_start(dir, Net::Test).unwrap();
         let init = wire::decode_payload(&shown).unwrap()[0]
@@ -1282,7 +1646,20 @@ mod tests {
         let (cosigner_setup, round1, round2) =
             CosignerSetup::respond(NetworkType::Test, &Round1::from_bytes(&theirs1).unwrap())
                 .unwrap();
-        let keys = wire::encode_payload(&[
+        let mut sealed = Vec::new();
+        if let Some((_, info)) = &recovery {
+            sealed.push(
+                Message::seal(
+                    &pairing,
+                    kind::GROUP_INFO,
+                    b"dkg",
+                    &info.to_bytes().unwrap(),
+                    &mut rng,
+                )
+                .unwrap(),
+            );
+        }
+        sealed.extend([
             Message::seal(
                 &pairing,
                 kind::DKG_ROUND1,
@@ -1300,14 +1677,17 @@ mod tests {
             )
             .unwrap(),
         ]);
-        let birthday = AccountBirthday::from_parts(
-            ChainState::empty(
-                zcash_protocol::consensus::BlockHeight::from_u32(4_600_000),
-                zcash_primitives::block::BlockHash([0; 32]),
-            ),
-            None,
-        );
-        let (last, step) = setup_finish(dir, step, &keys, &[3u8; 64], &birthday).unwrap();
+        let keys = wire::encode_payload(&sealed);
+        let birthday = test_birthday(4_600_001);
+        let old_birthday = test_birthday(4_465_026);
+        let (last, step) = setup_finish(
+            dir,
+            step,
+            &keys,
+            &[3u8; 64],
+            &birthday,
+            recovery.as_ref().map(|(input, _)| (*input, &old_birthday)),
+        )?;
         let (_, theirs2) = wire::decode_payload(&last).unwrap()[0]
             .open(&pairing, kind::DKG_ROUND2)
             .unwrap();
@@ -1315,7 +1695,108 @@ mod tests {
             .finish(&Round2::from_bytes(&theirs2).unwrap())
             .unwrap();
         frost_setup::check_backup(&backup.backup_string().unwrap(), &group).unwrap();
-        (step, Cosigner { pairing, group })
+        Ok((step, Cosigner { pairing, group }))
+    }
+
+    /// An old group, from frost-zec's own key generation: its co-signer's
+    /// member 2 and member 3.
+    fn old_group() -> (Group, Group) {
+        use frost_zec::setup::{CoordinatorSetup, CosignerSetup};
+        let (coordinator, c1) = CoordinatorSetup::start(NetworkType::Test).unwrap();
+        let (cosigner, s1, s2) = CosignerSetup::respond(NetworkType::Test, &c1).unwrap();
+        let (c2, _) = coordinator.finish(&s1, &s2).unwrap();
+        cosigner.finish(&c2).unwrap()
+    }
+
+    #[test]
+    fn a_lost_wallet_is_recovered_from_member_3() {
+        let dir = std::env::temp_dir().join(format!("zcash-frost-recover-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (two, three) = old_group();
+        let passphrase = "one two three four five six seven eight nine ten eleven twelve";
+        let file = frost_zec::profiles::encrypt(
+            &frost_zec::profiles::Contents {
+                backup: Zeroizing::new(three.backup_string().unwrap()),
+                ufvk: two.ufvk.clone(),
+                birthday: Some(4_500_000),
+                label: None,
+            },
+            passphrase,
+        )
+        .unwrap();
+        assert!(recovery_input(&file, "wrong")
+            .unwrap_err()
+            .to_string()
+            .contains("phrase de passe"));
+        let input = recovery_input(&file, passphrase).unwrap();
+        assert_eq!(input.kit_ufvk(), Some(two.ufvk.as_str()));
+        // The text form and the bare string are read too.
+        recovery_input(frost_zec::profiles::to_text(&file).as_bytes(), passphrase).unwrap();
+        recovery_input(three.backup_string().unwrap().as_bytes(), "").unwrap();
+
+        let info = frost_zec::recovery::GroupInfo::new(&two.member, &two.ufvk);
+        let (step, cosigner) = setup_with(&dir, Some((&input, info))).unwrap();
+        // The old account is stored, member 3 restored in its seat.
+        let old = old_account(&dir, Net::Test).unwrap().unwrap();
+        assert_eq!(old.address, two.address);
+        assert!(old.confirmed);
+        let (_, member) = load_seat_slot(&dir, Net::Test, Slot::Old, &[3u8; 64]).unwrap();
+        assert_eq!(member.id(), three.member.id());
+        assert_eq!(member.fvk, two.member.fvk);
+        // The current seat cannot be read as the old one, nor the reverse.
+        std::fs::copy(
+            Net::Test.slot_file(&dir, Slot::Old, "seat"),
+            dir.join("old.seat"),
+        )
+        .unwrap();
+        std::fs::copy(
+            Net::Test.slot_file(&dir, Slot::Current, "seat"),
+            Net::Test.slot_file(&dir, Slot::Old, "seat"),
+        )
+        .unwrap();
+        assert!(load_seat_slot(&dir, Net::Test, Slot::Old, &[3u8; 64]).is_err());
+        // The new account, confirmed by the acknowledgement as any setup.
+        let confirmed =
+            setup_done(&dir, &step, &acknowledgement(&cosigner, &cosigner.group)).unwrap();
+        assert!(confirmed.confirmed);
+        assert_ne!(confirmed.address, old.address);
+        // A second recovery waits until the old account is swept and removed.
+        assert_eq!(remove_old(&dir, Net::Test).is_ok(), true);
+        assert!(old_account(&dir, Net::Test).unwrap().is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_cosigner_describing_another_group_is_refused() {
+        let dir = std::env::temp_dir().join(format!("zcash-frost-lying-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (two, three) = old_group();
+        let (other, _) = old_group();
+        let file = frost_zec::profiles::encrypt(
+            &frost_zec::profiles::Contents {
+                backup: Zeroizing::new(three.backup_string().unwrap()),
+                ufvk: two.ufvk.clone(),
+                birthday: None,
+                label: None,
+            },
+            "a passphrase",
+        )
+        .unwrap();
+        let input = recovery_input(&file, "a passphrase").unwrap();
+        let lying = frost_zec::recovery::GroupInfo::new(&other.member, &other.ufvk);
+        let refused = setup_with(&dir, Some((&input, lying)))
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(refused.contains("membre 3"), "{refused}");
+        assert!(
+            account(&dir, Net::Test).unwrap().is_none(),
+            "nothing stored"
+        );
+        assert!(old_account(&dir, Net::Test).unwrap().is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     fn acknowledgement(cosigner: &Cosigner, group: &Group) -> Vec<u8> {
