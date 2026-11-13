@@ -12,12 +12,16 @@ use std::sync::{Arc, Mutex};
 
 use frost_zec::wire;
 use openpgp_wallet_core::api;
-use openpgp_wallet_core::zcash_frost::{self, Net, PendingSignature, PreparedSend, SetupStep};
+use openpgp_wallet_core::zcash_frost::{
+    self, Net, PendingSignature, PreparedSend, RecoveryInput, SetupStep,
+};
 use serde::Serialize;
 use tauri::{Emitter, Manager};
+use tauri_plugin_dialog::DialogExt;
 
 use crate::{
-    data_dir, lang, run_blocking, send_grace_period, shielded_dialog, GraceRecap, TranslatedResult,
+    data_dir, lang, run_blocking, send_grace_period, shielded_dialog, translate_error, GraceRecap,
+    TranslatedResult,
 };
 
 /// Bytes per QR fragment, as in the frost-zec co-signer: sparse enough for a
@@ -28,6 +32,11 @@ const FRAGMENT: usize = 120;
 #[derive(Default)]
 pub struct FrostState {
     setup: Mutex<Option<SetupStep>>,
+    /// During a recovery: member 3's backup, read and checked, until the
+    /// setup's last step stores the old account.
+    recovery: Mutex<Option<RecoveryInput>>,
+    /// The backup file picked for a recovery, read by the backend only.
+    picked: Mutex<Option<zeroize::Zeroizing<Vec<u8>>>>,
     prepared: Mutex<Option<PreparedSend>>,
     pending: Mutex<Option<PendingSignature>>,
     scan_cancel: Arc<AtomicBool>,
@@ -103,6 +112,9 @@ pub struct FrostAccountDto {
     /// (`frost_setup_done`): the page then gets no address and offers no way
     /// to receive.
     confirmed: bool,
+    /// An old account a recovery sweeps to the current one (frost-zec spec
+    /// § 7.2): its card offers the sweep and its removal, nothing else.
+    old: bool,
 }
 
 /// The unit amounts are shown in: testnet coins are not ZEC.
@@ -137,6 +149,21 @@ pub async fn frost_accounts(app: tauri::AppHandle) -> Result<Vec<FrostAccountDto
                     scanned_height: balance.scanned_height,
                     chain_height: balance.chain_height,
                     confirmed: account.confirmed,
+                    old: false,
+                });
+            }
+            if let Some(account) = zcash_frost::old_account(&dir, net).t_err()? {
+                let balance = zcash_frost::balance_old(&dir, net).t_err()?;
+                accounts.push(FrostAccountDto {
+                    network: network.to_string(),
+                    address: account.address,
+                    birthday: account.birthday,
+                    spendable: balance.spendable,
+                    pending: balance.pending,
+                    scanned_height: balance.scanned_height,
+                    chain_height: balance.chain_height,
+                    confirmed: true,
+                    old: true,
                 });
             }
         }
@@ -148,7 +175,13 @@ pub async fn frost_accounts(app: tauri::AppHandle) -> Result<Vec<FrostAccountDto
 #[tauri::command]
 pub async fn frost_sync(network: String, app: tauri::AppHandle) -> Result<(), String> {
     let net = net(&network)?;
-    run_blocking(move || zcash_frost::sync(&data_dir(&app)?, net).t_err()).await
+    run_blocking(move || {
+        let dir = data_dir(&app)?;
+        zcash_frost::sync(&dir, net).t_err()?;
+        // The old account of a recovery, scanned until it is swept.
+        zcash_frost::sync_old(&dir, net).t_err()
+    })
+    .await
 }
 
 #[derive(Clone, Serialize)]
@@ -200,6 +233,8 @@ pub fn frost_cancel(state: tauri::State<'_, FrostState>) {
     *locked(&state.setup) = None;
     *locked(&state.prepared) = None;
     *locked(&state.pending) = None;
+    *locked(&state.recovery) = None;
+    *locked(&state.picked) = None;
 }
 
 /// The co-signer's message on the clipboard, for the "Paste" button. Only a
@@ -293,6 +328,178 @@ pub fn frost_check_recipient(network: String, to: String) -> Result<(), String> 
     zcash_frost::check_recipient(net(&network)?, &to).t_err()
 }
 
+// --- Recovery after a lost wallet (frost-zec spec § 7.2) ---------------------------
+
+/// Opens the native "Open" window for member 3's backup (a backup file from
+/// the co-signer, or a bare backup string) and keeps its bytes here: they never
+/// reach the page. Returns the file's name, or `None` if the user cancelled.
+#[tauri::command]
+pub async fn frost_recover_pick(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    run_blocking(move || {
+        let Some(file_path) = app
+            .dialog()
+            .file()
+            .add_filter(
+                lang("Sauvegarde du membre 3", "Member 3 backup"),
+                &["zkfrost", "txt"],
+            )
+            .add_filter(lang("Tous les fichiers", "All files"), &["*"])
+            .blocking_pick_file()
+        else {
+            return Ok(None);
+        };
+        let path = file_path.into_path().t_err()?;
+        let size = std::fs::metadata(&path)
+            .map(|m| m.len())
+            .unwrap_or(u64::MAX);
+        if size > zcash_frost::BACKUP_FILE_MAX as u64 {
+            return Err(lang(
+                "Fichier anormalement gros pour une sauvegarde du membre 3.",
+                "File unusually large for a member 3 backup.",
+            )
+            .to_string());
+        }
+        let bytes = zeroize::Zeroizing::new(std::fs::read(&path).map_err(|e| e.to_string())?);
+        *locked(&app.state::<FrostState>().picked) = Some(bytes);
+        Ok(Some(
+            path.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+        ))
+    })
+    .await
+}
+
+/// Starts a recovery on `network`: member 3's backup, picked above, is read
+/// and checked under its passphrase before any pairing, then the setup starts
+/// as for a new account. Returns pair-init.
+#[tauri::command]
+pub async fn frost_recover_start(
+    network: String,
+    passphrase: String,
+    app: tauri::AppHandle,
+) -> Result<QrDto, String> {
+    let net = net(&network)?;
+    let passphrase = zeroize::Zeroizing::new(passphrase);
+    run_blocking(move || {
+        let state = app.state::<FrostState>();
+        let dir = data_dir(&app)?;
+        if zcash_frost::old_account(&dir, net).t_err()?.is_some() {
+            return Err(translate_error(zcash_frost::OLD_EXISTS));
+        }
+        let input = {
+            let picked = locked(&state.picked);
+            let bytes = picked.as_ref().ok_or_else(|| {
+                lang(
+                    "Choisissez d'abord le fichier de sauvegarde du membre 3.",
+                    "Choose member 3's backup file first.",
+                )
+                .to_string()
+            })?;
+            zcash_frost::recovery_input(bytes, &passphrase).t_err()?
+        };
+        let (step, shown) = zcash_frost::setup_start(&dir, net).t_err()?;
+        *locked(&state.setup) = Some(step);
+        *locked(&state.recovery) = Some(input);
+        *locked(&state.picked) = None;
+        qr(&shown)
+    })
+    .await
+}
+
+/// The sweep of a recovery: every spendable note of the old account to the
+/// new one. Confirmed in a native window, then the cancellation delay; the
+/// signing goes on as for any send (`frost_send_request`, `frost_send_finish`).
+#[tauri::command]
+pub async fn frost_sweep_prepare(
+    network: String,
+    app: tauri::AppHandle,
+) -> Result<SummaryDto, String> {
+    let net = net(&network)?;
+    run_blocking(move || {
+        let prepared = zcash_frost::sweep_prepare(&data_dir(&app)?, net).t_err()?;
+        let (amount, fee) = (
+            openpgp_wallet_core::zcash::format_zec(prepared.summary.amount),
+            openpgp_wallet_core::zcash::format_zec(prepared.summary.fee),
+        );
+        let recipient = prepared.summary.recipient.clone();
+        let unit = unit(net);
+        let network_name = match net {
+            Net::Main => "Zcash",
+            Net::Test => lang("Zcash (réseau de test)", "Zcash (testnet)"),
+        };
+        let message = if crate::UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
+            format!("Move everything from the old FROST account to the new one ({network_name})\n\nTo the new account: {recipient}\nAmount: {amount} {unit}\nNetwork fee: {fee} {unit}\n\nThe co-signer will check and approve it too, with member 3 restored on this computer.\nThis is irreversible once signed.\n\nConfirm this transfer?")
+        } else {
+            format!("Tout transférer de l'ancien compte FROST vers le nouveau ({network_name})\n\nVers le nouveau compte : {recipient}\nMontant : {amount} {unit}\nFrais réseau : {fee} {unit}\n\nLe co-signataire le vérifiera et l'approuvera aussi, avec le membre 3 restauré sur cet ordinateur.\nC'est irréversible une fois signé.\n\nConfirmer ce transfert ?")
+        };
+        if !shielded_dialog(
+            &app,
+            ("Transférer l'ancien compte", "Move the old account"),
+            message,
+        ) {
+            return Err(lang(
+                "Transfert annulé (confirmation refusée).",
+                "Transfer cancelled (confirmation refused).",
+            )
+            .to_string());
+        }
+        send_grace_period(
+            &app,
+            GraceRecap::new(network_name, format!("{amount} {unit}"), recipient.clone())
+                .on("zec_shielded"),
+        )?;
+        *locked(&app.state::<FrostState>().prepared) = Some(prepared);
+        Ok(SummaryDto {
+            amount,
+            fee,
+            recipient,
+        })
+    })
+    .await
+}
+
+/// Takes a swept old account out of the wallet (core: `zcash_frost::remove_old`,
+/// which sets its files aside and deletes nothing). Asked in a native window.
+#[tauri::command]
+pub async fn frost_remove_old(network: String, app: tauri::AppHandle) -> Result<bool, String> {
+    let net = net(&network)?;
+    run_blocking(move || {
+        let dir = data_dir(&app)?;
+        let held = zcash_frost::balance_old(&dir, net)
+            .ok()
+            .map(|b| b.spendable.saturating_add(b.pending));
+        let unit = unit(net);
+        let funds = match held {
+            Some(0) => String::new(),
+            Some(zats) => {
+                let amount = openpgp_wallet_core::zcash::format_zec(zats);
+                if crate::UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
+                    format!("\n\nIt still holds {amount} {unit}: move it to the new account first.")
+                } else {
+                    format!("\n\nIl contient encore {amount} {unit} : transférez-les d'abord vers le nouveau compte.")
+                }
+            }
+            None => String::new(),
+        };
+        let message = if crate::UI_LANG_IS_ENGLISH.load(Ordering::Relaxed) {
+            format!("Remove the old FROST account from this wallet?{funds}\n\nNothing is deleted: its files, member 3 restored included, are set aside in the wallet's data folder ({}). Delete them yourself once the transfer is confirmed.", zcash_frost::REMOVED_DIR)
+        } else {
+            format!("Retirer l'ancien compte FROST de ce portefeuille ?{funds}\n\nRien n'est effacé : ses fichiers, membre 3 restauré compris, sont mis de côté dans le dossier de données du portefeuille ({}). Supprimez-les vous-même une fois le transfert confirmé.", zcash_frost::REMOVED_DIR)
+        };
+        if !shielded_dialog(
+            &app,
+            ("Retirer l'ancien compte", "Remove the old account"),
+            message,
+        ) {
+            return Ok(false);
+        }
+        zcash_frost::remove_old(&dir, net).t_err()?;
+        Ok(true)
+    })
+    .await
+}
+
 // --- Setup --------------------------------------------------------------------------
 
 #[tauri::command]
@@ -382,6 +589,11 @@ pub async fn frost_setup_finish(
                 lang("Aucune configuration en cours.", "No setup in progress.").to_string()
             })?;
         let birthday = zcash_frost::chain_birthday(net).t_err()?;
+        // A recovery also scans the old account, from its own birthday.
+        let old_birthday = match locked(&state.recovery).as_ref() {
+            Some(input) => Some(zcash_frost::recovery_birthday(net, input).t_err()?),
+            None => None,
+        };
         api::check_device_password(&data_dir(&app)?, &password).t_err()?;
         let step = locked(&state.setup).take().ok_or_else(|| {
             lang("Aucune configuration en cours.", "No setup in progress.").to_string()
@@ -394,8 +606,23 @@ pub async fn frost_setup_finish(
             )
             .to_string());
         }
-        let (shown, step) =
-            api::frost_setup_finish(&data_dir(&app)?, &password, step, &keys, &birthday).t_err()?;
+        let recovery = locked(&state.recovery).take();
+        let result = api::frost_setup_finish(
+            &data_dir(&app)?,
+            &password,
+            step,
+            &keys,
+            &birthday,
+            recovery.as_ref().zip(old_birthday.as_ref()),
+        );
+        let (shown, step) = match result {
+            Ok(done) => done,
+            Err(e) => {
+                // The setup is consumed; the backup is kept for another try.
+                *locked(&state.recovery) = recovery;
+                return Err(e).t_err();
+            }
+        };
         *locked(&state.setup) = Some(step);
         qr(&shown)
     })

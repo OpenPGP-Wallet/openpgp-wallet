@@ -1762,7 +1762,7 @@ mod tests {
         assert!(confirmed.confirmed);
         assert_ne!(confirmed.address, old.address);
         // A second recovery waits until the old account is swept and removed.
-        assert_eq!(remove_old(&dir, Net::Test).is_ok(), true);
+        assert!(remove_old(&dir, Net::Test).is_ok());
         assert!(old_account(&dir, Net::Test).unwrap().is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
