@@ -976,6 +976,8 @@
           <div class="row-buttons">
             <button id="frost-create-main" class="primary" data-i18n="frost.createMain">+ Créer sur Mainnet</button>
             <button id="frost-create-test" class="secondary" data-i18n="frost.createTest">+ Créer sur le réseau de test</button>
+            <button id="frost-recover-main" class="secondary" data-i18n="frost.recoverMain">Récupérer sur Mainnet…</button>
+            <button id="frost-recover-test" class="secondary" data-i18n="frost.recoverTest">Récupérer sur le réseau de test…</button>
             <button id="frost-refresh" class="secondary" data-i18n="frost.refresh">Synchroniser</button>
           </div>
           <div id="frost-accounts" class="recipient-list"></div>
@@ -1230,6 +1232,15 @@
           <input id="frost-amount" type="text" inputmode="decimal" autocomplete="off" placeholder="0.001" />
           <label for="frost-memo" data-i18n="frost.memo">Mémo (facultatif)</label>
           <input id="frost-memo" type="text" autocomplete="off" maxlength="512" />
+        </div>
+        <!-- A recovery: member 3's backup, read by the backend only. -->
+        <div id="frost-recover-box" class="hidden">
+          <div class="row-buttons">
+            <button id="frost-recover-pick" type="button" class="secondary" data-i18n="frost.recoverPick">Choisir le fichier du membre 3…</button>
+          </div>
+          <p id="frost-recover-file" class="muted"></p>
+          <label for="frost-recover-passphrase" data-i18n="frost.recoverPassphrase">Phrase de passe de la sauvegarde</label>
+          <input id="frost-recover-passphrase" type="password" autocomplete="off" spellcheck="false" />
         </div>
         <pre id="frost-report" class="frost-report hidden"></pre>
         <!-- Without a camera, the way forward at each step: above the large QR
