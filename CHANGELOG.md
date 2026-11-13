@@ -5,6 +5,14 @@ links and SHA-256 hashes of each build are on the [releases page](https://github
 
 ## [Unreleased]
 
+### Added
+- FROST tab: recovery after a lost computer (frost-zec spec § 7.2). “Recover on Mainnet…” or “Recover on testnet…” opens member 3's
+  backup file in a native window (it never reaches the page) and asks for its passphrase; the wallet then pairs
+  with the co-signer (`frost-zec qr recover`), checks the old account the co-signer describes against member 3 and
+  the file's viewing key before sending anything secret, and creates a new account. The old account gets its own
+  card: once synced, “Move everything to the new account…” sends all its funds there, signed by member 3 restored
+  and the co-signer, after a Windows confirmation and the cancellation delay; it is then removed (set aside).
+
 ## [2.17.0] - 2026-11-13
 
 ### Changed

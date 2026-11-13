@@ -1268,6 +1268,25 @@ const I18N = {
     "frost.finishTitle": "Terminer la création du compte FROST",
     "frost.finishStep": "Entrez votre mot de passe, puis récupérez la dernière réponse du co-signataire. Si elle n'est plus affichée, lancez « frost-zec qr done » sur le co-signataire.",
     "frost.verified": "Confirmé par le co-signataire",
+    "frost.recoverMain": "Récupérer sur Mainnet…",
+    "frost.recoverTest": "Récupérer sur le réseau de test…",
+    "frost.recoverTitleMain": "Récupérer un compte FROST (Mainnet)",
+    "frost.recoverTitleTest": "Récupérer un compte FROST (réseau de test)",
+    "frost.recoverStep0": "L'ordinateur de l'ancien compte est perdu ? Avec la sauvegarde (le membre 3) et le co-signataire, vous créez un nouveau compte et y transférez tous les fonds. Choisissez le fichier de sauvegarde du membre 3 et entrez sa phrase de passe.",
+    "frost.recoverPick": "Choisir le fichier du membre 3…",
+    "frost.recoverPassphrase": "Phrase de passe de la sauvegarde",
+    "frost.recoverNoFile": "Aucun fichier choisi.",
+    "frost.recoverFile": "Fichier : {name}",
+    "frost.recoverContinue": "Continuer",
+    "frost.recoverStep1": "1/5 · Sur le co-signataire, lancez la récupération (« frost-zec qr recover --as cosigner »), puis donnez-lui ce message : « Copier en texte », ou ce QR code s'il a une caméra. Récupérez ensuite sa réponse.",
+    "frost.recoverStep5": "5/5 · Le co-signataire a confirmé : le nouveau compte est prêt, et voici son adresse. L'ancien compte apparaît sur sa propre carte : synchronisez-le, puis transférez tout vers le nouveau compte.",
+    "frost.oldTitleMain": "Ancien compte (Mainnet) — à vider",
+    "frost.oldTitleTest": "Ancien compte (réseau de test) — à vider",
+    "frost.oldHint": "Compte récupéré avec le membre 3. Transférez tout vers le nouveau compte, puis retirez-le.",
+    "frost.sweep": "Tout transférer vers le nouveau compte…",
+    "frost.sweepTitle": "Transférer l'ancien compte",
+    "frost.sweepStep2": "{amount} {unit} vers le nouveau compte (frais {fee} {unit}). Entrez votre mot de passe pour créer la demande de signature.",
+    "frost.removeOld": "Retirer l'ancien compte du portefeuille",
     "frost.recipientOk": "Adresse valide : protégée, réseau principal, acceptée par le co-signataire.",
     "frost.recipientOkTest": "Adresse valide : protégée, réseau de test, acceptée par le co-signataire.",
     "ledger.title": "Portefeuille matériel (Ledger, Trezor)",
@@ -2067,6 +2086,25 @@ const I18N = {
     "frost.finishTitle": "Finish the FROST account setup",
     "frost.finishStep": "Enter your password, then get the co-signer's last answer. If it is no longer shown, run “frost-zec qr done” on the co-signer.",
     "frost.verified": "Confirmed by the co-signer",
+    "frost.recoverMain": "Recover on Mainnet…",
+    "frost.recoverTest": "Recover on testnet…",
+    "frost.recoverTitleMain": "Recover a FROST account (Mainnet)",
+    "frost.recoverTitleTest": "Recover a FROST account (testnet)",
+    "frost.recoverStep0": "Lost the old account's computer? With the backup (member 3) and the co-signer, you create a new account and move all the funds to it. Choose member 3's backup file and enter its passphrase.",
+    "frost.recoverPick": "Choose member 3's file…",
+    "frost.recoverPassphrase": "Backup passphrase",
+    "frost.recoverNoFile": "No file chosen.",
+    "frost.recoverFile": "File: {name}",
+    "frost.recoverContinue": "Continue",
+    "frost.recoverStep1": "1/5 · On the co-signer, start the recovery (“frost-zec qr recover --as cosigner”), then give it this message: “Copy as text”, or this QR code if it has a camera. Then get its answer.",
+    "frost.recoverStep5": "5/5 · The co-signer confirmed: the new account is ready, and here is its address. The old account shows on its own card: sync it, then move everything to the new account.",
+    "frost.oldTitleMain": "Old account (Mainnet) — to empty",
+    "frost.oldTitleTest": "Old account (testnet) — to empty",
+    "frost.oldHint": "Account recovered with member 3. Move everything to the new account, then remove it.",
+    "frost.sweep": "Move everything to the new account…",
+    "frost.sweepTitle": "Move the old account",
+    "frost.sweepStep2": "{amount} {unit} to the new account (fee {fee} {unit}). Enter your password to create the signing request.",
+    "frost.removeOld": "Remove the old account from the wallet",
     "frost.recipientOk": "Valid address: shielded, mainnet, accepted by the co-signer.",
     "frost.recipientOkTest": "Valid address: shielded, testnet, accepted by the co-signer.",
     "ledger.title": "Hardware wallet (Ledger, Trezor)",
@@ -10244,8 +10282,13 @@ async function loadFrostAccounts() {
       empty.textContent = t("frost.none");
       list.replaceChildren(empty);
     }
-    frostEl("frost-create-main").classList.toggle("hidden", accounts.some((a) => a.network === "main"));
-    frostEl("frost-create-test").classList.toggle("hidden", accounts.some((a) => a.network === "test"));
+    const has = (network) => accounts.some((a) => a.network === network && !a.old);
+    const busy = (network) => accounts.some((a) => a.network === network);
+    frostEl("frost-create-main").classList.toggle("hidden", has("main"));
+    frostEl("frost-create-test").classList.toggle("hidden", has("test"));
+    // A recovery creates the network's account and keeps the old one aside.
+    frostEl("frost-recover-main").classList.toggle("hidden", busy("main"));
+    frostEl("frost-recover-test").classList.toggle("hidden", busy("test"));
     frostEl("frost-refresh").classList.toggle("hidden", !accounts.length);
     return accounts;
   } catch (e) {
@@ -10262,7 +10305,51 @@ function frostUnit(network) {
   return network === "test" ? "TAZ" : "ZEC";
 }
 
+// The card of an old account a recovery is emptying: its balance and
+// address, the sweep to the new account, and its removal.
+function frostOldAccountRow(account) {
+  const row = document.createElement("div");
+  row.className = "card frost-account";
+  const title = document.createElement("h3");
+  title.textContent = t(account.network === "main" ? "frost.oldTitleMain" : "frost.oldTitleTest");
+  const hint = document.createElement("p");
+  hint.className = "muted";
+  hint.textContent = t("frost.oldHint");
+  const balance = document.createElement("p");
+  balance.textContent = t("frost.balance", {
+    spendable: frostZec(account.spendable),
+    pending: frostZec(account.pending),
+    unit: frostUnit(account.network),
+  });
+  const sync = document.createElement("p");
+  sync.className = "muted";
+  sync.textContent =
+    account.scanned_height != null && account.chain_height != null
+      ? t("frost.synced", { scanned: account.scanned_height, tip: account.chain_height })
+      : t("frost.notSynced");
+  const address = document.createElement("code");
+  address.className = "frost-address";
+  address.textContent = frostShortAddress(account.address);
+  address.title = account.address;
+  const actions = document.createElement("div");
+  actions.className = "row-buttons";
+  actions.append(frostButton("primary", t("frost.sweep"), () => openFrostSweep(account.network)));
+  const remove = frostButton("link", t("frost.removeOld"), () => removeFrostOldAccount(account.network));
+  row.append(title, hint, balance, sync, address, actions, remove);
+  return row;
+}
+
+async function removeFrostOldAccount(network) {
+  try {
+    await invoke("frost_remove_old", { network });
+  } catch (e) {
+    alert(t("common.error", { err: e }));
+  }
+  await loadFrostAccounts();
+}
+
 function frostAccountRow(account) {
+  if (account.old) return frostOldAccountRow(account);
   const row = document.createElement("div");
   row.className = "card frost-account";
   const title = document.createElement("h3");
@@ -10377,6 +10464,7 @@ function frostShow(ids) {
   for (const id of [
     "frost-address-box",
     "frost-send-fields",
+    "frost-recover-box",
     "frost-qr",
     "frost-qr-caption",
     "frost-code-box",
@@ -10506,9 +10594,37 @@ async function openFrostSetup(network) {
   frostOpen(t(network === "main" ? "frost.setupTitleMain" : "frost.setupTitleTest"));
   frostFlow = { kind: "setup", network };
   try {
-    const shown = await invoke("frost_setup_start", { network });
+    frostPairing(await invoke("frost_setup_start", { network }), t("frost.setupStep1"));
+  } catch (e) {
+    frostFail(e);
+  }
+}
+
+// A recovery after a lost wallet: member 3's backup is chosen in a native
+// window and read by the backend, then the pairing goes on as for a setup,
+// with the co-signer's description of the old account checked at step 3.
+function openFrostRecover(network) {
+  frostOpen(t(network === "main" ? "frost.recoverTitleMain" : "frost.recoverTitleTest"));
+  frostFlow = { kind: "recover", network };
+  frostEl("frost-recover-file").textContent = t("frost.recoverNoFile");
+  frostEl("frost-recover-passphrase").value = "";
+  frostShow(["frost-recover-box", "frost-next"]);
+  frostStep(t("frost.recoverStep0"));
+  frostNext(t("frost.recoverContinue"), async () => {
+    const shown = await invoke("frost_recover_start", {
+      network,
+      passphrase: frostEl("frost-recover-passphrase").value,
+    });
+    frostEl("frost-recover-passphrase").value = "";
+    frostPairing(shown, t("frost.recoverStep1"));
+  });
+}
+
+// Steps 1 and 2 of a setup or a recovery: pair-init on screen, then the code.
+function frostPairing(shown, step1) {
+  {
     frostShow(["frost-qr", "frost-qr-caption", "frost-scan-box"]);
-    frostStep(t("frost.setupStep1"));
+    frostStep(step1);
     startFrostQr(shown);
     frostFlow.onScanned = async (ur) => {
       const answer = await invoke("frost_setup_response", { ur });
@@ -10518,8 +10634,6 @@ async function openFrostSetup(network) {
       frostEl("frost-code").textContent = answer.code;
       startFrostQr(answer.qr);
     };
-  } catch (e) {
-    frostFail(e);
   }
 }
 
@@ -10564,8 +10678,28 @@ async function openFrostSend(network) {
       amount: frostEl("frost-amount").value.trim(),
       memo: frostEl("frost-memo").value || null,
     });
+    frostSigning(t("frost.sendStep2", { ...summary, unit: frostUnit(network) }));
+  });
+}
+
+// The recovery's sweep: every spendable note of the old account to the new
+// one, confirmed in a native window by the backend, then signed as a send.
+async function openFrostSweep(network) {
+  frostOpen(t("frost.sweepTitle"));
+  frostFlow = { kind: "sweep", network };
+  try {
+    const summary = await invoke("frost_sweep_prepare", { network });
+    frostSigning(t("frost.sweepStep2", { ...summary, unit: frostUnit(network) }));
+  } catch (e) {
+    frostFail(e);
+  }
+}
+
+// The signing of a prepared send: the password, the request, the reply.
+function frostSigning(step2) {
+  {
     frostShow(["frost-password-box", "frost-next"]);
-    frostStep(t("frost.sendStep2", { ...summary, unit: frostUnit(network) }));
+    frostStep(step2);
     requestAnimationFrame(() => frostEl("frost-password").focus({ preventScroll: true }));
     frostNext(t("frost.makeRequest"), async () => {
       const request = await invoke("frost_send_request", { password: frostPassword() });
@@ -10602,7 +10736,7 @@ async function openFrostSend(network) {
         frostNext(t("frost.done"), frostClose);
       };
     });
-  });
+  }
 }
 
 async function openFrostReceive(account) {
@@ -10617,6 +10751,17 @@ async function openFrostReceive(account) {
 
 frostEl("frost-create-main").addEventListener("click", () => openFrostSetup("main"));
 frostEl("frost-create-test").addEventListener("click", () => openFrostSetup("test"));
+frostEl("frost-recover-main").addEventListener("click", () => openFrostRecover("main"));
+frostEl("frost-recover-test").addEventListener("click", () => openFrostRecover("test"));
+frostEl("frost-recover-pick").addEventListener("click", async () => {
+  hideError(frostEl("frost-error"));
+  try {
+    const name = await invoke("frost_recover_pick");
+    if (name) frostEl("frost-recover-file").textContent = t("frost.recoverFile", { name });
+  } catch (e) {
+    frostFail(e);
+  }
+});
 frostEl("frost-refresh").addEventListener("click", () => syncFrostAccounts());
 frostEl("frost-close").addEventListener("click", () => frostClose());
 frostEl("frost-scan").addEventListener("click", async () => {
@@ -10703,7 +10848,7 @@ frostEl("frost-code-same").addEventListener("click", async () => {
         stopFrostQr();
         frostSetAddress(address);
         frostShow(["frost-address-box", "frost-next"]);
-        frostStep(t("frost.setupStep5"));
+        frostStep(t(frostFlow?.kind === "recover" ? "frost.recoverStep5" : "frost.setupStep5"));
         frostNext(t("frost.done"), async () => {
           await frostClose();
           await syncFrostAccounts();

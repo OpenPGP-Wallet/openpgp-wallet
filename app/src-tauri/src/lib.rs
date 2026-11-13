@@ -55,6 +55,35 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
         "the co-signer finished the setup with another group than this wallet: do not use this account, remove it and set it up again",
     ),
     (
+        openpgp_wallet_core::zcash_frost::OLD_EXISTS,
+        "an old account to sweep already exists on this network: sweep and remove it first",
+    ),
+    (
+        openpgp_wallet_core::zcash_frost::NO_OLD_ACCOUNT,
+        "no old account to sweep on this network",
+    ),
+    (
+        "phrase de passe incorrecte, ou fichier de sauvegarde abîmé",
+        "wrong passphrase, or a damaged backup file",
+    ),
+    (
+        "entrez la phrase de passe du fichier de sauvegarde",
+        "enter the backup file's passphrase",
+    ),
+    (
+        "fichier anormalement gros pour une sauvegarde du membre 3",
+        "file unusually large for a member 3 backup",
+    ),
+    (
+        "l'ancien compte est sur un autre réseau que celui choisi",
+        "the old account is on another network than the one chosen",
+    ),
+    (
+        "QR inattendu : la description de l'ancien compte et les clés du co-signataire étaient attendues",
+        "unexpected QR code: the old account's description and the co-signer's keys were expected",
+    ),
+    ("adresse du nouveau compte illisible", "the new account's address is unreadable"),
+    (
         openpgp_wallet_core::zcash_frost::OLD_COSIGNER,
         "this message comes from a co-signer of an earlier version: update the co-signer (frost-zec)",
     ),
@@ -1000,6 +1029,11 @@ fn translate_dynamic_error(msg: &str) -> Option<String> {
     for (fr, en) in [
         ("synchronisation du compte FROST : ", "FROST account sync: "),
         ("envoi FROST impossible (", "FROST transfer impossible ("),
+        ("sauvegarde du membre 3 : ", "member 3 backup: "),
+        (
+            "transfert de l'ancien compte impossible (",
+            "moving the old account impossible (",
+        ),
         ("serveur Zcash ", "Zcash server "),
         (
             "transaction refusée par le serveur : ",
@@ -11907,6 +11941,10 @@ pub fn run() {
             frost::frost_setup_finish,
             frost::frost_setup_done,
             frost::frost_setup_done_later,
+            frost::frost_recover_pick,
+            frost::frost_recover_start,
+            frost::frost_sweep_prepare,
+            frost::frost_remove_old,
             frost::frost_send_prepare,
             frost::frost_send_request,
             frost::frost_send_finish,

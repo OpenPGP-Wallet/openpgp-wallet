@@ -3961,10 +3961,14 @@ pub fn frost_setup_finish(
     step: zcash_frost::SetupStep,
     cosigner_keys: &[u8],
     birthday: &zcash_client_backend::data_api::AccountBirthday,
+    recovery: Option<(
+        &zcash_frost::RecoveryInput,
+        &zcash_client_backend::data_api::AccountBirthday,
+    )>,
 ) -> Result<(Vec<u8>, zcash_frost::SetupStep)> {
     let seed = unlock_seed(data_dir, device_password)?;
     let _seed_lock = crate::memory_guard::lock(&seed);
-    zcash_frost::setup_finish(data_dir, step, cosigner_keys, &seed, birthday)
+    zcash_frost::setup_finish(data_dir, step, cosigner_keys, &seed, birthday, recovery)
 }
 
 /// Takes the co-signer's acknowledgement for an account whose setup was left
