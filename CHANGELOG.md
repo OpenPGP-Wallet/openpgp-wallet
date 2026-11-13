@@ -5,6 +5,8 @@ links and SHA-256 hashes of each build are on the [releases page](https://github
 
 ## [Unreleased]
 
+## [2.18.0] - 2026-11-13
+
 ### Added
 - FROST tab: recovery after a lost computer (frost-zec spec § 7.2). “Recover on Mainnet…” or “Recover on testnet…” opens member 3's
   backup file in a native window (it never reaches the page) and asks for its passphrase; the wallet then pairs
@@ -345,7 +347,8 @@ The app is renamed "PGP Wallet".
 First working proof of concept: a non-custodial Bitcoin, Ethereum and Solana wallet whose master key is
 protected by 2-of-3 Shamir secret sharing and OpenPGP, with no seed phrase.
 
-[Unreleased]: https://github.com/OpenPGP-Wallet/openpgp-wallet/compare/v2.17.0...HEAD
+[Unreleased]: https://github.com/OpenPGP-Wallet/openpgp-wallet/compare/v2.18.0...HEAD
+[2.18.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.18.0
 [2.17.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.17.0
 [2.16.3]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.16.3
 [2.16.2]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.16.2
