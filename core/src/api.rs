@@ -3952,27 +3952,40 @@ pub fn send_zec_shielded_max(
 
 // --- FROST 2-of-3 shielded account (zcash_frost) --------------------------------
 
-/// Ends the FROST account setup: the seed (device password) encrypts member 1's
-/// seat. Returns the last QR payload to show and the account.
+/// Takes the co-signer's keys in the FROST account setup: the seed (device
+/// password) encrypts member 1's seat. Returns the last QR payload to show and
+/// the step that waits for the co-signer's acknowledgement.
 pub fn frost_setup_finish(
     data_dir: &Path,
     device_password: &str,
     step: zcash_frost::SetupStep,
     cosigner_keys: &[u8],
     birthday: &zcash_client_backend::data_api::AccountBirthday,
-) -> Result<(Vec<u8>, zcash_frost::FrostAccount)> {
+) -> Result<(Vec<u8>, zcash_frost::SetupStep)> {
     let seed = unlock_seed(data_dir, device_password)?;
     let _seed_lock = crate::memory_guard::lock(&seed);
     zcash_frost::setup_finish(data_dir, step, cosigner_keys, &seed, birthday)
 }
 
-/// Answers the co-signer's commitments for a confirmed send: the seed (device
-/// password) unlocks member 1's seat.
+/// Takes the co-signer's acknowledgement for an account whose setup was left
+/// unfinished: the seed (device password) unlocks member 1's seat.
+pub fn frost_setup_done_later(
+    data_dir: &Path,
+    device_password: &str,
+    net: zcash_frost::Net,
+    acknowledgement: &[u8],
+) -> Result<zcash_frost::FrostAccount> {
+    let seed = unlock_seed(data_dir, device_password)?;
+    let _seed_lock = crate::memory_guard::lock(&seed);
+    zcash_frost::setup_done_later(data_dir, net, &seed, acknowledgement)
+}
+
+/// Opens a signing session for a confirmed send: the seed (device password)
+/// unlocks member 1's seat.
 pub fn frost_send_request(
     data_dir: &Path,
     device_password: &str,
     prepared: &zcash_frost::PreparedSend,
-    commitments: &[u8],
 ) -> Result<(
     zcash_frost::PendingSignature,
     Vec<u8>,
@@ -3980,7 +3993,7 @@ pub fn frost_send_request(
 )> {
     let seed = unlock_seed(data_dir, device_password)?;
     let _seed_lock = crate::memory_guard::lock(&seed);
-    zcash_frost::send_request(data_dir, prepared, commitments, &seed)
+    zcash_frost::send_request(data_dir, prepared, &seed)
 }
 
 // --- Zcash (transparent addresses) ---------------------------------------------

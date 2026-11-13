@@ -48,7 +48,27 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     (openpgp_wallet_core::zcash_frost::NOT_SYNCED, "FROST account not synced yet: sync it first"),
     (
         openpgp_wallet_core::zcash_frost::NOT_CONFIRMED,
-        "FROST account setup not confirmed: check that the co-signer shows its address",
+        "FROST account setup not finished: the co-signer's last message is missing",
+    ),
+    (
+        openpgp_wallet_core::zcash_frost::DIFFERENT_GROUP,
+        "the co-signer finished the setup with another group than this wallet: do not use this account, remove it and set it up again",
+    ),
+    (
+        openpgp_wallet_core::zcash_frost::OLD_COSIGNER,
+        "this message comes from a co-signer of an earlier version: update the co-signer (frost-zec)",
+    ),
+    (
+        "ce n'est pas le message attendu du co-signataire : récupérez son dernier message",
+        "this is not the message expected from the co-signer: get its last message",
+    ),
+    (
+        "cette réponse du co-signataire est celle d'une autre demande de signature",
+        "this reply from the co-signer answers another signing request",
+    ),
+    (
+        "compte FROST incohérent : le fichier du compte ne correspond pas à son siège",
+        "inconsistent FROST account: the account file does not match its seat",
     ),
     (
         openpgp_wallet_core::zcash_frost::RECIPIENT_TRANSPARENT,
@@ -77,7 +97,6 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("siège FROST introuvable", "FROST seat not found"),
     ("siège FROST : déchiffrement impossible (autre portefeuille ?)", "FROST seat: cannot decrypt it (another wallet?)"),
     ("QR inattendu : les clés du co-signataire étaient attendues", "unexpected QR code: the co-signer's keys were expected"),
-    ("QR incohérent : deux sessions différentes", "inconsistent QR code: two different sessions"),
     ("étape de configuration inattendue", "unexpected setup step"),
     ("Aucune configuration en cours.", "No setup in progress."),
     ("QR vide", "empty QR code"),
@@ -11881,12 +11900,13 @@ pub fn run() {
             frost::frost_cancel,
             frost::frost_remove,
             frost::frost_clipboard,
-            frost::frost_confirm_address,
             frost::frost_check_recipient,
             frost::frost_setup_start,
             frost::frost_setup_response,
             frost::frost_setup_code_confirmed,
             frost::frost_setup_finish,
+            frost::frost_setup_done,
+            frost::frost_setup_done_later,
             frost::frost_send_prepare,
             frost::frost_send_request,
             frost::frost_send_finish,
