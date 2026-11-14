@@ -5,6 +5,8 @@ links and SHA-256 hashes of each build are on the [releases page](https://github
 
 ## [Unreleased]
 
+## [2.18.0] - 2026-11-13
+
 ### Added
 - FROST tab: recovery after a lost computer (frost-zec spec § 7.2). “Recover on Mainnet…” or “Recover on testnet…” opens member 3's
   backup file in a native window (it never reaches the page) and asks for its passphrase; the wallet then pairs
@@ -12,6 +14,17 @@ links and SHA-256 hashes of each build are on the [releases page](https://github
   the file's viewing key before sending anything secret, and creates a new account. The old account gets its own
   card: once synced, “Move everything to the new account…” sends all its funds there, signed by member 3 restored
   and the co-signer, after a Windows confirmation and the cancellation delay; it is then removed (set aside).
+
+### Changed
+- FROST tab: during a setup or a recovery, the button to press next pulses green (member 3's file, "Copy as
+  text", "Paste the co-signer's message" or the camera, then the last button). Not at the code comparison, where
+  the codes must be compared first.
+
+### Fixed
+- FROST tab: a send or a transfer prepared while the tab's sync is still scanning new blocks could find no
+  spendable funds (the wallet library spends a note only once the latest blocks are scanned). It now waits for the
+  sync in progress.
+- FROST tab: the transfer of an old account that is synced and empty now says so, instead of "not spendable yet".
 
 ## [2.17.0] - 2026-11-13
 
@@ -345,7 +358,8 @@ The app is renamed "PGP Wallet".
 First working proof of concept: a non-custodial Bitcoin, Ethereum and Solana wallet whose master key is
 protected by 2-of-3 Shamir secret sharing and OpenPGP, with no seed phrase.
 
-[Unreleased]: https://github.com/OpenPGP-Wallet/openpgp-wallet/compare/v2.17.0...HEAD
+[Unreleased]: https://github.com/OpenPGP-Wallet/openpgp-wallet/compare/v2.18.0...HEAD
+[2.18.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.18.0
 [2.17.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.17.0
 [2.16.3]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.16.3
 [2.16.2]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.16.2

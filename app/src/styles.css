@@ -5125,6 +5125,28 @@ textarea:focus {
 #frost-modal .modal {
   max-width: 620px;
 }
+/* Setup and recovery: the button to press next pulses green (frostCue). */
+#frost-modal button.frost-cue {
+  outline: 2px solid var(--success);
+  outline-offset: 2px;
+  animation: frost-cue 1.4s ease-out infinite;
+}
+@keyframes frost-cue {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--success) 65%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 12px color-mix(in srgb, var(--success) 0%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  #frost-modal button.frost-cue {
+    animation: none;
+  }
+}
 #frost-qr.qr-container {
   display: block;
   width: max-content;

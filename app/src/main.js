@@ -1287,6 +1287,7 @@ const I18N = {
     "frost.sweepTitle": "Transférer l'ancien compte",
     "frost.sweepStep2": "{amount} {unit} vers le nouveau compte (frais {fee} {unit}). Entrez votre mot de passe pour créer la demande de signature.",
     "frost.removeOld": "Retirer l'ancien compte du portefeuille",
+    "frost.waitSync": "Synchronisation en cours : un instant…",
     "frost.recipientOk": "Adresse valide : protégée, réseau principal, acceptée par le co-signataire.",
     "frost.recipientOkTest": "Adresse valide : protégée, réseau de test, acceptée par le co-signataire.",
     "ledger.title": "Portefeuille matériel (Ledger, Trezor)",
@@ -2105,6 +2106,7 @@ const I18N = {
     "frost.sweepTitle": "Move the old account",
     "frost.sweepStep2": "{amount} {unit} to the new account (fee {fee} {unit}). Enter your password to create the signing request.",
     "frost.removeOld": "Remove the old account from the wallet",
+    "frost.waitSync": "Syncing: one moment…",
     "frost.recipientOk": "Valid address: shielded, mainnet, accepted by the co-signer.",
     "frost.recipientOkTest": "Valid address: shielded, testnet, accepted by the co-signer.",
     "ledger.title": "Hardware wallet (Ledger, Trezor)",
@@ -10431,17 +10433,39 @@ async function removeFrostAccount(network) {
   await loadFrostAccounts();
 }
 
+// The sync in progress, if any: a send or a sweep prepared while it scans
+// would see no spendable note (the chain tip moved, its blocks not scanned
+// yet), so they wait for it first.
+let frostSyncing = null;
+
 async function syncFrostAccounts() {
-  const accounts = await loadFrostAccounts();
-  for (const account of accounts) {
-    try {
-      await invoke("frost_sync", { network: account.network });
-      delete frostSyncErrors[account.network];
-    } catch (e) {
-      frostSyncErrors[account.network] = String(e);
+  if (frostSyncing) return frostSyncing;
+  frostSyncing = (async () => {
+    const accounts = await loadFrostAccounts();
+    // One sync per network: it covers the account and an old one to sweep.
+    for (const network of [...new Set(accounts.map((a) => a.network))]) {
+      try {
+        await invoke("frost_sync", { network });
+        delete frostSyncErrors[network];
+      } catch (e) {
+        frostSyncErrors[network] = String(e);
+      }
     }
+    if (accounts.length) await loadFrostAccounts();
+    return accounts;
+  })();
+  try {
+    return await frostSyncing;
+  } finally {
+    frostSyncing = null;
   }
-  if (accounts.length) await loadFrostAccounts();
+}
+
+// Waits for the sync in progress, saying so in the window.
+async function frostWaitForSync() {
+  if (!frostSyncing) return;
+  frostStep(t("frost.waitSync"));
+  await frostSyncing.catch(() => {});
 }
 
 // A unified address is over 100 characters: its start and end are enough to
@@ -10486,6 +10510,29 @@ function frostShow(ids) {
     const target = frostEl(asksPassword ? "frost-password" : "frost-paste-clipboard");
     requestAnimationFrame(() => target.focus({ preventScroll: true }));
   }
+  frostCue();
+}
+
+// During a setup or a recovery, the button to press next pulses green: member
+// 3's file, "Copy as text" for the co-signer, then "Paste the co-signer's
+// message" (the camera button once the camera was used), and the last button.
+// Never at the code comparison: there the user compares the codes, and nothing
+// should push a click.
+let frostCueCamera = false;
+
+function frostCue() {
+  for (const button of document.querySelectorAll("#frost-modal .frost-cue")) {
+    button.classList.remove("frost-cue");
+  }
+  if (!["setup", "recover", "finish"].includes(frostFlow?.kind)) return;
+  const shown = (id) => !frostEl(id).classList.contains("hidden");
+  let target = null;
+  if (shown("frost-qr") && !frostCueCamera && !frostFlow.copied) target = "frost-copy-text";
+  else if (shown("frost-code-box")) target = null;
+  else if (shown("frost-recover-box")) target = frostFlow.picked ? "frost-next" : "frost-recover-pick";
+  else if (shown("frost-next")) target = "frost-next";
+  else if (shown("frost-scan-box")) target = frostCueCamera ? "frost-scan" : "frost-paste-clipboard";
+  if (target) frostEl(target).classList.add("frost-cue");
 }
 
 function frostOpen(title) {
@@ -10503,6 +10550,7 @@ function frostOpen(title) {
 async function frostClose() {
   stopFrostQr();
   frostFlow = null;
+  frostCue();
   await invoke("frost_cancel").catch((e) => console.error(e));
   frostEl("frost-password").value = "";
   frostEl("frost-modal").classList.add("hidden");
@@ -10540,6 +10588,8 @@ function startFrostQr(qr) {
   const parts = qr.parts;
   frostEl("frost-qr").dataset.text = qr.text;
   frostEl("frost-copy-text").classList.remove("hidden");
+  if (frostFlow) frostFlow.copied = false;
+  frostCue();
   const token = ++frostQrToken;
   const cache = new Map();
   let index = 0;
@@ -10672,6 +10722,7 @@ async function openFrostSend(network) {
   frostEl("frost-to").oninput = () => frostCheckRecipient(network);
   frostCheckRecipient(network);
   frostNext(t("send.previewConfirm"), async () => {
+    await frostWaitForSync();
     const summary = await invoke("frost_send_prepare", {
       network,
       to: frostEl("frost-to").value.trim(),
@@ -10688,6 +10739,7 @@ async function openFrostSweep(network) {
   frostOpen(t("frost.sweepTitle"));
   frostFlow = { kind: "sweep", network };
   try {
+    await frostWaitForSync();
     const summary = await invoke("frost_sweep_prepare", { network });
     frostSigning(t("frost.sweepStep2", { ...summary, unit: frostUnit(network) }));
   } catch (e) {
@@ -10757,7 +10809,11 @@ frostEl("frost-recover-pick").addEventListener("click", async () => {
   hideError(frostEl("frost-error"));
   try {
     const name = await invoke("frost_recover_pick");
-    if (name) frostEl("frost-recover-file").textContent = t("frost.recoverFile", { name });
+    if (name) {
+      frostEl("frost-recover-file").textContent = t("frost.recoverFile", { name });
+      if (frostFlow) frostFlow.picked = true;
+      frostCue();
+    }
   } catch (e) {
     frostFail(e);
   }
@@ -10766,6 +10822,8 @@ frostEl("frost-refresh").addEventListener("click", () => syncFrostAccounts());
 frostEl("frost-close").addEventListener("click", () => frostClose());
 frostEl("frost-scan").addEventListener("click", async () => {
   const button = frostEl("frost-scan");
+  frostCueCamera = true;
+  frostCue();
   button.disabled = true;
   frostEl("frost-scan-progress").textContent = t("frost.scanStarting");
   try {
@@ -10798,6 +10856,7 @@ document.addEventListener("paste", (event) => {
 // ur:zcash-frost text, so nothing else copied ever reaches the page.
 frostEl("frost-paste-clipboard").addEventListener("click", async () => {
   hideError(frostEl("frost-error"));
+  frostCueCamera = false;
   try {
     const text = await invoke("frost_clipboard");
     if (!text) {
@@ -10821,7 +10880,12 @@ function frostUsePasted(text) {
   frostEl("frost-paste").value = text;
   frostReceived(text);
 }
-frostEl("frost-copy-text").addEventListener("click", () => copyText(frostEl("frost-qr").dataset.text || ""));
+frostEl("frost-copy-text").addEventListener("click", () => {
+  copyText(frostEl("frost-qr").dataset.text || "");
+  frostCueCamera = false;
+  if (frostFlow) frostFlow.copied = true;
+  frostCue();
+});
 frostEl("frost-txid-copy").addEventListener("click", () => copyText(frostEl("frost-txid-copy").dataset.txid || ""));
 frostEl("frost-address-copy").addEventListener("click", () =>
   copyText(frostEl("frost-address-short").dataset.address || ""),
