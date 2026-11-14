@@ -16,8 +16,10 @@ links and SHA-256 hashes of each build are on the [releases page](https://github
   and the co-signer, after a Windows confirmation and the cancellation delay; it is then removed (set aside).
 
 ### Fixed
-- FROST tab: a send or a transfer prepared while the tab's sync was still running could find no spendable funds
-  and say "insufficient balance". It now waits for the sync in progress. Found in the recovery drill on testnet.
+- FROST tab: a send or a transfer prepared while the tab's sync is still scanning new blocks could find no
+  spendable funds (the wallet library spends a note only once the latest blocks are scanned). It now waits for the
+  sync in progress.
+- FROST tab: the transfer of an old account that is synced and empty now says so, instead of "not spendable yet".
 
 ## [2.17.0] - 2026-11-13
 

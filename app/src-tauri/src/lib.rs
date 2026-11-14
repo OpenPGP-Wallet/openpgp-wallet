@@ -63,6 +63,10 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
         "nothing to move yet: the old account's funds are not spendable yet (a sync in progress, or confirmations missing); try again in a moment",
     ),
     (
+        openpgp_wallet_core::zcash_frost::OLD_EMPTY,
+        "the old account is empty: nothing to move, you can remove it from the wallet",
+    ),
+    (
         openpgp_wallet_core::zcash_frost::NO_OLD_ACCOUNT,
         "no old account to sweep on this network",
     ),
