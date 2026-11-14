@@ -10510,6 +10510,29 @@ function frostShow(ids) {
     const target = frostEl(asksPassword ? "frost-password" : "frost-paste-clipboard");
     requestAnimationFrame(() => target.focus({ preventScroll: true }));
   }
+  frostCue();
+}
+
+// During a setup or a recovery, the button to press next pulses green: member
+// 3's file, "Copy as text" for the co-signer, then "Paste the co-signer's
+// message" (the camera button once the camera was used), and the last button.
+// Never at the code comparison: there the user compares the codes, and nothing
+// should push a click.
+let frostCueCamera = false;
+
+function frostCue() {
+  for (const button of document.querySelectorAll("#frost-modal .frost-cue")) {
+    button.classList.remove("frost-cue");
+  }
+  if (!["setup", "recover", "finish"].includes(frostFlow?.kind)) return;
+  const shown = (id) => !frostEl(id).classList.contains("hidden");
+  let target = null;
+  if (shown("frost-qr") && !frostCueCamera && !frostFlow.copied) target = "frost-copy-text";
+  else if (shown("frost-code-box")) target = null;
+  else if (shown("frost-recover-box")) target = frostFlow.picked ? "frost-next" : "frost-recover-pick";
+  else if (shown("frost-next")) target = "frost-next";
+  else if (shown("frost-scan-box")) target = frostCueCamera ? "frost-scan" : "frost-paste-clipboard";
+  if (target) frostEl(target).classList.add("frost-cue");
 }
 
 function frostOpen(title) {
@@ -10527,6 +10550,7 @@ function frostOpen(title) {
 async function frostClose() {
   stopFrostQr();
   frostFlow = null;
+  frostCue();
   await invoke("frost_cancel").catch((e) => console.error(e));
   frostEl("frost-password").value = "";
   frostEl("frost-modal").classList.add("hidden");
@@ -10564,6 +10588,8 @@ function startFrostQr(qr) {
   const parts = qr.parts;
   frostEl("frost-qr").dataset.text = qr.text;
   frostEl("frost-copy-text").classList.remove("hidden");
+  if (frostFlow) frostFlow.copied = false;
+  frostCue();
   const token = ++frostQrToken;
   const cache = new Map();
   let index = 0;
@@ -10783,7 +10809,11 @@ frostEl("frost-recover-pick").addEventListener("click", async () => {
   hideError(frostEl("frost-error"));
   try {
     const name = await invoke("frost_recover_pick");
-    if (name) frostEl("frost-recover-file").textContent = t("frost.recoverFile", { name });
+    if (name) {
+      frostEl("frost-recover-file").textContent = t("frost.recoverFile", { name });
+      if (frostFlow) frostFlow.picked = true;
+      frostCue();
+    }
   } catch (e) {
     frostFail(e);
   }
@@ -10792,6 +10822,8 @@ frostEl("frost-refresh").addEventListener("click", () => syncFrostAccounts());
 frostEl("frost-close").addEventListener("click", () => frostClose());
 frostEl("frost-scan").addEventListener("click", async () => {
   const button = frostEl("frost-scan");
+  frostCueCamera = true;
+  frostCue();
   button.disabled = true;
   frostEl("frost-scan-progress").textContent = t("frost.scanStarting");
   try {
@@ -10824,6 +10856,7 @@ document.addEventListener("paste", (event) => {
 // ur:zcash-frost text, so nothing else copied ever reaches the page.
 frostEl("frost-paste-clipboard").addEventListener("click", async () => {
   hideError(frostEl("frost-error"));
+  frostCueCamera = false;
   try {
     const text = await invoke("frost_clipboard");
     if (!text) {
@@ -10847,7 +10880,12 @@ function frostUsePasted(text) {
   frostEl("frost-paste").value = text;
   frostReceived(text);
 }
-frostEl("frost-copy-text").addEventListener("click", () => copyText(frostEl("frost-qr").dataset.text || ""));
+frostEl("frost-copy-text").addEventListener("click", () => {
+  copyText(frostEl("frost-qr").dataset.text || "");
+  frostCueCamera = false;
+  if (frostFlow) frostFlow.copied = true;
+  frostCue();
+});
 frostEl("frost-txid-copy").addEventListener("click", () => copyText(frostEl("frost-txid-copy").dataset.txid || ""));
 frostEl("frost-address-copy").addEventListener("click", () =>
   copyText(frostEl("frost-address-short").dataset.address || ""),

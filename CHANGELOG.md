@@ -15,6 +15,11 @@ links and SHA-256 hashes of each build are on the [releases page](https://github
   card: once synced, “Move everything to the new account…” sends all its funds there, signed by member 3 restored
   and the co-signer, after a Windows confirmation and the cancellation delay; it is then removed (set aside).
 
+### Changed
+- FROST tab: during a setup or a recovery, the button to press next pulses green (member 3's file, "Copy as
+  text", "Paste the co-signer's message" or the camera, then the last button). Not at the code comparison, where
+  the codes must be compared first.
+
 ### Fixed
 - FROST tab: a send or a transfer prepared while the tab's sync is still scanning new blocks could find no
   spendable funds (the wallet library spends a note only once the latest blocks are scanned). It now waits for the
