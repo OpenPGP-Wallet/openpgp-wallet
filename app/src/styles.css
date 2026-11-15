@@ -611,9 +611,11 @@ input[type="radio"] {
   }
 }
 
+/* Animations turned off in Windows: the bar still shows the time left, one step
+   per second (it is information, not decoration), instead of staying full. */
 @media (prefers-reduced-motion: reduce) {
   .countdown-bar > div.running {
-    animation: none;
+    animation-timing-function: steps(5, end);
   }
 }
 

@@ -5,6 +5,10 @@ links and SHA-256 hashes of each build are on the [releases page](https://github
 
 ## [Unreleased]
 
+### Fixed
+- Cancellation delay of a send: when animations are turned off in Windows (Settings > Accessibility > Visual
+  effects > Animation effects), the bar stayed full for the whole delay. It now empties one step per second.
+
 ## [2.18.0] - 2026-11-15
 
 ### Added
