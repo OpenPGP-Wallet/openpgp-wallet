@@ -5,7 +5,7 @@ links and SHA-256 hashes of each build are on the [releases page](https://github
 
 ## [Unreleased]
 
-## [2.18.0] - 2026-11-13
+## [2.18.0] - 2026-11-15
 
 ### Added
 - FROST tab: recovery after a lost computer (frost-zec spec § 7.2). “Recover on Mainnet…” or “Recover on testnet…” opens member 3's
