@@ -8,6 +8,13 @@ links and SHA-256 hashes of each build are on the [releases page](https://github
 ### Fixed
 - Cancellation delay of a send: when animations are turned off in Windows (Settings > Accessibility > Visual
   effects > Animation effects), the bar stayed full for the whole delay. It now empties one step per second.
+- FROST tab, recovery: member 3's backup passphrase pasted with a stray space, a line break or capitals was refused
+  as if the file were damaged. It is now tried once more with its words lowercased and one space apart
+  (frost-zec 7739170, from the Milestone 2 security self-audit).
+- FROST tab: a backup file asking for more than 256 MiB of memory to open is refused, so it cannot exhaust the
+  device (was 1 GiB).
+- FROST tab: reading the co-signer's reply and ending the signing session now happen together, so a request
+  opened in between is no longer lost.
 
 ## [2.18.0] - 2026-11-15
 
