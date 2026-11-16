@@ -790,11 +790,14 @@ pub async fn frost_send_finish(ur: String, app: tauri::AppHandle) -> Result<Stri
         let reply = payload(&ur)?;
         let no_session =
             || lang("Aucune signature en cours.", "No signature in progress.").to_string();
-        let reply = {
-            let pending = locked(&state.pending);
-            zcash_frost::read_reply(pending.as_ref().ok_or_else(no_session)?, &reply).t_err()?
+        // Read and taken under one lock: a request opened in between cannot
+        // be the session this reply then ends.
+        let (pending, reply) = {
+            let mut pending = locked(&state.pending);
+            let reply = zcash_frost::read_reply(pending.as_ref().ok_or_else(no_session)?, &reply)
+                .t_err()?;
+            (pending.take().ok_or_else(no_session)?, reply)
         };
-        let pending = locked(&state.pending).take().ok_or_else(no_session)?;
         zcash_frost::send_finish(&data_dir(&app)?, pending, &reply).t_err()
     })
     .await
