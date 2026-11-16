@@ -1,6 +1,6 @@
 [package]
 name = "wallet"
-version = "2.17.0"
+version = "2.18.0"
 description = "Non-custodial, multi-network crypto wallet whose master key is protected by OpenPGP instead of a plaintext seed phrase"
 authors = ["Khadim"]
 edition = "2021"

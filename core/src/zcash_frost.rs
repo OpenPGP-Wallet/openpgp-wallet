@@ -1030,6 +1030,24 @@ pub fn recovery_birthday(net: Net, input: &RecoveryInput) -> Result<AccountBirth
     })
 }
 
+/// Shown when the old account has nothing spendable yet: a sync in progress,
+/// or funds still short of their confirmations.
+pub const SWEEP_NOT_SPENDABLE: &str = "rien à transférer pour l'instant : les fonds de l'ancien compte ne sont pas encore dépensables (synchronisation en cours ou confirmations manquantes), réessayez dans un instant";
+
+/// Whether an account is scanned up to the chain tip it knows and holds
+/// nothing, spendable or pending. Before its first sync it is not "empty".
+fn is_empty_and_synced(balance: &ShieldedBalance) -> bool {
+    let synced = matches!(
+        (balance.scanned_height, balance.chain_height),
+        (Some(scanned), Some(tip)) if scanned >= tip
+    );
+    synced && balance.spendable == 0 && balance.pending == 0
+}
+
+/// Shown when the old account, synced to the chain tip, holds nothing.
+pub const OLD_EMPTY: &str =
+    "l'ancien compte est vide : rien à transférer, vous pouvez le retirer du portefeuille";
+
 /// Shown when a sweep is asked for without an old account.
 pub const NO_OLD_ACCOUNT: &str = "aucun ancien compte à vider sur ce réseau";
 
@@ -1042,6 +1060,9 @@ pub fn sweep_prepare(data_dir: &Path, net: Net) -> Result<PreparedSend> {
         bail!(NOT_CONFIRMED);
     }
     old_account(data_dir, net)?.context(NO_OLD_ACCOUNT)?;
+    if is_empty_and_synced(&balance_old(data_dir, net)?) {
+        bail!(OLD_EMPTY);
+    }
     let recipient = zcash_address::ZcashAddress::try_from_encoded(&current.address)
         .map_err(|_| anyhow!("adresse du nouveau compte illisible"))?;
     let memo = MemoBytes::from_bytes(b"FROST recovery").expect("a short memo");
@@ -1064,6 +1085,8 @@ pub fn sweep_prepare(data_dir: &Path, net: Net) -> Result<PreparedSend> {
         let detail = e.to_string();
         if detail.contains("Must scan blocks first") {
             anyhow!("{NOT_SYNCED}")
+        } else if detail.contains("Insufficient balance") {
+            anyhow!("{SWEEP_NOT_SPENDABLE}")
         } else {
             anyhow!("transfert de l'ancien compte impossible ({detail})")
         }
@@ -1765,6 +1788,24 @@ mod tests {
         assert!(remove_old(&dir, Net::Test).is_ok());
         assert!(old_account(&dir, Net::Test).unwrap().is_none());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_old_account_is_empty_only_once_synced() {
+        let balance = |spendable, pending, scanned, tip| ShieldedBalance {
+            spendable,
+            pending,
+            scanned_height: scanned,
+            chain_height: tip,
+            progress: None,
+        };
+        assert!(is_empty_and_synced(&balance(0, 0, Some(100), Some(100))));
+        // Not synced yet: its funds may still be found.
+        assert!(!is_empty_and_synced(&balance(0, 0, None, None)));
+        assert!(!is_empty_and_synced(&balance(0, 0, Some(90), Some(100))));
+        // Funds still to confirm, or spendable: not empty.
+        assert!(!is_empty_and_synced(&balance(0, 1, Some(100), Some(100))));
+        assert!(!is_empty_and_synced(&balance(1, 0, Some(100), Some(100))));
     }
 
     #[test]
