@@ -1240,7 +1240,8 @@
           </div>
           <p id="frost-recover-file" class="muted"></p>
           <label for="frost-recover-passphrase" data-i18n="frost.recoverPassphrase">Phrase de passe de la sauvegarde</label>
-          <input id="frost-recover-passphrase" type="password" autocomplete="off" spellcheck="false" />
+          <input id="frost-recover-passphrase" type="password" autocomplete="off" spellcheck="false" aria-describedby="frost-recover-passphrase-hint" />
+          <p id="frost-recover-passphrase-hint" class="muted" data-i18n="frost.recoverPassphraseHint">Les 12 mots que le co-signataire a affichés une seule fois, à la création du compte.</p>
         </div>
         <pre id="frost-report" class="frost-report hidden"></pre>
         <!-- Without a camera, the way forward at each step: above the large QR
