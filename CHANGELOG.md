@@ -5,6 +5,12 @@ links and SHA-256 hashes of each build are on the [releases page](https://github
 
 ## [Unreleased]
 
+## [2.18.1] - 2026-11-17
+
+### Changed
+- FROST tab, recovery: under "Backup passphrase", a line says which passphrase it is: the 12 words the co-signer
+  showed only once, when the account was created.
+
 ### Fixed
 - Cancellation delay of a send: when animations are turned off in Windows (Settings > Accessibility > Visual
   effects > Animation effects), the bar stayed full for the whole delay. It now empties one step per second.
@@ -369,7 +375,8 @@ The app is renamed "PGP Wallet".
 First working proof of concept: a non-custodial Bitcoin, Ethereum and Solana wallet whose master key is
 protected by 2-of-3 Shamir secret sharing and OpenPGP, with no seed phrase.
 
-[Unreleased]: https://github.com/OpenPGP-Wallet/openpgp-wallet/compare/v2.18.0...HEAD
+[Unreleased]: https://github.com/OpenPGP-Wallet/openpgp-wallet/compare/v2.18.1...HEAD
+[2.18.1]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.18.1
 [2.18.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.18.0
 [2.17.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.17.0
 [2.16.3]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.16.3
