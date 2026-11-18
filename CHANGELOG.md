@@ -5,13 +5,17 @@ links and SHA-256 hashes of each build are on the [releases page](https://github
 
 ## [Unreleased]
 
-## [2.18.1] - 2026-11-17
+## [2.18.1] - 2026-11-18
 
 ### Changed
 - FROST tab, recovery: under "Backup passphrase", a line says which passphrase it is: the 12 words the co-signer
   showed only once, when the account was created.
 
 ### Fixed
+- Zcash, shielded send to one of the wallet's own FROST accounts (Mainnet): only Ironwood notes are spent. Leftover
+  notes in the old Orchard pool could be paid to it before, which ZIP 326 forbids for these keys (`use_qsk = true`).
+  If the Ironwood balance is not enough, the error says how much is still in the Orchard pool. Raised by Daniel
+  Gorgonha's review of the FROST white paper (#11).
 - Cancellation delay of a send: when animations are turned off in Windows (Settings > Accessibility > Visual
   effects > Animation effects), the bar stayed full for the whole delay. It now empties one step per second.
 - FROST tab, recovery: member 3's backup passphrase pasted with a stray space, a line break or capitals was refused
