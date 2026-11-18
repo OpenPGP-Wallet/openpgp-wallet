@@ -831,6 +831,40 @@ fn insufficient(message: &str) -> Option<anyhow::Error> {
     ))
 }
 
+/// Whether a send to `to` must leave Orchard notes alone: it goes to one of this
+/// wallet's FROST accounts, whose keys use `use_qsk = true`, and ZIP 326 forbids
+/// sending Orchard-pool funds to such keys at any point. Other recipients may
+/// still be paid from Orchard notes, which leave their sealed pool through the
+/// turnstile.
+fn ironwood_only(data_dir: &Path, to: &str) -> Result<bool> {
+    crate::zcash_frost::holds_mainnet_address(data_dir, to)
+}
+
+/// The account's Orchard-pool funds, confirmed or not: those a send to a FROST
+/// account cannot use.
+fn orchard_total(db: &Db, account: AccountUuid) -> Result<u64> {
+    Ok(db
+        .get_wallet_summary(ConfirmationsPolicy::default())?
+        .and_then(|summary| {
+            summary
+                .account_balances()
+                .get(&account)
+                .map(|balances| u64::from(balances.orchard_balance().total()))
+        })
+        .unwrap_or_default())
+}
+
+/// A refused send to a FROST account says why the Orchard funds did not count.
+fn orchard_hint(error: anyhow::Error, orchard_left: u64) -> anyhow::Error {
+    if orchard_left == 0 {
+        return error;
+    }
+    anyhow!(
+        "{error}. Les {} ZEC encore dans l'ancien pool Orchard ne peuvent pas aller vers un compte FROST de ce portefeuille (règle ZIP 326)",
+        zcash::format_zec(orchard_left)
+    )
+}
+
 fn proposal_fee<N>(proposal: &Proposal<StandardFeeRule, N>) -> u64 {
     proposal
         .steps()
@@ -934,6 +968,14 @@ pub fn send(
     let value = Zatoshis::from_u64(amount).map_err(|_| anyhow!("montant hors limites"))?;
     let request = TransactionRequest::new(vec![Payment::without_memo(recipient, value)])
         .map_err(|e| anyhow!("demande de paiement invalide ({e:?})"))?;
+    let (spend_policy, orchard_left) = if ironwood_only(data_dir, to)? {
+        (
+            SpendPolicy::shielded_pools([ShieldedPool::Ironwood]),
+            orchard_total(&db, account)?,
+        )
+    } else {
+        (SpendPolicy::default(), 0)
+    };
     let proposal = propose_transfer::<_, _, _, _, std::convert::Infallible>(
         &mut db,
         &MainNetwork,
@@ -942,13 +984,14 @@ pub fn send(
         &change_strategy(),
         request,
         ConfirmationsPolicy::default(),
-        &SpendPolicy::default(),
+        &spend_policy,
         None,
         None,
     )
     .map_err(|e| {
-        insufficient(&e.to_string())
-            .unwrap_or_else(|| anyhow!("envoi Zcash protégé impossible ({e})"))
+        let error = insufficient(&e.to_string())
+            .unwrap_or_else(|| anyhow!("envoi Zcash protégé impossible ({e})"));
+        orchard_hint(error, orchard_left)
     })?;
     let summary = SpendSummary {
         amount,
@@ -966,21 +1009,29 @@ pub fn send(
 
 /// Proposal to send ALL spendable shielded funds (fee deducted through the
 /// library's input selection, the only part that knows it) and the amount it sends.
+/// With `ironwood_only` (a send to one of this wallet's FROST accounts), Orchard
+/// notes are left out.
 fn max_proposal(
     db: &mut Db,
     account: AccountUuid,
     recipient: zcash_address::ZcashAddress,
+    ironwood_only: bool,
 ) -> Result<(
     Proposal<StandardFeeRule, zcash_client_sqlite::ReceivedNoteId>,
     u64,
 )> {
+    // Ironwood holds every note received since NU6.3; Orchard notes, if any, may still
+    // leave their sealed pool through the turnstile, but never toward a FROST account.
+    let (pools, orchard_left): (&[ShieldedPool], u64) = if ironwood_only {
+        (&[ShieldedPool::Ironwood], orchard_total(db, account)?)
+    } else {
+        (&[ShieldedPool::Orchard, ShieldedPool::Ironwood], 0)
+    };
     let proposal = propose_send_max_transfer::<_, _, _, std::convert::Infallible>(
         db,
         &MainNetwork,
         account,
-        // Ironwood holds every note received since NU6.3; Orchard notes, if any, may still
-        // leave their sealed pool through the turnstile.
-        &[ShieldedPool::Orchard, ShieldedPool::Ironwood],
+        pools,
         &StandardFeeRule::Zip317,
         recipient,
         None,
@@ -990,8 +1041,9 @@ fn max_proposal(
         None,
     )
     .map_err(|e| {
-        insufficient(&e.to_string())
-            .unwrap_or_else(|| anyhow!("envoi Zcash protégé impossible ({e})"))
+        let error = insufficient(&e.to_string())
+            .unwrap_or_else(|| anyhow!("envoi Zcash protégé impossible ({e})"));
+        orchard_hint(error, orchard_left)
     })?;
     let amount = proposal
         .steps()
@@ -1002,7 +1054,12 @@ fn max_proposal(
         .flatten()
         .map(u64::from)
         .filter(|amount| *amount > 0)
-        .context("ZEC protégés insuffisants pour couvrir les frais du réseau")?;
+        .ok_or_else(|| {
+            orchard_hint(
+                anyhow!("ZEC protégés insuffisants pour couvrir les frais du réseau"),
+                orchard_left,
+            )
+        })?;
     Ok((proposal, amount))
 }
 
@@ -1014,7 +1071,8 @@ pub fn max_amount(data_dir: &Path, profile: u32, to: &str) -> Result<u64> {
         .context("fonds protégés pas encore prêts (synchronisation en cours)")?;
     let account = find_account(&db, profile)?
         .context("fonds protégés pas encore prêts (synchronisation en cours)")?;
-    Ok(max_proposal(&mut db, account, recipient)?.1)
+    let ironwood_only = ironwood_only(data_dir, to)?;
+    Ok(max_proposal(&mut db, account, recipient, ironwood_only)?.1)
 }
 
 /// Sends ALL the profile's spendable shielded funds to `to`, fee deducted: same
@@ -1030,7 +1088,8 @@ pub fn send_max(
     let mut db = open(data_dir)?;
     let account = find_account(&db, profile)?
         .context("fonds protégés pas encore prêts (synchronisation en cours)")?;
-    let (proposal, amount) = max_proposal(&mut db, account, recipient)?;
+    let ironwood_only = ironwood_only(data_dir, to)?;
+    let (proposal, amount) = max_proposal(&mut db, account, recipient, ironwood_only)?;
     let summary = SpendSummary {
         amount,
         fee: proposal_fee(&proposal),

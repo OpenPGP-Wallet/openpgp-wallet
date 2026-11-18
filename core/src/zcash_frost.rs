@@ -222,6 +222,83 @@ fn account_slot(data_dir: &Path, net: Net, slot: Slot) -> Result<Option<FrostAcc
     }
 }
 
+/// Whether `address` belongs to one of this wallet's FROST accounts on Mainnet:
+/// the one in use, an old one a recovery is sweeping, or one set aside. Their
+/// keys use `use_qsk = true` (ZIP 2005), and ZIP 326 forbids a wallet that
+/// generates such keys from ever sending them Orchard-pool funds, so a shielded
+/// send to one of these addresses spends Ironwood notes only. Every diversified
+/// address of an account counts, internal ones included. An address that is not
+/// a Mainnet unified address with an Orchard receiver belongs to none.
+pub fn holds_mainnet_address(data_dir: &Path, address: &str) -> Result<bool> {
+    let Some(zcash_keys::address::Address::Unified(address)) =
+        zcash_keys::address::Address::decode(&Net::Main.params(), address.trim())
+    else {
+        return Ok(false);
+    };
+    let Some(receiver) = address.orchard() else {
+        return Ok(false);
+    };
+    for ufvk in mainnet_viewing_keys(data_dir)? {
+        let ufvk = UnifiedFullViewingKey::decode(&Net::Main.params(), &ufvk)
+            .map_err(|e| anyhow!("clé de visualisation d'un compte FROST illisible : {e}"))?;
+        if ufvk
+            .orchard()
+            .is_some_and(|fvk| fvk.scope_for_address(receiver).is_some())
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// The viewing keys of every Mainnet FROST account this wallet created: the
+/// current and old slots, and the accounts set aside in [`REMOVED_DIR`]. A file
+/// that exists but cannot be read is an error rather than skipped, so a send is
+/// refused instead of risking Orchard funds going to one of them.
+fn mainnet_viewing_keys(data_dir: &Path) -> Result<Vec<String>> {
+    let mut keys = Vec::new();
+    for slot in [Slot::Current, Slot::Old] {
+        if let Some(account) = account_slot(data_dir, Net::Main, slot)? {
+            keys.push(account.ufvk);
+        }
+    }
+    let folders = match std::fs::read_dir(data_dir.join(REMOVED_DIR)) {
+        Ok(folders) => folders,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(keys),
+        Err(e) => return Err(e).context("comptes FROST mis de côté illisibles"),
+    };
+    for folder in folders {
+        let folder = folder
+            .context("comptes FROST mis de côté illisibles")?
+            .path();
+        // Folders are named "<network>[-old]-<seconds>" (see remove_slot).
+        let mainnet = folder
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("main-"));
+        if !mainnet {
+            continue;
+        }
+        for slot in [Slot::Current, Slot::Old] {
+            let file = Net::Main.slot_file(Path::new(""), slot, "json");
+            let path = folder.join(file.file_name().context("nom de fichier")?);
+            match std::fs::read(&path) {
+                Ok(bytes) => {
+                    let account: FrostAccount = serde_json::from_slice(&bytes)
+                        .with_context(|| format!("compte FROST illisible : {}", path.display()))?;
+                    keys.push(account.ufvk);
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => {
+                    return Err(e)
+                        .with_context(|| format!("compte FROST illisible : {}", path.display()))
+                }
+            }
+        }
+    }
+    Ok(keys)
+}
+
 /// Where removed accounts go, inside the data directory.
 pub const REMOVED_DIR: &str = "zcash_frost_removed";
 
@@ -1724,11 +1801,93 @@ mod tests {
     /// An old group, from frost-zec's own key generation: its co-signer's
     /// member 2 and member 3.
     fn old_group() -> (Group, Group) {
+        group_on(NetworkType::Test)
+    }
+
+    fn group_on(network: NetworkType) -> (Group, Group) {
         use frost_zec::setup::{CoordinatorSetup, CosignerSetup};
-        let (coordinator, c1) = CoordinatorSetup::start(NetworkType::Test).unwrap();
-        let (cosigner, s1, s2) = CosignerSetup::respond(NetworkType::Test, &c1).unwrap();
+        let (coordinator, c1) = CoordinatorSetup::start(network).unwrap();
+        let (cosigner, s1, s2) = CosignerSetup::respond(network, &c1).unwrap();
         let (c2, _) = coordinator.finish(&s1, &s2).unwrap();
         cosigner.finish(&c2).unwrap()
+    }
+
+    /// Writes an account file for `group` where the app keeps it, or in `folder`.
+    fn write_account(path: &Path, group: &Group) {
+        let account = FrostAccount {
+            network: Net::Main,
+            ufvk: group.ufvk.clone(),
+            address: group.address.clone(),
+            birthday: 3_500_000,
+            confirmed: true,
+        };
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, serde_json::to_vec(&account).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn the_wallets_frost_addresses_are_recognized_wherever_the_account_is() {
+        let dir = std::env::temp_dir().join(format!("zcash-frost-holds-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (current, _) = group_on(NetworkType::Main);
+        let (old, _) = group_on(NetworkType::Main);
+        let (set_aside, _) = group_on(NetworkType::Main);
+        let (stranger, _) = group_on(NetworkType::Main);
+        let (testnet, _) = group_on(NetworkType::Test);
+
+        // No account yet: nothing is the wallet's.
+        assert!(!holds_mainnet_address(&dir, &current.address).unwrap());
+
+        write_account(&Net::Main.file(&dir, "json"), &current);
+        write_account(&Net::Main.slot_file(&dir, Slot::Old, "json"), &old);
+        let removed = dir.join(REMOVED_DIR);
+        write_account(
+            &removed
+                .join("main-1700000000")
+                .join("zcash_frost_main.json"),
+            &set_aside,
+        );
+        // A testnet account set aside is not a Mainnet one.
+        write_account(
+            &removed
+                .join("test-1700000000")
+                .join("zcash_frost_test.json"),
+            &stranger,
+        );
+
+        for group in [&current, &old, &set_aside] {
+            assert!(holds_mainnet_address(&dir, &group.address).unwrap());
+            // Another diversified address of the same account, with spaces
+            // around it as pasted.
+            let other = UnifiedFullViewingKey::decode(&Net::Main.params(), &group.ufvk)
+                .unwrap()
+                .address(
+                    zip32::DiversifierIndex::from(7u32),
+                    zcash_keys::keys::UnifiedAddressRequest::ORCHARD,
+                )
+                .unwrap()
+                .encode(&Net::Main.params());
+            assert_ne!(other, group.address);
+            assert!(holds_mainnet_address(&dir, &format!("  {other} ")).unwrap());
+        }
+        assert!(!holds_mainnet_address(&dir, &stranger.address).unwrap());
+        // Not Mainnet unified addresses: none of the wallet's.
+        assert!(!holds_mainnet_address(&dir, &testnet.address).unwrap());
+        assert!(!holds_mainnet_address(&dir, "t1VtnnhTYhmADh7L2uKU3Sev7GscBHT6HfE").unwrap());
+        assert!(!holds_mainnet_address(&dir, "not an address").unwrap());
+
+        // An account file set aside that cannot be read refuses rather than
+        // letting a send through.
+        std::fs::write(
+            removed
+                .join("main-1700000000")
+                .join("zcash_frost_main.json"),
+            b"{",
+        )
+        .unwrap();
+        assert!(holds_mainnet_address(&dir, &stranger.address).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
