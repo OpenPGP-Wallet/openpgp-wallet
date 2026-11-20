@@ -25,6 +25,7 @@ whom, by what means, and what remains at risk. Each countermeasure points to the
 | Device password | The user's head; never stored | With the device key: access to the vault |
 | Shamir backup kit (3 shares, any 2 are enough) | The user's files or USB drives, each share PGP-encrypted with its own passphrase | 2 shares + their passphrases: total loss |
 | Derived (signing) keys | Derived on the fly from the seed, wiped after use | Loss of funds on the network concerned |
+| FROST member 1 seat (share, `sk`, pairing keys) | `zcash_frost_<network>.seat`, encrypted under a key that needs both the seed and the device password, stretched with Argon2id (since 2.19.0; older seats are converted at the next unlock with the password) | One share of a 2-of-3 group: no spend alone; with a second member, loss of that account's funds. `sk` is also what recovers the group's notes under ZIP 2005 |
 | Zcash (UFVK) and Monero (private view key) viewing keys | Process memory after unlock; the UFVK is also in `zcash_shielded.sqlite` | Privacy: shielded history and balances visible, no funds lost |
 | Local state of the private cryptos | `zcash_shielded.sqlite`, `monero_wallet.json` | Privacy only |
 | Convenience data | Profiles, address book, recipients already paid, Monero node | Privacy (addresses, habits) |

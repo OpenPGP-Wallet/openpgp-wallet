@@ -11,9 +11,13 @@
 //!   sync, balance and history work as for the app's own shielded account.
 //! - The public part (viewing key, address, birthday) is stored in clear so the
 //!   card shows without unlocking. The seat (share, `sk`, pairing keys) is
-//!   encrypted with XChaCha20-Poly1305 under a key derived from the wallet's
-//!   seed: it is protected like everything else, and `sk` is never under
-//!   public-key encryption (zcash/zips#1432, Storage and transmission).
+//!   encrypted with XChaCha20-Poly1305 under a key that needs both the wallet's
+//!   seed and the device password, stretched with Argon2id (see [`SeatUnlock`]).
+//!   The seed alone is not enough: it is kept in a vault encrypted to a
+//!   Curve25519 key, which a quantum computer could break, so `sk` would
+//!   otherwise be reachable through public-key encryption after all
+//!   (zcash/zips#1432, Storage and transmission). Seats written before the
+//!   password was needed are converted the next time the password is given.
 //! - A send is proposed, turned into a PCZT, signed with the co-signer over QR
 //!   codes, then proved, extracted and broadcast here.
 
@@ -366,9 +370,80 @@ impl Drop for Seat {
     }
 }
 
-const SEAT_VERSION: u8 = 1;
-const SEAT_AAD: &[u8] = b"OpenPGP Wallet FROST seat v1";
+/// What opens a seat: the wallet's seed and the device password. The seed
+/// comes out of a vault encrypted to a Curve25519 key; the password, stretched
+/// with Argon2id, keeps the seat closed to anyone who can only break that key.
+pub struct SeatUnlock<'a> {
+    pub seed: &'a [u8],
+    pub password: &'a str,
+}
 
+/// Seats written before 2.19.0: the key came from the seed alone. Still read,
+/// and written again as version 2 when they are.
+const SEAT_V1: u8 = 1;
+const SEAT_AAD_V1: &[u8] = b"OpenPGP Wallet FROST seat v1";
+/// Since 2.19.0:
+///
+/// ```text
+/// version u8 = 2 | m_cost_kib u32 | t_cost u32 | p_cost u32 | salt (16)
+/// | nonce (24) | XChaCha20-Poly1305 ciphertext of the seat
+/// ```
+///
+/// Integers are little-endian. The key is BLAKE2b-256 keyed with the seed's
+/// key ([`seat_key`]) over Argon2id(password, salt) with the header's costs;
+/// the header is part of the associated data, so a changed cost or salt fails
+/// decryption.
+const SEAT_V2: u8 = 2;
+const SEAT_AAD_V2: &[u8] = b"OpenPGP Wallet FROST seat v2";
+const SALT_LEN: usize = 16;
+const NONCE_LEN: usize = 24;
+const V2_HEADER_LEN: usize = 1 + 4 + 4 + 4 + SALT_LEN;
+/// The authentication tag XChaCha20-Poly1305 appends.
+const TAG_LEN: usize = 16;
+
+/// The seat can't be opened with this seed and password: the message for a
+/// version 2 seat, which a restore with a new password leaves locked.
+pub const SEAT_LOCKED: &str = "siège FROST : déchiffrement impossible (autre mot de passe ou autre portefeuille ? après une restauration, passez par la récupération FROST)";
+
+/// Argon2id's costs, as stored in a version 2 seat.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Cost {
+    /// Memory, in KiB.
+    m_cost_kib: u32,
+    /// Passes over the memory.
+    t_cost: u32,
+    /// Lanes.
+    p_cost: u32,
+}
+
+/// RFC 9106's second recommended option: 64 MiB, 3 passes, 4 lanes. What
+/// seats are written with, and the least a reader accepts, so that a forged
+/// header cannot pass for a strong one.
+const SEAT_COST: Cost = Cost {
+    m_cost_kib: 64 * 1024,
+    t_cost: 3,
+    p_cost: 4,
+};
+/// The most a reader accepts, so that a seat cannot exhaust the machine (the
+/// same ceiling as frost-zec's backup files).
+const SEAT_MAX_COST: Cost = Cost {
+    m_cost_kib: 256 * 1024,
+    t_cost: 8,
+    p_cost: 4,
+};
+/// Tests write and accept a far lower cost, to stay fast; the real floor is
+/// tested on its own.
+#[cfg(not(test))]
+const WRITE_COST: Cost = SEAT_COST;
+#[cfg(test)]
+const WRITE_COST: Cost = Cost {
+    m_cost_kib: 64,
+    t_cost: 1,
+    p_cost: 1,
+};
+
+/// The key of a version 1 seat, from the seed alone. Also binds a version 2
+/// seat to this wallet and network (see [`seat_key_v2`]).
 fn seat_key(seed: &[u8], net: Net) -> Zeroizing<[u8; 32]> {
     let digest = blake2b_simd::Params::new()
         .hash_length(32)
@@ -380,37 +455,110 @@ fn seat_key(seed: &[u8], net: Net) -> Zeroizing<[u8; 32]> {
     Zeroizing::new(digest.as_bytes().try_into().expect("32-byte hash"))
 }
 
-/// The associated data of a seat: its network, and whether it is an old
-/// account's, so that neither file can stand in for another.
-fn seat_aad(net: Net, slot: Slot) -> Vec<u8> {
-    let mut aad: Vec<u8> = [SEAT_AAD, net.tag().as_bytes()].concat();
+/// The key of a version 2 seat: the seed's key ([`seat_key`]) over the
+/// password stretched with Argon2id. Without the password, breaking the
+/// vault's Curve25519 key gives the seed but not this key.
+fn seat_key_v2(
+    unlock: &SeatUnlock,
+    net: Net,
+    salt: &[u8],
+    cost: Cost,
+) -> Result<Zeroizing<[u8; 32]>> {
+    let params = argon2::Params::new(cost.m_cost_kib, cost.t_cost, cost.p_cost, Some(32))
+        .map_err(|e| anyhow!("siège FROST : coûts Argon2 invalides ({e})"))?;
+    let mut stretched = Zeroizing::new([0u8; 32]);
+    argon2::Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params)
+        .hash_password_into(unlock.password.as_bytes(), salt, stretched.as_mut_slice())
+        .map_err(|e| anyhow!("siège FROST : Argon2 ({e})"))?;
+    let bound = seat_key(unlock.seed, net);
+    let digest = blake2b_simd::Params::new()
+        .hash_length(32)
+        .key(bound.as_slice())
+        .personal(b"OPGPWalletFrWrap")
+        .hash(stretched.as_slice());
+    Ok(Zeroizing::new(
+        digest.as_bytes().try_into().expect("32-byte hash"),
+    ))
+}
+
+/// Refuses costs below `floor` or above [`SEAT_MAX_COST`], before any key
+/// derivation: a header can neither weaken the key nor exhaust the machine.
+fn check_cost(cost: Cost, floor: Cost) -> Result<()> {
+    let within = |value: u32, low: u32, high: u32| (low..=high).contains(&value);
+    if !(within(cost.m_cost_kib, floor.m_cost_kib, SEAT_MAX_COST.m_cost_kib)
+        && within(cost.t_cost, floor.t_cost, SEAT_MAX_COST.t_cost)
+        && within(cost.p_cost, floor.p_cost, SEAT_MAX_COST.p_cost))
+    {
+        bail!("siège FROST : coûts Argon2 refusés");
+    }
+    Ok(())
+}
+
+/// The associated data of a seat: its version, its network, and whether it is
+/// an old account's, so that no file can stand in for another; for version 2,
+/// also its header.
+fn seat_aad(base: &[u8], net: Net, slot: Slot, header: &[u8]) -> Vec<u8> {
+    let mut aad: Vec<u8> = [base, net.tag().as_bytes()].concat();
     if slot == Slot::Old {
         aad.extend_from_slice(b"-old");
     }
+    aad.extend_from_slice(header);
     aad
 }
 
-#[cfg(test)]
-fn save_seat(data_dir: &Path, net: Net, seed: &[u8], seat: &Seat) -> Result<()> {
-    save_seat_slot(data_dir, net, Slot::Current, seed, seat)
+fn v2_header(cost: Cost, salt: &[u8; SALT_LEN]) -> Vec<u8> {
+    let mut header = Vec::with_capacity(V2_HEADER_LEN);
+    header.push(SEAT_V2);
+    header.extend_from_slice(&cost.m_cost_kib.to_le_bytes());
+    header.extend_from_slice(&cost.t_cost.to_le_bytes());
+    header.extend_from_slice(&cost.p_cost.to_le_bytes());
+    header.extend_from_slice(salt);
+    header
 }
 
-fn save_seat_slot(data_dir: &Path, net: Net, slot: Slot, seed: &[u8], seat: &Seat) -> Result<()> {
+#[cfg(test)]
+fn save_seat(data_dir: &Path, net: Net, unlock: &SeatUnlock, seat: &Seat) -> Result<()> {
+    save_seat_slot(data_dir, net, Slot::Current, unlock, seat)
+}
+
+fn save_seat_slot(
+    data_dir: &Path,
+    net: Net,
+    slot: Slot,
+    unlock: &SeatUnlock,
+    seat: &Seat,
+) -> Result<()> {
     let plaintext = Zeroizing::new(serde_json::to_vec(seat)?);
-    let mut nonce = [0u8; 24];
+    write_seat_file(data_dir, net, slot, unlock, &plaintext)
+}
+
+/// Writes a seat as version 2, through a temporary file renamed over the
+/// seat, so that a crash leaves the old file or the new one, never half of
+/// either.
+fn write_seat_file(
+    data_dir: &Path,
+    net: Net,
+    slot: Slot,
+    unlock: &SeatUnlock,
+    plaintext: &[u8],
+) -> Result<()> {
+    let mut salt = [0u8; SALT_LEN];
+    let mut nonce = [0u8; NONCE_LEN];
+    getrandom::getrandom(&mut salt).map_err(|e| anyhow!("aléa indisponible : {e}"))?;
     getrandom::getrandom(&mut nonce).map_err(|e| anyhow!("aléa indisponible : {e}"))?;
-    let key = seat_key(seed, net);
-    let aad = seat_aad(net, slot);
+    let header = v2_header(WRITE_COST, &salt);
+    let key = seat_key_v2(unlock, net, &salt, WRITE_COST)?;
+    let aad = seat_aad(SEAT_AAD_V2, net, slot, &header);
     let ciphertext = XChaCha20Poly1305::new(&(*key).into())
         .encrypt(
             &XNonce::from(nonce),
             Payload {
-                msg: &plaintext,
+                msg: plaintext,
                 aad: &aad,
             },
         )
         .map_err(|_| anyhow!("chiffrement du siège FROST impossible"))?;
-    let mut file = vec![SEAT_VERSION];
+    let mut file = header;
     file.extend_from_slice(&nonce);
     file.extend_from_slice(&ciphertext);
     let path = net.slot_file(data_dir, slot, "seat");
@@ -420,33 +568,161 @@ fn save_seat_slot(data_dir: &Path, net: Net, slot: Slot, seed: &[u8], seat: &Sea
     Ok(())
 }
 
-/// Member 1, ready to sign, with the pairing to the co-signer.
-fn load_seat(data_dir: &Path, net: Net, seed: &[u8]) -> Result<(Pairing, Member)> {
-    load_seat_slot(data_dir, net, Slot::Current, seed)
-}
-
-fn load_seat_slot(data_dir: &Path, net: Net, slot: Slot, seed: &[u8]) -> Result<(Pairing, Member)> {
+/// The plaintext of a seat. A version 1 seat is written again as version 2
+/// before it is returned, so the next read needs the password too.
+fn open_seat_file(
+    data_dir: &Path,
+    net: Net,
+    slot: Slot,
+    unlock: &SeatUnlock,
+) -> Result<Zeroizing<Vec<u8>>> {
     let file =
         std::fs::read(net.slot_file(data_dir, slot, "seat")).context("siège FROST introuvable")?;
-    if file.len() < 25 || file[0] != SEAT_VERSION {
+    match file.first() {
+        Some(&SEAT_V2) => decrypt_v2(&file, net, slot, unlock),
+        Some(&SEAT_V1) => {
+            let plaintext = decrypt_v1(&file, net, slot, unlock.seed)?;
+            write_seat_file(data_dir, net, slot, unlock, &plaintext)
+                .context("siège FROST : conversion au nouveau format impossible")?;
+            Ok(plaintext)
+        }
+        _ => bail!("siège FROST illisible"),
+    }
+}
+
+fn decrypt_v1(file: &[u8], net: Net, slot: Slot, seed: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
+    if file.len() < 1 + NONCE_LEN + TAG_LEN {
         bail!("siège FROST illisible");
     }
-    let nonce: [u8; 24] = file[1..25].try_into().expect("24 bytes");
+    let nonce: [u8; NONCE_LEN] = file[1..1 + NONCE_LEN].try_into().expect("24 bytes");
     let key = seat_key(seed, net);
-    let aad = seat_aad(net, slot);
-    let plaintext = Zeroizing::new(
+    let aad = seat_aad(SEAT_AAD_V1, net, slot, &[]);
+    Ok(Zeroizing::new(
         XChaCha20Poly1305::new(&(*key).into())
             .decrypt(
                 &XNonce::from(nonce),
                 Payload {
-                    msg: &file[25..],
+                    msg: &file[1 + NONCE_LEN..],
                     aad: &aad,
                 },
             )
             .map_err(|_| {
                 anyhow!("siège FROST : déchiffrement impossible (autre portefeuille ?)")
             })?,
-    );
+    ))
+}
+
+fn decrypt_v2(
+    file: &[u8],
+    net: Net,
+    slot: Slot,
+    unlock: &SeatUnlock,
+) -> Result<Zeroizing<Vec<u8>>> {
+    if file.len() < V2_HEADER_LEN + NONCE_LEN + TAG_LEN {
+        bail!("siège FROST illisible");
+    }
+    let header = &file[..V2_HEADER_LEN];
+    let le = |at: usize| u32::from_le_bytes(header[at..at + 4].try_into().expect("4 bytes"));
+    let cost = Cost {
+        m_cost_kib: le(1),
+        t_cost: le(5),
+        p_cost: le(9),
+    };
+    check_cost(cost, WRITE_COST)?;
+    let salt = &header[13..V2_HEADER_LEN];
+    let nonce: [u8; NONCE_LEN] = file[V2_HEADER_LEN..V2_HEADER_LEN + NONCE_LEN]
+        .try_into()
+        .expect("24 bytes");
+    let key = seat_key_v2(unlock, net, salt, cost)?;
+    let aad = seat_aad(SEAT_AAD_V2, net, slot, header);
+    Ok(Zeroizing::new(
+        XChaCha20Poly1305::new(&(*key).into())
+            .decrypt(
+                &XNonce::from(nonce),
+                Payload {
+                    msg: &file[V2_HEADER_LEN + NONCE_LEN..],
+                    aad: &aad,
+                },
+            )
+            .map_err(|_| anyhow!(SEAT_LOCKED))?,
+    ))
+}
+
+/// The version byte of a seat file, `None` when there is no file.
+fn seat_version(path: &Path) -> Result<Option<u8>> {
+    use std::io::Read;
+    let mut file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e).context("siège FROST illisible"),
+    };
+    let mut version = [0u8; 1];
+    file.read_exact(&mut version)
+        .context("siège FROST illisible")?;
+    Ok(Some(version[0]))
+}
+
+/// Writes every version 1 seat again as version 2: the current and old
+/// accounts on both networks, and the accounts set aside in [`REMOVED_DIR`],
+/// which can still hold funds. Returns how many were converted. A seat
+/// already converted costs a one-byte read and no key derivation. Every seat
+/// is tried; the first failure is returned after the others.
+pub fn upgrade_seats(data_dir: &Path, unlock: &SeatUnlock) -> Result<usize> {
+    let mut folders = vec![data_dir.to_path_buf()];
+    match std::fs::read_dir(data_dir.join(REMOVED_DIR)) {
+        Ok(entries) => {
+            for entry in entries {
+                let path = entry
+                    .context("comptes FROST mis de côté illisibles")?
+                    .path();
+                // Each account set aside is a folder; anything else there is
+                // not the wallet's.
+                if path.is_dir() {
+                    folders.push(path);
+                }
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e).context("comptes FROST mis de côté illisibles"),
+    }
+    let mut converted = 0;
+    let mut first_failure = None;
+    for folder in &folders {
+        for net in [Net::Main, Net::Test] {
+            for slot in [Slot::Current, Slot::Old] {
+                let path = net.slot_file(folder, slot, "seat");
+                let result = match seat_version(&path) {
+                    Ok(Some(SEAT_V1)) => open_seat_file(folder, net, slot, unlock).map(|_| 1),
+                    Ok(_) => Ok(0),
+                    Err(e) => Err(e),
+                };
+                match result {
+                    Ok(count) => converted += count,
+                    Err(e) => {
+                        first_failure.get_or_insert_with(|| e.context(path.display().to_string()));
+                    }
+                }
+            }
+        }
+    }
+    match first_failure {
+        Some(e) => Err(e),
+        None => Ok(converted),
+    }
+}
+
+/// Member 1, ready to sign, with the pairing to the co-signer.
+fn load_seat(data_dir: &Path, net: Net, unlock: &SeatUnlock) -> Result<(Pairing, Member)> {
+    load_seat_slot(data_dir, net, Slot::Current, unlock)
+}
+
+fn load_seat_slot(
+    data_dir: &Path,
+    net: Net,
+    slot: Slot,
+    unlock: &SeatUnlock,
+) -> Result<(Pairing, Member)> {
+    let plaintext = open_seat_file(data_dir, net, slot, unlock)?;
     let seat: Seat = serde_json::from_slice(&plaintext).context("siège FROST illisible")?;
     let pairing = Pairing::from_bytes(&Zeroizing::new(hex::decode(&seat.pairing)?))
         .map_err(|e| anyhow!("{e}"))?;
@@ -738,13 +1014,13 @@ pub fn confirm_code(
 
 /// Takes the co-signer's keys; stores the account, unconfirmed, and returns
 /// the last payload to show with the next step, which waits for the
-/// co-signer's acknowledgement. `seed` encrypts the seat; `birthday` comes
+/// co-signer's acknowledgement. `unlock` encrypts the seat; `birthday` comes
 /// from [`chain_birthday`].
 pub fn setup_finish(
     data_dir: &Path,
     step: SetupStep,
     payload: &[u8],
-    seed: &[u8],
+    unlock: &SeatUnlock,
     birthday: &AccountBirthday,
     recovery: Option<(&RecoveryInput, &AccountBirthday)>,
 ) -> Result<(Vec<u8>, SetupStep)> {
@@ -815,20 +1091,20 @@ pub fn setup_finish(
         Slot::Current,
         &pairing,
         &group,
-        seed,
+        unlock,
         birthday,
         false,
     )?;
     if let (Some(restored), Some((_, old_birthday))) = (restored, recovery) {
         // The old account answers through the new pairing; its member is
-        // member 3, restored, encrypted under the seed like any seat.
+        // member 3, restored, encrypted like any seat.
         store(
             data_dir,
             net,
             Slot::Old,
             &pairing,
             &restored,
-            seed,
+            unlock,
             old_birthday,
             true,
         )?;
@@ -903,19 +1179,19 @@ pub fn setup_done(data_dir: &Path, step: &SetupStep, payload: &[u8]) -> Result<F
 
 /// The co-signer's acknowledgement for an account left unconfirmed, after the
 /// app was closed during the setup (the co-signer shows it again with
-/// `frost-zec qr done`). `seed` unlocks the seat, from which the digest is
+/// `frost-zec qr done`). `unlock` opens the seat, from which the digest is
 /// computed again.
 pub fn setup_done_later(
     data_dir: &Path,
     net: Net,
-    seed: &[u8],
+    unlock: &SeatUnlock,
     payload: &[u8],
 ) -> Result<FrostAccount> {
     let account = account(data_dir, net)?.context("aucun compte FROST sur ce réseau")?;
     if account.confirmed {
         return Ok(account);
     }
-    let (pairing, member) = load_seat(data_dir, net, seed)?;
+    let (pairing, member) = load_seat(data_dir, net, unlock)?;
     // The viewing key comes from the encrypted seat; the account file is
     // public, and must agree with it.
     let ufvk = keys::ufvk(&member.fvk, member.network).map_err(|e| anyhow!("{e}"))?;
@@ -935,7 +1211,7 @@ fn store(
     slot: Slot,
     pairing: &Pairing,
     group: &Group,
-    seed: &[u8],
+    unlock: &SeatUnlock,
     birthday: &AccountBirthday,
     confirmed: bool,
 ) -> Result<FrostAccount> {
@@ -971,7 +1247,7 @@ fn store(
         data_dir,
         net,
         slot,
-        seed,
+        unlock,
         &Seat {
             pairing: hex::encode(pairing.to_bytes()),
             key_package: hex::encode(Zeroizing::new(
@@ -1361,14 +1637,14 @@ pub struct PendingSignature {
 }
 
 /// Opens a signing session for a confirmed send: returns the request payload
-/// to show and the coordinator's own check of the PCZT. `seed` unlocks the
+/// to show and the coordinator's own check of the PCZT. `unlock` opens the
 /// seat. Every call draws fresh nonces, so each request is a new session.
 pub fn send_request(
     data_dir: &Path,
     prepared: &PreparedSend,
-    seed: &[u8],
+    unlock: &SeatUnlock,
 ) -> Result<(PendingSignature, Vec<u8>, check::Report)> {
-    let (pairing, member) = load_seat_slot(data_dir, prepared.net, prepared.slot, seed)?;
+    let (pairing, member) = load_seat_slot(data_dir, prepared.net, prepared.slot, unlock)?;
     let (session, request, report) =
         CoordinatorSession::request(&member, &prepared.pczt, &mut UnwrapErr(SysRng))
             .map_err(|e| anyhow!("{e}"))?;
@@ -1613,13 +1889,20 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    #[test]
-    fn a_seat_round_trips_only_with_its_seed_and_network() {
-        let dir = std::env::temp_dir().join(format!("zcash-frost-seat-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+    const TEST_SEED: [u8; 64] = [3u8; 64];
+    const TEST_PASSWORD: &str = "un mot de passe de test bien assez long";
+
+    fn test_unlock() -> SeatUnlock<'static> {
+        SeatUnlock {
+            seed: &TEST_SEED,
+            password: TEST_PASSWORD,
+        }
+    }
+
+    /// A seat with real key packages and pairing, and the pairing's bytes.
+    fn test_seat() -> (Seat, Vec<u8>) {
         let (key_packages, public_key_package) = frost_zec::dkg::run(3, 2).unwrap();
         let key_package = key_packages.into_values().next().unwrap();
-        let sk = [7u8; 32];
         let pairing_bytes = {
             let mut rng = UnwrapErr(SysRng);
             let (i, init) = Initiator::start(&mut rng);
@@ -1632,17 +1915,199 @@ mod tests {
             pairing: hex::encode(&pairing_bytes),
             key_package: hex::encode(key_package.serialize().unwrap()),
             public_key_package: hex::encode(public_key_package.serialize().unwrap()),
-            sk: hex::encode(sk),
+            sk: hex::encode([7u8; 32]),
         };
-        let seed = [1u8; 64];
-        save_seat(&dir, Net::Test, &seed, &seat).unwrap();
-        let (pairing, member) = load_seat(&dir, Net::Test, &seed).unwrap();
-        assert_eq!(pairing.to_bytes(), pairing_bytes);
+        (seat, pairing_bytes.to_vec())
+    }
+
+    /// A seat as wallets before 2.19.0 wrote it: version 1, the key from the
+    /// seed alone.
+    fn write_v1_seat(dir: &Path, net: Net, slot: Slot, seed: &[u8], seat: &Seat) {
+        let plaintext = serde_json::to_vec(seat).unwrap();
+        let nonce = [9u8; NONCE_LEN];
+        let ciphertext = XChaCha20Poly1305::new(&(*seat_key(seed, net)).into())
+            .encrypt(
+                &XNonce::from(nonce),
+                Payload {
+                    msg: &plaintext,
+                    aad: &seat_aad(SEAT_AAD_V1, net, slot, &[]),
+                },
+            )
+            .unwrap();
+        let mut file = vec![SEAT_V1];
+        file.extend_from_slice(&nonce);
+        file.extend_from_slice(&ciphertext);
+        std::fs::write(net.slot_file(dir, slot, "seat"), file).unwrap();
+    }
+
+    fn first_byte(path: &Path) -> u8 {
+        std::fs::read(path).unwrap()[0]
+    }
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("zcash-frost-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_seat_opens_only_with_its_seed_password_network_and_slot() {
+        let dir = temp_dir("seat");
+        let (seat, pairing_bytes) = test_seat();
+        save_seat(&dir, Net::Test, &test_unlock(), &seat).unwrap();
+        let path = Net::Test.file(&dir, "seat");
+        assert_eq!(first_byte(&path), SEAT_V2);
+        let (pairing, member) = load_seat(&dir, Net::Test, &test_unlock()).unwrap();
+        assert_eq!(pairing.to_bytes().to_vec(), pairing_bytes);
         assert_eq!(member.network, NetworkType::Test);
-        // Another seed, or the file moved to the other network, cannot open it.
-        assert!(load_seat(&dir, Net::Test, &[2u8; 64]).is_err());
-        std::fs::rename(Net::Test.file(&dir, "seat"), Net::Main.file(&dir, "seat")).unwrap();
-        assert!(load_seat(&dir, Net::Main, &seed).is_err());
+        // The seed alone is not enough: another password fails, as does
+        // another seed with the right password.
+        let wrong_password = SeatUnlock {
+            seed: &TEST_SEED,
+            password: "un autre mot de passe assez long",
+        };
+        let error = load_seat(&dir, Net::Test, &wrong_password)
+            .err()
+            .expect("another password must not open the seat");
+        assert_eq!(error.to_string(), SEAT_LOCKED);
+        let other_seed = SeatUnlock {
+            seed: &[4u8; 64],
+            password: TEST_PASSWORD,
+        };
+        assert!(load_seat(&dir, Net::Test, &other_seed).is_err());
+        // Nor can the file stand in for the old account's, or the other network's.
+        std::fs::copy(&path, Net::Test.slot_file(&dir, Slot::Old, "seat")).unwrap();
+        assert!(load_seat_slot(&dir, Net::Test, Slot::Old, &test_unlock()).is_err());
+        std::fs::rename(&path, Net::Main.file(&dir, "seat")).unwrap();
+        assert!(load_seat(&dir, Net::Main, &test_unlock()).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_changed_header_fails_and_costs_are_bounded() {
+        let dir = temp_dir("header");
+        let (seat, _) = test_seat();
+        save_seat(&dir, Net::Test, &test_unlock(), &seat).unwrap();
+        let path = Net::Test.file(&dir, "seat");
+        let good = std::fs::read(&path).unwrap();
+        // A changed salt, or a memory cost raised within the bounds (64 to 65
+        // KiB here), fails decryption.
+        for at in [13, 1] {
+            let mut file = good.clone();
+            file[at] ^= 1;
+            std::fs::write(&path, &file).unwrap();
+            assert!(load_seat(&dir, Net::Test, &test_unlock()).is_err());
+        }
+        // A cost past the ceiling is refused before Argon2 runs.
+        let mut file = good.clone();
+        file[1..5].copy_from_slice(&(SEAT_MAX_COST.m_cost_kib + 1).to_le_bytes());
+        std::fs::write(&path, &file).unwrap();
+        let error = load_seat(&dir, Net::Test, &test_unlock())
+            .err()
+            .expect("a cost past the ceiling must be refused");
+        assert!(error.to_string().contains("coûts Argon2 refusés"));
+        // A truncated file is unreadable rather than a panic.
+        std::fs::write(&path, &good[..V2_HEADER_LEN + 3]).unwrap();
+        assert!(load_seat(&dir, Net::Test, &test_unlock()).is_err());
+        std::fs::write(&path, &good).unwrap();
+        load_seat(&dir, Net::Test, &test_unlock()).unwrap();
+        // The real floor: less than RFC 9106's second option is refused, the
+        // option itself and the ceiling are accepted.
+        assert!(check_cost(SEAT_COST, SEAT_COST).is_ok());
+        assert!(check_cost(SEAT_MAX_COST, SEAT_COST).is_ok());
+        for weaker in [
+            Cost {
+                m_cost_kib: SEAT_COST.m_cost_kib / 2,
+                ..SEAT_COST
+            },
+            Cost {
+                t_cost: 2,
+                ..SEAT_COST
+            },
+            Cost {
+                p_cost: 1,
+                ..SEAT_COST
+            },
+        ] {
+            assert!(check_cost(weaker, SEAT_COST).is_err());
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_version_1_seat_is_converted_when_it_is_read() {
+        let dir = temp_dir("v1");
+        let (seat, pairing_bytes) = test_seat();
+        write_v1_seat(&dir, Net::Test, Slot::Current, &TEST_SEED, &seat);
+        let path = Net::Test.file(&dir, "seat");
+        assert_eq!(first_byte(&path), SEAT_V1);
+        // Another seed can't open it, and leaves it as it was.
+        let other_seed = SeatUnlock {
+            seed: &[4u8; 64],
+            password: TEST_PASSWORD,
+        };
+        assert!(load_seat(&dir, Net::Test, &other_seed).is_err());
+        assert_eq!(first_byte(&path), SEAT_V1);
+        // Read with the seed and password, it is written again as version 2.
+        let (pairing, _) = load_seat(&dir, Net::Test, &test_unlock()).unwrap();
+        assert_eq!(pairing.to_bytes().to_vec(), pairing_bytes);
+        assert_eq!(first_byte(&path), SEAT_V2);
+        assert!(!path.with_extension("seat.tmp").exists());
+        // From then on the password is needed.
+        let wrong_password = SeatUnlock {
+            seed: &TEST_SEED,
+            password: "un autre mot de passe assez long",
+        };
+        assert!(load_seat(&dir, Net::Test, &wrong_password).is_err());
+        load_seat(&dir, Net::Test, &test_unlock()).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn every_version_1_seat_is_upgraded_set_aside_ones_included() {
+        let dir = temp_dir("upgrade");
+        let (seat, _) = test_seat();
+        let set_aside = dir.join(REMOVED_DIR).join("main-1700000000");
+        std::fs::create_dir_all(&set_aside).unwrap();
+        // A stray file next to the accounts set aside is not an error.
+        std::fs::write(dir.join(REMOVED_DIR).join("notes.txt"), b"not an account").unwrap();
+        write_v1_seat(&dir, Net::Main, Slot::Current, &TEST_SEED, &seat);
+        write_v1_seat(&dir, Net::Main, Slot::Old, &TEST_SEED, &seat);
+        write_v1_seat(&dir, Net::Test, Slot::Old, &TEST_SEED, &seat);
+        write_v1_seat(&set_aside, Net::Main, Slot::Current, &TEST_SEED, &seat);
+        // Already version 2: left alone.
+        save_seat(&dir, Net::Test, &test_unlock(), &seat).unwrap();
+        let untouched = std::fs::read(Net::Test.file(&dir, "seat")).unwrap();
+
+        assert_eq!(upgrade_seats(&dir, &test_unlock()).unwrap(), 4);
+        for path in [
+            Net::Main.slot_file(&dir, Slot::Current, "seat"),
+            Net::Main.slot_file(&dir, Slot::Old, "seat"),
+            Net::Test.slot_file(&dir, Slot::Old, "seat"),
+            Net::Main.slot_file(&set_aside, Slot::Current, "seat"),
+        ] {
+            assert_eq!(first_byte(&path), SEAT_V2, "{}", path.display());
+        }
+        assert_eq!(
+            std::fs::read(Net::Test.file(&dir, "seat")).unwrap(),
+            untouched
+        );
+        // Each converted seat opens where it is, with the password.
+        load_seat_slot(&dir, Net::Main, Slot::Old, &test_unlock()).unwrap();
+        load_seat(&set_aside, Net::Main, &test_unlock()).unwrap();
+        // Nothing left to convert.
+        assert_eq!(upgrade_seats(&dir, &test_unlock()).unwrap(), 0);
+
+        // A seat another wallet left behind is reported, after the others.
+        write_v1_seat(&dir, Net::Main, Slot::Current, &[5u8; 64], &seat);
+        write_v1_seat(&set_aside, Net::Test, Slot::Current, &TEST_SEED, &seat);
+        assert!(upgrade_seats(&dir, &test_unlock()).is_err());
+        assert_eq!(
+            first_byte(&Net::Test.slot_file(&set_aside, Slot::Current, "seat")),
+            SEAT_V2
+        );
+        assert_eq!(first_byte(&Net::Main.file(&dir, "seat")), SEAT_V1);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1784,7 +2249,7 @@ mod tests {
             dir,
             step,
             &keys,
-            &[3u8; 64],
+            &test_unlock(),
             &birthday,
             recovery.as_ref().map(|(input, _)| (*input, &old_birthday)),
         )?;
@@ -1923,7 +2388,7 @@ mod tests {
         let old = old_account(&dir, Net::Test).unwrap().unwrap();
         assert_eq!(old.address, two.address);
         assert!(old.confirmed);
-        let (_, member) = load_seat_slot(&dir, Net::Test, Slot::Old, &[3u8; 64]).unwrap();
+        let (_, member) = load_seat_slot(&dir, Net::Test, Slot::Old, &test_unlock()).unwrap();
         assert_eq!(member.id(), three.member.id());
         assert_eq!(member.fvk, two.member.fvk);
         // The current seat cannot be read as the old one, nor the reverse.
@@ -1937,7 +2402,7 @@ mod tests {
             Net::Test.slot_file(&dir, Slot::Old, "seat"),
         )
         .unwrap();
-        assert!(load_seat_slot(&dir, Net::Test, Slot::Old, &[3u8; 64]).is_err());
+        assert!(load_seat_slot(&dir, Net::Test, Slot::Old, &test_unlock()).is_err());
         // The new account, confirmed by the acknowledgement as any setup.
         let confirmed =
             setup_done(&dir, &step, &acknowledgement(&cosigner, &cosigner.group)).unwrap();
@@ -2061,9 +2526,18 @@ mod tests {
         // The app closed before the acknowledgement came: the step is gone.
         let (_, cosigner) = setup_until_done(&dir);
         let payload = acknowledgement(&cosigner, &cosigner.group);
-        // Another seed cannot open the seat.
-        assert!(setup_done_later(&dir, Net::Test, &[4u8; 64], &payload).is_err());
-        let account = setup_done_later(&dir, Net::Test, &[3u8; 64], &payload).unwrap();
+        // Another seed, or another password, cannot open the seat.
+        let other_seed = SeatUnlock {
+            seed: &[4u8; 64],
+            password: TEST_PASSWORD,
+        };
+        assert!(setup_done_later(&dir, Net::Test, &other_seed, &payload).is_err());
+        let other_password = SeatUnlock {
+            seed: &TEST_SEED,
+            password: "un autre mot de passe assez long",
+        };
+        assert!(setup_done_later(&dir, Net::Test, &other_password, &payload).is_err());
+        let account = setup_done_later(&dir, Net::Test, &test_unlock(), &payload).unwrap();
         assert!(account.confirmed);
         assert_eq!(account.address, cosigner.group.address);
         let _ = std::fs::remove_dir_all(&dir);
