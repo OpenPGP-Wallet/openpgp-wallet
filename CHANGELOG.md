@@ -5,6 +5,8 @@ links and SHA-256 hashes of each build are on the [releases page](https://github
 
 ## [Unreleased]
 
+## [2.19.0] - 2026-11-20
+
 ### Security
 - FROST tab: member 1's seat (its share, `sk` and pairing keys) is now encrypted under a key that needs the device
   password as well as the seed, stretched with Argon2id (64 MiB, 3 passes, 4 lanes, as RFC 9106 recommends). The
@@ -392,7 +394,8 @@ The app is renamed "PGP Wallet".
 First working proof of concept: a non-custodial Bitcoin, Ethereum and Solana wallet whose master key is
 protected by 2-of-3 Shamir secret sharing and OpenPGP, with no seed phrase.
 
-[Unreleased]: https://github.com/OpenPGP-Wallet/openpgp-wallet/compare/v2.18.1...HEAD
+[Unreleased]: https://github.com/OpenPGP-Wallet/openpgp-wallet/compare/v2.19.0...HEAD
+[2.19.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.19.0
 [2.18.1]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.18.1
 [2.18.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.18.0
 [2.17.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.17.0
