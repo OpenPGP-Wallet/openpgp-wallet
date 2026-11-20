@@ -1036,6 +1036,7 @@ pub fn unlock_wallet(data_dir: &Path, device_password: &str) -> Result<Vec<Profi
     let seed = unlock_seed(data_dir, device_password)?;
     let _seed_lock = memory_guard::lock(&seed);
     forget_other_shielded_wallets(data_dir, &seed);
+    upgrade_frost_seats(data_dir, &seed, device_password);
     // Active profiles only: an archived profile (see `archive_profile`) must not
     // appear anywhere until it has been explicitly unarchived.
     list_profiles(data_dir)
@@ -1049,6 +1050,17 @@ pub fn unlock_wallet(data_dir: &Path, device_password: &str) -> Result<Vec<Profi
             })
         })
         .collect()
+}
+
+/// FROST seats written before the password was needed (their key came from
+/// the seed alone) are written again so that it is, at the first unlock with
+/// the password; a biometric unlock has no password, so the conversion waits
+/// for the next one. A failure does not block the unlock: the seat is
+/// converted again when it is next read or at the next unlock.
+fn upgrade_frost_seats(data_dir: &Path, seed: &[u8], device_password: &str) {
+    if let Err(e) = zcash_frost::upgrade_seats(data_dir, &seat_unlock(seed, device_password)) {
+        eprintln!("FROST : siège non converti ({e:#})");
+    }
 }
 
 /// Shielded Zcash accounts of another wallet (same device) are removed before
@@ -3952,9 +3964,18 @@ pub fn send_zec_shielded_max(
 
 // --- FROST 2-of-3 shielded account (zcash_frost) --------------------------------
 
-/// Takes the co-signer's keys in the FROST account setup: the seed (device
-/// password) encrypts member 1's seat. Returns the last QR payload to show and
-/// the step that waits for the co-signer's acknowledgement.
+/// What opens member 1's seat: the seed and the device password, which the
+/// seat's key needs both of (see `zcash_frost::SeatUnlock`).
+fn seat_unlock<'a>(seed: &'a [u8], device_password: &'a str) -> zcash_frost::SeatUnlock<'a> {
+    zcash_frost::SeatUnlock {
+        seed,
+        password: device_password,
+    }
+}
+
+/// Takes the co-signer's keys in the FROST account setup: the seed and the
+/// device password encrypt member 1's seat. Returns the last QR payload to
+/// show and the step that waits for the co-signer's acknowledgement.
 pub fn frost_setup_finish(
     data_dir: &Path,
     device_password: &str,
@@ -3968,11 +3989,18 @@ pub fn frost_setup_finish(
 ) -> Result<(Vec<u8>, zcash_frost::SetupStep)> {
     let seed = unlock_seed(data_dir, device_password)?;
     let _seed_lock = crate::memory_guard::lock(&seed);
-    zcash_frost::setup_finish(data_dir, step, cosigner_keys, &seed, birthday, recovery)
+    zcash_frost::setup_finish(
+        data_dir,
+        step,
+        cosigner_keys,
+        &seat_unlock(&seed, device_password),
+        birthday,
+        recovery,
+    )
 }
 
 /// Takes the co-signer's acknowledgement for an account whose setup was left
-/// unfinished: the seed (device password) unlocks member 1's seat.
+/// unfinished: the seed and the device password open member 1's seat.
 pub fn frost_setup_done_later(
     data_dir: &Path,
     device_password: &str,
@@ -3981,11 +4009,16 @@ pub fn frost_setup_done_later(
 ) -> Result<zcash_frost::FrostAccount> {
     let seed = unlock_seed(data_dir, device_password)?;
     let _seed_lock = crate::memory_guard::lock(&seed);
-    zcash_frost::setup_done_later(data_dir, net, &seed, acknowledgement)
+    zcash_frost::setup_done_later(
+        data_dir,
+        net,
+        &seat_unlock(&seed, device_password),
+        acknowledgement,
+    )
 }
 
-/// Opens a signing session for a confirmed send: the seed (device password)
-/// unlocks member 1's seat.
+/// Opens a signing session for a confirmed send: the seed and the device
+/// password open member 1's seat.
 pub fn frost_send_request(
     data_dir: &Path,
     device_password: &str,
@@ -3997,7 +4030,7 @@ pub fn frost_send_request(
 )> {
     let seed = unlock_seed(data_dir, device_password)?;
     let _seed_lock = crate::memory_guard::lock(&seed);
-    zcash_frost::send_request(data_dir, prepared, &seed)
+    zcash_frost::send_request(data_dir, prepared, &seat_unlock(&seed, device_password))
 }
 
 // --- Zcash (transparent addresses) ---------------------------------------------

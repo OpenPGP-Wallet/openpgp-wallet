@@ -5,6 +5,19 @@ links and SHA-256 hashes of each build are on the [releases page](https://github
 
 ## [Unreleased]
 
+### Security
+- FROST tab: member 1's seat (its share, `sk` and pairing keys) is now encrypted under a key that needs the device
+  password as well as the seed, stretched with Argon2id (64 MiB, 3 passes, 4 lanes, as RFC 9106 recommends). The
+  key used to come from the seed alone, which the local vault keeps under a Curve25519 key: a quantum computer able
+  to break that key could have opened the seat without the password. As committed to in section 8 of the FROST
+  white paper v0.5, after Daniel Gorgonha's review.
+- Existing seats are converted at the next unlock with the password, including those of accounts set aside in
+  `zcash_frost_removed`; a Windows Hello unlock has no password, so they wait for the next one. After the
+  conversion:
+  - a restore from the backup kit with a new password leaves the FROST seat locked under the old one. Recover the
+    account with member 3 and the co-signer, as after a lost computer;
+  - 2.18.1 and older can no longer sign with the seat.
+
 ## [2.18.1] - 2026-11-18
 
 ### Changed

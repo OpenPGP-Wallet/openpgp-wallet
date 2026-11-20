@@ -133,6 +133,16 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("mémo trop long (512 octets au plus)", "memo too long (512 bytes at most)"),
     ("siège FROST introuvable", "FROST seat not found"),
     ("siège FROST : déchiffrement impossible (autre portefeuille ?)", "FROST seat: cannot decrypt it (another wallet?)"),
+    (
+        openpgp_wallet_core::zcash_frost::SEAT_LOCKED,
+        "FROST seat: cannot decrypt it (another password or another wallet? after a restore, use FROST recovery)",
+    ),
+    ("siège FROST illisible", "FROST seat unreadable"),
+    ("siège FROST : coûts Argon2 refusés", "FROST seat: Argon2 costs refused"),
+    (
+        "siège FROST : conversion au nouveau format impossible",
+        "FROST seat: cannot convert it to the new format",
+    ),
     ("QR inattendu : les clés du co-signataire étaient attendues", "unexpected QR code: the co-signer's keys were expected"),
     ("étape de configuration inattendue", "unexpected setup step"),
     ("Aucune configuration en cours.", "No setup in progress."),

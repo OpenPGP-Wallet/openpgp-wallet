@@ -1,7 +1,8 @@
 //! Runs the app's FROST account code (`zcash_frost`) as the coordinator from a
 //! terminal, against the frost-zec test co-signer, to test it on the real chain
 //! before the screens exist. It never touches the app's own data: it works in
-//! the `--dir` folder given, with a throwaway seed kept there.
+//! the `--dir` folder given, with a throwaway seed kept there and a fixed
+//! throwaway password (test folders only).
 //!
 //!   setup   --net test|main --dir DIR --via EXCHANGE
 //!   sync    --net test|main --dir DIR
@@ -17,7 +18,12 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
 use frost_zec::wire;
-use openpgp_wallet_core::zcash_frost::{self, Net};
+use openpgp_wallet_core::zcash_frost::{self, Net, SeatUnlock};
+
+/// The throwaway password the seat of a test folder is encrypted with, next to
+/// its throwaway seed. Test folders only: the app's seats use the device
+/// password.
+const EXAMPLE_PASSWORD: &str = "frost-coordinator example password, test folders only";
 
 fn option<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
     args.iter()
@@ -87,7 +93,9 @@ fn main() -> Result<()> {
             let step = zcash_frost::setup_code_confirmed(step)?;
             let keys = read(&via, "4-cosigner-keys.ur")?;
             let birthday = zcash_frost::chain_birthday(net)?;
-            let (payload, step) = zcash_frost::setup_finish(&dir, step, &keys, &seed(&dir)?, &birthday, None)?;
+            let seed = seed(&dir)?;
+            let unlock = SeatUnlock { seed: &seed, password: EXAMPLE_PASSWORD };
+            let (payload, step) = zcash_frost::setup_finish(&dir, step, &keys, &unlock, &birthday, None)?;
             write(&via, "5-coordinator-keys.ur", &payload)?;
             let account = zcash_frost::setup_done(&dir, &step, &read(&via, "6-cosigner-done.ur")?)?;
             println!("  address:  {}\n  birthday: {}", account.address, account.birthday);
@@ -112,7 +120,9 @@ fn main() -> Result<()> {
                 "  prepared: {} zat to {}, fee {} zat",
                 prepared.summary.amount, prepared.summary.recipient, prepared.summary.fee
             );
-            let (pending, payload, report) = zcash_frost::send_request(&dir, &prepared, &seed(&dir)?)?;
+            let seed = seed(&dir)?;
+            let unlock = SeatUnlock { seed: &seed, password: EXAMPLE_PASSWORD };
+            let (pending, payload, report) = zcash_frost::send_request(&dir, &prepared, &unlock)?;
             for line in &report.lines {
                 println!("  coordinator's check: {line}");
             }

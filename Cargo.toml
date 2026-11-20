@@ -110,3 +110,10 @@ opt-level = 3
 opt-level = 3
 [profile.dev.package.libsqlite3-sys]
 opt-level = 3
+# Argon2id stretches the device password into the FROST seat's key (64 MiB, 3
+# passes): unoptimized, a FROST send or the first unlock after the update would
+# wait seconds in the development app.
+[profile.dev.package.argon2]
+opt-level = 3
+[profile.dev.package.blake2]
+opt-level = 3

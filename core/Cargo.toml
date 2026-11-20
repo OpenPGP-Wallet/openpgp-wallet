@@ -72,6 +72,12 @@ base64 = "0.22"
 # of that module (byte layout, no curve cryptography).
 curve25519-dalek = "4.1.3"
 blake2b_simd = "1"
+# Argon2id: stretches the device password into the key of the FROST seat
+# (zcash_frost.rs), so that the seat does not open with the seed alone. Already
+# in the tree at this version (frost-zec, sequoia-openpgp): no new crate.
+# `zeroize`: its 64 MiB of working memory, derived from the password, is wiped
+# after use (the crate leaves it as is otherwise).
+argon2 = { version = "0.5", features = ["zeroize"] }
 # Bittensor (TAO, a Substrate chain): sr25519 signatures, SCALE encoding, network
 # metadata (transaction format), seed from the entropy.
 schnorrkel = "0.11"
