@@ -32,6 +32,7 @@ const ASSETS = [
   { coin: "near", name: "NEAR", symbol: "NEAR", family: "near", icon: "/assets/near.jpg", iconRound: true, gecko: "near", decimals: 6, chart: "NEAR", networks: ["near_mainnet"] },
   { coin: "ada", name: "Cardano", symbol: "ADA", family: "ada", icon: "/assets/ada.png", gecko: "cardano", decimals: 6, chart: "ADA", networks: ["ada_mainnet"] },
   { coin: "stx", name: "Stacks", symbol: "STX", family: "stx", icon: "/assets/stx.png", gecko: "blockstack", decimals: 6, chart: "STX", networks: ["stx_mainnet"] },
+  { coin: "xtz", name: "Tezos", symbol: "XTZ", family: "xtz", icon: "/assets/xtz.png", gecko: "tezos", decimals: 6, chart: "XTZ", networks: ["xtz_mainnet"] },
   { coin: "tao", name: "Bittensor", symbol: "TAO", family: "tao", icon: "/assets/tao.jpg", iconRound: true, gecko: "bittensor", decimals: 9, chart: "TAO", networks: ["tao_mainnet"] },
   // Tokens (`token: true`): contracts and mints taken from core/src/tokens.rs. ONLY
   // the Rust registry counts for a send (the UI only sends the identifier and the
@@ -815,6 +816,7 @@ const I18N = {
     "net.near_mainnet": "NEAR",
     "net.ada_mainnet": "Cardano",
     "net.stx_mainnet": "Stacks",
+    "net.xtz_mainnet": "Tezos",
     "net.tao_mainnet": "Bittensor",
     "wallet.historyExplorerOnly": "Pas d'historique ici pour ce réseau : aucun service public gratuit ne le fournit. Il reste consultable sur l'explorateur du réseau.",
     "wallet.historyOpenExplorer": "Voir sur l'explorateur",
@@ -1638,6 +1640,7 @@ const I18N = {
     "net.near_mainnet": "NEAR",
     "net.ada_mainnet": "Cardano",
     "net.stx_mainnet": "Stacks",
+    "net.xtz_mainnet": "Tezos",
     "net.tao_mainnet": "Bittensor",
     "wallet.historyExplorerOnly": "No history here for this network: no free public service provides it. You can still see it on the network's explorer.",
     "wallet.historyOpenExplorer": "View on the explorer",
@@ -4597,6 +4600,8 @@ function addressOfProfile(profile, coin, network) {
   if (coin === "ada") return profile.addresses.cardano ?? "";
   // Stacks (SP…); missing from a profile derived before it was added.
   if (coin === "stx") return profile.addresses.stacks ?? "";
+  // Tezos (tz1…); missing from a profile derived before it was added.
+  if (coin === "xtz") return profile.addresses.tezos ?? "";
   // Bittensor (5…, SS58); missing from a profile derived before it was added.
   if (coin === "tao") return profile.addresses.bittensor ?? "";
   // Shielded Zcash: u1 address (Orchard receiver only).
@@ -5420,7 +5425,7 @@ const qrModal = document.getElementById("qr-modal");
 // address alone, readable by every app.
 //
 // Maximum decimals for a requested amount: 18 for any EVM currency.
-const QR_DECIMALS = new Proxy({ btc: 8, sol: 9, zec: 8, zecs: 8, xmr: 12, doge: 8, trx: 6, xrp: 6, xlm: 7, near: 24, ada: 6, stx: 6 }, { get: (known, coin) => ASSET_BY_COIN[coin]?.unitDecimals ?? known[coin] ?? 18 });
+const QR_DECIMALS = new Proxy({ btc: 8, sol: 9, zec: 8, zecs: 8, xmr: 12, doge: 8, trx: 6, xrp: 6, xlm: 7, near: 24, ada: 6, stx: 6, xtz: 6 }, { get: (known, coin) => ASSET_BY_COIN[coin]?.unitDecimals ?? known[coin] ?? 18 });
 // Same mint as core/src/sol_spl.rs::usdc_mint_mainnet.
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 let qrCard = null;
@@ -5513,6 +5518,7 @@ const EXCHANGE_NETWORK_NAMES = {
   near_mainnet: "NEAR",
   ada_mainnet: "Cardano",
   stx_mainnet: "Stacks",
+  xtz_mainnet: "Tezos",
   tao_mainnet: "Bittensor",
 };
 

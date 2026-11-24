@@ -70,6 +70,7 @@ const XLM_MAX: usize = 50;
 const NEAR_MAX: usize = 25;
 const ADA_MAX: usize = 25;
 const STX_MAX: usize = 50;
+const XTZ_MAX: usize = 50;
 /// TAO transfers read for the chart (one Taostats page).
 const TAO_MAX: usize = 100;
 /// Confirmed transactions per Esplora page.
@@ -206,6 +207,8 @@ enum Source {
     Ada,
     /// Stacks: recent movements, in one page (see `STX_MAX`).
     Stx,
+    /// Tezos: recent transfers, in one page (see `XTZ_MAX`).
+    Xtz,
     /// Bittensor: recent transfers, in one page (see `TAO_MAX`); balance only when this
     /// build has no Taostats key.
     Tao,
@@ -234,7 +237,8 @@ impl Spec {
             | Source::Xlm
             | Source::Near
             | Source::Ada
-            | Source::Stx => true,
+            | Source::Stx
+            | Source::Xtz => true,
             Source::Tao => crate::bittensor::history_available(),
             Source::Zec => false,
         }
@@ -360,6 +364,13 @@ fn spec(network: &str, token: Option<&str>) -> Result<Option<Spec>> {
             symbol: "STX",
             source: Source::Stx,
         },
+        "xtz_mainnet" => Spec {
+            asset: Asset::Pair("XTZUSDT"),
+            decimals: 6,
+            max_read: XTZ_MAX,
+            symbol: "XTZ",
+            source: Source::Xtz,
+        },
         "tao_mainnet" => Spec {
             asset: Asset::Pair("TAOUSDT"),
             decimals: 9,
@@ -419,6 +430,7 @@ fn fetch_balance(spec: &Spec, address: &str) -> Result<i128> {
             .map_err(|_| anyhow!("solde hors limites"))?,
         Source::Ada => api::get_ada_balance(address)?.into(),
         Source::Stx => api::get_stx_balance(address)?.into(),
+        Source::Xtz => api::get_xtz_balance(address)?.into(),
         Source::Tao => crate::bittensor::balance(address)?.into(),
         Source::Trc20(contract) => i128::try_from(crate::tron::trc20_balance(address, contract)?)
             .map_err(|_| anyhow!("solde hors limites"))?,
@@ -554,6 +566,10 @@ fn fetch_page(spec: &Spec, address: &str, cursor: Option<&Cursor>) -> Result<Pag
         }),
         Source::Stx => Ok(Page {
             entries: crate::stacks::history(&crate::stacks::MAINNET, address, STX_MAX)?,
+            next: None,
+        }),
+        Source::Xtz => Ok(Page {
+            entries: crate::tezos::history(&crate::tezos::MAINNET, address, XTZ_MAX)?,
             next: None,
         }),
         Source::Tao => Ok(Page {

@@ -462,6 +462,28 @@ const EXACT_ERROR_TRANSLATIONS: &[(&str, &str)] = &[
     ("STX insuffisants pour couvrir les frais du réseau", "not enough STX to cover the network fee"),
     ("nonce Stacks illisible", "unreadable Stacks nonce"),
     ("frais Stacks manquants", "Stacks fee missing"),
+    // Tezos (core/src/tezos.rs, core/src/api.rs)
+    ("nœud Tezos injoignable", "Tezos node unreachable"),
+    ("réponse du nœud Tezos illisible", "unreadable Tezos node response"),
+    ("montant Tezos illisible", "unreadable Tezos amount"),
+    ("adresse de contrat Tezos (KT1…) : envoi refusé, les fonds pourraient y rester bloqués", "Tezos contract address (KT1…): transfer refused, funds could stay locked there"),
+    ("adresse Tezos non reconnue : un caractère semble mal recopié", "Tezos address not recognized: a character seems miscopied"),
+    ("adresse Tezos invalide (tz1…, tz2…, tz3… ou tz4… attendue)", "invalid Tezos address (tz1…, tz2…, tz3… or tz4… expected)"),
+    ("clé publique Tezos invalide", "invalid Tezos public key"),
+    ("XTZ insuffisants pour ce virement et ses frais", "not enough XTZ for this transfer and its fees"),
+    ("signature Tezos refusée par le nœud", "Tezos signature refused by the node"),
+    ("un autre envoi Tezos de ce compte est en cours — attendez sa confirmation puis relancez", "another Tezos send from this account is pending — wait for its confirmation, then start again"),
+    ("nœud Tezos : réponse inattendue", "Tezos node: unexpected response"),
+    ("le nœud Tezos répond pour une autre chaîne — envoi refusé", "the Tezos node answers for another chain — send refused"),
+    ("bloc Tezos illisible", "unreadable Tezos block"),
+    ("protocole Tezos illisible", "unreadable Tezos protocol"),
+    ("simulation Tezos illisible", "unreadable Tezos simulation"),
+    ("envoi vers votre propre adresse Tezos", "sending to your own Tezos address"),
+    ("compte Tezos vide : il doit d'abord recevoir des XTZ", "empty Tezos account: it must receive XTZ first"),
+    ("aucun XTZ envoyable sur cette adresse", "no sendable XTZ on this address"),
+    ("XTZ insuffisants pour couvrir les frais du réseau", "not enough XTZ to cover the network fee"),
+    ("encodage Tezos différent de celui du nœud (nouveau protocole ?) — envoi refusé, mettez l'app à jour", "Tezos encoding differs from the node's (new protocol?) — send refused, update the app"),
+    ("frais Tezos manquants", "Tezos fee missing"),
     // MoonPay Trade (core/src/moonpay_trade.rs, core/src/api.rs, lib.rs)
     ("MoonPay Trade indisponible dans cette version de l'app", "MoonPay Trade unavailable in this version of the app"),
     ("MoonPay Trade n'est pas disponible dans votre pays", "MoonPay Trade is not available in your country"),
@@ -1499,6 +1521,57 @@ fn translate_dynamic_error(msg: &str) -> Option<String> {
     if let Some(rest) = msg.strip_prefix("transaction Stacks refusée : ") {
         return Some(format!("Stacks transaction refused: {rest}"));
     }
+    if let Some(rest) = msg.strip_prefix("XTZ insuffisants : ") {
+        return Some(format!(
+            "insufficient XTZ: {}",
+            rest.replace(" XTZ disponibles", " XTZ available")
+                .replace(" XTZ de frais demandés", " XTZ in fees requested")
+                .replace(" XTZ demandés", " XTZ requested")
+        ));
+    }
+    if let Some(rest) = msg
+        .strip_prefix("frais du réseau Tezos anormalement élevés (")
+        .and_then(|r| r.strip_suffix(" XTZ) — réessayez plus tard"))
+    {
+        return Some(format!(
+            "abnormally high Tezos network fee ({rest} XTZ) — try again later"
+        ));
+    }
+    if let Some(rest) = msg
+        .strip_prefix("stockage Tezos anormalement cher (")
+        .and_then(|r| r.strip_suffix(" XTZ) — envoi refusé"))
+    {
+        return Some(format!(
+            "abnormally expensive Tezos storage ({rest} XTZ) — send refused"
+        ));
+    }
+    if let Some(detail) = msg
+        .strip_prefix("les frais Tezos ont augmenté depuis la confirmation (")
+        .and_then(|rest| rest.strip_suffix(") — relancez l'envoi"))
+    {
+        return Some(format!(
+            "Tezos fees increased since the confirmation ({}) — start again",
+            detail.replace(" au lieu de ", " instead of ")
+        ));
+    }
+    if let Some(rest) = msg.strip_prefix("opération Tezos refusée par le nœud : ") {
+        return Some(format!("Tezos operation refused by the node: {rest}"));
+    }
+    if let Some(rest) = msg
+        .strip_prefix("opération Tezos refusée (réponse ")
+        .and_then(|r| r.strip_suffix(')'))
+    {
+        return Some(format!("Tezos operation refused (response {rest})"));
+    }
+    if let Some(rest) = msg.strip_prefix("nœud Tezos : réponse ") {
+        return Some(format!("Tezos node: response {rest}"));
+    }
+    if let Some(rest) = msg
+        .strip_prefix("constante Tezos ")
+        .and_then(|r| r.strip_suffix(" illisible"))
+    {
+        return Some(format!("unreadable Tezos constant {rest}"));
+    }
     if let Some(rest) = msg.strip_prefix("service Stacks : réponse ") {
         return Some(format!("Stacks service: response {rest}"));
     }
@@ -2142,6 +2215,7 @@ struct AddressesDto {
     near: String,
     cardano: String,
     stacks: String,
+    tezos: String,
     bittensor: String,
 }
 
@@ -2162,6 +2236,7 @@ impl From<api::Addresses> for AddressesDto {
             near: a.near,
             cardano: a.cardano,
             stacks: a.stacks,
+            tezos: a.tezos,
             bittensor: a.bittensor,
         }
     }
@@ -2374,7 +2449,7 @@ fn save_backup_file(
 /// compromised frontend open any page: a simple phishing vector, opened for no
 /// functional benefit since no legitimate call to this command ever targets
 /// anything other than these domains.
-const ALLOWED_EXTERNAL_LINK_PREFIXES: [&str; 15] = [
+const ALLOWED_EXTERNAL_LINK_PREFIXES: [&str; 16] = [
     "https://explorer.solana.com/",
     "https://blockstream.info/",
     "https://explorer.cow.fi/",
@@ -2388,6 +2463,7 @@ const ALLOWED_EXTERNAL_LINK_PREFIXES: [&str; 15] = [
     "https://nearblocks.io/txns/",
     "https://cardanoscan.io/transaction/",
     "https://explorer.hiro.so/txid/",
+    "https://tzkt.io/",
     "https://taostats.io/extrinsic/",
     "https://taostats.io/account/",
 ];
@@ -3884,6 +3960,16 @@ fn forget_session(app: &tauri::AppHandle) {
         .lock()
         .unwrap_or_else(|p| p.into_inner())
         .clear();
+    app.state::<ProfileTezosCache>()
+        .0
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clear();
+    app.state::<ProfileTezosKeyCache>()
+        .0
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clear();
     app.state::<ProfileBittensorCache>()
         .0
         .lock()
@@ -3981,6 +4067,9 @@ async fn get_balance(
             )),
             "stx_mainnet" => Ok(openpgp_wallet_core::stacks::format_stx(
                 api::get_stx_balance(&address).t_err()?,
+            )),
+            "xtz_mainnet" => Ok(openpgp_wallet_core::tezos::format_xtz(
+                api::get_xtz_balance(&address).t_err()?,
             )),
             "tao_mainnet" => Ok(openpgp_wallet_core::bittensor::format_tao(
                 api::get_tao_balance(&address).t_err()?,
@@ -4145,6 +4234,8 @@ async fn has_pending_tx(
             "xrp_mainnet" | "xlm_mainnet" | "near_mainnet" => Ok(false),
             // One block every 20 s; the send shows up when it is confirmed.
             "ada_mainnet" | "stx_mainnet" => Ok(false),
+            // One block every 6 s: a send is included before the next reread.
+            "xtz_mainnet" => Ok(false),
             // One block every 12 s; the send shows up when it is included.
             "tao_mainnet" => Ok(false),
             "xmr_mainnet" => {
@@ -4448,6 +4539,18 @@ async fn get_tx_history(
             Some(price_history::Asset::Pair("STXUSDT")),
             6,
             |id| format!("https://explorer.hiro.so/txid/0x{id}?chain=mainnet"),
+        )),
+        "xtz_mainnet" => HistoryDto::read(history_dtos(
+            || {
+                openpgp_wallet_core::tezos::history(
+                    &openpgp_wallet_core::tezos::MAINNET,
+                    &address,
+                    HISTORY_LIMIT as usize,
+                )
+            },
+            Some(price_history::Asset::Pair("XTZUSDT")),
+            6,
+            |id| format!("https://tzkt.io/{id}"),
         )),
         "tao_mainnet" => {
             openpgp_wallet_core::bittensor::parse_address(&address).t_err()?;
@@ -4796,6 +4899,7 @@ fn network_label(network: &str) -> String {
         "near_mainnet" => lang("NEAR — fonds réels", "NEAR — real funds").to_string(),
         "ada_mainnet" => lang("Cardano — fonds réels", "Cardano — real funds").to_string(),
         "stx_mainnet" => lang("Stacks — fonds réels", "Stacks — real funds").to_string(),
+        "xtz_mainnet" => lang("Tezos — fonds réels", "Tezos — real funds").to_string(),
         "tao_mainnet" => lang("Bittensor — fonds réels", "Bittensor — real funds").to_string(),
         "xmr_mainnet" => lang("Monero — fonds réels", "Monero — real funds").to_string(),
         "zec_shielded" => lang("Zcash — fonds protégés", "Zcash — shielded funds").to_string(),
@@ -4829,6 +4933,7 @@ fn network_unit(network: &str) -> &'static str {
         "near_mainnet" => "NEAR",
         "ada_mainnet" => "ADA",
         "stx_mainnet" => "STX",
+        "xtz_mainnet" => "XTZ",
         "tao_mainnet" => "TAO",
         other => wallet_flow::evm_network(other)
             .map(|n| n.native_symbol)
@@ -4956,6 +5061,7 @@ fn recipient_warning_lines(
         "near" => ("aucun NEAR", "no NEAR"),
         "ada" => ("aucun ADA", "no ADA"),
         "stx" => ("aucun STX", "no STX"),
+        "xtz" => ("aucun XTZ", "no XTZ"),
         "tao" => ("aucun TAO", "no TAO"),
         "sol" => ("aucun SOL", "no SOL"),
         _ => ("aucun fonds", "no funds"),
@@ -5121,6 +5227,7 @@ fn known_recipients(app: &tauri::AppHandle, dir: &std::path::Path) -> Vec<(Strin
     simple(&app.state::<ProfileNearCache>().0);
     simple(&app.state::<ProfileCardanoCache>().0);
     simple(&app.state::<ProfileStacksCache>().0);
+    simple(&app.state::<ProfileTezosCache>().0);
     simple(&app.state::<ProfileBittensorCache>().0);
     for (index, (address, _)) in app
         .state::<MoneroKeysCache>()
@@ -5372,6 +5479,7 @@ fn own_profile_label(
         "near_mainnet" => in_cache(&app.state::<ProfileNearCache>().0, exact),
         "ada_mainnet" => in_cache(&app.state::<ProfileCardanoCache>().0, exact),
         "stx_mainnet" => in_cache(&app.state::<ProfileStacksCache>().0, exact),
+        "xtz_mainnet" => in_cache(&app.state::<ProfileTezosCache>().0, exact),
         "tao_mainnet" => in_cache(&app.state::<ProfileBittensorCache>().0, exact),
         "xmr_mainnet" => app
             .state::<MoneroKeysCache>()
@@ -5622,6 +5730,13 @@ async fn send_transaction(
             .unwrap_or_else(|p| p.into_inner())
             .get(&profile_index)
             .cloned();
+        let from_tezos = app
+            .state::<ProfileTezosKeyCache>()
+            .0
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(&profile_index)
+            .cloned();
         let from = SendFrom {
             evm: from_evm.as_deref(),
             sol: from_sol.as_deref(),
@@ -5635,6 +5750,7 @@ async fn send_transaction(
             near: from_near.as_deref(),
             cardano: from_cardano.as_deref(),
             stacks: from_stacks.as_deref(),
+            tezos: from_tezos.as_deref(),
             bittensor: from_bittensor.as_deref(),
         };
         let mut send = confirm_send(
@@ -5826,6 +5942,20 @@ async fn send_transaction(
                     &send.amount,
                     send.stacks_memo(),
                     shown_fee,
+                    profile_index,
+                )
+                .t_err()
+            }
+            "xtz_mainnet" => {
+                let shown_cost = send
+                    .xtz_fee
+                    .ok_or_else(|| translate_error("frais Tezos manquants"))?;
+                api::send_xtz(
+                    &dir,
+                    &password,
+                    &send.to,
+                    &send.amount,
+                    shown_cost,
                     profile_index,
                 )
                 .t_err()
@@ -6055,6 +6185,9 @@ async fn max_send_amount(
                 api::ada_max(&cached(&app.state::<ProfileCardanoCache>().0)?, None).t_err()
             }
             "stx_mainnet" => api::stx_max(&cached(&app.state::<ProfileStacksCache>().0)?).t_err(),
+            "xtz_mainnet" => {
+                api::xtz_max(&cached(&app.state::<ProfileTezosKeyCache>().0)?, None).t_err()
+            }
             "tao_mainnet" => {
                 api::tao_max(&cached(&app.state::<ProfileBittensorCache>().0)?, None).t_err()
             }
@@ -6130,6 +6263,8 @@ struct ConfirmedSend {
     ada_fee: Option<u64>,
     /// Stacks fee shown (cap at send time).
     stx_fee: Option<u64>,
+    /// Tezos fee and burn shown (cap at send time).
+    xtz_fee: Option<u64>,
     /// Bittensor fee shown (cap at send time, within 10%).
     tao_fee: Option<u64>,
     /// Tag (XRP) or memo (Stellar) shown in the dialog, signed as is.
@@ -6209,6 +6344,8 @@ struct SendFrom<'a> {
     near: Option<&'a str>,
     cardano: Option<&'a str>,
     stacks: Option<&'a str>,
+    /// Tezos: the public key (edpk…), which also gives the address.
+    tezos: Option<&'a str>,
     bittensor: Option<&'a str>,
 }
 
@@ -6241,6 +6378,7 @@ fn recipient_activity(
         "near" => api::near_recipient_activity(to).ok(),
         "ada" => api::ada_recipient_activity(to).ok(),
         "stx" => api::stx_recipient_activity(to).ok(),
+        "xtz" => api::xtz_recipient_activity(to).ok(),
         "tao" => api::tao_recipient_activity(to).ok(),
         // Address checked by the preparation; no readable activity (addresses and amounts
         // are invisible on the Monero chain).
@@ -6268,6 +6406,7 @@ fn send_coin(network: &str) -> Result<&'static str, String> {
         "near_mainnet" => "near",
         "ada_mainnet" => "ada",
         "stx_mainnet" => "stx",
+        "xtz_mainnet" => "xtz",
         "tao_mainnet" => "tao",
         other => return Err(translate_error(&format!("réseau inconnu : {other}"))),
     })
@@ -6362,6 +6501,7 @@ fn confirm_send(
             "near" => api::near_max(from.near.ok_or_else(unknown_profile)?, Some(&to)).t_err()?,
             "ada" => api::ada_max(from.cardano.ok_or_else(unknown_profile)?, Some(&to)).t_err()?,
             "stx" => api::stx_max(from.stacks.ok_or_else(unknown_profile)?).t_err()?,
+            "xtz" => api::xtz_max(from.tezos.ok_or_else(unknown_profile)?, Some(&to)).t_err()?,
             "tao" => {
                 api::tao_max(from.bittensor.ok_or_else(unknown_profile)?, Some(&to)).t_err()?
             }
@@ -6386,6 +6526,7 @@ fn confirm_send(
         "near" => api::canonical_near_amount(&amount).t_err()?,
         "ada" => api::canonical_ada_amount(&amount).t_err()?,
         "stx" => api::canonical_stx_amount(&amount).t_err()?,
+        "xtz" => api::canonical_xtz_amount(&amount).t_err()?,
         "tao" => api::canonical_tao_amount(&amount).t_err()?,
         "xmr" => api::canonical_xmr_amount(&amount).t_err()?,
         _ => api::canonical_amount(coin, &amount).t_err()?,
@@ -6501,6 +6642,14 @@ fn confirm_send(
         ),
         _ => None,
     };
+    // Tezos: spendable balance (excluding staking), baker fee, burn for a new recipient
+    // account and the one-time reveal, from a simulation NOW.
+    let xtz_plan = match coin {
+        "xtz" => Some(
+            api::xtz_send_plan(from.tezos.ok_or_else(unknown_profile)?, &to, &amount).t_err()?,
+        ),
+        _ => None,
+    };
     // Bittensor: fee, the sender's minimum balance and an empty recipient account
     // checked NOW (refusals the node's validation does not see).
     let tao_plan = match coin {
@@ -6595,6 +6744,24 @@ Change returned to your address: {change} ZEC")));
         }),
         "stx" => stx_plan.map(|plan| format!("{} : {} STX", lang("Frais", "Fee"), openpgp_wallet_core::stacks::format_stx(plan.fee))),
         "tao" => tao_plan.as_ref().map(|plan| format!("{} : {} TAO", lang("Frais", "Fee"), openpgp_wallet_core::bittensor::format_tao(plan.fee))),
+        "xtz" => xtz_plan.map(|plan| {
+            use openpgp_wallet_core::tezos::format_xtz;
+            let mut line = format!("{} : {} XTZ", lang("Frais", "Fee"), format_xtz(plan.fee));
+            if plan.creates {
+                let burn = format_xtz(plan.burn);
+                line.push_str(lang(
+                    &format!("\nCe virement crée le compte destinataire (encore jamais utilisé) : {burn} XTZ brûlés par le réseau"),
+                    &format!("\nThis transfer creates the recipient account (never used yet): {burn} XTZ burned by the network"),
+                ));
+            }
+            if plan.reveal {
+                line.push_str(lang(
+                    "\nPremier envoi de ce compte : sa clé publique est publiée sur la chaîne (frais inclus)",
+                    "\nFirst send from this account: its public key is published on chain (fee included)",
+                ));
+            }
+            line
+        }),
         "ada" => ada_plan.as_ref().map(|plan| {
             let mut line = format!("{} : {} ADA", lang("Frais", "Fee"), openpgp_wallet_core::cardano::format_ada(plan.fee));
             if plan.change > 0 {
@@ -6686,6 +6853,7 @@ Change returned to your address: {change} XMR (spendable after 10 confirmations,
         near_fee: near_plan.map(|plan| plan.fee),
         ada_fee: ada_plan.map(|plan| plan.fee),
         stx_fee: stx_plan.map(|plan| plan.fee),
+        xtz_fee: xtz_plan.map(|plan| plan.cost()),
         tao_fee: tao_plan.map(|plan| plan.fee),
         note,
     })
@@ -7026,6 +7194,7 @@ fn profile_address(
         "near_mainnet" => cached(&app.state::<ProfileNearCache>().0),
         "ada_mainnet" => cached(&app.state::<ProfileCardanoCache>().0),
         "stx_mainnet" => cached(&app.state::<ProfileStacksCache>().0),
+        "xtz_mainnet" => cached(&app.state::<ProfileTezosCache>().0),
         "tao_mainnet" => cached(&app.state::<ProfileBittensorCache>().0),
         other => Err(translate_error(&format!("réseau inconnu : {other}"))),
     }
@@ -8640,6 +8809,7 @@ fn sent_tx_explorer_url(network: &str, tx: &str) -> Option<String> {
             "https://explorer.hiro.so/txid/0x{}?chain=mainnet",
             id.trim_start_matches("0x")
         ),
+        "xtz_mainnet" => format!("https://tzkt.io/{id}"),
         _ => return None,
     })
 }
@@ -8824,6 +8994,27 @@ async fn estimate_send_fee(
                 "stx",
                 false,
             ),
+            ("xtz_mainnet", None) => {
+                let key = app
+                    .state::<ProfileTezosKeyCache>()
+                    .0
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .get(&profile_index)
+                    .cloned()
+                    .ok_or_else(|| {
+                        translate_error(
+                            "adresse du profil inconnue — déverrouillez le portefeuille",
+                        )
+                    })?;
+                estimate(
+                    u128::from(api::xtz_send_plan(&key, &to, &amount).t_err()?.cost()),
+                    6,
+                    "XTZ",
+                    "xtz",
+                    false,
+                )
+            }
             ("tao_mainnet", None) => estimate(
                 u128::from(api::tao_send_plan(&from()?, &to, &amount).t_err()?.fee),
                 9,
@@ -10480,6 +10671,15 @@ struct ProfileCardanoCache(std::sync::Mutex<std::collections::HashMap<u32, Strin
 #[derive(Default)]
 struct ProfileStacksCache(std::sync::Mutex<std::collections::HashMap<u32, String>>);
 
+/// Tezos address of each profile.
+#[derive(Default)]
+struct ProfileTezosCache(std::sync::Mutex<std::collections::HashMap<u32, String>>);
+
+/// Tezos public key (edpk…) of each profile: preparing a send before the dialog,
+/// including the reveal of the key, which needs the key itself.
+#[derive(Default)]
+struct ProfileTezosKeyCache(std::sync::Mutex<std::collections::HashMap<u32, String>>);
+
 /// Bittensor address of each profile (preparing a send before the dialog).
 #[derive(Default)]
 struct ProfileBittensorCache(std::sync::Mutex<std::collections::HashMap<u32, String>>);
@@ -10591,6 +10791,20 @@ fn remember_addresses(app: &tauri::AppHandle, index: u32, addresses: &api::Addre
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .insert(index, addresses.stacks.clone());
+    }
+    if let Some(cache) = app.try_state::<ProfileTezosCache>() {
+        cache
+            .0
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(index, addresses.tezos.clone());
+    }
+    if let Some(cache) = app.try_state::<ProfileTezosKeyCache>() {
+        cache
+            .0
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(index, addresses.tezos_public_key.clone());
     }
     if let Some(cache) = app.try_state::<ProfileBittensorCache>() {
         cache
@@ -11893,6 +12107,8 @@ pub fn run() {
         .manage(ProfileNearCache::default())
         .manage(ProfileCardanoCache::default())
         .manage(ProfileStacksCache::default())
+        .manage(ProfileTezosCache::default())
+        .manage(ProfileTezosKeyCache::default())
         .manage(ProfileBittensorCache::default())
         .manage(ProfileDogeCache::default())
         .manage(ProfileBtcCache::default())
@@ -12374,7 +12590,7 @@ mod tests {
         // Each warning fits in a single paragraph (dialog layout).
         for coin in [
             "evm", "btc", "sol", "usdc", "zec", "doge", "trx", "xrp", "xlm", "near", "ada", "stx",
-            "tao", "xmr", "zecs",
+            "xtz", "tao", "xmr", "zecs",
         ] {
             for activity in [Some(Unused), Some(Empty), None] {
                 assert!(recipient_warning_lines(true, coin, activity)
@@ -13035,6 +13251,7 @@ mod tests {
             "near_mainnet",
             "ada_mainnet",
             "stx_mainnet",
+            "xtz_mainnet",
         ];
         for network in networks {
             let url = sent_tx_explorer_url(network, "0xabc123")
@@ -13227,6 +13444,66 @@ mod tests {
             translate_dynamic_error("les frais Stacks ont augmenté depuis la confirmation (0.004000 au lieu de 0.003000 STX) — relancez l'envoi").unwrap(),
             "Stacks fees increased since the confirmation (0.004000 instead of 0.003000 STX) — start again"
         );
+    }
+
+    /// Tezos error messages: present in the code (fixed), all translated (fixed and
+    /// variable).
+    #[test]
+    fn tezos_error_messages_have_a_translation() {
+        let sources = [
+            include_str!("../../../core/src/tezos.rs"),
+            include_str!("../../../core/src/api.rs"),
+            include_str!("lib.rs"),
+        ];
+        for message in [
+            "nœud Tezos injoignable",
+            "réponse du nœud Tezos illisible",
+            "montant Tezos illisible",
+            "adresse de contrat Tezos (KT1…) : envoi refusé, les fonds pourraient y rester bloqués",
+            "adresse Tezos non reconnue : un caractère semble mal recopié",
+            "adresse Tezos invalide (tz1…, tz2…, tz3… ou tz4… attendue)",
+            "clé publique Tezos invalide",
+            "XTZ insuffisants pour ce virement et ses frais",
+            "signature Tezos refusée par le nœud",
+            "un autre envoi Tezos de ce compte est en cours — attendez sa confirmation puis relancez",
+            "nœud Tezos : réponse inattendue",
+            "le nœud Tezos répond pour une autre chaîne — envoi refusé",
+            "bloc Tezos illisible",
+            "protocole Tezos illisible",
+            "simulation Tezos illisible",
+            "envoi vers votre propre adresse Tezos",
+            "compte Tezos vide : il doit d'abord recevoir des XTZ",
+            "aucun XTZ envoyable sur cette adresse",
+            "XTZ insuffisants pour couvrir les frais du réseau",
+            "encodage Tezos différent de celui du nœud (nouveau protocole ?) — envoi refusé, mettez l'app à jour",
+            "frais Tezos manquants",
+        ] {
+            assert!(
+                sources
+                    .iter()
+                    .any(|s| s.contains(&format!("\"{message}\""))),
+                "message absent du code : {message}"
+            );
+            assert!(
+                EXACT_ERROR_TRANSLATIONS
+                    .iter()
+                    .any(|(fr, _)| *fr == message),
+                "sans traduction : {message}"
+            );
+        }
+        for (fr, en) in [
+            ("XTZ insuffisants : 1.000000 XTZ disponibles, 2.000000 XTZ demandés", "insufficient XTZ: 1.000000 XTZ available, 2.000000 XTZ requested"),
+            ("XTZ insuffisants : 1.000000 XTZ disponibles, 2.000000 XTZ + 0.064900 XTZ de frais demandés", "insufficient XTZ: 1.000000 XTZ available, 2.000000 XTZ + 0.064900 XTZ in fees requested"),
+            ("frais du réseau Tezos anormalement élevés (0.200000 XTZ) — réessayez plus tard", "abnormally high Tezos network fee (0.200000 XTZ) — try again later"),
+            ("stockage Tezos anormalement cher (0.200000 XTZ) — envoi refusé", "abnormally expensive Tezos storage (0.200000 XTZ) — send refused"),
+            ("les frais Tezos ont augmenté depuis la confirmation (0.065000 au lieu de 0.064900 XTZ) — relancez l'envoi", "Tezos fees increased since the confirmation (0.065000 instead of 0.064900 XTZ) — start again"),
+            ("opération Tezos refusée par le nœud : contract.non_existing_contract", "Tezos operation refused by the node: contract.non_existing_contract"),
+            ("opération Tezos refusée (réponse 400 Bad Request)", "Tezos operation refused (response 400 Bad Request)"),
+            ("nœud Tezos : réponse 502 Bad Gateway", "Tezos node: response 502 Bad Gateway"),
+            ("constante Tezos cost_per_byte illisible", "unreadable Tezos constant cost_per_byte"),
+        ] {
+            assert_eq!(translate_dynamic_error(fr).as_deref(), Some(en), "{fr}");
+        }
     }
 
     /// Dogecoin error messages: present in the code (fixed), all translated (fixed and

@@ -290,6 +290,22 @@ pub fn derive_near_key(seed: &[u8], account_index: u32) -> ed25519_dalek::Signin
     signing_key
 }
 
+/// Derives Tezos key no. `account_index` (m/44'/1729'/{account_index}'/0', fully
+/// hardened: the path Temple, Kukai, Umami and Ledger's Tezos app use); tz1 address:
+/// see `tezos`.
+pub fn derive_tezos_key(seed: &[u8], account_index: u32) -> ed25519_dalek::SigningKey {
+    let (mut key, mut chain_code) = slip10_ed25519_master(seed);
+    for index in [44u32, 1729, account_index, 0] {
+        let (k, cc) = slip10_ed25519_child(&key, &chain_code, index);
+        key = k;
+        chain_code = cc;
+    }
+    let signing_key = ed25519_dalek::SigningKey::from_bytes(&key);
+    key.zeroize();
+    chain_code.zeroize();
+    signing_key
+}
+
 /// Refusal of a Bitcoin destination address, in plain words.
 pub const BTC_ADDRESS_UNSUPPORTED: &str = "type d'adresse Bitcoin pas encore pris en charge (version SegWit future) : demandez une autre adresse au destinataire";
 pub const BTC_ADDRESS_MISCOPIED: &str =
