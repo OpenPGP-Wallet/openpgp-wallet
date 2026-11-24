@@ -5,6 +5,17 @@ links and SHA-256 hashes of each build are on the [releases page](https://github
 
 ## [Unreleased]
 
+### Added
+- **Tezos (XTZ)**: balance, history, receiving and sending, signed in the wallet. Before a send, the confirmation
+  shows the fee, says when the first send from the account publishes its public key, and shows on its own line the
+  0.06425 XTZ the network burns when the recipient account is new. Contract addresses (KT1…) are refused. Like the
+  other networks beyond ETH, BTC, SOL and USDC, the card is hidden by default and appears when funds arrive.
+
+### Fixed
+- Receive window: "Amount to request" now appears only where the QR code carries the amount (Bitcoin, Zcash,
+  Monero, Dogecoin, Solana and the EVM networks, with their tokens). On XRP, Stellar, NEAR, Cardano, Stacks, Tron,
+  Bittensor and Tezos the QR code holds the address alone, yet the window said it held the amount.
+
 ## [2.19.0] - 2026-11-20
 
 ### Security
