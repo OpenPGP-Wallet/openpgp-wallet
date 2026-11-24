@@ -424,6 +424,12 @@ pub fn btc_mainnet_script_pubkey(address: &str) -> Result<Vec<u8>> {
         version <= 1,
         "adresse Bitcoin d'une version SegWit future (v{version}) — refusée"
     );
+    // Taproot is a 32-byte program: a version 1 program of another size is protected
+    // by no key (BIP341), and anyone could spend what is paid there.
+    anyhow::ensure!(
+        version == 0 || program.len() == 32,
+        "adresse Bitcoin mal formée (version SegWit, encodage ou longueur incohérents)"
+    );
     // OP_0, or OP_1 (0x51); then the program pushed as is.
     let mut script = vec![if version == 0 { 0x00 } else { 0x51 }, program.len() as u8];
     script.extend_from_slice(&program);
@@ -591,6 +597,14 @@ mod tests {
             parse_btc_mainnet_address(&taproot_20).is_err(),
             "v1 de 20 octets n'est pas une P2WPKH"
         );
+        // Nor a deposit address: no key protects a version 1 program that is not 32
+        // bytes long (audit round 34: it was turned into a script as it came).
+        for size in [2, 20, 31, 33, 40] {
+            assert!(
+                btc_mainnet_script_pubkey(&encode(1, &vec![0x75; size], Variant::Bech32m)).is_err(),
+                "v1 de {size} octets"
+            );
+        }
         let v0_bech32m = encode(0, &[0x75; 20], Variant::Bech32m);
         assert!(
             parse_btc_mainnet_address(&v0_bech32m).is_err()
