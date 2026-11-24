@@ -5546,6 +5546,11 @@ async function openQrModal(card) {
   setWithCoinIcon(document.getElementById("qr-coin"), card.dataset.coin, asset ? assetName(asset) : "");
   document.getElementById("qr-amount").value = "";
   document.getElementById("qr-amount-unit").textContent = card.querySelector(".balance").textContent.trim().split(/\s+/).pop();
+  // Networks whose QR format has no amount (XRP, Stellar, NEAR, Cardano, Stacks, Tezos,
+  // Bittensor, Tron…): the QR holds the address alone, so no amount is offered there
+  // (the hint would promise an amount the QR does not carry).
+  const takesAmount = paymentUri(card.dataset.coin, networkForCard(card), address, "1") !== address;
+  for (const el of document.querySelectorAll(".qr-amount-label, .qr-amount-row")) el.classList.toggle("hidden", !takesAmount);
   try {
     await renderQr();
     document.getElementById("qr-address-text").textContent = address;
