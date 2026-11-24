@@ -5,6 +5,8 @@ links and SHA-256 hashes of each build are on the [releases page](https://github
 
 ## [Unreleased]
 
+## [2.20.0] - 2026-11-25
+
 ### Added
 - **Tezos (XTZ)**: balance, history, receiving and sending, signed in the wallet. Before a send, the confirmation
   shows the fee, says when the first send from the account publishes its public key, and shows on its own line the
@@ -419,7 +421,8 @@ The app is renamed "PGP Wallet".
 First working proof of concept: a non-custodial Bitcoin, Ethereum and Solana wallet whose master key is
 protected by 2-of-3 Shamir secret sharing and OpenPGP, with no seed phrase.
 
-[Unreleased]: https://github.com/OpenPGP-Wallet/openpgp-wallet/compare/v2.19.0...HEAD
+[Unreleased]: https://github.com/OpenPGP-Wallet/openpgp-wallet/compare/v2.20.0...HEAD
+[2.20.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.20.0
 [2.19.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.19.0
 [2.18.1]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.18.1
 [2.18.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.18.0

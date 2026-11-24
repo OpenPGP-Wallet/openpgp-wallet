@@ -8676,7 +8676,7 @@ dependencies = [
 
 [[package]]
 name = "wallet"
-version = "2.19.0"
+version = "2.20.0"
 dependencies = [
  "arboard",
  "frost-zec",
