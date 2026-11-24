@@ -16,6 +16,11 @@ links and SHA-256 hashes of each build are on the [releases page](https://github
   Monero, Dogecoin, Solana and the EVM networks, with their tokens). On XRP, Stellar, NEAR, Cardano, Stacks, Tron,
   Bittensor and Tezos the QR code holds the address alone, yet the window said it held the amount.
 
+### Security
+- url 2.5.9 (RUSTSEC-2026-0592: stack overflow in `Url::origin()` on nested `blob:` URLs) and cookie 0.18.3
+  (RUSTSEC-2026-0594: repeated nonces for private cookies, a feature the app does not compile in). Released builds
+  never call `Url::origin()`: only the navigation guard does, and only under `tauri dev`.
+
 ## [2.19.0] - 2026-11-20
 
 ### Security
