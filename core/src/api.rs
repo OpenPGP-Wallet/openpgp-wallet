@@ -18,7 +18,7 @@ use crate::{
     bittensor, btc_rpc, cardano, cow, dapp_requests, derivation, doge, entropy, eth_rpc, eth_tx,
     evm_sign, history, jupiter_rpc, lifi, memory_guard, monero, moonpay_trade, native_deposit,
     near, pgp_engine, secure_storage, shamir, sol_rpc, sol_spl, sol_stake, sol_tx, stacks, stellar,
-    thorchain_rpc, tokens, tron, wallet_birthday, wallet_flow, xrp, zcash, zcash_frost,
+    tezos, thorchain_rpc, tokens, tron, wallet_birthday, wallet_flow, xrp, zcash, zcash_frost,
     zcash_shielded,
 };
 use anyhow::{Context, Result};
@@ -213,6 +213,11 @@ pub struct Addresses {
     pub cardano: String,
     /// Stacks address (SP…), path m/44'/5757'/0'/0/{index}.
     pub stacks: String,
+    /// Tezos address (tz1…), path m/44'/1729'/{index}'/0'.
+    pub tezos: String,
+    /// Tezos public key (edpk…), public like the address: preparing a send before the
+    /// confirmation dialog, including the one-time reveal of the key.
+    pub tezos_public_key: String,
     /// Bittensor address (5…, SS58 format 42), sr25519 key: the root of the entropy for
     /// profile 0, hard path "//n" beyond that (see `bittensor`).
     pub bittensor: String,
@@ -358,6 +363,7 @@ fn derive_addresses(seed: &[u8], index: u32) -> Result<Addresses> {
     let (_xrp_key, xrp_account) = derivation::derive_xrp_key(seed, index)?;
     let stellar_key = derivation::derive_stellar_key(seed, index);
     let near_key = derivation::derive_near_key(seed, index);
+    let tezos_key = derivation::derive_tezos_key(seed, index);
     let (_thor_key, thor_hash160) = derivation::derive_thor_key(seed, index)?;
     let shielded_keys = zcash_shielded::profile_keys(seed, index)?;
     let monero_keys = monero::view_keys(seed, index)?;
@@ -378,6 +384,8 @@ fn derive_addresses(seed: &[u8], index: u32) -> Result<Addresses> {
             &stacks::MAINNET,
             &derivation::derive_stacks_key(seed, index)?,
         ),
+        tezos: tezos::address_of(&tezos_key),
+        tezos_public_key: tezos::public_key_text(&tezos_key),
         bittensor: bittensor::address(&bittensor::keypair(seed, index)?.public.to_bytes()),
         evm: derivation::format_address(&evm_address),
         btc_testnet: derivation::format_btc_testnet_address(&btc_testnet_hash160)?,
@@ -5094,6 +5102,66 @@ pub fn stx_max(from: &str) -> Result<String> {
     Ok(stacks::format_stx(stacks::max_amount(
         &stacks::MAINNET,
         from,
+    )?))
+}
+
+// --- Tezos (XTZ) --------------------------------------------------------------------
+
+pub fn get_xtz_balance(address: &str) -> Result<u64> {
+    tezos::balance(&tezos::MAINNET, address)
+}
+
+/// State of a Tezos recipient address, for the dialog's warnings.
+pub fn xtz_recipient_activity(to: &str) -> Result<RecipientActivity> {
+    Ok(match tezos::address_activity(&tezos::MAINNET, to)? {
+        (true, _) => RecipientActivity::Funded,
+        (false, true) => RecipientActivity::Empty,
+        (false, false) => RecipientActivity::Unused,
+    })
+}
+
+/// Canonical form of an amount in XTZ (6 decimals), shown AND signed.
+pub fn canonical_xtz_amount(amount: &str) -> Result<String> {
+    Ok(tokens::format_amount(
+        tokens::parse_amount(amount, tezos::DECIMALS)?,
+        tezos::DECIMALS,
+    ))
+}
+
+fn xtz_units(amount: &str) -> Result<u64> {
+    u64::try_from(tokens::parse_amount(amount, tezos::DECIMALS)?).context("montant hors limites")
+}
+
+/// A send prepared for the confirmation dialog, from the profile's public key (edpk…):
+/// spendable balance, baker fee, burn for a new recipient account, reveal.
+pub fn xtz_send_plan(from_public_key: &str, to: &str, amount: &str) -> Result<tezos::XtzPlan> {
+    tezos::plan(&tezos::MAINNET, from_public_key, to, xtz_units(amount)?)
+}
+
+/// XTZ send: preparation redone, fee and burn never higher than what was shown
+/// (`shown_cost`), operation signed here, preapplied by the node, then broadcast.
+pub fn send_xtz(
+    data_dir: &Path,
+    device_password: &str,
+    to: &str,
+    amount: &str,
+    shown_cost: u64,
+    profile_index: u32,
+) -> Result<String> {
+    let units = xtz_units(amount)?;
+    let seed = unlock_seed(data_dir, device_password)?;
+    let _seed_lock = memory_guard::lock(&seed);
+    let key = derivation::derive_tezos_key(&seed, profile_index);
+    tezos::send(&tezos::MAINNET, &key, to, units, shown_cost)
+}
+
+/// "Max" button: spendable balance minus the fee (and the burn when `to` is a new
+/// account).
+pub fn xtz_max(from_public_key: &str, to: Option<&str>) -> Result<String> {
+    Ok(tezos::format_xtz(tezos::max_amount(
+        &tezos::MAINNET,
+        from_public_key,
+        to,
     )?))
 }
 
@@ -11039,6 +11107,7 @@ mod tests {
             ("near", a.near.clone()),
             ("cardano", a.cardano.clone()),
             ("stacks", a.stacks.clone()),
+            ("tezos", a.tezos.clone()),
             ("bittensor", a.bittensor.clone()),
             ("thor", a.thor.clone()),
             ("zcash_shielded", a.zcash_shielded.clone()),
@@ -11185,15 +11254,24 @@ mod tests {
                     b + 1
                 )
             });
-            for (network, address) in all_public_addresses(&addresses) {
+            // Every network the kit was frozen with gives the same address again; a
+            // network added since (absent from the kit) has nothing to compare.
+            let restored = all_public_addresses(&addresses);
+            let frozen = kit["addresses"].as_object().expect("adresses du kit");
+            for (network, address) in frozen {
+                let (_, now) = restored
+                    .iter()
+                    .find(|(name, _)| name == network)
+                    .unwrap_or_else(|| panic!("v{version} : réseau {network} disparu"));
                 assert_eq!(
-                    kit["addresses"][network].as_str(),
-                    Some(address.as_str()),
+                    address.as_str(),
+                    Some(now.as_str()),
                     "v{version} {network}, parts {} + {}",
                     a + 1,
                     b + 1
                 );
             }
+            assert!(frozen.len() >= 16, "v{version} : kit incomplet");
             let _ = std::fs::remove_dir_all(&dir);
         }
     }

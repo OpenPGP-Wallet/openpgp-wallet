@@ -120,6 +120,10 @@ pub(crate) fn validate_address(network: &str, address: &str) -> Result<()> {
         "stx_mainnet" => {
             crate::stacks::parse_address(&crate::stacks::MAINNET, address)?;
         }
+        // Tezos (tz1, tz2, tz3, tz4).
+        "xtz_mainnet" => {
+            crate::tezos::parse_address(address)?;
+        }
         // Bittensor (5..., SS58 format 42).
         "tao_mainnet" => {
             crate::bittensor::parse_address(address)?;

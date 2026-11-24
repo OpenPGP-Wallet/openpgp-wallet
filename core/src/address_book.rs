@@ -56,7 +56,7 @@ pub fn list_entries(data_dir: &Path) -> Vec<AddressBookEntry> {
 
 /// Networks that can be offered for an address (address book, external wallets), in
 /// the order they are offered: mainnets first, testnets last.
-const NETWORKS: [&str; 23] = [
+const NETWORKS: [&str; 24] = [
     "evm_mainnet",
     "base_mainnet",
     "arbitrum_mainnet",
@@ -76,6 +76,7 @@ const NETWORKS: [&str; 23] = [
     "near_mainnet",
     "ada_mainnet",
     "stx_mainnet",
+    "xtz_mainnet",
     "tao_mainnet",
     "evm_sepolia",
     "btc_testnet",

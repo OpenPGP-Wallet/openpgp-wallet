@@ -52,6 +52,7 @@ pub mod stellar;
 pub mod swap_health;
 pub mod swap_routes;
 pub mod swapkit;
+pub mod tezos;
 pub mod thorchain_rpc;
 pub mod tokens;
 pub mod trezor;

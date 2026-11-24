@@ -73,6 +73,8 @@ const XLM_INTERVAL: Duration = Duration::from_secs(10);
 const NEAR_INTERVAL: Duration = Duration::from_secs(8);
 const ADA_INTERVAL: Duration = Duration::from_secs(20);
 const STX_INTERVAL: Duration = Duration::from_secs(12);
+/// Tezos: a block every 6 s.
+const XTZ_INTERVAL: Duration = Duration::from_secs(10);
 /// Bittensor: a block every 12 s.
 const TAO_INTERVAL: Duration = Duration::from_secs(12);
 const HEARTBEAT: Duration = Duration::from_secs(30);
@@ -93,6 +95,7 @@ enum Polled {
     Near(String),
     Ada(String),
     Stx(String),
+    Xtz(String),
     Tao(String),
 }
 
@@ -110,6 +113,7 @@ impl Polled {
             Polled::Near(..) => NEAR_INTERVAL,
             Polled::Ada(..) => ADA_INTERVAL,
             Polled::Stx(..) => STX_INTERVAL,
+            Polled::Xtz(..) => XTZ_INTERVAL,
             Polled::Tao(..) => TAO_INTERVAL,
         }
     }
@@ -182,6 +186,7 @@ pub fn start(targets: Vec<Target>, notify: Notify) -> Result<BalanceWatch> {
             "near_mainnet" => polled.push((target.id, Polled::Near(address))),
             "ada_mainnet" => polled.push((target.id, Polled::Ada(address))),
             "stx_mainnet" => polled.push((target.id, Polled::Stx(address))),
+            "xtz_mainnet" => polled.push((target.id, Polled::Xtz(address))),
             "tao_mainnet" => polled.push((target.id, Polled::Tao(address))),
             other => match wallet_flow::evm_network(other) {
                 // Every EVM network (Ethereum, L2s, BNB Chain...): balance read again.
@@ -398,6 +403,7 @@ fn read(polled: &Polled) -> Result<String> {
         Polled::Stx(address) => {
             crate::stacks::balance(&crate::stacks::MAINNET, address)?.to_string()
         }
+        Polled::Xtz(address) => crate::tezos::balance(&crate::tezos::MAINNET, address)?.to_string(),
         Polled::Tao(address) => crate::bittensor::balance(address)?.to_string(),
     })
 }
