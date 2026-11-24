@@ -111,6 +111,7 @@ freezes.
 | Cardano | `cardano.rs` | CIP-3 Icarus keys, Conway-era CBOR, pool delegation |
 | Stacks | `stacks.rs` | Memos always shown |
 | Bittensor | `bittensor.rs` | Runtime metadata checked on every send, node-side validation |
+| Tezos | `tezos.rs` | Operations forged locally and compared with the node's own forge; simulated, then preapplied before injection |
 
 Tokens come from a single registry (`core/src/tokens.rs`): the frontend only passes a token identifier, never a
 contract address.

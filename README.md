@@ -38,9 +38,9 @@ key and passphrase, to a USB drive and check that it decrypts before saying it i
 
 ## Features
 
-- **18 networks from one master key**: Bitcoin, Ethereum and its L2s (Arbitrum, Base), BNB Chain, Avalanche,
+- **19 networks from one master key**: Bitcoin, Ethereum and its L2s (Arbitrum, Base), BNB Chain, Avalanche,
   Polygon, Solana, Zcash (transparent and shielded), Monero, Dogecoin, Tron, XRP Ledger, Stellar, NEAR, Cardano,
-  Stacks and Bittensor, plus custom EVM networks added by RPC.
+  Stacks, Bittensor and Tezos, plus custom EVM networks added by RPC.
 - **Tokens**: USDC, USDT and other ERC-20, SPL and TRC-20 tokens from a built-in registry, and xStocks tokenized
   shares on Solana.
 - **Swaps** through THORChain, Maya, Jupiter, CoW Protocol, LI.FI, SwapKit (NEAR Intents, Chainflip) and MoonPay
