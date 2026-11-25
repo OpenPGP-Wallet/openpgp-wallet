@@ -43,9 +43,7 @@ use zcash_client_backend::data_api::wallet::{
 use zcash_client_backend::data_api::{
     AccountBirthday, AccountPurpose, MaxSpendMode, WalletRead, WalletWrite,
 };
-use zcash_client_backend::fees::{
-    zip317::SingleOutputChangeStrategy, DustOutputPolicy, StandardFeeRule,
-};
+use zcash_client_backend::fees::{zip317::SingleOutputChangeStrategy, DustOutputPolicy};
 use zcash_client_backend::proposal::Proposal;
 use zcash_client_backend::proto::service::{
     compact_tx_streamer_client::CompactTxStreamerClient, BlockId, ChainSpec,
@@ -1429,7 +1427,7 @@ pub fn sweep_prepare(data_dir: &Path, net: Net) -> Result<PreparedSend> {
         &net.params(),
         account,
         &[ShieldedPool::Ironwood],
-        &StandardFeeRule::Zip317,
+        &crate::zcash::fee_rule(),
         recipient,
         Some(memo),
         MaxSpendMode::MaxSpendable,
@@ -1500,16 +1498,16 @@ pub struct PreparedSend {
     pub summary: SpendSummary,
 }
 
-fn change_strategy() -> SingleOutputChangeStrategy<StandardFeeRule, Db> {
+fn change_strategy() -> SingleOutputChangeStrategy<crate::zcash::FeeRule, Db> {
     SingleOutputChangeStrategy::new(
-        StandardFeeRule::Zip317,
+        crate::zcash::fee_rule(),
         None,
         ShieldedPool::Ironwood,
         DustOutputPolicy::default(),
     )
 }
 
-fn proposal_fee<N>(proposal: &Proposal<StandardFeeRule, N>) -> u64 {
+fn proposal_fee<N>(proposal: &Proposal<crate::zcash::FeeRule, N>) -> u64 {
     proposal
         .steps()
         .iter()

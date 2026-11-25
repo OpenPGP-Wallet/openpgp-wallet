@@ -5,6 +5,12 @@ links and SHA-256 hashes of each build are on the [releases page](https://github
 
 ## [Unreleased]
 
+### Changed
+- Zcash (transparent, shielded and FROST sends): the fee follows ZIP 2009, 1,000 zatoshis per action instead of
+  5,000, which the network accepts since block 3,590,000 (19 November 2026). The wallet was still paying five
+  times the fee, an amount up-to-date wallets no longer pay, which told its transactions apart. Change smaller
+  than 1,000 zatoshis (it was 5,000) is added to the fee of a transparent send.
+
 ### Fixed
 - **Bittensor (TAO) history**: Taostats retired the address the app read transfers from on 25 November 2026, so
   version 2.20.0 shows "Taostats: response 410" in place of the history. The app now reads the service's current

@@ -651,9 +651,7 @@ use zcash_client_backend::data_api::wallet::{
 };
 use zcash_client_backend::data_api::CoinbaseFilter;
 use zcash_client_backend::data_api::MaxSpendMode;
-use zcash_client_backend::fees::{
-    zip317::SingleOutputChangeStrategy, DustOutputPolicy, StandardFeeRule,
-};
+use zcash_client_backend::fees::{zip317::SingleOutputChangeStrategy, DustOutputPolicy};
 use zcash_client_backend::proposal::Proposal;
 use zcash_client_backend::wallet::OvkPolicy;
 use zcash_client_backend::zip321::{Payment, TransactionRequest};
@@ -741,9 +739,9 @@ pub struct SpendSummary {
 /// Change, and shielded transparent funds, go to Ironwood: the Orchard pool has
 /// been sealed since NU6.3 and refuses new value. (The library would already
 /// redirect an Orchard fallback there; this states it outright.)
-fn change_strategy() -> SingleOutputChangeStrategy<StandardFeeRule, Db> {
+fn change_strategy() -> SingleOutputChangeStrategy<crate::zcash::FeeRule, Db> {
     SingleOutputChangeStrategy::new(
-        StandardFeeRule::Zip317,
+        crate::zcash::fee_rule(),
         None,
         ShieldedPool::Ironwood,
         DustOutputPolicy::default(),
@@ -771,7 +769,7 @@ fn spending_keys(seed: &[u8], profile: u32) -> Result<SpendingKeys> {
 /// Signs the proposal and broadcasts its transactions; returns the last identifier.
 fn create_and_broadcast<N: std::fmt::Display>(
     db: &mut Db,
-    proposal: &Proposal<StandardFeeRule, N>,
+    proposal: &Proposal<crate::zcash::FeeRule, N>,
     keys: &SpendingKeys,
 ) -> Result<String> {
     // Input selection and change error types: specific to the proposal, never produced
@@ -865,7 +863,7 @@ fn orchard_hint(error: anyhow::Error, orchard_left: u64) -> anyhow::Error {
     )
 }
 
-fn proposal_fee<N>(proposal: &Proposal<StandardFeeRule, N>) -> u64 {
+fn proposal_fee<N>(proposal: &Proposal<crate::zcash::FeeRule, N>) -> u64 {
     proposal
         .steps()
         .iter()
@@ -1017,7 +1015,7 @@ fn max_proposal(
     recipient: zcash_address::ZcashAddress,
     ironwood_only: bool,
 ) -> Result<(
-    Proposal<StandardFeeRule, zcash_client_sqlite::ReceivedNoteId>,
+    Proposal<crate::zcash::FeeRule, zcash_client_sqlite::ReceivedNoteId>,
     u64,
 )> {
     // Ironwood holds every note received since NU6.3; Orchard notes, if any, may still
@@ -1032,7 +1030,7 @@ fn max_proposal(
         &MainNetwork,
         account,
         pools,
-        &StandardFeeRule::Zip317,
+        &crate::zcash::fee_rule(),
         recipient,
         None,
         MaxSpendMode::MaxSpendable,

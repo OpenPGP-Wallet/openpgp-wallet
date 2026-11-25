@@ -38,11 +38,29 @@ pub const SERVERS: [&str; 3] = [
 ];
 const SERVICE: &str = "/cash.z.wallet.sdk.rpc.CompactTxStreamer";
 /// ZIP-317 fees: 5,000 zatoshis per logical action, 2 actions at minimum.
-pub const MARGINAL_FEE: u64 = 5_000;
+pub const MARGINAL_FEE: u64 = 1_000;
+
+/// The fee rule of the shielded and FROST sends: ZIP 317 with ZIP 2009's marginal fee,
+/// in force on Mainnet since block 3,590,000 (19 November 2026) and on testnet since NU7.
+/// The library's standard rule still charges the 5,000 zatoshis of before: five times
+/// the fee, and a fee no up-to-date wallet pays, which tells this software apart.
+pub type FeeRule = zcash_primitives::transaction::fees::zip317::FeeRule;
+
+/// See [`FeeRule`].
+pub fn fee_rule() -> FeeRule {
+    use zcash_primitives::transaction::fees::zip317;
+    FeeRule::non_standard(
+        zcash_protocol::value::Zatoshis::const_from_u64(MARGINAL_FEE),
+        zip317::GRACE_ACTIONS,
+        zip317::P2PKH_STANDARD_INPUT_SIZE,
+        zip317::P2PKH_STANDARD_OUTPUT_SIZE,
+    )
+    .expect("tailles standard non nulles")
+}
 const GRACE_ACTIONS: u64 = 2;
 /// Smaller change is added to the fee rather than creating a dust output (shown in
-/// the confirmation dialog).
-const DUST_CHANGE: u64 = 5_000;
+/// the confirmation dialog). It is what spending that output later would cost.
+const DUST_CHANGE: u64 = MARGINAL_FEE;
 /// Maximum inputs per transaction: beyond ~100 kB, nodes no longer relay a
 /// transaction (148 bytes per P2PKH input).
 const MAX_INPUTS: usize = 600;
@@ -1012,14 +1030,10 @@ mod tests {
             (3, 0, zip317_fee(3, 1))
         );
         // An output smaller than the fee it adds: left out.
-        let with_dust = vec![
-            utxo(300_000, 1, &h),
-            utxo(200_000, 2, &h),
-            utxo(3_000, 3, &h),
-        ];
+        let with_dust = vec![utxo(300_000, 1, &h), utxo(200_000, 2, &h), utxo(600, 3, &h)];
         assert_eq!(max_amount(&with_dust).unwrap(), 500_000 - zip317_fee(2, 1));
         assert!(
-            max_amount(&[utxo(9_000, 1, &h)]).is_err(),
+            max_amount(&[utxo(1_500, 1, &h)]).is_err(),
             "moins que les frais minimaux"
         );
         // Maya deposit (80-byte memo): the maximum counts the memo's action and passes
@@ -1076,7 +1090,7 @@ mod tests {
     /// Fees identical to the official ZIP-317 rule.
     #[test]
     fn fees_match_the_official_zip317_rule() {
-        let rule = zcash_primitives::transaction::fees::zip317::FeeRule::standard();
+        let rule = fee_rule();
         for (inputs, outputs) in [(1, 1), (1, 2), (2, 2), (3, 2), (5, 1), (1, 4)] {
             let official = rule
                 .fee_required(
@@ -1138,16 +1152,16 @@ mod tests {
         let plan = plan_send(coins.clone(), 30_000).unwrap();
         assert_eq!(
             (plan.inputs.len(), plan.fee, plan.change),
-            (1, 10_000, 60_000)
+            (1, 2_000, 68_000)
         );
         let plan = plan_send(coins.clone(), 95_000).unwrap();
         assert_eq!(
             (plan.inputs.len(), plan.fee, plan.change),
-            (2, 10_000, 45_000)
+            (1, 2_000, 3_000)
         );
         // Dust change added to the fee.
-        let plan = plan_send(vec![utxo(105_000, 4, &h)], 92_000).unwrap();
-        assert_eq!((plan.fee, plan.change), (13_000, 0));
+        let plan = plan_send(vec![utxo(105_000, 4, &h)], 102_500).unwrap();
+        assert_eq!((plan.fee, plan.change), (2_500, 0));
         assert!(plan_send(coins, 200_000)
             .unwrap_err()
             .to_string()
@@ -1249,7 +1263,7 @@ mod tests {
         let plan = plan_deposit(vec![utxo(500_000, 3, &h)], 139_440, memo).unwrap();
         assert_eq!(
             (plan.fee, plan.change),
-            (20_000, 500_000 - 139_440 - 20_000),
+            (4_000, 500_000 - 139_440 - 4_000),
             "1 entrée, 34 + 34 + 66 octets de sorties : 4 actions"
         );
         assert!(
