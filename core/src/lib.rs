@@ -21,6 +21,7 @@ pub mod evm_sign;
 pub mod external_wallets;
 pub mod hardware;
 pub mod history;
+pub mod http_limit;
 pub mod jupiter_rpc;
 pub mod ledger;
 pub mod lifi;
