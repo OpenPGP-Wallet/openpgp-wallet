@@ -12073,8 +12073,71 @@ fn is_app_origin(url: &tauri::Url, dev_url: Option<&tauri::Url>) -> bool {
     }
 }
 
+/// WebView2 lets the environment of the host process change how it runs:
+/// `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` can open a remote debugging port, from which
+/// any local program reads and drives the page (the password field included), and
+/// `WEBVIEW2_BROWSER_EXECUTABLE_FOLDER` can make it load another browser binary. A
+/// program able to write the user's environment once (`setx`) would keep that hold on
+/// every later launch. Released builds therefore drop every `WEBVIEW2_*` variable from
+/// their own environment before the window is created. Found in audit round 34.
+///
+/// Called first in `run`, before any thread exists. Debug builds keep the variables:
+/// the interface tests drive the app through that debugging port. The build-time
+/// variable `OPGP_WEBVIEW2_ENV` forces either way (`keep` for a release build under
+/// test, `strip` to check this very function in a debug build).
+fn strip_webview2_overrides() {
+    let keep = match option_env!("OPGP_WEBVIEW2_ENV") {
+        Some("keep") => true,
+        Some("strip") => false,
+        _ => cfg!(debug_assertions),
+    };
+    if keep {
+        return;
+    }
+    for name in webview2_overrides(std::env::vars_os().map(|(name, _)| name)) {
+        std::env::remove_var(name);
+    }
+}
+
+/// Among `names`, the variables WebView2 reads: all those starting with `WEBVIEW2_`,
+/// whatever the case (Windows does not tell cases apart).
+fn webview2_overrides(names: impl Iterator<Item = std::ffi::OsString>) -> Vec<std::ffi::OsString> {
+    names
+        .filter(|name| {
+            name.to_string_lossy()
+                .to_ascii_uppercase()
+                .starts_with("WEBVIEW2_")
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod webview2_env_tests {
+    use super::webview2_overrides;
+
+    #[test]
+    fn every_webview2_variable_is_found_and_nothing_else() {
+        let names = [
+            "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+            "WEBVIEW2_BROWSER_EXECUTABLE_FOLDER",
+            "WEBVIEW2_USER_DATA_FOLDER",
+            "webview2_release_channel_preference",
+            "WebView2_Anything_Added_Later",
+            "PATH",
+            "MY_WEBVIEW2_NOTE",
+            "WEBVIEW",
+        ];
+        let found = webview2_overrides(names.iter().map(std::ffi::OsString::from));
+        assert_eq!(found.len(), 5, "{found:?}");
+        assert!(found
+            .iter()
+            .all(|name| name != "PATH" && name != "MY_WEBVIEW2_NOTE" && name != "WEBVIEW"));
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    strip_webview2_overrides();
     tauri::Builder::default()
         .plugin(
             tauri::plugin::Builder::<tauri::Wry>::new("navigation-guard")
