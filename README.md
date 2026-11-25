@@ -38,9 +38,9 @@ key and passphrase, to a USB drive and check that it decrypts before saying it i
 
 ## Features
 
-- **18 networks from one master key**: Bitcoin, Ethereum and its L2s (Arbitrum, Base), BNB Chain, Avalanche,
+- **19 networks from one master key**: Bitcoin, Ethereum and its L2s (Arbitrum, Base), BNB Chain, Avalanche,
   Polygon, Solana, Zcash (transparent and shielded), Monero, Dogecoin, Tron, XRP Ledger, Stellar, NEAR, Cardano,
-  Stacks and Bittensor, plus custom EVM networks added by RPC.
+  Stacks, Bittensor and Tezos, plus custom EVM networks added by RPC.
 - **Tokens**: USDC, USDT and other ERC-20, SPL and TRC-20 tokens from a built-in registry, and xStocks tokenized
   shares on Solana.
 - **Swaps** through THORChain, Maya, Jupiter, CoW Protocol, LI.FI, SwapKit (NEAR Intents, Chainflip) and MoonPay
@@ -130,7 +130,7 @@ cargo run -p openpgp-wallet-core --example shamir_pgp_cli  # the full Shamir + P
 
 ## Status and roadmap
 
-The current release is **2.19.0** (see [CHANGELOG.md](CHANGELOG.md)). Before the wallet can be recommended for
+The current release is **2.20.0** (see [CHANGELOG.md](CHANGELOG.md)). Before the wallet can be recommended for
 real funds, it still needs Authenticode code signing, an independent security audit and reproducible builds.
 
 Next on the list is user-friendly threshold signing with FROST for shielded Zcash (2-of-3 between a computer, a

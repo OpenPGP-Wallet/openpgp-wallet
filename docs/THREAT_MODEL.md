@@ -1,7 +1,7 @@
 # Threat model: OpenPGP Wallet (Windows application)
 
 Working document, last reviewed on 2026-10-04 (v2.9.0 and later commits); the list of networks was brought up to
-date on 2026-10-13 (Bittensor added). It gives structure to the project's informal threat
+date on 2026-11-24 (Tezos added). It gives structure to the project's informal threat
 model ("active malware vs. offline file theft") with a professional audit in mind: what is protected, against
 whom, by what means, and what remains at risk. Each countermeasure points to the code that implements it.
 **None of these protections has been verified by an independent auditor yet.**
@@ -12,7 +12,7 @@ whom, by what means, and what remains at risk. Each countermeasure points to the
   interface (`app/src`).
 - Non-custodial multi-network wallet: Bitcoin, EVM networks (Ethereum, L2s, BNB Chain, Avalanche, Polygon),
   Solana, Zcash (transparent and shielded), Monero, Dogecoin, Tron (TRX and TRC-20 USDT), XRP Ledger, Stellar,
-  NEAR, Cardano, Stacks, Bittensor, and the tokens in the registry (`tokens.rs`).
+  NEAR, Cardano, Stacks, Bittensor, Tezos, and the tokens in the registry (`tokens.rs`).
 - Out of scope: the iOS version (not started), the third-party services themselves (nodes, swap aggregators),
   the operating system and the hardware.
 
@@ -182,6 +182,17 @@ whom, by what means, and what remains at risk. Each countermeasure points to the
   is reread and must match exactly what the app knows how to encode, with the pallet and call indexes frozen
   (a node announcing other indexes is refused); the node validates the transaction before it is broadcast
   (`validate_transaction`), and fees above a cap are refused (`bittensor.rs`).
+- **Tezos**: operations (the transfer, plus the reveal of the public key on an account's first send) forged
+  and signed locally (Ed25519; signature and address encoding identical to Trust Wallet Core's vectors,
+  operation bytes identical to a mainnet node's, and compared on every send with the node's own `forge`: a
+  difference stops the send). A transfer that creates an account, the reveals and a "Max" that empties an
+  account executed end to end on the Shadownet test network, fees and burn exact to the mutez; on mainnet a
+  node accepts the real signature in `preapply` and refuses a tampered one. Before the dialog: gas and
+  storage come from a simulation, the tez burned to create a new recipient account is shown on its own
+  line, fee and burn are each capped (0.1 XTZ) and never exceed what the dialog showed; contract addresses
+  (KT1…), the wallet's own address and a node answering for another chain are refused. The node preapplies
+  the signed operation before it is injected, and one node, its chain checked, serves every step of a send
+  (`tezos.rs`).
 - *Residual risks*: a malicious node can show false balances or a false history (light wallet); a malicious
   Monero or Zcash node can weaken a send's privacy; public nodes see the IP address and the addresses queried;
   an aggregator can offer a bad rate (the minimum output shown bounds the loss, without guaranteeing the best

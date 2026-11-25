@@ -1601,7 +1601,8 @@ fn finish_enroll(
     // before the old one is ever overwritten. Otherwise, a malformed new vault would
     // break the only unlock path that existed before this call.
     let tmp_vault_path = data_dir.join("tmp_device_vault_new.asc");
-    std::fs::write(&tmp_vault_path, &new_vault)?;
+    // Flushed to the disk: this file takes the vault's name below (see `durable`).
+    crate::durable::write_synced(&tmp_vault_path, &new_vault)?;
     let _guard = TempFileGuard(&tmp_vault_path);
     with_device_privkey_path(data_dir, |privkey_path| pgp_engine::decrypt_share(&new_vault, privkey_path, device_password))
         .context("vérification post-ré-chiffrement du coffre : le mot de passe existant ne fonctionne plus, activation annulée")?;
@@ -1651,7 +1652,7 @@ fn disable_biometric_unlock_with(
     let new_vault = encrypt_with_armored_pubkey(&master_entropy, &tmp_pub_path, &device_pub, None)?;
 
     let tmp_vault_path = data_dir.join("tmp_device_vault_disable.asc");
-    std::fs::write(&tmp_vault_path, &new_vault)?;
+    crate::durable::write_synced(&tmp_vault_path, &new_vault)?;
     let _guard = TempFileGuard(&tmp_vault_path);
     with_device_privkey_path(data_dir, |privkey_path| pgp_engine::decrypt_share(&new_vault, privkey_path, device_password))
         .context("vérification post-ré-chiffrement du coffre : le mot de passe existant ne fonctionne plus, désactivation annulée")?;

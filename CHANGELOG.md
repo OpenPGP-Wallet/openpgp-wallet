@@ -5,11 +5,14 @@ links and SHA-256 hashes of each build are on the [releases page](https://github
 
 ## [Unreleased]
 
+## [2.20.0] - 2026-11-25
+
 ### Added
 - **Tezos (XTZ)**: balance, history, receiving and sending, signed in the wallet. Before a send, the confirmation
   shows the fee, says when the first send from the account publishes its public key, and shows on its own line the
-  0.06425 XTZ the network burns when the recipient account is new. Contract addresses (KT1…) are refused. Like the
-  other networks beyond ETH, BTC, SOL and USDC, the card is hidden by default and appears when funds arrive.
+  0.06425 XTZ the network burns when the recipient account is new. Contract addresses (KT1…) are refused, and so
+  is a second send while the first one is still waiting to be included. Like the other networks beyond ETH, BTC,
+  SOL and USDC, the card is hidden by default and appears when funds arrive.
 
 ### Fixed
 - Receive window: "Amount to request" now appears only where the QR code carries the amount (Bitcoin, Zcash,
@@ -17,6 +20,14 @@ links and SHA-256 hashes of each build are on the [releases page](https://github
   Bittensor and Tezos the QR code holds the address alone, yet the window said it held the amount.
 
 ### Security
+- Audit round 34, over the whole app: nothing that puts funds at risk. Three hardening changes came out of it:
+  - the local vault (rewritten when Windows Hello is turned on or off) and the FROST seat are flushed to the disk
+    before they replace the previous file. A power cut at that moment could have left an empty file under their
+    name;
+  - swaps from Bitcoin: a Taproot deposit address whose program is not 32 bytes long is refused (no key protects
+    such an output), as destination addresses already were;
+  - Tezos: the node's answers are read strictly before signing. A preapply that does not cover the whole
+    operation is no approval, and simulation figures a plain transfer cannot produce are refused.
 - url 2.5.9 (RUSTSEC-2026-0592: stack overflow in `Url::origin()` on nested `blob:` URLs) and cookie 0.18.3
   (RUSTSEC-2026-0594: repeated nonces for private cookies, a feature the app does not compile in). Released builds
   never call `Url::origin()`: only the navigation guard does, and only under `tauri dev`.
@@ -410,7 +421,8 @@ The app is renamed "PGP Wallet".
 First working proof of concept: a non-custodial Bitcoin, Ethereum and Solana wallet whose master key is
 protected by 2-of-3 Shamir secret sharing and OpenPGP, with no seed phrase.
 
-[Unreleased]: https://github.com/OpenPGP-Wallet/openpgp-wallet/compare/v2.19.0...HEAD
+[Unreleased]: https://github.com/OpenPGP-Wallet/openpgp-wallet/compare/v2.20.0...HEAD
+[2.20.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.20.0
 [2.19.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.19.0
 [2.18.1]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.18.1
 [2.18.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.18.0

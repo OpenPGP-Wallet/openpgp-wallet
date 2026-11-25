@@ -5466,7 +5466,10 @@ function paymentUri(coin, network, address, amount) {
   if (coin === "sol") return `solana:${address}?amount=${amount}`;
   if (coin === "usdc") return `solana:${address}?amount=${amount}&spl-token=${USDC_MINT}`;
   if (ASSET_BY_COIN[coin]?.family === "evm") {
-    const chainId = EVM_CHAIN_IDS[network] ?? 1;
+    // A network without a known chain ID gets the address alone, never a payment
+    // request for another chain.
+    const chainId = EVM_CHAIN_IDS[network];
+    if (chainId == null) return address;
     const [whole, fraction = ""] = amount.split(".");
     const wei = BigInt(whole + fraction.padEnd(18, "0")).toString();
     return `ethereum:${address}@${chainId}?value=${wei}`;

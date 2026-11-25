@@ -47,7 +47,8 @@ All wallet data lives in the app's data folder (on Windows, under `%APPDATA%`). 
 | `profiles.json` | Profile labels and derivation indexes (no secret) |
 | `unlock_attempts*.json` | Failure counters for the unlock rate limit |
 | `zcash_shielded.sqlite`, `monero_wallet.json` | Local state of the private cryptos (viewing keys only, never spending keys) |
-| `address_book.json`, `recipients.json`, `external_wallets.json`, `sent_recipients.json`, `hardware_accounts.json`, `custom_networks.json`, `walletconnect.json` | Convenience data, public information only |
+| `address_book.json`, `recipients.json`, `external_wallets.json`, `sent_recipients.json`, `hardware_accounts.json`, `custom_networks.json` | Convenience data, public information only |
+| `walletconnect.json` | WalletConnect state: this client's identity on the relay and the session keys. No wallet secret: these keys open the messages exchanged with a dApp, never the funds (every request still needs the password and the native confirmation) |
 
 There is one master secret: 32 bytes of entropy from the OS CSPRNG (`core/src/entropy.rs`). Every key for every
 network and profile is derived from it on demand (`core/src/derivation.rs`, plus the network modules for schemes
@@ -111,6 +112,7 @@ freezes.
 | Cardano | `cardano.rs` | CIP-3 Icarus keys, Conway-era CBOR, pool delegation |
 | Stacks | `stacks.rs` | Memos always shown |
 | Bittensor | `bittensor.rs` | Runtime metadata checked on every send, node-side validation |
+| Tezos | `tezos.rs` | Operations forged locally and compared with the node's own forge; simulated, then preapplied before injection |
 
 Tokens come from a single registry (`core/src/tokens.rs`): the frontend only passes a token identifier, never a
 contract address.

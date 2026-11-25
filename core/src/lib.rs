@@ -13,6 +13,7 @@ pub mod custom_networks;
 pub mod dapp_requests;
 pub mod derivation;
 pub mod doge;
+pub mod durable;
 pub mod entropy;
 pub mod eth_rpc;
 pub mod eth_tx;

@@ -496,6 +496,30 @@ fn error_ids(errors: &Value) -> Vec<String> {
         .collect()
 }
 
+/// Refusal of a send while another one of the account has not been included yet.
+const PENDING_SEND: &str =
+    "un autre envoi Tezos de ce compte est en cours — attendez sa confirmation puis relancez";
+
+/// The node's mempool already holds an operation of this account: its answer to an
+/// injection while a first send is pending. The identifier is a bare "failure" and the
+/// reason is only in the message (seen on Shadownet, Octez 25); the identifiers of
+/// older versions are recognized too.
+fn mempool_conflict(errors: &Value) -> bool {
+    errors
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .any(|e| {
+            e["id"]
+                .as_str()
+                .is_some_and(|id| id.contains("manager_restriction") || id.contains("conflict"))
+                || e["msg"]
+                    .as_str()
+                    .is_some_and(|msg| msg.contains("conflicting operation"))
+        })
+}
+
 /// A node's refusal in plain words.
 fn refusal(ids: &[String]) -> String {
     let has = |part: &str| ids.iter().any(|id| id.contains(part));
@@ -504,8 +528,7 @@ fn refusal(ids: &[String]) -> String {
     } else if has("signature") {
         "signature Tezos refusée par le nœud".to_string()
     } else if has("counter") {
-        "un autre envoi Tezos de ce compte est en cours — attendez sa confirmation puis relancez"
-            .to_string()
+        PENDING_SEND.to_string()
     } else {
         let id: String = ids
             .last()
@@ -518,9 +541,16 @@ fn refusal(ids: &[String]) -> String {
     }
 }
 
-/// Statuses of an applied (or simulated) operation: `Ok` if every content was applied.
-fn ensure_applied(contents: &Value) -> Result<()> {
-    for content in contents.as_array().map(Vec::as_slice).unwrap_or_default() {
+/// Statuses of an applied (or simulated) operation: `Ok` only if the node answered for
+/// each of the `expected` contents and applied every one. An answer of another shape
+/// (nothing, an empty list) is no approval.
+fn ensure_applied(contents: &Value, expected: usize) -> Result<()> {
+    let contents = contents.as_array().map(Vec::as_slice).unwrap_or_default();
+    ensure!(
+        contents.len() == expected,
+        "nœud Tezos : réponse inattendue"
+    );
+    for content in contents {
         let result = &content["metadata"]["operation_result"];
         if result["status"].as_str() != Some("applied") {
             let mut ids = error_ids(&result["errors"]);
@@ -619,16 +649,37 @@ fn simulate(node: Node, op: &Operation) -> Result<Vec<Value>> {
         "/chains/main/blocks/head/helpers/scripts/simulate_operation",
         &json!({ "operation": operation, "chain_id": node.chain_id }),
     )?;
-    ensure_applied(&response["contents"])?;
-    let results = response["contents"]
+    ensure_applied(&response["contents"], op.contents.len())?;
+    response["contents"]
         .as_array()
         .cloned()
-        .context("simulation Tezos illisible")?;
+        .context("simulation Tezos illisible")
+}
+
+/// What a simulated content needs: (gas limit, storage limit, whether it creates the
+/// recipient's account). A transfer between implicit accounts stores nothing: only the
+/// creation of the recipient's account is paid for, at the protocol's fixed size. An
+/// answer that says otherwise is refused, not turned into limits to sign.
+fn simulated_limits(
+    result: &Value,
+    transfer: bool,
+    origination_size: u64,
+) -> Result<(u64, u64, bool)> {
+    let milligas = mutez(&result["consumed_milligas"]).context("simulation Tezos illisible")?;
+    let allocates = result["allocated_destination_contract"].as_bool() == Some(true);
+    let stored = match result.get("paid_storage_size_diff") {
+        Some(diff) => mutez(diff).context("simulation Tezos illisible")?,
+        None => 0,
+    };
     ensure!(
-        results.len() == op.contents.len(),
+        stored == 0 && (transfer || !allocates),
         "simulation Tezos illisible"
     );
-    Ok(results)
+    Ok((
+        milligas.div_ceil(1000) + GAS_MARGIN,
+        if allocates { origination_size } else { 0 },
+        allocates,
+    ))
 }
 
 /// Send prepared for the confirmation dialog.
@@ -699,11 +750,19 @@ fn prepare(
     .is_null();
     let (cost_per_byte, origination_size, hard_gas, hard_storage) = constants(node)?;
 
+    // The counters come from the node: an absurd one is an unreadable answer, never an
+    // overflow.
+    let first_counter = counter
+        .checked_add(1)
+        .context("réponse du nœud Tezos illisible")?;
+    let transfer_counter = first_counter
+        .checked_add(u64::from(!revealed))
+        .context("réponse du nœud Tezos illisible")?;
     let mut contents = Vec::new();
     if !revealed {
         contents.push(Content::Reveal {
             fee: 0,
-            counter: counter + 1,
+            counter: first_counter,
             gas_limit: 0,
             storage_limit: 0,
             public_key: *public_key,
@@ -711,7 +770,7 @@ fn prepare(
     }
     contents.push(Content::Transaction {
         fee: 0,
-        counter: counter + 1 + u64::from(!revealed),
+        counter: transfer_counter,
         gas_limit: 0,
         storage_limit: hard_storage,
         amount,
@@ -731,16 +790,19 @@ fn prepare(
     let results = simulate(node, &op)?;
     let (mut burn, mut creates) = (0, false);
     for (content, result) in op.contents.iter_mut().zip(&results) {
-        let result = &result["metadata"]["operation_result"];
-        let milligas = mutez(&result["consumed_milligas"]).unwrap_or(0);
-        let allocates = result["allocated_destination_contract"].as_bool() == Some(true);
-        let storage = mutez(&result["paid_storage_size_diff"]).unwrap_or(0)
-            + if allocates { origination_size } else { 0 };
+        let transfer = matches!(content, Content::Transaction { .. });
+        let (gas, storage, allocates) = simulated_limits(
+            &result["metadata"]["operation_result"],
+            transfer,
+            origination_size,
+        )?;
         let (_, gas_limit, storage_limit) = content.limits();
-        *gas_limit = milligas.div_ceil(1000) + GAS_MARGIN;
+        *gas_limit = gas;
         *storage_limit = storage;
-        if matches!(content, Content::Transaction { .. }) {
-            burn = storage * cost_per_byte;
+        if transfer {
+            // The constants come from the node too: a product that does not fit is
+            // above any cap.
+            burn = storage.saturating_mul(cost_per_byte);
             creates = allocates;
         }
     }
@@ -880,7 +942,7 @@ fn preapply(node: Node, prepared: &Prepared, signature: &[u8; 64]) -> Result<()>
             "signature": b58check(&EDSIG, signature),
         }]),
     )?;
-    ensure_applied(&response[0]["contents"])
+    ensure_applied(&response[0]["contents"], prepared.op.contents.len())
 }
 
 /// Broadcasts signed bytes; returns their hash.
@@ -903,9 +965,11 @@ fn inject(node: Node, signed: &[u8]) -> Result<String> {
     }
     // The node's own refusal is a JSON list of errors: nothing went out. Anything else
     // (gateway, timeout page): maybe sent.
-    let ids = serde_json::from_str::<Value>(&text)
-        .map(|v| error_ids(&v))
-        .unwrap_or_default();
+    let errors = serde_json::from_str::<Value>(&text).unwrap_or(Value::Null);
+    if mempool_conflict(&errors) {
+        bail!(PENDING_SEND);
+    }
+    let ids = error_ids(&errors);
     if !ids.is_empty() {
         bail!("{}", refusal(&ids));
     }
@@ -1172,6 +1236,110 @@ mod tests {
         assert!(refusal(&error_ids(&signature)).contains("signature"));
         assert!(refusal(&["something.else".to_string()]).ends_with("something.else"));
         assert_eq!(format_xtz(64_250), "0.064250");
+    }
+
+    /// An approval is an answer for every content, each applied. Nothing, an empty
+    /// list or a list of another length is none: a preapply answering `{}` used to
+    /// pass (audit round 34).
+    #[test]
+    fn an_answer_that_does_not_cover_the_operation_is_no_approval() {
+        let applied = json!({ "metadata": { "operation_result": { "status": "applied" } } });
+        assert!(ensure_applied(&json!([applied]), 1).is_ok());
+        assert!(ensure_applied(&json!([applied, applied]), 2).is_ok());
+        for (answer, expected) in [
+            (Value::Null, 1),
+            (json!({}), 1),
+            (json!([]), 1),
+            (json!([applied]), 2),
+            (json!([applied, applied]), 1),
+        ] {
+            let error = ensure_applied(&answer, expected).unwrap_err().to_string();
+            assert_eq!(error, "nœud Tezos : réponse inattendue", "{answer}");
+        }
+        let failed = json!({ "metadata": { "operation_result": {
+            "status": "failed",
+            "errors": [{ "id": "proto.025-PsUshuai.contract.balance_too_low" }],
+        } } });
+        let error = ensure_applied(&json!([applied, failed]), 2).unwrap_err();
+        assert!(error.to_string().contains("insuffisants"), "{error}");
+        // No status at all is not "applied".
+        assert!(ensure_applied(&json!([{ "metadata": {} }]), 1).is_err());
+    }
+
+    /// A second send while the first one waits in the mempool: the answer a Shadownet
+    /// node gave to the injection (HTTP 500; nothing went out, and the first send was
+    /// included alone). It reads as "another send is pending", not as a bare "failure".
+    #[test]
+    fn a_send_while_another_one_is_pending_says_so() {
+        let answer = json!([
+            { "kind": "permanent", "id": "async_injection_failed" },
+            {
+                "kind": "temporary",
+                "id": "failure",
+                "msg": "Error while validating injected operation opKxMS7YJLYPBDaNTiHSAgnZ9PjYFxSGP6xnKsbwbtd9PLkvig6:
+Error:
+  The operation opKxMS7YJLYPBDaNTiHSAgnZ9PjYFxSGP6xnKsbwbtd9PLkvig6 cannot be added because the mempool already contains a conflicting operation. To replace the latter, this particular operation would need a total fee of at least 557 mutez.
+",
+            },
+        ]);
+        assert!(mempool_conflict(&answer));
+        assert!(mempool_conflict(&json!([
+            { "id": "proto.025-PsUshuai.validate.operation.manager_restriction" }
+        ])));
+        for other in [
+            Value::Null,
+            json!([]),
+            json!([{ "id": "proto.025-PsUshuai.contract.balance_too_low" }]),
+            json!([{ "id": "failure", "msg": "timeout" }]),
+        ] {
+            assert!(!mempool_conflict(&other), "{other}");
+        }
+        // A used counter (the first send was included meanwhile) says the same.
+        assert_eq!(
+            refusal(&["contract.counter_in_the_past".to_string()]),
+            PENDING_SEND
+        );
+    }
+
+    /// Limits read from a simulation, with the two answers a Shadownet node gave (an
+    /// existing recipient, then a new one). What a plain transfer cannot produce is
+    /// refused: no gas figure, storage paid for, an account created by a reveal.
+    #[test]
+    fn simulation_results_are_read_strictly() {
+        let existing = json!({ "status": "applied", "consumed_milligas": "2168821" });
+        assert_eq!(
+            simulated_limits(&existing, true, 257).unwrap(),
+            (2269, 0, false)
+        );
+        let new = json!({
+            "status": "applied",
+            "consumed_milligas": "2168821",
+            "allocated_destination_contract": true,
+        });
+        assert_eq!(
+            simulated_limits(&new, true, 257).unwrap(),
+            (2269, 257, true)
+        );
+        assert!(simulated_limits(&new, false, 257).is_err());
+        for odd in [
+            json!({ "status": "applied" }),
+            json!({ "consumed_milligas": "abc" }),
+            json!({ "consumed_milligas": "1000", "paid_storage_size_diff": "5" }),
+            json!({ "consumed_milligas": "1000", "paid_storage_size_diff": "x" }),
+            json!({
+                "consumed_milligas": "1000",
+                "paid_storage_size_diff": "18446744073709551615",
+                "allocated_destination_contract": true,
+            }),
+        ] {
+            let error = simulated_limits(&odd, true, 257).unwrap_err().to_string();
+            assert_eq!(error, "simulation Tezos illisible", "{odd}");
+        }
+        let zero = json!({ "consumed_milligas": "1000", "paid_storage_size_diff": "0" });
+        assert_eq!(simulated_limits(&zero, true, 257).unwrap(), (101, 0, false));
+        // The largest gas a node can state still gives a limit: the fee cap refuses it.
+        let huge = json!({ "consumed_milligas": "18446744073709551615" });
+        assert!(simulated_limits(&huge, true, 257).is_ok());
     }
 
     /// History lines from TzKT items (fields as TzKT returns them): tez received, tez

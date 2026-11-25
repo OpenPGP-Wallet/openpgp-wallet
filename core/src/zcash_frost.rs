@@ -200,9 +200,8 @@ fn confirm(data_dir: &Path, net: Net) -> Result<FrostAccount> {
     account.confirmed = true;
     let path = net.file(data_dir, "json");
     let temporary = path.with_extension("json.tmp");
-    std::fs::write(&temporary, serde_json::to_vec_pretty(&account)?)
+    crate::durable::replace(&path, &temporary, &serde_json::to_vec_pretty(&account)?)
         .context("compte FROST : écriture impossible")?;
-    std::fs::rename(&temporary, &path).context("compte FROST : écriture impossible")?;
     Ok(account)
 }
 
@@ -563,8 +562,10 @@ fn write_seat_file(
     file.extend_from_slice(&ciphertext);
     let path = net.slot_file(data_dir, slot, "seat");
     let temporary = path.with_extension("seat.tmp");
-    std::fs::write(&temporary, file).context("siège FROST : écriture impossible")?;
-    std::fs::rename(&temporary, &path).context("siège FROST : écriture impossible")?;
+    // Flushed to the disk before it takes the seat's name: a power cut must not leave
+    // an empty file where the only copy of this share was (see `durable`).
+    crate::durable::replace(&path, &temporary, &file)
+        .context("siège FROST : écriture impossible")?;
     Ok(())
 }
 
@@ -1276,9 +1277,11 @@ fn store(
         // one being recovered existed already.
         confirmed,
     };
-    std::fs::write(
-        net.slot_file(data_dir, slot, "json"),
-        serde_json::to_vec_pretty(&account)?,
+    let path = net.slot_file(data_dir, slot, "json");
+    crate::durable::replace(
+        &path,
+        &path.with_extension("json.tmp"),
+        &serde_json::to_vec_pretty(&account)?,
     )
     .context("compte FROST : écriture impossible")?;
     Ok(account)
