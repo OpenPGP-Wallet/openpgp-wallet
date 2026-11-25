@@ -94,6 +94,26 @@ fn client() -> &'static reqwest::blocking::Client {
     })
 }
 
+/// The largest body read from a node or from TzKT. Their answers here are a few hundred
+/// kilobytes at most (a page of history): beyond this limit it is not an answer.
+const MAX_BODY: u64 = 4 * 1024 * 1024;
+
+/// The JSON body of an answer, read up to [`MAX_BODY`].
+fn body_json(response: reqwest::blocking::Response) -> Result<Value> {
+    let bytes =
+        crate::http_limit::read(response, MAX_BODY).context("réponse du nœud Tezos illisible")?;
+    serde_json::from_slice(&bytes).context("réponse du nœud Tezos illisible")
+}
+
+/// The body of an answer as text, read up to [`MAX_BODY`]; empty when it cannot be read,
+/// which every caller treats as an unreadable answer.
+fn body_text(response: reqwest::blocking::Response) -> String {
+    crate::http_limit::read(response, MAX_BODY)
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .unwrap_or_default()
+}
+
 /// GET; `Ok(None)` when the server does not have the key: a 404, or the node's storage
 /// error for a key its context lacks (`full_balance` of an account that never received
 /// tez answers that, HTTP 500, where `balance` answers "0": seen on PsUshuai).
@@ -108,16 +128,14 @@ fn get_opt(base: &str, path: &str) -> Result<Option<Value>> {
         return Ok(None);
     }
     if status == reqwest::StatusCode::INTERNAL_SERVER_ERROR {
-        let body: Value = response.json().unwrap_or(Value::Null);
+        let body: Value = body_json(response).unwrap_or(Value::Null);
         if missing_key(&body) {
             return Ok(None);
         }
         bail!("nœud Tezos : réponse {status}");
     }
     ensure!(status.is_success(), "nœud Tezos : réponse {status}");
-    Ok(Some(
-        response.json().context("réponse du nœud Tezos illisible")?,
-    ))
+    Ok(Some(body_json(response)?))
 }
 
 /// A node's answer made only of storage errors on a missing key.
@@ -179,7 +197,7 @@ fn post(node: Node, path: &str, body: &Value) -> Result<(bool, String)> {
         .send()
         .context("nœud Tezos injoignable")?;
     let ok = response.status().is_success();
-    Ok((ok, response.text().unwrap_or_default()))
+    Ok((ok, body_text(response)))
 }
 
 fn mutez(value: &Value) -> Result<u64> {
@@ -954,7 +972,7 @@ fn inject(node: Node, signed: &[u8]) -> Result<String> {
         .send()
         .map_err(|e| crate::wallet_flow::broadcast_failure(e, "nœud Tezos injoignable", &hash))?;
     let status = response.status();
-    let text = response.text().unwrap_or_default();
+    let text = body_text(response);
     if status.is_success() {
         // Accepted: an answer other than our hash must not make it look refused, since
         // sending again would pay twice.
