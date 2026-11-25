@@ -5,6 +5,15 @@ links and SHA-256 hashes of each build are on the [releases page](https://github
 
 ## [Unreleased]
 
+### Security
+- Hardening proposed by audit round 34:
+  - released builds drop the `WEBVIEW2_*` environment variables before the window opens. WebView2 reads them to
+    open a remote debugging port or to load another browser binary, so a program able to write the user's
+    environment once could have watched and driven the interface at every later launch;
+  - Tezos: the answers of the nodes and of TzKT are read up to 4 MiB instead of whatever their size. The other
+    networks will follow with the same helper;
+  - CI: every GitHub action is pinned to a commit.
+
 ## [2.20.0] - 2026-11-25
 
 ### Added
