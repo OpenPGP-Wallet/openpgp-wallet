@@ -5,6 +5,8 @@ links and SHA-256 hashes of each build are on the [releases page](https://github
 
 ## [Unreleased]
 
+## [2.20.1] - 2026-11-27
+
 ### Changed
 - Zcash (transparent, shielded and FROST sends): the fee follows ZIP 2009, 1,000 zatoshis per action instead of
   5,000, which the network accepts since block 3,590,000 (19 November 2026). The wallet was still paying five
@@ -450,7 +452,8 @@ The app is renamed "PGP Wallet".
 First working proof of concept: a non-custodial Bitcoin, Ethereum and Solana wallet whose master key is
 protected by 2-of-3 Shamir secret sharing and OpenPGP, with no seed phrase.
 
-[Unreleased]: https://github.com/OpenPGP-Wallet/openpgp-wallet/compare/v2.20.0...HEAD
+[Unreleased]: https://github.com/OpenPGP-Wallet/openpgp-wallet/compare/v2.20.1...HEAD
+[2.20.1]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.20.1
 [2.20.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.20.0
 [2.19.0]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.19.0
 [2.18.1]: https://github.com/OpenPGP-Wallet/openpgp-wallet/releases/tag/v2.18.1
