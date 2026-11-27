@@ -5,6 +5,21 @@ links and SHA-256 hashes of each build are on the [releases page](https://github
 
 ## [Unreleased]
 
+### Changed
+- Zcash (transparent, shielded and FROST sends): the fee follows ZIP 2009, 1,000 zatoshis per action instead of
+  5,000, which the network accepts since block 3,590,000 (19 November 2026). The wallet was still paying five
+  times the fee, an amount up-to-date wallets no longer pay, which told its transactions apart. Change smaller
+  than 1,000 zatoshis (it was 5,000) is added to the fee of a transparent send.
+- FROST account: the checks the wallet runs on its own transaction before it shows the request, and the reading of
+  member 3's backup, now come from frost-zec 0.2.1 (8b87284, it was 7739170):
+  - the fee is checked against ZIP 2009's rate, the one the wallet now pays. A fee at the earlier rate is refused
+    from 1 February 2027;
+  - how far the expiry of a transaction may lie is counted from a later Mainnet block (3,609,500), which makes
+    that bound tighter;
+  - recovery refuses a backup whose signing share is zero, a share no member can hold;
+  - the change of value zero that the library adds when a payment uses up its notes exactly is counted as one of
+    the transaction's actions.
+
 ### Fixed
 - **Bittensor (TAO) history**: Taostats retired the address the app read transfers from on 25 November 2026, so
   version 2.20.0 shows "Taostats: response 410" in place of the history. The app now reads the service's current
