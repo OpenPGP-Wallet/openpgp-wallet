@@ -2362,25 +2362,22 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let (two, three) = old_group();
-        let passphrase = "one two three four five six seven eight nine ten eleven twelve";
-        let file = frost_zec::profiles::encrypt(
-            &frost_zec::profiles::Contents {
-                backup: Zeroizing::new(three.backup_string().unwrap()),
-                ufvk: two.ufvk.clone(),
-                birthday: Some(4_500_000),
-                label: None,
-            },
-            passphrase,
-        )
+        // The file as the co-signer writes it at setup: under a passphrase it generates.
+        let (file, passphrase) = frost_zec::profiles::protect(&frost_zec::profiles::Contents {
+            backup: Zeroizing::new(three.backup_string().unwrap()),
+            ufvk: two.ufvk.clone(),
+            birthday: Some(4_500_000),
+            label: None,
+        })
         .unwrap();
         assert!(recovery_input(&file, "wrong")
             .unwrap_err()
             .to_string()
             .contains("phrase de passe"));
-        let input = recovery_input(&file, passphrase).unwrap();
+        let input = recovery_input(&file, &passphrase).unwrap();
         assert_eq!(input.kit_ufvk(), Some(two.ufvk.as_str()));
         // The text form and the bare string are read too.
-        recovery_input(frost_zec::profiles::to_text(&file).as_bytes(), passphrase).unwrap();
+        recovery_input(frost_zec::profiles::to_text(&file).as_bytes(), &passphrase).unwrap();
         recovery_input(three.backup_string().unwrap().as_bytes(), "").unwrap();
 
         let info = frost_zec::recovery::GroupInfo::new(&two.member, &two.ufvk);
@@ -2440,17 +2437,14 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let (two, three) = old_group();
         let (other, _) = old_group();
-        let file = frost_zec::profiles::encrypt(
-            &frost_zec::profiles::Contents {
-                backup: Zeroizing::new(three.backup_string().unwrap()),
-                ufvk: two.ufvk.clone(),
-                birthday: None,
-                label: None,
-            },
-            "a passphrase",
-        )
+        let (file, passphrase) = frost_zec::profiles::protect(&frost_zec::profiles::Contents {
+            backup: Zeroizing::new(three.backup_string().unwrap()),
+            ufvk: two.ufvk.clone(),
+            birthday: None,
+            label: None,
+        })
         .unwrap();
-        let input = recovery_input(&file, "a passphrase").unwrap();
+        let input = recovery_input(&file, &passphrase).unwrap();
         let lying = frost_zec::recovery::GroupInfo::new(&other.member, &other.ufvk);
         let refused = setup_with(&dir, Some((&input, lying)))
             .err()
