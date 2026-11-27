@@ -838,7 +838,8 @@ pub fn send(pair: &Keypair, plan: &TaoPlan) -> Result<String> {
 /// `partner-keys.env`, see build.rs). Without it, the address's page on the
 /// explorer is shown instead.
 const TAOSTATS_KEY: Option<&str> = option_env!("TAOSTATS_API_KEY");
-const TAOSTATS: &str = "https://api.taostats.io/api/transfer/v1";
+/// Taostats retired `/api/transfer/v1` on 25 November 2026 (HTTP 410); this is its successor.
+const TAOSTATS: &str = "https://api.taostats.io/v1/transfers";
 pub const HISTORY_KEY_MISSING: &str =
     "historique Bittensor indisponible dans cette version de l'app";
 pub const HISTORY_LIMITED: &str = "historique Bittensor momentanément indisponible (limite du service atteinte) — réessayez plus tard";
@@ -864,7 +865,7 @@ pub fn history(address_text: &str, limit: usize) -> Result<Vec<history::TxEntry>
     let me = parse_address(address_text)?;
     let key = TAOSTATS_KEY.ok_or_else(|| anyhow!(HISTORY_KEY_MISSING))?;
     let url = format!(
-        "{TAOSTATS}?network=finney&address={}&limit={}&order=block_number_desc",
+        "{TAOSTATS}?network=finney&address={}&limit={}&order_by=timestamp&order_dir=desc",
         address(&me),
         limit.clamp(1, 200)
     );
@@ -885,17 +886,9 @@ pub fn history(address_text: &str, limit: usize) -> Result<Vec<history::TxEntry>
     )
 }
 
-/// Account of one party ("from"/"to") of a Taostats transfer.
+/// Account of one party ("from"/"to") of a Taostats transfer: an SS58 address.
 fn party(value: &Value) -> Option<[u8; 32]> {
-    value["ss58"]
-        .as_str()
-        .and_then(|s| parse_address(s).ok())
-        .or_else(|| {
-            hex::decode(value["hex"].as_str()?.trim_start_matches("0x"))
-                .ok()?
-                .try_into()
-                .ok()
-        })
+    parse_address(value.as_str()?).ok()
 }
 
 fn rao(value: &Value) -> Option<i128> {
@@ -1050,24 +1043,27 @@ mod tests {
         );
     }
 
-    /// Taostats transfers (format from their documentation): direction, sender fees
+    /// Taostats transfers (format of `GET /v1/transfers` in their documentation, reviewed
+    /// 2026-11-10: `from` and `to` are SS58 strings): direction, sender fees
     /// only, a batch within one transaction merged, lines for other accounts or
     /// unreadable lines dropped.
     #[test]
     fn taostats_transfers_are_read() {
         let me = parse_address("5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY").unwrap();
         let bob = "5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty";
-        let me_hex = format!("0x{}", hex::encode(me));
-        let body = json!({ "pagination": { "current_page": 1 }, "data": [
-            { "extrinsic_id": "6611494-0037", "timestamp": "2025-02-26T13:57:36Z", "amount": "1500000000", "fee": "83124",
-              "from": { "ss58": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY", "hex": me_hex }, "to": { "ss58": bob } },
-            { "extrinsic_id": "6611400-0002", "timestamp": "2025-02-26T13:00:00Z", "amount": "250000000", "fee": "90000",
-              "from": { "ss58": bob }, "to": { "ss58": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY" } },
-            // Batch: two transfers in the same transaction.
-            { "extrinsic_id": "6611300-0005", "amount": "100", "fee": "70000", "from": { "hex": me_hex }, "to": { "ss58": bob } },
-            { "extrinsic_id": "6611300-0005", "amount": "200", "fee": "70000", "from": { "hex": me_hex }, "to": { "ss58": bob } },
-            { "extrinsic_id": "6611200-0001", "amount": "5", "fee": "1", "from": { "ss58": bob }, "to": { "ss58": bob } },
-            { "extrinsic_id": "../evil", "amount": "5", "fee": "1", "from": { "ss58": bob }, "to": { "hex": me_hex } },
+        let alice = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
+        let body = json!({ "pagination": { "current_page": 1, "next_page": null }, "data": [
+            { "id": "finney-6611494-0037", "extrinsic_id": "6611494-0037", "timestamp": "2025-02-26T13:57:36.000Z",
+              "amount": "1500000000", "fee": "83124", "from": alice, "to": bob },
+            { "id": "finney-6611400-0002", "extrinsic_id": "6611400-0002", "timestamp": "2025-02-26T13:00:00.000Z",
+              "amount": "250000000", "fee": "90000", "from": bob, "to": alice },
+            // Batch: two transfers in the same transaction, the fee repeated on each line.
+            { "extrinsic_id": "6611300-0005", "amount": "100", "fee": "70000", "from": alice, "to": bob },
+            { "extrinsic_id": "6611300-0005", "amount": "200", "fee": "70000", "from": alice, "to": bob },
+            { "extrinsic_id": "6611200-0001", "amount": "5", "fee": "1", "from": bob, "to": bob },
+            { "extrinsic_id": "../evil", "amount": "5", "fee": "1", "from": bob, "to": alice },
+            // The shape of the endpoint retired in November 2026: no longer read.
+            { "extrinsic_id": "6611100-0001", "amount": "5", "fee": "1", "from": { "ss58": bob }, "to": { "ss58": alice } },
         ]});
         let entries = parse_transfers(&body, &me).unwrap();
         let summary: Vec<_> = entries
@@ -1169,7 +1165,7 @@ mod tests {
         // Raw data (hashes), same request.
         let raw: Value = client()
             .get(format!(
-                "{TAOSTATS}?network=finney&address={me_text}&limit=20&order=block_number_desc"
+                "{TAOSTATS}?network=finney&address={me_text}&limit=20&order_by=timestamp&order_dir=desc"
             ))
             .header("Authorization", TAOSTATS_KEY.unwrap())
             .send()

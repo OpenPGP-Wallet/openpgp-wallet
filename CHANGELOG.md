@@ -5,6 +5,11 @@ links and SHA-256 hashes of each build are on the [releases page](https://github
 
 ## [Unreleased]
 
+### Fixed
+- **Bittensor (TAO) history**: Taostats retired the address the app read transfers from on 25 November 2026, so
+  version 2.20.0 shows "Taostats: response 410" in place of the history. The app now reads the service's current
+  address. Balances and sending do not go through Taostats and were not affected.
+
 ### Security
 - Hardening proposed by audit round 34:
   - released builds drop the `WEBVIEW2_*` environment variables before the window opens. WebView2 reads them to
